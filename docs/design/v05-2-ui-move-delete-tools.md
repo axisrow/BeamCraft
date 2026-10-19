@@ -14,7 +14,7 @@ reloaded.
 |---|---|
 | `beamcraft_ui::tools` (pure) | `ToolKind` gains `Move` and `Delete`; `ElementRow` is one listed element (id, kind token, placement); `Tools::select` stores the selection and pre-fills the move form with the snapshot's placement; `prepare` produces the exact `update-element` / `delete-element` argument list of the selection; `parse_updated` and `parse_deleted` read the CLI's JSON reply or its refusal; `EditResult` carries whichever answer a committed tool produced, with the panel's note (`summary`). The create tools of V05.1 are unchanged in behaviour (their reply struct now shares the `Revision` reader). |
 | `beamcraft_ui::command` | `run_tool` runs a previewed command and parses its reply by the tool's kind, on the same capped, deadline-bounded process runner as before. |
-| `beamcraft_ui::app` | An Elements list at the top of the side panel (one row per snapshot element, kind and id, click to select); the tool row grows Move and Delete tabs; the move form takes the new absolute translation X/Y/Z; the delete tab states what Commit removes; selection, staged command and the two-status rule work exactly as in V05.1. A committed move, delete or create reloads the accepted revision and the definitions. A reload drops a selection the new revision no longer lists. |
+| `beamcraft_ui::app` | An Elements list at the top of the side panel (one row per snapshot element, kind and id, click to select), built once per accepted revision and shown through a windowed scroll area; the tool row grows Move and Delete tabs; the move form takes the new absolute translation X/Y/Z; the delete tab states what Commit removes; selection, staged command and the two-status rule work exactly as in V05.1. A committed move, delete or create reloads the accepted revision and the definitions. A committed delete clears the selection at once; a reload drops a selection the new revision no longer lists. |
 
 Commands used, exactly as a user types them:
 
@@ -35,10 +35,12 @@ beamcraft delete-element --store ROOT --id UUID
    view stays future work.
 3. **Move is the engine's semantics: an absolute translation, rotation kept.** The form shows
    the new placement translation and is pre-filled with the snapshot's placement, so a move is
-   typically one edited coordinate. The UI adds no delta arithmetic and re-derives no geometry;
-   it forwards the text, and the engine places the element. A snapshot read just before a
-   foreign change could be stale; the preview shows the exact `--translation` that Commit will
-   send, so what is sent is never in doubt.
+   typically one edited coordinate; selecting the already selected element again keeps the
+   typed coordinates. Pre-fill values are written in the shortest round-trip (Debug) form, so
+   they always fit the number field's length cap. The UI adds no delta arithmetic and
+   re-derives no geometry; it forwards the text, and the engine places the element. A snapshot
+   read just before a foreign change could be stale; the preview shows the exact
+   `--translation` that Commit will send, so what is sent is never in doubt.
 4. **Delete is preview-gated.** The staged preview shows the exact `delete-element` arguments
    before Commit exists as enabled, and the tab states that Commit removes the whole element and
    that this window has no undo. The engine still refuses a delete that would leave a link
@@ -47,10 +49,12 @@ beamcraft delete-element --store ROOT --id UUID
    previewed and only while unchanged"), cancel, busy and the two-status rule are the V05.1
    logic unchanged; a staged command stops being committable the moment the selection, the move
    text or any form field produces a different argument list. One command runs at a time.
-6. **The selection follows the accepted revision.** After each reload a selection the new
-   revision no longer lists is dropped (`retain_selection`), so a delete or a foreign change
-   cannot leave the panel addressing an element that is not there. A staged command of another
-   selection is invalidated by the same comparison rule.
+6. **The selection is the element's id; its row follows the accepted revision.** The panel
+   stores only the id and looks the row up in the list, so the kind and placement it shows are
+   always the current revision's, and a row is highlighted exactly when it is selected. After
+   each reload a selection the new revision no longer lists is dropped (`retain_selection`),
+   and a committed delete clears the selection at once, before the reload confirms it. A
+   staged command of another selection is invalidated by the same comparison rule.
 7. **Bounded input.** The move fields are capped at `MAX_TEXT` like every other editor; a
    non-finite or non-numeric translation is refused before any process runs, while a negative
    translation is forwarded (absolute placements may be negative; that is the engine's to
@@ -72,10 +76,12 @@ beamcraft delete-element --store ROOT --id UUID
 
 - Unit tests in `apps/beamcraft-ui/src/tools.rs` (17, four new in this slice): the exact argument lists of the move and
   the delete (selection required, numbers checked before any process runs, negative translation
-  forwarded), selection pre-fill and re-fill, the staged move invalidated by a changed selection
-  or text, `retain_selection`, reading of updated and deleted replies (current volume, replay
-  outcomes, a null kind on a delete replay, missing fields, wrong-command replies, refusals kept
-  with code and message and never hidden by a zero exit), and the success notes; the V05.1 tests
+  forwarded), selection pre-fill in the shortest round-trip form (float noise and large
+  magnitudes included, within the length cap) and re-click keeping typed coordinates, the
+  staged move invalidated by a changed selection or text, `retain_selection`, reading of
+  updated and deleted replies (current volume, replay outcomes, a null kind on a delete replay,
+  missing fields, wrong-command replies, refusals kept with code and message and never hidden
+  by a zero exit), and the success notes with their single replay marker; the V05.1 tests
   pass unchanged in behaviour over the shared `Revision` reader.
 - `apps/beamcraft-ui/tests/edit_tools.rs` (2, real `beamcraft` binary, no GPU needed):
   - a plate created by hand in two stores, then moved through selection + tool mapping +

@@ -326,6 +326,24 @@ struct ElementReply {
     volume_mm3: Option<f64>,
 }
 
+/// Whether the reply's outcome names the applied (`false`) or the replayed (`true`) token of
+/// `accepted`; any other outcome is an unreadable reply.
+fn applied_or_replayed(reply: &Json, accepted: [&str; 2]) -> Result<bool, ToolError> {
+    let outcome = text(reply, "outcome").unwrap_or_default();
+    let replayed = outcome == accepted[1];
+    if replayed || outcome == accepted[0] {
+        Ok(replayed)
+    } else {
+        Err(ToolError::local(
+            "UNREADABLE_REPLY",
+            format!(
+                "unexpected outcome \"{}\"",
+                outcome.chars().take(40).collect::<String>()
+            ),
+        ))
+    }
+}
+
 /// Reads the element object under `key`; the outcome must be one of `accepted[0]` (applied) or
 /// `accepted[1]` (an already applied operation answered again).
 fn element_reply(
@@ -333,17 +351,7 @@ fn element_reply(
     key: &str,
     accepted: [&str; 2],
 ) -> Result<(ElementReply, bool), ToolError> {
-    let outcome = text(reply, "outcome").unwrap_or_default();
-    let replayed = outcome == accepted[1];
-    if !replayed && outcome != accepted[0] {
-        return Err(ToolError::local(
-            "UNREADABLE_REPLY",
-            format!(
-                "unexpected outcome \"{}\"",
-                outcome.chars().take(40).collect::<String>()
-            ),
-        ));
-    }
+    let replayed = applied_or_replayed(reply, accepted)?;
     let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
     let element = reply.get(key).map_err(|_| unreadable())?;
     let volume = element
@@ -508,17 +516,7 @@ pub fn parse_deleted(exit_code: Option<i32>, stdout: &[u8]) -> Result<Deleted, T
     if let Some(error) = rejection(&reply, exit_code) {
         return Err(error);
     }
-    let outcome = text(&reply, "outcome").unwrap_or_default();
-    let replayed = outcome == "element_delete_replayed";
-    if !replayed && outcome != "element_deleted" {
-        return Err(ToolError::local(
-            "UNREADABLE_REPLY",
-            format!(
-                "unexpected outcome \"{}\"",
-                outcome.chars().take(40).collect::<String>()
-            ),
-        ));
-    }
+    let replayed = applied_or_replayed(&reply, ["element_deleted", "element_delete_replayed"])?;
     let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
     Ok(Deleted {
         element_id: text(&reply, "element_id").ok_or_else(unreadable)?,
@@ -564,44 +562,31 @@ impl EditResult {
                 name.to_owned()
             }
         };
+        let volume =
+            |v: &Option<f64>| v.map_or(String::new(), |v| format!(", volume {:.3} m3", v / 1e9));
         match self {
-            Self::Created(c) => {
-                let what = match c.kind {
-                    ToolKind::Plate => "plate",
-                    ToolKind::Member => "member",
-                    _ => "element",
-                };
-                let volume = c
-                    .volume_mm3
-                    .map_or(String::new(), |v| format!(", volume {:.3} m3", v / 1e9));
-                format!(
-                    "Created {what} {} ({}{}). {}.",
-                    c.element_id,
-                    named(&c.name),
-                    volume,
-                    pinned(&c.revision)
-                )
-            }
-            Self::Updated(u) => {
-                let volume = u
-                    .volume_mm3
-                    .map_or(String::new(), |v| format!(", volume {:.3} m3", v / 1e9));
-                format!(
-                    "Moved element {} ({}{}). {}{}.",
-                    u.element_id,
-                    named(&u.name),
-                    volume,
-                    pinned(&u.revision),
-                    if u.replayed { " (replayed)" } else { "" }
-                )
-            }
+            Self::Created(c) => format!(
+                "Created {} {} ({}{}). {}.",
+                c.kind.noun().unwrap_or("element"),
+                c.element_id,
+                named(&c.name),
+                volume(&c.volume_mm3),
+                pinned(&c.revision)
+            ),
+            Self::Updated(u) => format!(
+                "Moved element {} ({}{}). {}{}.",
+                u.element_id,
+                named(&u.name),
+                volume(&u.volume_mm3),
+                pinned(&u.revision),
+                if u.replayed { " (replayed)" } else { "" }
+            ),
             Self::Deleted(d) => format!(
-                "Deleted {} {}{}. {}{}.",
+                "Deleted {} {}{}. {}.",
                 d.kind.as_deref().unwrap_or("element"),
                 d.element_id,
                 if d.replayed { " (already absent)" } else { "" },
                 pinned(&d.revision),
-                if d.replayed { " (replayed)" } else { "" }
             ),
         }
     }
@@ -706,8 +691,9 @@ pub struct Tools {
     pub member: MemberForm,
     /// The store's definitions, as of the last refresh.
     pub definitions: Definitions,
-    /// The element selected for the move and delete tools, as the snapshot lists it.
-    pub selection: Option<ElementRow>,
+    /// The id of the element selected for the move and delete tools; its row is looked up in
+    /// the panel's list, so kind and placement always come from the current revision.
+    pub selection: Option<String>,
     /// The move form: the new absolute placement translation (millimetres), pre-filled from
     /// the snapshot's placement of the selection.
     pub move_to: [String; 3],
@@ -757,24 +743,29 @@ impl Tools {
         self.definitions = definitions;
         problem
     }
-    /// Selects an element for the move and delete tools and pre-fills the move form with its
-    /// placement as the snapshot reports it. A changed selection (or move text) invalidates a
-    /// staged move, because `prepare` no longer produces it.
+    /// Selects an element for the move and delete tools. A new selection (a different id)
+    /// pre-fills the move form with its placement as the snapshot reports it; selecting the
+    /// already selected element again keeps the typed coordinates. A changed selection (or
+    /// move text) invalidates a staged command, because `prepare` no longer produces it.
     pub fn select(&mut self, row: &ElementRow) {
-        self.move_to = row.placement_mm.map(|v| format!("{v}"));
-        self.selection = Some(row.clone());
+        if self.selection.as_deref() != Some(row.id.as_str()) {
+            // Debug formatting: the shortest round-trip form, which stays within the
+            // `number` length cap for every finite value (exponents included).
+            self.move_to = row.placement_mm.map(|v| format!("{v:?}"));
+            self.selection = Some(row.id.clone());
+        }
     }
 
     /// Drops the selection when it is not among `present` (the accepted revision moved on and
     /// no longer lists it).
     pub fn retain_selection(&mut self, present: impl Fn(&str) -> bool) {
-        if self.selection.as_ref().is_some_and(|s| !present(&s.id)) {
+        if self.selection.as_deref().is_some_and(|id| !present(id)) {
             self.selection = None;
         }
     }
 
-    fn selected(&self) -> Result<&ElementRow, FormError> {
-        self.selection.as_ref().ok_or(FormError {
+    fn selected(&self) -> Result<&str, FormError> {
+        self.selection.as_deref().ok_or(FormError {
             field: "Element",
             message: "select an element in the Elements list first".into(),
         })
@@ -783,7 +774,7 @@ impl Tools {
     /// The `update-element` move of the selection to the entered translation (absolute; the
     /// engine keeps the rotation and rebuilds nothing).
     fn prepare_move(&self, store: &Path) -> Result<Prepared, FormError> {
-        let selection = self.selected()?;
+        let id = self.selected()?;
         Ok(Prepared {
             kind: ToolKind::Move,
             args: vec![
@@ -791,7 +782,7 @@ impl Tools {
                 "--store".into(),
                 store.to_string_lossy().into_owned(),
                 "--id".into(),
-                selection.id.clone(),
+                id.to_owned(),
                 "--translation".into(),
                 point("Translation", &self.move_to)?,
             ],
@@ -801,7 +792,7 @@ impl Tools {
     /// The `delete-element` of the selection (the whole element; the engine refuses one that
     /// another element still links to).
     fn prepare_delete(&self, store: &Path) -> Result<Prepared, FormError> {
-        let selection = self.selected()?;
+        let id = self.selected()?;
         Ok(Prepared {
             kind: ToolKind::Delete,
             args: vec![
@@ -809,7 +800,7 @@ impl Tools {
                 "--store".into(),
                 store.to_string_lossy().into_owned(),
                 "--id".into(),
-                selection.id.clone(),
+                id.to_owned(),
             ],
         })
     }
@@ -1123,7 +1114,24 @@ mod tests {
         // Selecting pre-fills the move form with the snapshot's placement.
         tools.active = ToolKind::Move;
         tools.select(&row);
-        assert_eq!(tools.move_to, ["0", "0", "0"]);
+        assert_eq!(tools.move_to, ["0.0", "0.0", "0.0"]);
+        // A placement with float noise still fits the number length cap and parses back,
+        // because it is written in the shortest round-trip (Debug) form.
+        let noisy = ElementRow {
+            id: "01990000-0000-7000-8000-00000000000b".into(),
+            kind: "plate".into(),
+            placement_mm: [5.551115123125783e-17, 1.5e20, 0.0],
+        };
+        tools.select(&noisy);
+        assert_eq!(tools.move_to, ["5.551115123125783e-17", "1.5e20", "0.0"]);
+        assert!(tools.move_to.iter().all(|v| v.len() <= 32));
+        assert!(tools.prepare(store()).is_ok());
+        // Selecting the same element again keeps the typed coordinates.
+        tools.move_to = ["500".into(), "0".into(), "0".into()];
+        tools.select(&noisy);
+        assert_eq!(tools.move_to, ["500", "0", "0"]);
+        tools.select(&row);
+        assert_eq!(tools.move_to, ["0.0", "0.0", "0.0"]);
         tools.move_to = [" 500 ".into(), "-250.5".into(), "0".into()];
         let prepared = tools.prepare(store()).unwrap();
         assert_eq!(prepared.kind, ToolKind::Move);
@@ -1165,8 +1173,8 @@ mod tests {
 
     #[test]
     fn a_staged_move_survives_only_its_own_selection_and_text() {
-        let row = |x: f64| ElementRow {
-            id: "01990000-0000-7000-8000-00000000000a".into(),
+        let row = |id: &str, x: f64| ElementRow {
+            id: id.into(),
             kind: "plate".into(),
             placement_mm: [x, 0.0, 0.0],
         };
@@ -1174,27 +1182,28 @@ mod tests {
             active: ToolKind::Move,
             ..Tools::default()
         };
-        tools.select(&row(0.0));
+        tools.select(&row("a", 0.0));
         tools.move_to = ["100".into(), "0".into(), "0".into()];
         tools.preview(store()).unwrap();
         assert!(tools.can_commit(store()));
-        // Another selection, or edited text, invalidates the staged command.
-        tools.select(&row(50.0));
+        // Selecting the already selected element again keeps the typed translation and the
+        // staged command, even though the snapshot's placement moved on.
+        tools.select(&row("a", 50.0));
+        assert_eq!(tools.move_to, ["100", "0", "0"]);
+        assert!(tools.can_commit(store()));
+        // Another element pre-fills its own placement and invalidates the staged command.
+        tools.select(&row("b", 20.0));
+        assert_eq!(tools.move_to, ["20.0", "0.0", "0.0"]);
         assert!(!tools.can_commit(store()));
         assert!(tools.begin_commit(store()).is_none());
+        // Editing the text never revives another selection's staged command.
         tools.move_to = ["100".into(), "0".into(), "0".into()];
-        assert!(tools.can_commit(store()));
-        tools.move_to[0] = "200".into();
         assert!(!tools.can_commit(store()));
-        tools.move_to[0] = "100".into();
         // A selection that the accepted revision no longer lists is dropped; then nothing
         // can be prepared or committed.
         tools.retain_selection(|_| true);
-        assert_eq!(
-            tools.selection.as_ref().map(|s| s.id.as_str()),
-            Some("01990000-0000-7000-8000-00000000000a")
-        );
-        tools.retain_selection(|_| false);
+        assert_eq!(tools.selection.as_deref(), Some("b"));
+        tools.retain_selection(|id| id != "b");
         assert_eq!(tools.selection, None);
         assert!(tools.prepare(store()).is_err());
         assert!(!tools.can_commit(store()));
@@ -1208,6 +1217,15 @@ mod tests {
         assert_eq!(
             EditResult::Deleted(deleted).summary(),
             "Deleted plate e1. Accepted revision d3 (sequence 3)."
+        );
+        // A replayed delete carries one marker, not two.
+        let replay = DELETED
+            .replace("element_deleted", "element_delete_replayed")
+            .replace("\"kind\":\"plate\"", "\"kind\":null");
+        let deleted = parse_deleted(Some(0), replay.as_bytes()).unwrap();
+        assert_eq!(
+            EditResult::Deleted(deleted).summary(),
+            "Deleted element e1 (already absent). Accepted revision d3 (sequence 3)."
         );
     }
 

@@ -166,7 +166,7 @@ fn a_selected_element_moves_and_is_deleted_through_the_engine_commands() {
     let mut tools = Tools::default();
     tools.active = ToolKind::Move;
     tools.select(&listed[0]);
-    assert_eq!(tools.move_to, ["0", "0", "0"]);
+    assert_eq!(tools.move_to, ["0.0", "0.0", "0.0"]);
     tools.move_to = ["500".into(), "0".into(), "250".into()];
     tools.preview(&ui).unwrap();
     let staged = tools.begin_commit(&ui).unwrap();
@@ -241,10 +241,7 @@ fn a_selected_element_moves_and_is_deleted_through_the_engine_commands() {
             .iter()
             .any(|e| e.id.to_string() == wanted)
     });
-    assert_eq!(
-        tools.selection.as_ref().map(|s| s.id.as_str()),
-        Some(id.as_str())
-    );
+    assert_eq!(tools.selection.as_deref(), Some(id.as_str()));
     assert_eq!(rows(&cli, &ui)[0].placement_mm, [500.0, 0.0, 250.0]);
     // The staged move (to 500,0,250) is spent: the element is already there, the panel
     // refuses to commit it again without a new preview.

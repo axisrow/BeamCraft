@@ -40,6 +40,9 @@ pub struct App {
     texture: egui::TextureId,
     camera: Camera,
     loaded: Option<Loaded>,
+    /// The rows of the loaded snapshot's elements, cached once per accepted revision so the
+    /// panel does not rebuild them every frame.
+    elements: Vec<ElementRow>,
     error: Option<String>,
     text: bool,
     adapter: String,
@@ -184,6 +187,7 @@ impl App {
             texture,
             camera: Camera::new([0.0; 3], 1000.0, 1.6)?,
             loaded: None,
+            elements: Vec::new(),
             error: None,
             text,
             adapter,
@@ -248,7 +252,8 @@ impl App {
                 // A scene the camera cannot frame keeps the previous scene and shows why.
                 match self.camera.fit(target, extent, self.aspect()) {
                     Ok(()) => {
-                        // A selection the accepted revision no longer lists is dropped.
+                        // A selection the accepted revision no longer lists is dropped; the
+                        // rows the panel shows are rebuilt from the same snapshot.
                         self.tools.retain_selection(|id| {
                             loaded
                                 .snapshot
@@ -256,6 +261,16 @@ impl App {
                                 .iter()
                                 .any(|e| e.id.to_string() == id)
                         });
+                        self.elements = loaded
+                            .snapshot
+                            .elements()
+                            .iter()
+                            .map(|e| ElementRow {
+                                id: e.id.to_string(),
+                                kind: e.kind.as_token().to_owned(),
+                                placement_mm: e.placement_mm,
+                            })
+                            .collect();
                         self.loaded = Some(loaded);
                         self.error = None;
                     }
@@ -332,6 +347,11 @@ impl App {
         self.tools.finish();
         match result {
             Ok(result) => {
+                // A committed delete removes the selection with its element, even before the
+                // reload confirms it.
+                if let EditResult::Deleted(deleted) = &result {
+                    self.tools.retain_selection(|id| id != deleted.element_id);
+                }
                 self.reload();
                 self.tool_note = Some(Ok(result.summary()));
             }
@@ -344,26 +364,13 @@ impl App {
         }
     }
 
-    /// The elements of the loaded snapshot, as the panel's list shows them.
-    fn element_rows(&self) -> Vec<ElementRow> {
-        self.loaded
-            .as_ref()
-            .map(|l| {
-                l.snapshot
-                    .elements()
-                    .iter()
-                    .map(|e| ElementRow {
-                        id: e.id.to_string(),
-                        kind: e.kind.as_token().to_owned(),
-                        placement_mm: e.placement_mm,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
     fn selection_line(&self, ui: &mut egui::Ui) {
-        match &self.tools.selection {
+        let selected = self
+            .tools
+            .selection
+            .as_deref()
+            .and_then(|id| self.elements.iter().find(|r| r.id == id));
+        match selected {
             Some(s) => ui.label(format!(
                 "Selected: {} {} at {},{},{} mm.",
                 s.kind, s.id, s.placement_mm[0], s.placement_mm[1], s.placement_mm[2]
@@ -374,23 +381,29 @@ impl App {
 
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Elements");
-        let rows = self.element_rows();
-        if rows.is_empty() {
+        if self.elements.is_empty() {
             ui.label(if self.loaded.is_some() {
                 "The accepted revision has no elements yet."
             } else {
                 "No model loaded."
             });
         }
-        for row in &rows {
-            let selected = self.tools.selection.as_ref() == Some(row);
-            if ui
-                .selectable_label(selected, format!("{} {}", row.kind, row.id))
-                .clicked()
-            {
-                self.tools.select(row);
-            }
-        }
+        let (elements, tools) = (&self.elements, &mut self.tools);
+        let row_height = ui.text_style_height(&egui::TextStyle::Body);
+        egui::ScrollArea::vertical()
+            .id_salt("elements")
+            .max_height(160.0)
+            .show_rows(ui, row_height, elements.len(), |ui, range| {
+                for row in elements.get(range).into_iter().flatten() {
+                    let selected = tools.selection.as_deref() == Some(row.id.as_str());
+                    if ui
+                        .selectable_label(selected, format!("{} {}", row.kind, row.id))
+                        .clicked()
+                    {
+                        tools.select(row);
+                    }
+                }
+            });
         ui.separator();
         ui.heading("Create or edit");
         ui.horizontal(|ui| {
@@ -461,8 +474,12 @@ impl App {
             ToolKind::Move => {
                 self.selection_line(ui);
                 ui.label("New placement translation (absolute; rotation kept).");
-                let selection = self.tools.selection.clone();
-                let placement = selection.map(|s| s.placement_mm);
+                let placement = self
+                    .tools
+                    .selection
+                    .as_deref()
+                    .and_then(|id| self.elements.iter().find(|r| r.id == id))
+                    .map(|r| r.placement_mm);
                 for (axis, text) in ["X", "Y", "Z"].iter().zip(self.tools.move_to.iter_mut()) {
                     ui.horizontal(|ui| {
                         ui.label(*axis);
@@ -474,10 +491,7 @@ impl App {
                     });
                 }
                 if let Some(p) = placement {
-                    ui.label(format!(
-                        "Pre-filled from the snapshot: {},{},{}.",
-                        p[0], p[1], p[2]
-                    ));
+                    ui.label(format!("Element at {},{},{} mm.", p[0], p[1], p[2]));
                 }
             }
             ToolKind::Delete => {
