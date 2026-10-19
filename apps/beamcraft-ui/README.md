@@ -15,8 +15,11 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
   looked up next to the UI executable unless `--cli` names it.
 - Each distinct mesh is uploaded once and drawn with one instance per element placement.
   Coordinates are millimetres, re-centred on the engineering bounds in f64 before f32 conversion.
-- Controls: primary drag orbits, secondary drag pans, the wheel zooms, F fits, R reloads (F and R
-  are ignored while a text field has the keyboard).
+- Controls: primary drag orbits, Shift + primary drag pans (as does secondary drag), the wheel or
+  trackpad scroll zooms and so does a two-finger pinch on a trackpad, `+` / `-` zoom from the
+  keyboard, F fits and R reloads (F, R, `+` and `-` are ignored while a text field has the
+  keyboard). The "Invert zoom" toggle in the panel flips the scroll zoom direction, for macOS
+  natural scrolling; pinch and `+`/`-` keep their direction.
 - V05.1 Create panel (experimental): a plate (width, length, thickness, optional name and material)
   or a straight beam/column (start, end, profile and material chosen from the store's definitions,
   optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell
