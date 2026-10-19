@@ -12,10 +12,12 @@ focus explicitly. Everything below is wrapped in `run.sh` next to this file.
 ```sh
 R=.claude/skills/run-beamcraft-ui/run.sh
 S=/absolute/scratch/dir            # e.g. the session scratchpad; never inside the repo
-$R setup                           # apt: mesa-vulkan-drivers, libxkbcommon-x11-0, xvfb, xdotool, imagemagick
+export DISPLAY=:99                 # run.sh sets it itself; the raw xdotool calls below need it
+$R setup                           # apt: mesa-vulkan-drivers, libxkbcommon-x11-0, xvfb, xdotool, xclip, imagemagick
 $R build                           # cargo build --release -p beamcraft-cli -p beamcraft-ui (~several min cold)
 $R store $S/store                  # 1 material, 2 profiles, 6 columns, 5 beams, 6 base plates with holes
-$R start $S/store                  # Xvfb :99 1600x1000, UI window at 0,0, focused
+$R start $S/store                  # Xvfb :99 1600x1000, UI window at 0,0, focused; waits for the
+                                   # model (an empty store says "model loaded: no" after ~20 s)
 $R shot  $S/01-initial.png         # then Read the PNG and look at it
 ```
 
@@ -32,7 +34,10 @@ Coordinates are screen pixels at 1600x1000 with the window at 0,0. Left panel la
 | Width / Length / Thickness / Name fields | 90,380 / 98,403 / 118,426 / 120,449 |
 | Preview / Commit / Cancel | 36,511 / 100,511 / 160,511 |
 
-The panel widens on the Member tab, so take a screenshot before clicking there.
+The panel moves with its content, so take a screenshot before clicking anywhere new: it widens on
+the Member tab and again when a long profile name is selected, and on a store with no revision yet
+(no model loaded) the Create form sits 73 px higher (Width at 90,306, Preview/Commit at y 438).
+Select-all before retyping a field: `$R click X Y; xdotool key ctrl+a; $R type NEW`.
 
 ```sh
 $R click 90 380; $R type 800      # Width
@@ -51,9 +56,15 @@ horizontally already swings the camera far.
 
 ## Gotchas
 
-- Text fields stay empty if the window has no X keyboard focus; `start` runs `windowfocus --sync`.
+- Text fields stay empty if the window has no X keyboard focus; `start` retries `windowfocus --sync`
+  (X can answer BadMatch just after the window maps).
   Re-run `xdotool windowfocus --sync $(xdotool search --name '^BeamCraft$')` if typing stops working.
 - A press and release in the same frame are missed by egui; `click` keeps them apart.
+- Non-ASCII text (Cyrillic names): export `LANG=C.UTF-8` for xdotool and use `$R paste TEXT`;
+  fast per-key typing drops and reorders remapped letters.
+- Authoring sample stores: an element over 1 m3 is currently refused with `LIMIT_EXCEEDED: stage
+  budget exceeded` (the layer engine caps stored numbers at 1e9 and volume is in mm3), so keep each
+  plate and member at or under 1 m3.
 - The info panel reports `llvmpipe ... / Cpu / Vulkan`; 35-50 FPS is normal for software rendering.
 - A blank or black window means the driver did not load: check the UI log written by `start`.
 - Without `assets/fonts/inter` the window runs without text (by design).
