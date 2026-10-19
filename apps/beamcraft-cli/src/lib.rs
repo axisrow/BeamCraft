@@ -16,6 +16,7 @@ pub mod history;
 pub mod level;
 pub mod library;
 pub mod member;
+pub mod numbering;
 pub mod plate;
 pub mod reference;
 pub mod source_file;

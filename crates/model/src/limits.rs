@@ -48,3 +48,5 @@ pub const MAX_FOOTPRINT_ENTRIES: usize = 4096;
 pub const ORIENTATION_NORM_TOLERANCE: f64 = 1e-6;
 /// Largest weld size (A06): the nominal fillet size in millimetres.
 pub const WELD_SIZE_CAP_MM: f64 = 1_000.0;
+/// Longest approved element mark (A08), in UTF-8 bytes.
+pub const MAX_MARK_BYTES: usize = 64;

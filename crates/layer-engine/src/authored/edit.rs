@@ -941,6 +941,26 @@ pub(super) fn apply(
                 };
                 relationship_targets(&mut authored, &p, "bim:level", Some(targets))?;
             }
+            Change::Mark { value, status, .. } => {
+                if let Some(v) = value {
+                    attr(
+                        &mut authored,
+                        &p,
+                        "bim:mark",
+                        "string",
+                        sdf::Value::String(v.clone()),
+                    )?;
+                }
+                if let Some(s) = status {
+                    attr(
+                        &mut authored,
+                        &p,
+                        "bim:markStatus",
+                        "token",
+                        sdf::Value::token(s.as_token()),
+                    )?;
+                }
+            }
             Change::ReferenceUnits { interpretation, .. } => {
                 let wrapper = prims
                     .iter()
@@ -1170,6 +1190,14 @@ fn capture(
             Change::Material { .. } => add("bim:material", "rel", 0),
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::Level { .. } => add("bim:level", "rel", 0),
+            Change::Mark { value, status, .. } => {
+                if value.is_some() {
+                    add("bim:mark", "string", 0);
+                }
+                if status.is_some() {
+                    add("bim:markStatus", "token", 0);
+                }
+            }
             Change::Placement { .. } => {
                 for &(name, ty) in POSE {
                     add(name, ty, 0);

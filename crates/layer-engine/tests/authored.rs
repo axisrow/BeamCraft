@@ -2712,3 +2712,112 @@ fn the_project_record_is_validated_read_and_kept_through_edits() {
         );
     }
 }
+
+#[test]
+fn a_mark_is_authored_with_its_status_and_damaged_and_overlong_ones_are_refused() {
+    // Assign the plate a mark (value and status together), then approve it (the status only,
+    // value untouched).
+    let (mut a, o) = populated();
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Mark {
+                    id: PLATE.into(),
+                    value: Some("P/1".into()),
+                    status: Some(MarkStatus::Assigned),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    assert!(
+        p.writes
+            .iter()
+            .all(|f| f.identity == PLATE && f.group == Group::Mark),
+        "{:?}",
+        p.writes
+    );
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, PLATE, "bim:mark"),
+        Some(&Value::Text("P/1".into()))
+    );
+    assert_eq!(
+        value(&prims, PLATE, "bim:markStatus"),
+        Some(&Value::Text("assigned".into()))
+    );
+
+    // Approving writes only the status; the value is kept.
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Mark {
+                    id: PLATE.into(),
+                    value: None,
+                    status: Some(MarkStatus::Approved),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, PLATE, "bim:mark"),
+        Some(&Value::Text("P/1".into()))
+    );
+    assert_eq!(
+        value(&prims, PLATE, "bim:markStatus"),
+        Some(&Value::Text("approved".into()))
+    );
+
+    // A change that authors nothing, and one over the value bound, are refused; the duplicate
+    // value is refused by the candidate's uniqueness rule.
+    for bad in [
+        Change::Mark {
+            id: PLATE.into(),
+            value: None,
+            status: None,
+        },
+        Change::Mark {
+            id: PLATE.into(),
+            value: Some("x".repeat(65)),
+            status: Some(MarkStatus::Assigned),
+        },
+        Change::Mark {
+            id: MEMBER.into(),
+            value: Some("P/1".into()),
+            status: Some(MarkStatus::Assigned),
+        },
+    ] {
+        assert!(
+            a.prepare(batch(&o.context, vec![bad]), &control()).is_err(),
+            "expected a refusal"
+        );
+    }
+    // Nothing above changed the live marks.
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, PLATE, "bim:markStatus"),
+        Some(&Value::Text("approved".into()))
+    );
+}

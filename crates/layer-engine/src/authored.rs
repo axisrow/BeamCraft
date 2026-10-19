@@ -17,6 +17,7 @@ pub use reference::{
 };
 
 use crate::*;
+pub use beamcraft_model::command::MarkStatus;
 pub use beamcraft_model::definition::SectionProperties;
 pub use beamcraft_model::section::SectionShape;
 use std::collections::BTreeMap;
@@ -41,6 +42,8 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
+    "mark=bim:mark=string(optional,1..64 bytes,no control characters);bim:markStatus=token(assigned|approved);",
+    "authored together on one element of kind plate|beam|column|assembly|connection;unique per model (A08)\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient)\n",
     "kind:/World=assembly;/World/Steel=group;element=component;element/Geometry=subcomponent;",
     "displayName(element)=bim:name\n",
@@ -72,7 +75,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|Level|Delete;",
+    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|Level|Mark|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -82,6 +85,11 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "authored-item=(element_id,attribute,type_name,opinion);install=(context,token,op_id,Accepted);",
     "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
 );
+
+/// The one descriptor line that A08 added, and the `Mark` item it appended to the changes
+/// enumeration; see [`pin_accepted`].
+const NUMBERING_DESCRIPTOR_LINE: &str = "mark=bim:mark=string(optional,1..64 bytes,no control characters);bim:markStatus=token(assigned|approved);authored together on one element of kind plate|beam|column|assembly|connection;unique per model (A08)\n";
+const NUMBERING_CHANGES_ITEM: &str = "|Level|Mark|Delete;";
 
 /// Descriptor of the A07.1 mapping revision (section profiles), before D1 and D2 added the optional
 /// project record of the root layer, the `level` element and `bim:level`. Layers pinned to it
@@ -406,10 +414,19 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
     if pin == schema_identity()?.digest.to_string() {
         return Ok(true);
     }
+    // A08 added one line (the element mark) and one changes item to the A07.2 descriptor and
+    // changed nothing else, so the A07.2 mapping is the current descriptor without both.
+    let a07_2 = SCHEMA_DESCRIPTOR
+        .replacen(NUMBERING_DESCRIPTOR_LINE, "", 1)
+        .replacen(NUMBERING_CHANGES_ITEM, "|Level|Delete;", 1);
+    let digest = Sha256::digest(a07_2.as_bytes()).map_err(|_| limit())?;
+    if pin == digest.to_string() {
+        return Ok(true);
+    }
     // A07.2 added one optional line (the definition display name) to the D1/D2 descriptor and
-    // changed nothing else, so the D1/D2 mapping is the current descriptor without that line.
-    let a07_1 = SCHEMA_DESCRIPTOR.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
-    let digest = Sha256::digest(a07_1.as_bytes()).map_err(|_| limit())?;
+    // changed nothing else, so the D1/D2 mapping is the A07.2 descriptor without that line.
+    let d1_d2 = a07_2.replacen(A07_2_DISPLAY_NAME_LINE, "", 1);
+    let digest = Sha256::digest(d1_d2.as_bytes()).map_err(|_| limit())?;
     if pin == digest.to_string() {
         return Ok(true);
     }
@@ -755,6 +772,18 @@ pub enum Change {
         /// Full UUIDv7 of the level, or `None` for an explicit empty record (an unassignment).
         level: Option<String>,
     },
+    /// Author the mark of an element, or only its approval state (A08). Assigning a value writes
+    /// both attributes; approving, revoking or withdrawing an approval writes only the status and
+    /// keeps the value. Bounds, the markable kinds, the status pairing and the per-model
+    /// uniqueness are re-checked on the candidate.
+    Mark {
+        /// Full target UUIDv7.
+        id: String,
+        /// The exact mark value to author, or `None` to leave it unchanged.
+        value: Option<String>,
+        /// The exact approval state to author, or `None` to leave it unchanged.
+        status: Option<MarkStatus>,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
@@ -774,6 +803,7 @@ impl Change {
             Self::ReferenceUnits { id, .. } => (id, "reference:units"),
             Self::PartOf { id, .. } => (id, "bim:partOf"),
             Self::Level { id, .. } => (id, "bim:level"),
+            Self::Mark { id, .. } => (id, "bim:mark"),
         }
     }
 }
@@ -795,6 +825,8 @@ pub enum Group {
     Derived,
     /// Links to immutable definitions.
     Relationship,
+    /// The element mark and its approval state (A08).
+    Mark,
 }
 /// Engine-derived conservative footprint entry.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1144,6 +1176,25 @@ mod pin_tests {
     use super::*;
 
     #[test]
+    fn the_a07_2_mapping_pin_is_accepted_and_is_not_the_current_one() {
+        // Pinned value: the digest of the descriptor of master with A07.2, before A08.
+        let a07_2 = "fdaf890401a7bf4d8d17eb84ad1901b461ff21f1e7cec1e93f9e71203b83865b";
+        assert_eq!(
+            Sha256::digest(
+                SCHEMA_DESCRIPTOR
+                    .replacen(NUMBERING_DESCRIPTOR_LINE, "", 1)
+                    .replacen(NUMBERING_CHANGES_ITEM, "|Level|Delete;", 1)
+                    .as_bytes()
+            )
+            .unwrap()
+            .to_string(),
+            a07_2
+        );
+        assert!(pin_accepted(a07_2).unwrap());
+        assert_ne!(a07_2, schema_identity().unwrap().digest.to_string());
+    }
+
+    #[test]
     fn the_a07_1_mapping_pin_is_accepted_and_is_not_the_current_one() {
         // Pinned value: the digest of the descriptor of master with A07.1, before D1 and D2.
         let a07_1 = "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c";
@@ -1167,6 +1218,8 @@ mod pin_tests {
         assert_eq!(
             Sha256::digest(
                 SCHEMA_DESCRIPTOR
+                    .replacen(NUMBERING_DESCRIPTOR_LINE, "", 1)
+                    .replacen(NUMBERING_CHANGES_ITEM, "|Level|Delete;", 1)
                     .replacen(A07_2_DISPLAY_NAME_LINE, "", 1)
                     .as_bytes()
             )

@@ -35,10 +35,12 @@ use crate::definition::{
     DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
 };
 use crate::level::levels_of;
+use crate::numbering::marks_of;
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
 use beamcraft_engine::member::AuthoredMember;
+use beamcraft_engine::numbering::Numbering;
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, member_shape_signature,
     plate_shape_signature, record_for,
@@ -250,6 +252,8 @@ pub(crate) struct Decoded {
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
+    /// The marks of the model and their approval states (A08).
+    pub(crate) marks: Numbering,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -541,12 +545,14 @@ pub(crate) fn decode(
     }
     let definitions = decode_definitions(&prims)?;
     let levels = levels_of(&prims)?;
+    let marks = marks_of(&prims)?;
     Ok(Decoded {
         plates,
         members,
         other_elements: other,
         definitions,
         levels,
+        marks,
     })
 }
 
@@ -1128,6 +1134,7 @@ fn layer_group(group: LayerGroup) -> Group {
         LayerGroup::Material => Group::MaterialRef,
         LayerGroup::Derived => Group::Derived,
         LayerGroup::Relationship => Group::Relationship,
+        LayerGroup::Mark => Group::Mark,
     }
 }
 

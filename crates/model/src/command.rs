@@ -14,8 +14,9 @@ use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
 use crate::id::ElementId;
 use crate::limits::{
-    CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, MAX_LABEL_BYTES, MIN_CONTOUR_POINTS,
-    MIN_LABEL_BYTES, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD, WELD_SIZE_CAP_MM,
+    CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, MAX_LABEL_BYTES, MAX_MARK_BYTES,
+    MIN_CONTOUR_POINTS, MIN_LABEL_BYTES, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD,
+    WELD_SIZE_CAP_MM,
 };
 use beamcraft_geom::canonical_f64_bytes;
 use core::fmt;
@@ -1065,6 +1066,119 @@ impl CreateWeld {
     }
 }
 
+/// The approval state of a mark (A08): `assigned` is a value a person chose that no one has
+/// approved yet; `approved` freezes the value until the approval is revoked or withdrawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkStatus {
+    /// A chosen value, still changeable by its owner.
+    Assigned,
+    /// A value a person has approved; it cannot change while the approval stands.
+    Approved,
+}
+
+impl MarkStatus {
+    /// The stored token.
+    pub const fn as_token(self) -> &'static str {
+        match self {
+            Self::Assigned => "assigned",
+            Self::Approved => "approved",
+        }
+    }
+    /// Parses an exact token.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "assigned" => Some(Self::Assigned),
+            "approved" => Some(Self::Approved),
+            _ => None,
+        }
+    }
+}
+
+/// Whether `mark` is an admissible mark value (A08): 1 to [`MAX_MARK_BYTES`] UTF-8 bytes without
+/// control characters. The value is what outputs print, so anything readable passes.
+pub fn mark_is_valid(mark: &str) -> bool {
+    (MIN_LABEL_BYTES..=MAX_MARK_BYTES).contains(&mark.len()) && !mark.chars().any(char::is_control)
+}
+
+/// A08 `AssignMark`: authors the mark of one element, or revokes its approval. The value is a
+/// human decision; this command never generates one.
+///
+/// `mark = Some(value)` assigns `value` to an unmarked element or replaces the value of one whose
+/// mark is still `assigned`. `mark = None` revokes the approval of an `approved` mark (the value
+/// is kept; the status falls back to `assigned`). Whether the element exists, is markable, is
+/// unmarked or approved, and whether another element already carries the value are the engine's
+/// decisions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssignMark {
+    /// The element to mark.
+    pub target_id: ElementId,
+    /// The mark to author, or `None` to revoke the approval.
+    pub mark: Option<String>,
+}
+
+impl AssignMark {
+    /// Admits the request: a present value is a valid mark (`INVALID_ARGUMENT`, `LIMIT_EXCEEDED`).
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        match &self.mark {
+            Some(mark) if mark.len() > MAX_MARK_BYTES => {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "mark",
+                    "mark exceeds 64 bytes",
+                ));
+            }
+            Some(mark) if !mark_is_valid(mark) => {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "mark",
+                    "mark must be 1 to 64 bytes without control characters",
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(80);
+        bytes.extend_from_slice(b"BeamCraft/A08/AssignMark/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        match &self.mark {
+            None => bytes.push(0),
+            Some(mark) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&(mark.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(mark.as_bytes());
+            }
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
+/// A08 `ApproveMark`: a person approves the mark of one element, freezing its value. Whether the
+/// element exists, carries a mark and is not already approved are the engine's decisions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ApproveMark {
+    /// The element whose mark is approved.
+    pub target_id: ElementId,
+}
+
+impl ApproveMark {
+    /// SHA-256 of a versioned encoding of the request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut bytes = Vec::with_capacity(64);
+        bytes.extend_from_slice(b"BeamCraft/A08/ApproveMark/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1668,5 +1782,63 @@ mod tests {
         let other = patch(Some(Some(id(10)))).content_fingerprint().unwrap();
         let clear = patch(Some(None)).content_fingerprint().unwrap();
         assert!(set != other && set != clear && other != clear);
+    }
+
+    fn assign(mark: Option<&str>) -> AssignMark {
+        AssignMark {
+            target_id: id(5),
+            mark: mark.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_mark_value_is_bounded_readable_text() {
+        assert!(assign(Some("P/1")).validate_arguments().is_ok());
+        assert!(assign(Some("A-1002.b")).validate_arguments().is_ok());
+        // A revoke request carries no value and is admitted.
+        assert!(assign(None).validate_arguments().is_ok());
+        assert_eq!(
+            assign(Some("")).validate_arguments().unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            assign(Some("P\u{7f}1"))
+                .validate_arguments()
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            assign(Some(&"x".repeat(65)))
+                .validate_arguments()
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded
+        );
+    }
+
+    #[test]
+    fn mark_commands_fingerprint_their_content() {
+        let base = assign(Some("P/1")).content_fingerprint().unwrap();
+        for changed in [
+            assign(Some("P/2")),
+            assign(None),
+            AssignMark {
+                target_id: id(6),
+                mark: Some("P/1".into()),
+            },
+        ] {
+            assert_ne!(changed.content_fingerprint().unwrap(), base);
+        }
+        assert_eq!(assign(Some("P/1")).content_fingerprint().unwrap(), base);
+        let approve = ApproveMark { target_id: id(5) };
+        assert_ne!(
+            approve.content_fingerprint().unwrap(),
+            ApproveMark { target_id: id(6) }
+                .content_fingerprint()
+                .unwrap()
+        );
+        assert_eq!(MarkStatus::parse("approved"), Some(MarkStatus::Approved));
+        assert_eq!(MarkStatus::parse("open"), None);
     }
 }

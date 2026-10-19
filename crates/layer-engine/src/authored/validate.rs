@@ -49,6 +49,7 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
             }
             Change::Label { name, .. } if name.len() > 256 => return Err(limit()),
             Change::AttachReference(r) if r.name.len() > 256 => return Err(limit()),
+            Change::Mark { value: Some(v), .. } if v.len() > 64 => return Err(limit()),
             Change::Contour { points_mm, .. } => {
                 count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
             }
@@ -694,6 +695,7 @@ pub(super) fn snapshot(
     part_of(prims)?;
     connects(prims)?;
     level_links(prims)?;
+    marks(prims)?;
     for p in prims
         .iter()
         .filter(|p| p.type_name.as_deref() == Some("Mesh") && p.sources.iter().all(|s| s.owned))
@@ -805,6 +807,7 @@ pub(super) fn snapshot(
             "A01-V01:part-of-kinds-cardinality-self-link-and-cycles",
             "A06-V01:weld-properties-and-connects-two-distinct-parts",
             "D2-V01:level-elevation-and-level-kinds-cardinality-and-dangling",
+            "A08-V01:mark-value-status-pairing-kinds-and-uniqueness",
         ],
         prims: prims.len(),
     })
@@ -909,6 +912,49 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                     "level target unavailable",
                 ));
             }
+        }
+    }
+    Ok(())
+}
+
+/// The value of a mark (A08): 1 to 64 UTF-8 bytes without control characters.
+fn mark_value(s: &str) -> Result<(), Diagnostic> {
+    if s.is_empty() || s.len() > 64 || s.chars().any(char::is_control) {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// A08 marks (`A08-V01`): `bim:mark` and its `bim:markStatus` are authored together on one
+/// supported fabricable element (a level is not fabricated), the value is bounded readable text
+/// and no two elements of a model carry the same value. Foreign, newer and unknown content stays
+/// inert, as everywhere: only owned 0.1.0 parametric elements are checked.
+fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for p in prims
+        .iter()
+        .filter_map(|p| supported_kind(p).map(|k| (p, k)))
+    {
+        let value = optional_text(p.0, "bim:mark")?;
+        let status = optional(p.0, "bim:markStatus", "token")?;
+        match (&value, status) {
+            (None, None) => continue,
+            (None, Some(_)) | (Some(_), None) => return Err(invalid()),
+            (Some(v), Some(s)) => {
+                mark_value(v)?;
+                if !matches!(s, Value::Text(t) if MarkStatus::parse(t).is_some()) {
+                    return Err(invalid());
+                }
+            }
+        }
+        if p.1 == "level" {
+            return Err(fail(ErrorCode::InvalidArgument, "a level carries no mark"));
+        }
+        if !seen.insert(value.as_deref().ok_or_else(invalid)?.to_owned()) {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "the mark is already in use",
+            ));
         }
     }
     Ok(())
@@ -1237,6 +1283,23 @@ pub(super) fn changes(
                         matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
                     Change::Level { .. } => matches!(kind, "plate" | "beam" | "column"),
+                    // A mark lives on the fabricable elements a bill can list; a level is not
+                    // fabricated and a foreign wrapper is never marked (A08).
+                    Change::Mark { value, status, .. } => {
+                        if value.is_none() && status.is_none() {
+                            return Err(fail(
+                                ErrorCode::MalformedCommand,
+                                "a mark change authors nothing",
+                            ));
+                        }
+                        if let Some(v) = value {
+                            mark_value(v)?;
+                        }
+                        matches!(
+                            kind,
+                            "plate" | "beam" | "column" | "assembly" | "connection"
+                        )
+                    }
                     _ => matches!(kind, "plate" | "beam" | "column"),
                 };
                 if !valid {
@@ -1280,6 +1343,9 @@ pub(super) fn changes(
                 &[Group::Lifecycle, Group::Relationship],
                 &[Group::Relationship],
             ),
+            // A mark decision reads the element's existence and its current mark; it writes only
+            // the mark group (A08), mirroring the engine's `Footprint::for_mark`.
+            Change::Mark { .. } => (&[Group::Lifecycle, Group::Mark], &[Group::Mark]),
             Change::Delete { .. } => (
                 &[Group::Lifecycle, Group::Relationship],
                 &[
