@@ -7,6 +7,10 @@
 //! runs the CLI's `create-plate` / `create-member` in a separate process and then reloads the
 //! accepted revision; see [`tools`] (pure parameter mapping and reply parsing) and [`command`].
 //!
+//! V05.2 adds the edit tools: the panel lists the accepted snapshot's elements for selection,
+//! and a selection is moved (`update-element --translation`, absolute, rotation kept) or deleted
+//! (`delete-element`) through the same CLI commands, then the accepted revision is reloaded.
+//!
 //! The viewport shows the accepted (published) revision of a store. Its input is the engine's
 //! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
 //! separate process and rebuilt here with [`beamcraft_engine::ViewSnapshot::from_bundle`], which

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Running a `beamcraft` CLI command in a separate process for the create tools. The UI commits
+//! Running a `beamcraft` CLI command in a separate process for the tools. The UI commits
 //! through the same command a user types, so the accepted revision is the engine's, never a copy
 //! made here. Output is read with a cap and the process is killed after a deadline.
 
 use crate::tools::{
-    Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
+    Definitions, EditResult, Prepared, ToolError, ToolKind, definitions_args, parse_created,
+    parse_definitions, parse_deleted, parse_updated,
 };
 use std::io::Read;
 use std::path::Path;
@@ -116,10 +117,16 @@ pub fn run_capped(
     })
 }
 
-/// Runs a previewed create command and reads its reply.
-pub fn commit(cli: &Path, prepared: &Prepared) -> Result<Created, ToolError> {
+/// Runs a previewed tool command and reads its reply by the tool's kind.
+pub fn run_tool(cli: &Path, prepared: &Prepared) -> Result<EditResult, ToolError> {
     let output = run(cli, &prepared.args, DEADLINE)?;
-    parse_created(prepared.kind, output.code, &output.stdout)
+    match prepared.kind {
+        ToolKind::Plate | ToolKind::Member => {
+            parse_created(prepared.kind, output.code, &output.stdout).map(EditResult::Created)
+        }
+        ToolKind::Move => parse_updated(output.code, &output.stdout).map(EditResult::Updated),
+        ToolKind::Delete => parse_deleted(output.code, &output.stdout).map(EditResult::Deleted),
+    }
 }
 
 /// Lists the profile and material definitions of the store's accepted revision.

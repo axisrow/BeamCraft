@@ -8,7 +8,9 @@ use crate::camera::Camera;
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
 use crate::source::Reloaded;
-use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
+use crate::tools::{
+    Choice, EditResult, ElementRow, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools,
+};
 use crate::{Error, check_font, command, source};
 use beamcraft_engine::ViewSnapshot;
 use std::path::{Path, PathBuf};
@@ -44,7 +46,7 @@ pub struct App {
     last: Instant,
     fps: f32,
     tools: Tools,
-    job: Option<Receiver<Result<Created, ToolError>>>,
+    job: Option<Receiver<Result<EditResult, ToolError>>>,
     reload_job: Option<Receiver<Reloaded>>,
     reload_queued: bool,
     /// The result of the last Preview, Cancel or Commit.
@@ -246,6 +248,14 @@ impl App {
                 // A scene the camera cannot frame keeps the previous scene and shows why.
                 match self.camera.fit(target, extent, self.aspect()) {
                     Ok(()) => {
+                        // A selection the accepted revision no longer lists is dropped.
+                        self.tools.retain_selection(|id| {
+                            loaded
+                                .snapshot
+                                .elements()
+                                .iter()
+                                .any(|e| e.id.to_string() == id)
+                        });
                         self.loaded = Some(loaded);
                         self.error = None;
                     }
@@ -299,7 +309,7 @@ impl App {
         let spawned = std::thread::Builder::new()
             .name("beamcraft-command".into())
             .spawn(move || {
-                let _ = tx.send(command::commit(&cli, &prepared));
+                let _ = tx.send(command::run_tool(&cli, &prepared));
             });
         if spawned.is_err() {
             self.job = None;
@@ -321,30 +331,9 @@ impl App {
         self.job = None;
         self.tools.finish();
         match result {
-            Ok(created) => {
+            Ok(result) => {
                 self.reload();
-                let what = match created.kind {
-                    ToolKind::Plate => "plate",
-                    ToolKind::Member => "member",
-                };
-                let volume = created
-                    .volume_mm3
-                    .map_or(String::new(), |v| format!(", volume {:.3} m3", v / 1e9));
-                self.tool_note = Some(Ok(format!(
-                    "Created {what} {} ({}{}). Accepted revision {} (sequence {}).",
-                    created.element_id,
-                    if created.name.is_empty() {
-                        "unnamed"
-                    } else {
-                        &created.name
-                    },
-                    volume,
-                    created
-                        .manifest_digest
-                        .get(..12)
-                        .unwrap_or(&created.manifest_digest),
-                    created.sequence
-                )));
+                self.tool_note = Some(Ok(result.summary()));
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
@@ -355,11 +344,60 @@ impl App {
         }
     }
 
+    /// The elements of the loaded snapshot, as the panel's list shows them.
+    fn element_rows(&self) -> Vec<ElementRow> {
+        self.loaded
+            .as_ref()
+            .map(|l| {
+                l.snapshot
+                    .elements()
+                    .iter()
+                    .map(|e| ElementRow {
+                        id: e.id.to_string(),
+                        kind: e.kind.as_token().to_owned(),
+                        placement_mm: e.placement_mm,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn selection_line(&self, ui: &mut egui::Ui) {
+        match &self.tools.selection {
+            Some(s) => ui.label(format!(
+                "Selected: {} {} at {},{},{} mm.",
+                s.kind, s.id, s.placement_mm[0], s.placement_mm[1], s.placement_mm[2]
+            )),
+            None => ui.colored_label(RED, "No element selected: click one in the Elements list."),
+        };
+    }
+
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Create");
+        ui.heading("Elements");
+        let rows = self.element_rows();
+        if rows.is_empty() {
+            ui.label(if self.loaded.is_some() {
+                "The accepted revision has no elements yet."
+            } else {
+                "No model loaded."
+            });
+        }
+        for row in &rows {
+            let selected = self.tools.selection.as_ref() == Some(row);
+            if ui
+                .selectable_label(selected, format!("{} {}", row.kind, row.id))
+                .clicked()
+            {
+                self.tools.select(row);
+            }
+        }
+        ui.separator();
+        ui.heading("Create or edit");
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.tools.active, ToolKind::Plate, "Plate");
             ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
+            ui.selectable_value(&mut self.tools.active, ToolKind::Move, "Move");
+            ui.selectable_value(&mut self.tools.active, ToolKind::Delete, "Delete");
         });
         ui.label("Dimensions in mm.");
         let materials = self.tools.definitions.materials.clone();
@@ -419,6 +457,35 @@ impl App {
                 if profiles.is_empty() {
                     ui.label("The store has no profile definition yet (beamcraft define-profile).");
                 }
+            }
+            ToolKind::Move => {
+                self.selection_line(ui);
+                ui.label("New placement translation (absolute; rotation kept).");
+                let selection = self.tools.selection.clone();
+                let placement = selection.map(|s| s.placement_mm);
+                for (axis, text) in ["X", "Y", "Z"].iter().zip(self.tools.move_to.iter_mut()) {
+                    ui.horizontal(|ui| {
+                        ui.label(*axis);
+                        ui.add(
+                            egui::TextEdit::singleline(text)
+                                .desired_width(80.0)
+                                .char_limit(MAX_TEXT),
+                        );
+                    });
+                }
+                if let Some(p) = placement {
+                    ui.label(format!(
+                        "Pre-filled from the snapshot: {},{},{}.",
+                        p[0], p[1], p[2]
+                    ));
+                }
+            }
+            ToolKind::Delete => {
+                self.selection_line(ui);
+                ui.colored_label(
+                    RED,
+                    "Commit removes the whole element (no undo in this window; the engine refuses a delete that would leave a link behind).",
+                );
             }
         }
         let store = self.source.store.clone();

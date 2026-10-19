@@ -142,7 +142,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     assert!(tools.can_commit(&ui));
     let staged = tools.begin_commit(&ui).unwrap();
     assert_eq!(staged, prepared);
-    let created = command::commit(&cli, &staged).unwrap();
+    let created = command::run_tool(&cli, &staged).unwrap().created().unwrap();
     tools.finish();
 
     let hand_store = hand.to_str().unwrap();
@@ -174,7 +174,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     );
     assert_eq!(created.volume_mm3, Some(5_000_000.0));
     assert_eq!(created.name, "Plate A");
-    assert_eq!(created.sequence, 1);
+    assert_eq!(created.revision.sequence, 1);
 
     // The saved results agree when each store is reopened in a fresh process.
     let (a, b) = (
@@ -197,7 +197,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
     let snapshot = source::load(&cli, &ui).unwrap();
     assert_eq!(
         snapshot.pin().revision().to_string(),
-        created.manifest_digest
+        created.revision.manifest_digest
     );
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
     assert_eq!(scene.elements, 1);
@@ -258,7 +258,7 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
     tools.member.name = "C1".into();
     tools.preview(&ui).unwrap();
     let staged = tools.begin_commit(&ui).unwrap();
-    let created = command::commit(&cli, &staged).unwrap();
+    let created = command::run_tool(&cli, &staged).unwrap().created().unwrap();
     tools.finish();
 
     let reply = ok(
@@ -315,7 +315,7 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
     let snapshot = source::load(&cli, &ui).unwrap();
     assert_eq!(
         snapshot.pin().revision().to_string(),
-        created.manifest_digest
+        created.revision.manifest_digest
     );
     assert_eq!(
         Scene::from_snapshot(&snapshot, Representation::Full)
@@ -339,7 +339,7 @@ fn an_engine_refusal_reaches_the_panel_and_publishes_nothing() {
     };
     tools.preview(&ui).unwrap();
     let staged = tools.begin_commit(&ui).unwrap();
-    let error = command::commit(&cli, &staged).unwrap_err();
+    let error = command::run_tool(&cli, &staged).unwrap_err();
     tools.finish();
     // The same refusal the CLI prints by hand, code and message.
     let (code, reply) = by_hand(
@@ -368,7 +368,7 @@ fn an_engine_refusal_reaches_the_panel_and_publishes_nothing() {
     member.member.profile = Some("a".repeat(64));
     member.preview(&ui).unwrap();
     let staged = member.begin_commit(&ui).unwrap();
-    let error = command::commit(&cli, &staged).unwrap_err();
+    let error = command::run_tool(&cli, &staged).unwrap_err();
     assert_eq!(error.code, "NOT_FOUND", "{error}");
     assert!(!error.message.is_empty());
 }
@@ -384,7 +384,7 @@ fn a_missing_cli_is_an_error_not_a_hang() {
         ..PlateForm::default()
     };
     let staged = tools.preview(&stores.ui()).unwrap().clone();
-    let error = command::commit(&stores.root.join("no-such-beamcraft"), &staged).unwrap_err();
+    let error = command::run_tool(&stores.root.join("no-such-beamcraft"), &staged).unwrap_err();
     assert_eq!(error.code, "CLI_UNAVAILABLE");
 }
 

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! V05.1 create tools, as pure logic: the entered parameters become the argument list of the same
-//! `beamcraft create-plate` / `create-member` commands the CLI user types, and the CLI's JSON
-//! reply becomes a result or an error to show. Nothing here touches a window, a GPU or a process,
-//! so all of it is unit-testable; [`crate::command`] runs the process.
+//! V05.1/V05.2 tools, as pure logic: the entered parameters become the argument list of the same
+//! `beamcraft create-plate` / `create-member` / `update-element` / `delete-element` commands the
+//! CLI user types, and the CLI's JSON reply becomes a result or an error to show. Nothing here
+//! touches a window, a GPU or a process, so all of it is unit-testable; [`crate::command`] runs
+//! the process.
 //!
 //! The UI never computes engineering geometry. It checks only that a number is a finite decimal
 //! and that required choices are made, then forwards the text. Every rule about shapes, limits,
@@ -26,6 +27,11 @@ pub enum ToolKind {
     Plate,
     /// A straight beam or column (`create-member`).
     Member,
+    /// A selected element moved to a new placement translation
+    /// (`update-element --translation`, absolute, rotation kept).
+    Move,
+    /// A selected element removed (`delete-element`, no cascade).
+    Delete,
 }
 
 impl ToolKind {
@@ -34,13 +40,16 @@ impl ToolKind {
         match self {
             Self::Plate => "create-plate",
             Self::Member => "create-member",
+            Self::Move => "update-element",
+            Self::Delete => "delete-element",
         }
     }
 
-    fn noun(self) -> &'static str {
+    fn noun(self) -> Option<&'static str> {
         match self {
-            Self::Plate => "plate",
-            Self::Member => "member",
+            Self::Plate => Some("plate"),
+            Self::Member => Some("member"),
+            Self::Move | Self::Delete => None,
         }
     }
 }
@@ -250,6 +259,17 @@ impl MemberForm {
     }
 }
 
+/// One element of the loaded snapshot, as the panel's Elements list shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementRow {
+    /// The element id (what `--id` takes).
+    pub id: String,
+    /// The kind token ("plate", "beam", "column", ...).
+    pub kind: String,
+    /// The placement translation (millimetres) the snapshot reports.
+    pub placement_mm: [f64; 3],
+}
+
 /// A refusal or failure of a command, with the CLI's stable code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolError {
@@ -275,7 +295,76 @@ impl ToolError {
     }
 }
 
-/// What a committed command created, as the CLI reported it.
+/// The accepted revision a committed command reported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Revision {
+    /// The revision's id.
+    pub revision_id: String,
+    /// The revision's manifest digest, which is what the view snapshot pins.
+    pub manifest_digest: String,
+    /// The revision's sequence number.
+    pub sequence: u64,
+}
+
+fn read_revision(reply: &Json) -> Result<Revision, ToolError> {
+    let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
+    let revision = reply.get("revision").map_err(|_| unreadable())?;
+    Ok(Revision {
+        revision_id: text(revision, "revision_id").ok_or_else(unreadable)?,
+        manifest_digest: text(revision, "manifest_digest").ok_or_else(unreadable)?,
+        sequence: text(revision, "sequence")
+            .and_then(|s| s.parse().ok())
+            .ok_or_else(unreadable)?,
+    })
+}
+
+/// The element object of a create or update reply, as the panel reads it.
+struct ElementReply {
+    element_id: String,
+    name: String,
+    mesh_digest: String,
+    volume_mm3: Option<f64>,
+}
+
+/// Reads the element object under `key`; the outcome must be one of `accepted[0]` (applied) or
+/// `accepted[1]` (an already applied operation answered again).
+fn element_reply(
+    reply: &Json,
+    key: &str,
+    accepted: [&str; 2],
+) -> Result<(ElementReply, bool), ToolError> {
+    let outcome = text(reply, "outcome").unwrap_or_default();
+    let replayed = outcome == accepted[1];
+    if !replayed && outcome != accepted[0] {
+        return Err(ToolError::local(
+            "UNREADABLE_REPLY",
+            format!(
+                "unexpected outcome \"{}\"",
+                outcome.chars().take(40).collect::<String>()
+            ),
+        ));
+    }
+    let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
+    let element = reply.get(key).map_err(|_| unreadable())?;
+    let volume = element
+        .get("quantities")
+        .and_then(|q| q.get("volume"))
+        .ok()
+        .filter(|v| text(v, "status").as_deref() == Some("current"))
+        .and_then(|v| v.get("mm3").ok())
+        .and_then(|v| v.float().ok());
+    Ok((
+        ElementReply {
+            element_id: text(element, "element_id").ok_or_else(unreadable)?,
+            name: text(element, "name").unwrap_or_default(),
+            mesh_digest: text(element, "mesh_digest").ok_or_else(unreadable)?,
+            volume_mm3: volume,
+        },
+        replayed,
+    ))
+}
+
+/// What a committed create command made, as the CLI reported it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Created {
     /// The tool.
@@ -289,11 +378,7 @@ pub struct Created {
     /// Its volume in mm3, when the CLI reports a current one.
     pub volume_mm3: Option<f64>,
     /// The accepted revision that contains it.
-    pub revision_id: String,
-    /// The revision's manifest digest, which is what the view snapshot pins.
-    pub manifest_digest: String,
-    /// The revision's sequence number.
-    pub sequence: u64,
+    pub revision: Revision,
     /// True when the CLI answered an already applied operation again.
     pub replayed: bool,
 }
@@ -349,10 +434,83 @@ pub fn parse_created(
     if let Some(error) = rejection(&reply, exit_code) {
         return Err(error);
     }
-    let noun = kind.noun();
+    let noun = kind
+        .noun()
+        .ok_or_else(|| ToolError::local("UNREADABLE_REPLY", "not a create command"))?;
+    let (element, replayed) = element_reply(
+        &reply,
+        noun,
+        [&format!("{noun}_created"), &format!("{noun}_replayed")],
+    )?;
+    Ok(Created {
+        kind,
+        element_id: element.element_id,
+        name: element.name,
+        mesh_digest: element.mesh_digest,
+        volume_mm3: element.volume_mm3,
+        revision: read_revision(&reply)?,
+        replayed,
+    })
+}
+
+/// What a committed move (`update-element`) changed, as the CLI reported it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Updated {
+    /// The element's id.
+    pub element_id: String,
+    /// The element's name.
+    pub name: String,
+    /// Its volume in mm3, when the CLI reports a current one.
+    pub volume_mm3: Option<f64>,
+    /// The accepted revision that holds the change.
+    pub revision: Revision,
+    /// True when the CLI answered an already applied operation again.
+    pub replayed: bool,
+}
+
+/// Reads the reply of an update command: the element after the change or the CLI's refusal.
+pub fn parse_updated(exit_code: Option<i32>, stdout: &[u8]) -> Result<Updated, ToolError> {
+    let reply = decode(stdout)?;
+    if let Some(error) = rejection(&reply, exit_code) {
+        return Err(error);
+    }
+    let (element, replayed) = element_reply(
+        &reply,
+        "element",
+        ["element_updated", "element_update_replayed"],
+    )?;
+    Ok(Updated {
+        element_id: element.element_id,
+        name: element.name,
+        volume_mm3: element.volume_mm3,
+        revision: read_revision(&reply)?,
+        replayed,
+    })
+}
+
+/// What a committed delete command removed, as the CLI reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Deleted {
+    /// The deleted element's id.
+    pub element_id: String,
+    /// The kind the CLI removed ("plate", "member", ...); `None` on a replay, where the element
+    /// is already absent.
+    pub kind: Option<String>,
+    /// The accepted revision that no longer holds it.
+    pub revision: Revision,
+    /// True when the CLI answered an already applied operation again.
+    pub replayed: bool,
+}
+
+/// Reads the reply of a delete command: what was removed or the CLI's refusal.
+pub fn parse_deleted(exit_code: Option<i32>, stdout: &[u8]) -> Result<Deleted, ToolError> {
+    let reply = decode(stdout)?;
+    if let Some(error) = rejection(&reply, exit_code) {
+        return Err(error);
+    }
     let outcome = text(&reply, "outcome").unwrap_or_default();
-    let replayed = outcome == format!("{noun}_replayed");
-    if !replayed && outcome != format!("{noun}_created") {
+    let replayed = outcome == "element_delete_replayed";
+    if !replayed && outcome != "element_deleted" {
         return Err(ToolError::local(
             "UNREADABLE_REPLY",
             format!(
@@ -362,28 +520,91 @@ pub fn parse_created(
         ));
     }
     let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
-    let element = reply.get(noun).map_err(|_| unreadable())?;
-    let revision = reply.get("revision").map_err(|_| unreadable())?;
-    let volume = element
-        .get("quantities")
-        .and_then(|q| q.get("volume"))
-        .ok()
-        .filter(|v| text(v, "status").as_deref() == Some("current"))
-        .and_then(|v| v.get("mm3").ok())
-        .and_then(|v| v.float().ok());
-    Ok(Created {
-        kind,
-        element_id: text(element, "element_id").ok_or_else(unreadable)?,
-        name: text(element, "name").unwrap_or_default(),
-        mesh_digest: text(element, "mesh_digest").ok_or_else(unreadable)?,
-        volume_mm3: volume,
-        revision_id: text(revision, "revision_id").ok_or_else(unreadable)?,
-        manifest_digest: text(revision, "manifest_digest").ok_or_else(unreadable)?,
-        sequence: text(revision, "sequence")
-            .and_then(|s| s.parse().ok())
-            .ok_or_else(unreadable)?,
+    Ok(Deleted {
+        element_id: text(&reply, "element_id").ok_or_else(unreadable)?,
+        kind: text(&reply, "kind"),
+        revision: read_revision(&reply)?,
         replayed,
     })
+}
+
+/// What one committed tool command answered, by its kind.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditResult {
+    /// A create command: the element it made.
+    Created(Created),
+    /// A move command: the element after the move.
+    Updated(Updated),
+    /// A delete command: what it removed.
+    Deleted(Deleted),
+}
+
+impl EditResult {
+    /// The created element, when this is a create reply.
+    pub fn created(self) -> Option<Created> {
+        match self {
+            Self::Created(created) => Some(created),
+            _ => None,
+        }
+    }
+
+    /// The panel's success note: what changed and the revision that holds it.
+    pub fn summary(&self) -> String {
+        let pinned = |r: &Revision| {
+            format!(
+                "Accepted revision {} (sequence {})",
+                r.manifest_digest.get(..12).unwrap_or(&r.manifest_digest),
+                r.sequence
+            )
+        };
+        let named = |name: &str| {
+            if name.is_empty() {
+                "unnamed".to_owned()
+            } else {
+                name.to_owned()
+            }
+        };
+        match self {
+            Self::Created(c) => {
+                let what = match c.kind {
+                    ToolKind::Plate => "plate",
+                    ToolKind::Member => "member",
+                    _ => "element",
+                };
+                let volume = c
+                    .volume_mm3
+                    .map_or(String::new(), |v| format!(", volume {:.3} m3", v / 1e9));
+                format!(
+                    "Created {what} {} ({}{}). {}.",
+                    c.element_id,
+                    named(&c.name),
+                    volume,
+                    pinned(&c.revision)
+                )
+            }
+            Self::Updated(u) => {
+                let volume = u
+                    .volume_mm3
+                    .map_or(String::new(), |v| format!(", volume {:.3} m3", v / 1e9));
+                format!(
+                    "Moved element {} ({}{}). {}{}.",
+                    u.element_id,
+                    named(&u.name),
+                    volume,
+                    pinned(&u.revision),
+                    if u.replayed { " (replayed)" } else { "" }
+                )
+            }
+            Self::Deleted(d) => format!(
+                "Deleted {} {}{}. {}{}.",
+                d.kind.as_deref().unwrap_or("element"),
+                d.element_id,
+                if d.replayed { " (already absent)" } else { "" },
+                pinned(&d.revision),
+                if d.replayed { " (replayed)" } else { "" }
+            ),
+        }
+    }
 }
 
 /// One definition of the store that a form can choose.
@@ -485,6 +706,11 @@ pub struct Tools {
     pub member: MemberForm,
     /// The store's definitions, as of the last refresh.
     pub definitions: Definitions,
+    /// The element selected for the move and delete tools, as the snapshot lists it.
+    pub selection: Option<ElementRow>,
+    /// The move form: the new absolute placement translation (millimetres), pre-filled from
+    /// the snapshot's placement of the selection.
+    pub move_to: [String; 3],
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -496,6 +722,8 @@ impl Default for Tools {
             plate: PlateForm::default(),
             member: MemberForm::default(),
             definitions: Definitions::default(),
+            selection: None,
+            move_to: ["0".into(), "0".into(), "0".into()],
             staged: None,
             busy: false,
         }
@@ -529,11 +757,70 @@ impl Tools {
         self.definitions = definitions;
         problem
     }
+    /// Selects an element for the move and delete tools and pre-fills the move form with its
+    /// placement as the snapshot reports it. A changed selection (or move text) invalidates a
+    /// staged move, because `prepare` no longer produces it.
+    pub fn select(&mut self, row: &ElementRow) {
+        self.move_to = row.placement_mm.map(|v| format!("{v}"));
+        self.selection = Some(row.clone());
+    }
+
+    /// Drops the selection when it is not among `present` (the accepted revision moved on and
+    /// no longer lists it).
+    pub fn retain_selection(&mut self, present: impl Fn(&str) -> bool) {
+        if self.selection.as_ref().is_some_and(|s| !present(&s.id)) {
+            self.selection = None;
+        }
+    }
+
+    fn selected(&self) -> Result<&ElementRow, FormError> {
+        self.selection.as_ref().ok_or(FormError {
+            field: "Element",
+            message: "select an element in the Elements list first".into(),
+        })
+    }
+
+    /// The `update-element` move of the selection to the entered translation (absolute; the
+    /// engine keeps the rotation and rebuilds nothing).
+    fn prepare_move(&self, store: &Path) -> Result<Prepared, FormError> {
+        let selection = self.selected()?;
+        Ok(Prepared {
+            kind: ToolKind::Move,
+            args: vec![
+                "update-element".into(),
+                "--store".into(),
+                store.to_string_lossy().into_owned(),
+                "--id".into(),
+                selection.id.clone(),
+                "--translation".into(),
+                point("Translation", &self.move_to)?,
+            ],
+        })
+    }
+
+    /// The `delete-element` of the selection (the whole element; the engine refuses one that
+    /// another element still links to).
+    fn prepare_delete(&self, store: &Path) -> Result<Prepared, FormError> {
+        let selection = self.selected()?;
+        Ok(Prepared {
+            kind: ToolKind::Delete,
+            args: vec![
+                "delete-element".into(),
+                "--store".into(),
+                store.to_string_lossy().into_owned(),
+                "--id".into(),
+                selection.id.clone(),
+            ],
+        })
+    }
+
     /// The command of the selected form.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
         match self.active {
             ToolKind::Plate => self.plate.prepare(store),
             ToolKind::Member => self.member.prepare(store),
+            ToolKind::Move => self.prepare_move(store),
+            ToolKind::Delete => self.prepare_delete(store),
         }
     }
 
@@ -751,9 +1038,9 @@ mod tests {
         assert_eq!(created.name, "P1");
         assert_eq!(created.mesh_digest, "m1");
         assert_eq!(created.volume_mm3, Some(200_000.0));
-        assert_eq!(created.revision_id, "r1");
-        assert_eq!(created.manifest_digest, "d1");
-        assert_eq!(created.sequence, 3);
+        assert_eq!(created.revision.revision_id, "r1");
+        assert_eq!(created.revision.manifest_digest, "d1");
+        assert_eq!(created.revision.sequence, 3);
         assert!(!created.replayed);
         // A member reply is not a plate reply.
         let error = parse_created(ToolKind::Member, Some(0), CREATED.as_bytes()).unwrap_err();
@@ -765,6 +1052,163 @@ mod tests {
         let reply = CREATED.replace("\"current\"", "\"stale\"");
         let created = parse_created(ToolKind::Plate, Some(0), reply.as_bytes()).unwrap();
         assert_eq!(created.volume_mm3, None);
+    }
+
+    const UPDATED: &str = r#"{"changed_layers":["authored.usda"],"effect":{"level":false,"material":false,"name":false,"placement":true,"shape":false},"element":{"element_id":"e1","kind":"plate","mesh_digest":"m1","name":"P1","quantities":{"mass":{"status":"unknown"},"volume":{"mm3":5000000,"status":"current"}}},"footprint":null,"op_id":"o","outcome":"element_updated","revision":{"manifest_digest":"d2","revision_id":"r2","sequence":"2"}}"#;
+
+    #[test]
+    fn an_updated_reply_is_read() {
+        let updated = parse_updated(Some(0), UPDATED.as_bytes()).unwrap();
+        assert_eq!(updated.element_id, "e1");
+        assert_eq!(updated.name, "P1");
+        assert_eq!(updated.volume_mm3, Some(5_000_000.0));
+        assert_eq!(updated.revision.manifest_digest, "d2");
+        assert_eq!(updated.revision.sequence, 2);
+        assert!(!updated.replayed);
+        // A replay of the same move is answered from the head.
+        let replay = UPDATED.replace("element_updated", "element_update_replayed");
+        let updated = parse_updated(Some(0), replay.as_bytes()).unwrap();
+        assert!(updated.replayed);
+        // Another command's reply is not an update reply.
+        let error = parse_updated(Some(0), CREATED.as_bytes()).unwrap_err();
+        assert_eq!(error.code, "UNREADABLE_REPLY");
+        let error = parse_updated(Some(0), br#"{"outcome":"element_updated"}"#).unwrap_err();
+        assert_eq!(error.code, "UNREADABLE_REPLY");
+        // A refusal keeps the CLI's code, a zero exit cannot hide it.
+        let reply = r#"{"code":"NOT_FOUND","message":"the element is not in the head revision","outcome":"rejected"}"#;
+        let error = parse_updated(Some(2), reply.as_bytes()).unwrap_err();
+        assert_eq!(error.code, "NOT_FOUND");
+        assert!(parse_updated(Some(0), reply.as_bytes()).is_err());
+    }
+
+    const DELETED: &str = r#"{"changed_layers":["authored.usda"],"element_id":"e1","footprint":null,"kind":"plate","op_id":"o","outcome":"element_deleted","revision":{"manifest_digest":"d3","revision_id":"r3","sequence":"3"}}"#;
+
+    #[test]
+    fn a_deleted_reply_is_read() {
+        let deleted = parse_deleted(Some(0), DELETED.as_bytes()).unwrap();
+        assert_eq!(deleted.element_id, "e1");
+        assert_eq!(deleted.kind.as_deref(), Some("plate"));
+        assert_eq!(deleted.revision.sequence, 3);
+        assert!(!deleted.replayed);
+        // On a replay the element is already absent, so the CLI answers no kind.
+        let replay = DELETED
+            .replace("element_deleted", "element_delete_replayed")
+            .replace("\"kind\":\"plate\"", "\"kind\":null");
+        let deleted = parse_deleted(Some(0), replay.as_bytes()).unwrap();
+        assert!(deleted.replayed);
+        assert_eq!(deleted.kind, None);
+        assert_eq!(deleted.element_id, "e1");
+        // A missing field is an error, never a success.
+        let error = parse_deleted(Some(0), br#"{"outcome":"element_deleted"}"#).unwrap_err();
+        assert_eq!(error.code, "UNREADABLE_REPLY");
+        let error = parse_deleted(Some(0), UPDATED.as_bytes()).unwrap_err();
+        assert_eq!(error.code, "UNREADABLE_REPLY");
+    }
+
+    #[test]
+    fn a_move_and_a_delete_map_to_the_cli_arguments() {
+        let row = ElementRow {
+            id: "01990000-0000-7000-8000-00000000000a".into(),
+            kind: "plate".into(),
+            placement_mm: [0.0, 0.0, 0.0],
+        };
+        let mut tools = Tools {
+            active: ToolKind::Move,
+            ..Tools::default()
+        };
+        // Nothing selected: nothing is prepared, for either tool.
+        assert_eq!(tools.prepare(store()).unwrap_err().field, "Element");
+        tools.active = ToolKind::Delete;
+        assert_eq!(tools.prepare(store()).unwrap_err().field, "Element");
+        // Selecting pre-fills the move form with the snapshot's placement.
+        tools.active = ToolKind::Move;
+        tools.select(&row);
+        assert_eq!(tools.move_to, ["0", "0", "0"]);
+        tools.move_to = [" 500 ".into(), "-250.5".into(), "0".into()];
+        let prepared = tools.prepare(store()).unwrap();
+        assert_eq!(prepared.kind, ToolKind::Move);
+        assert_eq!(
+            prepared.args,
+            [
+                "update-element",
+                "--store",
+                "S",
+                "--id",
+                "01990000-0000-7000-8000-00000000000a",
+                "--translation",
+                "500,-250.5,0"
+            ]
+        );
+        // A bad number is refused before anything runs; a negative translation is the
+        // engine's to judge (absolute placements may be negative).
+        tools.move_to[1] = "x".into();
+        assert_eq!(tools.prepare(store()).unwrap_err().field, "Translation");
+        tools.move_to[1] = "-9999".into();
+        assert!(tools.prepare(store()).is_ok());
+        // The delete needs only the selection.
+        tools.active = ToolKind::Delete;
+        let prepared = tools.prepare(store()).unwrap();
+        assert_eq!(prepared.kind, ToolKind::Delete);
+        assert_eq!(
+            prepared.args,
+            [
+                "delete-element",
+                "--store",
+                "S",
+                "--id",
+                "01990000-0000-7000-8000-00000000000a"
+            ]
+        );
+        assert_eq!(ToolKind::Move.command(), "update-element");
+        assert_eq!(ToolKind::Delete.command(), "delete-element");
+    }
+
+    #[test]
+    fn a_staged_move_survives_only_its_own_selection_and_text() {
+        let row = |x: f64| ElementRow {
+            id: "01990000-0000-7000-8000-00000000000a".into(),
+            kind: "plate".into(),
+            placement_mm: [x, 0.0, 0.0],
+        };
+        let mut tools = Tools {
+            active: ToolKind::Move,
+            ..Tools::default()
+        };
+        tools.select(&row(0.0));
+        tools.move_to = ["100".into(), "0".into(), "0".into()];
+        tools.preview(store()).unwrap();
+        assert!(tools.can_commit(store()));
+        // Another selection, or edited text, invalidates the staged command.
+        tools.select(&row(50.0));
+        assert!(!tools.can_commit(store()));
+        assert!(tools.begin_commit(store()).is_none());
+        tools.move_to = ["100".into(), "0".into(), "0".into()];
+        assert!(tools.can_commit(store()));
+        tools.move_to[0] = "200".into();
+        assert!(!tools.can_commit(store()));
+        tools.move_to[0] = "100".into();
+        // A selection that the accepted revision no longer lists is dropped; then nothing
+        // can be prepared or committed.
+        tools.retain_selection(|_| true);
+        assert_eq!(
+            tools.selection.as_ref().map(|s| s.id.as_str()),
+            Some("01990000-0000-7000-8000-00000000000a")
+        );
+        tools.retain_selection(|_| false);
+        assert_eq!(tools.selection, None);
+        assert!(tools.prepare(store()).is_err());
+        assert!(!tools.can_commit(store()));
+        // The success notes name what changed and the revision that holds it.
+        let updated = parse_updated(Some(0), UPDATED.as_bytes()).unwrap();
+        assert_eq!(
+            EditResult::Updated(updated).summary(),
+            "Moved element e1 (P1, volume 0.005 m3). Accepted revision d2 (sequence 2)."
+        );
+        let deleted = parse_deleted(Some(0), DELETED.as_bytes()).unwrap();
+        assert_eq!(
+            EditResult::Deleted(deleted).summary(),
+            "Deleted plate e1. Accepted revision d3 (sequence 3)."
+        );
     }
 
     #[test]
