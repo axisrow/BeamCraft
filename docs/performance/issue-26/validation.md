@@ -10,6 +10,8 @@ The complete performance series is finished; raw data and aggregation are linked
 - PASS: real-window before/after visual smoke. Both windows displayed 100 elements, one mesh,
   1,200 triangles and 4× MSAA. The 1167×884 model-region RGB bytes match exactly, with 129,309
   lit blue pixels. See [visual-smoke.json](raw/visual-smoke.json).
+- PASS: headless worker-wakeup regression (success and unwind) executed directly from the
+  workspace-built test binary after adding explicit disposal of egui texture deltas.
 - IN PROGRESS: `cargo test --locked --workspace -j 2 -- --test-threads=2`.
 - PENDING RECHECK: `cargo clippy --locked --workspace --all-targets -j 2 -- -D warnings`.
   Its first pass caught a new unit test using egui's renamed `run` method; the test now uses

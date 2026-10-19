@@ -651,7 +651,9 @@ mod tests {
         for fail in [false, true] {
             let context = egui::Context::default();
             for _ in 0..4 {
-                let _ = context.run_ui(egui::RawInput::default(), |_| {});
+                let mut output = context.run_ui(egui::RawInput::default(), |_| {});
+                // This headless test deliberately has no texture backend.
+                output.textures_delta.clear();
             }
             let (tx, rx) = std::sync::mpsc::channel::<()>();
             let rx = Mutex::new(rx);

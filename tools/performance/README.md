@@ -30,7 +30,8 @@ activity phase alone does not establish completion of this asynchronous work.
 CPU/RSS. Its explicitly selected display-fixture mode serves the generated bundle instead;
 that mode measures UI loading/rendering/memory, not store inspection. The adapter writes the
 same documented bounded envelope used by the production CLI. `summarize.py` preserves all
-five samples, min/max and medians. CLI wall sums exclude gaps and UI decoding/upload: **they
+five samples, min/max and medians; it accepts plain `.json` or losslessly compressed `.json.gz`
+records. CLI wall sums exclude gaps and UI decoding/upload: **they
 are not end-to-end refresh latency**.
 
 A reproducible Linux container is described in `Dockerfile`. The image pins the official Rust
