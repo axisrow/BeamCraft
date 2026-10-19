@@ -25,5 +25,22 @@
       "height": 884
     }
   },
-  "notes": "Separate real-window visual smoke after all CPU/RSS measurements; comparison excludes the changed FPS/UI-update label. Screenshot pixels captured through XGetImage; RGB SHA-256 calculated with Pillow 12.3.0. No image is included."
+  "notes": "Separate real-window visual smoke after all CPU/RSS measurements; comparison excludes the changed FPS/UI-update label. Screenshot pixels captured through XGetImage; RGB SHA-256 calculated with Pillow 12.3.0. No image is included.",
+  "changed_scene_refresh": {
+    "store": "separate copy of frozen native-100; benchmark store unchanged",
+    "action": "create one 300x300x20 mm plate at 0,10000,0 through after CLI, send R to idle after window, then wait ten seconds with no further input",
+    "observed_before": {
+      "elements": 100,
+      "meshes": 1,
+      "triangles": 1200,
+      "generation": 164
+    },
+    "observed_after": {
+      "elements": 101,
+      "meshes": 2,
+      "triangles": 1212,
+      "generation": 165
+    },
+    "result": "new plate and changed bounds visible; inspected real-window screenshot"
+  }
 }

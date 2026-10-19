@@ -1,0 +1,37 @@
+{
+  "validated_source_commit": "820ee15c4ef83e4e35aab080243221ab86979912",
+  "exit_codes": {
+    "fmt": 0,
+    "clippy": 0,
+    "test": 0,
+    "fixtures": 0,
+    "boundaries": 0,
+    "fixture-expectations": 0,
+    "fixture-tests": 0,
+    "audit": 0,
+    "docs": 0,
+    "wasm": 0,
+    "deny": 0,
+    "before-metrics": 0,
+    "after-metrics": 0,
+    "raw-bundle-before": 0,
+    "raw-bundle-after": 0,
+    "raw-bundle-identical": 0
+  },
+  "rust_test_summary": {
+    "suites": 83,
+    "passed": 960,
+    "failed": 0,
+    "ignored": 0
+  },
+  "profiles": {
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "RUSTDOCFLAGS": "-D warnings"
+  },
+  "notes": [
+    "Final check results after correcting the new headless test setup. Production release code was unchanged by these test-only fixes.",
+    "Optional external PXR/OpenUSD oracle execution was not configured; its Rust wrappers can return successfully without running the external oracle.",
+    "GitHub cross-platform CI remains separate from this local Linux record."
+  ]
+}

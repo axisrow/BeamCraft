@@ -1,0 +1,21 @@
+{
+  "outcome": "viewport_metrics",
+  "source": "synthetic",
+  "adapter": "llvmpipe (LLVM 19.1.7, 256 bits)",
+  "device_type": "Cpu",
+  "backend": "Vulkan",
+  "width": 1280,
+  "height": 800,
+  "samples": 4,
+  "elements": 100,
+  "meshes": 100,
+  "instances": 100,
+  "triangles": 1200,
+  "upload_bytes": 87600,
+  "upload_ms": 3.934,
+  "frames": 30,
+  "submit_median_ms": 0.2014,
+  "submit_p95_ms": 2.7444,
+  "complete_median_ms": 18.9523,
+  "complete_p95_ms": 26.4799
+}

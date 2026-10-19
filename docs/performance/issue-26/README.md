@@ -124,7 +124,7 @@ follow-up work. No speedup is claimed for those paths; #26 remains open to track
 - [Native fixture manifest](raw/native-100.manifest.json), [display manifest](raw/stress.manifest.json).
 - [Reproduction commands and scripts](../../../tools/performance/README.md).
 - [Real-window visual smoke](raw/visual-smoke.json): identical viewport RGB hash and 129,309 lit blue pixels in both versions (100 elements, one mesh, 1,200 triangles, 4× MSAA).
-- [Validation](validation.md): required checks, pixel tests and environment-specific limits.
+- [Validation](validation.md): 960 passing Rust tests, all local required checks, and a changed-model idle-refresh smoke (101 elements / two meshes / 1,212 triangles).
 
 The report establishes CPU/RSS behavior on this one software adapter. It does not measure live
 heap allocation stacks, discrete-GPU VRAM, large engineering-store validation, Windows/macOS
