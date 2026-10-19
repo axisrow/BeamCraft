@@ -2,6 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! `beamcraft-ui --store ROOT [--cli PATH]` opens the window on the published revision.
+//! `beamcraft-ui --store PUBLISHED --workspace DIR` edits the personal workspace in DIR (a draft
+//! store forked from the published store) and shows its publication panel (status, publish,
+//! undo, redo); the model shown is the draft head.
 //! `beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--cli PATH]` renders the
 //! same snapshot offscreen, headless, and prints baseline GPU metrics as one JSON object.
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
@@ -11,7 +14,7 @@
 use beamcraft_engine::synthetic::plate_scene;
 use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
-use beamcraft_ui::app::{App, Source, icon};
+use beamcraft_ui::app::{self, App, Source, icon};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::{Error, json_string, metrics, source};
 use std::collections::BTreeMap;
@@ -20,7 +23,7 @@ use std::process::ExitCode;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui --store ROOT [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
+        "usage: beamcraft-ui --store ROOT [--workspace DIR] [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
     )
 }
 
@@ -40,7 +43,13 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
         };
         let known = matches!(
             key.as_str(),
-            "--store" | "--cli" | "--metrics" | "--width" | "--height" | "--synthetic"
+            "--store"
+                | "--workspace"
+                | "--cli"
+                | "--metrics"
+                | "--width"
+                | "--height"
+                | "--synthetic"
         );
         if !known || value.len() > 4096 || map.insert(key.clone(), value.clone()).is_some() {
             return Err(usage());
@@ -79,11 +88,20 @@ fn run() -> Result<Option<String>, Error> {
             1,
         )));
     }
-    let store = PathBuf::from(map.get("--store").ok_or_else(usage)?);
+    let published = PathBuf::from(map.get("--store").ok_or_else(usage)?);
     let cli = match map.get("--cli") {
         Some(path) => PathBuf::from(path),
         None => source::default_cli()?,
     };
+    let workspace = map.get("--workspace").map(|dir| app::Workspace {
+        published: published.clone(),
+        dir: PathBuf::from(dir),
+    });
+    // With a workspace the window edits the draft; the store named by --store stays the one the
+    // draft publishes to.
+    let store = workspace
+        .as_ref()
+        .map_or(published.clone(), |w| w.dir.clone());
     if map.contains_key("--metrics") {
         let frames = number(&map, "--metrics", 300)?;
         let size = [
@@ -109,7 +127,11 @@ fn run() -> Result<Option<String>, Error> {
         },
         ..Default::default()
     };
-    let source = Source { store, cli };
+    let source = Source {
+        store,
+        cli,
+        workspace,
+    };
     // Window-system libraries are loaded at run time by third-party crates, which panic when one
     // is missing; report that as an error instead of crashing.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {

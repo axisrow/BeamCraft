@@ -5,6 +5,10 @@
 //! through the same command a user types, so the accepted revision is the engine's, never a copy
 //! made here. Output is read with a cap and the process is killed after a deadline.
 
+use crate::props::{
+    self, Change, Properties, WorkspaceState, parse_change, parse_element, parse_history,
+    parse_pick as parse_pick_reply, parse_workspace_state,
+};
 use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
 };
@@ -126,4 +130,53 @@ pub fn commit(cli: &Path, prepared: &Prepared) -> Result<Created, ToolError> {
 pub fn definitions(cli: &Path, store: &Path) -> Result<Definitions, ToolError> {
     let output = run(cli, &definitions_args(store), DEADLINE)?;
     parse_definitions(output.code, &output.stdout)
+}
+
+/// Picks along a window ray and reads the first hit element's properties; `None` when the ray
+/// misses everything. Two queries, exactly as a user types them (`pick`, then `plate-inspect`).
+pub fn select(
+    cli: &Path,
+    store: &Path,
+    origin: [f64; 3],
+    direction: [f64; 3],
+) -> Result<Option<Properties>, ToolError> {
+    let picked = run(cli, &props::pick_args(store, origin, direction), DEADLINE)?;
+    let Some(id) = parse_pick_reply(picked.code, &picked.stdout)? else {
+        return Ok(None);
+    };
+    properties(cli, store, &id)
+}
+
+/// Reads the properties of one element from the store's inspection; `None` when the store has
+/// no such element (a revision the reply reports without it is not an error).
+pub fn properties(cli: &Path, store: &Path, id: &str) -> Result<Option<Properties>, ToolError> {
+    let output = run(cli, &props::inspect_args(store), DEADLINE)?;
+    parse_element(output.code, &output.stdout, id)
+}
+
+/// Runs one argument list that changes something (`update-element`, a workspace command) and
+/// reads its reply.
+pub fn run_change(cli: &Path, args: &[String]) -> Result<Change, ToolError> {
+    let output = run(cli, args, DEADLINE)?;
+    parse_change(output.code, &output.stdout)
+}
+
+/// Reads where the draft stands against the published head.
+pub fn workspace_state(
+    cli: &Path,
+    published: &Path,
+    dir: &Path,
+) -> Result<WorkspaceState, ToolError> {
+    let output = run(
+        cli,
+        &props::workspace_args("workspace-status", published, dir),
+        DEADLINE,
+    )?;
+    parse_workspace_state(output.code, &output.stdout)
+}
+
+/// Reads the draft's undo and redo units.
+pub fn workspace_history(cli: &Path, dir: &Path) -> Result<(u64, u64), ToolError> {
+    let output = run(cli, &props::history_args(dir), DEADLINE)?;
+    parse_history(output.code, &output.stdout)
 }

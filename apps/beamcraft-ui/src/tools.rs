@@ -149,7 +149,7 @@ impl Prepared {
     }
 }
 
-fn number(field: &'static str, text: &str) -> Result<String, FormError> {
+pub(crate) fn number(field: &'static str, text: &str) -> Result<String, FormError> {
     let text = text.trim();
     if text.is_empty() || text.len() > 32 {
         return Err(FormError {
@@ -303,11 +303,21 @@ fn decode(stdout: &[u8]) -> Result<Json, ToolError> {
         .map_err(|_| ToolError::local("UNREADABLE_REPLY", "the CLI reply is not valid JSON"))
 }
 
-fn text(json: &Json, key: &str) -> Option<String> {
+pub(crate) fn text(json: &Json, key: &str) -> Option<String> {
     json.get(key)
         .ok()
         .and_then(|v| v.string().ok())
         .map(str::to_owned)
+}
+
+/// Decodes a reply and refuses it when the CLI reported a rejection: what every query and
+/// change parser reads next. Even a zero exit status cannot turn a rejection into a success.
+pub(crate) fn reply_json(exit_code: Option<i32>, stdout: &[u8]) -> Result<Json, ToolError> {
+    let reply = decode(stdout)?;
+    match rejection(&reply, exit_code) {
+        Some(error) => Err(error),
+        None => Ok(reply),
+    }
 }
 
 /// The refusal in a reply, if the reply is one.

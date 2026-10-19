@@ -5,6 +5,7 @@
 //! (`beamcraft view-export --store ROOT --out -`) and the engine rebuilds and re-validates it.
 //! The viewport never opens USD itself and never trusts the bytes it receives.
 
+use crate::props::{Properties, WorkspacePanel};
 use crate::scene::Scene;
 use crate::tools::{Definitions, ToolError};
 use crate::{Error, command};
@@ -67,17 +68,29 @@ fn export_error(e: ToolError) -> Error {
     }
 }
 /// Everything one window refresh reads, gathered without a window or a GPU so it can run on a
-/// worker thread: the accepted snapshot with its scene, and the store's definitions. The two
-/// results are independent; one failing never hides the other.
+/// worker thread: the accepted snapshot with its scene, the store's definitions, the selected
+/// element's properties and the workspace panel. The results are independent; one failing never
+/// hides another.
 pub struct Reloaded {
     /// The accepted snapshot and the scene built from it.
     pub scene: Result<(ViewSnapshot, Scene), Error>,
     /// The profile and material definitions of the same store.
     pub definitions: Result<Definitions, ToolError>,
+    /// The selected element's properties as of this refresh; `Some(Ok(None))` when the selected
+    /// element is no longer in the store. `None` when nothing is selected.
+    pub properties: Option<Result<Option<Properties>, ToolError>>,
+    /// The publication panel, when the window edits a personal workspace.
+    pub workspace: Option<Result<WorkspacePanel, ToolError>>,
 }
 
-/// Runs the CLI queries of one refresh (blocking; call it off the UI thread).
-pub fn reload(cli: &Path, store: &Path) -> Reloaded {
+/// Runs the CLI queries of one refresh (blocking; call it off the UI thread). `selected` is the
+/// selected element's id, `workspace` the published store and the workspace directory.
+pub fn reload(
+    cli: &Path,
+    store: &Path,
+    selected: Option<&str>,
+    workspace: Option<(&Path, &Path)>,
+) -> Reloaded {
     let scene = load(cli, store).and_then(|snapshot| {
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
         Ok((snapshot, scene))
@@ -85,5 +98,15 @@ pub fn reload(cli: &Path, store: &Path) -> Reloaded {
     Reloaded {
         scene,
         definitions: command::definitions(cli, store),
+        properties: selected.map(|id| command::properties(cli, store, id)),
+        workspace: workspace.map(|(published, dir)| {
+            let state = command::workspace_state(cli, published, dir)?;
+            let (undo_units, redo_units) = command::workspace_history(cli, dir)?;
+            Ok(WorkspacePanel {
+                state,
+                undo_units,
+                redo_units,
+            })
+        }),
     }
 }

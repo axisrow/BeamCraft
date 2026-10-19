@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The eframe window: a side panel with the revision, counts, units and adapter, and the viewport
-//! with orbit (primary drag), pan (secondary drag), zoom (wheel), fit (F) and reload (R).
+//! The eframe window: a side panel with the revision, counts, units and adapter, the viewport
+//! with orbit (primary drag), pan (secondary drag), zoom (wheel), fit (F) and reload (R), the
+//! create tools, the properties panel (click to pick, edit and update through `update-element`)
+//! and the publication panel of a personal workspace.
 
 use crate::camera::Camera;
+use crate::props::{self, MaterialEdit, Properties, WorkspacePanel};
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
 use crate::source::Reloaded;
@@ -18,10 +21,22 @@ use std::time::Instant;
 /// Where the window reads its model from.
 #[derive(Debug, Clone)]
 pub struct Source {
-    /// The published store.
+    /// The store the window edits and shows (a personal workspace's directory when one is open,
+    /// else the published store).
     pub store: PathBuf,
-    /// The `beamcraft` CLI that exports the snapshot.
+    /// The `beamcraft` CLI that exports the snapshot and runs the commands.
     pub cli: PathBuf,
+    /// The personal workspace the window edits, with the published store it publishes to.
+    pub workspace: Option<Workspace>,
+}
+
+/// A personal workspace: a draft directory (itself a store) forked from a published store.
+#[derive(Debug, Clone)]
+pub struct Workspace {
+    /// The published store the draft is published to, fast-forward only.
+    pub published: PathBuf,
+    /// The workspace directory the window edits.
+    pub dir: PathBuf,
 }
 
 struct Loaded {
@@ -47,13 +62,60 @@ pub struct App {
     job: Option<Receiver<Result<Created, ToolError>>>,
     reload_job: Option<Receiver<Reloaded>>,
     reload_queued: bool,
+    /// The element id the running refresh reads the properties of, so a stale refresh never
+    /// overwrites a newer selection.
+    reload_selection: Option<String>,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
+    /// The running pick (a click in the viewport).
+    select_job: Option<Receiver<Result<Option<Properties>, ToolError>>>,
+    /// The selected element's properties, as of the last pick or refresh.
+    selected: Option<Properties>,
+    /// The properties panel's edit state.
+    props: props::Props,
+    /// The running `update-element` commit.
+    props_job: Option<Receiver<Result<props::Change, ToolError>>>,
+    /// The result of the last Preview, Cancel or Commit of the properties panel.
+    props_note: Option<Result<String, String>>,
+    /// Why the last properties refresh failed, or that the element is gone; kept apart from
+    /// `props_note`.
+    props_problem: Option<String>,
+    /// The publication panel as of the last refresh.
+    ws_panel: Option<Result<WorkspacePanel, ToolError>>,
+    /// The running `workspace-publish` / `workspace-undo` / `workspace-redo`.
+    ws_job: Option<Receiver<Result<props::Change, ToolError>>>,
+    /// The result of the last workspace command.
+    ws_note: Option<Result<String, String>>,
+    /// True while any change command (create, update, publish, undo, redo) runs; the other
+    /// panels' commit buttons wait for it, so one store never sees two change commands.
+    mutating: bool,
 }
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
+
+/// The panel note for a successful change reply: what happened, and the accepted revision's
+/// sequence when the reply reports one. An unknown outcome is shown as received.
+fn change_note(change: &props::Change) -> String {
+    let what = match change.outcome.as_str() {
+        "element_updated" => "The update was accepted".to_owned(),
+        "element_update_replayed" => {
+            "The update was already applied; nothing new was written".to_owned()
+        }
+        "workspace_published" => "The draft head is published".to_owned(),
+        "workspace_publish_replayed" => "The draft head was already the published head".to_owned(),
+        "workspace_undone" => "One unit was undone".to_owned(),
+        "workspace_undo_replayed" => "The undo was already applied".to_owned(),
+        "workspace_redone" => "One unit was redone".to_owned(),
+        "workspace_redo_replayed" => "The redo was already applied".to_owned(),
+        other => return format!("Outcome {other}."),
+    };
+    match change.sequence {
+        Some(sequence) => format!("{what}; revision sequence {sequence}."),
+        None => format!("{what}."),
+    }
+}
 
 /// A drop-down of store definitions; `required` removes the "none" entry.
 fn choice_combo(
@@ -191,8 +253,19 @@ impl App {
             job: None,
             reload_job: None,
             reload_queued: false,
+            reload_selection: None,
             tool_note: None,
             refresh_error: None,
+            select_job: None,
+            selected: None,
+            props: props::Props::default(),
+            props_job: None,
+            props_note: None,
+            props_problem: None,
+            ws_panel: None,
+            ws_job: None,
+            ws_note: None,
+            mutating: false,
         };
         app.reload();
         Ok(app)
@@ -207,14 +280,29 @@ impl App {
             return;
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        let selected = self.selected.as_ref().map(|p| p.element_id.clone());
+        let for_worker = selected.clone();
+        let workspace = self
+            .source
+            .workspace
+            .as_ref()
+            .map(|w| (w.published.clone(), w.dir.clone()));
         let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(&cli, &store));
+                let _ = tx.send(source::reload(
+                    &cli,
+                    &store,
+                    for_worker.as_deref(),
+                    workspace.as_ref().map(|(p, d)| (p.as_path(), d.as_path())),
+                ));
             });
         match spawned {
-            Ok(_) => self.reload_job = Some(rx),
+            Ok(_) => {
+                self.reload_job = Some(rx);
+                self.reload_selection = selected;
+            }
             Err(_) => self.error = Some("the reload thread could not be started".into()),
         }
     }
@@ -232,6 +320,30 @@ impl App {
         };
         self.reload_job = None;
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
+        self.ws_panel = reloaded.workspace;
+        // A refresh that started for another selection never overwrites a newer one.
+        let mine = self.reload_selection.take();
+        let current = self.selected.as_ref().map(|p| p.element_id.as_str());
+        if mine.as_deref() == current {
+            match reloaded.properties {
+                Some(Ok(Some(props))) => {
+                    self.selected = Some(props);
+                    self.props_problem = None;
+                }
+                Some(Ok(None)) => {
+                    if self.selected.is_some() {
+                        self.selected = None;
+                        self.props = props::Props::default();
+                        self.props_problem =
+                            Some("the selected element is no longer in the store".into());
+                    }
+                }
+                Some(Err(e)) => {
+                    self.props_problem = Some(format!("properties: {e}"));
+                }
+                None => {}
+            }
+        }
         let result = reloaded.scene.and_then(|(snapshot, scene)| {
             let uploaded = Uploaded::new(&self.state.device, &self.state.queue, &scene)?;
             Ok(Loaded {
@@ -285,6 +397,12 @@ impl App {
             self.info(ui);
             ui.separator();
             self.tools_panel(ui);
+            ui.separator();
+            self.properties_panel(ui);
+            if self.source.workspace.is_some() {
+                ui.separator();
+                self.workspace_panel(ui);
+            }
         });
     }
 
@@ -296,6 +414,7 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         self.job = Some(rx);
         self.tool_note = None;
+        self.mutating = true;
         let spawned = std::thread::Builder::new()
             .name("beamcraft-command".into())
             .spawn(move || {
@@ -304,6 +423,7 @@ impl App {
         if spawned.is_err() {
             self.job = None;
             self.tools.finish();
+            self.mutating = false;
             self.tool_note = Some(Err("the command thread could not be started".into()));
         }
     }
@@ -320,6 +440,7 @@ impl App {
         };
         self.job = None;
         self.tools.finish();
+        self.mutating = false;
         match result {
             Ok(created) => {
                 self.reload();
@@ -351,6 +472,162 @@ impl App {
                     self.reload();
                 }
                 self.tool_note = Some(Err(e.to_string()));
+            }
+        }
+    }
+
+    /// Starts a pick on a worker thread: the engine's `pick` query along the click's ray, then
+    /// the element's `plate-inspect` properties. A click while one runs is dropped.
+    fn start_select(&mut self, origin: [f64; 3], direction: [f64; 3]) {
+        if self.select_job.is_some() {
+            return;
+        }
+        let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-select".into())
+            .spawn(move || {
+                let _ = tx.send(command::select(&cli, &store, origin, direction));
+            });
+        match spawned {
+            Ok(_) => self.select_job = Some(rx),
+            Err(_) => self.props_note = Some(Err("the pick thread could not be started".into())),
+        }
+    }
+
+    fn poll_select(&mut self) {
+        let Some(rx) = &self.select_job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError::local(
+                "CLI_FAILED",
+                "the pick thread ended without a result",
+            )),
+        };
+        self.select_job = None;
+        match result {
+            Ok(Some(properties)) => {
+                let other = self
+                    .selected
+                    .as_ref()
+                    .map(|s| s.element_id != properties.element_id)
+                    .unwrap_or(true);
+                if other {
+                    self.props = props::Props::default();
+                    self.props_note = None;
+                }
+                self.selected = Some(properties);
+                self.props_problem = None;
+            }
+            Ok(None) => {
+                self.props_note = Some(Ok("Nothing was picked.".into()));
+            }
+            Err(e) => {
+                self.props_note = Some(Err(e.to_string()));
+            }
+        }
+    }
+
+    /// Runs the properties panel's staged `update-element` command.
+    fn start_update(&mut self) {
+        let store = self.source.store.clone();
+        let Some(id) = self.selected.as_ref().map(|p| p.element_id.clone()) else {
+            return;
+        };
+        let Some(args) = self.props.begin_commit(&store, &id) else {
+            return;
+        };
+        let cli = self.source.cli.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.props_job = Some(rx);
+        self.props_note = None;
+        self.mutating = true;
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-update".into())
+            .spawn(move || {
+                let _ = tx.send(command::run_change(&cli, &args));
+            });
+        if spawned.is_err() {
+            self.props_job = None;
+            self.props.finish();
+            self.mutating = false;
+            self.props_note = Some(Err("the command thread could not be started".into()));
+        }
+    }
+
+    fn poll_update(&mut self) {
+        let Some(rx) = &self.props_job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError::local(
+                "CLI_FAILED",
+                "the command thread ended without a result",
+            )),
+        };
+        self.props_job = None;
+        self.props.finish();
+        self.mutating = false;
+        match result {
+            Ok(change) => {
+                self.reload();
+                self.props_note = Some(Ok(change_note(&change)));
+            }
+            Err(e) => {
+                if e.code == "OUTCOME_UNKNOWN" {
+                    self.reload();
+                }
+                self.props_note = Some(Err(e.to_string()));
+            }
+        }
+    }
+
+    /// Runs one workspace command (`workspace-publish`, `workspace-undo`, `workspace-redo`);
+    /// it takes no form, so there is nothing to preview.
+    fn start_workspace(&mut self, args: Vec<String>) {
+        if self.ws_job.is_some() || self.mutating {
+            return;
+        }
+        let cli = self.source.cli.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.ws_job = Some(rx);
+        self.ws_note = None;
+        self.mutating = true;
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-workspace".into())
+            .spawn(move || {
+                let _ = tx.send(command::run_change(&cli, &args));
+            });
+        if spawned.is_err() {
+            self.ws_job = None;
+            self.mutating = false;
+            self.ws_note = Some(Err("the command thread could not be started".into()));
+        }
+    }
+
+    fn poll_workspace(&mut self) {
+        let Some(rx) = &self.ws_job else { return };
+        let result = match rx.try_recv() {
+            Ok(result) => result,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Err(ToolError::local(
+                "CLI_FAILED",
+                "the command thread ended without a result",
+            )),
+        };
+        self.ws_job = None;
+        self.mutating = false;
+        match result {
+            Ok(change) => {
+                self.reload();
+                self.ws_note = Some(Ok(change_note(&change)));
+            }
+            Err(e) => {
+                if e.code == "OUTCOME_UNKNOWN" {
+                    self.reload();
+                }
+                self.ws_note = Some(Err(e.to_string()));
             }
         }
     }
@@ -436,7 +713,7 @@ impl App {
                     }
                 }
             }
-            let can_commit = self.tools.can_commit(&store);
+            let can_commit = self.tools.can_commit(&store) && !self.mutating;
             if ui
                 .add_enabled(can_commit, egui::Button::new("Commit"))
                 .clicked()
@@ -484,6 +761,273 @@ impl App {
                 ui.colored_label(RED, message);
             }
             None => {}
+        }
+    }
+
+    /// The selected element's properties, with the typed update patch beneath them.
+    fn properties_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Properties");
+        if self.select_job.is_some() {
+            ui.label("Picking…");
+        }
+        if let Some(problem) = &self.props_problem {
+            ui.colored_label(RED, problem);
+        }
+        let Some(selected) = self.selected.clone() else {
+            ui.label("Click a body in the viewport to select it; click empty space for none.");
+            match &self.props_note {
+                Some(Ok(message)) => {
+                    ui.label(message);
+                }
+                Some(Err(message)) => {
+                    ui.colored_label(RED, message);
+                }
+                None => {}
+            }
+            return;
+        };
+        ui.monospace(format!(
+            "{} ({})",
+            if selected.name.is_empty() {
+                "unnamed"
+            } else {
+                &selected.name
+            },
+            selected.kind
+        ));
+        ui.label(format!("Id {}", selected.element_id));
+        let dimensions = selected
+            .dimensions
+            .iter()
+            .map(|(key, value)| format!("{key} {value} mm"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !dimensions.is_empty() {
+            ui.label(dimensions);
+        }
+        if let Some(profile) = &selected.profile {
+            ui.label(format!("Profile {}", profile.label()));
+        }
+        ui.label(match &selected.material {
+            Some(material) => format!("Material {}", material.label()),
+            None => "Material none".to_owned(),
+        });
+        ui.label(match selected.volume_mm3 {
+            Some(volume) => format!("Volume {:.3} m3 ({})", volume / 1e9, selected.volume_status),
+            None => format!("Volume none ({})", selected.volume_status),
+        });
+        ui.label(match selected.mass_kg {
+            Some(mass) => format!("Mass {mass:.3} kg ({})", selected.mass_status),
+            None => format!("Mass none ({})", selected.mass_status),
+        });
+        ui.label(format!(
+            "Translation {:.3}, {:.3}, {:.3} mm",
+            selected.translation_mm[0], selected.translation_mm[1], selected.translation_mm[2]
+        ));
+        // The typed patch; every field left as it came changes nothing.
+        ui.separator();
+        ui.label("Edit (empty fields change nothing):");
+        let materials = self.tools.definitions.materials.clone();
+        let store = self.source.store.clone();
+        let busy = self.props.busy() || self.mutating;
+        field(ui, "Name", &mut self.props.form.name, 140.0);
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("edit-material")
+                .width(200.0)
+                .selected_text(match &self.props.form.material {
+                    MaterialEdit::Keep => "keep current".to_owned(),
+                    MaterialEdit::Clear => "none".to_owned(),
+                    MaterialEdit::Set(digest) => materials
+                        .iter()
+                        .find(|choice| &choice.digest == digest)
+                        .map_or_else(
+                            || format!("…{}", digest.get(..8).unwrap_or(digest)),
+                            |choice| choice.label.clone(),
+                        ),
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.props.form.material,
+                        MaterialEdit::Keep,
+                        "keep current",
+                    );
+                    ui.selectable_value(
+                        &mut self.props.form.material,
+                        MaterialEdit::Clear,
+                        "none (remove the material)",
+                    );
+                    for choice in &materials {
+                        ui.selectable_value(
+                            &mut self.props.form.material,
+                            MaterialEdit::Set(choice.digest.clone()),
+                            &choice.label,
+                        );
+                    }
+                });
+            ui.label("Material");
+        });
+        if selected.kind == "plate" {
+            field(ui, "Thickness", &mut self.props.form.thickness, 80.0);
+        }
+        ui.horizontal(|ui| {
+            ui.label("Translation");
+            for (axis, text) in ["X", "Y", "Z"]
+                .iter()
+                .zip(self.props.form.translation.iter_mut())
+            {
+                ui.label(*axis);
+                ui.add(
+                    egui::TextEdit::singleline(text)
+                        .desired_width(56.0)
+                        .char_limit(MAX_TEXT),
+                );
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(!busy, egui::Button::new("Preview"))
+                .clicked()
+            {
+                match self.props.preview(&store, &selected.element_id) {
+                    Ok(()) => self.props_note = None,
+                    Err(e) => {
+                        self.props.cancel();
+                        self.props_note = Some(Err(e.to_string()));
+                    }
+                }
+            }
+            let can_commit = self.props.can_commit(&store, &selected.element_id) && !self.mutating;
+            if ui
+                .add_enabled(can_commit, egui::Button::new("Commit"))
+                .clicked()
+            {
+                self.start_update();
+            }
+            if ui
+                .add_enabled(
+                    self.props.staged().is_some() && !busy,
+                    egui::Button::new("Cancel"),
+                )
+                .clicked()
+            {
+                self.props.cancel();
+                self.props_note = Some(Ok("Cancelled; nothing was published.".into()));
+            }
+        });
+        if let Some(staged) = self.props.staged() {
+            let current = self.props.can_commit(&store, &selected.element_id);
+            ui.label(format!(
+                "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line).",
+                staged.len()
+            ));
+            let list = staged
+                .iter()
+                .map(|argument| crate::json_string(argument))
+                .collect::<Vec<_>>()
+                .join("\n");
+            ui.add(egui::Label::new(egui::RichText::new(list).monospace()).wrap());
+            if !current {
+                ui.colored_label(RED, "The parameters changed: preview again.");
+            }
+        }
+        if self.props_job.is_some() {
+            ui.label("Running…");
+        }
+        match &self.props_note {
+            Some(Ok(message)) => {
+                ui.label(message);
+            }
+            Some(Err(message)) => {
+                ui.colored_label(RED, message);
+            }
+            None => {}
+        }
+    }
+
+    /// The personal workspace's publication panel: status, undo, redo and the fast-forward-only
+    /// publish, each the same CLI command a user types.
+    fn workspace_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Workspace");
+        let Some(workspace) = self.source.workspace.clone() else {
+            return;
+        };
+        match &self.ws_panel {
+            None => {
+                ui.label("Reading the workspace status…");
+            }
+            Some(Err(e)) => {
+                ui.colored_label(RED, e.to_string());
+            }
+            Some(Ok(panel)) => {
+                // Owned, so the button closures never hold a panel borrow.
+                let panel = panel.clone();
+                let (draft, draft_sequence) = &panel.state.draft_head;
+                let (published, published_sequence) = &panel.state.published_head;
+                ui.label(format!(
+                    "Draft head {}… (sequence {draft_sequence})",
+                    draft.get(..12).unwrap_or(draft)
+                ));
+                ui.label(format!(
+                    "Published head {}… (sequence {published_sequence})",
+                    published.get(..12).unwrap_or(published)
+                ));
+                ui.label(format!(
+                    "Unsent revisions: {}",
+                    panel.state.unsent_revisions
+                ));
+                if panel.state.base_is_current {
+                    ui.label("The published head is still the base.");
+                } else {
+                    ui.colored_label(
+                        RED,
+                        "The published head moved; publish is refused (BASE_REVISION_MISMATCH, fast-forward only).",
+                    );
+                }
+                ui.label(format!(
+                    "Undo units: {} | Redo units: {}",
+                    panel.undo_units, panel.redo_units
+                ));
+                let free = !self.mutating && self.ws_job.is_none();
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(free && panel.undo_units > 0, egui::Button::new("Undo"))
+                        .clicked()
+                    {
+                        self.start_workspace(props::draft_args("workspace-undo", &workspace.dir));
+                    }
+                    if ui
+                        .add_enabled(free && panel.redo_units > 0, egui::Button::new("Redo"))
+                        .clicked()
+                    {
+                        self.start_workspace(props::draft_args("workspace-redo", &workspace.dir));
+                    }
+                    if ui
+                        .add_enabled(
+                            free && panel.state.unsent_revisions > 0,
+                            egui::Button::new("Publish"),
+                        )
+                        .clicked()
+                    {
+                        self.start_workspace(props::workspace_args(
+                            "workspace-publish",
+                            &workspace.published,
+                            &workspace.dir,
+                        ));
+                    }
+                });
+                if self.ws_job.is_some() {
+                    ui.label("Running…");
+                }
+                match &self.ws_note {
+                    Some(Ok(message)) => {
+                        ui.label(message);
+                    }
+                    Some(Err(message)) => {
+                        ui.colored_label(RED, message);
+                    }
+                    None => {}
+                }
+            }
         }
     }
 
@@ -545,6 +1089,9 @@ impl eframe::App for App {
             )
         });
         self.poll_commit();
+        self.poll_update();
+        self.poll_workspace();
+        self.poll_select();
         self.poll_reload();
         if reload {
             self.reload();
@@ -568,6 +1115,33 @@ impl eframe::App for App {
             }
             let response =
                 ui.add(egui::Image::new((self.texture, size)).sense(egui::Sense::drag()));
+            // A click (no drag) picks: the engine's `pick` query along the ray the click looks
+            // through, so selection is the engine's, never a guess made here.
+            if response.clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                let rect = response.rect;
+                let ndc = [
+                    (pos.x - rect.left()) / rect.width().max(1.0) * 2.0 - 1.0,
+                    1.0 - (pos.y - rect.top()) / rect.height().max(1.0) * 2.0,
+                ];
+                let aspect = self.aspect();
+                if let Ok(view) = self.camera.view(aspect)
+                    && let Some((origin, direction)) = view.pick_ray(ndc)
+                {
+                    // The scene is recentred for display; the engine measures in the store's
+                    // coordinates, so the ray origin moves back by the scene origin.
+                    let shift = self.loaded.as_ref().map_or([0.0; 3], |l| l.scene.origin_mm);
+                    self.start_select(
+                        [
+                            origin[0] + shift[0],
+                            origin[1] + shift[1],
+                            origin[2] + shift[2],
+                        ],
+                        direction,
+                    );
+                }
+            }
             let delta = ui.input(|i| i.pointer.delta());
             let orbit = if response.dragged_by(egui::PointerButton::Primary) {
                 [delta.x * 0.008, -delta.y * 0.008]

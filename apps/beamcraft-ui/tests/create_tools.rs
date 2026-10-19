@@ -394,7 +394,7 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     let stores = Stores::new();
     let ui = stores.ui();
     let refresh = |cli: PathBuf, store: PathBuf| {
-        std::thread::spawn(move || source::reload(&cli, &store))
+        std::thread::spawn(move || source::reload(&cli, &store, None, None))
             .join()
             .unwrap()
     };
