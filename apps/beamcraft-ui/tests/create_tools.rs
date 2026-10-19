@@ -237,13 +237,14 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
         );
     }
 
-    // The choices come from the store's definitions, as the panel lists them.
+    // The choices come from the store's definitions, as the panel lists them: the generated
+    // display name (A07.2) leads, the dimensions follow.
     let definitions = command::definitions(&cli, &ui).unwrap();
     assert_eq!(definitions.profiles.len(), 1);
     assert_eq!(definitions.materials.len(), 1);
     assert_eq!(
         definitions.profiles[0].label.split(" (").next(),
-        Some("rectangle 200 x 300 mm")
+        Some("RECT 200x300 200 x 300 mm")
     );
     let profile = definitions.profiles[0].digest.clone();
     let material = definitions.materials[0].digest.clone();
