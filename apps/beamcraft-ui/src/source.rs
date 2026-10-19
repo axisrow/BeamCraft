@@ -6,7 +6,7 @@
 //! The viewport never opens USD itself and never trusts the bytes it receives.
 
 use crate::scene::Scene;
-use crate::tools::{Definitions, ToolError};
+use crate::tools::{Definitions, ToolError, parse_definitions};
 use crate::{Error, command};
 use beamcraft_engine::query::bundle::max_bundle_bytes;
 use beamcraft_engine::{Limits, Representation, ViewSnapshot};
@@ -42,16 +42,20 @@ pub fn load_within(cli: &Path, store: &Path, deadline: Duration) -> Result<ViewS
     let output = command::run_capped(cli, &args, deadline, cap).map_err(export_error)?;
     if output.code != Some(0) {
         // A rejection is one JSON object; report its stable code only.
-        let text = String::from_utf8_lossy(&output.stdout);
-        let code = text
-            .split("\"code\":\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
-            .filter(|c| c.len() <= 32 && c.bytes().all(|b| b.is_ascii_uppercase() || b == b'_'))
-            .unwrap_or("UNKNOWN");
-        return Err(Error::Cli(format!("view-export rejected: {code}")));
+        return Err(rejected(&output.stdout));
     }
     Ok(ViewSnapshot::from_bundle(&output.stdout, &limits)?)
+}
+
+fn rejected(bytes: &[u8]) -> Error {
+    let text = String::from_utf8_lossy(bytes);
+    let code = text
+        .split("\"code\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .filter(|c| c.len() <= 32 && c.bytes().all(|b| b.is_ascii_uppercase() || b == b'_'))
+        .unwrap_or("UNKNOWN");
+    Error::Cli(format!("view-export rejected: {code}"))
 }
 
 /// A runner failure (no CLI, deadline, oversize output) as the viewport's typed error.
@@ -76,14 +80,56 @@ pub struct Reloaded {
     pub definitions: Result<Definitions, ToolError>,
 }
 
-/// Runs the CLI queries of one refresh (blocking; call it off the UI thread).
+/// Runs one pinned CLI inspection for geometry and definitions (blocking; call off the UI thread).
 pub fn reload(cli: &Path, store: &Path) -> Reloaded {
-    let scene = load(cli, store).and_then(|snapshot| {
-        let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        Ok((snapshot, scene))
-    });
+    let limits = Limits::default();
+    let snapshot_cap = max_bundle_bytes(&limits);
+    let cap = beamcraft_protocol::refresh::max_bytes(snapshot_cap).unwrap_or(0);
+    let args = [
+        "view-export".into(),
+        "--store".into(),
+        store.to_string_lossy().into_owned(),
+        "--out".into(),
+        "-".into(),
+        "--include-definitions".into(),
+        "true".into(),
+    ];
+    let output = match command::run_capped(cli, &args, command::DEADLINE, cap) {
+        Ok(output) => output,
+        Err(error) => {
+            return Reloaded {
+                scene: Err(Error::Cli(format!("view-export failed: {}", error.code))),
+                definitions: Err(error),
+            };
+        }
+    };
+    if output.code != Some(0) {
+        return Reloaded {
+            scene: Err(rejected(&output.stdout)),
+            definitions: parse_definitions(output.code, &output.stdout),
+        };
+    }
+    let (bundle, metadata) = match beamcraft_protocol::refresh::decode(&output.stdout, snapshot_cap)
+    {
+        Ok(parts) => parts,
+        Err(message) => {
+            return Reloaded {
+                scene: Err(Error::Input(message)),
+                definitions: Err(ToolError {
+                    code: "UNREADABLE_REPLY".into(),
+                    message: message.into(),
+                }),
+            };
+        }
+    };
+    let scene = ViewSnapshot::from_bundle(bundle, &limits)
+        .map_err(Error::View)
+        .and_then(|snapshot| {
+            let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
+            Ok((snapshot, scene))
+        });
     Reloaded {
         scene,
-        definitions: command::definitions(cli, store),
+        definitions: parse_definitions(Some(0), metadata),
     }
 }

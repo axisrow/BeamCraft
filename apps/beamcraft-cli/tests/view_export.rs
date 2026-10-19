@@ -86,6 +86,39 @@ fn the_bundle_is_the_engine_snapshot_of_the_head() {
     let token = text(inspected.get("snapshot").unwrap(), "token");
     assert_eq!(snapshot.token().as_str(), token);
 
+    // Opt-in refresh transports the identical old bundle and the existing definitions page.
+    let (code, refresh) = run(&[
+        "view-export",
+        "--store",
+        store,
+        "--out",
+        "-",
+        "--include-definitions",
+        "true",
+    ]);
+    assert_eq!(code, 0);
+    let (embedded, metadata) = beamcraft_protocol::refresh::decode(
+        &refresh,
+        beamcraft_engine::query::bundle::max_bundle_bytes(&Limits::default()),
+    )
+    .unwrap();
+    assert_eq!(embedded, bundle);
+    let (code, definitions) = run(&["definitions", "--store", store]);
+    assert_eq!(code, 0);
+    assert_eq!(json_of(metadata), json_of(&definitions));
+    let file_refresh = root.join("refresh.bin");
+    let (code, _) = run(&[
+        "view-export",
+        "--store",
+        store,
+        "--out",
+        file_refresh.to_str().unwrap(),
+        "--include-definitions",
+        "true",
+    ]);
+    assert_eq!(code, 0);
+    assert_eq!(fs::read(file_refresh).unwrap(), refresh);
+
     let file = root.join("view.bin");
     let file = file.to_str().unwrap();
     let (code, summary) = run(&["view-export", "--store", store, "--out", file]);
@@ -121,6 +154,26 @@ fn a_store_without_a_revision_and_bad_options_are_refused() {
             "x",
         ],
         vec!["view-export", "--out", "-"],
+        vec![
+            "view-export",
+            "--store",
+            store,
+            "--out",
+            "-",
+            "--include-definitions",
+            "false",
+        ],
+        vec![
+            "view-export",
+            "--store",
+            store,
+            "--out",
+            "-",
+            "--include-definitions",
+            "true",
+            "--include-definitions",
+            "true",
+        ],
     ] {
         let (code, body) = run(&args);
         assert_eq!(code, 2, "{args:?}");

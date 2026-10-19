@@ -61,13 +61,15 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 4 {
+    if !args.len().is_multiple_of(2) || args.len() > 6 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
     for pair in args.as_chunks::<2>().0 {
         let [key, value] = pair;
-        if !matches!(*key, "--store" | "--out") || options.insert(*key, *value).is_some() {
+        if !matches!(*key, "--store" | "--out" | "--include-definitions")
+            || options.insert(*key, *value).is_some()
+        {
             return Err(invalid("unknown or repeated option"));
         }
     }
@@ -77,6 +79,11 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
     let out = options
         .get("--out")
         .ok_or_else(|| invalid("--out is required"))?;
+    let include_definitions = match options.get("--include-definitions") {
+        None => false,
+        Some(&"true") => true,
+        _ => return Err(invalid("--include-definitions must be true")),
+    };
     let blobs = BlobStore::new(store).map_err(|e| PlateError {
         code: e.code(),
         message: "store root is not usable",
@@ -87,6 +94,29 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         code: e.f04_code(),
         message: "the view snapshot could not be bundled",
     })?;
+    let bundle = if include_definitions {
+        // Definitions and geometry come from the same verified inspection, not a second read
+        // of a potentially newer head. A metadata failure does not discard valid geometry.
+        let definitions = crate::plate_cmd::definitions_json(&inspection, &BTreeMap::new())
+            .unwrap_or_else(|e| {
+                Json::object([
+                    ("outcome", Json::text("rejected")),
+                    ("code", Json::text(e.code.as_str())),
+                    ("message", Json::text(e.message)),
+                ])
+            });
+        let metadata = definitions
+            .encode(&beamcraft_protocol::message::read_limits())
+            .map_err(|_| invalid("definitions could not be encoded"))?;
+        beamcraft_protocol::refresh::encode(
+            &bundle,
+            &metadata,
+            beamcraft_engine::query::bundle::max_bundle_bytes(&beamcraft_engine::Limits::default()),
+        )
+        .map_err(invalid)?
+    } else {
+        bundle
+    };
     if *out == "-" {
         return Ok(Output::Raw(bundle));
     }

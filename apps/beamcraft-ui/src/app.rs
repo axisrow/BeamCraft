@@ -4,9 +4,9 @@
 //! The eframe window: a side panel with the revision, counts, units and adapter, and the viewport
 //! with orbit (primary drag), pan (secondary drag), zoom (wheel), fit (F) and reload (R).
 
-use crate::camera::Camera;
+use crate::camera::{Camera, View};
 use crate::render::{Renderer, Uploaded};
-use crate::scene::Scene;
+use crate::scene::SceneInfo;
 use crate::source::Reloaded;
 use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, source};
@@ -26,7 +26,7 @@ pub struct Source {
 
 struct Loaded {
     snapshot: ViewSnapshot,
-    scene: Scene,
+    scene: SceneInfo,
     uploaded: Uploaded,
 }
 
@@ -51,6 +51,21 @@ pub struct App {
     tool_note: Option<Result<String, String>>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
+    context: egui::Context,
+    last_view: Option<View>,
+}
+
+/// Wake the event loop after the task (including its sender) has finished or unwound.
+/// A disconnected worker must also be observed without periodic polling.
+fn run_and_wake(context: egui::Context, task: impl FnOnce()) {
+    struct Wake(egui::Context);
+    impl Drop for Wake {
+        fn drop(&mut self) {
+            self.0.request_repaint();
+        }
+    }
+    let _wake = Wake(context);
+    task();
 }
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
@@ -193,6 +208,8 @@ impl App {
             reload_queued: false,
             tool_note: None,
             refresh_error: None,
+            context: cc.egui_ctx.clone(),
+            last_view: None,
         };
         app.reload();
         Ok(app)
@@ -208,10 +225,13 @@ impl App {
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
+        let context = self.context.clone();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(&cli, &store));
+                run_and_wake(context, move || {
+                    let _ = tx.send(source::reload(&cli, &store));
+                });
             });
         match spawned {
             Ok(_) => self.reload_job = Some(rx),
@@ -233,24 +253,32 @@ impl App {
         self.reload_job = None;
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
         let result = reloaded.scene.and_then(|(snapshot, scene)| {
+            let (target, extent) = scene.framing();
+            let mut camera = self.camera;
+            camera.fit(target, extent, self.aspect())?;
+            // Compare validated content, not just its hash: an unchanged refresh needs no
+            // replacement GPU buffers. Keep camera fitting and definition refresh semantics.
+            if self.loaded.as_ref().is_some_and(|l| l.snapshot == snapshot) {
+                return Ok((None, camera));
+            }
             let uploaded = Uploaded::new(&self.state.device, &self.state.queue, &scene)?;
-            Ok(Loaded {
-                snapshot,
-                scene,
-                uploaded,
-            })
+            Ok((
+                Some(Loaded {
+                    snapshot,
+                    scene: scene.info(),
+                    uploaded,
+                }),
+                camera,
+            ))
         });
         match result {
-            Ok(loaded) => {
-                let (target, extent) = loaded.scene.framing();
-                // A scene the camera cannot frame keeps the previous scene and shows why.
-                match self.camera.fit(target, extent, self.aspect()) {
-                    Ok(()) => {
-                        self.loaded = Some(loaded);
-                        self.error = None;
-                    }
-                    Err(e) => self.error = Some(e.to_string()),
+            Ok((loaded, camera)) => {
+                self.camera = camera;
+                if let Some(loaded) = loaded {
+                    self.loaded = Some(loaded);
+                    self.last_view = None;
                 }
+                self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
         }
@@ -266,17 +294,17 @@ impl App {
         if width == self.renderer.width && height == self.renderer.height {
             return Ok(());
         }
-        let renderer = Renderer::new(&self.state.adapter, &self.state.device, width, height)?;
+        self.renderer.resize(&self.state.device, width, height)?;
         self.state
             .renderer
             .write()
             .update_egui_texture_from_wgpu_texture(
                 &self.state.device,
-                &renderer.view,
+                &self.renderer.view,
                 wgpu::FilterMode::Linear,
                 self.texture,
             );
-        self.renderer = renderer;
+        self.last_view = None;
         Ok(())
     }
 
@@ -293,13 +321,16 @@ impl App {
             return;
         };
         let cli = self.source.cli.clone();
+        let context = self.context.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.job = Some(rx);
         self.tool_note = None;
         let spawned = std::thread::Builder::new()
             .name("beamcraft-command".into())
             .spawn(move || {
-                let _ = tx.send(command::commit(&cli, &prepared));
+                run_and_wake(context, move || {
+                    let _ = tx.send(command::commit(&cli, &prepared));
+                });
             });
         if spawned.is_err() {
             self.job = None;
@@ -362,8 +393,8 @@ impl App {
             ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
         });
         ui.label("Dimensions in mm.");
-        let materials = self.tools.definitions.materials.clone();
-        let profiles = self.tools.definitions.profiles.clone();
+        let materials = &self.tools.definitions.materials;
+        let profiles = &self.tools.definitions.profiles;
         match self.tools.active {
             ToolKind::Plate => {
                 let form = &mut self.tools.plate;
@@ -376,7 +407,7 @@ impl App {
                     "plate-material",
                     "Material",
                     &mut form.material,
-                    &materials,
+                    materials,
                     false,
                 );
             }
@@ -405,7 +436,7 @@ impl App {
                     "member-profile",
                     "Profile",
                     &mut form.profile,
-                    &profiles,
+                    profiles,
                     true,
                 );
                 choice_combo(
@@ -413,7 +444,7 @@ impl App {
                     "member-material",
                     "Material",
                     &mut form.material,
-                    &materials,
+                    materials,
                     false,
                 );
                 if profiles.is_empty() {
@@ -489,7 +520,7 @@ impl App {
 
     fn info(&self, ui: &mut egui::Ui) {
         ui.heading("BeamCraft");
-        ui.label(format!("{:.0} FPS", self.fps));
+        ui.label(format!("{:.0} UI updates/s while active", self.fps));
         ui.label(&self.adapter);
         ui.label(format!("{}x MSAA", self.renderer.samples));
         ui.separator();
@@ -592,18 +623,55 @@ impl eframe::App for App {
                 .and_then(|()| self.camera.view(aspect))
             {
                 Ok(view) => {
-                    if let Some(l) = &self.loaded {
+                    if let Some(l) = &self.loaded
+                        && self.last_view != Some(view)
+                    {
                         self.renderer.draw(
                             &self.state.device,
                             &self.state.queue,
                             &l.uploaded,
                             view,
                         );
+                        self.last_view = Some(view);
                     }
                 }
                 Err(e) => self.error = Some(e.to_string()),
             }
         });
-        ui.ctx().request_repaint();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn sleeping_event_loop_is_woken_after_worker_success_or_unwind() {
+        for fail in [false, true] {
+            let context = egui::Context::default();
+            for _ in 0..4 {
+                let _ = context.run_ui(egui::RawInput::default(), |_| {});
+            }
+            let (tx, rx) = std::sync::mpsc::channel::<()>();
+            let rx = Mutex::new(rx);
+            let observed = Arc::new(Mutex::new(false));
+            let wake_observed = observed.clone();
+            context.set_request_repaint_callback(move |_| {
+                // The worker's sender must already be gone even when the task panics.
+                *wake_observed.lock().unwrap() = matches!(
+                    rx.lock().unwrap().try_recv(),
+                    Err(TryRecvError::Disconnected)
+                );
+            });
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_and_wake(context, move || {
+                    let _sender = tx;
+                    assert!(!fail, "synthetic worker failure");
+                });
+            }));
+            assert_eq!(result.is_err(), fail);
+            assert!(*observed.lock().unwrap());
+        }
     }
 }

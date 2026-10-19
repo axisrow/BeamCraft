@@ -51,6 +51,20 @@ pub struct Scene {
     pub triangles: u64,
 }
 
+/// Small, buffer-free description retained by a window after uploading a [`Scene`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SceneInfo {
+    /// Engineering bounds relative to the display origin, millimetres.
+    pub min: [f32; 3],
+    /// Engineering bounds relative to the display origin, millimetres.
+    pub max: [f32; 3],
+    /// Number of elements drawn.
+    pub elements: usize,
+    /// Number of triangles drawn over all instances.
+    pub triangles: u64,
+    counts: (usize, u64),
+}
+
 fn read<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N], Error> {
     let end = offset.checked_add(N).ok_or(Error::Input("mesh offset"))?;
     bytes
@@ -241,6 +255,35 @@ impl Scene {
 
     /// Centre and size of the bounds, for camera framing.
     pub fn framing(&self) -> ([f32; 3], f32) {
+        self.info().framing()
+    }
+
+    /// Metadata needed after upload, without retaining expanded vertices or instances.
+    pub fn info(&self) -> SceneInfo {
+        SceneInfo {
+            min: self.min,
+            max: self.max,
+            elements: self.elements,
+            triangles: self.triangles,
+            counts: self.counts(),
+        }
+    }
+
+    /// Distinct meshes and instances in total.
+    pub fn counts(&self) -> (usize, u64) {
+        (
+            self.meshes.len(),
+            self.meshes
+                .iter()
+                .map(|m| u64::from(m.instance_count))
+                .sum(),
+        )
+    }
+}
+
+impl SceneInfo {
+    /// Centre and size of the bounds, for camera framing.
+    pub fn framing(&self) -> ([f32; 3], f32) {
         let centre = [
             (self.min[0] + self.max[0]) / 2.0,
             (self.min[1] + self.max[1]) / 2.0,
@@ -257,13 +300,7 @@ impl Scene {
 
     /// Distinct meshes and instances in total.
     pub fn counts(&self) -> (usize, u64) {
-        (
-            self.meshes.len(),
-            self.meshes
-                .iter()
-                .map(|m| u64::from(m.instance_count))
-                .sum(),
-        )
+        self.counts
     }
 }
 
@@ -303,6 +340,21 @@ mod tests {
         }
         let (_, extent) = scene.framing();
         assert!(extent > 1.0);
+    }
+
+    #[test]
+    fn upload_metadata_survives_dropping_all_display_buffers() {
+        let scene = Scene::from_snapshot(&snapshot(30), Representation::Full).unwrap();
+        let framing = scene.framing();
+        let counts = scene.counts();
+        let info = scene.info();
+        assert!(scene.meshes.iter().any(|m| !m.vertices.is_empty()));
+        drop(scene);
+        assert_eq!(info.framing(), framing);
+        assert_eq!(info.counts(), counts);
+        assert_eq!(info.elements, 30);
+        assert_eq!(info.triangles, 360);
+        assert!(std::mem::size_of_val(&info) <= 80);
     }
 
     #[test]

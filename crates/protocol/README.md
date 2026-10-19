@@ -4,6 +4,13 @@ The original F05 `frame`, `limits` and `code` APIs remain unchanged. U04 adds `j
 `message` for an experimental read-only Rust-worker profile. This crate still performs no
 I/O, process launch or filesystem access. It is desktop-native, per the WS amendment.
 
+`refresh` is a separate opt-in CLI export envelope, not a worker-protocol frame: ASCII
+`BCREFR01`, little-endian u64 snapshot length, little-endian u64 metadata length, exact engine
+bundle bytes, then definitions JSON. There are no trailing bytes. The caller supplies the
+engine bundle cap; metadata is capped at 1 MiB. Lengths and checked arithmetic are validated
+before payload access or allocation. Decode borrows both sections; engine and JSON consumers
+still perform their own full validation. This adds no engine-to-protocol dependency.
+
 `json::decode` scans complete capped UTF-8 before constructing a bounded tree. It checks
 grammar, depth, decoded strings, tokens, a conservative scratch reservation, numeric
 overflow/nonzero underflow, escapes and surrogate pairs; tree construction rejects duplicate

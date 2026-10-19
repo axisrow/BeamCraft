@@ -1,0 +1,16 @@
+{
+  "kind": "contributor-original display-only polygon-prism stress fixture",
+  "not_native_store": true,
+  "elements": 1000,
+  "meshes": 1000,
+  "sides": 512,
+  "vertices_per_mesh": 1024,
+  "triangles_per_mesh": 2044,
+  "projected_triangles": 2044000,
+  "raw_mesh_bytes": 53224000,
+  "expanded_vertex_bytes": 147168000,
+  "instance_bytes": 12000,
+  "bundle_bytes": 53277088,
+  "bundle_sha256": "bc78e409825385f1bcb0a9c565bf3be2c37f20b832cf2553e326fdda835ce963",
+  "snapshot_token": "vs1-ca4fb8c9a14d3f3f72beed90deb54ff3a4898765602c9769d62d01908ae4fb10"
+}

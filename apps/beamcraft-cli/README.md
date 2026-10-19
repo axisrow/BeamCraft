@@ -9,6 +9,15 @@ a socket or a service. The SDK fallback and the worker mutation protocol are una
 This is an experimental read path, not complete LEW-03/F05 admission.
 
 Build offline with `cargo build --offline -p beamcraft-cli --bins`.
+
+The native viewport export `beamcraft view-export --store ROOT --out -` retains its raw
+`BCVIEW01` bundle format. Opt in with `--include-definitions true` to receive a bounded
+`BCREFR01` envelope containing that exact bundle and the existing default definitions page
+(at most 64 entries, with its continuation metadata), both from one verified inspection.
+`--out FILE` supports either format and never overwrites an existing file. See
+[`beamcraft-protocol::refresh`](../../crates/protocol/README.md) for framing. This is independent
+of the experimental USD-worker protocol.
+
 `beamcraft --help` describes the bounded arguments. Example argument shape:
 
 ```text

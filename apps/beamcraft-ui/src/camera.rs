@@ -12,7 +12,7 @@ pub struct Camera {
     distance: f32,
 }
 /// Validated camera basis; four-component vectors match WGSL uniform alignment.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct View {
     /// Screen right and padding.
     pub right: [f32; 4],

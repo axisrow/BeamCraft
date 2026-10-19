@@ -1,0 +1,37 @@
+{
+  "baseline_commit": "11a213976ec592bf031f51b0bbdd35bcdcaf1776",
+  "branch": "bug/26-cpu-memory",
+  "rust_image": "rust:1.96.0-slim-trixie@sha256:c37af730be4fd8104cbf9aedbd6ab259e51ca2d5437817a0f8680edf66ac6c28",
+  "built_image": "sha256:c1d6b2cfc3845609cb234a3d75541f5978da1116a39bd9f47400811ff54e9dfe",
+  "environment": "Managed cloud container, Debian 13, Vulkan CPU llvmpipe, Xvfb :99 1920x1200x24",
+  "cpu_quota": 2,
+  "memory_limit_bytes": 7516192768,
+  "LP_NUM_THREADS": 2,
+  "release_build": "cargo build --locked --release -p beamcraft-ui -p beamcraft-cli -j 2",
+  "warmup_s": 10,
+  "phase_duration_requested_s": 3,
+  "independent_process_runs": 5,
+  "notes": [
+    "Initial two-second-warmup pilot runs were discarded before the final series.",
+    "Display pilot series that did not always finish asynchronous refresh were also discarded. Final display runs explicitly wait for complete CLI call sets and ten additional seconds before final idle, and sample memory throughout that wait.",
+    "No compilation or tests overlapped the final window measurement series.",
+    "The container received Git after the baseline series to run cargo-deny; application libraries and graphics drivers were unchanged."
+  ],
+  "before_binaries": {
+    "beamcraft": "ba666668377bb4363d53099f83642b8b8e6cee07ae2ebcbbcb42c6b65227d24b",
+    "beamcraft-ui": "9adbd034a15d0e804b99e5ae1a00a6008fbcf4518d0d6f58e99d1fad151805f8"
+  },
+  "after_binaries": {
+    "beamcraft": "782250deb4c37adc7ad389aaf63bcaaf928853753f13f4015de6b83ed96455d8",
+    "beamcraft-ui": "6717b14394f39fbb66d369d0b0f17c8383ce7cc08638c93f35938700ea55cbfc"
+  },
+  "cargo_deny": {
+    "version": "0.20.2",
+    "official_release": "https://github.com/EmbarkStudios/cargo-deny/releases/tag/0.20.2",
+    "archive_sha256": "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+  },
+  "initial_window_pixels": [
+    1400,
+    900
+  ]
+}

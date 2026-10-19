@@ -84,6 +84,39 @@ fn an_engine_snapshot_renders_lit_geometry_on_a_background() {
     assert!(is_lit(centre), "lit plate {centre:?}");
 }
 
+#[test]
+fn resizing_targets_preserves_pixels_and_invalid_sizes_preserve_the_old_target() {
+    let Some(gpu) = gpu() else { return };
+    let pin = ViewPin::new(Sha256::digest(b"resize").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene).unwrap();
+    let (target, extent) = scene.framing();
+    let mut renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128).unwrap();
+    for (width, height) in [(160, 96), (96, 160), (128, 128)] {
+        renderer.resize(&gpu.device, width, height).unwrap();
+        assert!(renderer.resize(&gpu.device, 0, height).is_err());
+        assert!(renderer.resize(&gpu.device, 4097, height).is_err());
+        assert_eq!((renderer.width, renderer.height), (width, height));
+        let fresh = Renderer::new(&gpu.adapter, &gpu.device, width, height).unwrap();
+        let view = Camera::new(target, extent, width as f32 / height as f32)
+            .unwrap()
+            .view(width as f32 / height as f32)
+            .unwrap();
+        let mut pixels = Vec::new();
+        for r in [&renderer, &fresh] {
+            wait(
+                &gpu.device,
+                r.draw(&gpu.device, &gpu.queue, &uploaded, view),
+            )
+            .unwrap();
+            pixels.push(r.readback(&gpu.device, &gpu.queue).unwrap());
+        }
+        assert_eq!(pixels[0], pixels[1]);
+    }
+}
+
 fn cli() -> Option<PathBuf> {
     let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
     let cli = ui

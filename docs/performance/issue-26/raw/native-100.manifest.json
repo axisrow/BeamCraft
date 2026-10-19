@@ -1,0 +1,2046 @@
+{
+  "kind": "contributor-original native store created through beamcraft CLI",
+  "elements": 100,
+  "materials": 32,
+  "profiles": 32,
+  "bundle_sha256": "7d5a987257e8c99813003c335bd9334605c092b04f1f0ab113d569c5654c5757",
+  "bundle_bytes": 5384,
+  "commands": [
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7850",
+        "--grade",
+        "PerfMaterial00",
+        "--name",
+        "PerfMaterial00"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "100",
+        "--height",
+        "200",
+        "--designation",
+        "PerfProfile00",
+        "--name",
+        "PerfProfile00"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7851",
+        "--grade",
+        "PerfMaterial01",
+        "--name",
+        "PerfMaterial01"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "101",
+        "--height",
+        "201",
+        "--designation",
+        "PerfProfile01",
+        "--name",
+        "PerfProfile01"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7852",
+        "--grade",
+        "PerfMaterial02",
+        "--name",
+        "PerfMaterial02"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "102",
+        "--height",
+        "202",
+        "--designation",
+        "PerfProfile02",
+        "--name",
+        "PerfProfile02"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7853",
+        "--grade",
+        "PerfMaterial03",
+        "--name",
+        "PerfMaterial03"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "103",
+        "--height",
+        "203",
+        "--designation",
+        "PerfProfile03",
+        "--name",
+        "PerfProfile03"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7854",
+        "--grade",
+        "PerfMaterial04",
+        "--name",
+        "PerfMaterial04"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "104",
+        "--height",
+        "204",
+        "--designation",
+        "PerfProfile04",
+        "--name",
+        "PerfProfile04"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7855",
+        "--grade",
+        "PerfMaterial05",
+        "--name",
+        "PerfMaterial05"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "105",
+        "--height",
+        "205",
+        "--designation",
+        "PerfProfile05",
+        "--name",
+        "PerfProfile05"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7856",
+        "--grade",
+        "PerfMaterial06",
+        "--name",
+        "PerfMaterial06"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "106",
+        "--height",
+        "206",
+        "--designation",
+        "PerfProfile06",
+        "--name",
+        "PerfProfile06"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7857",
+        "--grade",
+        "PerfMaterial07",
+        "--name",
+        "PerfMaterial07"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "107",
+        "--height",
+        "207",
+        "--designation",
+        "PerfProfile07",
+        "--name",
+        "PerfProfile07"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7858",
+        "--grade",
+        "PerfMaterial08",
+        "--name",
+        "PerfMaterial08"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "108",
+        "--height",
+        "208",
+        "--designation",
+        "PerfProfile08",
+        "--name",
+        "PerfProfile08"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7859",
+        "--grade",
+        "PerfMaterial09",
+        "--name",
+        "PerfMaterial09"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "109",
+        "--height",
+        "209",
+        "--designation",
+        "PerfProfile09",
+        "--name",
+        "PerfProfile09"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7860",
+        "--grade",
+        "PerfMaterial10",
+        "--name",
+        "PerfMaterial10"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "110",
+        "--height",
+        "210",
+        "--designation",
+        "PerfProfile10",
+        "--name",
+        "PerfProfile10"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7861",
+        "--grade",
+        "PerfMaterial11",
+        "--name",
+        "PerfMaterial11"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "111",
+        "--height",
+        "211",
+        "--designation",
+        "PerfProfile11",
+        "--name",
+        "PerfProfile11"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7862",
+        "--grade",
+        "PerfMaterial12",
+        "--name",
+        "PerfMaterial12"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "112",
+        "--height",
+        "212",
+        "--designation",
+        "PerfProfile12",
+        "--name",
+        "PerfProfile12"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7863",
+        "--grade",
+        "PerfMaterial13",
+        "--name",
+        "PerfMaterial13"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "113",
+        "--height",
+        "213",
+        "--designation",
+        "PerfProfile13",
+        "--name",
+        "PerfProfile13"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7864",
+        "--grade",
+        "PerfMaterial14",
+        "--name",
+        "PerfMaterial14"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "114",
+        "--height",
+        "214",
+        "--designation",
+        "PerfProfile14",
+        "--name",
+        "PerfProfile14"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7865",
+        "--grade",
+        "PerfMaterial15",
+        "--name",
+        "PerfMaterial15"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "115",
+        "--height",
+        "215",
+        "--designation",
+        "PerfProfile15",
+        "--name",
+        "PerfProfile15"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7866",
+        "--grade",
+        "PerfMaterial16",
+        "--name",
+        "PerfMaterial16"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "116",
+        "--height",
+        "216",
+        "--designation",
+        "PerfProfile16",
+        "--name",
+        "PerfProfile16"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7867",
+        "--grade",
+        "PerfMaterial17",
+        "--name",
+        "PerfMaterial17"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "117",
+        "--height",
+        "217",
+        "--designation",
+        "PerfProfile17",
+        "--name",
+        "PerfProfile17"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7868",
+        "--grade",
+        "PerfMaterial18",
+        "--name",
+        "PerfMaterial18"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "118",
+        "--height",
+        "218",
+        "--designation",
+        "PerfProfile18",
+        "--name",
+        "PerfProfile18"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7869",
+        "--grade",
+        "PerfMaterial19",
+        "--name",
+        "PerfMaterial19"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "119",
+        "--height",
+        "219",
+        "--designation",
+        "PerfProfile19",
+        "--name",
+        "PerfProfile19"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7870",
+        "--grade",
+        "PerfMaterial20",
+        "--name",
+        "PerfMaterial20"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "120",
+        "--height",
+        "220",
+        "--designation",
+        "PerfProfile20",
+        "--name",
+        "PerfProfile20"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7871",
+        "--grade",
+        "PerfMaterial21",
+        "--name",
+        "PerfMaterial21"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "121",
+        "--height",
+        "221",
+        "--designation",
+        "PerfProfile21",
+        "--name",
+        "PerfProfile21"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7872",
+        "--grade",
+        "PerfMaterial22",
+        "--name",
+        "PerfMaterial22"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "122",
+        "--height",
+        "222",
+        "--designation",
+        "PerfProfile22",
+        "--name",
+        "PerfProfile22"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7873",
+        "--grade",
+        "PerfMaterial23",
+        "--name",
+        "PerfMaterial23"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "123",
+        "--height",
+        "223",
+        "--designation",
+        "PerfProfile23",
+        "--name",
+        "PerfProfile23"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7874",
+        "--grade",
+        "PerfMaterial24",
+        "--name",
+        "PerfMaterial24"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "124",
+        "--height",
+        "224",
+        "--designation",
+        "PerfProfile24",
+        "--name",
+        "PerfProfile24"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7875",
+        "--grade",
+        "PerfMaterial25",
+        "--name",
+        "PerfMaterial25"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "125",
+        "--height",
+        "225",
+        "--designation",
+        "PerfProfile25",
+        "--name",
+        "PerfProfile25"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7876",
+        "--grade",
+        "PerfMaterial26",
+        "--name",
+        "PerfMaterial26"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "126",
+        "--height",
+        "226",
+        "--designation",
+        "PerfProfile26",
+        "--name",
+        "PerfProfile26"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7877",
+        "--grade",
+        "PerfMaterial27",
+        "--name",
+        "PerfMaterial27"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "127",
+        "--height",
+        "227",
+        "--designation",
+        "PerfProfile27",
+        "--name",
+        "PerfProfile27"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7878",
+        "--grade",
+        "PerfMaterial28",
+        "--name",
+        "PerfMaterial28"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "128",
+        "--height",
+        "228",
+        "--designation",
+        "PerfProfile28",
+        "--name",
+        "PerfProfile28"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7879",
+        "--grade",
+        "PerfMaterial29",
+        "--name",
+        "PerfMaterial29"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "129",
+        "--height",
+        "229",
+        "--designation",
+        "PerfProfile29",
+        "--name",
+        "PerfProfile29"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7880",
+        "--grade",
+        "PerfMaterial30",
+        "--name",
+        "PerfMaterial30"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "130",
+        "--height",
+        "230",
+        "--designation",
+        "PerfProfile30",
+        "--name",
+        "PerfProfile30"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-material",
+        "--density",
+        "7881",
+        "--grade",
+        "PerfMaterial31",
+        "--name",
+        "PerfMaterial31"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "define-profile",
+        "--width",
+        "131",
+        "--height",
+        "231",
+        "--designation",
+        "PerfProfile31",
+        "--name",
+        "PerfProfile31"
+      ],
+      "outcome": "definition_created"
+    },
+    {
+      "arguments": [
+        "create-plate",
+        "--width",
+        "1000",
+        "--length",
+        "500",
+        "--thickness",
+        "10",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000000",
+        "--material",
+        "PerfMaterial00"
+      ],
+      "outcome": "plate_created"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000001",
+        "--offset",
+        "1200,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000002",
+        "--offset",
+        "2400,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000003",
+        "--offset",
+        "3600,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000004",
+        "--offset",
+        "4800,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000005",
+        "--offset",
+        "6000,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000006",
+        "--offset",
+        "7200,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000007",
+        "--offset",
+        "8400,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000008",
+        "--offset",
+        "9600,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000009",
+        "--offset",
+        "10800,0,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000000a",
+        "--offset",
+        "0,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000000b",
+        "--offset",
+        "1200,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000000c",
+        "--offset",
+        "2400,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000000d",
+        "--offset",
+        "3600,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000000e",
+        "--offset",
+        "4800,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000000f",
+        "--offset",
+        "6000,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000010",
+        "--offset",
+        "7200,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000011",
+        "--offset",
+        "8400,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000012",
+        "--offset",
+        "9600,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000013",
+        "--offset",
+        "10800,700,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000014",
+        "--offset",
+        "0,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000015",
+        "--offset",
+        "1200,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000016",
+        "--offset",
+        "2400,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000017",
+        "--offset",
+        "3600,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000018",
+        "--offset",
+        "4800,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000019",
+        "--offset",
+        "6000,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000001a",
+        "--offset",
+        "7200,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000001b",
+        "--offset",
+        "8400,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000001c",
+        "--offset",
+        "9600,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000001d",
+        "--offset",
+        "10800,1400,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000001e",
+        "--offset",
+        "0,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000001f",
+        "--offset",
+        "1200,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000020",
+        "--offset",
+        "2400,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000021",
+        "--offset",
+        "3600,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000022",
+        "--offset",
+        "4800,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000023",
+        "--offset",
+        "6000,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000024",
+        "--offset",
+        "7200,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000025",
+        "--offset",
+        "8400,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000026",
+        "--offset",
+        "9600,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000027",
+        "--offset",
+        "10800,2100,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000028",
+        "--offset",
+        "0,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000029",
+        "--offset",
+        "1200,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000002a",
+        "--offset",
+        "2400,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000002b",
+        "--offset",
+        "3600,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000002c",
+        "--offset",
+        "4800,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000002d",
+        "--offset",
+        "6000,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000002e",
+        "--offset",
+        "7200,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000002f",
+        "--offset",
+        "8400,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000030",
+        "--offset",
+        "9600,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000031",
+        "--offset",
+        "10800,2800,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000032",
+        "--offset",
+        "0,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000033",
+        "--offset",
+        "1200,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000034",
+        "--offset",
+        "2400,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000035",
+        "--offset",
+        "3600,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000036",
+        "--offset",
+        "4800,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000037",
+        "--offset",
+        "6000,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000038",
+        "--offset",
+        "7200,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000039",
+        "--offset",
+        "8400,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000003a",
+        "--offset",
+        "9600,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000003b",
+        "--offset",
+        "10800,3500,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000003c",
+        "--offset",
+        "0,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000003d",
+        "--offset",
+        "1200,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000003e",
+        "--offset",
+        "2400,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000003f",
+        "--offset",
+        "3600,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000040",
+        "--offset",
+        "4800,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000041",
+        "--offset",
+        "6000,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000042",
+        "--offset",
+        "7200,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000043",
+        "--offset",
+        "8400,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000044",
+        "--offset",
+        "9600,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000045",
+        "--offset",
+        "10800,4200,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000046",
+        "--offset",
+        "0,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000047",
+        "--offset",
+        "1200,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000048",
+        "--offset",
+        "2400,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000049",
+        "--offset",
+        "3600,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000004a",
+        "--offset",
+        "4800,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000004b",
+        "--offset",
+        "6000,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000004c",
+        "--offset",
+        "7200,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000004d",
+        "--offset",
+        "8400,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000004e",
+        "--offset",
+        "9600,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000004f",
+        "--offset",
+        "10800,4900,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000050",
+        "--offset",
+        "0,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000051",
+        "--offset",
+        "1200,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000052",
+        "--offset",
+        "2400,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000053",
+        "--offset",
+        "3600,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000054",
+        "--offset",
+        "4800,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000055",
+        "--offset",
+        "6000,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000056",
+        "--offset",
+        "7200,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000057",
+        "--offset",
+        "8400,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000058",
+        "--offset",
+        "9600,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000059",
+        "--offset",
+        "10800,5600,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000005a",
+        "--offset",
+        "0,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000005b",
+        "--offset",
+        "1200,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000005c",
+        "--offset",
+        "2400,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000005d",
+        "--offset",
+        "3600,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000005e",
+        "--offset",
+        "4800,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-00000000005f",
+        "--offset",
+        "6000,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000060",
+        "--offset",
+        "7200,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000061",
+        "--offset",
+        "8400,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000062",
+        "--offset",
+        "9600,6300,0"
+      ],
+      "outcome": "element_copied"
+    },
+    {
+      "arguments": [
+        "copy-element",
+        "--id",
+        "01990000-0000-7000-8000-000000000000",
+        "--new-id",
+        "01990000-0000-7000-8000-000000000063",
+        "--offset",
+        "10800,6300,0"
+      ],
+      "outcome": "element_copied"
+    }
+  ]
+}

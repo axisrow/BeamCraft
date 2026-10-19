@@ -161,6 +161,67 @@ pub struct Renderer {
     /// Offscreen height in pixels.
     pub height: u32,
 }
+struct Targets {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    depth: wgpu::TextureView,
+    msaa: Option<wgpu::TextureView>,
+}
+
+// Construct targets transactionally under the same error scopes as initial setup.
+fn targets(device: &wgpu::Device, width: u32, height: u32, samples: u32) -> Result<Targets, Error> {
+    if width == 0
+        || height == 0
+        || width > 4096
+        || height > 4096
+        || width > device.limits().max_texture_dimension_2d
+        || height > device.limits().max_texture_dimension_2d
+    {
+        return Err(Error::Input("target size 1..=4096"));
+    }
+    let scopes = error_scopes(device);
+    let texture_fn = |format, sample_count, usage| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("BeamCraft target"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
+        })
+    };
+    let texture = texture_fn(
+        FORMAT,
+        1,
+        wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::TEXTURE_BINDING,
+    );
+    let view = texture.create_view(&Default::default());
+    let depth = texture_fn(DEPTH, samples, wgpu::TextureUsages::RENDER_ATTACHMENT)
+        .create_view(&Default::default());
+    let msaa = if samples == 4 {
+        Some(
+            texture_fn(FORMAT, 4, wgpu::TextureUsages::RENDER_ATTACHMENT)
+                .create_view(&Default::default()),
+        )
+    } else {
+        None
+    };
+    finish_scopes(scopes)?;
+    Ok(Targets {
+        texture,
+        view,
+        depth,
+        msaa,
+    })
+}
 impl Renderer {
     /// Create bounded targets and pipelines. Setup is excluded from upload and frame measurements.
     pub fn new(
@@ -169,15 +230,6 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Self, Error> {
-        if width == 0
-            || height == 0
-            || width > 4096
-            || height > 4096
-            || width > device.limits().max_texture_dimension_2d
-            || height > device.limits().max_texture_dimension_2d
-        {
-            return Err(Error::Input("target size 1..=4096"));
-        }
         let samples = if [FORMAT, DEPTH].into_iter().all(|f| {
             adapter
                 .get_texture_format_features(f)
@@ -188,41 +240,13 @@ impl Renderer {
         } else {
             1
         };
+        let Targets {
+            texture,
+            view,
+            depth,
+            msaa,
+        } = targets(device, width, height, samples)?;
         let scopes = error_scopes(device);
-        let texture_fn = |format, sample_count, usage| {
-            device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("BeamCraft target"),
-                size: wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1,
-                sample_count,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage,
-                view_formats: &[],
-            })
-        };
-        let texture = texture_fn(
-            FORMAT,
-            1,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let view = texture.create_view(&Default::default());
-        let depth = texture_fn(DEPTH, samples, wgpu::TextureUsages::RENDER_ATTACHMENT)
-            .create_view(&Default::default());
-        let msaa = if samples == 4 {
-            Some(
-                texture_fn(FORMAT, 4, wgpu::TextureUsages::RENDER_ATTACHMENT)
-                    .create_view(&Default::default()),
-            )
-        } else {
-            None
-        };
         let camera = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("BeamCraft camera"),
             size: 80,
@@ -326,6 +350,26 @@ impl Renderer {
             width,
             height,
         })
+    }
+    /// Resize only the attachments, retaining the shader, pipeline, camera and bind group.
+    /// On failure the previous targets remain usable.
+    pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) -> Result<(), Error> {
+        if self.width == width && self.height == height {
+            return Ok(());
+        }
+        let Targets {
+            texture,
+            view,
+            depth,
+            msaa,
+        } = targets(device, width, height, self.samples)?;
+        self.texture = texture;
+        self.view = view;
+        self.depth = depth;
+        self.msaa = msaa;
+        self.width = width;
+        self.height = height;
+        Ok(())
     }
     /// Encodes one lit, depth-tested frame and submits it; completion is a separate measurement.
     pub fn draw(

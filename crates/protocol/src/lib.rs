@@ -18,6 +18,7 @@ pub mod frame;
 pub mod json;
 pub mod limits;
 pub mod message;
+pub mod refresh;
 
 pub use code::TransportCode;
 pub use frame::{BinaryPrefix, BundleBudget, FrameError, FrameHeader, FrameKind};

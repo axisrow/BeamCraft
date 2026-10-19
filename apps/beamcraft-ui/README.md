@@ -9,12 +9,21 @@ beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]
 ```
 
 - The model comes from the engine, through the headless CLI in a separate process:
-  `beamcraft view-export --store ROOT --out -` writes the pinned view snapshot as one bundle, and
+  `beamcraft view-export --store ROOT --out - --include-definitions true` writes the pinned view
+  snapshot and definitions page from one inspection in a bounded `BCREFR01` envelope, and
   `beamcraft_engine::ViewSnapshot::from_bundle` rebuilds and re-validates it here. The UI never
   opens USD and never depends on the CLI crate (F08: an app may not depend on an app). The CLI is
   looked up next to the UI executable unless `--cli` names it.
+- The window requires a matching CLI supporting this opt-in refresh. The raw `view-export`
+  mode used by `source::load` and `--metrics` is unchanged. Geometry and definitions errors are
+  applied independently; a failed display expansion does not discard valid definition choices.
 - Each distinct mesh is uploaded once and drawn with one instance per element placement.
   Coordinates are millimetres, re-centred on the engineering bounds in f64 before f32 conversion.
+- Idle windows sleep until an input or worker completion wakes egui. Viewport rendering is
+  invalidated by a new scene, changed camera or target size; editing a form reuses the texture.
+  Expanded CPU display buffers are dropped after upload; compact `SceneInfo` retains framing
+  and counts. An unchanged validated snapshot reuses the existing GPU buffers. Resize replaces
+  only color/depth/MSAA targets, retaining the pipeline. Default sample count/quality is unchanged.
 - Controls: primary drag orbits, secondary drag pans, the wheel zooms, F fits, R reloads (F and R
   are ignored while a text field has the keyboard).
 - V05.1 Create panel (experimental): a plate (width, length, thickness, optional name and material)

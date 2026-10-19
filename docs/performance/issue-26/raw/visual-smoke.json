@@ -1,0 +1,29 @@
+{
+  "fixture": "frozen native-100 store",
+  "window_pixels": [
+    1400,
+    900
+  ],
+  "cropped_viewport_xyxy": [
+    225,
+    8,
+    1392,
+    892
+  ],
+  "verified_equal": true,
+  "measurements": {
+    "before": {
+      "viewport_rgb_sha256": "f9d13cce5ca03ec806a4f5b26ef9d4aac5d599bc3c58048da4b6e353a83af5b9",
+      "lit_blue_pixels": 129309,
+      "width": 1167,
+      "height": 884
+    },
+    "after": {
+      "viewport_rgb_sha256": "f9d13cce5ca03ec806a4f5b26ef9d4aac5d599bc3c58048da4b6e353a83af5b9",
+      "lit_blue_pixels": 129309,
+      "width": 1167,
+      "height": 884
+    }
+  },
+  "notes": "Separate real-window visual smoke after all CPU/RSS measurements; comparison excludes the changed FPS/UI-update label. Screenshot pixels captured through XGetImage; RGB SHA-256 calculated with Pillow 12.3.0. No image is included."
+}
