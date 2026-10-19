@@ -2,9 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! `beamcraft-ui --store ROOT [--cli PATH]` opens the window on the published revision.
-//! `beamcraft-ui --store PUBLISHED --workspace DIR` edits the personal workspace in DIR (a draft
-//! store forked from the published store) and shows its publication panel (status, publish,
-//! undo, redo); the model shown is the draft head.
+//! `beamcraft-ui --workspace DIR [--cli PATH]` opens it on a personal workspace (a store made by
+//! `beamcraft workspace-create`), which also enables undo and redo.
+//! `beamcraft-ui --store PUBLISHED --workspace DIR` is the publication mode (V06): the same
+//! window on the draft, plus the publication panel (status and fast-forward-only publish)
+//! against the named published store.
 //! `beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--cli PATH]` renders the
 //! same snapshot offscreen, headless, and prints baseline GPU metrics as one JSON object.
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
@@ -14,7 +16,7 @@
 use beamcraft_engine::synthetic::plate_scene;
 use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
-use beamcraft_ui::app::{self, App, Source, icon};
+use beamcraft_ui::app::{App, Source, icon};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::{Error, json_string, metrics, source};
 use std::collections::BTreeMap;
@@ -23,7 +25,7 @@ use std::process::ExitCode;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui --store ROOT [--workspace DIR] [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
+        "usage: beamcraft-ui (--store ROOT | --workspace DIR | --store PUBLISHED --workspace DIR) [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
     )
 }
 
@@ -88,20 +90,20 @@ fn run() -> Result<Option<String>, Error> {
             1,
         )));
     }
-    let published = PathBuf::from(map.get("--store").ok_or_else(usage)?);
+    // A workspace is a store of its own: the window shows and edits it, and undo and redo act on
+    // it. Naming the published store too (`--store PUBLISHED --workspace DIR`, V06) opens the
+    // same window with the publication panel; the workspace is still what the window edits.
+    let workspace = map.get("--workspace").map(PathBuf::from);
+    let (store, published) = match (map.get("--store"), &workspace) {
+        (Some(store), None) => (PathBuf::from(store), None),
+        (None, Some(dir)) => (dir.clone(), None),
+        (Some(store), Some(dir)) => (dir.clone(), Some(PathBuf::from(store))),
+        (None, None) => return Err(usage()),
+    };
     let cli = match map.get("--cli") {
         Some(path) => PathBuf::from(path),
         None => source::default_cli()?,
     };
-    let workspace = map.get("--workspace").map(|dir| app::Workspace {
-        published: published.clone(),
-        dir: PathBuf::from(dir),
-    });
-    // With a workspace the window edits the draft; the store named by --store stays the one the
-    // draft publishes to.
-    let store = workspace
-        .as_ref()
-        .map_or(published.clone(), |w| w.dir.clone());
     if map.contains_key("--metrics") {
         let frames = number(&map, "--metrics", 300)?;
         let size = [
@@ -131,6 +133,7 @@ fn run() -> Result<Option<String>, Error> {
         store,
         cli,
         workspace,
+        published,
     };
     // Window-system libraries are loaded at run time by third-party crates, which panic when one
     // is missing; report that as an error instead of crashing.

@@ -8,8 +8,8 @@
 //! is decoded with the bounded protocol JSON decoder; the arguments are mapped to the typed
 //! command here, so a non-number is `INVALID_ARGUMENT` like the contract says. Cases that need
 //! the envelope, a workspace or an authenticated actor are listed as skipped with the reason, and
-//! the cases where P01 deliberately differs from F04 are listed as deviations: the test fails if
-//! either list drifts silently.
+//! the cases where the A02 slice deliberately differs from F04 are listed as deviations: the test
+//! fails if either list drifts silently.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -45,20 +45,16 @@ const SKIPPED: &[(&str, &str)] = &[
     ),
 ];
 
-/// Accepted by F04, refused by P01 with UNSUPPORTED_GEOMETRY: the kernel evaluates only the
-/// origin rectangle (no body frame, no contour-plate solid).
-const UNSUPPORTED_BY_P01: &[&str] = &[
-    "F04-POS-18",
-    "F04-POS-19",
-    "F04-POS-20",
-    "F04-POS-25",
-    "F04-POS-26",
-    "F04-POS-28",
-];
+/// Accepted by F04, not evaluated by the A02 slice with UNSUPPORTED_GEOMETRY (the code the
+/// first slice used, so no valid input gains a new refusal class): a contour that touches any
+/// nonzero `z` stays unevaluated because the plate body frame is the local XY plane and the
+/// placement carries translations; F04's exact planarity tolerance is the G06 policy.
+const UNSUPPORTED_IN_A02: &[&str] = &["F04-POS-18", "F04-POS-28"];
 
-/// Rejected by F04 with INVALID_ARGUMENT (non-planar or self-intersecting contour) but reported
-/// by P01 as UNSUPPORTED_GEOMETRY: exact planarity and simplicity are not implemented.
-const WRONG_CODE_IN_P01: &[&str] = &["F04-NEG-29", "F04-NEG-30", "F04-NEG-38"];
+/// Rejected by F04 with INVALID_ARGUMENT (non-planar contour) but reported by this slice as
+/// UNSUPPORTED_GEOMETRY, like the first slice did: the exact planarity refusal needs the G06
+/// tolerance policy and is not an argument check here.
+const WRONG_CODE_IN_A02: &[&str] = &["F04-NEG-29", "F04-NEG-38"];
 
 fn code_of(name: &str) -> ErrorCode {
     ErrorCode::parse(name).unwrap()
@@ -224,7 +220,7 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
                 other => panic!("{id}: unknown outcome {other}"),
             },
         };
-        if UNSUPPORTED_BY_P01.contains(&id) || WRONG_CODE_IN_P01.contains(&id) {
+        if UNSUPPORTED_IN_A02.contains(&id) || WRONG_CODE_IN_A02.contains(&id) {
             assert_eq!(
                 verdict,
                 Verdict::Rejected(ErrorCode::UnsupportedGeometry),
@@ -246,7 +242,7 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
     assert_eq!(skipped.len(), SKIPPED.len());
     assert_eq!(
         deviations.len(),
-        UNSUPPORTED_BY_P01.len() + WRONG_CODE_IN_P01.len()
+        UNSUPPORTED_IN_A02.len() + WRONG_CODE_IN_A02.len()
     );
     // Cases that must be among the passing ones: the accepted first-scope plate, replay and reuse,
     // the minimum, the largest plate, large translation, quaternion tolerance, and the codes.
@@ -259,6 +255,16 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
         "F04-POS-12",
         "F04-POS-14",
         "F04-POS-17",
+        // The A02 contour plate closed the former P01 deviations: the pentagon and the translated
+        // rectangles (including the POS-19 square, which is listed counter-clockwise after all)
+        // are evaluated, and the self-intersecting contour is refused with the F04 code. The
+        // non-planar NEG-29/38 stay declared wrong-code deviations (UNSUPPORTED instead of
+        // INVALID) with the off-plane POS-18/28.
+        "F04-POS-19",
+        "F04-POS-20",
+        "F04-POS-25",
+        "F04-POS-26",
+        "F04-NEG-30",
         "F04-POS-27",
         "F04-NEG-01",
         "F04-NEG-02",

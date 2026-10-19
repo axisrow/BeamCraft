@@ -136,54 +136,6 @@ impl View {
         ]
     }
 
-    /// The world-space ray (origin, unit direction, millimetres) a viewport click at `ndc`
-    /// (each component in -1..=1, y up) looks along. Display only: the engine does the picking
-    /// with it, through the same `pick` query a CLI user types.
-    pub fn pick_ray(&self, ndc: [f32; 2]) -> Option<([f64; 3], [f64; 3])> {
-        let [tan, aspect, _, _] = self.params;
-        let scaled = [
-            (
-                -1.0,
-                [
-                    f64::from(self.back[0]),
-                    f64::from(self.back[1]),
-                    f64::from(self.back[2]),
-                ],
-            ),
-            (
-                f64::from(tan * aspect * ndc[0]),
-                [
-                    f64::from(self.right[0]),
-                    f64::from(self.right[1]),
-                    f64::from(self.right[2]),
-                ],
-            ),
-            (
-                f64::from(tan * ndc[1]),
-                [
-                    f64::from(self.up[0]),
-                    f64::from(self.up[1]),
-                    f64::from(self.up[2]),
-                ],
-            ),
-        ];
-        let mut d = [0.0f64; 3];
-        for (factor, basis) in scaled {
-            for (value, component) in std::iter::zip(&mut d, basis) {
-                *value += factor * component;
-            }
-        }
-        let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
-        if !len.is_finite() || len <= 0.0 {
-            return None;
-        }
-        let origin = [
-            f64::from(self.eye[0]),
-            f64::from(self.eye[1]),
-            f64::from(self.eye[2]),
-        ];
-        Some((origin, [d[0] / len, d[1] / len, d[2] / len]))
-    }
     pub(crate) fn bytes(self) -> Vec<u8> {
         self.right
             .into_iter()
@@ -250,34 +202,5 @@ mod tests {
         }
         assert!(c.view(1.0).unwrap().bytes().len() == 80);
         assert!(c.distance().is_finite());
-    }
-
-    #[test]
-    fn a_pick_ray_is_the_inverse_of_the_projection() {
-        let mut c = Camera::new([0.0; 3], 100.0, 1.5).unwrap();
-        c.navigate([0.4, 0.1], [0.0; 2], -0.3).unwrap();
-        let view = c.view(1.5).unwrap();
-        for nx in [-0.9f32, -0.2, 0.0, 0.3, 0.95] {
-            for ny in [-0.95f32, -0.1, 0.0, 0.4, 0.9] {
-                let (origin, direction) = view.pick_ray([nx, ny]).unwrap();
-                // The eye is on the ray; a point one camera distance along it projects back
-                // onto the same screen position.
-                let t = c.distance();
-                let p = [
-                    (origin[0] + direction[0] * f64::from(t)) as f32,
-                    (origin[1] + direction[1] * f64::from(t)) as f32,
-                    (origin[2] + direction[2] * f64::from(t)) as f32,
-                ];
-                let [px, py, _] = view.project(p);
-                assert!((px - nx).abs() < 1e-4, "{nx} {ny}: {px}");
-                assert!((py - ny).abs() < 1e-4, "{nx} {ny}: {py}");
-                // The direction is a unit vector.
-                let len = (direction[0] * direction[0]
-                    + direction[1] * direction[1]
-                    + direction[2] * direction[2])
-                    .sqrt();
-                assert!((len - 1.0).abs() < 1e-9);
-            }
-        }
     }
 }

@@ -19,6 +19,7 @@ pub mod footprint;
 pub mod level;
 pub mod limits;
 pub mod member;
+pub mod numbering;
 pub mod presentation;
 pub mod quantity;
 pub mod query;

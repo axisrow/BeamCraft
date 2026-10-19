@@ -83,6 +83,16 @@ desktop-only on Windows, Linux and macOS. Only `beamcraft-geom`, `beamcraft-mode
 
 ## Progress log
 
+- 2026-10-20: synced upstream A08 numbering preview (upstream PR #96) and V05.2 UI edit tools
+  (upstream PR #97) into the fork as verbatim cherry-picks (PR #35); with PR #31 the fork
+  master matches upstream `master` byte for byte. PR #6 (fork V05.2) is superseded and
+  recommended for closing; the numbering WIP is to be re-scoped to A09 over the upstream
+  preview.
+- 2026-10-19: synced upstream P-Mass (member mass from the exact section area with gross/net
+  quantities, upstream PR #94) and E02 minimal IFC4 export on the E01 contract (upstream PR
+  #95) into the fork as verbatim cherry-picks plus one merge-commit tolerance fix (PR #31).
+  Upstream V05.2 and A08 stay deferred pending the PR #6 comparison and the numbering-WIP
+  re-scope to A09; per-feature critique and verdicts are in the PR #31 description.
 - 2026-10-18: owner set the free single-user desktop MVP scope above (sections, UI editing,
   cuts/holes/bolts, numbering, IFC/BOM, packaging); C03–C06, D01–D03 and R02–R03 are deferred.
   Gate statuses were brought up to date with `master` at `d893f94`. Documentation only.

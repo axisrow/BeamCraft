@@ -101,7 +101,11 @@ pub struct SectionProperties {
 }
 
 impl SectionProperties {
-    fn validate(&self) -> Result<(), CommandError> {
+    /// Admits the declared labels and numbers: labels by the element-label rule, numbers finite
+    /// (`NON_FINITE_NUMBER`), greater than zero (`INVALID_ARGUMENT`) and under their caps
+    /// (`LIMIT_EXCEEDED`). A committed definition is re-admitted with this before its declared
+    /// area is used for a quantity.
+    pub fn validate(&self) -> Result<(), CommandError> {
         declared_label(&self.designation, "designation")?;
         declared_label(&self.standard, "standard")?;
         declared_label(&self.display_name, "display_name")?;
@@ -229,35 +233,37 @@ impl SectionProfileSpec {
         self.section.validate()
     }
 
-    /// Compares the declared area, if any, with the net area of the generated outline in mm2
-    /// (computed by the caller, which owns the kernel). A relative gap above 1 percent
+    /// Compares the declared area, if any, with the EXACT area of the section in mm2 (P-Mass:
+    /// the closed-form area of [`crate::section::SectionShape::exact_area_mm2`], supplied by the
+    /// caller; never the polygon of the mesh). A relative gap above 1 percent
     /// (`DECLARED_SECTION_AREA_TOLERANCE`) is a warning, never a refusal: owner decision D3
-    /// (2026-10-18), catalogue values are authoritative. No declared area, or an outline area
+    /// (2026-10-18), catalogue values are authoritative. No declared area, or an exact area
     /// that is not a positive finite number, gives no warning.
-    pub fn declared_area_warning(&self, outline_area_mm2: f64) -> Option<DeclaredAreaWarning> {
+    pub fn declared_area_warning(&self, exact_area_mm2: f64) -> Option<DeclaredAreaWarning> {
         let declared = self.section.area_mm2?;
-        if !outline_area_mm2.is_finite() || outline_area_mm2 <= 0.0 {
+        if !exact_area_mm2.is_finite() || exact_area_mm2 <= 0.0 {
             return None;
         }
-        let relative_difference = (declared - outline_area_mm2).abs() / outline_area_mm2;
+        let relative_difference = (declared - exact_area_mm2).abs() / exact_area_mm2;
         (relative_difference > DECLARED_SECTION_AREA_TOLERANCE).then_some(DeclaredAreaWarning {
             declared_mm2: declared,
-            kernel_mm2: outline_area_mm2,
+            kernel_mm2: exact_area_mm2,
             relative_difference,
             threshold: DECLARED_SECTION_AREA_TOLERANCE,
         })
     }
 }
 
-/// A declared section area that differs from the kernel's outline area by more than the
+/// A declared section area that differs from the exact area of the section by more than the
 /// threshold. Informational: the definition is created and keeps the declared value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DeclaredAreaWarning {
     /// The declared (catalogue) area in mm2.
     pub declared_mm2: f64,
-    /// The net area of the generated outline in mm2.
+    /// The exact area of the section in mm2 (the name is kept from the first slice, where the
+    /// kernel's polygon was the reference; the wire key is `kernel_mm2`).
     pub kernel_mm2: f64,
-    /// `|declared - kernel| / kernel`.
+    /// `|declared - exact| / exact`.
     pub relative_difference: f64,
     /// The relative threshold that was exceeded (0.01).
     pub threshold: f64,

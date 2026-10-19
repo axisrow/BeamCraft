@@ -4,7 +4,7 @@
 // the polygon areas, times the thickness. The saved layer text is read with plain string matching
 // and no BeamCraft crate.
 
-//! A04 (pilot) through holes end to end through the real `beamcraft` binary: `create-plate
+//! A04 through holes end to end through the real `beamcraft` binary: `create-plate
 //! --hole-rect/--hole-round` authors the hole polygons in the plate, the kernel cuts them, and
 //! fresh processes reopen and re-verify the result.
 

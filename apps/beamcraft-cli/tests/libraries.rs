@@ -481,7 +481,10 @@ fn a_declared_section_area_that_disagrees_with_the_outline_warns_and_malformed_o
     assert_eq!(num(definition, &["area_mm2"]), 2000.0);
     let warning = at(definition, &["declared_area_warning"]);
     assert_eq!(num(warning, &["declared_mm2"]), 2000.0);
-    assert!((num(warning, &["kernel_mm2"]) - 1712.0).abs() < 17.0);
+    // The reference is the exact ring pi * t * (d - t), not the polygon of the mesh.
+    let ring = std::f64::consts::PI * 5.0 * 109.0;
+    assert!((num(warning, &["kernel_mm2"]) - ring).abs() <= 1e-9 * ring);
+    assert_eq!(num(warning, &["exact_mm2"]), num(warning, &["kernel_mm2"]));
     assert!((num(warning, &["relative_difference"]) - 0.168).abs() < 0.01);
     assert_eq!(num(warning, &["threshold"]), 0.01);
     assert_eq!(num(warning, &["threshold_percent"]), 1.0);
@@ -552,9 +555,11 @@ fn library_options_do_not_combine_with_explicit_values() {
 fn a_large_library_is_listed_in_bounded_pages_that_add_up_to_the_whole() {
     let f = Fixture::new();
     let bar = "token steel:profile:family = \"rectangle\"\ndouble steel:profile:hMm = 10\ndouble steel:profile:bMm = 10\n";
-    // Half valid entries, half refused ones (no dimensions), 4096 in all.
-    let designations: Vec<String> = (0..4096).map(|i| format!("T-{i:04}")).collect();
-    let prims: Vec<String> = (0..4096).map(|i| format!("E{i}")).collect();
+    // Half valid entries, half refused ones, 1024 in all. The 4096-entry admission bound is
+    // proven by `the_entry_count_of_a_library_is_bounded`; paging stays well under it, because
+    // every page is a fresh process that recomposes the whole layer.
+    let designations: Vec<String> = (0..1024).map(|i| format!("T-{i:04}")).collect();
+    let prims: Vec<String> = (0..1024).map(|i| format!("E{i}")).collect();
     let entries: Vec<(&str, &str, &str)> = prims
         .iter()
         .zip(&designations)
@@ -583,8 +588,8 @@ fn a_large_library_is_listed_in_bounded_pages_that_add_up_to_the_whole() {
             ]);
             assert_eq!(code, 0, "offset {offset}: {body:?}");
             pages += 1;
-            assert_eq!(num(&body, &["entry_count"]), 2048.0);
-            assert_eq!(num(&body, &["rejected_count"]), 2048.0);
+            assert_eq!(num(&body, &["entry_count"]), 512.0);
+            assert_eq!(num(&body, &["rejected_count"]), 512.0);
             let page = at(&body, &["entries"]).array().unwrap();
             let refused = at(&body, &["rejected"]).array().unwrap();
             assert_eq!(
@@ -603,10 +608,10 @@ fn a_large_library_is_listed_in_bounded_pages_that_add_up_to_the_whole() {
                 next => offset = next.float().unwrap() as u64,
             }
         }
-        assert_eq!(seen.len(), 2048, "limit {limit}");
-        assert_eq!(rejected.len(), 2048, "limit {limit}");
+        assert_eq!(seen.len(), 512, "limit {limit}");
+        assert_eq!(rejected.len(), 512, "limit {limit}");
     }
-    assert!(pages >= 64 && offset > 0);
+    assert!(pages >= 16 && offset > 0);
     // The default page is bounded too, and the limits are checked.
     let (code, body) = f.raw(&["library-list", "--library", &path]);
     assert_eq!(code, 0);

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! V06 properties and publication, as pure logic: the window's pick ray becomes the argument
-//! list of the same `beamcraft pick` the CLI user types, the CLI's `plate-inspect` reply becomes
-//! the properties of the selected element, property edits become the exact `update-element`
-//! argument list, and the workspace replies become the publication panel's state. Nothing here
-//! touches a window, a GPU or a process, so all of it is unit-testable; [`crate::command`] runs
-//! the processes.
+//! V06 properties and publication, as pure logic: the CLI's `plate-inspect` reply becomes the
+//! full properties of the selected element (dimensions, profile, material, volume and mass with
+//! their statuses), a property edit becomes the exact `update-element` argument list, and the
+//! workspace replies become the publication panel's state. Picking itself lives in
+//! [`crate::edit`] (V05.2); nothing here touches a window, a GPU or a process, so all of it is
+//! unit-testable, and [`crate::command`] runs the processes.
 //!
-//! Like the create tools, the UI computes no engineering geometry: picking is the engine's
-//! `pick` query, every property value is the engine's report, and a property edit forwards the
-//! typed patch to `update-element`, whose refusal is shown as it is.
+//! Like the create tools, the UI computes no engineering geometry: every property value is the
+//! engine's report, and a property edit forwards the typed patch to `update-element`, whose
+//! refusal is shown as it is.
 
 use crate::tools::{FormError, MAX_TEXT, ToolError, number, reply_json, text};
 use beamcraft_protocol::json::Json;
@@ -137,16 +137,6 @@ fn properties(element: &Json) -> Result<Properties, ToolError> {
         mass_kg,
         mass_status,
     })
-}
-
-/// Reads the reply of `pick`: the first hit's element id, or `None` when the ray missed.
-pub fn parse_pick(exit_code: Option<i32>, stdout: &[u8]) -> Result<Option<String>, ToolError> {
-    let reply = reply_json(exit_code, stdout)?;
-    let hits = reply
-        .get("hits")
-        .and_then(Json::array)
-        .map_err(|_| ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field"))?;
-    Ok(hits.first().and_then(|hit| text(hit, "element_id")))
 }
 
 /// The most elements one element lookup walks (the reply itself is capped by the output limit).
@@ -422,32 +412,6 @@ pub fn parse_history(exit_code: Option<i32>, stdout: &[u8]) -> Result<(u64, u64)
     Ok((units("undo_units")?, units("redo_units")?))
 }
 
-/// The arguments of the `pick` query along a window ray (a world point and a unit direction,
-/// millimetres).
-pub fn pick_args(store: &Path, origin: [f64; 3], direction: [f64; 3]) -> Vec<String> {
-    let xyz = |[x, y, z]: [f64; 3]| format!("{x},{y},{z}");
-    vec![
-        "pick".into(),
-        "--store".into(),
-        store.to_string_lossy().into_owned(),
-        "--origin".into(),
-        xyz(origin),
-        "--direction".into(),
-        xyz(direction),
-        "--targets".into(),
-        "face".into(),
-    ]
-}
-
-/// The arguments of the element inspection the properties are read from.
-pub fn inspect_args(store: &Path) -> Vec<String> {
-    vec![
-        "plate-inspect".into(),
-        "--store".into(),
-        store.to_string_lossy().into_owned(),
-    ]
-}
-
 /// The arguments of one workspace command that names both stores, exactly as a user types them
 /// (`workspace-status`, `workspace-publish`).
 pub fn workspace_args(command: &str, published: &Path, dir: &Path) -> Vec<String> {
@@ -485,23 +449,6 @@ mod tests {
 
     const DIGEST: &str = "5d660dddce23e62c2544f796a80fd32de3725defa13dee514572833f0d886cb1";
     const MATERIAL: &str = "36281e26dd4affda6b39d884fe8a8bb04deb71684215741c188dac0806710ba9";
-
-    const PICKED: &str = r#"{"outcome":"picked","revision_id":"r1","snapshot_token":"t","hits":[{"element_id":"e1","feature_id":"fid1:e1:plate:face0","feature_kind":"face","t_mm":10.0,"distance_mm":0.0,"point_world_mm":[1.0,2.0,3.0],"normal_world":[0.0,0.0,1.0],"back_facing":false,"boundary":false}],"truncated":false,"skipped":[],"elements":1}"#;
-
-    #[test]
-    fn a_pick_reply_names_the_first_hit_or_nothing() {
-        assert_eq!(
-            parse_pick(Some(0), PICKED.as_bytes()).unwrap().as_deref(),
-            Some("e1")
-        );
-        let missed = r#"{"outcome":"picked","revision_id":"r1","snapshot_token":"t","hits":[],"truncated":false,"skipped":[],"elements":1}"#;
-        assert_eq!(parse_pick(Some(0), missed.as_bytes()).unwrap(), None);
-        // A refusal and garbage stay errors.
-        let refused = br#"{"code":"NOT_FOUND","message":"no revision","outcome":"rejected"}"#;
-        assert_eq!(parse_pick(Some(2), refused).unwrap_err().code, "NOT_FOUND");
-        assert!(parse_pick(Some(2), b"not json").is_err());
-        assert!(parse_pick(Some(0), b"{}").is_err());
-    }
 
     const PLATE: &str = r#"{"element_id":"e1","kind":"plate","name":"P1","material_digest":"36281e26dd4affda6b39d884fe8a8bb04deb71684215741c188dac0806710ba9","dimensions_mm":{"width":1000.0,"length":500.0,"thickness":10.0},"placement":{"translation_mm":[5.0,0.0,-2.0],"orientation_xyzw":[0.0,0.0,0.0,1.0]},"quantities":{"volume":{"mm3":5000000.0,"m3":0.005,"status":"current","algorithm":"w"}},"mesh_digest":"m1"}"#;
 
@@ -740,20 +687,5 @@ mod tests {
             draft_args("workspace-undo", Path::new("WS")),
             ["workspace-undo", "--workspace-dir", "WS"]
         );
-        assert_eq!(
-            pick_args(store(), [1.0, 2.0, 3.0], [0.0, 0.0, -1.0]),
-            [
-                "pick",
-                "--store",
-                "S",
-                "--origin",
-                "1,2,3",
-                "--direction",
-                "0,0,-1",
-                "--targets",
-                "face"
-            ]
-        );
-        assert_eq!(inspect_args(store()), ["plate-inspect", "--store", "S"]);
     }
 }

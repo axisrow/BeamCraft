@@ -1170,6 +1170,12 @@ case of the case file that is reachable.
 
 ### 19.5 Log
 
+- 2026-10-19: E02 implemented as an experimental slice (`docs/design/e02-ifc-export.md`): writer
+  crate `beamcraft-ifc`, atomic output in `beamcraft_host::output`, adapter `beamcraft_cli::export`,
+  commands `export-ifc` and `ifc-guid`. Decisions and deviations are listed there (assemblies,
+  welds and references as proxies; the adapter in the CLI rather than the engine; the additive
+  `AssemblyId` property). The contract text above is unchanged and stays a draft.
+
 - 2026-10-17: initial draft 0.1.0 (E01), with a swept-solid proposal.
 - 2026-10-17: owner decisions Q-1 to Q-11 applied. IFC4 ADD2 TC1; mesh only; stored ProjectId (D1);
   levels (D2); proxies instead of skips; no persisted GlobalId; `Unspecified` materials; declared

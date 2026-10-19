@@ -20,9 +20,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, ext: ".exe", archive: zip }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, ext: "", archive: tar.gz }
-          - { os: macos-latest, target: aarch64-apple-darwin, ext: "", archive: tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, kind: win }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, kind: linux }
+          - { os: macos-latest, target: aarch64-apple-darwin, kind: macos }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -34,23 +34,44 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p beamcraft-cli
+        run: cargo build --release --locked --target ${{ matrix.target }} -p beamcraft-cli -p beamcraft-ui
 
       - name: Package
         shell: bash
         run: |
-          name="beamcraft-${{ github.ref_name }}-${{ matrix.target }}"
-          mkdir "$name"
-          cp "target/${{ matrix.target }}/release/beamcraft${{ matrix.ext }}" "$name/"
-          cp README.md LICENSE NOTICE "$name/"
-          mkdir -p "$name/docs/brand"
-          cp docs/brand/LICENSE-brand.txt "$name/docs/brand/"
-          if [ "${{ matrix.archive }}" = zip ]; then
-            7z a "$name.zip" "$name"
-            echo "ASSET=$name.zip" >> "$GITHUB_ENV"
+          asset="$(bash packaging/package.sh "${{ matrix.target }}" "${{ matrix.kind }}" "${{ github.ref_name }}")"
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      # Q02 rehearsal smoke: a fresh install must run the CLI from the extracted package,
+      # and the font and (on macOS) the ad-hoc signature must be in place. The UI window
+      # check stays a manual step on each OS (see docs/development.md).
+      - name: Smoke test the package
+        shell: bash
+        run: |
+          dir="$(mktemp -d)"
+          if [ "${{ matrix.kind }}" = win ]; then
+            7z x "$ASSET" -o"$dir" >/dev/null
           else
-            tar czf "$name.tar.gz" "$name"
-            echo "ASSET=$name.tar.gz" >> "$GITHUB_ENV"
+            tar xzf "$ASSET" -C "$dir"
+          fi
+          cd "$dir"/beamcraft-*
+          if [ "${{ matrix.kind }}" = macos ]; then
+            codesign --verify BeamCraft.app
+            ./BeamCraft.app/Contents/MacOS/beamcraft --version
+            test -f BeamCraft.app/Contents/MacOS/beamcraft-ui
+            test -f BeamCraft.app/Contents/MacOS/beamcraft-usd-worker
+            test -f BeamCraft.app/Contents/Resources/assets/fonts/inter/Inter-Regular.ttf
+          else
+            if [ "${{ matrix.kind }}" = win ]; then
+              ./beamcraft.exe --version
+              test -f beamcraft-ui.exe
+              test -f beamcraft-usd-worker.exe
+            else
+              ./beamcraft --version
+              test -f beamcraft-ui
+              test -f beamcraft-usd-worker
+            fi
+            test -f assets/fonts/inter/Inter-Regular.ttf
           fi
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

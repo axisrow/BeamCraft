@@ -138,7 +138,7 @@ beamcraft create-plate --store ROOT --width MM --length MM --thickness MM
 beamcraft plate-inspect --store ROOT
 ```
 
-`--hole-rect` and `--hole-round` (A04 pilot, see the [design note](../../docs/design/a04-plate-holes.md))
+`--hole-rect` and `--hole-round` (A04, see the [design note](../../docs/design/a04-plate-holes.md))
 author through holes together with the plate: axis-aligned rectangles from the corner `X,Y`, and
 regular polygons (default 32 sides) inscribed in the circle of centre `X,Y` and diameter `D`.
 Only the clockwise polygons are stored, so a "round" hole is that polygon and its volume is exact for

@@ -30,6 +30,14 @@ beamcraft plate-inspect --store ROOT   (plates and members now carry stored_quan
 
 - Signatures are our own: typed inputs plus algorithm id plus `TOLERANCE_POLICY_VERSION`. The
   mass signature is the shape signature plus the density. They are not the F06 section 7 shape key.
+- **Update (P-Mass, [design](p-mass-section-area.md)).** The member volume is no longer the volume
+  of the mesh: it is `effective section area x axis length`, where the effective area is the
+  declared catalogue area of the pinned profile if it carries one, else the exact computed area.
+  The member shape signature now also covers the area source and both areas (a changed declared
+  area makes the stored quantity stale) and the list of operations (empty for members today). The
+  member algorithm labels changed, so records written by this slice's first version read as
+  `stale` (a superseded label), never as corruption. Quantities are reported as gross (nominal
+  body) and net (after operations); `volume` and `mass` are the net values.
 - A material change rewrites the mass record and leaves the mesh bytes untouched. A rename
   changes only the authored layer; the derived layer stays byte-identical (tested).
 - Clearing the material makes the mass unknown: the attribute is absent, never zero.

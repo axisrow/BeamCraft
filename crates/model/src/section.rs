@@ -202,6 +202,53 @@ impl ParametricSection {
         self.consistency()
     }
 
+    /// The exact area of the section in mm2 from its parameters (P-Mass): the closed-form area
+    /// of the sharp-cornered shape corrected by the true circular arcs, never a polygon.
+    ///
+    /// Every radius in a family is a quarter circle between two perpendicular straight edges, so a
+    /// convex bend removes and a concave root fillet adds exactly `(1 - pi/4) * r^2`. A cold-formed
+    /// bend pair (inner radius `r`, outer radius `r + t`) therefore changes the sharp area by
+    /// `(1 - pi/4) * (r^2 - (r + t)^2)`; the outer radius of a rectangular hollow section is `r`
+    /// and its inner radius is `r - t` (sharp when `r <= t`), as the kernel generates them. A
+    /// circular hollow section is `pi * t * (d - t)`. The value is only meaningful for admitted
+    /// values; a wrong number of values gives `0.0`.
+    pub fn exact_area_mm2(&self) -> f64 {
+        const K: f64 = 1.0 - core::f64::consts::FRAC_PI_4;
+        // `count` bend pairs of a cold-formed section; none when the radius is zero.
+        let bends = |r: f64, t: f64, count: f64| {
+            if r > 0.0 {
+                count * K * (r * r - (r + t) * (r + t))
+            } else {
+                0.0
+            }
+        };
+        match (self.family, self.values.as_slice()) {
+            (SectionFamily::IShape, &[h, b, tw, tf, r]) => {
+                2.0 * b * tf + (h - 2.0 * tf) * tw + 4.0 * K * r * r
+            }
+            (SectionFamily::Channel, &[h, b, tw, tf, r]) => {
+                2.0 * b * tf + (h - 2.0 * tf) * tw + 2.0 * K * r * r
+            }
+            (SectionFamily::Angle, &[h, b, t, r]) => t * (h + b - t) + K * r * r,
+            (SectionFamily::Rhs, &[h, b, t, r]) => {
+                let inner_r = if r > t { r - t } else { 0.0 };
+                (h * b - 4.0 * K * r * r)
+                    - ((h - 2.0 * t) * (b - 2.0 * t) - 4.0 * K * inner_r * inner_r)
+            }
+            (SectionFamily::Chs, &[d, t]) => core::f64::consts::PI * t * (d - t),
+            (SectionFamily::PlainC, &[h, b, t, r]) => {
+                t * (h + 2.0 * b - 2.0 * t) + bends(r, t, 2.0)
+            }
+            (SectionFamily::LippedC | SectionFamily::LippedZ, &[h, b, c, t, r]) => {
+                t * (h + 2.0 * b + 2.0 * c - 4.0 * t) + bends(r, t, 4.0)
+            }
+            (SectionFamily::Omega, &[h, b, c, t, r]) => {
+                t * (b + 2.0 * h + 2.0 * c - 4.0 * t) + bends(r, t, 4.0)
+            }
+            _ => 0.0,
+        }
+    }
+
     fn consistency(&self) -> Result<(), CommandError> {
         let rule = |ok: bool, field: &'static str, message: &'static str| {
             if ok {
@@ -351,6 +398,33 @@ impl CustomSection {
     }
 }
 
+/// Absolute shoelace area of a closed polygon in mm2, taken relative to its first point so large
+/// coordinates do not cancel.
+fn polygon_area_mm2(contour: &[[f64; 2]]) -> f64 {
+    let Some(&[x0, y0]) = contour.first() else {
+        return 0.0;
+    };
+    let doubled: f64 = contour
+        .iter()
+        .zip(contour.iter().cycle().skip(1))
+        .map(|(p, q)| (p[0] - x0) * (q[1] - y0) - (q[0] - x0) * (p[1] - y0))
+        .sum();
+    doubled.abs() / 2.0
+}
+
+impl CustomSection {
+    /// The exact area of the authored polygon in mm2: the shoelace area of the outer contour
+    /// minus that of every cavity (winding does not matter). Only meaningful for an admitted
+    /// outline that the kernel accepts (cavities inside the outer contour, no overlap).
+    pub fn exact_area_mm2(&self) -> f64 {
+        self.cavities
+            .iter()
+            .fold(polygon_area_mm2(&self.outer), |area, c| {
+                area - polygon_area_mm2(c)
+            })
+    }
+}
+
 /// The shape of a profile definition beyond the first-scope rectangle.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SectionShape {
@@ -374,6 +448,16 @@ impl SectionShape {
         match self {
             Self::Parametric(p) => p.validate(),
             Self::Custom(c) => c.validate(),
+        }
+    }
+
+    /// The exact area in mm2 (see [`ParametricSection::exact_area_mm2`] and
+    /// [`CustomSection::exact_area_mm2`]). It is independent of the polygon the kernel generates
+    /// for display and meshes.
+    pub fn exact_area_mm2(&self) -> f64 {
+        match self {
+            Self::Parametric(p) => p.exact_area_mm2(),
+            Self::Custom(c) => c.exact_area_mm2(),
         }
     }
 
@@ -413,6 +497,96 @@ mod tests {
         ParametricSection::new(family, values.to_vec())
             .and_then(|s| s.validate())
             .map_err(|e| (e.code, e.field))
+    }
+
+    fn area(family: SectionFamily, values: &[f64]) -> f64 {
+        ParametricSection::new(family, values.to_vec())
+            .unwrap()
+            .exact_area_mm2()
+    }
+
+    fn close(a: f64, b: f64) {
+        assert!((a - b).abs() <= 1e-9 * b.abs(), "{a} vs {b}");
+    }
+
+    #[test]
+    fn exact_areas_match_closed_form_hand_values() {
+        use core::f64::consts::PI;
+        // I h=298 b=149 tw=5.5 tf=8 r=13: sharp 3935 plus four root fillets of (4 - pi) r^2 / 4.
+        close(
+            area(SectionFamily::IShape, &[298.0, 149.0, 5.5, 8.0, 13.0]),
+            3935.0 + (4.0 - PI) * 169.0,
+        );
+        assert!(
+            (area(SectionFamily::IShape, &[298.0, 149.0, 5.5, 8.0, 13.0]) - 4_080.070_8).abs()
+                < 1e-4
+        );
+        // Channel 200x80, tw 6, tf 10, r 10: two root fillets.
+        close(
+            area(SectionFamily::Channel, &[200.0, 80.0, 6.0, 10.0, 10.0]),
+            2.0 * 80.0 * 10.0 + 180.0 * 6.0 + (4.0 - PI) * 100.0 / 2.0,
+        );
+        // Angle 100x75x8, r 10: one root fillet.
+        close(
+            area(SectionFamily::Angle, &[100.0, 75.0, 8.0, 10.0]),
+            8.0 * 167.0 + (4.0 - PI) * 100.0 / 4.0,
+        );
+        // RHS 150x100x5, r 10: outer rectangle less four corners, minus the cavity with r 5.
+        close(
+            area(SectionFamily::Rhs, &[150.0, 100.0, 5.0, 10.0]),
+            (15_000.0 - (4.0 - PI) * 100.0) - (140.0 * 90.0 - (4.0 - PI) * 25.0),
+        );
+        // A square tube with a sharp outside has a sharp cavity: 100^2 - 90^2.
+        close(area(SectionFamily::Rhs, &[100.0, 100.0, 5.0, 0.0]), 1_900.0);
+        // CHS 114 x 5: the ring pi/4 (114^2 - 104^2).
+        close(
+            area(SectionFamily::Chs, &[114.0, 5.0]),
+            PI / 4.0 * (114.0 * 114.0 - 104.0 * 104.0),
+        );
+        // Cold-formed sections without a radius are the thin-walled sums.
+        close(
+            area(SectionFamily::LippedC, &[150.0, 50.0, 15.0, 2.0, 0.0]),
+            2.0 * 150.0 + 2.0 * 2.0 * 48.0 + 2.0 * 2.0 * 13.0,
+        );
+        close(
+            area(SectionFamily::PlainC, &[100.0, 40.0, 2.0, 0.0]),
+            2.0 * 100.0 + 2.0 * 2.0 * 38.0,
+        );
+        // One bend pair of a 2 mm strip bent on r 3 (outer 5): each pair is -(4 - pi)/4 (25 - 9).
+        close(
+            area(SectionFamily::PlainC, &[100.0, 40.0, 2.0, 3.0]),
+            area(SectionFamily::PlainC, &[100.0, 40.0, 2.0, 0.0])
+                - 2.0 * (4.0 - PI) / 4.0 * (25.0 - 9.0),
+        );
+    }
+
+    #[test]
+    fn a_custom_area_is_the_shoelace_area_whatever_the_winding() {
+        let outer = vec![[0.0, 0.0], [100.0, 0.0], [100.0, 50.0], [0.0, 50.0]];
+        let cavity = vec![[10.0, 10.0], [10.0, 20.0], [30.0, 20.0], [30.0, 10.0]];
+        let section = CustomSection {
+            outer: outer.clone(),
+            cavities: vec![cavity.clone()],
+        };
+        close(section.exact_area_mm2(), 5_000.0 - 200.0);
+        let mut reversed = outer;
+        reversed.reverse();
+        let flipped = CustomSection {
+            outer: reversed,
+            cavities: vec![cavity],
+        };
+        close(flipped.exact_area_mm2(), 4_800.0);
+        // Far from the origin the area does not lose its digits.
+        let far = CustomSection {
+            outer: vec![
+                [1.0e8, 1.0e8],
+                [1.0e8 + 100.0, 1.0e8],
+                [1.0e8 + 100.0, 1.0e8 + 50.0],
+                [1.0e8, 1.0e8 + 50.0],
+            ],
+            cavities: vec![],
+        };
+        close(far.exact_area_mm2(), 5_000.0);
     }
 
     #[test]

@@ -89,8 +89,9 @@ Rules:
   radii has one outline referenced by both.
 * Radii in the detailed outline are arcs approximated by a deterministic polygon with its vertices
   on the arc and a sagitta bound of `max(0.25 mm, 0.5 % of the radius)` (section 9), so that geometry is flagged `Approximated` (G05 rule; F06 0.1.0 has no exact
-  curves). The simplified outline is flagged not exact. Volume, mass, BOM and snapping use the
-  detailed one only, and the two are never summed (section 5).
+  curves). The simplified outline is flagged not exact. Snapping and the mesh use the detailed
+  one only, and the two are never summed (section 5). Volume and mass do **not** read the polygon
+  any more: they use the exact section area (P-Mass, section 5).
 * The point budget is the G05 one (1024 per contour, 2048 total); the generator chooses the arc
   segment count from the radius and the sagitta bound and refuses (`LIMIT_EXCEEDED`), never
   truncates.
@@ -124,10 +125,17 @@ Rules:
 
 * The library entry may declare area, mass per metre and surface per metre (P02.2 fields). They
   are what a BOM reads, and they are part of the definition's identity.
-* The kernel computes its own area from the generated polygon. A declared area that differs from
-  the polygon area by more than 1 percent is reported as a warning and never refused (owner
-  decision D3, section 7 and section 10): catalogue values are authoritative. The rectangle keeps
-  its refusing P02.2 check.
+* **Member quantities (P-Mass, owner decision of 2026-10-18).** The member mass is
+  `area x axis length x density`. The area has two origins and there is never "no area":
+  `catalogue` is the area the pinned profile definition declares (a library entry or
+  `--area-mm2`); `computed` is the EXACT area of the section from its parameters (closed form
+  with true circular arcs; the shoelace area of a custom outline; `width x height` of a
+  rectangle). The polygon of the detailed outline is used for the mesh only. See
+  [p-mass-section-area.md](p-mass-section-area.md).
+* A declared area is compared with the exact area (not with the polygon). A declared area that
+  differs from the exact area by more than 1 percent is reported as a warning and never refused
+  (owner decision D3, section 7 and section 10): catalogue values are authoritative. The
+  rectangle keeps its refusing P02.2 check.
 * No density, grade or mass is ever guessed from a designation.
 
 ## 6. Environments and libraries (A07.2, A07.3)
@@ -265,8 +273,10 @@ Deviations and limits, recorded rather than hidden:
   view setting that chooses it follow with V02/V05 work.
 * **Declared area (D3).** For section families, a declared area was admitted as a label-like value
   and not compared with the outline area; A07.2 now reports a warning when it differs (section 10).
-* **Volume status.** A section member's volume is `current` for the polygon it stores; the arcs are
-  approximated (flagged in the kernel result), as the A04 round holes are.
+* **Volume status.** A section member's volume is `current`. Since P-Mass it is the effective
+  section area (declared, else the exact area) times the axis length; the stored mesh is still the
+  detailed polygon, whose arcs are approximated (flagged in the kernel result, as the A04 round
+  holes are), so the mesh volume and the quantity volume can differ by the arc approximation.
 * **Layer budgets.** The U01 first-slice ceilings bounded a revision to 7 detailed I-sections; they
   were replaced by the model profile ([layer budgets](layer-budgets-model-profile.md)).
 * No placement offsets, no rotated placement (P03 rule), no member holes or cuts.
@@ -301,7 +311,7 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
 | `define-profile --library` | The definition takes every value from the entry and stores them itself (designation, standard, declared numbers, display name = designation unless `--name`), so it never depends on the library file later: the tests delete the library before placing a member. The library provenance (id, version, licence) is reported by `library-list` and `library-show` but is **not** stored in the definition (the design note of section 2 foresaw provenance labels; they would be new definition fields and a new digest input, and are left to a later slice). `library-show` prints the digest that `define-profile --library` would pin. Combining `--library` with explicit dimensions, `--family`, `--standard` or declared numbers is `INVALID_ARGUMENT`. |
 | Display names | `Definition::{Material, RectangleProfile, SectionProfile}` carry an optional readable name, written as USD `displayName` metadata on the definition prim. `define-material` and `define-profile` take `--name TEXT`; the default is the designation, else a generated name: `S355 7850 kg/m3` (grade and density, only what is declared; `Material (density unknown)` otherwise), `RECT 200x300`, `I 200x100`, `RHS 100x60x4`, `CHS 114x5`, `Custom 8 points`. `definitions` lists `display_name`; `plate-inspect` lists `profile_name` and `material_name` of each element (null for a definition without a name). JSON objects are printed with sorted keys by the shared encoder, so "name first" is not a property of the text; the name is the first thing a person looks for, not the first key. |
 | Selection by name | `create-member --profile NAME`, `create-member|create-plate --material NAME` resolve against the **head's** definitions (verified and re-admitted like every read) by display name or by designation (profiles) or grade (materials); profiles and materials are separate namespaces. No match is `NOT_FOUND`; more than one distinct definition is `INVALID_ARGUMENT` with the candidates (digest, kind, display name, names; the first 16 and the total, see the review follow-up) in `diagnostics` and nothing published or guessed; a name and its digest option together are `INVALID_ARGUMENT`. The digest stays the identity: the command pins the resolved digest. |
-| Declared area (D3) | Owner decision of 2026-10-18: **a warning, never a refusal**; the reason is that catalogue values are not mathematically derived and rounded radii differ legitimately. `engine::member::declared_section_area_warning` compares a declared area with the net area the kernel's detailed outline extrudes (`section_member` over a 1 m axis, `net_area_mm2`); a relative gap above 1 percent (`model::limits::DECLARED_SECTION_AREA_TOLERANCE`) gives a `DeclaredAreaWarning` and the definition is created with its declared value. The CLI reports `declared_area_warning` (`declared_mm2`, `kernel_mm2`, `relative_difference`, `threshold`, `threshold_percent`; null when it agrees or no area is declared) in the `definition` of `define-profile`, in each entry of `library-list` and `library-show`, and in `definitions` (computed when listed, so stores need no change). A library entry with such an area still loads. Malformed values (non-finite, not above zero, above the cap) are still refused by the F04 rules. The rectangle keeps its refusing 0.1 percent P02.2 check (not widened). Mass is not computed from the declared area or mass per metre in this slice. |
+| Declared area (D3) | Owner decision of 2026-10-18: **a warning, never a refusal**; the reason is that catalogue values are not mathematically derived and rounded radii differ legitimately. `engine::member::declared_section_area_warning` compares a declared area with the **exact** area of the section (`SectionShape::exact_area_mm2`, closed form with true arcs; since P-Mass, no longer the polygon the kernel extrudes); a relative gap above 1 percent (`model::limits::DECLARED_SECTION_AREA_TOLERANCE`) gives a `DeclaredAreaWarning` and the definition is created with its declared value. The CLI reports `declared_area_warning` (`declared_mm2`, `kernel_mm2` and its alias `exact_mm2` (both the exact area), `relative_difference`, `threshold`, `threshold_percent`; null when it agrees or no area is declared) in the `definition` of `define-profile`, in each entry of `library-list` and `library-show`, and in `definitions` (computed when listed, so stores need no change). A library entry with such an area still loads. Malformed values (non-finite, not above zero, above the cap) are still refused by the F04 rules. The rectangle keeps its refusing 0.1 percent P02.2 check (not widened). Mass uses the declared area when present (P-Mass); the declared mass per metre is still not read. |
 
 ### Digest and schema effect (honest record)
 
@@ -339,10 +349,10 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
 ### Assumptions and limits, recorded rather than hidden
 
 * **D3 is decided (owner, 2026-10-18): a warning.** The 1 percent threshold (the note of section 5
-  gave no number) is the point above which the warning is reported; it covers the arc polygon
-  (sagitta at most 0.5 percent of a radius, a few hundredths of a percent of the area) and
-  the rounding of a published area. The declared mass per metre will feed the bill of materials in a
-  follow-up; this slice does not change how mass is computed.
+  gave no number) is the point above which the warning is reported; it covers the rounding of
+  a published area. Since P-Mass the reference is the exact area, so the arc polygon no longer
+  contributes to the gap. The declared mass per metre will feed the bill of materials in a
+  follow-up.
 * **One library file only.** `--library FILE` names it explicitly; the project, user and
   environment lookup order, `--environment`, environment layers (sublayers of libraries) and shadow
   reports of section 6 are **design only**. A07.3 (user library, `library-add`) is not started.
@@ -357,7 +367,7 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
 * The synthetic library `assets/libraries/synthetic-sections.usda` has nine invented entries
   (`SYN-*`, MPL-2.0, listed in `ATTRIBUTION.md`); it follows no standard and contains no national data.
   The declared areas of its three entries that carry one (5,153, 2,000 and 2,400 mm2) agree
-  with the kernel outline, so none warns.
+  with the exact area, so none warns.
 
 Evidence: `cargo test -p beamcraft-cli --test libraries` (real binary: list and filter, show,
 self-contained definition with the library deleted, digest equal to the predicted one, every

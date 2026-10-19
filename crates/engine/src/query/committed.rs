@@ -226,6 +226,7 @@ mod tests {
                 Ok(ProfileInfo::Rectangle {
                     width_mm: 200.0,
                     height_mm: 300.0,
+                    declared_area_mm2: None,
                 })
             } else {
                 crate::member::no_profiles(d)

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Q02 rehearsal bundle for the ad-hoc-signed, unsigned-release macOS package. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>BeamCraft</string>
+    <key>CFBundleDisplayName</key>
+    <string>BeamCraft</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.apibim.beamcraft</string>
+    <key>CFBundleExecutable</key>
+    <string>beamcraft-ui</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+</dict>
+</plist>

@@ -7,10 +7,13 @@
 //! runs the CLI's `create-plate` / `create-member` in a separate process and then reloads the
 //! accepted revision; see [`tools`] (pure parameter mapping and reply parsing) and [`command`].
 //!
-//! V06 adds the properties panel (click to pick through the CLI's `pick`, properties from
-//! `plate-inspect`, edits through `update-element`) and the publication panel of a personal
-//! workspace (`workspace-status` / `-publish` / `-undo` / `-redo`); see [`props`] for the pure
-//! mapping, following the same client pattern.
+//! V05.2 adds the edit tools: click selection through the engine's `pick`, Move / Copy / Delete
+//! as staged CLI commands, and Undo / Redo on a workspace; see [`edit`].
+//!
+//! V06 adds the properties panel (the selected element's full `plate-inspect` report, property
+//! edits through `update-element`) and the publication panel of a personal workspace
+//! (`workspace-status` / `-publish` with `--store PUBLISHED --workspace DIR`); see [`props`] for
+//! the pure mapping, following the same client pattern.
 //!
 //! The viewport shows the accepted (published) revision of a store. Its input is the engine's
 //! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
@@ -26,6 +29,7 @@
 pub mod app;
 pub mod camera;
 pub mod command;
+pub mod edit;
 pub mod metrics;
 pub mod props;
 pub mod render;

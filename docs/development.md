@@ -79,5 +79,21 @@ on Windows and Linux, the module-boundary check, docs, a wasm32 check of `beamcr
 
 ## Releases
 
-Push a tag such as `v0.1.0`. `.github/workflows/release.yml` builds `beamcraft` for Windows, Linux
-and macOS and attaches the archives to a GitHub release.
+Push a tag such as `v0.1.0`. `.github/workflows/release.yml` builds unsigned packages and
+attaches them to a GitHub release (Q02 rehearsal):
+
+- Windows `x86_64-pc-windows-msvc`: `beamcraft-<tag>-x86_64-pc-windows-msvc.zip`.
+- Linux `x86_64-unknown-linux-gnu`: the same layout, archived as a `tar.gz`.
+- macOS `aarch64-apple-darwin`: a `BeamCraft.app` bundle inside a `tar.gz`, ad-hoc signed
+  (`codesign -s -`); the arm64 kernel refuses unsigned executables. No developer identity,
+  no notarization — Gatekeeper warns on a fresh download (owner decision; tracked separately).
+
+Every package carries `beamcraft`, `beamcraft-ui` and `beamcraft-usd-worker`, the admitted
+Inter font with its `OFL-1.1-Inter.txt` licence (in the .app under `Contents/Resources/`),
+and the project documents. `packaging/package.sh` builds one package from a release build;
+`packaging/Info.plist` is the .app template. CI extracts each archive into a fresh directory
+and runs `beamcraft --version` from it.
+
+Fresh-install verification on each OS (manual, owner): extract the package, run
+`beamcraft --version`, start `beamcraft-ui` and confirm the window opens with text rendered
+(Inter loaded; without it the window runs without text).

@@ -68,10 +68,11 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-protocol | crates/protocol | native | 2 | beamcraft-model | now | U01 |
 | beamcraft-layer-engine | crates/layer-engine | host | 2 | beamcraft-model | now | U01/U02/U03; separate process, owner decision 2026-10-16 |
 | beamcraft-kernel | crates/kernel | domain | 2 | beamcraft-geom, beamcraft-model | now | G02 |
+| beamcraft-ifc | crates/ifc | native | 2 | beamcraft-model | now | E02 (IFC4 STEP writer and structural reader; std only, no file system) |
 | beamcraft-engine | crates/engine | native | 3 | beamcraft-geom, beamcraft-model, beamcraft-kernel | now | V02 (view snapshot and query slice); P01 (`CreatePlate` application, footprints, transactions, committed-plate queries) |
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-protocol, beamcraft-engine | now | U05 |
-| beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine | now | U04 amendment: CLI and thin Rust worker binaries |
-| beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-protocol, beamcraft-engine, beamcraft-host | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the protocol crate) |
+| beamcraft-cli | apps/beamcraft-cli | app | 5 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-protocol, beamcraft-layer-engine, beamcraft-ifc | now | U04 amendment: CLI and thin Rust worker binaries; E02 (`export-ifc` adapter) |
+| beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-protocol, beamcraft-engine, beamcraft-host | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the protocol crate); V05.2 (edit tools; same edges) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
 <!-- module-table:end -->
@@ -129,6 +130,9 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | USD worker (thin Rust wrapper, separate process; no new package) | F11 s.9, U04 owner topology decision | `apps/beamcraft-cli/src/bin/beamcraft-usd-worker.rs` | U04 amendment: experimental read worker; SDK fallback remains unavailable |
 | CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04 amendment: version, experimental open/read and byte-storage commands; U06: `revision-commit`, `revision-open`; V02: `view-snapshot` and `view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `plate-inspect` over a store (the CLI package also has a library target, `beamcraft_cli`, for its tests) |
 | Read-only foreign reference: source pin, units interpretation, attach/move/correct commands, write refusal; wiring of file read, layer engine and host | F04 s.1, F10 `reference`, LEW-01/04 | `beamcraft_model::reference`, `beamcraft_engine::reference`, `beamcraft_layer_engine::authored` (`Change::AttachReference`, `read_references`, `inspect_foreign_layer`), `apps/beamcraft-cli` (`beamcraft_cli::{reference, source_file}`) | **now**, R01 (experimental; single self-contained layer, in-process layer engine; no new crate and no new edge) |
+| Numbering preview: grouping rules, series, overlaps, staleness token | owner numbering notes (outside the repository), A08 | `beamcraft_engine::numbering` (rules), `beamcraft_cli::numbering` (adapter), `numbering-preview` | **now**, A08 (experimental; read-only, no stored numbers) |
+| IFC4 export: GlobalId, STEP lexical rules, entity templates, bounded sink, structural reader for tests | E01 s.3, 11, 15 | `beamcraft_ifc::{guid, step, model, verify}` and `write_ifc` | **now**, E02 (experimental; std only, no I/O of its own; `verify` is a test harness, not an importer) |
+| Export adapter: committed revision to `ExportModel`, report, atomic output | E01 s.4, 8, 13, 15.4 | `apps/beamcraft-cli` (`beamcraft_cli::export`), `beamcraft_host::output` | **now**, E02 (the contract proposed `beamcraft_engine::export`; the adapter sits with the other P/A-slice adapters and the engine gains no edge to `beamcraft-ifc`) |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | **now, partial**, V03: window, orbit camera, instanced offscreen viewport of the accepted snapshot (received as `beamcraft_engine::query::bundle` from `beamcraft view-export`), headless baseline metrics. Selection, snapping and tools are V04/V05 |
 
 The F05 sections 3 and 10 also require SHA-256 verification of attachments. The protocol crate

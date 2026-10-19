@@ -379,14 +379,16 @@ pub(crate) fn profile_lookup(
         Some(DefinitionRecord::RectangleProfile {
             width_mm,
             height_mm,
-            ..
+            section,
         }) => Ok(ProfileInfo::Rectangle {
             width_mm: *width_mm,
             height_mm: *height_mm,
+            declared_area_mm2: section.area_mm2,
         }),
-        Some(DefinitionRecord::SectionProfile { shape, .. }) => {
-            Ok(ProfileInfo::Section(shape.clone()))
-        }
+        Some(DefinitionRecord::SectionProfile { shape, section }) => Ok(ProfileInfo::Section {
+            shape: shape.clone(),
+            declared_area_mm2: section.area_mm2,
+        }),
         Some(DefinitionRecord::Material { .. }) => Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "profile_digest",

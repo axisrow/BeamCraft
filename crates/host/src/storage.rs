@@ -5,10 +5,13 @@
 //!
 //! The authorized root must already exist. Only the host may mutate its namespace while
 //! operations run: safe portable `std` has no directory-handle-relative, no-follow traversal.
-//! Every existing component is checked for links/reparse points, and canonical containment is
-//! checked before opening. These checks reject static hostile entries, but cannot exclude a
-//! hostile concurrent directory replacement between a check and a filesystem call. Restrict
-//! filesystem permissions accordingly; this API is not a sandbox against a hostile local writer.
+//! Every existing component is checked for links/reparse points (on macOS, any ancestor
+//! link is canonicalised and asserted as a resolved directory — sanctioned system links
+//! such as /var -> /private/var make this necessary, and a user-created ancestor link
+//! passes too), and canonical containment is checked before opening. These checks reject
+//! static hostile entries, but cannot exclude a hostile concurrent directory replacement
+//! between a check and a filesystem call. Restrict filesystem permissions accordingly; this
+//! API is not a sandbox against a hostile local writer.
 //!
 //! Installation uses a same-filesystem hard link, which fails if a destination already exists.
 //! Filesystems without hard-link support return an error; there is no replacing fallback.
@@ -137,14 +140,27 @@ fn directory(path: &Path) -> Result<(), StorageError> {
 }
 
 fn absolute_directory(path: &Path) -> Result<(), StorageError> {
-    // Walk from the filesystem root down so an ancestor link is rejected before a child
+    // Walk from the filesystem root down so an ancestor link is checked before a child
     // lookup can follow it. The root argument is host configuration, never an asset path.
+    // macOS places ordinary roots (temp dir, home) behind system links such as
+    // /var -> /private/var, so any ancestor link there is canonicalised first and asserted
+    // as a resolved directory (a user-created ancestor link passes too; a dangling or
+    // non-directory ancestor still fails); elsewhere the plain component is asserted
+    // unchanged. The supplied root itself must always be a plain directory.
+    let resolve_ancestors = cfg!(target_os = "macos");
     let mut prefix = PathBuf::new();
-    for component in path.components() {
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next() {
         prefix.push(component);
-        if prefix.is_absolute() {
-            directory(&prefix)?;
+        if !prefix.is_absolute() {
+            continue;
         }
+        let checked = if components.peek().is_none() || !resolve_ancestors {
+            prefix.clone()
+        } else {
+            fs::canonicalize(&prefix).map_err(io_error)?
+        };
+        directory(&checked)?;
     }
     Ok(())
 }
@@ -166,6 +182,12 @@ impl BlobStore {
         Self::with_limit(root, MAX_BLOB_BYTES)
     }
 
+    /// The canonical form of the store's root directory, for deciding whether a path lies inside
+    /// the store.
+    pub fn canonical_root(&self) -> &Path {
+        &self.canonical_root
+    }
+
     /// Opens a store with a smaller blob/read memory cap (zero permits only empty blobs).
     /// Caps above [`MAX_BLOB_BYTES`] are invalid; errors never include the root path.
     pub fn with_limit(root: impl AsRef<Path>, cap: usize) -> Result<Self, StorageError> {
@@ -184,8 +206,10 @@ impl BlobStore {
                 return Err(StorageError::InvalidArgument);
             }
         }
-        // Reject all links in the supplied root, including ancestors. Do not canonicalize
-        // first: that would erase evidence of a symlink. Parent components are ambiguous.
+        // Reject links in the supplied root itself, and in its ancestors except on macOS,
+        // where any ancestor link is canonicalised instead (system links such as
+        // /var -> /private/var sit before ordinary roots; a user-created ancestor link
+        // passes too). Parent components are ambiguous.
         if root
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))

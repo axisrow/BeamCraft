@@ -623,5 +623,10 @@ profile centred on the section's bounding box: a detailed outline whose radii ar
 the radius)`) and a simplified one with sharp corners and a 16-edge circle. `section_member`
 extrudes the outline along the member axis with G05, places it with the `geom::MemberFrame`
 basis (`world = R*local + p1`) and certifies one closed shell with G06. No dependency, asset or
-dimension table is added; family geometry follows public engineering descriptions. Evidence:
-`tests/section.rs`. Details: `docs/design/a07-section-library.md`.
+dimension table is added; family geometry follows public engineering descriptions. The polygon of
+the detailed outline is geometry and display only: `SectionResult::net_area_mm2` is its area and
+is not the section area. The exact area (closed form with true arcs) lives with the parameters in
+`model::section` (`exact_area_mm2`) and feeds the quantities (P-Mass,
+`docs/design/p-mass-section-area.md`). `SectionResult::axis_length_mm` is the extrusion length.
+Evidence: `tests/section.rs` and the unit tests of `section.rs` (a finely subdivided polygon
+converges to the exact area of every family). Details: `docs/design/a07-section-library.md`.

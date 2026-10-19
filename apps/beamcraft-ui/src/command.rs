@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Running a `beamcraft` CLI command in a separate process for the create tools. The UI commits
-//! through the same command a user types, so the accepted revision is the engine's, never a copy
-//! made here. Output is read with a cap and the process is killed after a deadline.
+//! Running a `beamcraft` CLI command in a separate process: the create tools (V05.1), the edit
+//! tools (V05.2) and the properties and publication queries of V06. The UI commits through the
+//! same command a user types, so the accepted revision is the engine's, never a copy made here.
+//! Output is read with a cap and the process is killed after a deadline.
 
+use crate::edit::{
+    Edit, Edited, ElementInfo, Ray, inspect_args, parse_edited, parse_element_info, parse_pick,
+    pick_args,
+};
 use crate::props::{
-    self, Change, Properties, WorkspaceState, parse_change, parse_element, parse_history,
-    parse_pick as parse_pick_reply, parse_workspace_state,
+    Change, Properties, WorkspaceState, history_args, parse_change, parse_element, parse_history,
+    parse_workspace_state, workspace_args,
 };
 use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
@@ -132,30 +137,52 @@ pub fn definitions(cli: &Path, store: &Path) -> Result<Definitions, ToolError> {
     parse_definitions(output.code, &output.stdout)
 }
 
-/// Picks along a window ray and reads the first hit element's properties; `None` when the ray
-/// misses everything. Two queries, exactly as a user types them (`pick`, then `plate-inspect`).
-pub fn select(
-    cli: &Path,
-    store: &Path,
-    origin: [f64; 3],
-    direction: [f64; 3],
-) -> Result<Option<Properties>, ToolError> {
-    let picked = run(cli, &props::pick_args(store, origin, direction), DEADLINE)?;
-    let Some(id) = parse_pick_reply(picked.code, &picked.stdout)? else {
-        return Ok(None);
-    };
-    properties(cli, store, &id)
+/// Runs a previewed edit (or an undo or redo) and reads its reply.
+pub fn commit_edit(cli: &Path, edit: &Edit) -> Result<Edited, ToolError> {
+    let output = run(cli, &edit.args, DEADLINE)?;
+    parse_edited(edit.kind, output.code, &output.stdout)
 }
 
-/// Reads the properties of one element from the store's inspection; `None` when the store has
-/// no such element (a revision the reply reports without it is not an error).
+/// The most standard output read from `plate-inspect` when one element is looked up.
+const MAX_INSPECT_OUTPUT: usize = 32 * 1024 * 1024;
+
+/// What a click found: the element id the engine's `pick` returned and, apart from it, whether
+/// the element's details could be read (a failure there never loses the selection).
+#[derive(Debug)]
+pub struct Selected {
+    /// The picked element.
+    pub id: String,
+    /// Its kind, name and translation as `plate-inspect` reports them.
+    pub info: Result<ElementInfo, ToolError>,
+}
+
+/// Looks up one element of the accepted revision.
+pub fn element_info(cli: &Path, store: &Path, id: &str) -> Result<ElementInfo, ToolError> {
+    let output = run_capped(cli, &inspect_args(store), DEADLINE, MAX_INSPECT_OUTPUT)?;
+    parse_element_info(id, output.code, &output.stdout)
+}
+
+/// Picks along `ray` with the engine's `pick` and reads the details of what it hit. `None` is
+/// empty space.
+pub fn select_at(cli: &Path, store: &Path, ray: &Ray) -> Result<Option<Selected>, ToolError> {
+    let output = run(cli, &pick_args(store, ray), DEADLINE)?;
+    let Some(id) = parse_pick(output.code, &output.stdout)? else {
+        return Ok(None);
+    };
+    let info = element_info(cli, store, &id);
+    Ok(Some(Selected { id, info }))
+}
+
+/// Reads the full properties of one element from the store's inspection; `None` when the store
+/// has no such element. The properties panel's report; the editor's lighter lookup is
+/// [`element_info`].
 pub fn properties(cli: &Path, store: &Path, id: &str) -> Result<Option<Properties>, ToolError> {
-    let output = run(cli, &props::inspect_args(store), DEADLINE)?;
+    let output = run_capped(cli, &inspect_args(store), DEADLINE, MAX_INSPECT_OUTPUT)?;
     parse_element(output.code, &output.stdout, id)
 }
 
-/// Runs one argument list that changes something (`update-element`, a workspace command) and
-/// reads its reply.
+/// Runs one argument list that changes something the edit panel does not stage (`update-element`
+/// with a property patch, `workspace-publish`) and reads its reply.
 pub fn run_change(cli: &Path, args: &[String]) -> Result<Change, ToolError> {
     let output = run(cli, args, DEADLINE)?;
     parse_change(output.code, &output.stdout)
@@ -169,7 +196,7 @@ pub fn workspace_state(
 ) -> Result<WorkspaceState, ToolError> {
     let output = run(
         cli,
-        &props::workspace_args("workspace-status", published, dir),
+        &workspace_args("workspace-status", published, dir),
         DEADLINE,
     )?;
     parse_workspace_state(output.code, &output.stdout)
@@ -177,6 +204,6 @@ pub fn workspace_state(
 
 /// Reads the draft's undo and redo units.
 pub fn workspace_history(cli: &Path, dir: &Path) -> Result<(u64, u64), ToolError> {
-    let output = run(cli, &props::history_args(dir), DEADLINE)?;
+    let output = run(cli, &history_args(dir), DEADLINE)?;
     parse_history(output.code, &output.stdout)
 }

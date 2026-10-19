@@ -14,28 +14,44 @@
 //! placement rotation other than the identity is `UNSUPPORTED_GEOMETRY` (the view contract
 //! carries translations only), so a beam is laid out through its own axis points.
 
-use crate::command::{MaterialInfo, MaterialLookup, Quantities, quantities_with_material};
+use crate::command::{
+    AreaSource, MaterialInfo, MaterialLookup, Quantities, Volumes, quantities_with_material,
+};
 use crate::footprint::Footprint;
 use crate::solid::SolidMesh;
 use crate::transaction::PriorOp;
-use beamcraft_geom::Point3;
+use beamcraft_geom::{MemberFrame, Point3};
 use beamcraft_kernel::diagnostic::{Failure, Field};
 use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, section_member};
 use beamcraft_kernel::{StraightMember, straight_member};
 use beamcraft_model::command::{CommandError, CreateStraightMember, MemberKind, Placement};
-use beamcraft_model::definition::{DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec};
+use beamcraft_model::definition::{
+    DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
+};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::section::SectionShape;
 
-/// Version label of the volume algorithm in a member's [`Quantities`] record.
-pub const MEMBER_VOLUME_ALGORITHM: &str = "kernel-p03-straight-member-volume/1;tolerance-policy-3";
+/// Version label of the volume algorithm in the [`Quantities`] record of a rectangle member:
+/// the effective section area (the declared catalogue area, else `width * height`) times the
+/// axis length.
+pub const MEMBER_VOLUME_ALGORITHM: &str =
+    "pmass-member-area-x-length/1;rectangle;tolerance-policy-3";
 
-/// Version label of the volume algorithm of a member of an A07.1 section: the net area of the
-/// detailed outline (radii as polygons on the arcs) times the axis length.
+/// Version label of the volume algorithm of a member of an A07.1 section: the effective section
+/// area (the declared catalogue area, else the exact closed-form area with true arcs) times the
+/// axis length. The mesh is still the detailed polygon outline; its volume is not this number.
 pub const SECTION_VOLUME_ALGORITHM: &str =
-    "kernel-a07-section-member-volume/1;detailed-arcs-max(0.25mm,0.5%r);tolerance-policy-3";
+    "pmass-member-area-x-length/1;section-exact-area;tolerance-policy-3";
+
+/// Labels that earlier slices stored for members. A stored record that carries one is a
+/// superseded value: it reads as `stale` and is recomputed by the next edit that rewrites the
+/// record; it is not corruption.
+pub const SUPERSEDED_MEMBER_ALGORITHMS: [&str; 2] = [
+    "kernel-p03-straight-member-volume/1;tolerance-policy-3",
+    "kernel-a07-section-member-volume/1;detailed-arcs-max(0.25mm,0.5%r);tolerance-policy-3",
+];
 
 /// The content of a resolved immutable profile definition.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,9 +62,16 @@ pub enum ProfileInfo {
         width_mm: f64,
         /// Section height in millimetres.
         height_mm: f64,
+        /// The section area the definition declares in mm2, if any (the catalogue area).
+        declared_area_mm2: Option<f64>,
     },
     /// An A07.1 section family or custom outline.
-    Section(SectionShape),
+    Section {
+        /// The shape.
+        shape: SectionShape,
+        /// The section area the definition declares in mm2, if any (the catalogue area).
+        declared_area_mm2: Option<f64>,
+    },
 }
 
 impl ProfileInfo {
@@ -58,8 +81,43 @@ impl ProfileInfo {
             Self::Rectangle {
                 width_mm,
                 height_mm,
+                ..
             } => (*width_mm, *height_mm),
-            Self::Section(shape) => shape.extent_mm(),
+            Self::Section { shape, .. } => shape.extent_mm(),
+        }
+    }
+
+    /// The declared (catalogue) area in mm2, if the definition carries one.
+    pub const fn declared_area_mm2(&self) -> Option<f64> {
+        match self {
+            Self::Rectangle {
+                declared_area_mm2, ..
+            }
+            | Self::Section {
+                declared_area_mm2, ..
+            } => *declared_area_mm2,
+        }
+    }
+
+    /// The exact area computed from the parameters in mm2: `width * height` for a rectangle, the
+    /// closed form with true arcs for a family, the shoelace area of a custom outline.
+    pub fn exact_area_mm2(&self) -> f64 {
+        match self {
+            Self::Rectangle {
+                width_mm,
+                height_mm,
+                ..
+            } => width_mm * height_mm,
+            Self::Section { shape, .. } => shape.exact_area_mm2(),
+        }
+    }
+
+    /// The area a member's volume uses and where it came from: the declared catalogue area when
+    /// the definition carries one, else the exact computed area. There is never no area.
+    pub fn effective_area(&self) -> (f64, AreaSource) {
+        match self.declared_area_mm2() {
+            Some(area) => (area, AreaSource::Catalogue),
+            None => (self.exact_area_mm2(), AreaSource::Computed),
         }
     }
 }
@@ -131,7 +189,10 @@ impl AuthoredMember {
 /// A member evaluated by the kernel: the sealed body and its section.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberBody {
-    /// The certified mesh, as every body offers it to the derived layer and the view.
+    /// The certified mesh, as every body offers it to the derived layer and the view. For a
+    /// section its arcs are polygons, so `solid.volume_mm3()` (the mesh volume) can differ from
+    /// [`Self::volume_mm3`] by the arc approximation: at most about `pi/3 * r * s` of area per
+    /// quarter arc of radius `r` and sagitta `s <= max(0.25 mm, 0.5 % r)`, times the length.
     pub solid: SolidMesh,
     /// The resolved profile the body was built from.
     pub profile: ProfileInfo,
@@ -139,7 +200,14 @@ pub struct MemberBody {
     pub width_mm: f64,
     /// Height of the section's bounding box in millimetres.
     pub height_mm: f64,
-    /// Analytic volume in cubic millimetres.
+    /// The axis length in millimetres.
+    pub axis_length_mm: f64,
+    /// The effective section area in mm2 (declared catalogue area, else the exact area).
+    pub section_area_mm2: f64,
+    /// Where the effective area came from.
+    pub area_source: AreaSource,
+    /// Gross volume in cubic millimetres: `section_area_mm2 * axis_length_mm`. A member has no
+    /// operation yet, so this is also its net volume.
     pub volume_mm3: f64,
     /// Version label of the volume algorithm.
     pub algorithm: &'static str,
@@ -171,9 +239,9 @@ fn map_section(failure: &SectionFailure) -> CommandError {
     }
 }
 
-/// Net area in mm2 of the detailed outline of a section shape, as the kernel generates it
-/// (shoelace of the polygon, radii as arcs on the polygon). It is the area every member of this
-/// shape extrudes, so a declared catalogue area can be compared with it.
+/// Net area in mm2 of the detailed polygon outline of a section shape, as the kernel generates
+/// it for the mesh (shoelace of the polygon, radii as chords on the arcs). It is a display and
+/// geometry figure only: quantities use the exact area ([`ProfileInfo::effective_area`]).
 pub fn section_outline_area_mm2(shape: &SectionShape) -> Result<f64, CommandError> {
     let result = section_member(&SectionMember {
         start: Point3::new(0.0, 0.0, 0.0),
@@ -186,21 +254,24 @@ pub fn section_outline_area_mm2(shape: &SectionShape) -> Result<f64, CommandErro
     Ok(result.net_area_mm2())
 }
 
-/// The warning for a declared section area that differs from the generated outline by more than
-/// 1 percent (owner decision D3: a warning, never a refusal). `None` when no area is declared,
-/// when it agrees, or when the kernel cannot build the outline (the declared value stays
-/// authoritative and the failure surfaces where the body is built). The kernel is only asked when
-/// an area is declared.
+/// The warning for a declared section area that differs from the EXACT area of the section by
+/// more than 1 percent (owner decision D3: a warning, never a refusal; the comparison is with the
+/// closed-form area, not the polygon of the mesh). `None` when no area is declared, when it
+/// agrees, or when the shape is not admitted (the declared value stays authoritative and the
+/// failure surfaces where the body is built). The `kernel_mm2` field of the warning carries the
+/// exact area.
 pub fn declared_section_area_warning(spec: &SectionProfileSpec) -> Option<DeclaredAreaWarning> {
     spec.section.area_mm2?;
-    let kernel_mm2 = section_outline_area_mm2(&spec.shape).ok()?;
-    spec.declared_area_warning(kernel_mm2)
+    spec.shape.validate().ok()?;
+    spec.declared_area_warning(spec.shape.exact_area_mm2())
 }
 
 /// Evaluates an authored member with its resolved profile. The profile values are re-admitted
 /// because a committed definition is untrusted input. A rectangle keeps the P03 box builder (and
 /// its exact bytes); a section family or custom outline is the kernel's detailed A07.1 outline
-/// extruded along the axis.
+/// extruded along the axis for the mesh. The volume is `effective area x axis length`, where the
+/// effective area is the declared catalogue area when the profile carries one, else the exact
+/// computed area (P-Mass).
 pub fn evaluate_member(
     authored: &AuthoredMember,
     profile: ProfileInfo,
@@ -211,15 +282,27 @@ pub fn evaluate_member(
         Point3::new(p2[0], p2[1], p2[2]),
     );
     let (width_mm, height_mm) = profile.extent_mm();
-    let (solid, volume_mm3, algorithm) = match &profile {
+    SectionProperties {
+        area_mm2: profile.declared_area_mm2(),
+        ..SectionProperties::default()
+    }
+    .validate()?;
+    let (solid, axis_length_mm, algorithm) = match &profile {
         ProfileInfo::Rectangle {
             width_mm,
             height_mm,
+            declared_area_mm2,
         } => {
+            // The declared area is admitted with the rectangle's own rule (it must agree with
+            // width x height within 0.1 percent), so a direct engine caller cannot pair a
+            // rectangle with an area that would give a different volume.
             RectangleProfileSpec {
                 width_mm: *width_mm,
                 height_mm: *height_mm,
-                ..RectangleProfileSpec::default()
+                section: SectionProperties {
+                    area_mm2: *declared_area_mm2,
+                    ..SectionProperties::default()
+                },
             }
             .validate()?;
             let result = straight_member(StraightMember {
@@ -230,13 +313,22 @@ pub fn evaluate_member(
                 roll_rad: authored.roll_rad,
             })
             .map_err(|failure| map_kernel(&failure))?;
+            // The kernel succeeded, so the frame exists; the same frame gives the same length.
+            let frame = MemberFrame::new(start, end, *width_mm, *height_mm, authored.roll_rad)
+                .map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::UnsupportedGeometry,
+                        "axis_points_mm",
+                        "member frame could not be built",
+                    )
+                })?;
             (
                 SolidMesh::from_box(&result),
-                result.volume_mm3(),
+                frame.scale().axis_length_mm(),
                 MEMBER_VOLUME_ALGORITHM,
             )
         }
-        ProfileInfo::Section(shape) => {
+        ProfileInfo::Section { shape, .. } => {
             shape.validate()?;
             let result = section_member(&SectionMember {
                 start,
@@ -248,27 +340,47 @@ pub fn evaluate_member(
             .map_err(|failure| map_section(&failure))?;
             (
                 SolidMesh::from_section(&result),
-                result.volume_mm3(),
+                result.axis_length_mm(),
                 SECTION_VOLUME_ALGORITHM,
             )
         }
     };
+    let (section_area_mm2, area_source) = profile.effective_area();
+    let volume_mm3 = section_area_mm2 * axis_length_mm;
+    if !volume_mm3.is_finite() || volume_mm3 <= 0.0 {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "profile",
+            "section area or volume is not a positive finite number",
+        ));
+    }
     Ok(MemberBody {
         solid,
         profile,
         width_mm,
         height_mm,
+        axis_length_mm,
+        section_area_mm2,
+        area_source,
         volume_mm3,
         algorithm,
     })
 }
 
-/// The quantity records of a member body with the physical material of the element.
+/// The quantity records of a member body with the physical material of the element: gross is the
+/// effective area times the axis length, and net is the same (no operation on a member yet).
 pub fn member_quantities(
     body: &MemberBody,
     material: Option<MaterialInfo>,
 ) -> Result<Quantities, CommandError> {
-    quantities_with_material(body.volume_mm3, body.algorithm, material)
+    let mut quantities = quantities_with_material(
+        Volumes::unchanged(body.volume_mm3),
+        body.algorithm,
+        material,
+    )?;
+    quantities.section_area_mm2 = Some(body.section_area_mm2);
+    quantities.area_source = Some(body.area_source);
+    Ok(quantities)
 }
 
 /// Everything one accepted `CreateStraightMember` produces for the layers and the host.
@@ -416,6 +528,7 @@ mod tests {
             Ok(ProfileInfo::Rectangle {
                 width_mm: 200.0,
                 height_mm: 300.0,
+                declared_area_mm2: None,
             })
         } else {
             no_profiles(digest)
@@ -435,21 +548,193 @@ mod tests {
                 ..SectionProperties::default()
             },
         };
-        // The tube is a ring: pi / 4 * (114^2 - 104^2).
+        // The tube is a ring: pi / 4 * (114^2 - 104^2). The warning compares with that exact
+        // area, not with the polygon of the mesh.
         let ring = std::f64::consts::FRAC_PI_4 * (114.0 * 114.0 - 104.0 * 104.0);
-        let outline = section_outline_area_mm2(&spec(None).shape).unwrap();
-        assert!((outline - ring).abs() < 0.01 * ring, "{outline} vs {ring}");
+        let polygon = section_outline_area_mm2(&spec(None).shape).unwrap();
+        assert!((polygon - ring).abs() < 0.01 * ring, "{polygon} vs {ring}");
+        let exact = spec(None).shape.exact_area_mm2();
+        assert!((exact - ring).abs() <= 1e-9 * ring);
         assert_eq!(declared_section_area_warning(&spec(None)), None);
         assert_eq!(
             declared_section_area_warning(&spec(Some(ring.round()))),
             None
         );
+        // A declared area that matches the (slightly larger) polygon but is further than one
+        // percent from the exact area would be flagged; the exact area is the reference.
         for declared in [1.05 * ring, 0.95 * ring] {
             let warning = declared_section_area_warning(&spec(Some(declared))).unwrap();
             assert_eq!(warning.declared_mm2, declared);
-            assert_eq!(warning.kernel_mm2, outline);
+            assert_eq!(warning.kernel_mm2, exact);
             assert!(warning.relative_difference > 0.03 && warning.threshold == 0.01);
         }
+        assert_eq!(
+            declared_section_area_warning(&spec(Some(exact * 1.0099))),
+            None
+        );
+        assert!(declared_section_area_warning(&spec(Some(exact * 1.0101))).is_some());
+    }
+
+    fn i_section(r: f64) -> SectionShape {
+        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        SectionShape::Parametric(
+            ParametricSection::new(SectionFamily::IShape, vec![298.0, 149.0, 5.5, 8.0, r]).unwrap(),
+        )
+    }
+
+    fn member_with(profile: ProfileInfo, density: Option<f64>, length: f64) -> CreateMemberOutcome {
+        let digest = digest(b"profile");
+        let lookup = |d: &ContentDigest| {
+            if *d == digest {
+                Ok(profile.clone())
+            } else {
+                no_profiles(d)
+            }
+        };
+        let materials = |_: &ContentDigest| {
+            Ok(MaterialInfo {
+                density_kg_m3: density,
+            })
+        };
+        let mut c = command(digest);
+        c.axis_points_mm = [[0.0; 3], [length, 0.0, 0.0]];
+        c.material_digest = Some(self::digest(b"steel"));
+        create_straight_member(&c, &none, &lookup, &materials).unwrap()
+    }
+
+    #[test]
+    fn the_exact_area_replaces_the_polygon_and_the_old_value_overstated() {
+        let exact = 3935.0 + (4.0 - core::f64::consts::PI) * 169.0;
+        let out = member_with(
+            ProfileInfo::Section {
+                shape: i_section(13.0),
+                declared_area_mm2: None,
+            },
+            Some(7850.0),
+            6000.0,
+        );
+        let q = out.quantities;
+        assert_eq!(q.area_source, Some(AreaSource::Computed));
+        assert!((q.section_area_mm2.unwrap() - exact).abs() <= 1e-9 * exact);
+        assert!((q.volume_mm3 - exact * 6000.0).abs() <= 1e-9 * exact * 6000.0);
+        let mass = q.mass_kg.unwrap();
+        assert!((mass - 192.168).abs() < 0.01, "{mass}");
+        // Without operations gross and net are one value.
+        assert_eq!(q.volume_gross_mm3, q.volume_mm3);
+        assert_eq!(q.mass_gross_kg, q.mass_kg);
+        assert_eq!(q.removed_volume_mm3, 0.0);
+        // The mesh keeps the detailed polygon: its volume overstates the exact one (the old
+        // quantity, 192.58 kg), by less than the arc bound of four fillets.
+        let mesh = out.body.solid.volume_mm3();
+        assert!(mesh > q.volume_mm3);
+        assert!((mesh - q.volume_mm3) / q.volume_mm3 < 0.0025);
+        let old_mass = mesh * 7850.0 / 1e9;
+        assert!((old_mass - 192.58).abs() < 0.02, "{old_mass}");
+    }
+
+    #[test]
+    fn a_declared_catalogue_area_wins_over_the_computed_one() {
+        let out = member_with(
+            ProfileInfo::Section {
+                shape: i_section(13.0),
+                declared_area_mm2: Some(4080.0),
+            },
+            Some(7850.0),
+            6000.0,
+        );
+        let q = out.quantities;
+        assert_eq!(q.area_source, Some(AreaSource::Catalogue));
+        assert_eq!(q.section_area_mm2, Some(4080.0));
+        assert_eq!(q.volume_mm3, 4080.0 * 6000.0);
+        assert!((q.mass_kg.unwrap() - 192.168).abs() < 0.001);
+        // A hostile declared area from a committed definition is refused, never used.
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e30] {
+            let lookup = |_: &ContentDigest| {
+                Ok(ProfileInfo::Section {
+                    shape: i_section(13.0),
+                    declared_area_mm2: Some(bad),
+                })
+            };
+            assert!(
+                create_straight_member(&command(digest(b"p")), &none, &lookup, &no_materials)
+                    .is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rectangle_is_width_times_height_unless_an_area_is_declared() {
+        let computed = member_with(
+            ProfileInfo::Rectangle {
+                width_mm: 200.0,
+                height_mm: 300.0,
+                declared_area_mm2: None,
+            },
+            Some(7850.0),
+            6000.0,
+        );
+        assert_eq!(computed.quantities.area_source, Some(AreaSource::Computed));
+        assert_eq!(computed.quantities.section_area_mm2, Some(60_000.0));
+        assert_eq!(computed.quantities.volume_mm3, 360_000_000.0);
+        let declared = member_with(
+            ProfileInfo::Rectangle {
+                width_mm: 200.0,
+                height_mm: 300.0,
+                declared_area_mm2: Some(60_030.0),
+            },
+            Some(7850.0),
+            6000.0,
+        );
+        assert_eq!(declared.quantities.area_source, Some(AreaSource::Catalogue));
+        assert_eq!(declared.quantities.volume_mm3, 60_030.0 * 6000.0);
+    }
+
+    #[test]
+    fn a_rectangle_refuses_a_declared_area_that_disagrees_with_width_times_height() {
+        for declared in [1.0, 59_000.0, 61_000.0, 1e9] {
+            let lookup = |_: &ContentDigest| {
+                Ok(ProfileInfo::Rectangle {
+                    width_mm: 200.0,
+                    height_mm: 300.0,
+                    declared_area_mm2: Some(declared),
+                })
+            };
+            let error =
+                create_straight_member(&command(digest(b"p")), &none, &lookup, &no_materials)
+                    .unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidArgument, "{declared}");
+        }
+        // Within 0.1 percent it is accepted (the catalogue value wins).
+        let lookup = |_: &ContentDigest| {
+            Ok(ProfileInfo::Rectangle {
+                width_mm: 200.0,
+                height_mm: 300.0,
+                declared_area_mm2: Some(60_030.0),
+            })
+        };
+        assert!(
+            create_straight_member(&command(digest(b"p")), &none, &lookup, &no_materials).is_ok()
+        );
+    }
+
+    #[test]
+    fn a_custom_outline_uses_its_shoelace_area() {
+        use beamcraft_model::section::CustomSection;
+        let out = member_with(
+            ProfileInfo::Section {
+                shape: SectionShape::Custom(CustomSection {
+                    outer: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 100.0], [0.0, 100.0]],
+                    cavities: vec![vec![[40.0, 40.0], [40.0, 60.0], [60.0, 60.0], [60.0, 40.0]]],
+                }),
+                declared_area_mm2: None,
+            },
+            None,
+            1000.0,
+        );
+        assert_eq!(out.quantities.section_area_mm2, Some(9_600.0));
+        assert_eq!(out.quantities.volume_mm3, 9_600_000.0);
+        assert_eq!(out.quantities.mass_kg, None);
     }
 
     #[test]
@@ -462,7 +747,10 @@ mod tests {
         );
         let lookup = |d: &ContentDigest| {
             if *d == profile {
-                Ok(ProfileInfo::Section(shape.clone()))
+                Ok(ProfileInfo::Section {
+                    shape: shape.clone(),
+                    declared_area_mm2: None,
+                })
             } else {
                 no_profiles(d)
             }
@@ -471,18 +759,25 @@ mod tests {
         assert_eq!((out.body.width_mm, out.body.height_mm), (150.0, 300.0));
         assert_eq!(out.body.algorithm, SECTION_VOLUME_ALGORITHM);
         assert!(out.body.solid.vertices().len() > 8);
-        // Area of the sharp I plus four root fillets, within the arc approximation bound.
+        // Area of the sharp I plus four root fillets, exactly; the mesh is only close to it.
         let area =
             2.0 * 150.0 * 10.0 + 280.0 * 7.0 + 4.0 * (1.0 - core::f64::consts::FRAC_PI_4) * 225.0;
-        assert!((out.body.volume_mm3 / 6000.0 - area).abs() < 25.0);
+        assert!((out.body.volume_mm3 / 6000.0 - area).abs() <= 1e-9 * area);
+        assert!((out.body.solid.volume_mm3() / 6000.0 - area).abs() < 25.0);
         assert_eq!(out.quantities.volume_mm3, out.body.volume_mm3);
         // A bad committed definition is refused by the same admission as a command.
         let bad = |d: &ContentDigest| {
             let _ = d;
-            Ok(ProfileInfo::Section(SectionShape::Parametric(
-                ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 200.0, 15.0])
+            Ok(ProfileInfo::Section {
+                shape: SectionShape::Parametric(
+                    ParametricSection::new(
+                        SectionFamily::IShape,
+                        vec![300.0, 150.0, 7.0, 200.0, 15.0],
+                    )
                     .unwrap(),
-            )))
+                ),
+                declared_area_mm2: None,
+            })
         };
         assert_eq!(
             create_straight_member(&command(profile), &none, &bad, &no_materials)
@@ -586,6 +881,7 @@ mod tests {
                 ProfileInfo::Rectangle {
                     width_mm: w,
                     height_mm: h,
+                    declared_area_mm2: None,
                 },
             )
             .unwrap_err();

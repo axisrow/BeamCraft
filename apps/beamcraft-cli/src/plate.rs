@@ -40,8 +40,7 @@ use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
 use beamcraft_engine::member::AuthoredMember;
 use beamcraft_engine::quantity::{
-    Assessment, Freshness, QuantityRecord, StoredRecord, assess, member_shape_signature,
-    plate_shape_signature, record_for,
+    Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
 };
 use beamcraft_engine::query::committed::{
     MemberRecord, PlateRecord, evaluate_committed, evaluate_committed_members, ids,
@@ -242,6 +241,137 @@ impl DerivedMesh {
     }
 }
 
+/// How a prim authors its placement (E02: a proxy's pose is read from here).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlacementRead {
+    /// The prim authors no transform at all.
+    Absent,
+    /// Exactly a translation and an orientation, as the F04 pose.
+    Rigid(beamcraft_model::command::Placement),
+    /// Any other transform form (a scale, a different operation order, a missing half).
+    Other,
+}
+
+/// The published mesh of an element the kernel does not know (E02: kept for its proxy). Triangles
+/// only, indices checked against the points; anything else is not a usable mesh.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PublishedMesh {
+    /// Points in their stored order, element-local millimetres.
+    pub points: Vec<[f32; 3]>,
+    /// Zero-based vertex indices of each triangle in their stored order.
+    pub triangles: Vec<[u32; 3]>,
+}
+
+fn published_mesh(mesh: &DerivedMesh) -> Option<PublishedMesh> {
+    if mesh.points.is_empty()
+        || mesh.counts.is_empty()
+        || mesh.counts.iter().any(|c| *c != 3)
+        || mesh.indices.len() != mesh.counts.len().checked_mul(3)?
+        || mesh.points.iter().flatten().any(|v| !v.is_finite())
+    {
+        return None;
+    }
+    let triangles = mesh
+        .indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|&[a, b, c]| {
+            let index = |v: i64| {
+                u32::try_from(v)
+                    .ok()
+                    .filter(|i| usize::try_from(*i).is_ok_and(|i| i < mesh.points.len()))
+            };
+            Some([index(a)?, index(b)?, index(c)?])
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(PublishedMesh {
+        points: mesh.points.clone(),
+        triangles,
+    })
+}
+
+/// The common facts of one element prim, whatever its kind (E02: kinds without a mapping are
+/// exported as proxies and need a name, a pose and the lifecycle). Levels are not listed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ElementMeta {
+    /// The `bim:elementKind` token, `unknown` when the prim authors none.
+    pub kind: String,
+    /// `bim:name`, when authored as a string.
+    pub name: Option<String>,
+    /// `bim:schemaVersion`, when authored.
+    pub schema_version: Option<String>,
+    /// `bim:geometryMode`, when authored.
+    pub geometry_mode: Option<String>,
+    /// Whether `bim:lifecycle` is `deactivated` or the prim is inactive.
+    pub deactivated: bool,
+    /// The authored placement.
+    pub placement: PlacementRead,
+    /// The assembly this element is a part of (`bim:partOf`).
+    pub part_of: Option<ElementId>,
+    /// The published mesh of an element whose kind the kernel does not know, when it has a usable
+    /// one. Plates, beams and columns carry `None`: their mesh is the kernel's.
+    pub mesh: Option<PublishedMesh>,
+}
+
+fn placement_read(prim: &Prim) -> PlacementRead {
+    let translation = property(prim, "xformOp:translate").and_then(numbers::<3>);
+    let orient = property(prim, "xformOp:orient").and_then(numbers::<4>);
+    let order = property(prim, "xformOpOrder");
+    let order_is_pose = match order {
+        Some(Value::Array(items)) => {
+            items.iter().filter_map(text).collect::<Vec<_>>()
+                == ["xformOp:translate", "xformOp:orient"]
+        }
+        _ => false,
+    };
+    let other_ops = prim.properties.iter().any(|p| {
+        p.name.starts_with("xformOp:")
+            && !matches!(p.name.as_str(), "xformOp:translate" | "xformOp:orient")
+    });
+    match (translation, orient, order.is_some(), other_ops) {
+        (None, None, false, false) => PlacementRead::Absent,
+        (Some(t), Some([w, x, y, z]), true, false) if order_is_pose => {
+            PlacementRead::Rigid(beamcraft_model::command::Placement {
+                translation_mm: t,
+                orientation_xyzw: [x, y, z, w],
+            })
+        }
+        _ => PlacementRead::Other,
+    }
+}
+
+fn element_meta(
+    prim: &Prim,
+    kind: &str,
+    by_path: &BTreeMap<&str, ElementId>,
+    mesh: Option<PublishedMesh>,
+) -> ElementMeta {
+    let part_of = prim
+        .relationships
+        .iter()
+        .find(|r| r.name == "bim:partOf")
+        .and_then(|r| match r.targets.as_slice() {
+            [target] => by_path.get(target.as_str()).copied(),
+            _ => None,
+        });
+    ElementMeta {
+        kind: kind.to_owned(),
+        name: property(prim, "bim:name").and_then(text).map(str::to_owned),
+        schema_version: property(prim, "bim:schemaVersion")
+            .and_then(text)
+            .map(str::to_owned),
+        geometry_mode: property(prim, "bim:geometryMode")
+            .and_then(text)
+            .map(str::to_owned),
+        deactivated: !prim.active
+            || property(prim, "bim:lifecycle").and_then(text) == Some("deactivated"),
+        placement: placement_read(prim),
+        part_of,
+        mesh,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Decoded {
     plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
@@ -250,6 +380,8 @@ pub(crate) struct Decoded {
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
+    /// The common facts of every element except levels, by id.
+    pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -515,6 +647,16 @@ pub(crate) fn decode(
     let mut plates = Vec::new();
     let mut members = Vec::new();
     let mut other = 0usize;
+    let mut elements = BTreeMap::new();
+    let ids: BTreeMap<&str, ElementId> = prims
+        .iter()
+        .filter_map(|p| {
+            Some((
+                p.path.as_str(),
+                ElementId::parse(p.element_id.as_deref()?).ok()?,
+            ))
+        })
+        .collect();
     for prim in &prims {
         let Some(text_id) = prim.element_id.as_deref() else {
             continue;
@@ -528,7 +670,18 @@ pub(crate) fn decode(
                 .get(format!("{}/Geometry", prim.path).as_str())
                 .and_then(|m| decode_mesh(m))
         };
-        match property(prim, "bim:elementKind").and_then(text) {
+        let kind = property(prim, "bim:elementKind").and_then(text);
+        if kind != Some("level") {
+            let proxy_mesh = match kind {
+                Some("plate" | "beam" | "column") => None,
+                _ => mesh().as_ref().and_then(published_mesh),
+            };
+            elements.insert(
+                id,
+                element_meta(prim, kind.unwrap_or("unknown"), &ids, proxy_mesh),
+            );
+        }
+        match kind {
             Some("plate") => plates.push((decode_plate(prim, id)?, mesh())),
             Some("beam") => members.push((decode_member(prim, id, MemberKind::Beam)?, mesh())),
             Some("column") => {
@@ -547,6 +700,7 @@ pub(crate) fn decode(
         other_elements: other,
         definitions,
         levels,
+        elements,
     })
 }
 
@@ -670,18 +824,20 @@ pub(crate) fn evaluate_decoded(
 /// The quantity record the engine expects for a plate: its quantities under the signature of its
 /// shape inputs.
 pub(crate) fn plate_record(record: &PlateRecord) -> QuantityRecord {
-    let shape = plate_shape_signature(&record.authored, record.body.algorithm());
-    record_for(shape, &record.quantities)
+    beamcraft_engine::quantity::plate_record(
+        &record.authored,
+        record.body.algorithm(),
+        &record.quantities,
+    )
 }
 
 /// The quantity record the engine expects for a member.
 pub(crate) fn member_record(record: &MemberRecord) -> QuantityRecord {
-    let shape = member_shape_signature(
+    beamcraft_engine::quantity::member_record(
         &record.authored,
         &record.body.profile,
-        record.quantities.algorithm,
-    );
-    record_for(shape, &record.quantities)
+        &record.quantities,
+    )
 }
 
 /// What the derived layer stores for a quantity record, and what a reader found.
@@ -726,14 +882,14 @@ fn verify_derived(
         .collect();
     let expected = records
         .iter()
-        .map(|r| (r.authored.id, &r.body.solid, plate_record(r)))
+        .map(|r| (r.authored.id, &r.body.solid, plate_record(r), false))
         .chain(
             member_records
                 .iter()
-                .map(|r| (r.authored.id, &r.body.solid, member_record(r))),
+                .map(|r| (r.authored.id, &r.body.solid, member_record(r), true)),
         );
     let mut reports = BTreeMap::new();
-    for (id, solid, record) in expected {
+    for (id, solid, record, is_member) in expected {
         let mesh = kernel_mesh(solid)?;
         let Some(Some(actual)) = found.get(&id) else {
             return Err(integrity("element has no derived mesh"));
@@ -742,8 +898,17 @@ fn verify_derived(
             return Err(integrity("derived mesh differs from the kernel result"));
         }
         let assessment = assess(actual.stored.as_ref(), &record);
+        // A record that an earlier slice wrote for a member (a superseded algorithm label) is a
+        // stale value to recompute, not a layer that cannot be published. Plate algorithms did
+        // not change, so a plate carrying such a label is a wrong record like any other.
+        let superseded = is_member
+            && actual
+                .stored
+                .as_ref()
+                .is_some_and(|s| is_superseded_algorithm(&s.algorithm));
         if strict
             && actual.stored.is_some()
+            && !superseded
             && (assessment.volume != Freshness::Current || assessment.mass != Freshness::Current)
         {
             return Err(integrity("stored quantities differ from the kernel's"));
@@ -1523,13 +1688,19 @@ pub struct Inspection {
     pub project_record: Option<String>,
     /// D2: the levels of the revision and the level of every plate, beam and column.
     pub levels: Levels,
+    /// The common facts of every element except levels, by id (E02).
+    pub elements: BTreeMap<ElementId, ElementMeta>,
 }
 
 /// Opens the head revision with verification, reads its model and derived layers in a fresh
 /// reader, re-evaluates every plate with the kernel, checks the committed meshes against the
 /// kernel's and builds the pinned view snapshot.
 pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
-    let revision = store.open()?;
+    inspect_revision(&store.open()?)
+}
+
+/// [`inspect`] for one already opened and verified revision (the head or an earlier one).
+pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
     let content = revision.manifest().content();
     let assets = content
         .entries()
@@ -1597,6 +1768,7 @@ pub fn inspect(store: &RevisionStore) -> Result<Inspection, PlateError> {
         snapshot,
         project_record: record,
         levels: decoded.levels,
+        elements: decoded.elements,
     })
 }
 
@@ -1625,6 +1797,92 @@ mod tests {
             type_name: "double3[]".into(),
             value,
             interpolation: None,
+        }
+    }
+
+    fn mesh(points: usize, counts: Vec<i64>, indices: Vec<i64>) -> DerivedMesh {
+        DerivedMesh {
+            points: vec![[0.0, 0.0, 0.0]; points],
+            counts,
+            indices,
+            shape_key: String::new(),
+            orientation: "rightHanded".into(),
+            subdivision: "none".into(),
+            stored: None,
+        }
+    }
+
+    #[test]
+    fn only_a_triangle_mesh_with_valid_indices_is_published() {
+        let good = published_mesh(&mesh(3, vec![3], vec![0, 1, 2])).unwrap();
+        assert_eq!(good.triangles, [[0, 1, 2]]);
+        for bad in [
+            mesh(0, vec![3], vec![0, 1, 2]),
+            mesh(3, vec![], vec![]),
+            mesh(4, vec![4], vec![0, 1, 2, 3]),
+            mesh(3, vec![3], vec![0, 1, 3]),
+            mesh(3, vec![3], vec![0, 1, -1]),
+            mesh(3, vec![3], vec![0, 1]),
+            mesh(3, vec![3, 3], vec![0, 1, 2]),
+        ] {
+            assert!(published_mesh(&bad).is_none());
+        }
+        let mut nan = mesh(3, vec![3], vec![0, 1, 2]);
+        nan.points[0][0] = f32::NAN;
+        assert!(published_mesh(&nan).is_none());
+    }
+
+    #[test]
+    fn a_placement_is_rigid_only_in_the_pose_form() {
+        let numbers = |name: &str, ty: &str, values: &[f64]| Property {
+            name: name.into(),
+            type_name: ty.into(),
+            value: Some(Value::Array(
+                values.iter().map(|v| Value::Number(*v)).collect(),
+            )),
+            interpolation: None,
+        };
+        let order = |ops: &[&str]| Property {
+            name: "xformOpOrder".into(),
+            type_name: "token[]".into(),
+            value: Some(Value::Array(
+                ops.iter().map(|o| Value::Text((*o).into())).collect(),
+            )),
+            interpolation: None,
+        };
+        let translate = numbers("xformOp:translate", "double3", &[1.0, 2.0, 3.0]);
+        let orient = numbers("xformOp:orient", "quatd", &[1.0, 0.0, 0.0, 0.0]);
+        let pose_order = order(&["xformOp:translate", "xformOp:orient"]);
+        assert_eq!(placement_read(&prim(Vec::new())), PlacementRead::Absent);
+        let rigid = placement_read(&prim(vec![
+            translate.clone(),
+            orient.clone(),
+            pose_order.clone(),
+        ]));
+        assert_eq!(
+            rigid,
+            PlacementRead::Rigid(beamcraft_model::command::Placement {
+                translation_mm: [1.0, 2.0, 3.0],
+                orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            })
+        );
+        // A missing half, another order and an additional operation are not the pose form.
+        for properties in [
+            vec![translate.clone(), pose_order.clone()],
+            vec![
+                translate.clone(),
+                orient.clone(),
+                order(&["xformOp:orient", "xformOp:translate"]),
+            ],
+            vec![
+                translate.clone(),
+                orient.clone(),
+                pose_order.clone(),
+                numbers("xformOp:scale:bimUnits", "double3", &[1.0, 1.0, 1.0]),
+            ],
+            vec![translate, orient],
+        ] {
+            assert_eq!(placement_read(&prim(properties)), PlacementRead::Other);
         }
     }
 

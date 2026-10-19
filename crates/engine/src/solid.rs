@@ -3,15 +3,16 @@
 
 //! The sealed mesh of any evaluated body, whatever the kernel operation that produced it.
 //!
-//! A box (plate or member) is a [`PlateResult`]; a plate with through holes is the certified
-//! result of the G09 hole operation. Both are BCMESH01 blobs with a digest, vertices, triangles
-//! and an analytic volume, and everything downstream (derived USD mesh, view snapshot, quantities)
-//! needs only that.
+//! A box (plate or member) is a [`PlateResult`]; a contour plate is a sealed G05 extrusion; a
+//! plate with through holes is the certified result of the G09 hole operation. All are BCMESH01
+//! blobs with a digest, vertices, triangles and an analytic volume, and everything downstream
+//! (derived USD mesh, view snapshot, quantities) needs only that.
 
 use crate::scene::SceneMesh;
 use beamcraft_geom::Point3;
 use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
+use beamcraft_kernel::profile::Extrusion;
 use beamcraft_kernel::section::SectionResult;
 use beamcraft_model::digest::ContentDigest;
 
@@ -48,6 +49,20 @@ impl SolidMesh {
             blob: result.blob().to_vec(),
             digest: result.mesh_digest(),
             volume_mm3: result.volume_mm3().midpoint(),
+        }
+    }
+
+    /// The mesh of a sealed G05 extrusion (a contour plate): the extrusion's own exact blob and
+    /// digest, its vertices and triangles, and the analytic `net_area * thickness` volume. The
+    /// caller certifies the same shell with G06 (`Body::from_extrusion`) before storing it.
+    pub fn from_extrusion(extrusion: &Extrusion) -> Self {
+        let mesh = extrusion.mesh();
+        Self {
+            vertices: mesh.vertices().iter().map(|p| [p.x, p.y, p.z]).collect(),
+            triangles: mesh.triangles().to_vec(),
+            blob: mesh.blob().to_vec(),
+            digest: mesh.mesh_digest(),
+            volume_mm3: extrusion.volume_mm3(),
         }
     }
 

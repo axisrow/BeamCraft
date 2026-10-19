@@ -23,9 +23,9 @@ use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
 };
-use beamcraft_engine::command::{Quantities, origin_rectangle_contour};
+use beamcraft_engine::command::{Quantities, VOLUME_ALGORITHM, origin_rectangle_contour};
 use beamcraft_engine::footprint::{Entry, Footprint, Target};
-use beamcraft_engine::quantity::Freshness;
+use beamcraft_engine::quantity::{Freshness, is_superseded_algorithm};
 use beamcraft_engine::query::committed::MemberRecord;
 use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::{
@@ -71,7 +71,7 @@ pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
 
 /// [`report`] with the `diagnostics` array of a rejection filled in (the candidates of an
 /// ambiguous name).
-fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u8) {
+pub(crate) fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u8) {
     match result {
         Ok(json) => (json, 0),
         Err(e) => (
@@ -103,6 +103,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--store",
     "--width",
     "--length",
+    "--outer",
     "--thickness",
     "--name",
     "--translation",
@@ -460,6 +461,26 @@ fn candidate_json(digest: &ContentDigest, record: &DefinitionRecord) -> Json {
     ])
 }
 
+/// One closed polygon from `"X,Y;X,Y;..."`, in millimetres. One trailing separator is ignored
+/// (the closure of a contour is implicit); an empty outline is named as such. Winding,
+/// simplicity and the caps are the kernel's and the model's decisions, not the parser's.
+pub(crate) fn parse_polygon(text: &str) -> Run<Vec<[f64; 2]>> {
+    let text = text.strip_suffix(';').unwrap_or(text);
+    if text.is_empty() {
+        return Err(invalid("the outline is empty"));
+    }
+    text.split(';')
+        .map(|pair| {
+            let parts: Vec<f64> = pair
+                .split(',')
+                .map(|v| v.trim().parse::<f64>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| invalid("an outline point is not two numbers"))?;
+            <[f64; 2]>::try_from(parts).map_err(|_| invalid("an outline point is not two numbers"))
+        })
+        .collect()
+}
+
 /// The section shape of `define-profile --family`: a family token with one `--<parameter>` per
 /// family parameter (millimetres), or `custom` with `--outer "X,Y;X,Y;..."` (counter-clockwise)
 /// and optional `--cavity "X,Y;...|X,Y;..."` (each clockwise). The rectangle's `--width` and
@@ -475,26 +496,16 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
         if parameters.iter().any(|p| options.contains_key(p)) {
             return Err(invalid("a custom outline takes --outer and --cavity only"));
         }
-        let polygon = |text: &str| -> Run<Vec<[f64; 2]>> {
-            text.split(';')
-                .map(|pair| {
-                    let parts: Vec<f64> = pair
-                        .split(',')
-                        .map(|v| v.trim().parse::<f64>())
-                        .collect::<Result<_, _>>()
-                        .map_err(|_| invalid("an outline point is not two numbers"))?;
-                    <[f64; 2]>::try_from(parts)
-                        .map_err(|_| invalid("an outline point is not two numbers"))
-                })
-                .collect()
-        };
-        let outer = polygon(
+        let outer = parse_polygon(
             options
                 .get("--outer")
                 .ok_or_else(|| invalid("a custom outline needs --outer"))?,
         )?;
         let cavities = match options.get("--cavity") {
-            Some(text) => text.split('|').map(polygon).collect::<Run<Vec<_>>>()?,
+            Some(text) => text
+                .split('|')
+                .map(parse_polygon)
+                .collect::<Run<Vec<_>>>()?,
             None => Vec::new(),
         };
         return Ok(SectionShape::Custom(CustomSection { outer, cavities }));
@@ -687,10 +698,32 @@ fn create(
     } else {
         None
     };
-    let width = float(options, "--width")?;
-    let length = float(options, "--length")?;
+    // The outline is either the `--width`/`--length` origin rectangle or an arbitrary closed
+    // `--outer` contour (A02, experimental, counter-clockwise, element-local millimetres). The
+    // parser reads XY pairs; the plate body frame is the z = 0 plane, so the pair becomes a
+    // point with z = 0 and an off-plane input cannot be expressed here at all.
+    let contour: Vec<[f64; 3]> = match (given("--outer"), given("--width"), given("--length")) {
+        (Some(text), None, None) => parse_polygon(text)?
+            .into_iter()
+            .map(|[x, y]| [x, y, 0.0])
+            .collect(),
+        (None, Some(_), Some(_)) => {
+            let width = float(options, "--width")?;
+            let length = float(options, "--length")?;
+            origin_rectangle_contour(width, length).map_err(PlateError::from)?
+        }
+        (Some(_), _, _) => {
+            return Err(invalid(
+                "--outer and --width/--length are two ways of one outline; use one",
+            ));
+        }
+        (None, _, _) => {
+            return Err(invalid(
+                "create-plate needs --width and --length, or --outer",
+            ));
+        }
+    };
     let thickness = float(options, "--thickness")?;
-    let contour = origin_rectangle_contour(width, length).map_err(PlateError::from)?;
     let name = given("--name").unwrap_or("Plate").to_owned();
     let command = CreatePlate {
         new_id,
@@ -1420,8 +1453,21 @@ pub(crate) fn triple(values: [f64; 3]) -> Run<Json> {
     ))
 }
 
+/// A mass rounded to 0.1 kg for display. The stored and exact values are never rounded.
+fn display_kg(kg: f64) -> f64 {
+    (kg * 10.0).round() / 10.0
+}
+
+/// The quantities of a plate or a member.
+///
+/// `volume.mm3`, `volume.m3` and `mass.kg` are the NET values and keep the names of the first
+/// quantity slices, so existing readers do not change. The explicit gross and net figures are
+/// next to them at full precision, and `mass.kg_display` and friends are the same masses rounded
+/// to 0.1 kg for display. `section_area_mm2` and `area_source` describe a member's effective
+/// area.
 fn quantities_json(q: &Quantities) -> Run<Json> {
     let optional = |value: Option<f64>| value.map_or(Ok(Json::Null), num);
+    let display = |value: Option<f64>| value.map(display_kg).map_or(Ok(Json::Null), num);
     Ok(Json::object([
         (
             "volume",
@@ -1436,9 +1482,22 @@ fn quantities_json(q: &Quantities) -> Run<Json> {
             "mass",
             Json::object([
                 ("kg", optional(q.mass_kg)?),
+                ("kg_display", display(q.mass_kg)?),
                 ("density_kg_m3", optional(q.density_kg_m3)?),
                 ("status", Json::text(q.mass_status.as_str())),
             ]),
+        ),
+        ("volume_gross_mm3", num(q.volume_gross_mm3)?),
+        ("volume_net_mm3", num(q.volume_mm3)?),
+        ("removed_volume_mm3", num(q.removed_volume_mm3)?),
+        ("mass_gross_kg", optional(q.mass_gross_kg)?),
+        ("mass_net_kg", optional(q.mass_kg)?),
+        ("mass_gross_kg_display", display(q.mass_gross_kg)?),
+        ("mass_net_kg_display", display(q.mass_kg)?),
+        ("section_area_mm2", optional(q.section_area_mm2)?),
+        (
+            "area_source",
+            q.area_source.map_or(Json::Null, |s| Json::text(s.as_str())),
         ),
     ]))
 }
@@ -1512,6 +1571,7 @@ pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord)
                     Some(w) => Json::object([
                         ("declared_mm2", num(w.declared_mm2)?),
                         ("kernel_mm2", num(w.kernel_mm2)?),
+                        ("exact_mm2", num(w.kernel_mm2)?),
                         ("relative_difference", num(w.relative_difference)?),
                         ("threshold", num(w.threshold)?),
                         ("threshold_percent", num(w.threshold * 100.0)?),
@@ -1665,10 +1725,21 @@ fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> 
 
 fn plate_json(record: &PlateRecord) -> Run<Json> {
     let mesh = &record.body.solid;
+    // A rectangle's dimensions are its sides; a contour plate has no sides, only a bounding box,
+    // so the record names what it reports and never lets `width * length * thickness` pass for
+    // the size of an arbitrary outline.
+    let rectangle = record.body.volume_algorithm == VOLUME_ALGORITHM;
+    let shape = if rectangle { "rectangle" } else { "contour" };
+    let dimensions = if rectangle {
+        "dimensions_mm"
+    } else {
+        "bounding_box_mm"
+    };
     Ok(Json::object([
         ("element_id", Json::text(record.authored.id.to_string())),
         ("prim_path", Json::text(record.authored.id.prim_path())),
         ("kind", Json::text("plate")),
+        ("shape", Json::text(shape)),
         ("name", Json::text(record.authored.name.clone())),
         (
             "material_digest",
@@ -1678,7 +1749,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                 .map_or(Json::Null, |d| Json::text(d.to_string())),
         ),
         (
-            "dimensions_mm",
+            dimensions,
             Json::object([
                 ("width", num(record.body.width_mm)?),
                 ("length", num(record.body.length_mm)?),
@@ -1863,8 +1934,20 @@ fn stored_json(report: &QuantityReport) -> Run<Json> {
             Json::text(report.expected.shape_signature.to_string()),
         ),
         (
+            "expected_gross_signature",
+            Json::text(report.expected.gross_signature.to_string()),
+        ),
+        (
             "expected_mass_signature",
             Json::text(report.expected.mass_signature.to_string()),
+        ),
+        (
+            "stored_algorithm",
+            stored.map_or(Json::Null, |s| Json::text(s.algorithm.as_str())),
+        ),
+        (
+            "superseded_algorithm",
+            Json::Bool(stored.is_some_and(|s| is_superseded_algorithm(&s.algorithm))),
         ),
         (
             "stored_shape_signature",

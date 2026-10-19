@@ -1,0 +1,15 @@
+[package]
+name = "beamcraft-ifc"
+description = "Pure IFC4 STEP writer of BeamCraft (E02): GlobalId, lexical rules, fixed entity templates."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+beamcraft-model.workspace = true
+
+[lints]
+workspace = true

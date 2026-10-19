@@ -15,7 +15,7 @@
 //! the tolerance policy version. They are not the F06 section 7 shape key (`kernel::keys` is
 //! planned): no claim of that key is made.
 
-use crate::command::{AuthoredPlate, Quantities, QuantityStatus};
+use crate::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM};
 use crate::member::{AuthoredMember, ProfileInfo};
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
@@ -23,22 +23,43 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::section::SectionShape;
 
 /// A quantity record as the engine computes it and as the derived layer stores it.
+///
+/// The derived layer stores the NET volume and mass with the net signatures (`volume_mm3`,
+/// `mass_kg`, `shape_signature`, `mass_signature`). The gross figures and the removed volume are
+/// computed from the authored inputs and reported next to them; they are not stored (the stored
+/// attribute set is unchanged), so the gross signature is what a reader compares to know whether
+/// a gross figure it holds is still the present one.
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuantityRecord {
-    /// Volume in mm3.
+    /// NET volume in mm3.
     pub volume_mm3: f64,
+    /// GROSS volume in mm3: the nominal body before any operation.
+    pub volume_gross_mm3: f64,
+    /// Volume removed by operations in mm3, measured on the meshes (`0.0` without operations).
+    pub removed_volume_mm3: f64,
     /// Status token of the volume.
     pub volume_status: &'static str,
-    /// Mass in kg, present exactly when `mass_status` is `current`.
+    /// NET mass in kg, present exactly when `mass_status` is `current`.
     pub mass_kg: Option<f64>,
+    /// GROSS mass in kg, present exactly when `mass_status` is `current`.
+    pub mass_gross_kg: Option<f64>,
     /// Status token of the mass.
     pub mass_status: &'static str,
-    /// Signature of the shape inputs.
+    /// Signature of the NET shape inputs: the gross inputs and the list of operations.
     pub shape_signature: ContentDigest,
-    /// Signature of the mass inputs: the shape signature and the density or its absence.
+    /// Signature of the GROSS inputs: the nominal body (outline and thickness, or axis, roll,
+    /// section, area source and area), without any operation.
+    pub gross_signature: ContentDigest,
+    /// Signature of the NET mass inputs: the net shape signature plus the density or its absence.
     pub mass_signature: ContentDigest,
+    /// Signature of the GROSS mass inputs: the gross signature plus the density or its absence.
+    pub mass_gross_signature: ContentDigest,
     /// Algorithm label of the volume.
     pub algorithm: String,
+    /// Effective section area of a member in mm2; `None` for a plate.
+    pub section_area_mm2: Option<f64>,
+    /// `catalogue` or `computed` for a member; `None` for a plate.
+    pub area_source: Option<&'static str>,
 }
 
 /// What a reader found stored next to a mesh.
@@ -153,15 +174,34 @@ pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentD
     digest(&bytes)
 }
 
-/// Signature of the shape inputs of a member: axis, roll and the resolved section, with the
-/// algorithm and tolerance policy. The profile digest is not an input; its values are.
-pub fn member_shape_signature(
+/// Signature of the GROSS inputs of a plate: the outline and thickness, with the gross algorithm
+/// label and tolerance policy. Holes, name, placement and material are not gross inputs, so a
+/// hole edit changes the net signature and leaves this one unchanged.
+pub fn plate_gross_signature(plate: &AuthoredPlate) -> ContentDigest {
+    let mut bytes = Vec::with_capacity(160);
+    bytes.extend_from_slice(b"BeamCraft/PMass/PlateGross/v1\0");
+    bytes.extend_from_slice(&TOLERANCE_POLICY_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&(VOLUME_ALGORITHM.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(VOLUME_ALGORITHM.as_bytes());
+    bytes.extend_from_slice(&(plate.contour_points_mm.len() as u64).to_le_bytes());
+    for v in plate.contour_points_mm.iter().flatten() {
+        float(&mut bytes, *v);
+    }
+    float(&mut bytes, plate.thickness_mm);
+    digest(&bytes)
+}
+
+/// Signature of the GROSS inputs of a member: axis, roll, the resolved section values, the area
+/// source with the declared and the effective area, the algorithm and the tolerance policy.
+/// Changing the declared area (or removing it) changes this signature, so a stored quantity
+/// computed from another area is `stale`. The profile digest is not an input; its values are.
+pub fn member_gross_signature(
     member: &AuthoredMember,
     profile: &ProfileInfo,
     algorithm: &str,
 ) -> ContentDigest {
-    let mut bytes = Vec::with_capacity(160);
-    bytes.extend_from_slice(b"BeamCraft/P04/MemberShape/v1\0");
+    let mut bytes = Vec::with_capacity(192);
+    bytes.extend_from_slice(b"BeamCraft/PMass/MemberGross/v1\0");
     bytes.extend_from_slice(&TOLERANCE_POLICY_VERSION.to_le_bytes());
     bytes.extend_from_slice(&(algorithm.len() as u64).to_le_bytes());
     bytes.extend_from_slice(algorithm.as_bytes());
@@ -176,15 +216,16 @@ pub fn member_shape_signature(
         None => bytes.push(0),
     }
     match profile {
-        // The P04 bytes of a rectangle are kept, so stored signatures stay current.
         ProfileInfo::Rectangle {
             width_mm,
             height_mm,
+            ..
         } => {
+            bytes.extend_from_slice(b"rectangle\0");
             float(&mut bytes, *width_mm);
             float(&mut bytes, *height_mm);
         }
-        ProfileInfo::Section(shape) => {
+        ProfileInfo::Section { shape, .. } => {
             bytes.extend_from_slice(b"section\0");
             bytes.extend_from_slice(shape.token().as_bytes());
             bytes.push(0);
@@ -202,7 +243,42 @@ pub fn member_shape_signature(
             }
         }
     }
+    let (area, source) = profile.effective_area();
+    bytes.extend_from_slice(source.as_str().as_bytes());
+    bytes.push(0);
+    match profile.declared_area_mm2() {
+        Some(declared) => {
+            bytes.push(1);
+            float(&mut bytes, declared);
+        }
+        None => bytes.push(0),
+    }
+    float(&mut bytes, area);
     digest(&bytes)
+}
+
+/// Signature of the NET inputs of a member: the gross signature and the list of operations, each
+/// identified by the digest of its own authored content. A member has no operation yet, so the
+/// list is empty today; a cut, bolt hole or cope adds its digest here and changes the net
+/// signature without touching the gross one.
+pub fn member_net_signature(gross: &ContentDigest, operations: &[ContentDigest]) -> ContentDigest {
+    let mut bytes = Vec::with_capacity(48 + 32 * operations.len());
+    bytes.extend_from_slice(b"BeamCraft/PMass/MemberNet/v1\0");
+    bytes.extend_from_slice(gross.as_bytes());
+    bytes.extend_from_slice(&(operations.len() as u64).to_le_bytes());
+    for operation in operations {
+        bytes.extend_from_slice(operation.as_bytes());
+    }
+    digest(&bytes)
+}
+
+/// The signature stored as a member's shape signature (the NET one, without operations).
+pub fn member_shape_signature(
+    member: &AuthoredMember,
+    profile: &ProfileInfo,
+    algorithm: &str,
+) -> ContentDigest {
+    member_net_signature(&member_gross_signature(member, profile, algorithm), &[])
 }
 
 /// Signature of the mass inputs: the shape signature and the density, or its absence.
@@ -220,18 +296,61 @@ pub fn mass_signature(shape: &ContentDigest, density_kg_m3: Option<f64>) -> Cont
     digest(&bytes)
 }
 
-/// The record of the engine's quantities under the given shape signature.
-pub fn record_for(shape: ContentDigest, quantities: &Quantities) -> QuantityRecord {
+/// The record of the engine's quantities under the given net and gross shape signatures.
+pub fn record_for(
+    shape: ContentDigest,
+    gross: ContentDigest,
+    quantities: &Quantities,
+) -> QuantityRecord {
     let token = |s: QuantityStatus| s.as_str();
     QuantityRecord {
         volume_mm3: quantities.volume_mm3,
+        volume_gross_mm3: quantities.volume_gross_mm3,
+        removed_volume_mm3: quantities.removed_volume_mm3,
         volume_status: token(quantities.volume_status),
         mass_kg: quantities.mass_kg,
+        mass_gross_kg: quantities.mass_gross_kg,
         mass_status: token(quantities.mass_status),
         shape_signature: shape,
+        gross_signature: gross,
         mass_signature: mass_signature(&shape, quantities.density_kg_m3),
+        mass_gross_signature: mass_signature(&gross, quantities.density_kg_m3),
         algorithm: quantities.algorithm.to_owned(),
+        section_area_mm2: quantities.section_area_mm2,
+        area_source: quantities.area_source.map(|s| s.as_str()),
     }
+}
+
+/// The record the engine expects for a plate: its quantities under the signatures of its shape
+/// inputs (net: outline, thickness and holes) and of its nominal body (gross: outline and
+/// thickness).
+pub fn plate_record(
+    plate: &AuthoredPlate,
+    algorithm: &str,
+    quantities: &Quantities,
+) -> QuantityRecord {
+    record_for(
+        plate_shape_signature(plate, algorithm),
+        plate_gross_signature(plate),
+        quantities,
+    )
+}
+
+/// The record the engine expects for a member.
+pub fn member_record(
+    member: &AuthoredMember,
+    profile: &ProfileInfo,
+    quantities: &Quantities,
+) -> QuantityRecord {
+    let algorithm = quantities.algorithm;
+    let gross = member_gross_signature(member, profile, algorithm);
+    record_for(member_net_signature(&gross, &[]), gross, quantities)
+}
+
+/// Whether a stored algorithm label is one that an earlier slice wrote for a member. Such a
+/// record is a superseded value (`stale`), not damage.
+pub fn is_superseded_algorithm(label: &str) -> bool {
+    crate::member::SUPERSEDED_MEMBER_ALGORITHMS.contains(&label)
 }
 
 #[cfg(test)]
@@ -287,18 +406,26 @@ mod tests {
     }
 
     fn record(volume: f64, density: Option<f64>, shape: ContentDigest) -> QuantityRecord {
+        let mass = density.map(|d| volume * d / 1e9);
         QuantityRecord {
             volume_mm3: volume,
+            volume_gross_mm3: volume,
+            removed_volume_mm3: 0.0,
             volume_status: "current",
-            mass_kg: density.map(|d| volume * d / 1e9),
+            mass_kg: mass,
+            mass_gross_kg: mass,
             mass_status: if density.is_some() {
                 "current"
             } else {
                 "unknown"
             },
             shape_signature: shape,
+            gross_signature: shape,
             mass_signature: mass_signature(&shape, density),
+            mass_gross_signature: mass_signature(&shape, density),
             algorithm: "a".into(),
+            section_area_mm2: None,
+            area_source: None,
         }
     }
 
@@ -312,6 +439,158 @@ mod tests {
             mass_signature: r.mass_signature,
             algorithm: r.algorithm.clone(),
         }
+    }
+
+    fn member() -> AuthoredMember {
+        use beamcraft_model::command::MemberKind;
+        AuthoredMember {
+            id: ElementId::parse("019a7bf0-0000-7000-8000-000000000009").unwrap(),
+            kind: MemberKind::Beam,
+            name: "Beam".into(),
+            axis_points_mm: [[0.0; 3], [6000.0, 0.0, 0.0]],
+            profile: Sha256::digest(b"profile").unwrap(),
+            roll_rad: None,
+            placement: Placement::IDENTITY,
+            material: None,
+        }
+    }
+
+    fn i_profile(declared: Option<f64>) -> ProfileInfo {
+        use beamcraft_model::section::{ParametricSection, SectionFamily};
+        ProfileInfo::Section {
+            shape: SectionShape::Parametric(
+                ParametricSection::new(SectionFamily::IShape, vec![298.0, 149.0, 5.5, 8.0, 13.0])
+                    .unwrap(),
+            ),
+            declared_area_mm2: declared,
+        }
+    }
+
+    fn member_record_of(declared: Option<f64>, density: Option<f64>) -> QuantityRecord {
+        let profile = i_profile(declared);
+        let body = crate::member::evaluate_member(&member(), profile.clone()).unwrap();
+        let quantities = crate::member::member_quantities(
+            &body,
+            density.map(|d| crate::command::MaterialInfo {
+                density_kg_m3: Some(d),
+            }),
+        )
+        .unwrap();
+        member_record(&member(), &profile, &quantities)
+    }
+
+    #[test]
+    fn the_declared_area_and_its_source_are_gross_and_net_inputs_of_a_member() {
+        let computed = member_record_of(None, Some(7850.0));
+        let declared = member_record_of(Some(4080.0), Some(7850.0));
+        let other = member_record_of(Some(4090.0), Some(7850.0));
+        assert_eq!(computed.area_source, Some("computed"));
+        assert_eq!(declared.area_source, Some("catalogue"));
+        assert_ne!(computed.gross_signature, declared.gross_signature);
+        assert_ne!(declared.gross_signature, other.gross_signature);
+        assert_ne!(computed.shape_signature, declared.shape_signature);
+        // A stored record of the declared area is stale against another declared area, and
+        // against the computed one, but current against itself.
+        let stored = stored(&declared);
+        assert_eq!(assess(Some(&stored), &declared).volume, Freshness::Current);
+        assert_eq!(assess(Some(&stored), &other).volume, Freshness::Stale);
+        assert_eq!(assess(Some(&stored), &other).mass, Freshness::Stale);
+        assert_eq!(assess(Some(&stored), &computed).volume, Freshness::Stale);
+        // No operation: gross equals net, in value and in the mass figures.
+        assert_eq!(declared.volume_gross_mm3, declared.volume_mm3);
+        assert_eq!(declared.mass_gross_kg, declared.mass_kg);
+        assert_eq!(declared.removed_volume_mm3, 0.0);
+        // The density changes the mass signatures and neither shape signature.
+        let unknown = member_record_of(Some(4080.0), None);
+        assert_eq!(unknown.gross_signature, declared.gross_signature);
+        assert_ne!(unknown.mass_signature, declared.mass_signature);
+        assert_ne!(unknown.mass_gross_signature, declared.mass_gross_signature);
+        assert_eq!(unknown.mass_kg, None);
+    }
+
+    #[test]
+    fn a_future_operation_changes_the_net_signature_and_never_the_gross_one() {
+        let record = member_record_of(None, None);
+        let cut = Sha256::digest(b"cut").unwrap();
+        let net = member_net_signature(&record.gross_signature, &[cut]);
+        assert_ne!(net, record.shape_signature);
+        assert_ne!(
+            member_net_signature(&record.gross_signature, &[cut, cut]),
+            net
+        );
+        assert_eq!(
+            member_net_signature(&record.gross_signature, &[]),
+            record.shape_signature
+        );
+    }
+
+    #[test]
+    fn a_hole_edit_changes_the_plate_net_and_not_the_gross_signature_or_value() {
+        use crate::command::evaluate_plate;
+        let record = |holes: Vec<Vec<[f64; 2]>>| {
+            let mut p = plate();
+            p.holes_mm = holes;
+            let body = evaluate_plate(&p).unwrap();
+            let q = body.quantities();
+            plate_record(&p, body.algorithm(), &q)
+        };
+        let solid = record(vec![]);
+        let one = record(vec![vec![
+            [100.0, 100.0],
+            [100.0, 200.0],
+            [200.0, 200.0],
+            [200.0, 100.0],
+        ]]);
+        let two = record(vec![
+            vec![
+                [100.0, 100.0],
+                [100.0, 200.0],
+                [200.0, 200.0],
+                [200.0, 100.0],
+            ],
+            vec![
+                [400.0, 100.0],
+                [400.0, 150.0],
+                [450.0, 150.0],
+                [450.0, 100.0],
+            ],
+        ]);
+        assert_eq!(solid.gross_signature, one.gross_signature);
+        assert_eq!(one.gross_signature, two.gross_signature);
+        assert_eq!(one.volume_gross_mm3, 5_000_000.0);
+        assert_eq!(solid.volume_gross_mm3, one.volume_gross_mm3);
+        assert_eq!(two.volume_gross_mm3, one.volume_gross_mm3);
+        assert_ne!(solid.shape_signature, one.shape_signature);
+        assert_ne!(one.shape_signature, two.shape_signature);
+        assert!(one.volume_mm3 < solid.volume_mm3 && two.volume_mm3 < one.volume_mm3);
+        assert!((one.removed_volume_mm3 - 100_000.0).abs() <= 1e-6);
+        assert!((two.removed_volume_mm3 - 125_000.0).abs() <= 1e-6);
+        // A thickness change is a gross input.
+        let mut thicker = plate();
+        thicker.thickness_mm = 12.0;
+        assert_ne!(plate_gross_signature(&thicker), solid.gross_signature);
+    }
+
+    #[test]
+    fn a_record_with_a_superseded_label_reads_stale_not_corrupt() {
+        let now = member_record_of(None, Some(7850.0));
+        let mut old = stored(&now);
+        old.algorithm =
+            "kernel-a07-section-member-volume/1;detailed-arcs-max(0.25mm,0.5%r);tolerance-policy-3"
+                .into();
+        old.volume_mm3 = 24_555_000.0;
+        // An old record was signed with the old signature bytes, which no longer match.
+        old.shape_signature = Sha256::digest(b"old shape").unwrap();
+        old.mass_signature = Sha256::digest(b"old mass").unwrap();
+        let assessment = assess(Some(&old), &now);
+        assert_eq!(assessment.volume, Freshness::Stale);
+        assert_eq!(assessment.mass, Freshness::Stale);
+        assert!(is_superseded_algorithm(&old.algorithm));
+        assert!(is_superseded_algorithm(
+            "kernel-p03-straight-member-volume/1;tolerance-policy-3"
+        ));
+        assert!(!is_superseded_algorithm(&now.algorithm));
+        assert!(!is_superseded_algorithm("anything else"));
     }
 
     #[test]

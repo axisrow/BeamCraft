@@ -8,6 +8,7 @@ pub mod coordinator;
 pub mod dispatch;
 pub mod ids;
 pub mod ledger;
+pub mod output;
 pub mod revision;
 pub mod storage;
 pub mod wire;

@@ -9,7 +9,7 @@ use crate::storage::{BlobStore, StorageError};
 
 use super::manifest::{LayerEntry, Manifest};
 use super::root::{self, MAX_RECORD_BYTES, RevisionInfo, RootRecord};
-use super::{MAX_MANIFEST_BYTES, RevisionError};
+use super::{MAX_MANIFEST_BYTES, RevisionError, Uuid7};
 
 /// A revision store bound to one [`BlobStore`] root. Resource methods take no path or URI.
 #[derive(Debug, Clone)]
@@ -69,6 +69,24 @@ impl RevisionStore {
             Some(head) if sequence > 0 && sequence <= head => self.load_at(&directory, sequence),
             _ => Err(RevisionError::NoRevision),
         }
+    }
+
+    /// The log sequence of the revision with this id, found by reading each head-log record once
+    /// from the head down (the directory is scanned a single time). `Ok(None)` when no committed
+    /// revision has that id.
+    pub fn sequence_of(&self, revision: &Uuid7) -> Result<Option<u64>, RevisionError> {
+        let Some(directory) = self.head_dir()? else {
+            return Ok(None);
+        };
+        let Some(head) = root::scan(&directory)? else {
+            return Ok(None);
+        };
+        for sequence in (1..=head).rev() {
+            if self.load_record(&directory, sequence)?.revision() == revision {
+                return Ok(Some(sequence));
+            }
+        }
+        Ok(None)
     }
 
     /// Opens one revision by its log sequence and verifies every layer blob it references, as

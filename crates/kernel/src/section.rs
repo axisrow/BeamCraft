@@ -399,12 +399,25 @@ fn parametric_outline(
     section: &ParametricSection,
     representation: Representation,
 ) -> Result<SectionOutline, SectionFailure> {
+    parametric_outline_with(section, representation, None)
+}
+
+/// The outline with an optional fixed number of edges per full turn (a multiple of four), which
+/// the tests use to compare the polygon with the exact area at an arbitrarily fine subdivision.
+fn parametric_outline_with(
+    section: &ParametricSection,
+    representation: Representation,
+    forced_segments: Option<u64>,
+) -> Result<SectionOutline, SectionFailure> {
     let simplified = representation == Representation::Simplified;
     if let (SectionFamily::Chs, &[d, t]) = (section.family(), section.values()) {
         let n = if simplified {
             SIMPLIFIED_CIRCLE_SEGMENTS
         } else {
-            segments_for(d / 2.0)?
+            match forced_segments {
+                Some(n) => n,
+                None => segments_for(d / 2.0)?,
+            }
         };
         return Ok(SectionOutline {
             outer: circle(d / 2.0, n),
@@ -426,7 +439,10 @@ fn parametric_outline(
     // keeps every arc on the same angular grid.
     let largest = list.iter().fold(0.0f64, |m, c| m.max(c.r));
     let n = if largest > 0.0 {
-        segments_for(largest)?
+        match forced_segments {
+            Some(n) => n,
+            None => segments_for(largest)?,
+        }
     } else {
         4
     };
@@ -474,6 +490,7 @@ pub struct SectionResult {
     blob: Vec<u8>,
     digest: ContentDigest,
     net_area_mm2: f64,
+    axis_length_mm: f64,
     volume_mm3: f64,
     approximated: bool,
 }
@@ -494,12 +511,20 @@ impl SectionResult {
         self.digest
     }
 
-    /// Net area of the extruded outline, mm2 (shoelace of the generated polygon).
+    /// Net area of the extruded outline, mm2 (shoelace of the generated polygon). This is the
+    /// area of the detailed polygon the mesh is built from, not the exact section area: it
+    /// differs from [`beamcraft_model::section::SectionShape::exact_area_mm2`] by the arc
+    /// approximation and is not used for quantities.
     pub const fn net_area_mm2(&self) -> f64 {
         self.net_area_mm2
     }
 
-    /// Volume `net_area * axis_length`, mm3.
+    /// The axis length the outline is extruded over, mm.
+    pub const fn axis_length_mm(&self) -> f64 {
+        self.axis_length_mm
+    }
+
+    /// Volume of the mesh `net_area * axis_length`, mm3 (the polygon, not the exact section).
     pub const fn volume_mm3(&self) -> f64 {
         self.volume_mm3
     }
@@ -593,7 +618,99 @@ pub fn section_member(input: &SectionMember) -> Result<SectionResult, SectionFai
         blob,
         digest,
         net_area_mm2,
+        axis_length_mm: length,
         volume_mm3,
         approximated: shape.approximated,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn family(f: SectionFamily, values: &[f64]) -> ParametricSection {
+        ParametricSection::new(f, values.to_vec()).unwrap()
+    }
+
+    fn signed(points: &[Point2]) -> f64 {
+        let doubled: f64 = points
+            .iter()
+            .zip(points.iter().cycle().skip(1))
+            .map(|(p, q)| p.x * q.y - q.x * p.y)
+            .sum();
+        doubled / 2.0
+    }
+
+    fn polygon_area(o: &SectionOutline) -> f64 {
+        o.cavities
+            .iter()
+            .fold(signed(&o.outer), |a, c| a + signed(c.points()))
+    }
+
+    fn samples() -> Vec<ParametricSection> {
+        vec![
+            family(SectionFamily::IShape, &[298.0, 149.0, 5.5, 8.0, 13.0]),
+            family(SectionFamily::Channel, &[200.0, 80.0, 6.0, 10.0, 10.0]),
+            family(SectionFamily::Angle, &[100.0, 75.0, 8.0, 10.0]),
+            family(SectionFamily::Rhs, &[150.0, 100.0, 5.0, 10.0]),
+            family(SectionFamily::Rhs, &[150.0, 100.0, 8.0, 6.0]),
+            family(SectionFamily::Chs, &[114.0, 5.0]),
+            family(SectionFamily::LippedC, &[150.0, 50.0, 15.0, 2.0, 3.0]),
+            family(SectionFamily::PlainC, &[100.0, 40.0, 2.0, 3.0]),
+            family(SectionFamily::LippedZ, &[200.0, 60.0, 18.0, 2.0, 3.0]),
+            family(SectionFamily::Omega, &[40.0, 30.0, 20.0, 0.8, 1.0]),
+        ]
+    }
+
+    #[test]
+    fn a_finely_subdivided_polygon_converges_to_the_exact_area_of_every_family() {
+        for section in samples() {
+            let exact = section.exact_area_mm2();
+            let at = |n: u64| {
+                let o =
+                    parametric_outline_with(&section, Representation::Detailed, Some(n)).unwrap();
+                polygon_area(&o)
+            };
+            let (coarse, fine) = (at(256), at(16_384));
+            assert!(
+                (fine - exact).abs() <= 1e-7 * exact,
+                "{:?}: polygon {fine} exact {exact}",
+                section.family()
+            );
+            // The error shrinks with the square of the edge length (256 -> 16384 is 64 times).
+            if (coarse - exact).abs() > 1e-9 * exact {
+                assert!((coarse - exact).abs() > 100.0 * (fine - exact).abs());
+            }
+        }
+    }
+
+    #[test]
+    fn a_sharp_outline_polygon_is_exactly_the_closed_form() {
+        for section in samples() {
+            let sharp = section.without_radius();
+            let o = parametric_outline_with(&sharp, Representation::Detailed, None);
+            if section.family() == SectionFamily::Chs {
+                continue;
+            }
+            let area = polygon_area(&o.unwrap());
+            let exact = sharp.exact_area_mm2();
+            assert!(
+                (area - exact).abs() <= 1e-12 * exact,
+                "{:?}",
+                section.family()
+            );
+        }
+    }
+
+    #[test]
+    fn the_stored_detailed_polygon_overstates_a_root_fillet_and_the_exact_area_does_not() {
+        // 30B1-like I section: the chord polygon of the four root fillets is larger than the arcs.
+        let i = family(SectionFamily::IShape, &[298.0, 149.0, 5.5, 8.0, 13.0]);
+        let polygon = polygon_area(&parametric_outline(&i, Representation::Detailed).unwrap());
+        let exact = i.exact_area_mm2();
+        assert!(polygon > exact);
+        assert!((polygon - exact) / exact < 0.0035);
+        let closed_form = 3935.0 + (4.0 - core::f64::consts::PI) * 169.0;
+        assert!((exact - closed_form).abs() <= 1e-9 * closed_form);
+    }
 }

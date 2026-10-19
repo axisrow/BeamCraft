@@ -161,14 +161,19 @@ fn an_i_beam_from_a_family_definition_is_built_and_reopened() {
     let beam = at(&reply, &["member"]).clone();
     assert_eq!(num(&beam, &["section_mm", "width"]), 150.0);
     assert_eq!(num(&beam, &["section_mm", "height"]), 300.0);
-    // Sharp I plus four root fillets (1 - pi/4) r^2, within the arc approximation bound of the
-    // detailed outline (0.25 mm sagitta over four quarter arcs of 15 mm: below 25 mm2).
+    // Sharp I plus four root fillets (1 - pi/4) r^2: the exact area, not the arc polygon.
     let area = 2.0 * 150.0 * 10.0 + 280.0 * 7.0 + 4.0 * (1.0 - std::f64::consts::FRAC_PI_4) * 225.0;
     let volume = num(&beam, &["quantities", "volume", "mm3"]);
-    assert!((volume / 6000.0 - area).abs() < 25.0, "{volume}");
+    assert!((volume / 6000.0 - area).abs() <= 1e-9 * area, "{volume}");
+    let quantities = at(&beam, &["quantities"]);
+    assert_eq!(text(quantities, "area_source"), "computed");
+    assert!((num(quantities, &["section_area_mm2"]) - area).abs() <= 1e-9 * area);
+    assert_eq!(num(quantities, &["volume_gross_mm3"]), volume);
+    assert_eq!(num(quantities, &["volume_net_mm3"]), volume);
+    assert_eq!(num(quantities, &["removed_volume_mm3"]), 0.0);
     assert_eq!(
         text(at(&beam, &["quantities", "volume"]), "algorithm"),
-        "kernel-a07-section-member-volume/1;detailed-arcs-max(0.25mm,0.5%r);tolerance-policy-3"
+        "pmass-member-area-x-length/1;section-exact-area;tolerance-policy-3"
     );
 
     let inspected = f.ok("plate-inspect", &[]);
@@ -291,10 +296,11 @@ fn bad_section_input_is_refused_with_its_code() {
 #[test]
 fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
     // The U01 first-slice layer ceilings stopped at 7 such I-sections; the model profile
-    // keeps going. Twelve stay cheap for a debug test run.
+    // keeps going. Eight prove it; every new member re-verifies the whole revision, so a
+    // longer run adds quadratic kernel work without a new property.
     let f = Fixture::new();
     let profile = defined(&f, I300);
-    for n in 0..12 {
+    for n in 0..8 {
         let y = format!("{}", n * 1000);
         member(
             &f,
@@ -305,5 +311,5 @@ fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
         );
     }
     let inspected = f.ok("plate-inspect", &[]);
-    assert_eq!(num(&inspected, &["member_count"]), 12.0);
+    assert_eq!(num(&inspected, &["member_count"]), 8.0);
 }

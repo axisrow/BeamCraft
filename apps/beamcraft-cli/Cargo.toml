@@ -23,6 +23,7 @@ beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }
 beamcraft-host = { path = "../../crates/host", version = "0.0.1" }
 beamcraft-protocol.workspace = true
 beamcraft-layer-engine = { path = "../../crates/layer-engine", version = "0.0.1" }
+beamcraft-ifc = { path = "../../crates/ifc", version = "0.0.1" }
 
 [lints]
 workspace = true
