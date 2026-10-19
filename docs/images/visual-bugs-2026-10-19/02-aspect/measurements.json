@@ -1,0 +1,12 @@
+{
+  "bug-04-aspect-normal": {
+    "screen_width": 1400,
+    "hole_width_px": 275,
+    "hole_height_px": 273
+  },
+  "bug-04-aspect-wide": {
+    "screen_width": 5200,
+    "hole_width_px": 333,
+    "hole_height_px": 273
+  }
+}

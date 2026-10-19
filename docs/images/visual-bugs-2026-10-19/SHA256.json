@@ -1,0 +1,20 @@
+{
+  "docs/images/visual-bugs-2026-10-19/01-volume/accepted.png": "907ff832a6e12b55e192f3ff548204b8a60d32e244eae15c665aa60985ba0a8f",
+  "docs/images/visual-bugs-2026-10-19/01-volume/member-rejected.png": "1b5e5c8de0675ad1eb1df4e0fa11633ce0f1eb1c0d0f1ce78cc4d67c9e39f0ed",
+  "docs/images/visual-bugs-2026-10-19/01-volume/rejected.png": "6e9579576bffc405fcffb52df41f857a6458fa73de76335834d406c834ce1999",
+  "docs/images/visual-bugs-2026-10-19/02-aspect/measurements.json": "a4265b791e7ef225a9817372680f9b1feac5a36e81b4159a082623ff3eab271a",
+  "docs/images/visual-bugs-2026-10-19/02-aspect/normal.png": "2e9156c7de7f172ee1cf82fb969488add8b7322bb73c834d3ec9293d0388ede5",
+  "docs/images/visual-bugs-2026-10-19/02-aspect/restored.png": "3df5e40fcfe2e7887413c9e25fa802ffc92815d7704a2532e1ee177ea9d29c40",
+  "docs/images/visual-bugs-2026-10-19/02-aspect/wide-detail.png": "9f2bbf21fcd04e69908caa475db283745645c3eeda0e32aba281e369f1349c1a",
+  "docs/images/visual-bugs-2026-10-19/02-aspect/wide.png": "53a5a0b55279ebf1c100b75169e876c47a4c79b448f97786f829f5300ad9c095",
+  "docs/images/visual-bugs-2026-10-19/03-names/Floor-beams.json": "aa078f49e728d4620e36f245a998822179a3092279e0c3838b9cedbe6ff66e69",
+  "docs/images/visual-bugs-2026-10-19/03-names/Roof-beams.json": "882a183d79424951cb2f178999ecf1b326b9d3e2f7517e98c8feaaf3d96f700b",
+  "docs/images/visual-bugs-2026-10-19/03-names/Structural-steel.json": "d23512daa42be5076ad0bcd364ef3a558c0bf8a5ca6aab663b24b00e4d555fcf",
+  "docs/images/visual-bugs-2026-10-19/03-names/Test-material.json": "31a4d05379a139d0c0a2bab652366978fb7257a804cacc96239ad1965e53d7df",
+  "docs/images/visual-bugs-2026-10-19/03-names/materials.png": "4cc9959f65060a8a50b3feaef6f5e6ab2df1ee8613742d504229c7ea0a5c7bda",
+  "docs/images/visual-bugs-2026-10-19/03-names/profiles.png": "8292fd5b72fd33f4514e1408253a88ce79e0b90471c11aa60ded1d5fc5e0dced",
+  "docs/images/visual-bugs-2026-10-19/04-coordinates/narrow.png": "af0a5e6922db333f231cd87a7a1b24930abe7aa592de42e086266aebc3a47805",
+  "docs/images/visual-bugs-2026-10-19/04-coordinates/wide.png": "6d0f90a0e7bec639ee9d07a31a509e15e295260c661126743d844075c352c6da",
+  "docs/images/visual-bugs-2026-10-19/reproduce-fixtures.py": "9daa5f85dcd94597bf4cd7a1411d72f50af995a5de666892783b9c2d57447e72",
+  "docs/images/visual-bugs-2026-10-19/README.md": "d43695b1c8abc08c04ed284942d8e0a3dd43ab44725d2e8b65d06e7542c1b2c2"
+}
