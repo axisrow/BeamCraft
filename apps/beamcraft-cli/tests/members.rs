@@ -417,3 +417,32 @@ fn a_member_whose_mesh_would_collapse_in_float32_is_refused() {
     ];
     f.ok("create-member", &ok);
 }
+
+#[test]
+fn a_member_above_one_cubic_metre_is_within_the_stage_budget() {
+    // 200 mm x 300 mm over 20 m is 1.2 m3 = 1.2e9 mm3 of stored volume: the bounded read used
+    // to refuse any double above 1e9, so this very member could not be created at all (the
+    // same reproduction the issue reported).
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let args = [
+        "--kind",
+        "beam",
+        "--start",
+        "0,0,0",
+        "--end",
+        "20000,0,0",
+        "--profile-digest",
+        profile.as_str(),
+    ];
+    let reply = f.ok("create-member", &args);
+    assert_eq!(text(&reply, "outcome"), "member_created");
+    assert_eq!(
+        num(at(&reply, &["member", "quantities", "volume"]), &["mm3"]),
+        1_200_000_000.0
+    );
+    // A fresh process reopens the revision and keeps the quantity current.
+    let inspected = f.ok("plate-inspect", &[]);
+    let members = inspected.get("members").unwrap().array().unwrap();
+    assert_eq!(members.len(), 1);
+}
