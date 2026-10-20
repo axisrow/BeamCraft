@@ -45,23 +45,26 @@ struct Loaded {
 /// The window state.
 pub struct App {
     state: eframe::egui_wgpu::RenderState,
+    /// The egui context, cloned into worker threads so a finished job can wake the UI: polling
+    /// alone would idle past a result once the window redraws only on demand.
+    ctx: egui::Context,
     source: Source,
     renderer: Renderer,
     texture: egui::TextureId,
     camera: Camera,
     loaded: Option<Loaded>,
+    /// Whether the 3D image must be redrawn at the next opportunity: the scene, the camera, the
+    /// target size or the renderer changed. Unrelated UI frames reuse the offscreen texture.
+    viewport_dirty: bool,
     error: Option<String>,
     text: bool,
     adapter: String,
-    last: Instant,
+    last_draw: Instant,
     fps: f32,
     tools: Tools,
     job: Option<Receiver<Result<Created, ToolError>>>,
     reload_job: Option<Receiver<Reloaded>>,
     reload_queued: bool,
-    /// The element id the running refresh reads the properties of, so a stale refresh never
-    /// overwrites a newer selection.
-    reload_selection: Option<String>,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
@@ -72,6 +75,9 @@ pub struct App {
     select_epoch: Epoch,
     /// The result of the last select, edit, undo or redo.
     edit_note: Option<Result<String, String>>,
+    /// The element id the running refresh reads the properties of, so a stale refresh never
+    /// overwrites a newer selection.
+    reload_selection: Option<String>,
     /// The selected element's full properties, as of the last pick or refresh.
     selected: Option<Properties>,
     /// The properties panel's edit state.
@@ -327,21 +333,22 @@ impl App {
         );
         let mut app = Self {
             state,
+            ctx: cc.egui_ctx.clone(),
             source,
             renderer,
             texture,
             camera: Camera::new([0.0; 3], 1000.0, 1.6)?,
             loaded: None,
+            viewport_dirty: true,
             error: None,
             text,
             adapter,
-            last: Instant::now(),
+            last_draw: Instant::now(),
             fps: 0.0,
             tools: Tools::default(),
             job: None,
             reload_job: None,
             reload_queued: false,
-            reload_selection: None,
             tool_note: None,
             refresh_error: None,
             editor: Editor::default(),
@@ -349,6 +356,7 @@ impl App {
             select_job: None,
             select_epoch: Epoch::default(),
             edit_note: None,
+            reload_selection: None,
             selected: None,
             props: props::Props::default(),
             props_job: None,
@@ -380,6 +388,7 @@ impl App {
             .clone()
             .zip(self.source.workspace.clone());
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
@@ -389,6 +398,8 @@ impl App {
                     for_worker.as_deref(),
                     workspace.as_ref().map(|(p, d)| (p.as_path(), d.as_path())),
                 ));
+                // The result is only consumed by a UI frame; wake the window for it.
+                ctx.request_repaint();
             });
         match spawned {
             Ok(_) => {
@@ -452,6 +463,7 @@ impl App {
                     Ok(()) => {
                         self.loaded = Some(loaded);
                         self.error = None;
+                        self.viewport_dirty = true;
                     }
                     Err(e) => self.error = Some(e.to_string()),
                 }
@@ -481,6 +493,7 @@ impl App {
                 self.texture,
             );
         self.renderer = renderer;
+        self.viewport_dirty = true;
         Ok(())
     }
 
@@ -515,6 +528,7 @@ impl App {
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         self.select_job = Some((self.select_epoch.advance(), rx));
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
@@ -525,6 +539,7 @@ impl App {
                     _ => Ok(None),
                 };
                 let _ = tx.send((picked, properties));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -618,6 +633,7 @@ impl App {
         let Some(edit) = edit else { return };
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         self.edit_job = Some(rx);
         self.edit_note = None;
         self.mutating = true;
@@ -625,6 +641,7 @@ impl App {
             .name("beamcraft-edit".into())
             .spawn(move || {
                 let _ = tx.send(command::commit_edit(&cli, &edit));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.edit_job = None;
@@ -693,6 +710,7 @@ impl App {
         };
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         self.select_job = Some((self.select_epoch.advance(), rx));
         let spawned = std::thread::Builder::new()
             .name("beamcraft-info".into())
@@ -709,6 +727,7 @@ impl App {
                 };
                 let properties = command::properties(&cli, &store, &id);
                 let _ = tx.send((Ok(reply), properties));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.select_job = None;
@@ -850,6 +869,7 @@ impl App {
         };
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         self.job = Some(rx);
         self.tool_note = None;
         self.mutating = true;
@@ -857,6 +877,7 @@ impl App {
             .name("beamcraft-command".into())
             .spawn(move || {
                 let _ = tx.send(command::commit(&cli, &prepared));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.job = None;
@@ -995,7 +1016,7 @@ impl App {
                     }
                 }
             }
-            let can_commit = self.tools.can_commit(&store);
+            let can_commit = self.tools.can_commit(&store) && !self.mutating;
             if ui
                 .add_enabled(can_commit, egui::Button::new("Commit"))
                 .clicked()
@@ -1057,6 +1078,7 @@ impl App {
         };
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         self.props_job = Some(rx);
         self.props_note = None;
         self.mutating = true;
@@ -1064,6 +1086,7 @@ impl App {
             .name("beamcraft-update".into())
             .spawn(move || {
                 let _ = tx.send(command::run_change(&cli, &args));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.props_job = None;
@@ -1118,6 +1141,7 @@ impl App {
         let cli = self.source.cli.clone();
         let args = props::workspace_args("workspace-publish", &published, &dir);
         let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = self.ctx.clone();
         self.ws_job = Some(rx);
         self.ws_note = None;
         self.mutating = true;
@@ -1125,6 +1149,7 @@ impl App {
             .name("beamcraft-publish".into())
             .spawn(move || {
                 let _ = tx.send(command::run_change(&cli, &args));
+                ctx.request_repaint();
             });
         if spawned.is_err() {
             self.ws_job = None;
@@ -1340,6 +1365,7 @@ impl App {
                 ui.colored_label(RED, e.to_string());
             }
             Some(Ok(panel)) => {
+                // Owned, so the button closure never holds a panel borrow.
                 let panel = panel.clone();
                 let (draft, draft_sequence) = &panel.state.draft_head;
                 let (published, published_sequence) = &panel.state.published_head;
@@ -1390,7 +1416,7 @@ impl App {
 
     fn info(&self, ui: &mut egui::Ui) {
         ui.heading("BeamCraft");
-        ui.label(format!("{:.0} FPS", self.fps));
+        ui.label(format!("{:.0} viewport redraws/s", self.fps));
         ui.label(&self.adapter);
         ui.label(format!("{}x MSAA", self.renderer.samples));
         ui.separator();
@@ -1432,12 +1458,6 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let now = Instant::now();
-        let dt = now.duration_since(self.last).as_secs_f32();
-        self.last = now;
-        if dt > 0.0 {
-            self.fps = self.fps * 0.9 + 0.1 / dt;
-        }
         let wants_text = ui.ctx().egui_wants_keyboard_input();
         let (fit, reload) = ui.input(|i| {
             (
@@ -1465,6 +1485,7 @@ impl eframe::App for App {
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
                 self.error = Some(e.to_string());
             }
+            self.viewport_dirty = true;
         }
         if self.text {
             egui::Panel::left("info").show(ui, |ui| self.panel(ui));
@@ -1496,6 +1517,7 @@ impl eframe::App for App {
             } else {
                 0.0
             };
+            let moving = orbit != [0.0; 2] || pan != [0.0; 2] || zoom != 0.0;
             let aspect = self.aspect();
             let mut picked = None;
             match self
@@ -1504,13 +1526,25 @@ impl eframe::App for App {
                 .and_then(|()| self.camera.view(aspect))
             {
                 Ok(view) => {
-                    if let Some(l) = &self.loaded {
+                    if moving {
+                        self.viewport_dirty = true;
+                    }
+                    if self.viewport_dirty
+                        && let Some(l) = &self.loaded
+                    {
                         self.renderer.draw(
                             &self.state.device,
                             &self.state.queue,
                             &l.uploaded,
                             view,
                         );
+                        self.viewport_dirty = false;
+                        let now = Instant::now();
+                        let dt = now.duration_since(self.last_draw).as_secs_f32();
+                        self.last_draw = now;
+                        if dt > 0.0 && dt < 5.0 {
+                            self.fps = self.fps * 0.9 + 0.1 / dt;
+                        }
                     }
                     if let Some(l) = &self.loaded {
                         if let Some(selected) = self.editor.selected() {
@@ -1537,6 +1571,8 @@ impl eframe::App for App {
                 self.start_select(ray);
             }
         });
-        ui.ctx().request_repaint();
+        // No unconditional repaint request: the window idles until input, a finished background
+        // job (`ctx.request_repaint` from the worker) or an egui animation asks for a frame, and
+        // an unrelated UI frame reuses the last offscreen image.
     }
 }

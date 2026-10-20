@@ -6,6 +6,7 @@
 //! application layer.
 
 pub mod assembly;
+pub mod bom;
 pub mod changeset;
 pub mod coordinator;
 pub mod copy;
@@ -16,6 +17,7 @@ pub mod export;
 pub mod history;
 pub mod level;
 pub mod library;
+pub mod marks;
 pub mod member;
 pub mod numbering;
 pub mod plate;

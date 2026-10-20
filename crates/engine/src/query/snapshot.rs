@@ -16,7 +16,7 @@ use crate::presentation::Representation;
 use crate::query::bounds::Aabb;
 use crate::query::mesh::MeshEntry;
 use crate::scene::{SceneElement, SceneMesh};
-use beamcraft_geom::{Translation3, canonical_f64_bytes};
+use beamcraft_geom::{Point3, Translation3, canonical_f64_bytes};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use std::collections::BTreeMap;
 
@@ -155,11 +155,15 @@ struct MeshRegistry {
 impl MeshRegistry {
     fn add(&mut self, mesh: &SceneMesh) -> Result<ContentDigest, ViewError> {
         let digest = mesh.digest;
-        let entry = MeshEntry::from_blob(&mesh.blob, &digest)?;
         match self.map.get(&digest) {
-            Some(existing) if existing.bytes() == entry.bytes() => {}
+            // A digest already admitted names verified bytes: equal bytes reuse the entry, and
+            // different bytes under one digest are tampered content, refused without paying
+            // another validation, hash and copy per duplicate.
+            Some(existing) if existing.bytes() == mesh.blob.as_ref() => {}
             Some(_) => return Err(ViewError::new(ViewCode::BlobInvalid)),
             None => {
+                // New content: the structural check and digest verification run exactly once.
+                let entry = MeshEntry::from_blob(&mesh.blob, &digest)?;
                 self.total = self
                     .total
                     .checked_add(entry.bytes().len())
@@ -180,14 +184,33 @@ struct Pending {
     simplified: (ContentDigest, Aabb),
 }
 
-fn world_bounds(mesh: &SceneMesh, placement: Translation3) -> Result<Aabb, ViewError> {
+/// Mesh-local bounds, computed once per distinct mesh: the placement is applied to the result,
+/// not to every vertex.
+fn local_bounds(mesh: &SceneMesh) -> Result<Aabb, ViewError> {
     let numeric = || ViewError::new(ViewCode::NumericUncertain);
     let mut bounds: Option<Aabb> = None;
     for vertex in mesh.vertices.iter() {
-        let point = Aabb::at(placement.apply_point(*vertex).map_err(|_| numeric())?);
+        let point = Aabb::at(*vertex);
         bounds = Some(bounds.map_or(point, |b| b.union(point)));
     }
     bounds.ok_or_else(numeric)
+}
+
+/// World bounds of mesh-local bounds under a translation-only placement. The local corners are
+/// the local extremes and addition is monotone, so translating them is exact, and a non-finite
+/// sum is the same numeric failure the per-vertex scan reported.
+fn translated_bounds(local: Aabb, placement: Translation3) -> Result<Aabb, ViewError> {
+    let numeric = || ViewError::new(ViewCode::NumericUncertain);
+    let min = placement
+        .apply_point(Point3::new(local.min[0], local.min[1], local.min[2]))
+        .map_err(|_| numeric())?;
+    let max = placement
+        .apply_point(Point3::new(local.max[0], local.max[1], local.max[2]))
+        .map_err(|_| numeric())?;
+    Ok(Aabb {
+        min: [min.x, min.y, min.z],
+        max: [max.x, max.y, max.z],
+    })
 }
 
 fn slot_of(meshes: &[MeshEntry], digest: &ContentDigest) -> Result<u32, ViewError> {
@@ -225,14 +248,33 @@ impl ViewSnapshot {
             limit: limits.max_total_mesh_bytes(),
         };
         let mut pending = Vec::with_capacity(elements.len());
+        let mut local: BTreeMap<ContentDigest, Aabb> = BTreeMap::new();
         for element in &elements {
             let full_digest = registry.add(&element.full)?;
-            let full_bounds = world_bounds(&element.full, element.placement)?;
+            // The registry verified this mesh's bytes against its digest, so its local bounds
+            // are trusted for every element that shares the digest.
+            let full_local = match local.get(&full_digest) {
+                Some(found) => *found,
+                None => {
+                    let found = local_bounds(&element.full)?;
+                    local.insert(full_digest, found);
+                    found
+                }
+            };
+            let full_bounds = translated_bounds(full_local, element.placement)?;
             let simplified = match &element.simplified {
-                Some(plate) => (
-                    registry.add(plate)?,
-                    world_bounds(plate, element.placement)?,
-                ),
+                Some(plate) => {
+                    let digest = registry.add(plate)?;
+                    let plate_local = match local.get(&digest) {
+                        Some(found) => *found,
+                        None => {
+                            let found = local_bounds(plate)?;
+                            local.insert(digest, found);
+                            found
+                        }
+                    };
+                    (digest, translated_bounds(plate_local, element.placement)?)
+                }
                 None => (full_digest, full_bounds),
             };
             pending.push(Pending {
@@ -411,4 +453,73 @@ fn content_digest(pin: ViewPin, entries: &[ElementEntry]) -> Result<ContentDiges
         put(e.simplified.mesh_digest.as_bytes())?;
     }
     Ok(h.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scene::{SceneElement, SceneMesh};
+    use beamcraft_geom::Translation3;
+    use beamcraft_kernel::{RectangularPlate, rectangular_plate};
+
+    fn plate_mesh() -> SceneMesh {
+        SceneMesh::from(
+            &rectangular_plate(RectangularPlate {
+                width_mm: 100.0,
+                length_mm: 80.0,
+                thickness_mm: 10.0,
+            })
+            .unwrap(),
+        )
+    }
+
+    fn placed(id: u64, mesh: SceneMesh, at: f64) -> SceneElement {
+        SceneElement::new(
+            ElementId::parse(&format!("01990000-0000-7000-8000-{id:012x}")).unwrap(),
+            ElementKind::Plate,
+            Translation3::new(at, 0.0, 0.0).unwrap(),
+            mesh,
+        )
+    }
+
+    fn pin() -> ViewPin {
+        ViewPin::new(Sha256::digest(b"revision").unwrap(), 1)
+    }
+
+    #[test]
+    fn copies_share_one_verified_mesh_and_keep_exact_translated_bounds() {
+        let shared = plate_mesh();
+        let snapshot = ViewSnapshot::build(
+            pin(),
+            vec![placed(0, shared.clone(), 0.0), placed(1, shared, 200.0)],
+            &Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(snapshot.meshes().len(), 1);
+        let (first, second) = (snapshot.elements().first(), snapshot.elements().get(1));
+        let (first, second) = (
+            first.unwrap().full.world_bounds,
+            second.unwrap().full.world_bounds,
+        );
+        assert_eq!(second.min[0] - first.min[0], 200.0);
+        assert_eq!(second.max[0] - first.max[0], 200.0);
+        assert_eq!(first.min[1], second.min[1]);
+        assert_eq!(first.max[2], second.max[2]);
+    }
+
+    #[test]
+    fn different_bytes_under_one_admitted_digest_are_refused_on_the_reuse_path() {
+        let good = plate_mesh();
+        let digest = good.digest;
+        let mut bytes = good.blob.as_ref().to_vec();
+        let coordinate = 32 + 24;
+        bytes[coordinate] ^= 0x01;
+        let forged = SceneMesh::new(bytes, digest, good.vertices.as_ref().to_vec());
+        let result = ViewSnapshot::build(
+            pin(),
+            vec![placed(0, good, 0.0), placed(1, forged, 400.0)],
+            &Limits::default(),
+        );
+        assert!(matches!(result, Err(e) if e.code() == ViewCode::BlobInvalid));
+    }
 }

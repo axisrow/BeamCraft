@@ -83,30 +83,63 @@ pub struct Reloaded {
     pub workspace: Option<Result<WorkspacePanel, ToolError>>,
 }
 
-/// Runs the CLI queries of one refresh (blocking; call it off the UI thread). `selected` is the
-/// selected element's id, `workspace` the published store and the workspace directory.
+/// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The queries are
+/// independent CLI processes, so they run concurrently and the refresh waits for the slowest
+/// one instead of paying the full inspections in sequence (issue 26, finding 2). `selected` is
+/// the selected element's id, `workspace` the published store and the workspace directory.
 pub fn reload(
     cli: &Path,
     store: &Path,
     selected: Option<&str>,
     workspace: Option<(&Path, &Path)>,
 ) -> Reloaded {
-    let scene = load(cli, store).and_then(|snapshot| {
-        let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        Ok((snapshot, scene))
-    });
-    Reloaded {
-        scene,
-        definitions: command::definitions(cli, store),
-        properties: selected.map(|id| command::properties(cli, store, id)),
-        workspace: workspace.map(|(published, dir)| {
-            let state = command::workspace_state(cli, published, dir)?;
-            let (undo_units, redo_units) = command::workspace_history(cli, dir)?;
-            Ok(WorkspacePanel {
-                state,
-                undo_units,
-                redo_units,
+    std::thread::scope(|scope| {
+        let scene = scope.spawn(|| {
+            load(cli, store).and_then(|snapshot| {
+                let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
+                Ok((snapshot, scene))
             })
-        }),
-    }
+        });
+        let definitions = scope.spawn(|| command::definitions(cli, store));
+        let properties = scope.spawn(|| selected.map(|id| command::properties(cli, store, id)));
+        let workspace = scope.spawn(|| {
+            workspace.map(|(published, dir)| {
+                let state = command::workspace_state(cli, published, dir)?;
+                let (undo_units, redo_units) = command::workspace_history(cli, dir)?;
+                Ok(WorkspacePanel {
+                    state,
+                    undo_units,
+                    redo_units,
+                })
+            })
+        });
+        // A panicked worker is a bug, not model data: report it as its typed failure.
+        let scene = scene
+            .join()
+            .unwrap_or_else(|_| Err(Error::Cli("the view-export thread failed".into())));
+        let definitions = definitions.join().unwrap_or_else(|_| {
+            Err(ToolError::local(
+                "CLI_FAILED",
+                "the definitions thread failed",
+            ))
+        });
+        let properties = properties.join().unwrap_or_else(|_| {
+            Some(Err(ToolError::local(
+                "CLI_FAILED",
+                "the properties thread failed",
+            )))
+        });
+        let workspace = workspace.join().unwrap_or_else(|_| {
+            Some(Err(ToolError::local(
+                "CLI_FAILED",
+                "the workspace thread failed",
+            )))
+        });
+        Reloaded {
+            scene,
+            definitions,
+            properties,
+            workspace,
+        }
+    })
 }

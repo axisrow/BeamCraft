@@ -35,9 +35,11 @@ use crate::definition::{
     DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
 };
 use crate::level::levels_of;
+use crate::marks::marks_of;
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
+use beamcraft_engine::marks::Numbering;
 use beamcraft_engine::member::AuthoredMember;
 use beamcraft_engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
@@ -382,6 +384,8 @@ pub(crate) struct Decoded {
     pub(crate) levels: Levels,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
+    /// The marks of the model and their approval states (A08).
+    pub(crate) marks: Numbering,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -694,6 +698,7 @@ pub(crate) fn decode(
     }
     let definitions = decode_definitions(&prims)?;
     let levels = levels_of(&prims)?;
+    let marks = marks_of(&prims)?;
     Ok(Decoded {
         plates,
         members,
@@ -701,6 +706,7 @@ pub(crate) fn decode(
         definitions,
         levels,
         elements,
+        marks,
     })
 }
 
@@ -1293,6 +1299,7 @@ fn layer_group(group: LayerGroup) -> Group {
         LayerGroup::Material => Group::MaterialRef,
         LayerGroup::Derived => Group::Derived,
         LayerGroup::Relationship => Group::Relationship,
+        LayerGroup::Mark => Group::Mark,
     }
 }
 
@@ -1690,6 +1697,8 @@ pub struct Inspection {
     pub levels: Levels,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
+    /// The marks of the model and their approval states (A08).
+    pub marks: Numbering,
 }
 
 /// Opens the head revision with verification, reads its model and derived layers in a fresh
@@ -1769,6 +1778,7 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         project_record: record,
         levels: decoded.levels,
         elements: decoded.elements,
+        marks: decoded.marks,
     })
 }
 

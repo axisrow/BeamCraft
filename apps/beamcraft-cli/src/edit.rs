@@ -36,7 +36,7 @@ use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, MaterialOpinion, Placement as LayerPlacement, Prepare,
     schema_identity,
 };
-use beamcraft_model::command::{CommandError, UpdateElement};
+use beamcraft_model::command::{CommandError, MarkStatus, UpdateElement};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
@@ -126,12 +126,18 @@ pub fn update_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, levels) = {
+    let (plates, members, definitions, levels, marks) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, members) = evaluate_decoded(&decoded)?;
-        (plates, members, decoded.definitions, decoded.levels)
+        (
+            plates,
+            members,
+            decoded.definitions,
+            decoded.levels,
+            decoded.marks,
+        )
     };
     let materials = material_lookup(&definitions);
     let patch_effect = effect(&command.patch);
@@ -255,6 +261,19 @@ pub fn update_element(
     if let Some(level) = command.patch.level {
         footprint = footprint.union(levels.assign(command.target_id, level)?.footprint)?;
     }
+    // A09: a shape-input edit withdraws the approval of an approved mark in the same batch. The
+    // value is kept; a person approves the edited geometry again. The engine decision (which
+    // edits withdraw) stays in `beamcraft_engine::marks`; the call site adds the real value
+    // change (a patch that restates the current thickness changes no shape input) and the batch
+    // authoring.
+    let thickness_changes = match (&command.patch.thickness_mm, &head_element) {
+        (Some(mm), UpdatedElement::Plate(record)) => *mm != record.authored.thickness_mm,
+        _ => false,
+    };
+    let withdraws = thickness_changes && marks.shape_edit_withdraws(&command.target_id);
+    if withdraws {
+        footprint = footprint.union(Footprint::for_mark(command.target_id)?)?;
+    }
     let schema = schema_identity()?;
     let (mut author, opened) = Author::open(
         base_request,
@@ -301,8 +320,15 @@ pub fn update_element(
     }
     if let Some(level) = command.patch.level {
         changes.push(Change::Level {
-            id: id_text,
+            id: id_text.clone(),
             level: level.map(|l| l.to_string()),
+        });
+    }
+    if withdraws {
+        changes.push(Change::Mark {
+            id: id_text.clone(),
+            value: None,
+            status: Some(MarkStatus::Assigned),
         });
     }
     if patch_effect.material || patch_effect.shape {

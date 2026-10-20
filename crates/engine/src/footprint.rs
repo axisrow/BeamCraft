@@ -39,6 +39,8 @@ pub enum Group {
     MaterialRef,
     /// Relationships to other elements or definitions.
     Relationship,
+    /// The element mark and its approval state (A08).
+    Mark,
     /// Existence and identity.
     Lifecycle,
     /// Derived geometry, quantities and their signatures.
@@ -54,6 +56,7 @@ impl Group {
             Self::Placement => "placement",
             Self::MaterialRef => "material_ref",
             Self::Relationship => "relationship",
+            Self::Mark => "mark",
             Self::Lifecycle => "lifecycle",
             Self::Derived => "derived",
         }
@@ -335,6 +338,25 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of a mark change (A08: assign, replace, revoke or approve): the record
+    /// lives with its source, so only the element's mark group is written. It reads the element's
+    /// lifecycle (its existence decides acceptance) and its mark group (the current value and
+    /// approval state decide it), so a concurrent change of either must conflict. A mark change
+    /// has no geometric effect and writes no derived group. The withdrawal of an approval under a
+    /// shape-input edit is `for_update` unioned with this.
+    pub fn for_mark(element: ElementId) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(element),
+            group,
+        };
+        let footprint = Self {
+            reads: BTreeSet::from([entry(Group::Lifecycle), entry(Group::Mark)]),
+            writes: BTreeSet::from([entry(Group::Mark)]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of two commands applied as one change: the union of their reads and writes.
     pub fn union(mut self, other: Self) -> Result<Self, CommandError> {
         self.reads.extend(other.reads);
@@ -515,6 +537,30 @@ mod tests {
         assert!(!f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
         // A copy of the element reads its lifecycle, so it cannot run against the delete.
         assert!(f.conflicts_with(&Footprint::for_copy(id(5), id(7), None, None).unwrap()));
+    }
+
+    #[test]
+    fn a_mark_change_writes_only_the_target_mark_and_reads_it_back() {
+        let f = Footprint::for_mark(id(5)).unwrap();
+        assert_eq!(
+            f.writes().iter().copied().collect::<Vec<_>>(),
+            vec![Entry {
+                target: Target::Element(id(5)),
+                group: Group::Mark,
+            }]
+        );
+        assert_eq!(f.reads().len(), 2);
+        // Groups are the conflict unit: two marks of different elements are independent, and a
+        // rename of the same element touches the label group, not the mark group.
+        assert!(!f.conflicts_with(&Footprint::for_mark(id(6)).unwrap()));
+        let rename = Footprint::for_update(id(5), true, false, false, false, None).unwrap();
+        assert!(!f.conflicts_with(&rename));
+        assert!(!rename.conflicts_with(&f));
+        // The same element's mark group conflicts with itself, and a delete conflicts through
+        // the lifecycle read.
+        assert!(f.conflicts_with(&Footprint::for_mark(id(5)).unwrap()));
+        assert!(f.conflicts_with(&Footprint::for_delete(id(5)).unwrap()));
+        assert_eq!(Group::Mark.as_str(), "mark");
     }
 
     #[test]

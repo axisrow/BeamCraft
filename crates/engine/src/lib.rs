@@ -11,6 +11,7 @@
 //! the other commands and personal workspaces are not implemented.
 
 pub mod assembly;
+pub mod bom;
 pub mod command;
 pub mod copy;
 pub mod element;
@@ -18,6 +19,7 @@ pub mod error;
 pub mod footprint;
 pub mod level;
 pub mod limits;
+pub mod marks;
 pub mod member;
 pub mod numbering;
 pub mod presentation;
