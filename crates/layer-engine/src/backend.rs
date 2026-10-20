@@ -318,7 +318,7 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             } else {
                 attr.get::<sdf::Value>()
                     .map_err(|_| corrupt())?
-                    .map(|v| typed(&v, b))
+                    .map(|v| typed_depth(&v, b, 0, scalar_budget(&property)))
                     .transpose()?
             };
             if let Some(v) = &value {
@@ -513,8 +513,8 @@ pub(crate) fn load_asset(
                         return Err(limit());
                     }
                     for offset in offsets {
-                        number(offset.offset)?;
-                        number(offset.scale)?;
+                        number(offset.offset, SCALAR_MAX)?;
+                        number(offset.scale, SCALAR_MAX)?;
                         if *offset != sdf::LayerOffset::IDENTITY {
                             return Err(unsupported());
                         }
@@ -552,7 +552,17 @@ pub(crate) fn load_asset(
                         dependencies.push(preflight::anchored(&reference.asset_path, name)?);
                     }
                 }
-                _ => validate(value.as_ref(), b, 0)?,
+                _ => {
+                    // An attribute's value fields follow the attribute's own scalar budget
+                    // (the stored quantities have theirs, see `scalar_budget`); every other
+                    // spec keeps the generic one.
+                    let max = if data.spec_type(&path) == Some(sdf::SpecType::Attribute) {
+                        scalar_budget(path.to_string().rsplit('.').next().unwrap_or_default())
+                    } else {
+                        SCALAR_MAX
+                    };
+                    validate_as(value.as_ref(), b, 0, max)?
+                }
             }
         }
     }
@@ -592,7 +602,7 @@ fn walk(
     Ok(())
 }
 
-fn validate(value: &sdf::Value, b: Budgets, depth: usize) -> Result<(), Diagnostic> {
+fn validate_as(value: &sdf::Value, b: Budgets, depth: usize, max: f64) -> Result<(), Diagnostic> {
     if depth >= b.depth {
         return Err(limit());
     }
@@ -606,7 +616,7 @@ fn validate(value: &sdf::Value, b: Budgets, depth: usize) -> Result<(), Diagnost
                 if key.len() > 1024 {
                     return Err(limit());
                 }
-                validate(v, b, depth + 1)?;
+                validate_as(v, b, depth + 1, max)?;
             }
             Ok(())
         }
@@ -645,25 +655,58 @@ fn validate(value: &sdf::Value, b: Budgets, depth: usize) -> Result<(), Diagnost
             Ok(())
         }
         _ => {
-            typed(value, b)?;
+            typed_depth(value, b, depth, max)?;
             Ok(())
         }
     }
 }
 
-fn number(n: f64) -> Result<Value, Diagnostic> {
+/// The generic scalar budget of the bounded read, sized for millimetre coordinates; the
+/// domain rules cap each kind of value tighter.
+const SCALAR_MAX: f64 = 1_000_000_000.0;
+/// The budget of the stored-quantity doubles, which the quantity rules validate on their own
+/// (`authored::validate::quantities`): a volume above one cubic metre is a legitimate value
+/// above 1e9 mm3 and must not read as a stage-budget breach.
+const QUANTITY_MAX: f64 = 1e30;
+
+/// The scalar budget of one attribute's numbers. Only the two stored quantities carry the
+/// wider budget; coordinates, dimensions and unknown attributes keep the generic one.
+fn scalar_budget(property: &str) -> f64 {
+    if matches!(property, "bim:volumeMm3" | "bim:massKg") {
+        QUANTITY_MAX
+    } else {
+        SCALAR_MAX
+    }
+}
+
+/// Converts a value read back from a layer under the scalar budget of the named attribute:
+/// the capture of existing opinions must not refuse the quantities it itself stored.
+pub(crate) fn typed_attribute(
+    value: &sdf::Value,
+    b: Budgets,
+    property: &str,
+) -> Result<Value, Diagnostic> {
+    typed_depth(value, b, 0, scalar_budget(property))
+}
+
+fn number(n: f64, max: f64) -> Result<Value, Diagnostic> {
     if !n.is_finite() {
         return Err(fail(ErrorCode::NonFiniteNumber, "non-finite numeric value"));
     }
-    if n.abs() > 1_000_000_000.0 {
+    if n.abs() > max {
         return Err(limit());
     }
     Ok(Value::Number(n))
 }
 pub(crate) fn typed(value: &sdf::Value, b: Budgets) -> Result<Value, Diagnostic> {
-    typed_depth(value, b, 0)
+    typed_depth(value, b, 0, SCALAR_MAX)
 }
-fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Diagnostic> {
+fn typed_depth(
+    value: &sdf::Value,
+    b: Budgets,
+    depth: usize,
+    max: f64,
+) -> Result<Value, Diagnostic> {
     if depth >= b.depth {
         return Err(limit());
     }
@@ -681,7 +724,7 @@ fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Di
             }
             Ok(Value::Dictionary(
                 map.iter()
-                    .map(|(k, v)| Ok((k.clone(), typed_depth(v, b, depth + 1)?)))
+                    .map(|(k, v)| Ok((k.clone(), typed_depth(v, b, depth + 1, max)?)))
                     .collect::<Result<_, Diagnostic>>()?,
             ))
         }
@@ -692,9 +735,9 @@ fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Di
         V::Int64(v) => Ok(Value::Int(*v)),
         V::Uint(v) => Ok(Value::Uint((*v).into())),
         V::Uint64(v) => Ok(Value::Uint(*v)),
-        V::Half(v) => number(v.to_f64()),
-        V::Float(v) => number((*v).into()),
-        V::Double(v) => number(*v),
+        V::Half(v) => number(v.to_f64(), max),
+        V::Float(v) => number((*v).into(), max),
+        V::Double(v) => number(*v, max),
         V::String(v) => {
             if v.len() > 1024 {
                 return Err(limit());
@@ -711,7 +754,11 @@ fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Di
             if v.len() > b.array_items {
                 return Err(limit());
             }
-            array(v.iter().map(|n| number(*n)).collect::<Result<_, _>>()?)
+            array(
+                v.iter()
+                    .map(|n| number(*n, max))
+                    .collect::<Result<_, _>>()?,
+            )
         }
         V::FloatVec(v) => {
             if v.len() > b.array_items {
@@ -719,7 +766,7 @@ fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Di
             }
             array(
                 v.iter()
-                    .map(|n| number((*n).into()))
+                    .map(|n| number((*n).into(), max))
                     .collect::<Result<_, _>>()?,
             )
         }
@@ -744,19 +791,19 @@ fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Di
         V::Vec3d(v) => array(
             [v.x, v.y, v.z]
                 .into_iter()
-                .map(number)
+                .map(|n| number(n, max))
                 .collect::<Result<_, _>>()?,
         ),
         V::Quatd(v) => array(
             [v.w, v.x, v.y, v.z]
                 .into_iter()
-                .map(number)
+                .map(|n| number(n, max))
                 .collect::<Result<_, _>>()?,
         ),
         V::Vec3f(v) => array(
             [v.x, v.y, v.z]
                 .into_iter()
-                .map(|n| number(n.into()))
+                .map(|n| number(n.into(), max))
                 .collect::<Result<_, _>>()?,
         ),
         V::Vec3fVec(v) => {
@@ -765,7 +812,7 @@ fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Di
             }
             array(
                 v.iter()
-                    .map(|v| typed(&V::Vec3f(*v), b))
+                    .map(|v| typed_depth(&V::Vec3f(*v), b, 0, max))
                     .collect::<Result<_, _>>()?,
             )
         }
@@ -775,7 +822,7 @@ fn typed_depth(value: &sdf::Value, b: Budgets, depth: usize) -> Result<Value, Di
             }
             array(
                 v.iter()
-                    .map(|v| typed(&V::Vec3d(*v), b))
+                    .map(|v| typed_depth(&V::Vec3d(*v), b, 0, max))
                     .collect::<Result<_, _>>()?,
             )
         }
@@ -877,7 +924,7 @@ pub(crate) fn inspect_foreign(
         Some(_) => return Err(unsupported()),
     };
     if let Some(n) = meters_per_unit {
-        number(n)?;
+        number(n, SCALAR_MAX)?;
     }
     let default_prim = text_of(field("defaultPrim")?)?;
     let up_axis = text_of(field("upAxis")?)?;

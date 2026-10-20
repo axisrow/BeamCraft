@@ -961,3 +961,38 @@ fn a_library_error_is_typed_and_a_failed_commit_leaves_the_old_revision() {
     assert!(!done.replayed);
     assert_eq!(inspect(&store).unwrap().plates.len(), 2);
 }
+
+#[test]
+fn a_plate_above_one_cubic_metre_is_within_the_stage_budget() {
+    // 1e9 mm3 is exactly one cubic metre: the bounded read used to refuse any stored double
+    // above it, including the plate's own volume in mm3, so this very plate was impossible.
+    let fx = Fixture::new();
+    let (code, reply) = fx.create(&[
+        "--width",
+        "5000",
+        "--length",
+        "5000",
+        "--thickness",
+        "41",
+        "--name",
+        "Slab",
+    ]);
+    assert_eq!(code, 0, "{reply:?}");
+    assert_eq!(text(&reply, "outcome"), "plate_created");
+    assert!(close(
+        num(at(&reply, &["plate", "quantities", "volume"]), &["mm3"]),
+        5_000.0 * 5_000.0 * 41.0
+    ));
+    // A fresh process still opens the revision and re-reads the quantities.
+    let (code, inspected) = fx.inspect();
+    assert_eq!(code, 0, "{inspected:?}");
+    let plates = inspected.get("plates").unwrap().array().unwrap();
+    assert_eq!(plates.len(), 1);
+    assert!(close(
+        num(
+            at(plates.first().unwrap(), &["quantities", "volume"]),
+            &["mm3"]
+        ),
+        5_000.0 * 5_000.0 * 41.0
+    ));
+}

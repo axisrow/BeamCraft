@@ -1261,7 +1261,7 @@ fn capture(
             match data.try_field(&spec, "default").map_err(|_| corrupt())? {
                 None => Opinion::Absent,
                 Some(v) if matches!(v.as_ref(), sdf::Value::ValueBlock) => Opinion::Block,
-                Some(v) => Opinion::Value(backend::typed(v.as_ref(), b)?),
+                Some(v) => Opinion::Value(backend::typed_attribute(v.as_ref(), b, name)?),
             }
         };
         result.push(AuthoredItem {

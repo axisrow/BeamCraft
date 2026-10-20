@@ -455,8 +455,13 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
     {
         let digest = text(definition, "digest").ok_or_else(unreadable)?;
         let kind = text(definition, "kind").ok_or_else(unreadable)?;
+        // The readable name the engine stores with the definition (A07.2) leads the label;
+        // definitions published before it fall back to the grade or designation they have.
+        let display = text(definition, "display_name").filter(|n| !n.is_empty());
         if kind == "material" {
-            let grade = text(definition, "grade").unwrap_or_else(|| "material".into());
+            let grade = display
+                .or_else(|| text(definition, "grade"))
+                .unwrap_or_else(|| "material".into());
             let density = dimension(definition, "density_kg_m3")
                 .map(|d| format!(" {d} kg/m3"))
                 .unwrap_or_default();
@@ -465,7 +470,9 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                 digest,
             });
         } else {
-            let name = text(definition, "designation").unwrap_or_else(|| kind.clone());
+            let name = display
+                .or_else(|| text(definition, "designation"))
+                .unwrap_or_else(|| kind.clone());
             let size = match (
                 dimension(definition, "width_mm"),
                 dimension(definition, "height_mm"),
@@ -833,14 +840,30 @@ mod tests {
 
     #[test]
     fn definitions_split_into_profiles_and_materials() {
+        // A07.2 definitions carry a stored display name; it leads the label.
         let reply = format!(
-            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
+            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","display_name":"Structural steel","grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","display_name":"Roof beams","height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
             m = "36281e26dd4affda6b39d884fe8a8bb04deb71684215741c188dac0806710ba9"
         );
         let definitions = parse_definitions(Some(0), reply.as_bytes()).unwrap();
         assert_eq!(definitions.materials.len(), 1);
         assert_eq!(definitions.profiles.len(), 1);
         assert_eq!(definitions.profiles[0].digest, DIGEST);
+        assert_eq!(
+            definitions.profiles[0].label,
+            "Roof beams 200 x 300 mm (5d660ddd)"
+        );
+        assert_eq!(
+            definitions.materials[0].label,
+            "Structural steel 7850 kg/m3 (36281e26)"
+        );
+        // Definitions published before A07.2 have no display name: the designation or grade
+        // and the kind still label them.
+        let unnamed = format!(
+            r#"{{"definition_count":2,"definitions":[{{"density_kg_m3":7850,"digest":"{m}","display_name":null,"grade":"S355","kind":"material","used_by":[]}},{{"digest":"{DIGEST}","display_name":null,"height_mm":300,"kind":"rectangle","width_mm":200,"used_by":[]}}],"outcome":"definitions"}}"#,
+            m = "36281e26dd4affda6b39d884fe8a8bb04deb71684215741c188dac0806710ba9"
+        );
+        let definitions = parse_definitions(Some(0), unnamed.as_bytes()).unwrap();
         assert_eq!(
             definitions.profiles[0].label,
             "rectangle 200 x 300 mm (5d660ddd)"
