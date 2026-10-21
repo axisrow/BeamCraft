@@ -9,12 +9,17 @@
 //!
 //! The UI computes no engineering result. The one piece of arithmetic is the display ray through a
 //! clicked pixel (camera math, like the projection in [`crate::camera`]); what the ray hits is the
-//! engine's `pick`. A move is the absolute translation the user types (the form is pre-filled with
+//! engine's `pick`. The window runs that query itself on the snapshot it shows ([`pick_in`], the
+//! same engine call the CLI's `pick` makes), so a click selects what is on screen and starts no
+//! process for it. A move is the absolute translation the user types (the form is pre-filled with
 //! the element's present translation as the engine reports it), so the UI adds nothing up itself.
 //! Property editing is V06.
 
 use crate::camera::View;
 use crate::tools::{FormError, ToolError, decode, rejection, text};
+use beamcraft_engine::ViewSnapshot;
+use beamcraft_engine::query::feature::FeatureKind;
+use beamcraft_engine::query::pick::{PickQuery, RayPick, pick};
 use beamcraft_protocol::json::Json;
 use std::path::Path;
 
@@ -116,6 +121,19 @@ pub fn parse_pick(exit_code: Option<i32>, stdout: &[u8]) -> Result<Option<String
     }
 }
 
+/// What the CLI's `pick` with [`pick_args`] answers for `ray`, computed in this process on
+/// `snapshot` by the same engine query: the element of the nearest front face along the ray, or
+/// `None` for empty space. A refusal carries the engine's code, as the CLI's reply would.
+pub fn pick_in(snapshot: &ViewSnapshot, ray: &Ray) -> Result<Option<String>, ToolError> {
+    let mut query = RayPick::new(ray.origin, ray.direction, vec![FeatureKind::Face]);
+    query.max_hits = 1;
+    let result = pick(snapshot, &PickQuery::Ray(query)).map_err(|e| ToolError {
+        code: e.f04_code().as_str().to_owned(),
+        message: format!("the pick was refused ({})", e.code().as_str()),
+    })?;
+    Ok(result.hits.first().map(|hit| hit.element_id.to_string()))
+}
+
 /// What the panel shows about the selected element, as `plate-inspect` reports it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElementInfo {
@@ -129,12 +147,16 @@ pub struct ElementInfo {
     pub translation_mm: [f64; 3],
 }
 
-/// The arguments of the CLI command that lists the elements with their placements.
-pub fn inspect_args(store: &Path) -> Vec<String> {
+/// The arguments of the CLI command that reports one element of the accepted revision with its
+/// placement and properties (`plate-inspect --element ID`: a reply of one element, whatever the
+/// size of the model).
+pub fn inspect_element_args(store: &Path, id: &str) -> Vec<String> {
     vec![
         "plate-inspect".into(),
         "--store".into(),
         store.to_string_lossy().into_owned(),
+        "--element".into(),
+        id.to_owned(),
     ]
 }
 

@@ -5,7 +5,8 @@
 //! V05.2 end to end: selecting by a click, moving, copying, deleting, undo and redo, driven
 //! through the edit tools' mapping and reply parsing against the real `beamcraft` binary, give
 //! exactly what the CLI gives by hand (same placement, same mesh digest, same world bounds); a
-//! click finds what the engine's `pick` finds; a cancelled preview publishes nothing; a refusal
+//! click finds what the CLI's `pick` finds, without starting it; a lookup that is no longer
+//! wanted stops its process; a cancelled preview publishes nothing; a refusal
 //! reaches the panel with the engine's code and message. Without the CLI binary next to this
 //! package's binary the tests are skipped and say so (`cargo test --workspace` builds it).
 
@@ -22,12 +23,14 @@ use beamcraft_protocol::{
     message,
 };
 use beamcraft_ui::camera::Camera;
-use beamcraft_ui::edit::{EditKind, Editor, Target, ndc_of, ray_through};
+use beamcraft_ui::edit::{
+    EditKind, Editor, Target, ndc_of, parse_pick, pick_args, pick_in, ray_through,
+};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::{command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -87,6 +90,15 @@ fn by_hand(cli: &Path, args: &[&str]) -> (i32, Json) {
     let output = Command::new(cli).args(args).output().unwrap();
     let body = json::decode(&output.stdout, &message::read_limits()).unwrap();
     (output.status.code().unwrap(), body)
+}
+
+/// What the CLI's own `pick` answers for `ray` on the store's head.
+fn cli_pick(cli: &Path, store: &Path, ray: &beamcraft_ui::edit::Ray) -> Option<String> {
+    let output = Command::new(cli)
+        .args(pick_args(store, ray))
+        .output()
+        .unwrap();
+    parse_pick(output.status.code(), &output.stdout).unwrap()
 }
 
 fn ok(cli: &Path, args: &[&str]) -> Json {
@@ -232,10 +244,14 @@ fn a_click_selects_what_the_engine_picks() {
         let pixel = [(nx * 0.5 + 0.5) * size[0], (0.5 - ny * 0.5) * size[1]];
         let ndc = ndc_of(pixel, [0.0, 0.0], size).unwrap();
         let ray = ray_through(&view, ndc, scene.origin_mm).unwrap();
-        let selected = command::select_at(&cli, &stores.ui(), &ray)
-            .unwrap()
-            .unwrap();
+        // The window picks in its own process on the snapshot it shows; the CLI's `pick` on
+        // the store's head answers the same.
+        assert_eq!(cli_pick(&cli, &stores.ui(), &ray).as_deref(), Some(id));
+        let (picked, properties) =
+            command::select(&cli, &stores.ui(), &snapshot, &ray, &AtomicBool::new(false));
+        let selected = picked.unwrap().unwrap();
         assert_eq!(selected.id, id);
+        assert_eq!(properties.unwrap().unwrap().element_id, id);
         let info = selected.info.unwrap();
         assert_eq!(info.kind, "plate");
         assert_eq!(info.name, if id == A { "A" } else { "B" });
@@ -248,13 +264,14 @@ fn a_click_selects_what_the_engine_picks() {
             }
         );
     }
-    // A pixel on empty space (the top-left corner) selects nothing.
+    // A pixel on empty space (the top-left corner) selects nothing, in the CLI as here.
     let ray = ray_through(&view, [-0.99, 0.99], scene.origin_mm).unwrap();
-    assert!(
-        command::select_at(&cli, &stores.ui(), &ray)
-            .unwrap()
-            .is_none()
-    );
+    assert_eq!(cli_pick(&cli, &stores.ui(), &ray), None);
+    assert_eq!(pick_in(&snapshot, &ray).unwrap(), None);
+    let (picked, properties) =
+        command::select(&cli, &stores.ui(), &snapshot, &ray, &AtomicBool::new(false));
+    assert!(picked.unwrap().is_none());
+    assert_eq!(properties.unwrap(), None);
     // A click that is not inside the view is not a click.
     assert!(ndc_of([1700.0, 10.0], [0.0, 0.0], size).is_none());
 }

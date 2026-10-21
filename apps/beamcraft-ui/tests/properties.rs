@@ -24,7 +24,7 @@ use beamcraft_ui::props::{self, MaterialEdit, UpdateForm};
 use beamcraft_ui::{command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -169,8 +169,8 @@ fn pick_and_lookup_report_what_the_cli_reports() {
     assert_eq!(found.profile, None);
 
     // A pick through the plate's centre from above hits it; a ray into the sky does not. The
-    // window's own path is `select_at` (the editor's light report); the panel's full properties
-    // are the same `plate-inspect` read through `properties`.
+    // window's own path is `select`: the engine's pick on the snapshot it shows, then one
+    // `plate-inspect --element` for the editor's light report and the panel's full properties.
     let reply = ok(&cli, &["plate-inspect", "--store", store.to_str().unwrap()]);
     let element = &at(&reply, &["snapshot", "elements"]).array().unwrap()[0];
     let min = floats(at(element, &["world_min_mm"]));
@@ -181,30 +181,46 @@ fn pick_and_lookup_report_what_the_cli_reports() {
         (min[2] + max[2]) / 2.0,
     ];
     let ray = |origin: [f64; 3], direction: [f64; 3]| Ray { origin, direction };
-    let selected = command::select_at(
+    let snapshot = source::load(&cli, &store).unwrap();
+    let cancel = AtomicBool::new(false);
+    let (picked, properties) = command::select(
         &cli,
         &store,
+        &snapshot,
         &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, -1.0]),
-    )
-    .unwrap()
-    .unwrap();
+        &cancel,
+    );
+    let selected = picked.unwrap().unwrap();
     assert_eq!(selected.id, id);
     assert_eq!(selected.info.unwrap().name, "P1");
-    let missed = command::select_at(
+    // The panel's properties come from the same reply, equal to the separate lookup.
+    assert_eq!(
+        properties.unwrap(),
+        command::properties(&cli, &store, &id).unwrap()
+    );
+    let (missed, properties) = command::select(
         &cli,
         &store,
+        &snapshot,
         &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, 1.0]),
-    )
-    .unwrap();
-    assert!(missed.is_none());
+        &cancel,
+    );
+    assert!(missed.unwrap().is_none());
+    assert_eq!(properties.unwrap(), None);
 
-    // A store without a revision refuses the pick with the CLI's own code.
-    let empty = stores.hand();
-    let error = command::select_at(&cli, &empty, &ray([0.0; 3], [0.0, 0.0, -1.0])).unwrap_err();
-    assert_eq!(error.code, "NOT_FOUND", "{error}");
-
-    // A missing element is no error: the panel says it is gone.
+    // A missing element is no error: the panel says it is gone, for an unknown id and for one
+    // no revision can hold alike.
+    assert_eq!(
+        command::properties(&cli, &store, "019a7bf0-0000-7000-8000-0000000000ff").unwrap(),
+        None
+    );
     assert_eq!(command::properties(&cli, &store, "gone").unwrap(), None);
+    assert_eq!(
+        command::element_info(&cli, &store, "gone")
+            .unwrap_err()
+            .code,
+        "NOT_FOUND"
+    );
 }
 
 #[test]

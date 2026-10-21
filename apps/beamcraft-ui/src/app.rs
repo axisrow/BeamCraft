@@ -8,7 +8,7 @@
 //! personal workspace (V06).
 
 use crate::camera::{Camera, View};
-use crate::command::Selected;
+use crate::command::{Selected, Selection};
 use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
 use crate::perf::{Observed, PerfRun, Phase, RefreshTiming, Request};
 use crate::props::{self, MaterialEdit, Properties, WorkspacePanel};
@@ -20,6 +20,8 @@ use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, T
 use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Instant;
 
@@ -43,7 +45,8 @@ pub struct Source {
 }
 
 struct Loaded {
-    snapshot: ViewSnapshot,
+    /// Shared with the selection worker, which picks on what the window shows.
+    snapshot: Arc<ViewSnapshot>,
     scene: Scene,
     uploaded: Uploaded,
 }
@@ -144,15 +147,14 @@ fn note_loaded(loaded: &Loaded) {
     );
 }
 
-/// A lookup in flight: the epoch it was asked under and its receiver. The answer carries the
-/// editor's light selection and the properties panel's full report for the same element.
-type SelectJob = (
-    u64,
-    Receiver<(
-        Result<Option<Selected>, ToolError>,
-        Result<Option<Properties>, ToolError>,
-    )>,
-);
+/// A lookup in flight: the epoch it was asked under, its receiver and the flag that gives it up.
+/// The answer carries the editor's light selection and the properties panel's full report for
+/// the same element.
+struct SelectJob {
+    asked: u64,
+    rx: Receiver<Selection>,
+    cancel: Arc<AtomicBool>,
+}
 
 /// One frame of viewport navigation in `Camera::navigate` argument space: orbit radians, a
 /// screen-relative pan in millimetres and logarithmic zoom. Shift turns the primary drag into a
@@ -623,7 +625,7 @@ impl App {
             STATS.uploads.add(1);
             STATS.upload_bytes.add(uploaded.bytes);
             Ok(Loaded {
-                snapshot,
+                snapshot: Arc::new(snapshot),
                 scene,
                 uploaded,
             })
@@ -717,25 +719,36 @@ impl App {
         }
     }
 
+    /// Registers a lookup under a new epoch; returns the flag that gives it up.
+    fn begin_select(&mut self, rx: Receiver<Selection>) -> Arc<AtomicBool> {
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.select_job = Some(SelectJob {
+            asked: self.select_epoch.advance(),
+            rx,
+            cancel: Arc::clone(&cancel),
+        });
+        cancel
+    }
+
     /// Starts a click selection on a worker: the engine's `pick` along the ray, then the details
-    /// of the element it hit — the editor's light report and the properties panel's full one.
+    /// of the element it hit, the editor's light report and the properties panel's full one from
+    /// one lookup ([`command::select`]).
     fn start_select(&mut self, ray: crate::edit::Ray) {
         if self.select_job.is_some() {
             return;
         }
+        // The pick runs on the snapshot on screen, so a click selects what the user sees.
+        let Some(snapshot) = self.loaded.as_ref().map(|l| Arc::clone(&l.snapshot)) else {
+            return;
+        };
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = self.ctx.clone();
-        self.select_job = Some((self.select_epoch.advance(), rx));
+        let cancel = self.begin_select(rx);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
-                let picked = command::select_at(&cli, &store, &ray);
-                let properties = match &picked {
-                    Ok(Some(found)) => command::properties(&cli, &store, &found.id),
-                    _ => Ok(None),
-                };
-                let _ = tx.send((picked, properties));
+                let _ = tx.send(command::select(&cli, &store, &snapshot, &ray, &cancel));
                 ctx.request_repaint();
             });
         if spawned.is_err() {
@@ -744,14 +757,17 @@ impl App {
         }
     }
 
-    /// Drops any lookup in flight: its result is no longer wanted (Esc, an accepted edit).
+    /// Drops any lookup in flight: its result is no longer wanted (Esc, an accepted edit, a
+    /// newer lookup), so its CLI process is stopped as well (issue 26, finding 9).
     fn invalidate_select(&mut self) {
         self.select_epoch.advance();
-        self.select_job = None;
+        if let Some(job) = self.select_job.take() {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
     }
 
     fn poll_select(&mut self) {
-        let Some((asked, rx)) = &self.select_job else {
+        let Some(SelectJob { asked, rx, .. }) = &self.select_job else {
             return;
         };
         let asked = *asked;
@@ -914,24 +930,26 @@ impl App {
         let Some(id) = self.editor.selected().map(|s| s.id.clone()) else {
             return;
         };
+        // This lookup replaces any one in flight.
+        self.invalidate_select();
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
         let (tx, rx) = std::sync::mpsc::channel();
         let ctx = self.ctx.clone();
-        self.select_job = Some((self.select_epoch.advance(), rx));
+        let cancel = self.begin_select(rx);
         let spawned = std::thread::Builder::new()
             .name("beamcraft-info".into())
             .spawn(move || {
+                let (info, properties) = command::lookup(&cli, &store, &id, &cancel);
                 // An element the revision no longer holds clears the selection; any other
                 // failure keeps it selected without details, so the move form is emptied
                 // rather than left with the position from before the edit.
-                let reply = match command::element_info(&cli, &store, &id) {
+                let reply = match info {
                     Err(e) if e.code == "NOT_FOUND" => None,
                     info => Some(Selected {
                         id: id.clone(),
                         info,
                     }),
                 };
-                let properties = command::properties(&cli, &store, &id);
                 let _ = tx.send((Ok(reply), properties));
                 ctx.request_repaint();
             });
@@ -1930,6 +1948,7 @@ mod tests {
     use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;
+    use std::sync::atomic::Ordering;
 
     /// The window state on the headless adapter, with no window and no CLI behind it: the
     /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
@@ -1990,6 +2009,18 @@ mod tests {
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
         app.poll_reload();
+    }
+
+    #[test]
+    fn a_lookup_that_is_given_up_is_told_to_stop() {
+        let Some(mut app) = headless() else { return };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let cancel = app.begin_select(rx);
+        assert!(!cancel.load(Ordering::Relaxed));
+        // What Esc, an accepted edit and a newer lookup do.
+        app.invalidate_select();
+        assert!(cancel.load(Ordering::Relaxed), "its CLI process is stopped");
+        assert!(app.select_job.is_none());
     }
 
     #[test]
