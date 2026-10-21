@@ -633,22 +633,17 @@ impl App {
                 let (target, extent) = loaded.scene.framing();
                 let aspect = self.aspect();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
-                // unchanged framing keeps the user's camera and the last rendered frame.
+                // unchanged framing keeps the user's camera.
                 if needs_refit(self.framed, target, extent, aspect) {
                     match self.camera.fit(target, extent, aspect) {
                         Ok(()) => {
-                            note_loaded(&loaded);
-                            self.loaded = Some(loaded);
                             self.framed = Some((target, extent, aspect));
-                            self.error = None;
-                            self.viewport_dirty = true;
+                            self.show(loaded);
                         }
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 } else {
-                    note_loaded(&loaded);
-                    self.loaded = Some(loaded);
-                    self.error = None;
+                    self.show(loaded);
                 }
             }
             // A store with no revision yet is a normal state, not an error: the definitions
@@ -664,6 +659,16 @@ impl App {
             self.reload();
         }
     }
+    /// Puts a refreshed scene on screen. Its image is always drawn again: a scene whose bounds
+    /// did not change (an edit inside them, a rename, an undo) can still differ from the last
+    /// image.
+    fn show(&mut self, loaded: Loaded) {
+        note_loaded(&loaded);
+        self.loaded = Some(loaded);
+        self.error = None;
+        self.viewport_dirty = true;
+    }
+
     fn aspect(&self) -> f32 {
         (self.renderer.width as f32 / self.renderer.height as f32).clamp(0.05, 20.0)
     }
@@ -1913,8 +1918,97 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{navigation, needs_refit, target_size, volume_note};
+    use super::{App, Source, navigation, needs_refit, target_size, volume_note};
+    use crate::Error;
     use crate::camera::Camera;
+    use crate::perf::RefreshTiming;
+    use crate::render::Gpu;
+    use crate::scene::Scene;
+    use crate::source::Reloaded;
+    use crate::tools::ToolError;
+    use beamcraft_engine::synthetic::plate_scene;
+    use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
+    use beamcraft_model::digest::Sha256;
+    use eframe::egui_wgpu;
+
+    /// The window state on the headless adapter, with no window and no CLI behind it: the
+    /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
+    /// saying so, without a native adapter.
+    fn headless() -> Option<App> {
+        let gpu = match pollster::block_on(Gpu::headless()) {
+            Ok(gpu) => gpu,
+            Err(Error::NoAdapter) => {
+                eprintln!("SKIP window test: no native wgpu adapter");
+                return None;
+            }
+            Err(e) => panic!("adapter or device failed: {e}"),
+        };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let renderer =
+            egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
+        // eframe's own constructor for windowless tests (doc-hidden; eframe is pinned).
+        let mut cc = eframe::CreationContext::_new_kittest(egui::Context::default());
+        cc.wgpu_render_state = Some(egui_wgpu::RenderState {
+            adapter: gpu.adapter,
+            available_adapters: Vec::new(),
+            instance: wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()),
+            device: gpu.device,
+            queue: gpu.queue,
+            target_format: format,
+            renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
+            surface_config: egui_wgpu::SurfaceConfig::LOW_LATENCY,
+        });
+        let missing = std::env::temp_dir().join("beamcraft-window-test-no-cli");
+        let source = Source {
+            store: missing.clone(),
+            cli: missing,
+            workspace: None,
+            published: None,
+        };
+        Some(App::new(&cc, source).unwrap())
+    }
+
+    /// A refresh whose scene is `plates` synthetic kernel plates.
+    fn refreshed(plates: u32) -> Reloaded {
+        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+        let snapshot =
+            ViewSnapshot::build(pin, plate_scene(plates, false).unwrap(), &Limits::default())
+                .unwrap();
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        Reloaded {
+            scene: Ok((snapshot, scene)),
+            definitions: Err(ToolError::local("NOT_FOUND", "no store in this test")),
+            properties: None,
+            workspace: None,
+            timing: RefreshTiming::default(),
+        }
+    }
+
+    /// Hands `reloaded` to the window as the result of the refresh in flight.
+    fn deliver(app: &mut App, reloaded: Reloaded) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(reloaded).unwrap();
+        app.reload_job = Some(rx);
+        app.poll_reload();
+    }
+
+    #[test]
+    fn a_refreshed_scene_is_drawn_again_even_when_its_framing_is_unchanged() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        assert!(app.loaded.is_some() && app.viewport_dirty);
+        let framed = app.framed;
+        // What a frame does after drawing the image.
+        app.viewport_dirty = false;
+        // The same bounds again, as after an edit inside them: the camera stays where the user
+        // left it, and the new scene is still drawn.
+        deliver(&mut app, refreshed(2));
+        assert_eq!(app.framed, framed);
+        assert!(
+            app.viewport_dirty,
+            "the new scene must replace the old image"
+        );
+    }
 
     const PLAIN: (egui::Vec2, bool, bool, bool) = (egui::Vec2::ZERO, false, false, false);
     const KEYS_NONE: (bool, bool) = (false, false);
