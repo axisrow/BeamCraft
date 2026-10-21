@@ -992,7 +992,7 @@ impl App {
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Edit");
         ui.label("Click an element in the view to select it. Esc clears the selection.");
-        match self.editor.selected().cloned() {
+        match self.editor.selected() {
             Some(info) => {
                 ui.label(format!(
                     "Selected: {} {} ({})",
@@ -1310,8 +1310,9 @@ impl App {
             ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
         });
         ui.label("Dimensions in mm.");
-        let materials = self.tools.definitions.materials.clone();
-        let profiles = self.tools.definitions.profiles.clone();
+        // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
+        // frame the window draws.
+        let definitions = &self.tools.definitions;
         match self.tools.active {
             ToolKind::Plate => {
                 let form = &mut self.tools.plate;
@@ -1324,7 +1325,7 @@ impl App {
                     "plate-material",
                     "Material",
                     &mut form.material,
-                    &materials,
+                    &definitions.materials,
                     false,
                 );
             }
@@ -1353,7 +1354,7 @@ impl App {
                     "member-profile",
                     "Profile",
                     &mut form.profile,
-                    &profiles,
+                    &definitions.profiles,
                     true,
                 );
                 choice_combo(
@@ -1361,22 +1362,27 @@ impl App {
                     "member-material",
                     "Material",
                     &mut form.material,
-                    &materials,
+                    &definitions.materials,
                     false,
                 );
-                if profiles.is_empty() {
+                if definitions.profiles.is_empty() {
                     ui.label("The store has no profile definition yet (beamcraft define-profile).");
                 }
             }
         }
-        let store = self.source.store.clone();
         let busy = self.tools.busy();
+        let mutating = self.mutating;
+        let store = &self.source.store;
+        // Whether the staged command is still what the form produces; preparing it builds the
+        // whole argument list, so it is asked once per frame unless a button acted.
+        let mut fresh = false;
+        let (mut commit, mut cancelled) = (false, false);
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(!busy, egui::Button::new("Preview"))
                 .clicked()
             {
-                match self.tools.preview(&store) {
+                match self.tools.preview(store) {
                     Ok(_) => self.tool_note = None,
                     Err(e) => {
                         self.tools.cancel();
@@ -1384,13 +1390,10 @@ impl App {
                     }
                 }
             }
-            let can_commit = self.tools.can_commit(&store) && !self.mutating;
-            if ui
-                .add_enabled(can_commit, egui::Button::new("Commit"))
-                .clicked()
-            {
-                self.start_commit();
-            }
+            fresh = self.tools.can_commit(store);
+            commit = ui
+                .add_enabled(fresh && !mutating, egui::Button::new("Commit"))
+                .clicked();
             if ui
                 .add_enabled(
                     self.tools.staged().is_some() && !busy,
@@ -1400,10 +1403,18 @@ impl App {
             {
                 self.tools.cancel();
                 self.tool_note = Some(Ok("Cancelled; nothing was published.".into()));
+                cancelled = true;
             }
         });
+        if commit {
+            self.start_commit();
+        }
         if let Some(staged) = self.tools.staged() {
-            let current = self.tools.can_commit(&store);
+            let current = if commit || cancelled {
+                self.tools.can_commit(&self.source.store)
+            } else {
+                fresh
+            };
             ui.label(format!(
                 "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line). The engine builds the shape then; there is no geometry preview.",
                 staged.args.len()
@@ -1559,7 +1570,8 @@ impl App {
         if let Some(problem) = &self.props_problem {
             ui.colored_label(RED, problem);
         }
-        let Some(selected) = self.selected.clone() else {
+        // Borrowed, never copied: the panel is laid out in every frame the window draws.
+        let Some(selected) = &self.selected else {
             if self.editor.selected().is_some() && self.select_job.is_none() {
                 ui.label("The properties of the selection are not loaded.");
             } else {
@@ -1618,9 +1630,10 @@ impl App {
         // The typed patch; every field left as it came changes nothing.
         ui.separator();
         ui.label("Edit (empty fields change nothing):");
-        let materials = self.tools.definitions.materials.clone();
-        let store = self.source.store.clone();
+        let materials = &self.tools.definitions.materials;
+        let store = &self.source.store;
         let busy = self.props.busy() || self.mutating;
+        let mutating = self.mutating;
         field(ui, "Name", &mut self.props.form.name, 140.0);
         ui.horizontal(|ui| {
             egui::ComboBox::from_id_salt("edit-material")
@@ -1647,7 +1660,7 @@ impl App {
                         MaterialEdit::Clear,
                         "none (remove the material)",
                     );
-                    for choice in &materials {
+                    for choice in materials {
                         ui.selectable_value(
                             &mut self.props.form.material,
                             MaterialEdit::Set(choice.digest.clone()),
@@ -1660,12 +1673,16 @@ impl App {
         if selected.kind == "plate" {
             field(ui, "Thickness", &mut self.props.form.thickness, 80.0);
         }
+        // As in the Create panel: the staged patch is prepared once per frame unless a button
+        // acted.
+        let mut fresh = false;
+        let (mut commit, mut cancelled) = (false, false);
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(!busy, egui::Button::new("Preview"))
                 .clicked()
             {
-                match self.props.preview(&store, &selected.element_id) {
+                match self.props.preview(store, &selected.element_id) {
                     Ok(()) => self.props_note = None,
                     Err(e) => {
                         self.props.cancel();
@@ -1673,13 +1690,10 @@ impl App {
                     }
                 }
             }
-            let can_commit = self.props.can_commit(&store, &selected.element_id) && !self.mutating;
-            if ui
-                .add_enabled(can_commit, egui::Button::new("Commit"))
-                .clicked()
-            {
-                self.start_update();
-            }
+            fresh = self.props.can_commit(store, &selected.element_id);
+            commit = ui
+                .add_enabled(fresh && !mutating, egui::Button::new("Commit"))
+                .clicked();
             if ui
                 .add_enabled(
                     self.props.staged().is_some() && !busy,
@@ -1689,10 +1703,20 @@ impl App {
             {
                 self.props.cancel();
                 self.props_note = Some(Ok("Cancelled; nothing was published.".into()));
+                cancelled = true;
             }
         });
+        if commit {
+            self.start_update();
+        }
         if let Some(staged) = self.props.staged() {
-            let current = self.props.can_commit(&store, &selected.element_id);
+            let current = if commit || cancelled {
+                self.selected
+                    .as_ref()
+                    .is_some_and(|s| self.props.can_commit(&self.source.store, &s.element_id))
+            } else {
+                fresh
+            };
             ui.label(format!(
                 "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line).",
                 staged.len()
