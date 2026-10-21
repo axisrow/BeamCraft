@@ -31,10 +31,10 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: release-${{ matrix.target }}
+          key: dist-${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }} -p beamcraft-cli -p beamcraft-ui
+        run: cargo build --profile dist --locked --target ${{ matrix.target }} -p beamcraft-cli -p beamcraft-ui
 
       - name: Package
         shell: bash

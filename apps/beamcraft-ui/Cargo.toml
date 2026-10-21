@@ -24,7 +24,8 @@ beamcraft-model.workspace = true
 beamcraft-protocol.workspace = true
 beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }
 egui = { version = "=0.36.2", default-features = false }
-eframe = { version = "=0.36.2", default-features = false, features = ["wgpu_no_default_features", "links", "wayland", "x11"] }
+# No hyperlink widgets or OpenUrl commands: avoid the unused webbrowser/URL/ICU graph.
+eframe = { version = "=0.36.2", default-features = false, features = ["wgpu_no_default_features", "wayland", "x11"] }
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "dx12", "vulkan", "metal"] }
 pollster = "=1.0.1"
 # The parser epaint 0.36.2 uses at font init; validates Inter before egui can panic on it.

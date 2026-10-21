@@ -37,6 +37,33 @@ indexing_slicing = "warn"
 opt-level = 3
 
 [profile.release]
+# Local optimized builds prioritize compile time. Distribution builds retain the
+# full optimization settings below; neither profile changes runtime checks.
+opt-level = 0
+lto = "off"
+codegen-units = 16
+strip = "symbols"
+debug-assertions = false
+overflow-checks = false
+
+# Keep our engineering code optimized without overriding Cargo's cheap default
+# for host build scripts and proc macros (a package."*" override would do that).
+[profile.release.package]
+beamcraft-boundaries = { opt-level = 3 }
+beamcraft-cli = { opt-level = 3 }
+beamcraft-engine = { opt-level = 3 }
+beamcraft-fixtures = { opt-level = 3 }
+beamcraft-geom = { opt-level = 3 }
+beamcraft-host = { opt-level = 3 }
+beamcraft-ifc = { opt-level = 3 }
+beamcraft-kernel = { opt-level = 3 }
+beamcraft-layer-engine = { opt-level = 3 }
+beamcraft-model = { opt-level = 3 }
+beamcraft-protocol = { opt-level = 3 }
+beamcraft-ui = { opt-level = 3 }
+
+[profile.dist]
+inherits = "release"
+opt-level = 3
 lto = "thin"
 codegen-units = 1
-strip = "symbols"
