@@ -403,6 +403,8 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     let empty = refresh(cli.clone(), ui.clone());
     assert!(matches!(&empty.scene, Err(Error::NoRevision)));
     assert_eq!(empty.definitions.unwrap_err().code, "NOT_FOUND");
+    // The failed export, then the definitions on their own.
+    assert_eq!(empty.timing.processes, 2);
 
     let store = ui.to_str().unwrap();
     ok(
@@ -438,6 +440,8 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     let definitions = full.definitions.unwrap();
     assert_eq!(definitions.profiles.len(), 1);
     assert!(definitions.materials.is_empty());
+    // One process and one inspection read the snapshot and the definitions (issue 26).
+    assert_eq!(full.timing.processes, 1);
 }
 
 #[test]

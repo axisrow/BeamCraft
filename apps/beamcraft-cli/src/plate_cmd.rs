@@ -264,7 +264,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
-        "plate-inspect" => &["--store"],
+        "plate-inspect" => &["--store", "--element"],
         "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
@@ -284,6 +284,11 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     ) {
         return history_command(command, &options);
     }
+    // Parsed before the store is opened, so a malformed id reads nothing.
+    let element = match options.get("--element") {
+        Some(text) => Some(ElementId::parse(text).map_err(id_error)?),
+        None => None,
+    };
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
@@ -304,7 +309,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         }
         "define-material" | "define-profile" => define_command(&store, command, &options),
         "definitions" => definitions_json(&inspect(&store)?, &options),
-        _ => Ok(inspection_json(&inspect(&store)?)?),
+        _ => Ok(inspection_json(&inspect(&store)?, element)?),
     }
 }
 
@@ -1735,7 +1740,11 @@ pub(crate) fn fit_page(
     }
 }
 
-fn definitions_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> Run<Json> {
+/// The `definitions` reply for `inspection` (also framed by `view-export --with-definitions`).
+pub(crate) fn definitions_json(
+    inspection: &Inspection,
+    options: &BTreeMap<&str, &str>,
+) -> Run<Json> {
     let (offset, limit) = page_of(options)?;
     let name = options.get("--name");
     let matching: Vec<_> = inspection
@@ -2075,11 +2084,22 @@ fn with_names(
     Json::Object(object)
 }
 
-fn inspection_json(inspection: &Inspection) -> Run<Json> {
+/// The `plate-inspect` reply for `inspection` (also framed by `view-export --with-element`).
+/// `only` keeps one element in the lists (plates, members, the snapshot's elements and their
+/// meshes), none when the revision does not hold it, and names it as `element_filter`; the
+/// counts still describe the whole revision. Without it the reply lists everything.
+pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) -> Run<Json> {
     let snapshot = &inspection.snapshot;
+    let wanted = |id: ElementId| only.is_none_or(|o| o == id);
+    let shown: Vec<_> = snapshot
+        .elements()
+        .iter()
+        .filter(|e| wanted(e.id))
+        .collect();
     let plates = inspection
         .plates
         .iter()
+        .filter(|p| wanted(p.authored.id))
         .map(|p| {
             Ok(with_names(
                 with_stored(plate_json(p)?, p.authored.id, inspection)?,
@@ -2092,6 +2112,7 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
     let members = inspection
         .members
         .iter()
+        .filter(|m| wanted(m.authored.id))
         .map(|m| {
             Ok(with_names(
                 with_stored(member_json(m)?, m.authored.id, inspection)?,
@@ -2104,6 +2125,12 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
     let meshes = snapshot
         .meshes()
         .iter()
+        .filter(|m| {
+            only.is_none()
+                || shown.iter().any(|e| {
+                    e.full.mesh_digest == m.digest() || e.simplified.mesh_digest == m.digest()
+                })
+        })
         .map(|m| {
             Json::object([
                 ("digest", Json::text(m.digest().to_string())),
@@ -2113,8 +2140,7 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
             ])
         })
         .collect();
-    let entries = snapshot
-        .elements()
+    let entries = shown
         .iter()
         .map(|e| {
             Ok(Json::object([
@@ -2127,7 +2153,7 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
             ]))
         })
         .collect::<Run<Vec<_>>>()?;
-    Ok(Json::object([
+    let mut reply = Json::object([
         ("outcome", Json::text("plate_inspection")),
         ("revision", revision_json(&inspection.revision)),
         ("plate_count", Json::uint(inspection.plates.len() as u64)),
@@ -2166,7 +2192,11 @@ fn inspection_json(inspection: &Inspection) -> Run<Json> {
                 ("meshes", Json::Array(meshes)),
             ]),
         ),
-    ]))
+    ]);
+    if let (Some(id), Json::Object(fields)) = (only, &mut reply) {
+        fields.insert("element_filter".into(), Json::text(id.to_string()));
+    }
+    Ok(reply)
 }
 
 #[cfg(test)]

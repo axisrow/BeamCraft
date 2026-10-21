@@ -425,4 +425,7 @@ fn the_publication_panel_follows_the_real_draft() {
         reloaded.properties.unwrap().unwrap().unwrap().element_id,
         id
     );
+    // The model is read once (the framed export carries the properties); the panel's two
+    // queries read the draft's history.
+    assert_eq!(reloaded.timing.processes, 3);
 }

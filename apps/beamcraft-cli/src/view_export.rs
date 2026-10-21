@@ -6,14 +6,28 @@
 //!
 //! `--out -` writes the raw bundle to standard output and nothing else (the viewport reads it
 //! through a pipe); `--out FILE` creates a new file (never overwrites) and prints a JSON summary.
+//!
+//! `--with-definitions true` and `--with-element ID` (only with `--out -`) add replies taken from
+//! the same verified inspection, so one process and one inspection serve a whole viewport
+//! refresh and everything it shows belongs to the exported revision (issue 26, finding 2).
+//! Standard output is then a frame: [`FRAME_MAGIC`]; the length of the definitions reply as a
+//! little-endian `u32` and that reply byte for byte as `beamcraft definitions --store ROOT`
+//! prints it; the length and the reply of `beamcraft plate-inspect --store ROOT --element ID`
+//! the same way; then the bundle. A length of zero is a reply that was not asked for.
 
+use crate::plate_cmd::{definitions_json, id_error, inspection_json, report};
 use beamcraft_cli::plate::{PlateError, inspect};
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::ElementId;
 use beamcraft_protocol::json::Json;
+use beamcraft_protocol::message;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
+
+/// The first bytes of a framed reply (`--with-definitions true` or `--with-element ID`).
+pub const FRAME_MAGIC: &[u8; 8] = b"BCVXFRM1";
 
 /// What `execute` produced.
 pub enum Output {
@@ -21,6 +35,35 @@ pub enum Output {
     Json(Json, u8),
     /// Raw bundle bytes for standard output.
     Raw(Vec<u8>),
+    /// A frame: the magic and the two length-prefixed replies, then the bundle, written one
+    /// after the other.
+    Framed {
+        /// Magic, lengths and replies.
+        head: Vec<u8>,
+        /// The bundle.
+        bundle: Vec<u8>,
+    },
+}
+
+/// A reply exactly as the command that owns it prints it (the CLI's `print_json`).
+fn printed(result: Result<Json, PlateError>) -> Vec<u8> {
+    let (json, _) = report(result);
+    json.encode(&message::read_limits()).unwrap_or_else(|_| {
+        // What `print_json` prints when a reply exceeds the encoder budget.
+        b"{\"outcome\":\"rejected\",\"code\":\"LIMIT_EXCEEDED\"}\n".to_vec()
+    })
+}
+
+/// Appends `reply` with its length; `None` is a reply that was not asked for.
+fn section(head: &mut Vec<u8>, reply: Option<&[u8]>) -> Result<(), PlateError> {
+    let reply = reply.unwrap_or_default();
+    let length = u32::try_from(reply.len()).map_err(|_| PlateError {
+        code: ErrorCode::LimitExceeded,
+        message: "a framed reply is too large",
+    })?;
+    head.extend_from_slice(&length.to_le_bytes());
+    head.extend_from_slice(reply);
+    Ok(())
 }
 
 fn invalid(message: &'static str) -> PlateError {
@@ -61,13 +104,17 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 4 {
+    if !args.len().is_multiple_of(2) || args.len() > 8 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
     for pair in args.as_chunks::<2>().0 {
         let [key, value] = pair;
-        if !matches!(*key, "--store" | "--out") || options.insert(*key, *value).is_some() {
+        if !matches!(
+            *key,
+            "--store" | "--out" | "--with-definitions" | "--with-element"
+        ) || options.insert(*key, *value).is_some()
+        {
             return Err(invalid("unknown or repeated option"));
         }
     }
@@ -77,6 +124,20 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
     let out = options
         .get("--out")
         .ok_or_else(|| invalid("--out is required"))?;
+    let with_definitions = match options.get("--with-definitions") {
+        None | Some(&"false") => false,
+        Some(&"true") => true,
+        Some(_) => return Err(invalid("--with-definitions is true or false")),
+    };
+    let with_element = match options.get("--with-element") {
+        Some(text) => Some(ElementId::parse(text).map_err(id_error)?),
+        None => None,
+    };
+    let framed = with_definitions || with_element.is_some();
+    // Checked before the store is opened, so a refused request never creates the file.
+    if framed && *out != "-" {
+        return Err(invalid("a framed reply needs --out -"));
+    }
     let blobs = BlobStore::new(store).map_err(|e| PlateError {
         code: e.code(),
         message: "store root is not usable",
@@ -87,6 +148,15 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         code: e.f04_code(),
         message: "the view snapshot could not be bundled",
     })?;
+    if framed {
+        let definitions =
+            with_definitions.then(|| printed(definitions_json(&inspection, &BTreeMap::new())));
+        let element = with_element.map(|id| printed(inspection_json(&inspection, Some(id))));
+        let mut head = FRAME_MAGIC.to_vec();
+        section(&mut head, definitions.as_deref())?;
+        section(&mut head, element.as_deref())?;
+        return Ok(Output::Framed { head, bundle });
+    }
     if *out == "-" {
         return Ok(Output::Raw(bundle));
     }

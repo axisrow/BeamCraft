@@ -4,14 +4,19 @@
 //! Loading the accepted snapshot: the headless CLI exports it in a separate process
 //! (`beamcraft view-export --store ROOT --out -`) and the engine rebuilds and re-validates it.
 //! The viewport never opens USD itself and never trusts the bytes it receives.
+//!
+//! A window refresh asks for the snapshot, the store's definitions and the selected element's
+//! report in one process (`--with-definitions true --with-element ID`): one verified inspection
+//! of one revision instead of one per query (issue 26, finding 2).
 
 use crate::perf::RefreshTiming;
-use crate::props::{Properties, WorkspacePanel};
+use crate::props::{Properties, WorkspacePanel, parse_element};
 use crate::scene::Scene;
-use crate::tools::{Definitions, ToolError};
+use crate::tools::{Definitions, ToolError, parse_definitions};
 use crate::{Error, command};
 use beamcraft_engine::query::bundle::max_bundle_bytes;
 use beamcraft_engine::{Limits, Representation, ViewSnapshot};
+use beamcraft_model::id::ElementId;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -43,22 +48,119 @@ pub fn load_within(cli: &Path, store: &Path, deadline: Duration) -> Result<ViewS
     ];
     let output = command::run_capped(cli, &args, deadline, cap).map_err(export_error)?;
     if output.code != Some(0) {
-        // A rejection is one JSON object; report its stable code only.
-        let text = String::from_utf8_lossy(&output.stdout);
-        let code = text
-            .split("\"code\":\"")
-            .nth(1)
-            .and_then(|rest| rest.split('"').next())
-            .filter(|c| c.len() <= 32 && c.bytes().all(|b| b.is_ascii_uppercase() || b == b'_'))
-            .unwrap_or("UNKNOWN");
-        if code == "NOT_FOUND" {
-            // A store with no published revision yet: typed, so the empty state cannot drift
-            // apart from the matcher that treats it as normal.
-            return Err(Error::NoRevision);
-        }
-        return Err(Error::Cli(format!("view-export rejected: {code}")));
+        return Err(rejected(&output.stdout));
     }
     Ok(ViewSnapshot::from_bundle(&output.stdout, &limits)?)
+}
+
+/// A rejection is one JSON object; report its stable code only.
+fn rejected(stdout: &[u8]) -> Error {
+    let text = String::from_utf8_lossy(stdout);
+    let code = text
+        .split("\"code\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .filter(|c| c.len() <= 32 && c.bytes().all(|b| b.is_ascii_uppercase() || b == b'_'))
+        .unwrap_or("UNKNOWN");
+    if code == "NOT_FOUND" {
+        // A store with no published revision yet: typed, so the empty state cannot drift apart
+        // from the matcher that treats it as normal.
+        return Error::NoRevision;
+    }
+    Error::Cli(format!("view-export rejected: {code}"))
+}
+
+/// The first bytes of a framed `view-export` reply (the CLI defines the frame).
+pub const FRAME_MAGIC: &[u8; 8] = b"BCVXFRM1";
+
+/// The parts of a framed `view-export` reply, split but not yet read.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Frame<'a> {
+    /// The `definitions` reply; empty when it was not asked for.
+    pub definitions: &'a [u8],
+    /// The `plate-inspect --element ID` reply; empty when it was not asked for.
+    pub element: &'a [u8],
+    /// The engine bundle.
+    pub bundle: &'a [u8],
+}
+
+/// Splits a framed reply. Nothing in it is trusted: each length is bounded by
+/// [`command::MAX_OUTPUT`] and checked against the bytes received, the replies go through the
+/// bounded JSON decoder and the bundle is re-validated by the engine.
+pub fn split_frame(bytes: &[u8]) -> Result<Frame<'_>, Error> {
+    fn section(bytes: &[u8]) -> Option<(&[u8], &[u8])> {
+        let (length, rest) = bytes.split_first_chunk::<4>()?;
+        let length = usize::try_from(u32::from_le_bytes(*length)).ok()?;
+        if length > command::MAX_OUTPUT {
+            return None;
+        }
+        rest.split_at_checked(length)
+    }
+    let bad = || Error::Cli("view-export returned an unreadable frame".into());
+    let rest = bytes.strip_prefix(FRAME_MAGIC.as_slice()).ok_or_else(bad)?;
+    let (definitions, rest) = section(rest).ok_or_else(bad)?;
+    let (element, bundle) = section(rest).ok_or_else(bad)?;
+    Ok(Frame {
+        definitions,
+        element,
+        bundle,
+    })
+}
+
+/// Runs one framed `view-export`: the bundle, the definitions and, for `selected`, that
+/// element's report.
+fn export_framed(
+    cli: &Path,
+    store: &Path,
+    selected: Option<&str>,
+    deadline: Duration,
+) -> Result<Vec<u8>, Error> {
+    let cap = FRAME_MAGIC
+        .len()
+        .saturating_add(2 * (4 + command::MAX_OUTPUT))
+        .saturating_add(max_bundle_bytes(&Limits::default()));
+    let mut args = vec![
+        "view-export".to_owned(),
+        "--store".into(),
+        store.to_string_lossy().into_owned(),
+        "--out".into(),
+        "-".into(),
+        "--with-definitions".into(),
+        "true".into(),
+    ];
+    // An id the CLI would refuse is not asked for, so it cannot fail the snapshot with it.
+    if let Some(id) = selected.filter(|id| ElementId::parse(id).is_ok()) {
+        args.extend(["--with-element".into(), id.to_owned()]);
+    }
+    let output = command::run_capped(cli, &args, deadline, cap).map_err(export_error)?;
+    if output.code != Some(0) {
+        return Err(rejected(&output.stdout));
+    }
+    Ok(output.stdout)
+}
+
+/// What one refresh reads about the model: the snapshot with its scene, the definitions and
+/// the selected element's properties.
+type Parts = (
+    Result<(ViewSnapshot, Scene), Error>,
+    Result<Definitions, ToolError>,
+    Option<Result<Option<Properties>, ToolError>>,
+);
+
+fn frame_parts(frame: &Frame<'_>, selected: Option<&str>) -> Parts {
+    let definitions = parse_definitions(Some(0), frame.definitions);
+    let properties = selected.map(|id| match ElementId::parse(id) {
+        Ok(_) => parse_element(Some(0), frame.element, id),
+        // An id no revision can hold is not in this one.
+        Err(_) => Ok(None),
+    });
+    let scene = ViewSnapshot::from_bundle(frame.bundle, &Limits::default())
+        .map_err(Error::from)
+        .and_then(|snapshot| {
+            let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
+            Ok((snapshot, scene))
+        });
+    (scene, definitions, properties)
 }
 
 /// A runner failure (no CLI, deadline, oversize output) as the viewport's typed error.
@@ -97,10 +199,13 @@ pub struct Reloaded {
     pub timing: RefreshTiming,
 }
 
-/// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The queries are
-/// independent CLI processes, so they run concurrently and the refresh waits for the slowest
-/// one instead of paying the full inspections in sequence (issue 26, finding 2). `selected` is
-/// the selected element's id, `workspace` the published store and the workspace directory.
+/// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The model is read
+/// by one framed `view-export`, so the snapshot, the definitions and the selected element's
+/// properties come from one verified inspection of one revision; only when that export fails
+/// are the definitions and the properties asked on their own, so a failing snapshot never hides
+/// them (issue 26, finding 2). The workspace queries read the draft's history, not the model,
+/// and run alongside. `selected` is the selected element's id, `workspace` the published store
+/// and the workspace directory.
 pub fn reload(
     cli: &Path,
     store: &Path,
@@ -108,17 +213,9 @@ pub fn reload(
     workspace: Option<(&Path, &Path)>,
 ) -> Reloaded {
     let started = Instant::now();
-    // view-export and definitions, plate-inspect for a selection, two workspace queries.
-    let processes = 2 + u32::from(selected.is_some()) + 2 * u32::from(workspace.is_some());
+    // The framed export, and the two workspace queries.
+    let mut processes = 1 + 2 * u32::from(workspace.is_some());
     std::thread::scope(|scope| {
-        let scene = scope.spawn(|| {
-            load(cli, store).and_then(|snapshot| {
-                let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-                Ok((snapshot, scene))
-            })
-        });
-        let definitions = scope.spawn(|| command::definitions(cli, store));
-        let properties = scope.spawn(|| selected.map(|id| command::properties(cli, store, id)));
         let workspace = scope.spawn(|| {
             workspace.map(|(published, dir)| {
                 let state = command::workspace_state(cli, published, dir)?;
@@ -130,22 +227,25 @@ pub fn reload(
                 })
             })
         });
-        // A panicked worker is a bug, not model data: report it as its typed failure.
-        let scene = scene
-            .join()
-            .unwrap_or_else(|_| Err(Error::Cli("the view-export thread failed".into())));
-        let definitions = definitions.join().unwrap_or_else(|_| {
-            Err(ToolError::local(
-                "CLI_FAILED",
-                "the definitions thread failed",
-            ))
-        });
-        let properties = properties.join().unwrap_or_else(|_| {
-            Some(Err(ToolError::local(
-                "CLI_FAILED",
-                "the properties thread failed",
-            )))
-        });
+        let framed = export_framed(cli, store, selected, command::DEADLINE)
+            .and_then(|bytes| Ok(frame_parts(&split_frame(&bytes)?, selected)));
+        let (scene, definitions, properties) = match framed {
+            Ok(parts) => parts,
+            Err(e) => {
+                processes += 1 + u32::from(selected.is_some());
+                let properties =
+                    scope.spawn(|| selected.map(|id| command::properties(cli, store, id)));
+                let definitions = command::definitions(cli, store);
+                // A panicked worker is a bug, not model data: report it as its typed failure.
+                let properties = properties.join().unwrap_or_else(|_| {
+                    Some(Err(ToolError::local(
+                        "CLI_FAILED",
+                        "the properties thread failed",
+                    )))
+                });
+                (Err(e), definitions, properties)
+            }
+        };
         let workspace = workspace.join().unwrap_or_else(|_| {
             Some(Err(ToolError::local(
                 "CLI_FAILED",
@@ -163,4 +263,88 @@ pub fn reload(
             },
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(definitions: &[u8], element: &[u8], bundle: &[u8]) -> Vec<u8> {
+        let mut out = FRAME_MAGIC.to_vec();
+        for reply in [definitions, element] {
+            out.extend_from_slice(&u32::try_from(reply.len()).unwrap().to_le_bytes());
+            out.extend_from_slice(reply);
+        }
+        out.extend_from_slice(bundle);
+        out
+    }
+
+    #[test]
+    fn a_frame_splits_into_its_replies_and_bundle() {
+        let bytes = frame(b"{}", b"{\"a\":1}", b"BCVIEW01rest");
+        assert_eq!(
+            split_frame(&bytes).unwrap(),
+            Frame {
+                definitions: b"{}",
+                element: b"{\"a\":1}",
+                bundle: b"BCVIEW01rest",
+            }
+        );
+        let empty = frame(b"", b"", b"");
+        assert_eq!(
+            split_frame(&empty).unwrap(),
+            Frame {
+                definitions: b"",
+                element: b"",
+                bundle: b"",
+            }
+        );
+    }
+
+    #[test]
+    fn a_damaged_frame_is_refused_without_reading_past_it() {
+        let good = frame(b"{\"a\":1}", b"{}", b"bundle");
+        // Magic 0..8, first length 8..12 and reply 12..19, second length 19..23 and reply
+        // 23..25, bundle 25..31.
+        for cut in [0, 7, 11, 15, 19, 22, 24] {
+            assert!(split_frame(&good[..cut]).is_err(), "cut at {cut}");
+        }
+        assert!(
+            split_frame(&good[..25]).is_ok(),
+            "an empty bundle is the engine's to refuse"
+        );
+        let mut magic = good.clone();
+        magic[0] = b'X';
+        assert!(split_frame(&magic).is_err());
+        for at in [8, 19] {
+            let mut huge = good.clone();
+            huge[at..at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            assert!(split_frame(&huge).is_err(), "length at {at}");
+        }
+        let mut over = frame(&vec![b' '; command::MAX_OUTPUT + 1], b"", b"");
+        assert!(
+            split_frame(&over).is_err(),
+            "longer than a CLI reply may be"
+        );
+        over.truncate(12);
+        assert!(split_frame(&over).is_err());
+    }
+
+    #[test]
+    fn a_frame_gives_the_definitions_and_the_selected_element() {
+        let definitions = br#"{"outcome":"definitions","definitions":[]}"#;
+        let element = br#"{"outcome":"plate_inspection","plates":[],"members":[]}"#;
+        let bytes = frame(definitions, element, b"not a bundle");
+        let frame = split_frame(&bytes).unwrap();
+        let id = "019a7bf0-0000-7000-8000-000000000010";
+        let (scene, definitions, properties) = frame_parts(&frame, Some(id));
+        // A bundle the engine refuses fails the scene alone.
+        assert!(scene.is_err());
+        assert!(definitions.is_ok());
+        // The element is not in the report: the selected element is gone.
+        assert!(matches!(properties, Some(Ok(None))));
+        assert!(frame_parts(&frame, None).2.is_none());
+        // An id no revision can hold is not looked for.
+        assert!(matches!(frame_parts(&frame, Some("x")).2, Some(Ok(None))));
+    }
 }
