@@ -611,7 +611,7 @@ a trace of every validation-plan row and every F06 case to code and tests, the m
 the preconditions for G08. G07 added `tests/g07_acceptance.rs` (member meshes against the F06 vertex
 lists, special-value sweeps over every public builder and operation, never-exact mesh probes, a
 near-tolerance cut, pinned blob digests), `examples/g07_bench.rs` (timing and determinism harness,
-`cargo run --release -p beamcraft-kernel --example g07_bench`) and `Code::AxisTooShort`
+`cargo run --profile dist -p beamcraft-kernel --example g07_bench`) and `Code::AxisTooShort`
 (`GEO_AXIS_TOO_SHORT`), which the member builder now reports for an axis below the floor together
 with the contract's stages for a failed frame certificate and a non-finite derived scale.
 

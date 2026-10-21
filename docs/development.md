@@ -12,6 +12,78 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p beamcraft-cli -- --version
 ```
 
+### Optimized local builds and cold timings
+
+For an optimized local build of both applications:
+
+```sh
+cargo build --release --locked -p beamcraft-cli -p beamcraft-ui
+```
+
+The `release` profile keeps workspace code at optimization level 3, uses 16 codegen units and
+disables LTO; third-party dependencies use optimization level 0 to reduce compile time. The
+`dist` profile keeps application and dependency runtime code at optimization level 3, thin LTO
+and one codegen unit for packaged builds; host build tools keep Cargo's defaults. Both profiles
+use the same features and runtime source code. Use `--profile dist` to reproduce package
+optimization locally; its executables are under `target/dist/` (or `target/<triple>/dist/` with
+an explicit target).
+
+Local dependency code prioritizes compile time over throughput; use `dist` for performance
+measurements and distribution. Release runtime checks are unchanged; workspace engineering code
+remains at level 3. Explicit workspace package overrides keep those crates at level 3 without
+raising the optimization cost of Cargo's host build scripts or proc macros.
+
+Measure compiler-cold builds with the helper, from a Bash shell on Linux, macOS or Windows:
+
+```sh
+bash tools/build-timings.sh --target aarch64-apple-darwin --output target/timings-after
+# Optional comparison with package optimization:
+bash tools/build-timings.sh --profile dist --target aarch64-apple-darwin --output target/timings-dist
+```
+
+Omit `--target` for the host target. Each output directory must be new. The helper uses an empty
+target directory inside it and disables both Cargo compiler wrappers. It preserves `build.log`,
+`metadata.txt`, the standalone `cargo-timing.html` report and build artifacts; it never clears the
+normal target directory. Artifacts can occupy several GB. The registry download cache is reused,
+and missing dependencies are downloaded during the timed command. Record whether downloads were
+already cached when sharing a result. For a compile-only comparison, run `cargo fetch --locked`
+first for both revisions and disclose that prefetch.
+
+Compare before and after on the same machine, target, Rust toolchain, build-job count and registry
+state, with no custom Cargo profile overrides or Rust flags. The helper records the revision,
+working-tree status, platform, CPU, toolchain, command, exit status and elapsed seconds. Attach the
+HTML and log when reporting timings; the HTML shows crate durations and the remaining critical
+path. A Linux x86_64 measurement does not establish the issue #153 goal of at most two minutes
+on the reference Apple M5 for the `aarch64-apple-darwin` build. That acceptance requires the same
+cold command on that machine, workspace tests, and opening the window against a demo store.
+
+### Reusing dependencies
+
+Ordinary Cargo commands reuse the local target directory. For several worktrees, optionally set
+`CARGO_TARGET_DIR` to a persistent directory outside them. Cargo separates profiles and target
+triples there; artifacts for different target ABIs still need separate compilation. Unset this
+variable when following the packaging commands below, which use the repository's `target/`.
+
+An optional installed `sccache` can reuse dependency compilation after the target directory is
+removed:
+
+```sh
+cargo install sccache --locked
+RUSTC_WRAPPER=sccache cargo build --release --locked -p beamcraft-cli -p beamcraft-ui
+sccache --show-stats
+```
+
+In PowerShell, set `$env:RUSTC_WRAPPER = 'sccache'` for the build and remove it afterward.
+No wrapper is required by the repository. Cache hits depend on the compiler, target and flags;
+they help repeated builds and do not replace a genuinely cold benchmark. CI already uses
+`Swatinem/rust-cache` for registry and target dependencies, with separate WASM and distribution-target
+keys.
+
+The cold release CI jobs on Linux and macOS deliberately skip compiled caches and upload their
+timing HTML, log and machine metadata as `build-timings-<triple>` artifacts. Downloads happen before
+the measured command. These artifacts document compiler-cold builds on the hosted runners;
+reference-machine acceptance still needs the Apple M5 run described above.
+
 ## Everything CI checks
 
 CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `master`, on Windows
@@ -51,8 +123,15 @@ packages and attaches them to a GitHub release:
 
 Every package holds `beamcraft`, `beamcraft-ui`, `beamcraft-usd-worker`, the Inter font with its
 OFL-1.1 licence (in the .app under `Contents/Resources/`) and the project documents.
-`packaging/package.sh` builds one package from a release build; `packaging/Info.plist` is the .app
-template. CI extracts each archive into a fresh directory and runs `beamcraft --version` from it.
+Build the package executables and package them:
+
+```sh
+cargo build --profile dist --locked --target <triple> -p beamcraft-cli -p beamcraft-ui
+bash packaging/package.sh <triple> <win|linux|macos> <tag>
+```
+
+The script uses the `dist` output; `packaging/Info.plist` is the .app template. CI extracts each
+archive into a fresh directory and runs `beamcraft --version` from it.
 
 Manual check on each OS: extract the package, run `beamcraft --version`, start `beamcraft-ui` and
 confirm the window opens with text (without the font the window has no text).

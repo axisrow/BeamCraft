@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Q02: build one unsigned release package. Run from the repository root after
 #
-#   cargo build --release --locked --target <target> -p beamcraft-cli -p beamcraft-ui
+#   cargo build --profile dist --locked --target <target> -p beamcraft-cli -p beamcraft-ui
 #
 # Usage: packaging/package.sh <target-triple> <win|linux|macos> <tag>
 #
@@ -24,7 +24,7 @@ case "$kind" in
 esac
 
 name="beamcraft-${tag}-${target}"
-release="target/${target}/release"
+release="target/${target}/dist"
 ext=""
 if [ "$kind" = win ]; then
     ext=".exe"
