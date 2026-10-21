@@ -54,5 +54,11 @@ OFL-1.1 licence (in the .app under `Contents/Resources/`) and the project docume
 `packaging/package.sh` builds one package from a release build; `packaging/Info.plist` is the .app
 template. CI extracts each archive into a fresh directory and runs `beamcraft --version` from it.
 
+The macOS bundle uses `assets/icons/BeamCraft.icns` for Finder and the Dock. Its original
+artwork is `assets/icons/beamcraft-1024.png`; on macOS, regenerate the full standard/Retina
+icon set with `bash packaging/generate-icon.sh`. The prebuilt ICNS is committed so release
+packaging needs no image tools. Release smoke checks decode the packaged ICNS with `iconutil`.
+
 Manual check on each OS: extract the package, run `beamcraft --version`, start `beamcraft-ui` and
 confirm the window opens with text (without the font the window has no text).
+On macOS, also confirm the steel-beam icon appears in Finder, the Dock and the app switcher.
