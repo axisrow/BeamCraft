@@ -97,3 +97,10 @@ and runs `beamcraft --version` from it.
 Fresh-install verification on each OS (manual, owner): extract the package, run
 `beamcraft --version`, start `beamcraft-ui` and confirm the window opens with text rendered
 (Inter loaded; without it the window runs without text).
+
+The macOS bundle uses `assets/icons/BeamCraft.icns` for Finder and the Dock. Its original
+artwork is `assets/icons/beamcraft-1024.png`; on macOS, regenerate the standard/Retina
+icon set with `bash packaging/generate-icon.sh`. The prebuilt ICNS is committed so release
+packaging needs no image tools. Release smoke checks decode the packaged ICNS with `iconutil`.
+Run `python3 packaging/test_package.py` to check the icon and archive wiring without a Rust
+build. On macOS, also confirm the steel-beam icon appears in Finder, the Dock and the app switcher.

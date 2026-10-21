@@ -11,6 +11,8 @@
     <string>com.apibim.beamcraft</string>
     <key>CFBundleExecutable</key>
     <string>beamcraft-ui</string>
+    <key>CFBundleIconFile</key>
+    <string>BeamCraft.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
