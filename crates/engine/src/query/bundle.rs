@@ -23,8 +23,10 @@ use crate::query::mesh::MeshEntry;
 use crate::query::snapshot::{ViewPin, ViewSnapshot};
 use crate::scene::{SceneElement, SceneMesh};
 use beamcraft_geom::{Point3, Translation3};
-use beamcraft_model::digest::{ContentDigest, Sha256};
+use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::Uuid7;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 const MAGIC: &[u8; 8] = b"BCVIEW01";
 
@@ -102,7 +104,16 @@ impl Reader<'_> {
 impl ViewSnapshot {
     /// The bundle of this snapshot.
     pub fn to_bundle(&self) -> Result<Vec<u8>, ViewError> {
-        let mut out = Vec::new();
+        const ELEMENT: usize = 16 + 1 + 24 + 4 + 4;
+        // The exact size; the snapshot's own limits bound it (see `max_bundle_bytes`).
+        let size = self
+            .meshes()
+            .iter()
+            .fold(8usize + 32 + 8 + 32 + 4 + 4, |n, m| {
+                n.saturating_add(4).saturating_add(m.bytes().len())
+            })
+            .saturating_add(self.len().saturating_mul(ELEMENT));
+        let mut out = Vec::with_capacity(size.min(max_bundle_bytes(&self.limits())));
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(self.pin().revision().as_bytes());
         out.extend_from_slice(&self.pin().generation().to_le_bytes());
@@ -158,6 +169,7 @@ impl ViewSnapshot {
             return Err(invalid());
         }
         let mut meshes = Vec::with_capacity(mesh_count);
+        let mut admitted = BTreeMap::new();
         let mut total = 0usize;
         for _ in 0..mesh_count {
             let len = r.usize()?;
@@ -168,11 +180,17 @@ impl ViewSnapshot {
                 .checked_add(len)
                 .filter(|t| *t <= limits.max_total_mesh_bytes())
                 .ok_or(ViewError::new(ViewCode::BufferLimit))?;
-            let blob = r.take(len)?;
-            let digest = Sha256::digest(blob).map_err(|_| ViewError::new(ViewCode::BufferLimit))?;
-            let entry = MeshEntry::from_blob(blob, &digest)?;
+            // One structural check, one SHA-256 and one copy per blob: the scene mesh and the
+            // snapshot entry share these bytes, and the builder does not validate them again.
+            let entry = MeshEntry::admit(r.take(len)?)?;
             let vertices = positions(&entry)?;
-            meshes.push(SceneMesh::new(blob.to_vec(), digest, vertices));
+            meshes.push(SceneMesh::shared(
+                Arc::clone(entry.shared()),
+                entry.digest(),
+                vertices,
+            ));
+            // A duplicate blob replaces its twin here; the mesh-count check below refuses it.
+            admitted.insert(entry.digest(), entry);
         }
         let mut elements = Vec::with_capacity(element_count);
         for _ in 0..element_count {
@@ -195,7 +213,12 @@ impl ViewSnapshot {
         if r.at != bytes.len() {
             return Err(invalid());
         }
-        let snapshot = Self::build(ViewPin::new(revision, generation), elements, limits)?;
+        let snapshot = Self::build_admitted(
+            ViewPin::new(revision, generation),
+            elements,
+            limits,
+            admitted,
+        )?;
         // The rebuilt content must be exactly the bundled one: same token, and every mesh used.
         let expected = format!("vs1-{token}");
         if snapshot.token().as_str() != expected || snapshot.meshes().len() != mesh_count {
@@ -209,6 +232,7 @@ impl ViewSnapshot {
 mod tests {
     use super::*;
     use crate::synthetic::plate_scene;
+    use beamcraft_model::digest::Sha256;
 
     fn snapshot(count: u32, simplified: bool) -> ViewSnapshot {
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 7);
@@ -255,5 +279,53 @@ mod tests {
                 assert_eq!(back.token(), s.token());
             }
         }
+    }
+
+    #[test]
+    fn a_bundle_with_a_duplicated_or_unused_blob_is_refused() {
+        let limits = Limits::default();
+        let s = snapshot(2, false);
+        assert_eq!(s.meshes().len(), 2);
+        let bytes = s.to_bundle().unwrap();
+        // Header: magic 8, revision 32, generation 8, token 32, element count 4, mesh count 4.
+        let counts = 8 + 32 + 8 + 32;
+        let first_len = u32::from_le_bytes(bytes[counts + 8..counts + 12].try_into().unwrap());
+        let first = counts + 8..counts + 12 + first_len as usize;
+        // A third blob, a byte-identical copy of the first, that no element uses.
+        let mut unused = bytes[..first.end].to_vec();
+        unused[counts + 4..counts + 8].copy_from_slice(&3u32.to_le_bytes());
+        unused.extend_from_slice(&bytes[first.clone()]);
+        unused.extend_from_slice(&bytes[first.end..]);
+        assert_eq!(
+            ViewSnapshot::from_bundle(&unused, &limits)
+                .unwrap_err()
+                .code(),
+            ViewCode::BlobInvalid
+        );
+        // The same copy used by the second element instead of its own blob: one blob too many.
+        let mut used = unused.clone();
+        let simplified_slot = used.len() - 4;
+        let full_slot = used.len() - 8;
+        used[full_slot..simplified_slot].copy_from_slice(&2u32.to_le_bytes());
+        used[simplified_slot..].copy_from_slice(&2u32.to_le_bytes());
+        assert!(ViewSnapshot::from_bundle(&used, &limits).is_err());
+    }
+
+    #[test]
+    fn a_rebuilt_snapshot_shares_one_copy_of_each_blob() {
+        // 40 copies of one plate: one blob in the bundle, one entry in the snapshot.
+        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 3);
+        let plate = plate_scene(1, false).unwrap().remove(0).full;
+        let elements = (0..40u64)
+            .map(|n| {
+                let id = ElementId::parse(&format!("01990000-0000-7000-8000-{n:012x}")).unwrap();
+                let at = Translation3::new(n as f64 * 200.0, 0.0, 0.0).unwrap();
+                SceneElement::new(id, ElementKind::Plate, at, plate.clone())
+            })
+            .collect();
+        let s = ViewSnapshot::build(pin, elements, &Limits::default()).unwrap();
+        let back = ViewSnapshot::from_bundle(&s.to_bundle().unwrap(), &Limits::default()).unwrap();
+        assert_eq!(back, s);
+        assert_eq!(back.meshes().len(), 1);
     }
 }

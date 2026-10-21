@@ -10,30 +10,74 @@
 use crate::error::{ViewCode, ViewError};
 use crate::limits::{MAX_BLOB_FACES, MAX_BLOB_TRIANGLES, MAX_BLOB_VERTICES, MAX_MESH_BLOB_BYTES};
 use beamcraft_model::digest::{ContentDigest, Sha256};
+use std::sync::Arc;
 
-/// One immutable mesh blob and its identity. The bytes are element-local (space 0).
+/// One immutable mesh blob and its identity. The bytes are element-local (space 0). They are
+/// shared, not copied, with the scene meshes they were admitted from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeshEntry {
     digest: ContentDigest,
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     vertex_count: u32,
     triangle_count: u32,
+}
+
+/// The structural check and the SHA-256 of `bytes`, compared with `claimed` when there is one.
+/// Returns `(vertices, triangles, digest)`. Caps and structure are checked before anything is
+/// hashed or allocated.
+fn validate(
+    bytes: &[u8],
+    claimed: Option<&ContentDigest>,
+) -> Result<(u32, u32, ContentDigest), ViewError> {
+    let (vertex_count, triangle_count) = inspect_blob(bytes)?;
+    let actual = Sha256::digest(bytes).map_err(|_| ViewError::new(ViewCode::BufferLimit))?;
+    if claimed.is_some_and(|claimed| *claimed != actual) {
+        return Err(ViewError::new(ViewCode::BlobInvalid));
+    }
+    Ok((vertex_count, triangle_count, actual))
 }
 
 impl MeshEntry {
     /// Validates `bytes` structurally and checks that their SHA-256 equals `claimed`.
     pub fn from_blob(bytes: &[u8], claimed: &ContentDigest) -> Result<Self, ViewError> {
-        let (vertex_count, triangle_count) = inspect_blob(bytes)?;
-        let actual = Sha256::digest(bytes).map_err(|_| ViewError::new(ViewCode::BufferLimit))?;
-        if actual != *claimed {
-            return Err(ViewError::new(ViewCode::BlobInvalid));
-        }
+        let (vertex_count, triangle_count, digest) = validate(bytes, Some(claimed))?;
         Ok(Self {
-            digest: actual,
-            bytes: bytes.to_vec(),
+            digest,
+            bytes: Arc::from(bytes),
             vertex_count,
             triangle_count,
         })
+    }
+
+    /// [`MeshEntry::from_blob`] for bytes that are already shared: they are kept, not copied.
+    pub(crate) fn from_shared(
+        bytes: Arc<[u8]>,
+        claimed: &ContentDigest,
+    ) -> Result<Self, ViewError> {
+        let (vertex_count, triangle_count, digest) = validate(&bytes, Some(claimed))?;
+        Ok(Self {
+            digest,
+            bytes,
+            vertex_count,
+            triangle_count,
+        })
+    }
+
+    /// Validates a blob that arrives without a digest (a bundle carries none) and computes its
+    /// digest: one structural check, one SHA-256 and one copy.
+    pub(crate) fn admit(bytes: &[u8]) -> Result<Self, ViewError> {
+        let (vertex_count, triangle_count, digest) = validate(bytes, None)?;
+        Ok(Self {
+            digest,
+            bytes: Arc::from(bytes),
+            vertex_count,
+            triangle_count,
+        })
+    }
+
+    /// The shared bytes, for reuse without a copy.
+    pub(crate) const fn shared(&self) -> &Arc<[u8]> {
+        &self.bytes
     }
 
     /// SHA-256 of the exact bytes.

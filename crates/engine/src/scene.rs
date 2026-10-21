@@ -29,8 +29,13 @@ impl SceneMesh {
     /// checks that the digest is the blob's. Crate-private: outside the engine a mesh can only
     /// come from a certified kernel or `SolidMesh` result, so its vertices always match its blob.
     pub(crate) fn new(blob: Vec<u8>, digest: ContentDigest, vertices: Vec<Point3>) -> Self {
+        Self::shared(blob.into(), digest, vertices)
+    }
+
+    /// [`SceneMesh::new`] over bytes that are already shared (a validated bundle blob).
+    pub(crate) fn shared(blob: Arc<[u8]>, digest: ContentDigest, vertices: Vec<Point3>) -> Self {
         Self {
-            blob: blob.into(),
+            blob,
             digest,
             vertices: vertices.into(),
         }

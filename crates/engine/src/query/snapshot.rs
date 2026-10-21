@@ -19,6 +19,7 @@ use crate::scene::{SceneElement, SceneMesh};
 use beamcraft_geom::{Point3, Translation3, canonical_f64_bytes};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// The pinned context of a snapshot: the base revision and the workspace generation.
 ///
@@ -148,6 +149,9 @@ pub struct ViewSnapshot {
 
 struct MeshRegistry {
     map: BTreeMap<ContentDigest, MeshEntry>,
+    /// Blobs a caller has already validated (the meshes of a bundle). One enters the snapshot,
+    /// without being validated again, only when an element offers exactly those bytes.
+    admitted: BTreeMap<ContentDigest, MeshEntry>,
     total: usize,
     limit: usize,
 }
@@ -156,14 +160,21 @@ impl MeshRegistry {
     fn add(&mut self, mesh: &SceneMesh) -> Result<ContentDigest, ViewError> {
         let digest = mesh.digest;
         match self.map.get(&digest) {
-            // A digest already admitted names verified bytes: equal bytes reuse the entry, and
-            // different bytes under one digest are tampered content, refused without paying
-            // another validation, hash and copy per duplicate.
-            Some(existing) if existing.bytes() == mesh.blob.as_ref() => {}
+            // A digest already admitted names verified bytes: equal bytes reuse the entry (copies
+            // share them, so most need no comparison), and different bytes under one digest are
+            // tampered content, refused without paying another validation, hash and copy per
+            // duplicate.
+            Some(existing)
+                if Arc::ptr_eq(existing.shared(), &mesh.blob)
+                    || existing.bytes() == mesh.blob.as_ref() => {}
             Some(_) => return Err(ViewError::new(ViewCode::BlobInvalid)),
             None => {
-                // New content: the structural check and digest verification run exactly once.
-                let entry = MeshEntry::from_blob(&mesh.blob, &digest)?;
+                // New content: the structural check and digest verification run exactly once,
+                // here or where the caller admitted these very bytes; they are shared, not copied.
+                let entry = match self.admitted.remove(&digest) {
+                    Some(entry) if Arc::ptr_eq(entry.shared(), &mesh.blob) => entry,
+                    _ => MeshEntry::from_shared(Arc::clone(&mesh.blob), &digest)?,
+                };
                 self.total = self
                     .total
                     .checked_add(entry.bytes().len())
@@ -225,12 +236,23 @@ impl ViewSnapshot {
     /// Builds the snapshot of `elements` at `pin`.
     ///
     /// The element count is checked before any work. Elements are ordered by id; a duplicate id
-    /// is rejected. Each blob is re-inspected and its digest recomputed; identical blobs are
-    /// stored once. Nothing is partially returned on failure.
+    /// is rejected. Each distinct blob is re-inspected and its digest recomputed once; identical
+    /// blobs are stored once. Nothing is partially returned on failure.
     pub fn build(
+        pin: ViewPin,
+        elements: Vec<SceneElement>,
+        limits: &Limits,
+    ) -> Result<Self, ViewError> {
+        Self::build_admitted(pin, elements, limits, BTreeMap::new())
+    }
+
+    /// [`ViewSnapshot::build`] with meshes the caller has already validated (see
+    /// [`MeshRegistry`]): an element whose mesh is exactly one of them is not validated again.
+    pub(crate) fn build_admitted(
         pin: ViewPin,
         mut elements: Vec<SceneElement>,
         limits: &Limits,
+        admitted: BTreeMap<ContentDigest, MeshEntry>,
     ) -> Result<Self, ViewError> {
         if elements.len() > limits.max_elements() {
             return Err(ViewError::new(ViewCode::ElementLimit));
@@ -244,6 +266,7 @@ impl ViewSnapshot {
         }
         let mut registry = MeshRegistry {
             map: BTreeMap::new(),
+            admitted,
             total: 0,
             limit: limits.max_total_mesh_bytes(),
         };
@@ -505,6 +528,22 @@ mod tests {
         assert_eq!(second.max[0] - first.max[0], 200.0);
         assert_eq!(first.min[1], second.min[1]);
         assert_eq!(first.max[2], second.max[2]);
+    }
+
+    #[test]
+    fn a_mesh_is_validated_once_and_its_bytes_are_kept_not_copied() {
+        let mesh = plate_mesh();
+        // Copies sharing the bytes, and one element with an equal private copy of them.
+        let private = SceneMesh::new(mesh.blob.to_vec(), mesh.digest, mesh.vertices.to_vec());
+        let elements = vec![
+            placed(0, mesh.clone(), 0.0),
+            placed(1, mesh.clone(), 200.0),
+            placed(2, private, 400.0),
+        ];
+        let s = ViewSnapshot::build(pin(), elements, &Limits::default()).unwrap();
+        assert_eq!(s.meshes().len(), 1);
+        assert!(Arc::ptr_eq(s.meshes()[0].shared(), &mesh.blob));
+        assert_eq!(s.meshes()[0].digest(), mesh.digest);
     }
 
     #[test]
