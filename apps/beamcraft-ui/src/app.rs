@@ -10,16 +10,21 @@
 use crate::camera::{Camera, View};
 use crate::command::Selected;
 use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
+use crate::perf::{Observed, PerfRun, Phase, RefreshTiming, Request};
 use crate::props::{self, MaterialEdit, Properties, WorkspacePanel};
 use crate::render::{Renderer, Uploaded};
 use crate::scene::Scene;
 use crate::source::Reloaded;
+use crate::stats::STATS;
 use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
-use crate::{Error, check_font, command, source};
+use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Instant;
+
+/// Where a `--perf-run` report goes: the JSON object and whether every phase succeeded.
+pub type PerfReport = Sender<(String, bool)>;
 
 /// Where the window reads its model from.
 #[derive(Debug, Clone)]
@@ -104,6 +109,39 @@ pub struct App {
     /// True while any change command (create, edit, update, publish) runs; the other panels'
     /// commit buttons wait for it, so one store never sees two change commands.
     mutating: bool,
+    /// The `--perf-run` driver and where its report goes, when one runs.
+    perf: Option<(PerfRun, PerfReport)>,
+    /// Refresh results consumed, whatever their outcome (read by the perf driver).
+    reloads_finished: u64,
+    /// Commit results consumed, and whether the last one succeeded (read by the perf driver).
+    commits_finished: u64,
+    last_commit_ok: bool,
+    /// Selection results consumed, a stale one too (read by the perf driver).
+    selects_finished: u64,
+    /// Worker timings of the refreshes consumed while a perf run is active.
+    refresh_timings: Vec<RefreshTiming>,
+}
+
+/// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
+/// the window keeps from now on.
+fn note_loaded(loaded: &Loaded) {
+    STATS.reloads_applied.add(1);
+    STATS.retained_display_bytes.set(
+        loaded
+            .scene
+            .meshes
+            .iter()
+            .map(|m| (m.vertices.capacity() as u64).saturating_add(m.instances.capacity() as u64))
+            .fold(0, u64::saturating_add),
+    );
+    STATS.snapshot_mesh_bytes.set(
+        loaded
+            .snapshot
+            .meshes()
+            .iter()
+            .map(|m| m.bytes().len() as u64)
+            .fold(0, u64::saturating_add),
+    );
 }
 
 /// A lookup in flight: the epoch it was asked under and its receiver. The answer carries the
@@ -414,6 +452,15 @@ pub fn icon() -> egui::IconData {
 impl App {
     /// Creates the window state and loads the accepted snapshot.
     pub fn new(cc: &eframe::CreationContext<'_>, source: Source) -> Result<Self, Error> {
+        Self::with_perf_run(cc, source, None)
+    }
+
+    /// [`App::new`] that also runs a `--perf-run` plan and sends its report (JSON, success).
+    pub fn with_perf_run(
+        cc: &eframe::CreationContext<'_>,
+        source: Source,
+        perf: Option<(Vec<Phase>, PerfReport)>,
+    ) -> Result<Self, Error> {
         let state = cc
             .wgpu_render_state
             .clone()
@@ -430,6 +477,17 @@ impl App {
             "{} / {:?} / {:?}",
             info.name, info.device_type, info.backend
         );
+        let perf = perf.map(|(phases, report)| {
+            let header = format!(
+                "\"adapter\":{},\"device_type\":{},\"backend\":{},\"samples\":{},\"text\":{}",
+                json_string(&info.name),
+                json_string(&format!("{:?}", info.device_type)),
+                json_string(&format!("{:?}", info.backend)),
+                renderer.samples,
+                text
+            );
+            (PerfRun::new(phases, header), report)
+        });
         let mut app = Self {
             state,
             ctx: cc.egui_ctx.clone(),
@@ -467,6 +525,12 @@ impl App {
             ws_job: None,
             ws_note: None,
             mutating: false,
+            perf,
+            reloads_finished: 0,
+            commits_finished: 0,
+            last_commit_ok: true,
+            selects_finished: 0,
+            refresh_timings: Vec::new(),
         };
         app.reload();
         Ok(app)
@@ -523,6 +587,10 @@ impl App {
             }
         };
         self.reload_job = None;
+        self.reloads_finished += 1;
+        if self.perf.is_some() {
+            self.refresh_timings.push(reloaded.timing);
+        }
         self.refresh_error = self.tools.apply_definitions(reloaded.definitions);
         self.ws_panel = reloaded.workspace;
         // A refresh that started for another selection never overwrites a newer one.
@@ -549,7 +617,11 @@ impl App {
             }
         }
         let result = reloaded.scene.and_then(|(snapshot, scene)| {
+            let started = Instant::now();
             let uploaded = Uploaded::new(&self.state.device, &self.state.queue, &scene)?;
+            STATS.upload_ui_ns.add_duration(started.elapsed());
+            STATS.uploads.add(1);
+            STATS.upload_bytes.add(uploaded.bytes);
             Ok(Loaded {
                 snapshot,
                 scene,
@@ -565,6 +637,7 @@ impl App {
                 if needs_refit(self.framed, target, extent, aspect) {
                     match self.camera.fit(target, extent, aspect) {
                         Ok(()) => {
+                            note_loaded(&loaded);
                             self.loaded = Some(loaded);
                             self.framed = Some((target, extent, aspect));
                             self.error = None;
@@ -573,6 +646,7 @@ impl App {
                         Err(e) => self.error = Some(e.to_string()),
                     }
                 } else {
+                    note_loaded(&loaded);
                     self.loaded = Some(loaded);
                     self.error = None;
                 }
@@ -598,6 +672,7 @@ impl App {
         if width == self.renderer.width && height == self.renderer.height {
             return Ok(());
         }
+        let started = Instant::now();
         let renderer = Renderer::new(&self.state.adapter, &self.state.device, width, height)?;
         self.state
             .renderer
@@ -610,6 +685,7 @@ impl App {
             );
         self.renderer = renderer;
         self.viewport_dirty = true;
+        STATS.resize_ns.add_duration(started.elapsed());
         Ok(())
     }
 
@@ -686,10 +762,19 @@ impl App {
             ),
         };
         self.select_job = None;
+        self.selects_finished += 1;
         if !self.select_epoch.is_current(asked) {
             return;
         }
         let (picked, properties) = result;
+        let failed = match &picked {
+            Ok(None) => false,
+            Ok(Some(selected)) => selected.info.is_err() || !matches!(properties, Ok(Some(_))),
+            Err(_) => true,
+        };
+        if failed {
+            STATS.select_errors.add(1);
+        }
         match picked {
             Ok(None) => {
                 self.editor.deselect();
@@ -1016,6 +1101,8 @@ impl App {
         self.job = None;
         self.tools.finish();
         self.mutating = false;
+        self.commits_finished += 1;
+        self.last_commit_ok = result.is_ok();
         match result {
             Ok(created) => {
                 self.reload();
@@ -1047,6 +1134,119 @@ impl App {
                 self.tool_note = Some(Err(e.to_string()));
             }
         }
+    }
+
+    /// Creates plate number `ordinal` of a perf `edit` phase through the Create panel's own
+    /// path: fill the form, preview, commit.
+    fn perf_commit(&mut self, ordinal: u32) {
+        self.tools.active = ToolKind::Plate;
+        let form = &mut self.tools.plate;
+        form.width = (100 + ordinal % 1000).to_string();
+        form.length = "200".into();
+        form.thickness = "10".into();
+        form.name = format!("perf-edit-{ordinal}");
+        form.material = None;
+        let store = self.source.store.clone();
+        let started = self.tools.preview(&store).is_ok() && {
+            self.start_commit();
+            self.job.is_some()
+        };
+        if !started {
+            self.commits_finished += 1;
+            self.last_commit_ok = false;
+        }
+    }
+
+    /// The ray a click straight onto box element number `ordinal` of the loaded snapshot looks
+    /// through: from above the centre of its bounds, straight down (box bodies are the ones a
+    /// pick can hit).
+    fn perf_ray(&self, ordinal: u32) -> Option<crate::edit::Ray> {
+        let snapshot = &self.loaded.as_ref()?.snapshot;
+        let boxes: Vec<_> = snapshot
+            .elements()
+            .iter()
+            .filter(|e| {
+                snapshot
+                    .mesh_at(e.full.mesh_slot)
+                    .is_some_and(|m| m.vertex_count() == 8 && m.triangle_count() == 12)
+            })
+            .collect();
+        let count = u32::try_from(boxes.len()).ok().filter(|n| *n > 0)?;
+        let element = boxes.get(usize::try_from(ordinal % count).ok()?)?;
+        let b = element.full.world_bounds;
+        Some(crate::edit::Ray {
+            origin: [
+                (b.min[0] + b.max[0]) / 2.0,
+                (b.min[1] + b.max[1]) / 2.0,
+                b.max[2] + 1000.0,
+            ],
+            direction: [0.0, 0.0, -1.0],
+        })
+    }
+
+    /// One frame of the perf driver, if a run is active.
+    fn perf_step(&mut self, ctx: &egui::Context, frame_cpu: Option<f32>) {
+        let Some((mut run, report)) = self.perf.take() else {
+            return;
+        };
+        let request: Request = run.step(&Observed {
+            now: Instant::now(),
+            reloads_finished: self.reloads_finished,
+            reload_busy: self.reload_job.is_some() || self.reload_queued,
+            commits_finished: self.commits_finished,
+            commit_busy: self.job.is_some(),
+            last_commit_ok: self.last_commit_ok,
+            selects_finished: self.selects_finished,
+            select_busy: self.select_job.is_some(),
+            target: [self.renderer.width, self.renderer.height],
+            frame_cpu,
+            refresh_timings: &self.refresh_timings,
+        });
+        if request.reload {
+            self.reload();
+        }
+        if let Some(ordinal) = request.commit {
+            self.perf_commit(ordinal);
+        }
+        if let Some(ordinal) = request.select {
+            match self.perf_ray(ordinal) {
+                Some(ray) => self.start_select(ray),
+                // Nothing to click on: count it as answered so the run goes on.
+                None => self.selects_finished += 1,
+            }
+        }
+        if let Some(ordinal) = request.cancel {
+            // What Esc does, then the next click.
+            self.invalidate_select();
+            self.editor.deselect();
+            self.selected = None;
+            self.props = props::Props::default();
+            match self.perf_ray(ordinal + 1) {
+                Some(ray) => self.start_select(ray),
+                None => self.selects_finished += 1,
+            }
+        }
+        if request.orbit {
+            if let Err(e) = self.camera.navigate([0.01, 0.0], [0.0; 2], 0.0) {
+                self.error = Some(e.to_string());
+            }
+            self.viewport_dirty = true;
+        }
+        if let Some([width, height]) = request.resize {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
+        }
+        if request.repaint_now {
+            ctx.request_repaint();
+        }
+        if let Some(after) = request.wake_after {
+            ctx.request_repaint_after(after);
+        }
+        if let Some(finished) = request.finished {
+            let _ = report.send(finished);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        self.perf = Some((run, report));
     }
 
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
@@ -1575,7 +1775,8 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        STATS.frames.add(1);
         let wants_text = ui.ctx().egui_wants_keyboard_input();
         let (fit, reload, zoom_in, zoom_out) = ui.input(|i| {
             (
@@ -1591,6 +1792,7 @@ impl eframe::App for App {
         self.poll_workspace();
         self.poll_select();
         self.poll_reload();
+        self.perf_step(ui.ctx(), frame.info().cpu_usage);
         if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.invalidate_select();
             self.editor.deselect();

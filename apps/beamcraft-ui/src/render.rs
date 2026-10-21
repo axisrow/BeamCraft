@@ -6,6 +6,7 @@ use crate::{
     Error,
     camera::View,
     scene::{INSTANCE_BYTES, Scene, VERTEX_BYTES},
+    stats::STATS,
 };
 use std::time::{Duration, Instant};
 fn error_scopes(device: &wgpu::Device) -> [wgpu::ErrorScopeGuard; 3] {
@@ -134,6 +135,7 @@ impl Uploaded {
                 mesh.instance_count,
             ));
         }
+        STATS.submits.add(1);
         let completion = wait(device, queue.submit([]));
         finish_scopes(scopes)?;
         completion?;
@@ -314,6 +316,8 @@ impl Renderer {
         };
         let instanced = pipeline("instanced", &[vertex_layout(), instance_layout]);
         finish_scopes(scopes)?;
+        STATS.pipeline_builds.add(1);
+        STATS.target_builds.add(1);
         Ok(Self {
             view,
             texture,
@@ -335,6 +339,8 @@ impl Renderer {
         uploaded: &Uploaded,
         camera: View,
     ) -> wgpu::SubmissionIndex {
+        STATS.viewport_draws.add(1);
+        STATS.submits.add(1);
         queue.write_buffer(&self.camera, 0, &camera.bytes());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("BeamCraft frame"),

@@ -31,10 +31,12 @@ pub mod camera;
 pub mod command;
 pub mod edit;
 pub mod metrics;
+pub mod perf;
 pub mod props;
 pub mod render;
 pub mod scene;
 pub mod source;
+pub mod stats;
 pub mod tools;
 
 /// A bounded viewport failure; adapter absence is reported, never replaced by a fake result.

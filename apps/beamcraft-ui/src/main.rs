@@ -12,20 +12,23 @@
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
+//! `... --perf-run PLAN` opens the window as above, runs the scripted measurement `PLAN` in it
+//! (see `beamcraft_ui::perf`), prints its report as one JSON object and closes; the exit status
+//! is 1 when a phase failed.
 
 use beamcraft_engine::synthetic::plate_scene;
 use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
 use beamcraft_ui::app::{App, Source, icon};
 use beamcraft_ui::scene::Scene;
-use beamcraft_ui::{Error, json_string, metrics, source};
+use beamcraft_ui::{Error, json_string, metrics, perf, source};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui (--store ROOT | --workspace DIR | --store PUBLISHED --workspace DIR) [--cli PATH] [--metrics FRAMES [--width W] [--height H]] | --synthetic COUNT --metrics FRAMES",
+        "usage: beamcraft-ui (--store ROOT | --workspace DIR | --store PUBLISHED --workspace DIR) [--cli PATH] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES",
     )
 }
 
@@ -52,6 +55,7 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--width"
                 | "--height"
                 | "--synthetic"
+                | "--perf-run"
         );
         if !known || value.len() > 4096 || map.insert(key.clone(), value.clone()).is_some() {
             return Err(usage());
@@ -65,10 +69,14 @@ fn number(map: &BTreeMap<String, String>, key: &str, default: u32) -> Result<u32
         .map_or(Ok(default), |v| v.parse().map_err(|_| usage()))
 }
 
-fn run() -> Result<Option<String>, Error> {
+/// What a run printed and its exit status, or `None` for a window that just closed.
+fn run() -> Result<Option<(String, u8)>, Error> {
     let map = options()?;
     if map.contains_key("--synthetic") {
-        if map.contains_key("--store") || !map.contains_key("--metrics") {
+        if map.contains_key("--store")
+            || !map.contains_key("--metrics")
+            || map.contains_key("--perf-run")
+        {
             return Err(usage());
         }
         let count = number(&map, "--synthetic", 1)?;
@@ -84,11 +92,12 @@ fn run() -> Result<Option<String>, Error> {
         let snapshot = ViewSnapshot::build(pin, plate_scene(count, false)?, &Limits::default())?;
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
         let json = metrics::measure(&scene, frames, size)?.to_json();
-        return Ok(Some(json.replacen(
+        let json = json.replacen(
             "\"outcome\":\"viewport_metrics\"",
             "\"outcome\":\"viewport_metrics\",\"source\":\"synthetic\"",
             1,
-        )));
+        );
+        return Ok(Some((json, 0)));
     }
     // A workspace is a store of its own: the window shows and edits it, and undo and redo act on
     // it. Naming the published store too (`--store PUBLISHED --workspace DIR`, V06) opens the
@@ -105,6 +114,9 @@ fn run() -> Result<Option<String>, Error> {
         None => source::default_cli()?,
     };
     if map.contains_key("--metrics") {
+        if map.contains_key("--perf-run") {
+            return Err(usage());
+        }
         let frames = number(&map, "--metrics", 300)?;
         let size = [
             number(&map, "--width", 1280)?,
@@ -112,8 +124,10 @@ fn run() -> Result<Option<String>, Error> {
         ];
         let snapshot = source::load(&cli, &store)?;
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        return Ok(Some(metrics::measure(&scene, frames, size)?.to_json()));
+        return Ok(Some((metrics::measure(&scene, frames, size)?.to_json(), 0)));
     }
+    let plan = map.get("--perf-run").map(|p| perf::parse(p)).transpose()?;
+    let (report, reports) = std::sync::mpsc::channel();
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
         wgpu::Backends::DX12 | wgpu::Backends::VULKAN | wgpu::Backends::METAL;
@@ -135,27 +149,39 @@ fn run() -> Result<Option<String>, Error> {
         workspace,
         published,
     };
+    let perf_run = plan.is_some();
     // Window-system libraries are loaded at run time by third-party crates, which panic when one
     // is missing; report that as an error instead of crashing.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         eframe::run_native(
             "BeamCraft",
             options,
-            Box::new(move |cc| Ok(Box::new(App::new(cc, source)?))),
+            Box::new(move |cc| {
+                let perf = plan.map(|phases| (phases, report));
+                Ok(Box::new(App::with_perf_run(cc, source, perf)?))
+            }),
         )
     }))
     .map_err(|_| {
         Error::Graphics("the window could not be created (missing window-system library?)".into())
     })?
     .map_err(|e| Error::Graphics(e.to_string()))?;
-    Ok(None)
+    if !perf_run {
+        return Ok(None);
+    }
+    match reports.try_recv() {
+        Ok((json, ok)) => Ok(Some((json, if ok { 0 } else { 1 }))),
+        Err(_) => Err(Error::Input(
+            "the window closed before the perf run finished",
+        )),
+    }
 }
 
 fn main() -> ExitCode {
     match run() {
-        Ok(Some(json)) => {
+        Ok(Some((json, code))) => {
             println!("{json}");
-            ExitCode::SUCCESS
+            ExitCode::from(code)
         }
         Ok(None) => ExitCode::SUCCESS,
         Err(e) => {

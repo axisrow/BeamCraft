@@ -14,6 +14,7 @@ use crate::props::{
     Change, Properties, WorkspaceState, history_args, parse_change, parse_element, parse_history,
     parse_workspace_state, workspace_args,
 };
+use crate::stats::STATS;
 use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
 };
@@ -35,6 +36,23 @@ pub struct Output {
     pub code: Option<i32>,
     /// Standard output, capped at [`MAX_OUTPUT`].
     pub stdout: Vec<u8>,
+}
+
+/// Counts a running CLI process for the perf counters until it is dropped.
+struct Active;
+
+impl Active {
+    fn new() -> Self {
+        STATS.cli_runs.add(1);
+        STATS.cli_active.add(1);
+        Self
+    }
+}
+
+impl Drop for Active {
+    fn drop(&mut self) {
+        STATS.cli_active.decrement();
+    }
 }
 
 fn drain(
@@ -86,17 +104,22 @@ pub fn run_capped(
             format!("the beamcraft CLI could not be started ({})", e.kind()),
         )
     })?;
+    let _active = Active::new();
     let reader = drain(child.stdout.take(), cap);
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status,
+            Ok(Some(status)) => {
+                STATS.cli_ns.add_duration(started.elapsed());
+                break status;
+            }
             Ok(None) if started.elapsed() < deadline => {
                 std::thread::sleep(Duration::from_millis(10));
             }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
+                STATS.cli_ns.add_duration(started.elapsed());
                 let _ = reader.join();
                 return Err(ToolError::local(
                     "OUTCOME_UNKNOWN",
