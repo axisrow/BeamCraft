@@ -5,9 +5,11 @@
 use crate::{
     Error,
     camera::View,
-    scene::{INSTANCE_BYTES, Scene, VERTEX_BYTES},
+    scene::{DrawMesh, INSTANCE_BYTES, Scene, VERTEX_BYTES},
     stats::STATS,
 };
+use beamcraft_model::digest::ContentDigest;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 fn error_scopes(device: &wgpu::Device) -> [wgpu::ErrorScopeGuard; 3] {
     [
@@ -89,12 +91,22 @@ pub fn wait(device: &wgpu::Device, index: wgpu::SubmissionIndex) -> Result<(), E
         .map_err(|e| Error::Graphics(e.to_string()))?;
     Ok(())
 }
+/// One distinct mesh on the device.
+struct GpuMesh {
+    digest: ContentDigest,
+    vertices: wgpu::Buffer,
+    instances: wgpu::Buffer,
+    vertex_count: u32,
+    instance_count: u32,
+}
+
 /// The scene on the device: per distinct mesh one vertex buffer and one instance buffer.
 pub struct Uploaded {
-    meshes: Vec<(wgpu::Buffer, wgpu::Buffer, u32, u32)>,
-    /// Exact vertex and instance bytes sent (excludes the fixed 80-byte camera uniform).
+    meshes: Vec<GpuMesh>,
+    /// Exact vertex and instance bytes this upload sent (excludes the fixed 80-byte camera
+    /// uniform); vertex buffers reused from the previous scene are not sent again.
     pub bytes: u64,
-    /// Buffer allocation, writes and flush-to-completion time.
+    /// Buffer allocation and writes, and for [`Uploaded::new`] the flush to completion.
     pub upload_ms: f64,
 }
 fn buffer(device: &wgpu::Device, queue: &wgpu::Queue, bytes: &[u8]) -> wgpu::Buffer {
@@ -107,43 +119,115 @@ fn buffer(device: &wgpu::Device, queue: &wgpu::Queue, bytes: &[u8]) -> wgpu::Buf
     queue.write_buffer(&b, 0, bytes);
     b
 }
+/// Checks one mesh's buffer sizes; `vertices` is false for a mesh whose vertex buffer is reused.
+fn check(mesh: &DrawMesh, vertices: bool, limit: u64) -> Result<(), Error> {
+    let instances_ok = mesh.instances.len() == mesh.instance_count as usize * INSTANCE_BYTES
+        && !mesh.instances.is_empty();
+    let vertices_ok = !vertices
+        || (mesh.vertices.len() == mesh.vertex_count as usize * VERTEX_BYTES
+            && !mesh.vertices.is_empty());
+    if !instances_ok || !vertices_ok {
+        return Err(Error::Input("scene buffer sizes"));
+    }
+    if [mesh.vertices.len(), mesh.instances.len()]
+        .iter()
+        .any(|s| *s as u64 > limit)
+    {
+        return Err(Error::Input("adapter buffer limit"));
+    }
+    Ok(())
+}
+
 impl Uploaded {
-    /// Uploads every mesh of the scene and its instances, then waits for completion.
+    /// Uploads every mesh of the scene and its instances, then waits for completion: the
+    /// measured upload of `--metrics` and the render tests. The window uses [`Uploaded::upload`].
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, scene: &Scene) -> Result<Self, Error> {
         let start = Instant::now();
-        let limit = device.limits().max_buffer_size;
         let scopes = error_scopes(device);
-        let mut meshes = Vec::with_capacity(scene.meshes.len());
-        let mut bytes = 0u64;
-        for mesh in &scene.meshes {
-            if mesh.vertices.len() != mesh.vertex_count as usize * VERTEX_BYTES
-                || mesh.instances.len() != mesh.instance_count as usize * INSTANCE_BYTES
-                || mesh.vertices.is_empty()
-                || mesh.instances.is_empty()
-            {
-                return Err(Error::Input("scene buffer sizes"));
-            }
-            let sizes = [mesh.vertices.len() as u64, mesh.instances.len() as u64];
-            if sizes.iter().any(|s| *s > limit) {
-                return Err(Error::Input("adapter buffer limit"));
-            }
-            bytes = bytes.saturating_add(sizes[0]).saturating_add(sizes[1]);
-            meshes.push((
-                buffer(device, queue, &mesh.vertices),
-                buffer(device, queue, &mesh.instances),
-                mesh.vertex_count,
-                mesh.instance_count,
-            ));
-        }
+        let uploaded = Self::write(device, queue, scene, None);
         STATS.submits.add(1);
         let completion = wait(device, queue.submit([]));
         finish_scopes(scopes)?;
         completion?;
+        let mut uploaded = uploaded?;
+        uploaded.upload_ms = start.elapsed().as_secs_f64() * 1000.0;
+        Ok(uploaded)
+    }
+
+    /// The window's upload: writes the scene's buffers without waiting for the device (the queue
+    /// orders them before the next draw). A vertex buffer of `previous` with the same mesh digest
+    /// is reused instead of being sent again (equal digests are equal blobs, so equal display
+    /// vertices); instance buffers are always new, because they depend on the scene origin.
+    /// Buffers of `previous` that the new scene does not use are released with it.
+    pub fn upload(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+        previous: Option<&Self>,
+    ) -> Result<Self, Error> {
+        let start = Instant::now();
+        let scopes = error_scopes(device);
+        let uploaded = Self::write(device, queue, scene, previous);
+        finish_scopes(scopes)?;
+        let mut uploaded = uploaded?;
+        uploaded.upload_ms = start.elapsed().as_secs_f64() * 1000.0;
+        Ok(uploaded)
+    }
+
+    fn write(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        scene: &Scene,
+        previous: Option<&Self>,
+    ) -> Result<Self, Error> {
+        let limit = device.limits().max_buffer_size;
+        let on_device: BTreeMap<ContentDigest, &GpuMesh> = previous
+            .map(|p| p.meshes.iter().map(|g| (g.digest, g)).collect())
+            .unwrap_or_default();
+        let mut meshes = Vec::with_capacity(scene.meshes.len());
+        let mut bytes = 0u64;
+        for mesh in &scene.meshes {
+            let reused = on_device
+                .get(&mesh.digest)
+                .filter(|g| g.vertex_count == mesh.vertex_count);
+            if mesh.resident && reused.is_none() {
+                return Err(Error::Input("a resident mesh is not on the device"));
+            }
+            check(mesh, reused.is_none(), limit)?;
+            let vertices = match reused {
+                Some(gpu) => gpu.vertices.clone(),
+                None => {
+                    bytes = bytes.saturating_add(mesh.vertices.len() as u64);
+                    buffer(device, queue, &mesh.vertices)
+                }
+            };
+            bytes = bytes.saturating_add(mesh.instances.len() as u64);
+            meshes.push(GpuMesh {
+                digest: mesh.digest,
+                vertices,
+                instances: buffer(device, queue, &mesh.instances),
+                vertex_count: mesh.vertex_count,
+                instance_count: mesh.instance_count,
+            });
+        }
         Ok(Self {
             meshes,
             bytes,
-            upload_ms: start.elapsed().as_secs_f64() * 1000.0,
+            upload_ms: 0.0,
         })
+    }
+
+    /// The digests of the meshes on the device, for [`Scene::from_snapshot_reusing`].
+    pub fn resident(&self) -> BTreeSet<ContentDigest> {
+        self.meshes.iter().map(|m| m.digest).collect()
+    }
+
+    /// Vertex buffers this scene shares with `other` (the same buffer, not a copy).
+    pub fn shared_vertex_buffers(&self, other: &Self) -> usize {
+        self.meshes
+            .iter()
+            .filter(|m| other.meshes.iter().any(|o| o.vertices == m.vertices))
+            .count()
     }
 }
 /// Offscreen target with depth and 4x MSAA when both formats support it.
@@ -375,10 +459,10 @@ impl Renderer {
             });
             pass.set_pipeline(&self.instanced);
             pass.set_bind_group(0, &self.bind, &[]);
-            for (vertices, instances, vertex_count, instance_count) in &uploaded.meshes {
-                pass.set_vertex_buffer(0, vertices.slice(..));
-                pass.set_vertex_buffer(1, instances.slice(..));
-                pass.draw(0..*vertex_count, 0..*instance_count);
+            for mesh in &uploaded.meshes {
+                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                pass.set_vertex_buffer(1, mesh.instances.slice(..));
+                pass.draw(0..mesh.vertex_count, 0..mesh.instance_count);
             }
         }
         queue.submit([encoder.finish()])

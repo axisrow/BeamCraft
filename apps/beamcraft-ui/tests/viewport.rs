@@ -84,6 +84,67 @@ fn an_engine_snapshot_renders_lit_geometry_on_a_background() {
     assert!(is_lit(centre), "lit plate {centre:?}");
 }
 
+/// Draws `uploaded` framed on `scene` and returns the lit pixel count.
+fn lit_pixels(gpu: &Gpu, scene: &Scene, uploaded: &Uploaded) -> usize {
+    let (target, extent) = scene.framing();
+    let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128).unwrap();
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let index = renderer.draw(&gpu.device, &gpu.queue, uploaded, view);
+    wait(&gpu.device, index).unwrap();
+    let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+    assert!(pollster::block_on(scope.pop()).is_none());
+    (0..128usize)
+        .flat_map(|y| (0..128usize).map(move |x| (x, y)))
+        .filter(|(x, y)| {
+            let at = y * row as usize + x * 4;
+            is_lit(pixels[at..at + 4].try_into().unwrap())
+        })
+        .count()
+}
+
+#[test]
+fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
+    let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+    let first =
+        ViewSnapshot::build(pin, plate_scene(12, false).unwrap(), &Limits::default()).unwrap();
+    let before = Scene::from_snapshot(&first, Representation::Full).unwrap();
+    // The next revision adds four plates; its first twelve meshes are already on the device.
+    let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 2);
+    let second =
+        ViewSnapshot::build(pin, plate_scene(16, false).unwrap(), &Limits::default()).unwrap();
+    let Some(gpu) = gpu() else { return };
+    let old = Uploaded::upload(&gpu.device, &gpu.queue, &before, None).unwrap();
+    let resident = old.resident();
+    let after = Scene::from_snapshot_reusing(&second, Representation::Full, &resident).unwrap();
+    let kept = after.meshes.iter().filter(|m| m.resident).count();
+    assert_eq!(kept, before.meshes.len());
+    assert!(
+        after
+            .meshes
+            .iter()
+            .filter(|m| m.resident)
+            .all(|m| m.vertices.is_empty())
+    );
+    let new = Uploaded::upload(&gpu.device, &gpu.queue, &after, Some(&old)).unwrap();
+    assert_eq!(new.shared_vertex_buffers(&old), kept);
+    // Only the new meshes' vertices and every instance buffer were sent again.
+    let full = Scene::from_snapshot(&second, Representation::Full).unwrap();
+    let sent: usize = full
+        .meshes
+        .iter()
+        .map(|m| if resident.contains(&m.digest) { 0 } else { m.vertices.len() } + m.instances.len())
+        .sum();
+    assert_eq!(new.bytes, sent as u64);
+    // The reused buffers draw the same image as a fresh upload of the whole scene.
+    let fresh = Uploaded::new(&gpu.device, &gpu.queue, &full).unwrap();
+    let lit = lit_pixels(&gpu, &full, &new);
+    assert!(lit > 0);
+    assert_eq!(lit, lit_pixels(&gpu, &full, &fresh));
+    // A resident mesh the device does not hold is refused, never drawn from nothing.
+    assert!(Uploaded::upload(&gpu.device, &gpu.queue, &after, None).is_err());
+}
+
 fn cli() -> Option<PathBuf> {
     let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
     let cli = ui

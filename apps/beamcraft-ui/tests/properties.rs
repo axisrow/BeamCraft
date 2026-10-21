@@ -434,6 +434,7 @@ fn the_publication_panel_follows_the_real_draft() {
         &workspace,
         Some(id.as_str()),
         Some((published.as_path(), workspace.as_path())),
+        &source::Known::default(),
     );
     let panel = reloaded.workspace.unwrap().unwrap();
     assert_eq!(panel, redone);

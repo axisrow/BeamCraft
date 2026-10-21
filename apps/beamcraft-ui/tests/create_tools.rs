@@ -394,9 +394,11 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     let stores = Stores::new();
     let ui = stores.ui();
     let refresh = |cli: PathBuf, store: PathBuf| {
-        std::thread::spawn(move || source::reload(&cli, &store, None, None))
-            .join()
-            .unwrap()
+        std::thread::spawn(move || {
+            source::reload(&cli, &store, None, None, &source::Known::default())
+        })
+        .join()
+        .unwrap()
     };
     // No revision yet: the scene reports the typed empty state and the definitions listing
     // answers with the CLI's own NOT_FOUND.
@@ -433,8 +435,11 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
             "5",
         ],
     );
-    let full = refresh(cli, ui);
-    let (snapshot, scene) = full.scene.unwrap();
+    let full = refresh(cli.clone(), ui.clone());
+    let source::Refreshed::New(new) = full.scene.unwrap() else {
+        panic!("a first refresh reads a new snapshot");
+    };
+    let (snapshot, scene) = *new;
     assert_eq!(scene.elements, 1);
     assert!(!snapshot.pin().revision().to_string().is_empty());
     let definitions = full.definitions.unwrap();
@@ -442,6 +447,16 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     assert!(definitions.materials.is_empty());
     // One process and one inspection read the snapshot and the definitions (issue 26).
     assert_eq!(full.timing.processes, 1);
+    // The same revision again: nothing to build or upload, and the definitions still arrive.
+    let known = source::Known {
+        token: Some(snapshot.token().clone()),
+        resident: scene.meshes.iter().map(|m| m.digest).collect(),
+    };
+    let again = std::thread::spawn(move || source::reload(&cli, &ui, None, None, &known))
+        .join()
+        .unwrap();
+    assert!(matches!(again.scene, Ok(source::Refreshed::Unchanged)));
+    assert_eq!(again.definitions.unwrap().profiles.len(), 1);
 }
 
 #[test]
