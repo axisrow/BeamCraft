@@ -38,7 +38,7 @@ impl Counter {
     pub fn decrement(&self) {
         let _ = self
             .0
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
     }
 
     /// The current value.
@@ -287,6 +287,17 @@ mod tests {
         assert_eq!(status_kib(text, "VmRSS:"), Some(65432));
         assert_eq!(status_kib(text, "VmHWM:"), Some(123456));
         assert_eq!(status_kib(text, "VmSwap:"), None);
+    }
+
+    #[test]
+    fn a_gauge_decrements_but_never_below_zero() {
+        let gauge = Counter::new();
+        gauge.add(2);
+        gauge.decrement();
+        assert_eq!(gauge.get(), 1);
+        gauge.decrement();
+        gauge.decrement();
+        assert_eq!(gauge.get(), 0);
     }
 
     #[test]
