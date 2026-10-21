@@ -42,6 +42,9 @@ pub struct Source {
     /// The published store the workspace publishes to, when named (`--store` together with
     /// `--workspace`, V06): it enables the publication panel.
     pub published: Option<PathBuf>,
+    /// The viewport's MSAA sample count, 1 or 4; `None` is the adapter's default
+    /// ([`crate::render::samples_for`]).
+    pub samples: Option<u32>,
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -465,7 +468,8 @@ impl App {
             .clone()
             .ok_or(Error::Input("eframe requires wgpu"))?;
         let text = inter(&cc.egui_ctx);
-        let renderer = Renderer::new(&state.adapter, &state.device, 1280, 800)?;
+        let renderer =
+            Renderer::with_samples(&state.adapter, &state.device, 1280, 800, source.samples)?;
         let texture = state.renderer.write().register_native_texture(
             &state.device,
             &renderer.view,
@@ -711,17 +715,17 @@ impl App {
             return Ok(());
         }
         let started = Instant::now();
-        let renderer = Renderer::new(&self.state.adapter, &self.state.device, width, height)?;
+        // Only the targets follow the size; the shader and the pipeline stay.
+        self.renderer.resize(&self.state.device, width, height)?;
         self.state
             .renderer
             .write()
             .update_egui_texture_from_wgpu_texture(
                 &self.state.device,
-                &renderer.view,
+                &self.renderer.view,
                 wgpu::FilterMode::Linear,
                 self.texture,
             );
-        self.renderer = renderer;
         self.viewport_dirty = true;
         STATS.resize_ns.add_duration(started.elapsed());
         Ok(())
@@ -2038,6 +2042,7 @@ mod tests {
             cli: missing,
             workspace: None,
             published: None,
+            samples: None,
         };
         Some(App::new(&cc, source).unwrap())
     }

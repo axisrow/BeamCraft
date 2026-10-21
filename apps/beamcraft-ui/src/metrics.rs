@@ -60,13 +60,19 @@ fn percentiles(mut samples: Vec<f64>) -> [f64; 2] {
     [at(0.5), at(0.95)]
 }
 
-/// Renders `scene` offscreen `frames` times after ten warm-up frames, orbiting slowly.
-pub fn measure(scene: &Scene, frames: u32, size: [u32; 2]) -> Result<Baseline, Error> {
+/// Renders `scene` offscreen `frames` times after ten warm-up frames, orbiting slowly, with
+/// `samples` (1 or 4; `None` is the adapter's default).
+pub fn measure(
+    scene: &Scene,
+    frames: u32,
+    size: [u32; 2],
+    samples: Option<u32>,
+) -> Result<Baseline, Error> {
     if frames == 0 || frames > MAX_FRAMES {
         return Err(Error::Input("frames 1..=10000"));
     }
     let gpu = pollster::block_on(Gpu::headless())?;
-    let renderer = Renderer::new(&gpu.adapter, &gpu.device, size[0], size[1])?;
+    let renderer = Renderer::with_samples(&gpu.adapter, &gpu.device, size[0], size[1], samples)?;
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene)?;
     let (target, extent) = scene.framing();
     let aspect = size[0] as f32 / size[1] as f32;

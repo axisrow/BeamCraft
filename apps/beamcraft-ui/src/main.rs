@@ -12,6 +12,8 @@
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
+//! `--samples 1|4` overrides the viewport's MSAA default (4x on a hardware adapter that supports
+//! it, 1x on a software one) in the window and in `--metrics`.
 //! `... --perf-run PLAN` opens the window as above, runs the scripted measurement `PLAN` in it
 //! (see `beamcraft_ui::perf`), prints its report as one JSON object and closes; the exit status
 //! is 1 when a phase failed.
@@ -28,17 +30,17 @@ use std::process::ExitCode;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui (--store ROOT | --workspace DIR | --store PUBLISHED --workspace DIR) [--cli PATH] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES",
+        "usage: beamcraft-ui (--store ROOT | --workspace DIR | --store PUBLISHED --workspace DIR) [--cli PATH] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
 fn options() -> Result<BTreeMap<String, String>, Error> {
     let args: Vec<String> = std::env::args_os()
         .skip(1)
-        .take(13)
+        .take(17)
         .map(|a| a.into_string().map_err(|_| usage()))
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 12 {
+    if !args.len().is_multiple_of(2) || args.len() > 16 {
         return Err(usage());
     }
     let mut map = BTreeMap::new();
@@ -56,6 +58,7 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--height"
                 | "--synthetic"
                 | "--perf-run"
+                | "--samples"
         );
         if !known || value.len() > 4096 || map.insert(key.clone(), value.clone()).is_some() {
             return Err(usage());
@@ -72,6 +75,14 @@ fn number(map: &BTreeMap<String, String>, key: &str, default: u32) -> Result<u32
 /// What a run printed and its exit status, or `None` for a window that just closed.
 fn run() -> Result<Option<(String, u8)>, Error> {
     let map = options()?;
+    let samples = map
+        .get("--samples")
+        .map(|v| match v.as_str() {
+            "1" => Ok(1),
+            "4" => Ok(4),
+            _ => Err(usage()),
+        })
+        .transpose()?;
     if map.contains_key("--synthetic") {
         if map.contains_key("--store")
             || !map.contains_key("--metrics")
@@ -91,7 +102,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         );
         let snapshot = ViewSnapshot::build(pin, plate_scene(count, false)?, &Limits::default())?;
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        let json = metrics::measure(&scene, frames, size)?.to_json();
+        let json = metrics::measure(&scene, frames, size, samples)?.to_json();
         let json = json.replacen(
             "\"outcome\":\"viewport_metrics\"",
             "\"outcome\":\"viewport_metrics\",\"source\":\"synthetic\"",
@@ -124,7 +135,10 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         ];
         let snapshot = source::load(&cli, &store)?;
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        return Ok(Some((metrics::measure(&scene, frames, size)?.to_json(), 0)));
+        return Ok(Some((
+            metrics::measure(&scene, frames, size, samples)?.to_json(),
+            0,
+        )));
     }
     let plan = map.get("--perf-run").map(|p| perf::parse(p)).transpose()?;
     let (report, reports) = std::sync::mpsc::channel();
@@ -148,6 +162,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         cli,
         workspace,
         published,
+        samples,
     };
     let perf_run = plan.is_some();
     // Window-system libraries are loaded at run time by third-party crates, which panic when one
