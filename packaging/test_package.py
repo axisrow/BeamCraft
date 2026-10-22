@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
 """Check the macOS icon and archive wiring without needing a Rust build or macOS."""
-from io import BytesIO
 import os
 from pathlib import Path
 import plistlib
@@ -10,8 +9,87 @@ import subprocess
 import tarfile
 import tempfile
 import unittest
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def decode_png_rgba(data):
+    """Decode a non-interlaced 8-bit RGBA PNG to raw scanlines, stdlib only:
+    CI runs these checks without installing any Python dependencies."""
+    if data[:8] != b'\x89PNG\r\n\x1a\n':
+        raise ValueError('not a PNG file')
+    width = height = None
+    compressed = bytearray()
+    offset = 8
+    while offset < len(data):
+        length = struct.unpack('>I', data[offset:offset + 4])[0]
+        kind = data[offset + 4:offset + 8]
+        chunk = data[offset + 8:offset + 8 + length]
+        if kind == b'IHDR':
+            width, height, depth, color_type = struct.unpack('>IIBB', chunk[:10])
+            if (depth, color_type) != (8, 6):
+                raise ValueError('expected an 8-bit RGBA PNG')
+            if chunk[12]:
+                raise ValueError('interlaced PNG is not supported')
+        elif kind == b'IDAT':
+            compressed += chunk
+        offset += 12 + length
+    if width is None or height is None:
+        raise ValueError('PNG is missing an IHDR chunk')
+    stride = width * 4
+    raw = zlib.decompress(bytes(compressed))
+    pixels = bytearray()
+    previous = bytes(stride)
+    pos = 0
+    for _ in range(height):
+        filter_kind = raw[pos]
+        row = bytearray(raw[pos + 1:pos + 1 + stride])
+        pos += 1 + stride
+        if filter_kind == 1:  # Sub
+            for i in range(4, stride):
+                row[i] = (row[i] + row[i - 4]) & 0xff
+        elif filter_kind == 2:  # Up
+            for i in range(stride):
+                row[i] = (row[i] + previous[i]) & 0xff
+        elif filter_kind == 3:  # Average
+            for i in range(stride):
+                left = row[i - 4] if i >= 4 else 0
+                row[i] = (row[i] + (left + previous[i]) // 2) & 0xff
+        elif filter_kind == 4:  # Paeth
+            for i in range(stride):
+                a = row[i - 4] if i >= 4 else 0
+                b = previous[i]
+                c = previous[i - 4] if i >= 4 else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                if pa <= pb and pa <= pc:
+                    predictor = a
+                elif pb <= pc:
+                    predictor = b
+                else:
+                    predictor = c
+                row[i] = (row[i] + predictor) & 0xff
+        elif filter_kind != 0:
+            raise ValueError('unknown PNG filter %d' % filter_kind)
+        pixels += row
+        previous = row
+    return width, height, bytes(pixels)
+
+
+def alpha_bbox(width, height, pixels):
+    """Bounding box of pixels with alpha > 0, as (left, top, right, bottom)."""
+    stride = width * 4
+    left, top, right, bottom = width, height, 0, 0
+    for y in range(height):
+        alpha = pixels[y * stride + 3:(y + 1) * stride:4]
+        if alpha.count(0) == len(alpha):
+            continue
+        top = min(top, y)
+        bottom = max(bottom, y + 1)
+        left = min(left, len(alpha) - len(alpha.lstrip(b'\x00')))
+        right = max(right, len(alpha.rstrip(b'\x00')))
+    return left, top, right, bottom
 
 
 class MacIcon(unittest.TestCase):
@@ -50,14 +128,12 @@ class MacIcon(unittest.TestCase):
         self.assertEqual(sizes, {16, 32, 64, 128, 256, 512, 1024})
 
     def test_macos_icon_has_transparent_margins(self):
-        from PIL import Image
-        image = Image.open(ROOT / 'assets/icons/beamcraft-macos-1024.png')
-        self.assertEqual(image.size, (1024, 1024))
-        self.assertEqual(image.mode, 'RGBA')
-        alpha = image.getchannel('A')
-        self.assertEqual(alpha.getpixel((0, 0)), 0)
-        self.assertEqual(alpha.getpixel((512, 512)), 255)
-        left, top, right, bottom = alpha.getbbox()
+        width, height, pixels = decode_png_rgba(
+            (ROOT / 'assets/icons/beamcraft-macos-1024.png').read_bytes())
+        self.assertEqual((width, height), (1024, 1024))
+        self.assertEqual(pixels[3], 0)
+        self.assertEqual(pixels[(512 * width + 512) * 4 + 3], 255)
+        left, top, right, bottom = alpha_bbox(width, height, pixels)
         self.assertGreater(left, 40)
         self.assertGreater(top, 40)
         self.assertLess(right, 984)
@@ -68,8 +144,8 @@ class MacIcon(unittest.TestCase):
         while offset < len(data):
             length = struct.unpack('>I', data[offset + 4:offset + 8])[0]
             if data[offset:offset + 4] == b'ic10':
-                bundled = Image.open(BytesIO(data[offset + 8:offset + length]))
-                self.assertEqual(bundled.tobytes(), image.tobytes())
+                bundled = decode_png_rgba(data[offset + 8:offset + length])
+                self.assertEqual(bundled, (width, height, pixels))
                 return
             offset += length
         self.fail('Missing 1024px ICNS representation')
