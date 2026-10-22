@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
+//! `beamcraft-ui` with no arguments opens a per-user default workspace under the system data
+//! directory (the published store and the workspace fork are created on demand), so a
+//! double-clicked app bundle launches with undo, redo and Publish.
 //! `beamcraft-ui --store ROOT [--cli PATH]` opens the window on the published revision.
 //! `beamcraft-ui --workspace DIR [--cli PATH]` opens it on a personal workspace (a store made by
 //! `beamcraft workspace-create`), which also enables undo and redo. Adding `--published ROOT`
@@ -119,14 +122,22 @@ fn run() -> Result<Option<(String, u8)>, Error> {
     if published.is_some() && workspace.is_none() {
         return Err(usage());
     }
-    let store = match (map.get("--store"), &workspace) {
-        (Some(store), None) => PathBuf::from(store),
-        (None, Some(dir)) => dir.clone(),
-        _ => return Err(usage()),
-    };
     let cli = match map.get("--cli") {
         Some(path) => PathBuf::from(path),
         None => source::default_cli()?,
+    };
+    let (store, workspace, published) = if map.is_empty() {
+        // No arguments at all (a double-clicked app bundle): open a per-user default
+        // workspace, created on demand, so the packaged application launches.
+        let root = source::default_root()?;
+        let (workspace, published) = source::default_workspace_at(&root, &cli, &stats)?;
+        (workspace.clone(), Some(workspace), Some(published))
+    } else {
+        match (map.get("--store"), &workspace) {
+            (Some(store), None) => (PathBuf::from(store), None, None),
+            (None, Some(dir)) => (dir.clone(), workspace.clone(), published),
+            _ => return Err(usage()),
+        }
     };
     if map.contains_key("--metrics") {
         if map.contains_key("--perf-run") {

@@ -3,11 +3,18 @@
 V03: the native window and viewport. It shows the accepted (published) revision of a store.
 
 ```text
+beamcraft-ui
 beamcraft-ui --store ROOT [--cli PATH]
+beamcraft-ui --workspace DIR [--published ROOT] [--cli PATH]
 beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--samples 1|4] [--cli PATH]
 beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H] [--samples 1|4]
 beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 ```
+
+- With no arguments the window opens on a per-user default workspace under the system data
+  directory (`~/Library/Application Support/BeamCraft`, `%APPDATA%\BeamCraft`, or
+  `XDG_DATA_HOME`/`~/.local/share`): the published store and the workspace fork are created
+  on demand, so a double-clicked app bundle launches with undo, redo and Publish.
 
 - The model comes from the engine, through the headless CLI in a separate process:
   `beamcraft view-export --store ROOT --out - --with-definitions true` writes the pinned view

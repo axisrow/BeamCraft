@@ -12,7 +12,7 @@
 use crate::perf::RefreshTiming;
 use crate::scene::Scene;
 use crate::stats::Stats;
-use crate::tools::{Definitions, ToolError, parse_definitions};
+use crate::tools::{self, Definitions, ToolError, parse_definitions};
 use crate::{Error, command};
 use beamcraft_engine::query::bundle::max_bundle_bytes;
 use beamcraft_engine::{Limits, Representation, SnapshotToken, ViewSnapshot};
@@ -29,6 +29,92 @@ pub fn default_cli() -> Result<PathBuf, Error> {
         .parent()
         .ok_or(Error::Input("executable has no directory"))?;
     Ok(dir.join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX)))
+}
+
+/// The per-user base directory for application data, resolved from the environment lookup
+/// `get`: `~/Library/Application Support` on macOS, `%APPDATA%` (then `%LOCALAPPDATA%`, then
+/// the profile) on Windows, and `XDG_DATA_HOME` (absolute, else `~/.local/share`) elsewhere.
+/// The lookup is a parameter so tests can fake the environment without touching the process.
+fn default_base(get: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return get("HOME").map(|home| home.join("Library/Application Support"));
+    }
+    if cfg!(windows) {
+        return get("APPDATA")
+            .or_else(|| get("LOCALAPPDATA"))
+            .or_else(|| get("USERPROFILE"));
+    }
+    let xdg = get("XDG_DATA_HOME").filter(|p| p.is_absolute());
+    xdg.or_else(|| get("HOME").map(|home| home.join(".local/share")))
+}
+
+/// The per-user default data root of a launch without arguments: `<data>/BeamCraft`.
+pub fn default_root() -> Result<PathBuf, Error> {
+    default_base(|key| std::env::var_os(key).map(PathBuf::from))
+        .map(|base| base.join("BeamCraft"))
+        .ok_or(Error::Input("no home directory is set"))
+}
+
+/// The default session of a launch without arguments: a per-user workspace forked from a
+/// per-user published store, both created on demand under `root`, so a double-clicked app
+/// bundle (which passes no argv) opens a window with undo, redo and Publish. Returns
+/// `(workspace, published)`. A run against an existing workspace changes nothing.
+pub fn default_workspace_at(
+    root: &Path,
+    cli: &Path,
+    stats: &Stats,
+) -> Result<(PathBuf, PathBuf), Error> {
+    let published = root.join("published");
+    let workspace = root.join("workspace");
+    // A fork generates fresh identifiers, so an existing workspace is what says "already
+    // forked": a second `workspace-create` would only be refused as a duplicate.
+    if !workspace.exists() {
+        // The store commands open an existing root (they never create one): the published
+        // store is a plain directory the CLI fills in.
+        std::fs::create_dir_all(&published).map_err(Error::Io)?;
+        // The fork needs a published head. One mutating definition provides it; a rerun
+        // with the same content is refused as existing, which means the same thing.
+        let store = published.to_string_lossy().into_owned();
+        let material = [
+            "define-material".to_owned(),
+            "--store".into(),
+            store.clone(),
+        ];
+        bootstrapped(cli, &material, stats, &["DEFINITION_EXISTS"])?;
+        let fork = [
+            "workspace-create".to_owned(),
+            "--store".into(),
+            store,
+            "--workspace-dir".into(),
+            workspace.to_string_lossy().into_owned(),
+        ];
+        // A simultaneous first launch may win the fork; then the workspace exists either way.
+        bootstrapped(cli, &fork, stats, &["DUPLICATE_ID"])?;
+    }
+    Ok((workspace, published))
+}
+
+/// Runs one bootstrap command and accepts its refusal only when the code says the wanted
+/// state is already in place (`tolerated`), so reruns and first-launch races stay clean.
+fn bootstrapped(
+    cli: &Path,
+    args: &[String],
+    stats: &Stats,
+    tolerated: &[&str],
+) -> Result<(), Error> {
+    let name = args.first().map(String::as_str).unwrap_or("beamcraft");
+    let failed = |code: &str| Error::Cli(format!("{name} failed: {code}"));
+    let output = command::run(cli, args, command::DEADLINE, stats).map_err(|e| failed(&e.code))?;
+    let reply = tools::decode(&output.stdout).map_err(|e| failed(&e.code))?;
+    if let Some(e) = tools::rejection(&reply, output.code)
+        && !tolerated.contains(&e.code.as_str())
+    {
+        return Err(Error::Cli(format!(
+            "{name} rejected: {}: {}",
+            e.code, e.message
+        )));
+    }
+    Ok(())
 }
 
 /// The pinned view snapshot of the published head of `store`. The CLI runs under the same
@@ -249,6 +335,44 @@ pub fn reload(cli: &Path, store: &Path, known: &Known, stats: &Stats) -> Reloade
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_base_needs_a_home() {
+        assert_eq!(default_base(|_| None), None);
+    }
+
+    #[test]
+    fn the_default_base_resolves_from_the_environment_map() {
+        let home = PathBuf::from("/users/dev");
+        let env = |key: &str| match key {
+            "HOME" | "USERPROFILE" => Some(home.clone()),
+            _ => None,
+        };
+        let base = default_base(env).expect("the platform variable is set");
+        if cfg!(target_os = "macos") {
+            assert_eq!(base, home.join("Library/Application Support"));
+        } else if cfg!(windows) {
+            assert_eq!(base, home);
+        } else {
+            assert_eq!(base, home.join(".local/share"));
+        }
+    }
+
+    #[test]
+    fn a_relative_xdg_data_home_is_treated_as_unset() {
+        if cfg!(target_os = "macos") || cfg!(windows) {
+            return;
+        }
+        let env = |key: &str| match key {
+            "XDG_DATA_HOME" => Some(PathBuf::from("relative/path")),
+            "HOME" => Some(PathBuf::from("/home/u")),
+            _ => None,
+        };
+        assert_eq!(
+            default_base(env),
+            Some(PathBuf::from("/home/u/.local/share"))
+        );
+    }
 
     fn frame(definitions: &[u8], element: &[u8], bundle: &[u8]) -> Vec<u8> {
         let mut out = FRAME_MAGIC.to_vec();

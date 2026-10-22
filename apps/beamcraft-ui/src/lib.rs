@@ -11,6 +11,9 @@
 //! reports, labelled current, stale or unknown; edits are the CLI's `update-element`) and a
 //! Publish action (`workspace-publish`); see [`props`] and [`publish`].
 //!
+//! A launch without arguments opens a per-user default workspace created on demand
+//! ([`source::default_workspace_at`]), so a double-clicked app bundle launches.
+//!
 //! The viewport shows the accepted (published) revision of a store. Its input is the engine's
 //! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
 //! separate process and rebuilt here with [`beamcraft_engine::ViewSnapshot::from_bundle`], which

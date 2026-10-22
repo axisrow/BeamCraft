@@ -523,7 +523,7 @@ fn undo_and_redo_run_in_a_workspace_and_never_touch_the_published_store() {
 }
 
 #[test]
-fn the_window_binary_accepts_a_workspace_and_refuses_both_options() {
+fn the_window_binary_refuses_a_store_and_a_workspace_together() {
     let ui = env!("CARGO_BIN_EXE_beamcraft-ui");
     // Both a store and a workspace is a usage error (the workspace is the store).
     let output = Command::new(ui)
@@ -532,6 +532,41 @@ fn the_window_binary_accepts_a_workspace_and_refuses_both_options() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stdout).contains("usage: beamcraft-ui"));
-    let output = Command::new(ui).output().unwrap();
-    assert_eq!(output.status.code(), Some(2));
+}
+
+/// The no-argument launch is what a double-clicked app bundle does: the default session
+/// bootstraps a published store, forks a per-user workspace, and a rerun changes nothing.
+#[test]
+fn a_launch_without_arguments_bootstraps_a_default_workspace_and_forks_it_once() {
+    let Some(cli) = cli() else {
+        return;
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("v05-2-tests")
+        .join(format!(
+            "default-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+    let _ = std::fs::remove_dir_all(&root);
+
+    let (workspace, published) =
+        source::default_workspace_at(&root, &cli, &Stats::default()).unwrap();
+    assert!(workspace.is_dir());
+    assert!(published.is_dir());
+    let status = [
+        "workspace-status",
+        "--store",
+        s(&published),
+        "--workspace-dir",
+        s(&workspace),
+    ];
+    let before = format!("{:?}", ok(&cli, &status));
+
+    // A second launch reuses the session: same paths, no second fork, no new revision.
+    let again = source::default_workspace_at(&root, &cli, &Stats::default()).unwrap();
+    assert_eq!(again, (workspace.clone(), published.clone()));
+    assert_eq!(format!("{:?}", ok(&cli, &status)), before);
+
+    let _ = std::fs::remove_dir_all(&root);
 }
