@@ -26,6 +26,7 @@ jobs:
       matrix:
         # Windows first: Tekla users are on Windows. macOS is covered by release builds.
         os: [windows-latest, ubuntu-latest]
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -54,13 +55,6 @@ jobs:
       - name: Check module boundaries
         run: cargo run --locked -p beamcraft-boundaries -- check
 
-      # Independent oracle (Python standard library) for hashes and analytical expectations.
-      - name: Check fixture expectations independently
-        if: runner.os == 'Linux'
-        run: |
-          python3 tools/fixtures/verify_expectations.py
-          python3 tools/fixtures/test_verify_expectations.py
-
       - name: Docs
         if: runner.os == 'Linux'
         run: cargo doc --workspace --no-deps
@@ -76,6 +70,7 @@ jobs:
         include:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: macos-latest, target: aarch64-apple-darwin }
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -102,6 +97,7 @@ jobs:
   wasm:
     name: wasm32 check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -123,6 +119,7 @@ jobs:
   deny:
     name: dependency licences and advisories
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: EmbarkStudios/cargo-deny-action@v2

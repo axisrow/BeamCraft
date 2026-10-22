@@ -30,7 +30,7 @@ inside that attributed path; harness and writer source are code under their SPDX
 | Path | Author and source | Use |
 |------|-------------------|-----|
 | `parameters/*.tsv` | BeamCraft contributors; original synthetic choices, set 1 | 56 bounded input descriptions |
-| `manifest.tsv` | Same; set 1; exact-byte SHA-256 via Python standard-library `hashlib` | Stable IDs, file paths, byte lengths, provenance, support and plan references |
+| `manifest.tsv` | Same; set 1; exact-byte SHA-256 | Stable IDs, file paths, byte lengths, provenance, support and plan references |
 | `expectations.tsv` | Same; exact rational evaluation of the formulas below | Separate outcomes, diagnostics, volumes, bounds and topology counts |
 | This README | Same; version 1, frozen F06 0.1.0 and original mathematical derivations | Schema, provenance, scope and reproduction instructions |
 
@@ -73,8 +73,8 @@ G04 design examples retain superseded tolerances. No production output is used a
 | Reserved support/outcome | F06 sections 1/2 exclude operations and nonrectangle evaluation. Plan reservations: hole A04/G09; cavity and thin wall A02/G05/G09; nonrectangle A02/G09. No new diagnostic contract is invented. |
 
 Rational values use the **exact binary64 inputs**: for example `0.001` means the dyadic rational
-of its nearest binary64 value. Python `Fraction.from_float` obtains that rational, and integer
-arithmetic multiplies lengths or adds interval endpoints. Numerator/denominator strings retain
+of its nearest binary64 value. Integer arithmetic on that exact rational multiplies lengths or
+adds interval endpoints. Numerator/denominator strings retain
 all bits. The Rust oracle converts these rational references only for comparison. The separate
 F06 operation-order test compares f64 bits directly. In particular the `decimal` fixture can
 detect reassociation of the volume products.
@@ -96,7 +96,7 @@ same-stage range aggregation. Choosing these numbers requires no kernel executio
 `crates/kernel/tests/g03_fixtures.rs` is an automatically discovered Cargo integration test.
 It calls only the public rectangular builder for actual output. Its oracle imports no production
 math helpers, tolerance constants, mesh tables, topology checks or builder internals. Existing
-model SHA-256 is used only to validate fixture bytes; the writer uses independent Python hashlib.
+model SHA-256 is used only to validate fixture bytes.
 
 The oracle recomputes scalar admission and analytic references, then reads the actual kernel
 mesh. It infers each face from its constant coordinate plane and outward sign, collects directed
@@ -120,15 +120,15 @@ general mesh validator or an accuracy certificate for arbitrary solids.
 ## Reproduction
 
 ```sh
-python tests/g03/write_fixtures.py --check
 cargo test -p beamcraft-kernel --test g03_fixtures
 cargo test --workspace
 ```
 
-To reproduce the byte-identical dataset, run the writer without `--check`. It never loads or
-invokes the kernel. The committed exact rational references and code are reviewable independently.
+The committed exact rational references and code are reviewable independently.
 The Rust harness runs in existing workspace CI with no new dependencies or Cargo registration.
-The Python reproducibility check is additional local verification, not a newly registered CI step.
+The fixture parameters, manifest and expectations were produced by a one-time generator that the
+project retired with its Python toolchain (issue #178); the committed files are the frozen
+evidence and git history keeps the generator.
 
 This task does not implement a user-facing feature and makes no engine/CLI E2E claim. Native
 results do not prove WASM or cross-platform conformance, K0, G05 or G09 acceptance. No kernel defect

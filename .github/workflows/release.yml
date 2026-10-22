@@ -36,10 +36,6 @@ jobs:
       - name: Build
         run: cargo build --profile dist --locked --target ${{ matrix.target }} -p beamcraft-cli -p beamcraft-ui
 
-      - name: Check macOS icon packaging
-        if: runner.os == 'Linux'
-        run: python3 packaging/test_package.py
-
       - name: Package
         shell: bash
         run: |

@@ -141,10 +141,11 @@ process by the U17 decision. Workspace and undo commands have their own sections
 F04 envelope/JSON command adapter remains absent. Quantities are printed, not stored in USD
 (the pinned schema has none).
 A library target (`beamcraft_cli::plate`) exposes the same path with a commit hook for fault
-injection in tests. `tests/pxr_oracle.rs` reads the saved layers with the OpenUSD reference
-implementation and runs `UsdUtils.ComplianceChecker`. It honours `BEAMCRAFT_PXR_PYTHON` and
-normally skips explicitly without a Python that can `import pxr`; set `BEAMCRAFT_REQUIRE_PXR=1`
-for acceptance to fail when the oracle is missing. `tests/f04_cases.rs` and `tests/f06_cases.rs`
+injection in tests. `tests/independent_reader.rs` and `tests/reference_reader.rs` re-read the
+saved layers with the independent `beamcraft-usd-oracle` process — its own parser, composition
+and vector algebra, sharing no code with the layer engine — and cross-check the closed forms.
+The gate runs in every `cargo test`, locally and in CI.
+`tests/f04_cases.rs` and `tests/f06_cases.rs`
 read the frozen contract fixtures and report their projections, deviations and omissions. See
 the [P01 design note](../../docs/design/p01-first-plate.md) and the current
 [K1 evidence and case inventory](../../docs/design/k1-contract-acceptance.md).

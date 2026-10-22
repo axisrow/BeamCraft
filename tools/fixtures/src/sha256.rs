@@ -3,8 +3,8 @@
 
 //! SHA-256 as specified in NIST FIPS 180-4, section 6.2.
 //!
-//! Written from the public standard so the fixture tool has no third-party dependency.
-//! Digests are cross-checked by an independent implementation (Python `hashlib`) in CI.
+//! Written from the public standard so the fixture tool has no third-party dependency. The
+//! implementation is validated against the published FIPS 180-4 example digests in its tests.
 
 /// Round constants, FIPS 180-4 §4.2.2.
 const K: [u32; 64] = [

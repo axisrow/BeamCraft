@@ -11,7 +11,7 @@ national material tables, or from observation notes such as F02.
 
 | Path | Content | Produced by |
 |------|---------|-------------|
-| [`tools/fixtures/`](../../tools/fixtures/) | `beamcraft-fixtures` crate: generator API, CLI, validator, tests and Python oracle | contributors |
+| [`tools/fixtures/`](../../tools/fixtures/) | `beamcraft-fixtures` crate: generator API, CLI, validator and the independent analytical test | contributors |
 | [`tests/fixtures/f07/`](../../tests/fixtures/f07/) | 33 fixtures (`valid/`, `invalid/`) and `manifest.json` | the generator only |
 | [`tests/fixtures/expectations/f07.json`](../../tests/fixtures/expectations/f07.json) | Expected outcomes and analytical values | hand-written |
 | [`expectations.md`](expectations.md) | Derivations, units, conversions and tolerances | hand-written |
@@ -140,7 +140,7 @@ density. See [expectations.md](expectations.md) for every case.
 - the generator name, version, source and command;
 - the units;
 - set-wide provenance and the expected-results provenance, including the expectations file,
-  the derivation document and the oracle.
+  the derivation document and the independent analytical test.
 
 Each fixture entry records:
 
@@ -171,29 +171,27 @@ cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
 # Validate one description. Exit status: 0 accepted, 3 rejected, 1 I/O error, 2 usage error.
 cargo run -p beamcraft-fixtures -- check tests/fixtures/f07/valid/member-vertical.json
 cargo run -p beamcraft-fixtures -- list
-# Independent oracle (Python 3.9+, standard library only) and its mutation tests.
-python tools/fixtures/verify_expectations.py
-python tools/fixtures/test_verify_expectations.py
+# Independent analytical check (closed forms recomputed from the fixture inputs).
+cargo test -p beamcraft-fixtures --test expectations
 ```
 
 The library API (`beamcraft_fixtures::generate`, `write`, `verify` and `fixture::check`) is what
-the CLI calls. CI runs the Rust unit and E2E tests with `cargo test --workspace`, then runs the
-`verify` command on Windows and Linux. On Linux, CI also runs the Python oracle and its mutation
-tests.
+the CLI calls. CI runs the Rust unit and E2E tests with `cargo test --workspace` (the
+independent analytical check included), then runs the `verify` command on Windows and Linux.
 
 ## Independence of the expected results
 
 - The generator creates input bytes only. It contains no volume, length, mass or bounds formula.
 - The expectations are hand-derived closed forms. The rejection codes follow the format rules
   above.
-- `verify_expectations.py` shares no code with the Rust tool. It recomputes the SHA-256 digests
-  with `hashlib` and computes the geometry from the fixture inputs with Rodrigues' rotation and
-  frame algebra. It then compares the results with the hand-written values.
-  `test_verify_expectations.py` shows that the oracle fails on a tampered byte, an unlisted file,
-  a wrong volume, a wrong oblique bound, a mass invented for unknown density, a wrong rejection
-  code and a missing expectation.
+- `tests/expectations.rs` recomputes every analytical value from the fixture inputs with its own
+  Rodrigues' rotation and frame algebra (no production math helpers) and compares the results
+  with the hand-written values, so the comparison legs are independent by construction. Its
+  mutation cases show that the check fails on a wrong volume and on a mass invented for an
+  unknown density; `cli.rs` shows that the outcomes fail on a tampered byte, an unlisted file, a
+  wrong oblique rejection code and a missing expectation.
 - The SHA-256 implementation follows the public FIPS 180-4 standard and is tested against
-  published example digests. Python `hashlib` also confirms every fixture digest.
+  published example digests.
 
 ## Provenance
 
@@ -210,8 +208,8 @@ are public: elementary vector algebra, Rodrigues' rotation formula, RFC 8259 (JS
 | `cargo test --workspace` | passed: 21 unit and 8 CLI E2E fixture tests, plus 3 existing tests |
 | `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS=-D warnings` | passed |
 | `cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07` | passed: 34 files, 33 manifest digests |
-| `python tools/fixtures/verify_expectations.py` | passed: 33 files, 33 SHA-256 digests, 33 cases, 172 analytical quantities |
-| `python tools/fixtures/test_verify_expectations.py` | passed: 8 mutation tests |
+| `python tools/fixtures/verify_expectations.py` (retired 2026-10-22; replaced by `tests/expectations.rs`) | passed: 33 files, 33 SHA-256 digests, 33 cases, 172 analytical quantities |
+| `python tools/fixtures/test_verify_expectations.py` (retired 2026-10-22; replaced by the mutation cases in `tests/expectations.rs`) | passed: 8 mutation tests |
 | PowerShell `Get-FileHash -Algorithm SHA256` over every fixture | matched all 33 manifest digests |
 | Linux CI, WASM check, `cargo deny` | not run locally; left to CI |
 
@@ -222,7 +220,5 @@ are public: elementary vector algebra, Rodrigues' rotation formula, RFC 8259 (JS
 - The set has no holes, cuts, cavities or non-rectangular profiles. G03 extends the set with
   its own cases.
 - The copy case is an input description, not evidence that copying works.
-- The Python oracle runs on Linux CI only, because the existing workflow installs no Python on
-  Windows. It was also run locally on Windows.
 - The validator checks this test format. It does not replace future engine validation, which
   must define its own contract (F04/F06).

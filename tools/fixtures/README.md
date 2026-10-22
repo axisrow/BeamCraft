@@ -8,9 +8,13 @@ cargo run -p beamcraft-fixtures -- generate --out tests/fixtures/f07
 cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
 cargo run -p beamcraft-fixtures -- check <FILE>
 cargo run -p beamcraft-fixtures -- list
-python tools/fixtures/verify_expectations.py       # independent oracle
-python tools/fixtures/test_verify_expectations.py  # oracle mutation tests
+cargo test -p beamcraft-fixtures --test expectations  # independent analytical check
 ```
+
+The generator computes no expected values. The analytical expectations are checked by
+`tests/expectations.rs`, which recomputes volume, axis length, mass and bounds from the fixture
+inputs with its own closed-form vector algebra (no production math helpers) and fails on a
+corrupted expectation (mutation cases included).
 
 | Module | Purpose |
 |--------|---------|
@@ -20,7 +24,8 @@ python tools/fixtures/test_verify_expectations.py  # oracle mutation tests
 | `src/sha256.rs` | SHA-256 (FIPS 180-4) |
 | `src/lib.rs` | `generate`, `write` and `verify` APIs and the manifest |
 | `src/main.rs` | CLI |
-| `tests/cli.rs` | End-to-end tests of the binary |
+| `tests/cli.rs` | End-to-end tests of the binary, including every committed outcome |
+| `tests/expectations.rs` | Independent analytical check and mutation cases |
 
 See [docs/fixtures/README.md](../../docs/fixtures/README.md) for the format, statuses,
 provenance and verification results. See

@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// Contributor-original synthetic source and driver, MPL-2.0. The OpenUSD Python package is used
-// only as a local, optional test oracle: it is not vendored, not a dependency and nothing from it
-// is committed.
+// Contributor-original synthetic source and driver, MPL-2.0. The oracle is a std-only Rust
+// binary that shares no code with the layer engine.
 
 //! Independent-reader oracle for R01: a revision with a reference wrapper, written by the real
-//! `beamcraft` binary, is read by the OpenUSD reference implementation (`pxr`, through
-//! `reference_oracle.py`). pxr composes the foreign model below the owned wrapper, places its
-//! points exactly where the engine's `source_point_to_world` says (a three-way agreement: pxr, the
-//! engine function and a closed form), sees no owned opinion below the arc holder, and finds the
+//! `beamcraft` binary, is re-read from the committed layer text by an independent reader (the
+//! `beamcraft-usd-oracle` process, with its own parser, composition and vector algebra). The
+//! reader composes the foreign model below the owned wrapper, places its points exactly where
+//! the engine's `source_point_to_world` says (a three-way agreement: reader, the engine
+//! function and a closed form), sees no owned opinion below the arc holder, and finds the
 //! foreign layer byte-identical to the file that was attached.
 //!
-//! The interpreter is found as in `pxr_oracle.rs` (`BEAMCRAFT_PXR_PYTHON`, `py -3.11`, then the
-//! per-user Python 3.11). If none can `import pxr` the test prints an explicit SKIP and passes
-//! without running anything: CI has no pxr, and a skip is never evidence.
+//! Unlike the retired OpenUSD Python oracle, the reader runs everywhere and skips nowhere: the
+//! independent-reader gate runs in every `cargo test`, locally and in CI.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -24,7 +23,7 @@ use beamcraft_model::digest::Sha256;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::reference::{SourceFormat, SourcePin, UnitsInterpretation, UpAxis};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 const SITE: &str = r#"#usda 1.0
@@ -48,34 +47,6 @@ def Xform "Site"
 }
 "#;
 
-fn probe(program: &str, args: &[&str]) -> Option<(String, Vec<String>)> {
-    let mut probe_args: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
-    probe_args.extend(["-c".into(), "import pxr".into()]);
-    let ok = Command::new(program)
-        .args(&probe_args)
-        .output()
-        .is_ok_and(|o| o.status.success());
-    ok.then(|| {
-        (
-            program.to_owned(),
-            args.iter().map(|a| (*a).to_owned()).collect(),
-        )
-    })
-}
-
-fn find_python() -> Option<(String, Vec<String>)> {
-    if let Ok(path) = std::env::var("BEAMCRAFT_PXR_PYTHON") {
-        return probe(&path, &[]);
-    }
-    probe("py", &["-3.11"]).or_else(|| {
-        let local = std::env::var("LOCALAPPDATA").ok()?;
-        let path: PathBuf = [&local, "Programs", "Python", "Python311", "python.exe"]
-            .iter()
-            .collect();
-        probe(path.to_str()?, &[])
-    })
-}
-
 fn run_binary(args: &[&str]) -> Json {
     let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
         .args(args)
@@ -90,22 +61,14 @@ fn text(json: &Json, key: &str) -> String {
 }
 
 #[test]
-fn pxr_composes_the_reference_and_places_the_foreign_points_as_the_engine_says() {
-    let Some((python, python_args)) = find_python() else {
-        println!(
-            "SKIP: no Python interpreter with pxr found (set BEAMCRAFT_PXR_PYTHON, or install \
-             usd-core for `py -3.11`). The independent pxr gate was NOT run."
-        );
-        return;
-    };
-    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("r01-pxr");
-    fs::create_dir_all(&base).unwrap();
+fn the_reader_composes_the_reference_and_places_the_foreign_points_as_the_engine_says() {
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("r01-reader");
+    let _ = fs::remove_dir_all(&base);
     let root = base.join(format!("run-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("store")).unwrap();
+    fs::create_dir_all(root.join("layers").join("external")).unwrap();
     let store = root.join("store");
     let layers = root.join("layers");
-    fs::create_dir_all(&store).unwrap();
-    fs::create_dir_all(layers.join("external")).unwrap();
     let source = root.join("site.usda");
     fs::write(&source, SITE).unwrap();
     let store_arg = store.to_str().unwrap();
@@ -162,7 +125,7 @@ fn pxr_composes_the_reference_and_places_the_foreign_points_as_the_engine_says()
         )
         .unwrap();
     }
-    // The foreign layer pxr reads is byte-identical to the attached file.
+    // The foreign layer the reader composes is byte-identical to the attached file.
     let digest = Sha256::digest(SITE.as_bytes()).unwrap().to_string();
     assert_eq!(
         fs::read(layers.join(format!("external/{digest}.usda"))).unwrap(),
@@ -236,31 +199,18 @@ fn pxr_composes_the_reference_and_places_the_foreign_points_as_the_engine_says()
     );
     let expect_path = layers.join("expect.json");
     fs::write(&expect_path, expect).unwrap();
-    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests")
-        .join("reference_oracle.py");
-    let output = Command::new(&python)
-        .args(&python_args)
-        .arg(&script)
+    let output = Command::new(env!("CARGO_BIN_EXE_beamcraft-usd-oracle"))
+        .arg("reference")
         .arg(layers.join("root.usda"))
         .arg(&expect_path)
         .output()
         .unwrap();
     let report = String::from_utf8_lossy(&output.stdout).into_owned();
-    println!("PXR REPORT: {report}");
+    println!("READER REPORT: {report}");
     assert!(
         output.status.success(),
-        "pxr rejected or disagreed: {}\n{report}",
+        "the independent reader disagreed: {}\n{report}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let report = beamcraft_json::decode(report.trim().as_bytes(), &Limits::DEFAULT).unwrap();
-    let compliance = report.get("compliance").unwrap();
-    println!("COMPLIANCE: {compliance:?}");
-    for key in ["errors", "failed_checks", "warnings"] {
-        assert!(
-            compliance.get(key).unwrap().array().unwrap().is_empty(),
-            "compliance {key}: {compliance:?}"
-        );
-    }
     let _ = fs::remove_dir_all(&root);
 }

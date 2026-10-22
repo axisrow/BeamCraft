@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// Contributor-original synthetic plates, members and assemblies, MPL-2.0. The OpenUSD Python
-// package is used only as a local, optional test oracle: it is not vendored, not a dependency and
-// nothing from it is committed.
+// Contributor-original synthetic plates, members and assemblies, MPL-2.0. The independent
+// `beamcraft-usd-oracle` process is used as the external test reader: it is not a dependency
+// and shares no code with the layer engine.
 
 //! A09 end to end through the real CLI binary: `numbering-approve` stores the approved marks as
 //! authored data through the normal revision path, `numbering-status` and `numbering-preview` read
@@ -763,40 +763,9 @@ fn damaged_and_oversized_input_is_refused() {
     assert_eq!(f.layers(), before);
 }
 
-/// The OpenUSD reference implementation reads the marks back, when it is installed locally.
+/// The independent reader re-reads the stored marks from the committed layer text.
 #[test]
-fn pxr_reads_the_stored_marks() {
-    let probe = |program: &str, args: &[&str]| {
-        let mut all: Vec<String> = args.iter().map(|a| (*a).to_owned()).collect();
-        all.extend(["-c".into(), "import pxr".into()]);
-        Command::new(program)
-            .args(&all)
-            .output()
-            .is_ok_and(|o| o.status.success())
-            .then(|| {
-                (
-                    program.to_owned(),
-                    args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>(),
-                )
-            })
-    };
-    let found = match std::env::var("BEAMCRAFT_PXR_PYTHON") {
-        Ok(path) => probe(&path, &[]),
-        Err(_) => probe("py", &["-3.11"]).or_else(|| {
-            let local = std::env::var("LOCALAPPDATA").ok()?;
-            let path: PathBuf = [&local, "Programs", "Python", "Python311", "python.exe"]
-                .iter()
-                .collect();
-            probe(path.to_str()?, &[])
-        }),
-    };
-    let Some((python, python_args)) = found else {
-        println!(
-            "SKIP: no Python interpreter with pxr found (set BEAMCRAFT_PXR_PYTHON). The independent \
-             pxr gate was NOT run."
-        );
-        return;
-    };
+fn the_reader_reads_the_stored_marks() {
     let f = Fixture::new();
     let s = f.scene();
     f.approve(&f.token(&[]), &[]);
@@ -815,10 +784,8 @@ fn pxr_reads_the_stored_marks() {
         )
         .unwrap();
     }
-    let script = "import sys, json\nfrom pxr import Usd\nstage = Usd.Stage.Open(sys.argv[1])\nout = {}\nfor prim in stage.Traverse():\n    s = prim.GetAttribute('steel:numbering:series')\n    n = prim.GetAttribute('steel:numbering:number')\n    b = prim.GetAttribute('steel:numbering:basis')\n    if s and n and b:\n        out[prim.GetAttribute('bim:id').Get()] = [s.Get(), n.Get(), b.Get()]\nprint(json.dumps(out))\n";
-    let output = Command::new(&python)
-        .args(&python_args)
-        .args(["-c", script])
+    let output = Command::new(env!("CARGO_BIN_EXE_beamcraft-usd-oracle"))
+        .arg("marks")
         .arg(layers.join("root.usda"))
         .output()
         .unwrap();
@@ -832,7 +799,7 @@ fn pxr_reads_the_stored_marks() {
         &Limits::DEFAULT,
     )
     .unwrap();
-    // pxr and the CLI agree on every mark: series, number and the approval record.
+    // The reader and the CLI agree on every mark: series, number and the approval record.
     let status = f.status();
     let basis = text(at(&status, &["approval"]), "approved_token");
     for m in list(&status, "marks") {

@@ -9,8 +9,9 @@
 //! directory byte for byte, and validates single descriptions.
 //!
 //! It never computes expected quantities. Analytical expectations are hand-derived in
-//! `docs/fixtures/expectations.md`, stored in `tests/fixtures/expectations/f07.json` and checked by
-//! an independent oracle (`tools/fixtures/verify_expectations.py`).
+//! `docs/fixtures/expectations.md`, stored in `tests/fixtures/expectations/f07.json` and checked
+//! independently by this package's `tests/expectations.rs`, which recomputes them from the
+//! fixture inputs with its own closed-form vector algebra.
 //!
 //! The command-line front end is the `beamcraft-fixtures` binary.
 
@@ -240,7 +241,10 @@ fn manifest(cases: &[Case]) -> Json {
                     "method",
                     s("hand-derived closed-form analytical values; not produced by this generator"),
                 ),
-                ("oracle", s("tools/fixtures/verify_expectations.py")),
+                (
+                    "oracle",
+                    s("cargo test -p beamcraft-fixtures --test expectations"),
+                ),
             ]),
         ),
         ("fixtures", Json::Array(entries)),

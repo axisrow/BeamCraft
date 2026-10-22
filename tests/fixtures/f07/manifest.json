@@ -27,7 +27,7 @@
     "data": "tests/fixtures/expectations/f07.json",
     "derivation": "docs/fixtures/expectations.md",
     "method": "hand-derived closed-form analytical values; not produced by this generator",
-    "oracle": "tools/fixtures/verify_expectations.py"
+    "oracle": "cargo test -p beamcraft-fixtures --test expectations"
   },
   "fixtures": [
     {

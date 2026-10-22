@@ -111,12 +111,43 @@ cargo deny check
 - **Offline.** Add `--offline --locked` to Cargo commands to work without downloads; never update
   `Cargo.lock` as a side effect.
 
-For K1 acceptance, set `BEAMCRAFT_REQUIRE_PXR=1` and run
-`cargo test -p beamcraft-cli --test pxr_oracle -- --nocapture`. Optionally set
-`BEAMCRAFT_PXR_PYTHON` to the installed Python interpreter with `pxr`. This mode fails if the
-independent reader is unavailable; the default developer mode prints an explicit skip instead.
-No interpreter or SDK is installed by the tests. The exact contract case inventory, asserted
-fields and remaining deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
+The independent-reader gate runs in every `cargo test`: run
+`cargo test -p beamcraft-cli --test independent_reader --test reference_reader -- --nocapture`.
+The `beamcraft-usd-oracle` process re-reads the committed layer text with its own parser,
+composition and vector algebra and cross-checks the closed forms; a failure fails the tests, and
+no SDK or interpreter is needed. The exact contract case inventory, asserted fields and remaining
+deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
+
+## CI wall time and Windows runner queues
+
+CI wall time is about 15 minutes today (14–17 minutes across the runs of 2026-10-22). The critical
+path is the `test (windows)` job at roughly 13–14 minutes; every other job finishes in under
+3 minutes. Each job carries an explicit `timeout-minutes` sized at about three times the longest
+observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour
+per-job default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
+
+Windows jobs queue for runners that the account shares across all of its repositories and
+workflows, and hosted Windows runners are the scarcest standard tier: each Windows minute is
+billed at twice the Linux rate, and plan concurrency counts Windows and macOS jobs against a
+smaller allowance. During a burst — several pull requests, merges and retries at once — a Windows
+job can sit in the queue for hours with no failure signal, because the run reads "queued", not
+"failing". On 2026-10-21, run
+[39648960935](https://github.com/Apibim-com/BeamCraft/actions/runs/39648960935) waited about
+5 hours 40 minutes for a Windows runner while the rest of its jobs had long finished.
+
+Two workflow-level guardrails bound our own contribution to such bursts; neither widens the
+account quota:
+
+- The `concurrency` group `ci-<ref>` with `cancel-in-progress` keeps at most one active CI run per
+  branch or pull request; a new push cancels that ref's superseded run instead of queueing it.
+- Per-job `timeout-minutes` fail fast when a job hangs after it starts. They do not bound queue
+  time, and no workflow setting does: the 6-hour default is itself a per-job execution timeout
+  that starts when a runner picks the job up. Run 39648960935 finished green after 6 hours
+  4 minutes of wall time, queue included.
+
+When CI looks stuck, first check whether the Windows job is queued rather than running, then look
+for a burst across the account's Actions runs, cancel superseded runs and re-run the starved job
+once the burst subsides.
 
 ## Releases
 
@@ -154,8 +185,8 @@ packaging needs no image tools. Release smoke checks decode the packaged ICNS wi
 The same PNG ships inside the bundle as `Contents/Resources/beamcraft-icon.png`: while
 `beamcraft-ui` runs, the Dock shows the process icon, so the UI loads that file and applies
 it (`eframe::icon_data::from_png_bytes`), falling back to the coded I-section outside a
-bundle. Run `python3 packaging/test_package.py` (stdlib-only, no dependencies) to check the
-icon and archive wiring without a Rust build. On macOS, also confirm the composed icon
+bundle. `cargo test -p beamcraft-cli --test macos_icon` checks the committed ICNS structure
+without a Rust build of the UI or macOS. On macOS, also confirm the composed icon
 appears in Finder, the Dock and the app switcher. The mark and `docs/brand/beamcraft-logo.svg`
 are the official BeamCraft logo (see `ATTRIBUTION.md`); the brand terms in
 `docs/brand/LICENSE-brand.txt` apply to them.
