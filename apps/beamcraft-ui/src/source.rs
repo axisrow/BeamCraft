@@ -73,14 +73,14 @@ pub fn default_workspace_at(
         // store is a plain directory the CLI fills in.
         std::fs::create_dir_all(&published).map_err(Error::Io)?;
         // The fork needs a published head. One mutating definition provides it; a rerun
-        // with the same content is refused as existing, which means the same thing.
+        // with the same content answers outcome definition_exists and writes nothing.
         let store = published.to_string_lossy().into_owned();
         let material = [
             "define-material".to_owned(),
             "--store".into(),
             store.clone(),
         ];
-        bootstrapped(cli, &material, stats, &["DEFINITION_EXISTS"])?;
+        bootstrapped(cli, &material, stats, &[])?;
         let fork = [
             "workspace-create".to_owned(),
             "--store".into(),
