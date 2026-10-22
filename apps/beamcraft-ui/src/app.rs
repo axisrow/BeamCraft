@@ -446,7 +446,7 @@ pub fn icon() -> egui::IconData {
     }
 }
 
-/// The window/application icon. In the macOS bundle the official logo ships as
+/// The window/application icon. In the macOS bundle the dedicated macOS artwork ships as
 /// `Contents/Resources/beamcraft-icon.png`, and eframe applies it to the Dock at run time
 /// (`setApplicationIconImage`): while the app runs, the Dock shows the process icon and
 /// ignores the bundle's ICNS. Outside a bundle, or when the resource is missing, the coded

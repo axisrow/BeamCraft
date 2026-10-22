@@ -44,7 +44,7 @@ if [ "$kind" = macos ]; then
         "$app/Contents/Resources/licenses"
     sed "s/@VERSION@/${tag#v}/" packaging/Info.plist > "$app/Contents/Info.plist"
     cp assets/icons/BeamCraft.icns "$app/Contents/Resources/"
-    cp assets/icons/beamcraft-1024.png "$app/Contents/Resources/beamcraft-icon.png"
+    cp assets/icons/beamcraft-macos-1024.png "$app/Contents/Resources/beamcraft-icon.png"
     cp "$release/beamcraft" "$release/beamcraft-ui" "$app/Contents/MacOS/"
     cp assets/fonts/inter/Inter-Regular.ttf assets/fonts/inter/Inter-Bold.ttf \
         "$app/Contents/Resources/assets/fonts/inter/"

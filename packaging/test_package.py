@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MPL-2.0
 """Check the macOS icon and archive wiring without needing a Rust build or macOS."""
+from io import BytesIO
 import os
 from pathlib import Path
 import plistlib
@@ -48,12 +49,37 @@ class MacIcon(unittest.TestCase):
         self.assertEqual(offset, len(data))
         self.assertEqual(sizes, {16, 32, 64, 128, 256, 512, 1024})
 
+    def test_macos_icon_has_transparent_margins(self):
+        from PIL import Image
+        image = Image.open(ROOT / 'assets/icons/beamcraft-macos-1024.png')
+        self.assertEqual(image.size, (1024, 1024))
+        self.assertEqual(image.mode, 'RGBA')
+        alpha = image.getchannel('A')
+        self.assertEqual(alpha.getpixel((0, 0)), 0)
+        self.assertEqual(alpha.getpixel((512, 512)), 255)
+        left, top, right, bottom = alpha.getbbox()
+        self.assertGreater(left, 40)
+        self.assertGreater(top, 40)
+        self.assertLess(right, 984)
+        self.assertLess(bottom, 1000)
+        # The largest ICNS image must match the running-process PNG exactly.
+        data = (ROOT / 'assets/icons/BeamCraft.icns').read_bytes()
+        offset = 8
+        while offset < len(data):
+            length = struct.unpack('>I', data[offset + 4:offset + 8])[0]
+            if data[offset:offset + 4] == b'ic10':
+                bundled = Image.open(BytesIO(data[offset + 8:offset + length]))
+                self.assertEqual(bundled.tobytes(), image.tobytes())
+                return
+            offset += length
+        self.fail('Missing 1024px ICNS representation')
+
     def test_archive_contains_icon_before_signing(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             for path in ('packaging/package.sh', 'packaging/Info.plist',
                          'assets/icons/BeamCraft.icns',
-                         'assets/icons/beamcraft-1024.png'):
+                         'assets/icons/beamcraft-macos-1024.png'):
                 dest = root / path
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / path, dest)
@@ -61,8 +87,8 @@ class MacIcon(unittest.TestCase):
             for path in ('README.md', 'LICENSE', 'NOTICE', 'docs/brand/LICENSE-brand.txt',
                          'assets/fonts/inter/Inter-Regular.ttf',
                          'assets/fonts/inter/Inter-Bold.ttf', 'licenses/OFL-1.1-Inter.txt',
-                         'target/aarch64-apple-darwin/release/beamcraft',
-                         'target/aarch64-apple-darwin/release/beamcraft-ui'):
+                         'target/aarch64-apple-darwin/dist/beamcraft',
+                         'target/aarch64-apple-darwin/dist/beamcraft-ui'):
                 dest = root / path
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text('synthetic packaging input\n')
@@ -85,7 +111,7 @@ class MacIcon(unittest.TestCase):
                 with archive.extractfile(prefix + 'Resources/' + info['CFBundleIconFile']) as entry:
                     self.assertEqual(entry.read(), (ROOT / 'assets/icons/BeamCraft.icns').read_bytes())
                 with archive.extractfile(prefix + 'Resources/beamcraft-icon.png') as entry:
-                    self.assertEqual(entry.read(), (ROOT / 'assets/icons/beamcraft-1024.png').read_bytes())
+                    self.assertEqual(entry.read(), (ROOT / 'assets/icons/beamcraft-macos-1024.png').read_bytes())
 
 
 if __name__ == '__main__':
