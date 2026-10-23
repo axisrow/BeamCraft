@@ -41,8 +41,10 @@ pub const MAX_LAYERS: usize = 16;
 pub const MAX_ASSETS: usize = 256;
 /// Largest layer or blob a changeset may name (the host's 32 MiB blob cap).
 pub const MAX_ASSET_BYTES: u64 = 32 * 1024 * 1024;
-/// Longest layer name.
+/// Longest plain layer name. R01's exact digest-qualified external form is 78 bytes.
 pub const MAX_LAYER_NAME_BYTES: usize = 64;
+
+const EXTERNAL_LAYER_NAME_BYTES: usize = "external/".len() + 64 + ".usda".len();
 
 const MAGIC: &[u8] = b"BeamCraft/C01/Changeset/v1\0";
 const MAGIC_WITH_MARK: &[u8] = b"BeamCraft/C01/Changeset/v2\0";
@@ -161,7 +163,7 @@ pub enum LayerRole {
 /// One layer of the resulting revision.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LayerDelta {
-    /// Virtual layer name (`[a-z0-9._-]`, ends in `.usda`).
+    /// Plain lowercase `.usda` name, or the R01 external role's `external/<sha256>.usda`.
     pub name: String,
     /// Manifest role.
     pub role: LayerRole,
@@ -237,7 +239,7 @@ fn limit(field: &'static str) -> CommandError {
     error(ErrorCode::LimitExceeded, field, "changeset exceeds a cap")
 }
 
-fn layer_name_valid(name: &str) -> bool {
+fn plain_layer_name_valid(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= MAX_LAYER_NAME_BYTES
         && name.ends_with(".usda")
@@ -245,6 +247,18 @@ fn layer_name_valid(name: &str) -> bool {
         && name.bytes().all(|b| {
             b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
         })
+}
+
+fn layer_name_valid(layer: &LayerDelta) -> bool {
+    plain_layer_name_valid(&layer.name)
+        || (layer.role == LayerRole::External
+            && layer.name.len() == EXTERNAL_LAYER_NAME_BYTES
+            && layer
+                .name
+                .strip_prefix("external/")
+                .and_then(|name| name.strip_suffix(".usda"))
+                .and_then(|text| text.parse::<ContentDigest>().ok())
+                .is_some_and(|digest| digest == layer.digest))
 }
 
 /// Strictly increasing order (sorted and free of duplicates).
@@ -291,11 +305,13 @@ impl Changeset {
         if self.layers.is_empty() || self.layers.len() > MAX_LAYERS {
             return Err(limit("layers"));
         }
-        if self.layers.iter().any(|l| !layer_name_valid(&l.name)) {
+        if !plain_layer_name_valid(&self.root_layer)
+            || self.layers.iter().any(|l| !layer_name_valid(l))
+        {
             return Err(error(
                 ErrorCode::InvalidArgument,
                 "layers",
-                "layer name is not a plain lowercase .usda name",
+                "layer name is not plain lowercase or an exact digest-named external source",
             ));
         }
         let names: Vec<&str> = self.layers.iter().map(|l| l.name.as_str()).collect();
@@ -742,6 +758,48 @@ mod tests {
             root_layer: "root.usda".into(),
             assets,
         }
+    }
+
+    #[test]
+    fn external_source_names_bind_the_role_and_full_digest_without_admitting_paths() {
+        let hash = digest("original survey");
+        let name = format!("external/{hash}.usda");
+        let mut c = sample();
+        c.layers.push(LayerDelta {
+            name: name.clone(),
+            role: LayerRole::External,
+            base: Some(hash),
+            digest: hash,
+            size: 9,
+        });
+        c.layers.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(Changeset::decode(&c.encode().unwrap()).unwrap(), c);
+        let position = c.layers.iter().position(|l| l.name == name).unwrap();
+        for bad in [
+            format!("external/{hash}/source.usda"),
+            format!("external//{hash}.usda"),
+            format!("/external/{hash}.usda"),
+            format!("../external/{hash}.usda"),
+            format!("external/../{hash}.usda"),
+            format!("external/{}.usda", hash.to_string().to_uppercase()),
+            format!("external/{}.usda", digest("different source")),
+            "external/not-a-digest.usda".into(),
+        ] {
+            let mut invalid = c.clone();
+            invalid.layers[position].name = bad;
+            invalid.layers.sort_by(|a, b| a.name.cmp(&b.name));
+            assert!(invalid.validate().is_err());
+        }
+        for role in [LayerRole::Authored, LayerRole::Derived] {
+            let mut invalid = c.clone();
+            invalid.layers[position].role = role;
+            assert!(invalid.validate().is_err());
+        }
+        c.root_layer = name;
+        assert!(
+            c.validate().is_err(),
+            "an external source is not an owned composition root"
+        );
     }
 
     #[test]
