@@ -12,6 +12,16 @@ source history rather than trusting a caller's before-image or arbitrary inverse
 An original operation embedded in a published changeset requires its retained source proof;
 an unavailable/compacted proof refuses instead of guessing an inverse from final state.
 
+The CLI's `--original-revision` identifies one accepted publication. A C01/C02 changeset is one
+published operation, even when it contains several source commands and administrative rebase
+records. Verify its complete contiguous source interval and exact aggregate dependencies, then
+compensate its accepted delta as one unit. This API does not select just its last source command.
+The inverse before-image is the actual accepted base pinned by that payload, independently of
+the older personal prefix used to bind/verify source history. Otherwise undoing a rebased client's
+change could also undo another client's already accepted opinion. Original single-command proof
+pins/request binding stay unchanged. Direct publication still requires proof that its complete
+delta/dependencies are accounted for by one terminal command; unavailable intervals refuse.
+
 The engine derives the inverse from the original command's supported semantic groups and
 verified before/after images. Apply only those groups to the current model. All intervening
 accepted operations, including reads and reverted writes, participate in current precondition

@@ -42,6 +42,9 @@ mod compensation;
 
 #[path = "rebase/compensation_recovery.rs"]
 mod compensation_recovery;
+
+#[path = "rebase/compensation_changesets.rs"]
+mod compensation_changesets;
 fn id(n: usize) -> String {
     format!("019a7bf0-0000-7000-8000-{n:012x}")
 }

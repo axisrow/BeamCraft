@@ -34,7 +34,7 @@ pub struct CompensationRequest {
     pub op_id: OpId,
     /// Acting owner of the source and destination personal workspaces.
     pub actor: Uuid7,
-    /// Direct or C01/C02 publication accounted for by one original command.
+    /// Direct command or complete C01/C02 changeset publication to compensate as one unit.
     pub original: Uuid7,
     /// Exact observed accepted revision.
     pub expected_head: Uuid7,
@@ -232,8 +232,8 @@ pub fn compensate(
         return Ok(CompensationResult::Conflicted(conflicts));
     }
     let candidate = materializer::prepare(
-        &opened(original.after())?,
-        &opened(original.before())?,
+        &opened(original.published())?,
+        &opened(original.accepted_before())?,
         &opened(&draft)?,
         &evidence::dependencies(&footprint),
         &EditTargets {

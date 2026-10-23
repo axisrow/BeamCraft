@@ -226,10 +226,13 @@ fn a_changeset_publication_uses_its_exact_payload_and_original_source_result() {
 }
 
 #[test]
-fn a_larger_changeset_is_not_guessed_to_be_its_last_commands_inverse() {
+fn a_complete_changeset_proves_its_whole_interval_and_accepted_basis() {
     let f = Fixture::new(false);
+    let prefix = f.head("a");
+    let base = f.head("published");
     f.update("a", 11, &["--name", "first"]);
     f.update("a", 10, &["--name", "second"]);
+    let source = f.head("a");
     let package = f.ok(&[
         "changeset-create",
         "--store",
@@ -250,18 +253,34 @@ fn a_larger_changeset_is_not_guessed_to_be_its_last_commands_inverse() {
         digest,
     ]);
     let accepted = f.head("published");
+    let proof = verify_original(
+        &store(&f.path("published")),
+        &store(&f.path("a")),
+        &f.path("a"),
+        &Uuid7::parse(&id(3)).unwrap(),
+        accepted.revision(),
+    )
+    .unwrap();
     assert_eq!(
-        verify_original(
-            &store(&f.path("published")),
-            &store(&f.path("a")),
-            &f.path("a"),
-            &Uuid7::parse(&id(3)).unwrap(),
-            accepted.revision()
-        )
-        .err()
-        .unwrap()
-        .code,
-        ErrorCode::DependencyUnavailable
+        proof.before().info().manifest_digest(),
+        prefix.manifest_digest()
+    );
+    assert_eq!(
+        proof.after().info().manifest_digest(),
+        source.manifest_digest()
+    );
+    assert_eq!(
+        proof.accepted_before().info().manifest_digest(),
+        base.manifest_digest()
+    );
+    assert_ne!(
+        proof.before().info().manifest_digest(),
+        proof.accepted_before().info().manifest_digest()
+    );
+    assert_eq!(proof.command().footprint.writes().len(), 2);
+    assert_eq!(
+        proof.command().op_id.to_string(),
+        accepted.manifest().content().op().as_str()
     );
     assert_eq!(
         f.head("published").manifest_digest(),

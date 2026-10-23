@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Verify original images that exactly account for a direct or single-operation C01 publication.
+//! Verify original images and complete dependencies of a direct command or C01 publication.
 //!
 //! This adapter changes no model. It does not compensate from a caller-supplied inverse or a
 //! final-state diff. A subsequent inverse adapter must compare all intervening dependencies and
@@ -41,11 +41,11 @@ fn source_result(
         }
     }
     // A C01/C02 accepted operation binds the canonical payload digest, not the draft manifest.
-    // Verify the exact pinned payload and its single original result in actual source history.
+    // Verify the exact pinned payload and its terminal result in actual source history.
     let changeset = read_changeset(source, &publication.fingerprint)
         .map_err(|_| unavailable())?
         .changeset;
-    if changeset.operations.len() != 1
+    if changeset.operations.is_empty()
         || changeset.changeset_id.to_string() != a.op().as_str()
         || changeset.revision.to_string() != accepted.info().revision().as_str()
         || changeset.project.to_string() != a.project().as_str()
@@ -88,7 +88,7 @@ fn source_result(
             ));
         }
     }
-    let operation = changeset.operations.first().ok_or_else(unavailable)?;
+    let operation = changeset.operations.last().ok_or_else(unavailable)?;
     let bytes = source
         .blobs()
         .read_capped(&operation.result, MAX_MANIFEST_BYTES)
@@ -111,25 +111,31 @@ pub struct Original {
     before: Revision,
     after: Revision,
     published: Revision,
+    accepted_before: Revision,
     command: CapturedFootprint,
     _source_maintenance: StoreLease,
     _published_maintenance: StoreLease,
 }
 
 impl Original {
-    /// Verified original command's before-image in its source workspace.
+    /// Verified complete source interval's before-image (also used by request binding).
     pub fn before(&self) -> &Revision {
         &self.before
     }
-    /// Verified original command's after-image in its source workspace.
+    /// Verified complete source interval's after-image (also used by request binding).
     pub fn after(&self) -> &Revision {
         &self.after
     }
-    /// Exact accepted revision whose complete delta is accounted for by this command.
+    /// Exact accepted revision whose complete delta is accounted for by the verified operation.
     pub fn published(&self) -> &Revision {
         &self.published
     }
-    /// Canonical actual footprint and argument fingerprint pinned by the original producer.
+    /// Exact accepted basis of the original publication. A rebased draft's earlier local prefix
+    /// can contain an older model and is not a valid inverse before-image.
+    pub fn accepted_before(&self) -> &Revision {
+        &self.accepted_before
+    }
+    /// Canonical command/publication identity, argument/payload fingerprint and actual footprint.
     pub fn command(&self) -> &CapturedFootprint {
         &self.command
     }
@@ -145,13 +151,16 @@ fn unavailable() -> PlateError {
 /// Verify source ownership, exact historical publication membership and both original images.
 ///
 /// Supported: a terminal personal command accounting for a `workspace-publish` delta, or a C01/C02
-/// publication with exactly one verified source operation. The direct path uses
+/// publication with a complete verified source interval. The direct path uses
 /// the source revision identity as its published identity and pins the source manifest as its
 /// request fingerprint. The immediately preceding source layers must equal the immediately
 /// preceding accepted layers; the resulting complete layer sets and footprints must also match.
-/// C01 requires the canonical payload, its exact accepted operation/base/layers and the pinned
-/// source result in actual history. This refuses any additional published delta/dependency,
-/// rebase administration and missing/compacted proof. Earlier commands reverting to the exact prior
+/// C01 requires the canonical payload, its exact accepted operation/base/layers and every pinned
+/// source result in actual history. Administrative rebase records retain their original commands
+/// without duplicating dependencies. The entire published changeset is one compensating unit;
+/// it does not guess a selected command's inverse from a larger accepted delta. Direct publication
+/// still requires its complete delta/dependencies to match one terminal command. Missing or
+/// compacted proof refuses. Earlier direct commands reverting to the exact prior
 /// accepted bytes with no additional dependency do not invalidate this terminal command's inverse.
 /// It never guesses a publication boundary to extract one command from a larger accepted delta.
 /// The source workspace may have advanced since publication. The supplied actor must still own
@@ -198,7 +207,14 @@ pub fn verify_original(
     if source_sequence <= 1 {
         return Err(unavailable());
     }
-    let before = source.open_at(source_sequence - 1)?;
+    let prefix = match payload.as_ref() {
+        Some(cs) => source_sequence
+            .checked_sub(cs.operations.len() as u64)
+            .filter(|n| *n > 0)
+            .ok_or_else(unavailable)?,
+        None => source_sequence - 1,
+    };
+    let before = source.open_at(prefix)?;
     let s = after.manifest().content();
     let a = accepted.manifest().content();
     let b = before.manifest().content();
@@ -210,7 +226,7 @@ pub fn verify_original(
         || b.project() != p.project()
         || b.schema() != p.schema()
         || s.entries() != a.entries()
-        || b.entries() != p.entries()
+        || (payload.is_none() && b.entries() != p.entries())
         || s.root_layer() != a.root_layer()
         || b.root_layer() != p.root_layer()
         || after.manifest().index().is_none()
@@ -218,16 +234,33 @@ pub fn verify_original(
     {
         return Err(unavailable());
     }
-    // Use the command codec, not the polymorphic administrative-receipt decoder. A rebase
-    // receipt has no independently supported modelling inverse in this proof slice.
-    let command = CapturedFootprint::decode(&after.operation_evidence()?.ok_or_else(unavailable)?)
-        .map_err(|_| unavailable())?;
-    if command.op_id.to_string() != s.op().as_str()
+    let command = if let Some(cs) = payload.as_ref() {
+        let interval = command_evidence::aggregate(source, prefix, &cs.operations)?;
+        let footprint = interval.footprint.ok_or_else(unavailable)?;
+        if interval.head.manifest_digest() != after.info().manifest_digest()
+            || publication.footprint != footprint
+            || cs.dependencies != command_evidence::dependencies(&footprint)
+        {
+            return Err(integrity(
+                "original changeset disagrees with its complete source interval",
+            ));
+        }
+        if cs.operations.len() == 1 {
+            // Keep existing single-command proof/request binding byte-compatible. A standalone
+            // administrative record is not an independently invertible modelling operation.
+            CapturedFootprint::decode(&after.operation_evidence()?.ok_or_else(unavailable)?)
+                .map_err(|_| unavailable())?
+        } else {
+            publication.clone()
+        }
+    } else {
+        CapturedFootprint::decode(&after.operation_evidence()?.ok_or_else(unavailable)?)
+            .map_err(|_| unavailable())?
+    };
+    if ((payload.as_ref().is_none_or(|cs| cs.operations.len() == 1))
+        && command.op_id.to_string() != s.op().as_str())
         || publication.op_id.to_string() != a.op().as_str()
         || publication.footprint != command.footprint
-        || payload
-            .as_ref()
-            .is_some_and(|cs| cs.dependencies != command_evidence::dependencies(&command.footprint))
     {
         return Err(integrity(
             "publication evidence does not prove this original command",
@@ -237,6 +270,7 @@ pub fn verify_original(
         before,
         after,
         published: accepted,
+        accepted_before,
         command,
         _source_maintenance: source_maintenance,
         _published_maintenance: published_maintenance,
