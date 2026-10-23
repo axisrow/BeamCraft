@@ -20,6 +20,7 @@ use super::{BlobStore, MAX_SCANNED_ENTRIES, NEXT_TEMP, StorageError, io_error, i
 pub(crate) enum LockFile {
     Maintenance,
     WorkspaceState,
+    Publication,
 }
 
 /// One installed blob as found on disk.
@@ -253,6 +254,7 @@ impl BlobStore {
         let name = match kind {
             LockFile::Maintenance => "maintenance.lock",
             LockFile::WorkspaceState => "workspace-state.lock",
+            LockFile::Publication => "publication.lock",
         };
         let path: PathBuf = self.root.join(name);
         match fs::symlink_metadata(&path) {

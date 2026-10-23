@@ -8,7 +8,7 @@ use std::path::Path;
 
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
 
-use crate::lease::StoreLease;
+use crate::lease::PublicationLease;
 use crate::ledger::{
     AbortReason, CommittedRecord, Intent, OpStatus, Record, new_attempt, now_secs,
 };
@@ -282,8 +282,9 @@ impl RevisionStore {
         verifier: Option<&dyn ContentVerifier>,
         hook: &mut dyn CommitHook,
     ) -> Result<Committed, RevisionError> {
-        // Compaction holds the store exclusively; a commit never runs beside it.
-        let _lease = StoreLease::shared(&self.blobs)?;
+        // Committers share the publication gate and retain the usual root CAS. A reader may
+        // pin this head exclusively while committing a different draft. Compaction is excluded.
+        let _lease = PublicationLease::shared(&self.blobs)?;
         let content = Content::from_draft_with_evidence(draft, evidence)?;
         let fingerprint = content.fingerprint()?;
         let directory = self.head_dir()?;

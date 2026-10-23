@@ -129,6 +129,126 @@ fn expect(n: u32) -> ExpectedBase {
     }
 }
 
+#[test]
+fn a_pinned_head_refuses_commits_before_an_intent_and_leaves_another_draft_free() {
+    use beamcraft_host::lease::{PublicationLease, StoreLease};
+    use beamcraft_host::ledger::Outcome;
+    let published_fixture = Fixture::new();
+    let draft_fixture = Fixture::new();
+    let published = published_fixture.store();
+    let workspace = draft_fixture.store();
+    let accepted = commit_n(&published, 1);
+    commit_n(&workspace, 1);
+    let candidate = draft(layers(&published, 2), 2);
+    // A serving coordinator's maintenance lease must not prevent a queued rebase from pinning.
+    let _serving = StoreLease::shared(published.blobs()).unwrap();
+    let pin = PublicationLease::exclusive(published.blobs()).unwrap();
+    let ledger = fs::read(published_fixture.0.join("ledger/outcomes.log")).unwrap();
+    assert_eq!(published.open().unwrap().info(), &accepted);
+    assert_eq!(
+        published.commit(&candidate, &expect(1)).unwrap_err(),
+        RevisionError::StoreBusy
+    );
+    assert_eq!(published.head().unwrap().unwrap(), accepted);
+    assert_eq!(
+        fs::read(published_fixture.0.join("ledger/outcomes.log")).unwrap(),
+        ledger
+    );
+    assert_eq!(
+        published.query_outcome(&candidate.op).unwrap(),
+        Outcome::NotFound
+    );
+    assert!(!published_fixture.log(2).exists());
+    assert_eq!(commit_n(&workspace, 2).sequence(), 2);
+    drop(pin);
+    assert_eq!(
+        published.commit(&candidate, &expect(1)).unwrap().outcome,
+        CommitOutcome::Created
+    );
+    assert_eq!(published.open().unwrap().info().sequence(), 2);
+}
+
+#[test]
+fn ordinary_committers_share_the_gate_and_an_inflight_writer_refuses_an_exclusive_pin() {
+    use beamcraft_host::lease::{LeaseError, PublicationLease, StoreLease};
+    let fx = Fixture::new();
+    let store = fx.store();
+    commit_n(&store, 1);
+    let first = PublicationLease::shared(store.blobs()).unwrap();
+    let second = PublicationLease::shared(store.blobs()).unwrap();
+    assert!(matches!(
+        PublicationLease::exclusive(store.blobs()),
+        Err(LeaseError::Busy)
+    ));
+    assert_eq!(
+        commit_n(&store, 2).sequence(),
+        2,
+        "committers remain concurrent"
+    );
+    drop(first);
+    assert!(matches!(
+        PublicationLease::exclusive(store.blobs()),
+        Err(LeaseError::Busy)
+    ));
+    drop(second);
+    let pin = PublicationLease::exclusive(store.blobs()).unwrap();
+    assert!(
+        matches!(StoreLease::exclusive(store.blobs()), Err(LeaseError::Busy)),
+        "the pinned history cannot be compacted"
+    );
+    assert!(matches!(
+        PublicationLease::shared(store.blobs()),
+        Err(LeaseError::Busy)
+    ));
+    drop(pin);
+    assert!(StoreLease::exclusive(store.blobs()).is_ok());
+}
+
+#[test]
+fn a_nonregular_publication_gate_refuses_every_committer_without_touching_the_root() {
+    use beamcraft_host::lease::PublicationLease;
+    let fx = Fixture::new();
+    let store = fx.store();
+    let accepted = commit_n(&store, 1);
+    let candidate = draft(layers(&store, 2), 2);
+    let path = fx.0.join("publication.lock");
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    let ledger = fs::read(fx.0.join("ledger/outcomes.log")).unwrap();
+    assert!(PublicationLease::exclusive(store.blobs()).is_err());
+    assert_eq!(
+        store.commit(&candidate, &expect(1)).unwrap_err(),
+        RevisionError::Storage(StorageError::UnsafeEntry)
+    );
+    assert_eq!(store.head().unwrap().unwrap(), accepted);
+    assert_eq!(fs::read(fx.0.join("ledger/outcomes.log")).unwrap(), ledger);
+    assert!(path.is_dir());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_planted_publication_gate_link_never_locks_or_changes_its_target() {
+    use beamcraft_host::lease::PublicationLease;
+    use std::os::unix::fs::symlink;
+    let fx = Fixture::new();
+    let store = fx.store();
+    let accepted = commit_n(&store, 1);
+    let candidate = draft(layers(&store, 2), 2);
+    let target = fx.0.join("sentinel");
+    fs::write(&target, b"original bytes").unwrap();
+    let path = fx.0.join("publication.lock");
+    fs::remove_file(&path).unwrap();
+    symlink(&target, &path).unwrap();
+    assert!(PublicationLease::exclusive(store.blobs()).is_err());
+    assert_eq!(
+        store.commit(&candidate, &expect(1)).unwrap_err(),
+        RevisionError::Storage(StorageError::UnsafeEntry)
+    );
+    assert_eq!(store.head().unwrap().unwrap(), accepted);
+    assert_eq!(fs::read(target).unwrap(), b"original bytes");
+    assert!(fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+}
+
 /// Commits revision `n` on top of `n - 1`.
 fn commit_n(store: &RevisionStore, n: u32) -> RevisionInfo {
     let d = draft(layers(store, n), n);

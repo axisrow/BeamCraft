@@ -203,8 +203,8 @@ pub enum RevisionError {
     OutcomeUnknown,
     /// Blob storage failed.
     Storage(StorageError),
-    /// Another holder has the store: a history compaction is running (or a commit while this
-    /// call needed the store exclusively). Nothing was written; retry later.
+    /// Another holder has the store: maintenance or an exclusive publication pin prevents
+    /// this operation. Nothing was written; retry later.
     StoreBusy,
     /// The outcome ledger failed or contradicts the root. See [`crate::ledger`].
     Ledger(LedgerError),
@@ -276,7 +276,7 @@ impl fmt::Display for RevisionError {
             Self::Aborted(_) => "commit aborted before the root switch",
             Self::OutcomeUnknown => "commit outcome unknown after the root switch",
             Self::Storage(_) => "blob storage failed",
-            Self::StoreBusy => "the store is in use by a history compaction",
+            Self::StoreBusy => "the store is in use by another operation",
             Self::Ledger(error) => match error {
                 LedgerError::RootDisagrees => "ledger records a commit that the root lacks",
                 _ => "outcome ledger failed",

@@ -143,6 +143,54 @@ impl WorkspaceLease {
     }
 }
 
+/// Separates concurrent committers from a reader that needs one store's head to stay pinned
+/// while it commits a different store, as for C03 rebase. Ordinary committers share this gate
+/// and still race through the root CAS. An exclusive holder refuses new commits immediately.
+/// A serving coordinator's maintenance lease remains compatible; compaction stays excluded.
+#[derive(Debug)]
+pub struct PublicationLease {
+    _file: File,
+    _maintenance: StoreLease,
+}
+
+impl Drop for PublicationLease {
+    fn drop(&mut self) {
+        // A forked child must not extend the logical pin until its close-on-exec runs.
+        let _ = self._file.unlock();
+    }
+}
+
+impl PublicationLease {
+    fn acquire(store: &BlobStore, exclusive: bool) -> Result<Self, LeaseError> {
+        let maintenance = StoreLease::shared(store)?;
+        let file = store
+            .open_named_lock_file(crate::storage::LockFile::Publication, true)?
+            .ok_or(LeaseError::Storage(StorageError::NotFound))?;
+        if exclusive {
+            file.try_lock().map_err(lock_error)?;
+        } else {
+            file.try_lock_shared().map_err(lock_error)?;
+        }
+        Ok(Self {
+            _file: file,
+            _maintenance: maintenance,
+        })
+    }
+
+    /// Holds the publication gate shared for a commit. Other committers remain concurrent;
+    /// an exclusive publication holder or compaction returns `Busy` without waiting.
+    pub fn shared(store: &BlobStore) -> Result<Self, LeaseError> {
+        Self::acquire(store, false)
+    }
+
+    /// Pins publication without stopping readers or a serving coordinator. Acquire before
+    /// reading the head, retain through the other store's CAS, then drop. This does not merge
+    /// models or authorize a publication, and a commit to this same store is refused while held.
+    pub fn exclusive(store: &BlobStore) -> Result<Self, LeaseError> {
+        Self::acquire(store, true)
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -185,6 +233,18 @@ mod tests {
             guard._file.try_clone().unwrap()
         };
         assert!(StoreLease::exclusive(&store).is_ok());
+        drop(inherited);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_cloned_open_description_cannot_extend_a_dropped_publication_pin() {
+        let (root, store) = store("publication");
+        let inherited = {
+            let guard = PublicationLease::exclusive(&store).unwrap();
+            guard._file.try_clone().unwrap()
+        };
+        assert!(PublicationLease::shared(&store).is_ok());
         drop(inherited);
         std::fs::remove_dir_all(root).unwrap();
     }

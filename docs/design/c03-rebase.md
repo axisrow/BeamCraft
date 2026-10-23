@@ -110,6 +110,14 @@ The published store has its own compare-and-swap. If it moves after planning, re
 the newly observed pin; never overwrite that head or report the stale plan as current. A rebase
 request authorizes no subsequent publication to a later, different head.
 
+The host's `PublicationLease` supports this boundary: ordinary committers hold its shared gate
+and retain concurrent root CAS behavior; an exclusive holder pins one store's head while it
+commits a different store. Acquire it before reading the accepted pin and retain it through the
+draft CAS. The guard also holds a shared maintenance lease, so a serving coordinator is compatible
+and compaction is excluded. A conflicting writer/pinner receives `BACKEND_UNAVAILABLE` before a
+commit intent; reads and edits of another draft remain available. This primitive does not itself
+plan, merge or recover a rebase, and the runtime still needs to use it with the metadata guard.
+
 ## Executable acceptance required before completion
 
 These are required tests to implement, not claims that they already pass:
