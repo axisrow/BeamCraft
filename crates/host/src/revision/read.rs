@@ -195,7 +195,7 @@ impl RevisionStore {
         Ok(RevisionInfo { record, manifest })
     }
 
-    /// Reads one referenced layer blob and checks its digest (by the blob store) and size.
+    /// Reads the operation evidence for a verified pin, capped, and checks its pinned size.
     pub(super) fn read_evidence(&self, pin: super::EvidencePin) -> Result<Vec<u8>, RevisionError> {
         let cap = usize::try_from(super::MAX_OPERATION_EVIDENCE_BYTES)
             .map_err(|_| RevisionError::LimitExceeded)?;
@@ -213,6 +213,7 @@ impl RevisionStore {
         Ok(bytes)
     }
 
+    /// Reads one referenced layer blob and checks its digest (by the blob store) and size.
     pub(super) fn read_entry(
         &self,
         index: usize,
