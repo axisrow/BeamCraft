@@ -40,7 +40,8 @@ use crate::plate::{
 use crate::source_file::read_file;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::reference::{
-    ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, write_foreign,
+    ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, update_source,
+    write_foreign,
 };
 use beamcraft_engine::reference_measure::{ReferenceMeshMeasurement, measure_reference_mesh};
 use beamcraft_engine::transaction::PriorOp;
@@ -50,16 +51,20 @@ use beamcraft_host::revision::{
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, ForeignPrim, Placement as LayerPlacement, Prepare, Reference,
-    ReferenceView, SourcePin, UpAxis, read_references, schema_identity, validate_layers,
+    ReferenceView, SourceFormat, SourcePin, UpAxis, read_references, schema_identity,
+    validate_layers,
 };
-use beamcraft_layer_engine::{Asset, Budgets, Opened, Prim, Reader, Value, inspect_foreign_layer};
+use beamcraft_layer_engine::{
+    Asset, BACKEND, Budgets, Identity, OpenRequest, Opened, Prim, Profile, Reader, Value,
+    inspect_foreign_layer,
+};
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::reference::{
     AttachReference, CorrectReferenceUnits, ForeignTarget, MAX_SOURCE_BYTES, MoveReference,
-    WriteForeign, check_source_path,
+    UpdateReferenceSource, WriteForeign, check_source_path,
 };
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -92,6 +97,19 @@ pub struct AttachRequest {
     pub placement: Placement,
     /// The path text of the source file as the user wrote it. It is classified before any I/O and
     /// is never stored.
+    pub source_path: String,
+}
+
+/// Inputs for an explicit R03 source replacement.
+#[derive(Debug, Clone)]
+pub struct UpdateSourceRequest {
+    /// Operation identities and project/workspace context.
+    pub ids: Ids,
+    /// Existing wrapper to update.
+    pub target_id: ElementId,
+    /// Source digest the caller inspected and expects to replace.
+    pub expected_source_digest: ContentDigest,
+    /// New local source path. It is validated before any filesystem access.
     pub source_path: String,
 }
 
@@ -138,6 +156,25 @@ pub struct Edited {
     pub revision: RevisionSummary,
     /// The declared footprint; `None` for a replay.
     pub footprint: Option<Footprint>,
+    /// R03 comparison of supported data in the previous and new pinned source snapshots.
+    pub source_comparison: Option<SourceComparison>,
+}
+
+/// Bounded source-to-source report. Unknown or unsupported meshes never count as unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceComparison {
+    /// `compared` for parsed USDA inputs; other states are explicit non-comparisons.
+    pub status: String,
+    /// Source prim paths added by the new snapshot.
+    pub added_paths: Vec<String>,
+    /// Source prim paths removed by the new snapshot.
+    pub removed_paths: Vec<String>,
+    /// Source prim paths whose supported triangle geometry differs.
+    pub changed_geometry_paths: Vec<String>,
+    /// Source prim paths whose geometry could not be compared by the triangle-only adapter.
+    pub unsupported_geometry_paths: Vec<String>,
+    /// `path:property` identities whose typed static values changed.
+    pub changed_properties: Vec<String>,
 }
 
 fn command_error(error: CommandError) -> PlateError {
@@ -482,6 +519,7 @@ fn edit(
                 foreign_layers: foreign_layers(&base),
                 revision: replay_summary(&head, recorded)?,
                 footprint: None,
+                source_comparison: None,
             });
         }
         PriorOp::Accepted { .. } => {
@@ -553,6 +591,7 @@ fn edit(
         foreign_layers: foreign,
         revision: summarize(&committed.info),
         footprint: Some(step.footprint),
+        source_comparison: None,
     })
 }
 
@@ -562,6 +601,235 @@ fn foreign_layers(base: &Base) -> Vec<(String, ContentDigest)> {
         .filter(|a| base.external.contains(&a.name))
         .map(|a| (a.name.clone(), a.digest))
         .collect()
+}
+
+fn previous_source_snapshot<'a>(
+    base: &'a Base,
+    current: &ReferenceRecord,
+    expected: ContentDigest,
+) -> Result<(SourcePin, &'a [u8]), PlateError> {
+    let asset = base
+        .assets
+        .iter()
+        .find(|asset| asset.digest == expected)
+        .ok_or(PlateError {
+            code: ErrorCode::BaseRevisionMismatch,
+            message: "the expected previous source bytes are no longer retained",
+        })?;
+    if current.source.digest == expected {
+        return Ok((current.source.clone(), &asset.bytes));
+    }
+    let format = asset
+        .name
+        .rsplit_once('.')
+        .and_then(|(_, extension)| SourceFormat::parse(extension))
+        .ok_or_else(|| integrity("retained source format is unavailable for comparison"))?;
+    let version = current
+        .source
+        .version
+        .checked_sub(1)
+        .ok_or_else(|| integrity("updated source version has no previous source version"))?;
+    Ok((
+        SourcePin {
+            digest: expected,
+            bytes: asset.bytes.len() as u64,
+            format,
+            default_prim: "HistoricalSnapshot".to_owned(),
+            version,
+            label: asset.name.clone(),
+            declared_meters_per_unit: None,
+            declared_up_axis: None,
+        },
+        &asset.bytes,
+    ))
+}
+
+fn source_snapshot_prims(pin: &SourcePin, bytes: &[u8]) -> Result<Option<Vec<Prim>>, PlateError> {
+    let name = format!("root.{}", pin.format.as_str());
+    let digest = digest_of(bytes)?;
+    if digest != pin.digest || bytes.len() as u64 != pin.bytes {
+        return Err(integrity("source comparison bytes disagree with their pin"));
+    }
+    let Some(bytes) = normalized_usda_units(bytes, pin)? else {
+        return Ok(None);
+    };
+    let digest = digest_of(&bytes)?;
+    let mut request = OpenRequest {
+        identity: Identity {
+            project: "01900000-0000-7000-8000-000000000001".into(),
+            workspace: "01900000-0000-7000-8000-000000000002".into(),
+            revision: digest,
+            generation: u64::from(pin.version),
+        },
+        root: name.clone(),
+        assets: vec![Asset {
+            name: name.clone(),
+            digest,
+            bytes,
+        }],
+        owned_layers: [name].into_iter().collect(),
+        manifest: digest,
+        backend: BACKEND,
+        profile: Profile::StaticLocal,
+        budgets: Budgets::FIRST_SLICE,
+    };
+    request.manifest = request.manifest_digest().map_err(PlateError::from)?;
+    let control = control();
+    let mut reader = Reader::default();
+    let opened = reader.open(request, &control)?;
+    Ok(Some(read_all_prims(&reader, &opened, &control)?))
+}
+
+fn normalized_usda_units(bytes: &[u8], pin: &SourcePin) -> Result<Option<Vec<u8>>, PlateError> {
+    if pin.format != SourceFormat::Usda {
+        return Ok(None);
+    }
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| integrity("pinned USDA source is not UTF-8 during comparison"))?;
+    let Some(start) = text.find('(') else {
+        return Err(integrity("pinned USDA metadata header is missing"));
+    };
+    let Some(relative_end) = text.get(start + 1..).and_then(|tail| tail.find(')')) else {
+        return Err(integrity("pinned USDA metadata header is malformed"));
+    };
+    let end = start + 1 + relative_end;
+    let header = text
+        .get(start + 1..end)
+        .ok_or_else(|| integrity("invalid USDA header"))?;
+    let mut found_units = false;
+    let mut found_axis = false;
+    let mut normalized = String::new();
+    for line in header.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("metersPerUnit") {
+            let indent = &line[..line.len() - trimmed.len()];
+            normalized.push_str(indent);
+            normalized.push_str("metersPerUnit = 0.001\n");
+            found_units = true;
+        } else if trimmed.starts_with("upAxis") {
+            let indent = &line[..line.len() - trimmed.len()];
+            normalized.push_str(indent);
+            normalized.push_str("upAxis = \"Z\"\n");
+            found_axis = true;
+        } else {
+            normalized.push_str(line);
+            normalized.push('\n');
+        }
+    }
+    if !found_units {
+        normalized.push_str("    metersPerUnit = 0.001\n");
+    }
+    if !found_axis {
+        normalized.push_str("    upAxis = \"Z\"\n");
+    }
+    let mut result = String::with_capacity(text.len() + normalized.len());
+    result.push_str(
+        text.get(..start + 1)
+            .ok_or_else(|| integrity("invalid USDA prefix"))?,
+    );
+    result.push('\n');
+    result.push_str(&normalized);
+    result.push_str(
+        text.get(end..)
+            .ok_or_else(|| integrity("invalid USDA suffix"))?,
+    );
+    Ok(Some(result.into_bytes()))
+}
+
+fn compare_source_snapshots(
+    old_pin: &SourcePin,
+    old_bytes: &[u8],
+    new_pin: &SourcePin,
+    new_bytes: &[u8],
+) -> Result<SourceComparison, PlateError> {
+    let old = source_snapshot_prims(old_pin, old_bytes)?;
+    let new = source_snapshot_prims(new_pin, new_bytes)?;
+    if old.is_none() || new.is_none() {
+        return Ok(SourceComparison {
+            status: "unsupported_binary_source".to_owned(),
+            added_paths: Vec::new(),
+            removed_paths: Vec::new(),
+            changed_geometry_paths: Vec::new(),
+            unsupported_geometry_paths: vec!["/".to_owned()],
+            changed_properties: Vec::new(),
+        });
+    }
+    let old = old.ok_or_else(|| integrity("old source comparison disappeared"))?;
+    let new = new.ok_or_else(|| integrity("new source comparison disappeared"))?;
+    let old = old
+        .iter()
+        .map(|prim| (prim.path.as_str(), prim))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let new = new
+        .iter()
+        .map(|prim| (prim.path.as_str(), prim))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let added_paths = new
+        .keys()
+        .filter(|path| !old.contains_key(**path))
+        .map(|path| (*path).to_owned())
+        .collect();
+    let removed_paths = old
+        .keys()
+        .filter(|path| !new.contains_key(**path))
+        .map(|path| (*path).to_owned())
+        .collect();
+    let mut changed_geometry_paths = Vec::new();
+    let mut unsupported_geometry_paths = Vec::new();
+    let mut changed_properties = Vec::new();
+    if old_pin.declared_meters_per_unit != new_pin.declared_meters_per_unit {
+        changed_properties.push("@stage:metersPerUnit".to_owned());
+    }
+    if old_pin.declared_up_axis != new_pin.declared_up_axis {
+        changed_properties.push("@stage:upAxis".to_owned());
+    }
+    for (path, old_prim) in &old {
+        let Some(new_prim) = new.get(path) else {
+            continue;
+        };
+        if old_prim.type_name != new_prim.type_name {
+            changed_properties.push(format!("{path}:type"));
+        }
+        let old_properties = old_prim
+            .properties
+            .iter()
+            .map(|property| (property.name.as_str(), property))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let new_properties = new_prim
+            .properties
+            .iter()
+            .map(|property| (property.name.as_str(), property))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let names = old_properties
+            .keys()
+            .chain(new_properties.keys())
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        for name in names {
+            if old_properties.get(name) != new_properties.get(name) {
+                changed_properties.push(format!("{path}:{name}"));
+            }
+        }
+        if old_prim.type_name.as_deref() == Some("Mesh")
+            || new_prim.type_name.as_deref() == Some("Mesh")
+        {
+            match (mesh_buffers(old_prim), mesh_buffers(new_prim)) {
+                (Some(old_mesh), Some(new_mesh)) if old_mesh != new_mesh => {
+                    changed_geometry_paths.push((*path).to_owned());
+                }
+                (Some(_), Some(_)) => {}
+                _ => unsupported_geometry_paths.push((*path).to_owned()),
+            }
+        }
+    }
+    Ok(SourceComparison {
+        status: "compared".to_owned(),
+        added_paths,
+        removed_paths,
+        changed_geometry_paths,
+        unsupported_geometry_paths,
+        changed_properties,
+    })
 }
 
 /// Moves a wrapper: replaces its rigid placement and nothing else. The foreign layer, the source
@@ -629,6 +897,166 @@ pub fn correct_wrapper_units(
         },
         hook,
     )
+}
+
+/// Replaces the pinned source of one existing reference wrapper in a new model revision. The
+/// prior external blob remains retained, the source version advances by one, and any old units
+/// correction is cleared because it was tied to the previous digest.
+pub fn update_wrapper_source(
+    store: &RevisionStore,
+    request: &UpdateSourceRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<Edited, PlateError> {
+    check_source_path(&request.source_path).map_err(command_error)?;
+    let control = control();
+    let (mut pin, bytes) = pin_source(&request.source_path, &control)?;
+    let (head, base) = load_base(store, &request.ids.project, &request.ids.workspace)?;
+    if head.is_none() {
+        return Err(not_found());
+    }
+    let known = read_head(&base, &control)?;
+    let current = find(&known, request.target_id).ok_or_else(not_found)?;
+    let version = if current.record.source.digest == pin.digest {
+        current.record.source.version
+    } else {
+        current
+            .record
+            .source
+            .version
+            .checked_add(1)
+            .ok_or(PlateError {
+                code: ErrorCode::LimitExceeded,
+                message: "reference source version is exhausted",
+            })?
+    };
+    pin.version = version;
+    let command = UpdateReferenceSource {
+        target_id: request.target_id,
+        expected_source_digest: request.expected_source_digest,
+        source: pin.clone(),
+    };
+    let fingerprint = command.content_fingerprint().map_err(command_error)?;
+    let op_host = host_uuid(&request.ids.op_id.to_string())?;
+    let (prior, recorded) = prior_op_with(store, &op_host, || Ok(fingerprint))?;
+    match prior {
+        PriorOp::Accepted {
+            fingerprint: accepted,
+        } if accepted == fingerprint => {
+            let (old_pin, old_bytes) =
+                previous_source_snapshot(&base, &current.record, request.expected_source_digest)?;
+            let source_comparison = compare_source_snapshots(&old_pin, old_bytes, &pin, &bytes)?;
+            return Ok(Edited {
+                replayed: true,
+                wrapper: current.clone(),
+                changed_layers: Vec::new(),
+                foreign_layers: foreign_layers(&base),
+                revision: replay_summary(&head, recorded)?,
+                footprint: None,
+                source_comparison: Some(source_comparison),
+            });
+        }
+        PriorOp::Accepted { .. } => {
+            return Err(command_error(CommandError::new(
+                ErrorCode::OpIdReuse,
+                "op_id",
+                "operation id was accepted with different source content",
+            )));
+        }
+        PriorOp::Unseen => {}
+    }
+    let (old_pin, old_bytes) =
+        previous_source_snapshot(&base, &current.record, request.expected_source_digest)?;
+    let source_comparison = compare_source_snapshots(&old_pin, old_bytes, &pin, &bytes)?;
+    let outcome = update_source(&current.record, &command).map_err(command_error)?;
+    let mut open = open_base(&base)?;
+    let layer_name = pin.layer_name();
+    if let Some(existing) = open.assets.iter().find(|asset| asset.name == layer_name) {
+        if existing.digest != pin.digest || existing.bytes != bytes {
+            return Err(integrity(
+                "a stored source layer conflicts with the new digest",
+            ));
+        }
+    } else {
+        open.assets.push(Asset {
+            name: layer_name,
+            digest: pin.digest,
+            bytes,
+        });
+    }
+    open.manifest = open.manifest_digest()?;
+    let schema = schema_identity()?;
+    let (mut author, opened) = Author::open(
+        open,
+        EditTargets {
+            authored: AUTHORED_LAYER.into(),
+            derived: DERIVED_LAYER.into(),
+        },
+        schema,
+        &control,
+    )?;
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: request.ids.op_id.to_string(),
+            actor: request.ids.actor.to_string(),
+            schema,
+            resources: Vec::new(),
+            changes: vec![Change::ReplaceReferenceSource {
+                id: request.target_id.to_string(),
+                expected_digest: request.expected_source_digest,
+                source: pin,
+            }],
+        },
+        &control,
+    )?;
+    check_footprint(&prepared, &outcome.footprint)?;
+    let before: std::collections::BTreeMap<String, ContentDigest> = base
+        .assets
+        .iter()
+        .map(|asset| (asset.name.clone(), asset.digest))
+        .collect();
+    let changed_layers = prepared
+        .layers
+        .iter()
+        .filter(|layer| before.get(&layer.name) != Some(&layer.digest))
+        .map(|layer| layer.name.clone())
+        .collect();
+    let retained = prepared
+        .retained
+        .iter()
+        .map(|asset| (asset.name.clone(), asset.digest))
+        .collect();
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            prepared: &prepared,
+            schema,
+            project: &base.project,
+            workspace: &base.workspace,
+            revision_id: &request.ids.revision_id,
+            op: op_host,
+            base_generation: base.generation,
+            expected: &base.expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("an unseen operation was reported as replayed"));
+    }
+    Ok(Edited {
+        replayed: false,
+        wrapper: reread(store, request.target_id)?.unwrap_or(Wrapper {
+            record: outcome.record.clone(),
+            status: outcome.record.units_status(),
+            layer: outcome.record.source.layer_name(),
+            foreign: Vec::new(),
+        }),
+        changed_layers,
+        foreign_layers: retained,
+        revision: summarize(&committed.info),
+        footprint: Some(outcome.footprint),
+        source_comparison: Some(source_comparison),
+    })
 }
 
 /// The verified head and its wrappers.

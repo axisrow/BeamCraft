@@ -1,7 +1,7 @@
 # R02–R03 foreign-reference measurements and updates
 
-Status: the R02 engine seam and CLI read command are implemented experimentally. R03's explicit
-source update transaction and persisted W03 result lifecycle are still required. Neither K3 nor
+Status: the R02 engine seam, CLI read command, and R03 explicit source update/comparison are
+implemented experimentally. Persisted W03 result lifecycle remains follow-up work. Neither K3 nor
 the R02/R03 plan rows are accepted by this note alone.
 
 ## R02 result contract
@@ -35,13 +35,15 @@ results are presently read-only command output; saved W03 result objects remain 
 
 ## R03 explicit source update
 
-An update is an explicit command with a new local source path and expected model head. It reads and
-validates the new USD snapshot under R01's byte and structure budgets, then commits a new wrapper
-revision with incremented source version and the new digest. It does not modify foreign content,
-resolve network paths, or update on file-system change. Existing measurements remain immutable and
-become stale because their digest/version no longer match. Supported property/geometry comparison
-is a separate report between the two pinned snapshots; missing, ambiguous, or unsupported data is
-reported as unknown/unsupported, never as equality.
+`reference-update` takes a new local source path and the expected current source digest. It reads
+and validates the new USD snapshot under R01's byte and structure budgets, then commits a new
+wrapper revision with incremented source version and the new digest. It does not modify foreign
+content, resolve network paths, or update on file-system change. Existing measurements remain
+immutable and become stale because their digest/version no longer match; a units correction is
+cleared and must be explicitly applied to the new pin. The command reports added/removed prims,
+changed typed properties, and changed triangle buffers for supported static USDA. Binary USD and
+unsupported mesh geometry produce explicit unsupported comparison status, never equality. Replay
+returns the recorded update without reapplying it.
 
 ## Evidence before acceptance
 
@@ -49,4 +51,6 @@ Required end-to-end fixtures include a closed triangle shell with independent ar
 metres and Y-up correction, wrapper rotation/translation, open and self-intersecting shells,
 malformed and over-budget arrays, and a changed source that preserves the old result while making
 it stale. Tests must prove the foreign layer bytes remain identical and the model is not modified
-by measurement. Until the CLI and W03 lifecycle coverage pass, R02/R03 stay open.
+by measurement. CLI source update and comparison tests now cover changed triangle geometry,
+retained old source bytes, version increment, cleared units correction, and exact replay. W03
+lifecycle coverage and broader measurement fixtures remain outstanding, so R02/R03 stay open.

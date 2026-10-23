@@ -479,6 +479,16 @@ pub enum Change {
     /// R01: author a new wrapper around a foreign source whose layer is already a non-owned entry
     /// of the manifest. The only foreign-facing opinion written is the reference arc.
     AttachReference(Reference),
+    /// R03: replace a pinned source on an existing wrapper. The caller supplies the expected old
+    /// digest; the replacement is a new immutable external layer and clears old unit correction.
+    ReplaceReferenceSource {
+        /// Full target UUIDv7 of the existing wrapper.
+        id: String,
+        /// Digest currently pinned by the expected base.
+        expected_digest: ContentDigest,
+        /// New source snapshot with the incremented explicit version.
+        source: SourcePin,
+    },
     /// R01: write or clear the explicit units and up-axis interpretation on the owned units level
     /// of a wrapper. The foreign content is never touched.
     ReferenceUnits {
@@ -529,6 +539,7 @@ impl Change {
             Self::Placement { id, .. } => (id, "placement"),
             Self::Mesh(m) => (&m.id, "derived"),
             Self::AttachReference(r) => (&r.id, "lifecycle"),
+            Self::ReplaceReferenceSource { id, .. } => (id, "reference:source"),
             Self::ReferenceUnits { id, .. } => (id, "reference:units"),
             Self::PartOf { id, .. } => (id, "bim:partOf"),
             Self::Level { id, .. } => (id, "bim:level"),

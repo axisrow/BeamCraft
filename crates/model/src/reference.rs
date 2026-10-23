@@ -408,6 +408,62 @@ impl AttachReference {
     }
 }
 
+/// R03 explicit source replacement for an existing read-only wrapper.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateReferenceSource {
+    /// Existing reference wrapper.
+    pub target_id: ElementId,
+    /// Digest currently recorded by the expected head.
+    pub expected_source_digest: ContentDigest,
+    /// Newly inspected foreign snapshot. Its version must be exactly the old version plus one.
+    pub source: SourcePin,
+}
+
+impl UpdateReferenceSource {
+    /// Checks the new source and rejects no-op digest replacements.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.source.validate()?;
+        if self.source.digest == self.expected_source_digest {
+            return Err(error(
+                ErrorCode::InvalidArgument,
+                "source",
+                "an explicit source update must change the source digest",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Fingerprint of the target, expected old pin, and complete new source metadata.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(256);
+        bytes.extend_from_slice(b"BeamCraft/R03/UpdateReferenceSource/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.expected_source_digest.as_bytes());
+        bytes.extend_from_slice(self.source.digest.as_bytes());
+        bytes.extend_from_slice(&self.source.bytes.to_le_bytes());
+        bytes.extend_from_slice(&self.source.version.to_le_bytes());
+        push_text(&mut bytes, self.source.format.as_str());
+        push_text(&mut bytes, &self.source.default_prim);
+        push_text(&mut bytes, &self.source.label);
+        match self.source.declared_meters_per_unit {
+            Some(value) => {
+                bytes.push(1);
+                push_f64(&mut bytes, value, "source.declared_meters_per_unit")?;
+            }
+            None => bytes.push(0),
+        }
+        match self.source.declared_up_axis {
+            Some(axis) => {
+                bytes.push(1);
+                push_text(&mut bytes, axis.as_str());
+            }
+            None => bytes.push(0),
+        }
+        Sha256::digest(&bytes).map_err(|_| digest_error())
+    }
+}
+
 /// R01 `MoveReference`: replaces the rigid placement of the wrapper. The foreign content, its
 /// units interpretation and its stored bytes are not touched.
 #[derive(Debug, Clone, PartialEq)]

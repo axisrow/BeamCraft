@@ -955,6 +955,18 @@ pub(super) fn apply(
         }
     }
     for c in &input.changes {
+        if let Change::ReplaceReferenceSource {
+            id,
+            expected_digest: _,
+            source,
+        } = c
+        {
+            control.check()?;
+            reference::check_source_asset(original, targets, source)?;
+            reference::replace_source(&mut authored, id, source)?;
+        }
+    }
+    for c in &input.changes {
         control.check()?;
         let (id, _) = c.key();
         let p = change_path(id, input, prims)?;
@@ -1265,6 +1277,20 @@ fn capture(
                 }
                 for &(name, ty) in POSE {
                     add(name, ty, 0);
+                }
+            }
+            Change::ReplaceReferenceSource { source, .. } => {
+                for &(name, ty) in reference::ATTACH_FIELDS {
+                    let absent = (name == "bim:reference:declaredMetersPerUnit"
+                        && source.declared_meters_per_unit.is_none())
+                        || (name == "bim:reference:declaredUpAxis"
+                            && source.declared_up_axis.is_none());
+                    if !absent {
+                        add(name, ty, 0);
+                    }
+                }
+                for &(name, ty) in reference::UNITS_FIELDS {
+                    add(name, ty, 2);
                 }
             }
             Change::ReferenceUnits { .. } => {

@@ -1393,7 +1393,9 @@ pub(super) fn changes(
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
                     }
-                    Change::ReferenceUnits { .. } => wrapper,
+                    Change::ReferenceUnits { .. } | Change::ReplaceReferenceSource { .. } => {
+                        wrapper
+                    }
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
                     Change::Placement { .. } => {
@@ -1743,6 +1745,18 @@ pub(super) fn changes(
             }
             Change::Label { name, .. } => label(name)?,
             Change::AttachReference(r) => reference::check_new(r)?,
+            Change::ReplaceReferenceSource {
+                id,
+                expected_digest,
+                source,
+            } => {
+                let path = change_path(id, input, prims)?;
+                let prim = prims
+                    .iter()
+                    .find(|prim| prim.path == path)
+                    .ok_or_else(|| fail(ErrorCode::NotFound, "reference wrapper not found"))?;
+                reference::check_replacement(prim, *expected_digest, source)?;
+            }
             Change::ReferenceUnits { interpretation, .. } => {
                 reference::check_units(interpretation)?
             }
@@ -1870,6 +1884,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 .chain(r.placement.orientation_xyzw)
                 .chain(r.source.declared_meters_per_unit),
         ),
+        Change::ReplaceReferenceSource { source, .. } => finite(source.declared_meters_per_unit),
         Change::ReferenceUnits { interpretation, .. } => {
             finite(interpretation.iter().map(|i| i.meters_per_unit))
         }

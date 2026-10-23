@@ -50,7 +50,7 @@ fn main() -> std::process::ExitCode {
             "Drawing documents (D03): drawing-create --store MODEL_ROOT --document-dir NEW_DIR (with drawing/view/dimension/member/anchor IDs, op/revision/actor IDs); drawing-refresh --store MODEL_ROOT --document-dir DIR --expected-head UUID (same IDs); drawing-publish --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID --version-id UUID; drawing-inspect --document-dir DIR [--model-store ROOT]; drawing-versions --document-dir DIR; drawing-export-svg --document-dir DIR --version-id UUID --out NEW_FILE.svg."
         );
         println!(
-            "Reference measurements (experimental R02): reference-measure --store ROOT (certified foreign triangle meshes return area/volume enclosures in world mm units; unsupported meshes have no values; mass is never inferred)."
+            "References (R02/R03 experimental): reference-measure --store ROOT; reference-update --store ROOT --id UUID --expected-source-digest SHA256 --source FILE (explicit update pins a new source version, retains old bytes, and clears old unit interpretation)."
         );
         return std::process::ExitCode::SUCCESS;
     }

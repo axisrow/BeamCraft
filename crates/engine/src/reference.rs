@@ -31,7 +31,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::reference::{
     AttachReference, CorrectReferenceUnits, ForeignTarget, MoveReference, PROJECT_METERS_PER_UNIT,
-    SourcePin, UnitsInterpretation, UpAxis, WriteForeign,
+    SourcePin, UnitsInterpretation, UpAxis, UpdateReferenceSource, WriteForeign,
 };
 use core::convert::Infallible;
 
@@ -204,6 +204,57 @@ pub fn attach(
             units: None,
         },
         footprint: Footprint::for_attach(command.new_id)?,
+        fingerprint: command.content_fingerprint()?,
+    })
+}
+
+/// Admitted result of an explicit R03 source replacement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateSourceOutcome {
+    /// Updated wrapper. The previous explicit units correction is cleared because it was pinned
+    /// to the old digest and cannot be silently carried to new bytes.
+    pub record: ReferenceRecord,
+    /// Source-input replacement and derived geometry invalidation.
+    pub footprint: Footprint,
+    /// Fingerprint used for exact operation replay.
+    pub fingerprint: ContentDigest,
+}
+
+/// Admits replacing an existing wrapper's pinned source. The expected digest and monotonic
+/// version make this an explicit compare-and-swap; no file-system change is followed implicitly.
+pub fn update_source(
+    current: &ReferenceRecord,
+    command: &UpdateReferenceSource,
+) -> Result<UpdateSourceOutcome, CommandError> {
+    command.validate_arguments()?;
+    same_wrapper(current, command.target_id)?;
+    if current.source.digest != command.expected_source_digest {
+        return Err(CommandError::new(
+            ErrorCode::BaseRevisionMismatch,
+            "expected_source_digest",
+            "the reference source changed since it was inspected",
+        ));
+    }
+    let version = current.source.version.checked_add(1).ok_or_else(|| {
+        CommandError::new(
+            ErrorCode::LimitExceeded,
+            "source.version",
+            "reference source version is exhausted",
+        )
+    })?;
+    if command.source.version != version {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "source.version",
+            "updated source version must increment by one",
+        ));
+    }
+    let mut record = current.clone();
+    record.source = command.source.clone();
+    record.units = None;
+    Ok(UpdateSourceOutcome {
+        record,
+        footprint: Footprint::for_update(current.id, false, false, true, false, None)?,
         fingerprint: command.content_fingerprint()?,
     })
 }

@@ -375,6 +375,99 @@ fn reference_measure_reports_non_triangle_faces_as_unsupported() {
 }
 
 #[test]
+fn explicit_reference_update_retains_old_pin_versions_source_and_replays_exactly() {
+    let f = Fixture::new();
+    let old_path = f.source("cube-v1.usda", TRIANGLE_CUBE);
+    let attached = f.attach(&old_path, &[]);
+    let reference = reference_id(&attached);
+    let old_digest = sha(TRIANGLE_CUBE.as_bytes());
+    let old_blob = f.blob_path(&old_digest);
+    let old_bytes = fs::read(&old_blob).unwrap();
+    f.ok(
+        "reference-correct-units",
+        &[
+            "--id",
+            &reference,
+            "--meters-per-unit",
+            "1",
+            "--up-axis",
+            "Z",
+        ],
+    );
+
+    let new_bytes = TRIANGLE_CUBE
+        .replace("(1, 0, 0)", "(2, 0, 0)")
+        .replace("(1, 1, 0)", "(2, 1, 0)")
+        .replace("(1, 0, 1)", "(2, 0, 1)")
+        .replace("(1, 1, 1)", "(2, 1, 1)")
+        + "\n# second explicit source snapshot\n";
+    let new_path = f.source("cube-v2.usda", &new_bytes);
+    let new_digest = sha(new_bytes.as_bytes());
+    let update_args = [
+        "--id",
+        reference.as_str(),
+        "--expected-source-digest",
+        old_digest.as_str(),
+        "--source",
+        new_path.as_str(),
+        "--op-id",
+        "01900000-0000-7000-8000-00000000000e",
+        "--revision-id",
+        "01900000-0000-7000-8000-00000000000f",
+        "--actor-id",
+        "01900000-0000-7000-8000-000000000010",
+    ];
+    let updated = f.ok("reference-update", &update_args);
+    assert_eq!(text(&updated, "outcome"), "reference_source_updated");
+    let wrapper = at(&updated, &["reference"]);
+    assert_eq!(text(at(wrapper, &["source"]), "digest"), new_digest);
+    assert_eq!(number(wrapper, &["source", "version"]), 2.0);
+    assert_eq!(text(wrapper, "units_status"), "needs_correction");
+    assert_eq!(fs::read(old_blob).unwrap(), old_bytes);
+    let layers = at(&updated, &["foreign_layers"]).array().unwrap();
+    assert!(
+        layers
+            .iter()
+            .any(|layer| text(layer, "digest") == old_digest)
+    );
+    assert!(
+        layers
+            .iter()
+            .any(|layer| text(layer, "digest") == new_digest)
+    );
+    let comparison = at(&updated, &["source_comparison"]);
+    assert!(
+        at(comparison, &["changed_geometry_paths"])
+            .array()
+            .unwrap()
+            .iter()
+            .any(|path| path.string().unwrap() == "/Cube/Body")
+    );
+    assert!(
+        at(comparison, &["changed_properties"])
+            .array()
+            .unwrap()
+            .iter()
+            .any(|path| path.string().unwrap() == "/Cube/Body:points")
+    );
+
+    let replay = f.ok("reference-update", &update_args);
+    assert_eq!(
+        text(&replay, "outcome"),
+        "reference_source_updated_replayed"
+    );
+    assert_eq!(
+        text(at(&replay, &["reference", "source"]), "digest"),
+        new_digest
+    );
+    let measured = f.ok("reference-measure", &[]);
+    assert_eq!(
+        text(&at(&measured, &["results"]).array().unwrap()[0], "status"),
+        "units_interpretation_required"
+    );
+}
+
+#[test]
 fn every_later_save_carries_the_foreign_layer_unchanged() {
     let f = Fixture::new();
     let source = f.source("site.usda", SITE);
