@@ -46,6 +46,7 @@ pub fn handles(command: &OsString) -> bool {
                 | "drawing-publish"
                 | "drawing-inspect"
                 | "drawing-versions"
+                | "drawing-export-svg"
         )
     )
 }
@@ -165,6 +166,7 @@ fn document_options(args: &[OsString]) -> Run<BTreeMap<&str, &str>> {
                 | "--actor-id"
                 | "--version-id"
                 | "--model-store"
+                | "--out"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated drawing document option"));
@@ -435,6 +437,39 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                             .filter(|revision| revision.state == State::Published)
                             .map(document_json)
                             .collect(),
+                    ),
+                ),
+            ]))
+        }
+        "drawing-export-svg" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let version = DocumentVersionId::parse(required("--version-id")?)
+                .map_err(|_| invalid("document version id must be UUIDv7"))?;
+            let revision = documents
+                .history()?
+                .into_iter()
+                .find(|revision| {
+                    revision.state == State::Published && revision.version == Some(version)
+                })
+                .ok_or(PlateError {
+                    code: ErrorCode::NotFound,
+                    message: "published drawing version is unavailable",
+                })?;
+            let svg = beamcraft_cli::drawing::document::svg::encode(&revision)?;
+            beamcraft_cli::drawing::document::svg::write_new(
+                std::path::Path::new(required("--out")?),
+                &svg,
+            )?;
+            Ok(Json::object([
+                ("outcome", Json::text("drawing_svg_exported")),
+                ("version_id", Json::text(version.to_string())),
+                ("bytes", Json::text(svg.len().to_string())),
+                (
+                    "sha256",
+                    Json::text(
+                        beamcraft_model::digest::Sha256::digest(&svg)
+                            .map_err(|_| invalid("SVG digest failed"))?
+                            .to_string(),
                     ),
                 ),
             ]))

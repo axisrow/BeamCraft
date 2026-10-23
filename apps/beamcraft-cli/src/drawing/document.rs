@@ -14,6 +14,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, DocumentVersionId, OpId};
 
 pub mod store;
+pub mod svg;
 pub use store::{DocumentRevision, DocumentStore, DocumentWrite};
 
 /// Tight bound for the complete document root, including all persisted operation metadata.

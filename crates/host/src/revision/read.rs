@@ -92,6 +92,27 @@ impl RevisionStore {
         Ok(None)
     }
 
+    /// Verified manifests for every retained head-log sequence, oldest first.
+    ///
+    /// This is a metadata-only snapshot: layer blobs are verified only when a revision is opened.
+    /// It reads the head-log extent once, which lets bounded application metadata checks scan a
+    /// history without repeating the head-log discovery for each sequence.
+    pub fn history_info(&self) -> Result<Vec<RevisionInfo>, RevisionError> {
+        let Some(directory) = self.head_dir()? else {
+            return Ok(Vec::new());
+        };
+        let Some(span) = self.span(&directory)? else {
+            return Ok(Vec::new());
+        };
+        let count = usize::try_from(span.head - span.floor + 1)
+            .map_err(|_| RevisionError::LimitExceeded)?;
+        let mut history = Vec::with_capacity(count);
+        for sequence in span.floor..=span.head {
+            history.push(self.load_at(&directory, sequence)?);
+        }
+        Ok(history)
+    }
+
     /// Opens one revision by its log sequence and verifies every layer blob it references, as
     /// [`Self::open`] does for the head. The blobs of an earlier revision stay readable as long as
     /// the store does not garbage-collect them.

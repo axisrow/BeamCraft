@@ -240,6 +240,55 @@ fn document_publication_creates_an_immutable_version_and_stale_cas_loses() {
     let base = expected_base(Some(&draft.info)).unwrap();
     let version = beamcraft_model::id::DocumentVersionId::parse(VERSION).unwrap();
     let published_op = beamcraft_model::id::OpId::parse(OP2).unwrap();
+    let unresolved = Drawing::admit(DrawingSpec {
+        id: beamcraft_model::id::DrawingId::parse(DRAWING).unwrap(),
+        name: "Member drawing".to_owned(),
+        source: source.pin(),
+        member: beamcraft_model::id::ElementId::parse(COPY).unwrap(),
+        view: ViewSpec {
+            id: beamcraft_model::id::DrawingViewId::parse(VIEW).unwrap(),
+            plane: Plane::Front,
+            scale_denominator: 100.0,
+            paper_origin_mm: [0.0, 0.0],
+        },
+        dimension: DimensionSpec {
+            id: beamcraft_model::id::DimensionId::parse(DIMENSION).unwrap(),
+            anchors: [
+                FeatureId::parse(&format!("fid1:{COPY}:member:v.x0.y0.z0")).unwrap(),
+                FeatureId::parse(&format!("fid1:{COPY}:member:v.x0.y0.z1")).unwrap(),
+            ],
+            paper_offset_mm: 10.0,
+            decimal_places: 0,
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        documents
+            .commit(
+                &base,
+                DocumentWrite {
+                    revision: beamcraft_model::id::Uuid7::parse(
+                        "01900000-0000-7000-8000-000000000010"
+                    )
+                    .unwrap(),
+                    operation: beamcraft_model::id::OpId::parse(
+                        "01900000-0000-7000-8000-000000000011"
+                    )
+                    .unwrap(),
+                    actor: actor(),
+                    drawing: &unresolved,
+                    source: &source,
+                    state: State::Published,
+                    version: Some(version),
+                    latest_published: Some(version),
+                },
+            )
+            .unwrap_err()
+            .code
+            .as_str(),
+        "DEPENDENCY_UNAVAILABLE"
+    );
+    assert_eq!(documents.head().unwrap().info, draft.info);
     let (_, published) = documents
         .commit(
             &base,
