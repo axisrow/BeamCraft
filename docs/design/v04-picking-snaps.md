@@ -82,15 +82,18 @@ used.
 
 ## Evidence
 
-- `apps/beamcraft-cli/tests/pick.rs` (4 end-to-end tests through the binary): positions derived from
+- `apps/beamcraft-cli/tests/pick.rs` (5 end-to-end tests through the binary): positions derived from
   the command inputs and the F06 frame rules (plate top face, a horizontal beam's `f.y1`, the
   plate's far corner, vertex and edge and face counts around it, axis start and mid point); ids
-  survive a move and differ on a copy; index addresses, dangling and malformed ids; a holed plate
-  is skipped and an attached foreign reference is never hit; every limit and input error; the head
-  is unchanged by queries.
+  survive a move and differ on a copy; index addresses, dangling and malformed ids; an I-section
+  member and a holed plate are hit at element level by their mesh, a ray through the plate's hole
+  hits nothing, and an attached foreign reference is never hit (the holed plate is in `skipped`
+  only on the point form); every limit and input error; the head is unchanged by queries.
 - Engine unit tests: FeatureId grammar and refusals, the 26 features with outward rectangular faces,
   world equals local plus translation, front and back face hits, the inclusive band with `t`
-  clamped at the segment end, ordering and truncation, input validation, snap.
+  clamped at the segment end, ordering and truncation, input validation, snap; a body without box
+  features (a kernel prism) is picked by its mesh at element level, with the mesh hit's front and
+  back faces, the miss beyond the slanted edge while still scanned, and the `skipped` cases.
 
 ## Not done
 
