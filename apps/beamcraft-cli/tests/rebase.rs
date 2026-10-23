@@ -422,3 +422,230 @@ fn accepted_head_is_pinned_while_a_concurrent_local_edit_wins_the_draft_cas() {
         "concurrent local"
     );
 }
+
+#[test]
+fn both_clients_new_parts_and_immutable_materials_survive_rebase() {
+    let f = Fixture::new(false);
+    for (name, n, density) in [("a", 12, "8000"), ("b", 13, "7000")] {
+        let material = f.ok(&[
+            "define-material",
+            "--store",
+            f.s(name),
+            "--density",
+            density,
+            "--name",
+            name,
+        ]);
+        let digest = text(material.get("definition").unwrap(), "digest");
+        f.ok(&[
+            "create-plate",
+            "--store",
+            f.s(name),
+            "--width",
+            "10",
+            "--length",
+            "20",
+            "--thickness",
+            "3",
+            "--new-id",
+            &id(n),
+            "--name",
+            name,
+            "--material-digest",
+            digest,
+        ]);
+    }
+    let original = f.head("b");
+    f.publish("a");
+    let accepted = f.head("published");
+    let (code, result) = f.rebase(500, &accepted, &original);
+    assert_eq!(code, 0, "{result:?}");
+    f.publish("b");
+    let report = plate::inspect(&store(&f.path("published"))).unwrap();
+    assert_eq!(report.plates.len(), 4);
+    assert_eq!(report.definitions.len(), 3);
+    for (n, mass) in [(12, 0.0048), (13, 0.0042)] {
+        let part = report
+            .plates
+            .iter()
+            .find(|p| p.authored.id == ElementId::parse(&id(n)).unwrap())
+            .unwrap();
+        assert_eq!(part.quantities.volume_mm3, 600.0);
+        assert!((part.quantities.mass_kg.unwrap() - mass).abs() < 1e-12);
+    }
+}
+
+#[test]
+fn repeated_rebase_retains_unsent_ids_and_undo_stops_at_the_latest_combined_basis() {
+    use beamcraft_cli::workspace::rebase_receipt::RebaseReceipt;
+    let f = Fixture::new(false);
+    f.update("b", 11, &["--name", "local"]);
+    let original = f.head("b");
+    f.update("a", 10, &["--name", "accepted first"]);
+    f.publish("a");
+    let first = f.head("published");
+    assert_eq!(f.rebase(500, &first, &original).0, 0);
+    let combined = f.head("b");
+    f.update("a", 10, &["--name", "accepted second"]);
+    f.publish("a");
+    let second = f.head("published");
+    let (code, result) = f.rebase(501, &second, &combined);
+    assert_eq!(code, 0, "{result:?}");
+    let latest = f.head("b");
+    let receipt = RebaseReceipt::decode(
+        &store(&f.path("b"))
+            .open()
+            .unwrap()
+            .operation_evidence()
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt.operations.len(), 2);
+    assert_eq!(receipt.operations[0].result, original.manifest_digest());
+    assert_eq!(receipt.operations[1].result, combined.manifest_digest());
+    assert_eq!(f.rebase(500, &first, &original).0, 0);
+    assert_eq!(f.head("b").manifest_digest(), latest.manifest_digest());
+    let (code, refused) = f.run(&["workspace-undo", "--workspace-dir", f.s("b")]);
+    assert_eq!(code, 2, "{refused:?}");
+    f.update("b", 11, &["--name", "after combined basis"]);
+    f.ok(&["workspace-undo", "--workspace-dir", f.s("b")]);
+    f.publish("b");
+    let report = plate::inspect(&store(&f.path("published"))).unwrap();
+    for (n, name) in [(10, "accepted second"), (11, "local")] {
+        assert_eq!(
+            report
+                .plates
+                .iter()
+                .find(|p| p.authored.id == ElementId::parse(&id(n)).unwrap())
+                .unwrap()
+                .authored
+                .name,
+            name
+        );
+    }
+}
+
+#[test]
+fn an_unpublished_weld_conflicts_with_deleting_its_linked_part() {
+    let f = Fixture::new(false);
+    f.ok(&[
+        "create-weld",
+        "--name",
+        "Local weld",
+        "--store",
+        f.s("b"),
+        "--new-id",
+        &id(12),
+        "--main",
+        &id(10),
+        "--secondary",
+        &id(11),
+        "--size",
+        "6",
+        "--location",
+        "workshop",
+        "--side",
+        "both",
+    ]);
+    f.ok(&["delete-element", "--store", f.s("a"), "--id", &id(10)]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let metadata = fs::read(f.path("b").join("workspace.json")).unwrap();
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    assert!(
+        result
+            .get("diagnostics")
+            .unwrap()
+            .array()
+            .unwrap()
+            .iter()
+            .any(|d| text(d, "target") == id(10) && text(d, "group") == "lifecycle")
+    );
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        accepted.manifest_digest()
+    );
+    assert_eq!(
+        fs::read(f.path("b").join("workspace.json")).unwrap(),
+        metadata
+    );
+}
+
+#[test]
+fn an_interrupted_runtime_request_retries_once_and_recovers_beyond_a_later_edit() {
+    use beamcraft_host::revision::Injected;
+    for point in [CommitPoint::Checked, CommitPoint::Switched] {
+        let f = Fixture::new(false);
+        f.update("b", 11, &["--name", "local"]);
+        let original = f.head("b");
+        f.update("a", 10, &["--name", "remote"]);
+        f.publish("a");
+        let accepted = f.head("published");
+        let mut reached = false;
+        let mut hook = |seen| {
+            if seen == point {
+                reached = true;
+                Err(Injected)
+            } else {
+                Ok(())
+            }
+        };
+        let attempted = rebase_workspace(
+            &store(&f.path("published")),
+            &store(&f.path("b")),
+            &f.path("b"),
+            &RebaseRequest {
+                op_id: OpId::parse(&id(500)).unwrap(),
+                actor: Uuid7::parse(&id(3)).unwrap(),
+                expected_head: accepted.revision().clone(),
+                expected_draft: original.revision().clone(),
+            },
+            &mut hook,
+        );
+        let code = attempted.err().unwrap().code;
+        assert!(reached);
+        if point == CommitPoint::Switched {
+            assert_eq!(code, ErrorCode::OutcomeUnknown);
+            f.update("b", 11, &["--name", "later local"]);
+        }
+        let (code, result) = f.rebase(500, &accepted, &original);
+        assert_eq!(code, 0, "{result:?}");
+        assert_eq!(
+            text(&result, "outcome"),
+            if point == CommitPoint::Switched {
+                "workspace_rebase_replayed"
+            } else {
+                "workspace_rebased"
+            }
+        );
+        assert_eq!(
+            f.head("b").sequence(),
+            original.sequence() + if point == CommitPoint::Switched { 2 } else { 1 }
+        );
+        assert_eq!(
+            f.head("published").manifest_digest(),
+            accepted.manifest_digest()
+        );
+        let expected = if point == CommitPoint::Switched {
+            "later local"
+        } else {
+            "local"
+        };
+        assert_eq!(
+            plate::inspect(&store(&f.path("b")))
+                .unwrap()
+                .plates
+                .iter()
+                .find(|p| p.authored.id == ElementId::parse(&id(11)).unwrap())
+                .unwrap()
+                .authored
+                .name,
+            expected
+        );
+    }
+}
