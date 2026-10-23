@@ -233,3 +233,21 @@ fn independent_operation_and_dependency_caps_are_checked_before_expansion() {
     receipt.draft.manifest = digest(9000);
     assert!(receipt.encode().is_err());
 }
+
+#[test]
+fn the_last_legal_history_slot_is_usable_but_cannot_overflow_into_a_candidate() {
+    let mut receipt = sample();
+    receipt.accepted.sequence = MAX_REVISIONS;
+    receipt.draft.sequence = MAX_REVISIONS - 1;
+    receipt.old_meta.synced_sequence = MAX_REVISIONS - 2;
+    assert_eq!(
+        RebaseReceipt::decode(&receipt.encode().unwrap()).unwrap(),
+        receipt
+    );
+    receipt.draft.sequence += 1;
+    receipt.old_meta.synced_sequence += 1;
+    assert_eq!(
+        receipt.encode().unwrap_err().code,
+        beamcraft_model::error::ErrorCode::LimitExceeded
+    );
+}
