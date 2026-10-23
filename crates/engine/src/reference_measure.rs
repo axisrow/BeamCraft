@@ -19,6 +19,15 @@ use beamcraft_model::error::ErrorCode;
 /// Algorithm identity for this experimental result format.
 pub const REFERENCE_MEASUREMENT_ALGORITHM: &str = "reference-triangle-shell-enclosure/1";
 
+/// A closed lower/upper bound returned by a certified reference measurement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeasurementEnclosure {
+    /// Inclusive lower bound.
+    pub lo: f64,
+    /// Inclusive upper bound.
+    pub hi: f64,
+}
+
 /// One independent result for one mesh in one pinned reference.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReferenceMeshMeasurement {
@@ -33,9 +42,9 @@ pub struct ReferenceMeshMeasurement {
     /// Geometry certification result. Only `Certified` has values.
     pub shell_status: ShellStatus,
     /// Conservative enclosure of surface area in square millimetres.
-    pub area_mm2: Option<beamcraft_kernel::enclosure::Enclosure>,
+    pub area_mm2: Option<MeasurementEnclosure>,
     /// Conservative enclosure of enclosed volume in cubic millimetres.
-    pub volume_mm3: Option<beamcraft_kernel::enclosure::Enclosure>,
+    pub volume_mm3: Option<MeasurementEnclosure>,
     /// Foreign mesh quantities never become current BeamCraft engineering quantities.
     pub engineering_quantity_status: beamcraft_kernel::measure::QuantityStatus,
 }
@@ -103,10 +112,31 @@ pub fn measure_reference_mesh(
         source_version: reference.source.version,
         input_signature,
         shell_status: measured.shell_status(),
-        area_mm2: measured.area_mm2(),
-        volume_mm3: measured.volume_mm3(),
+        area_mm2: measured
+            .area_mm2()
+            .map(|e| MeasurementEnclosure { lo: e.lo, hi: e.hi }),
+        volume_mm3: measured
+            .volume_mm3()
+            .map(|e| MeasurementEnclosure { lo: e.lo, hi: e.hi }),
         engineering_quantity_status: measured.quantity_status(),
     })
+}
+
+/// Builds and measures a bounded triangle mesh from foreign USD buffers without exposing the
+/// kernel mesh type to the CLI layer.
+pub fn measure_reference_mesh_buffers(
+    reference: &ReferenceRecord,
+    vertices: &[[f64; 3]],
+    triangles: &[[u32; 3]],
+) -> Result<ReferenceMeshMeasurement, CommandError> {
+    let mesh = TriMesh::from_buffers(vertices, triangles).map_err(|_| {
+        CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "mesh",
+            "foreign mesh buffers are outside supported geometry bounds",
+        )
+    })?;
+    measure_reference_mesh(reference, &mesh)
 }
 
 #[cfg(test)]
@@ -175,8 +205,10 @@ mod tests {
     fn applies_explicit_units_and_reports_mesh_enclosures_not_engineering_quantities() {
         let result = measure_reference_mesh(&reference(1.0), &cube()).unwrap();
         assert_eq!(result.shell_status, ShellStatus::Certified);
-        assert!(result.area_mm2.unwrap().contains(6_000_000.0));
-        assert!(result.volume_mm3.unwrap().contains(1_000_000_000.0));
+        let area = result.area_mm2.unwrap();
+        let volume = result.volume_mm3.unwrap();
+        assert!(area.lo <= 6_000_000.0 && area.hi >= 6_000_000.0);
+        assert!(volume.lo <= 1_000_000_000.0 && volume.hi >= 1_000_000_000.0);
         assert_eq!(
             result.engineering_quantity_status,
             beamcraft_kernel::measure::QuantityStatus::Unsupported
