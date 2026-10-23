@@ -201,6 +201,7 @@ beamcraft drawing-preview --store ROOT --id MEMBER_UUIDV7
   --anchor-a QUALIFIED_VERTEX_ID --anchor-b QUALIFIED_VERTEX_ID
   [--plane front|top|right] [--scale 100] [--origin X,Y] [--offset MM]
   [--decimals 0..3] [--name TEXT]
+  [--intent-out NEW_FILE.usda]
 ```
 
 The engine projects twelve named edges of a real canonical rectangular member and measures the
@@ -214,6 +215,14 @@ IDs, retained anchor IDs, paper geometry and resolution states. A deleted owner,
 body or anchors that project to less than 0.001 mm are explicitly unresolved with no numeric
 dimension value. All output coordinates/offsets are capped at 10000 paper mm; scale is 1..10000.
 The command is read-only and does not yet save/publish a drawing or export a document version.
+
+`--intent-out` optionally creates a new ordinary USDA intent file after complete admission,
+source inspection and projection. It never overwrites a destination and reports `intent_digest`.
+The separate `beamcraft-drawing-usd/1` schema records intent and exact source pins, without copying
+the model into it. This standalone intent is not a published version or a self-contained source
+archive. The library `drawing::codec::{encode, decode}` uses admitted engine intent and bounded
+USD reading/re-admission (16 KiB, three prims, canonical closed fields); source verification is
+still a separate prerequisite. Historical publication/archive and derived geometry follow in D03.
 
 ### Semantic feature addresses (D01.1)
 

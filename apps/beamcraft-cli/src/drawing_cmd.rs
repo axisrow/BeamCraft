@@ -18,6 +18,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{
     DimensionId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
 };
+use std::io::Write;
 use std::{collections::BTreeMap, ffi::OsString};
 
 type Run<T> = Result<T, PlateError>;
@@ -142,6 +143,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 | "--origin"
                 | "--offset"
                 | "--decimals"
+                | "--intent-out"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated drawing option"));
@@ -236,7 +238,11 @@ fn run(args: &[OsString]) -> Run<Json> {
     let (body, dimension_geometry) =
         geometry_json(projection::resolve(&drawing, &inspection.snapshot)?)?;
     let spec = drawing.spec();
-    Ok(Json::object([
+    let intent = options
+        .get("--intent-out")
+        .map(|_| beamcraft_cli::drawing::codec::encode(&drawing))
+        .transpose()?;
+    let result = Json::object([
         ("outcome", Json::text("drawing_preview")),
         ("drawing_id", Json::text(id.to_string())),
         ("view_id", Json::text(view_id.to_string())),
@@ -274,5 +280,33 @@ fn run(args: &[OsString]) -> Run<Json> {
         ),
         ("body", body),
         ("dimension", dimension_geometry),
-    ]))
+        (
+            "intent_digest",
+            intent
+                .as_ref()
+                .map_or(Json::Null, |asset| Json::text(asset.digest.to_string())),
+        ),
+    ]);
+    if let (Some(path), Some(asset)) = (options.get("--intent-out"), intent) {
+        // Reserve after all admission, source inspection, geometry and serialization succeed.
+        // An existing destination is never opened for writing or removed.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .map_err(|_| invalid("drawing intent destination exists or cannot be created"))?;
+        if file
+            .write_all(&asset.bytes)
+            .and_then(|()| file.sync_all())
+            .is_err()
+        {
+            drop(file);
+            let _ = std::fs::remove_file(path);
+            return Err(PlateError {
+                code: ErrorCode::BackendUnavailable,
+                message: "drawing intent could not be written",
+            });
+        }
+    }
+    Ok(result)
 }

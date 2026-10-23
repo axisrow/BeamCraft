@@ -289,3 +289,78 @@ fn malformed_or_unbounded_preview_refuses_without_writing_the_model() {
     );
     assert_eq!(f.head(), head);
 }
+
+#[test]
+fn real_cli_exports_reopenable_usd_intent_without_overwriting_or_modifying_the_model() {
+    use beamcraft_cli::drawing::codec;
+    use beamcraft_layer_engine::{Asset, Cancellation, Control, Identity};
+    use beamcraft_model::digest::ContentDigest;
+    use std::time::{Duration, Instant};
+    let f = Fixture::new();
+    model(&f);
+    let head = f.head();
+    let a = format!("fid1:{MEMBER}:member:v.x0.y0.z0");
+    let b = format!("fid1:{MEMBER}:member:v.x0.y0.z1");
+    let output = f.root.join("intent.usda");
+    let mut options = args(MEMBER, &a, &b);
+    options.extend(["--intent-out".into(), output.to_str().unwrap().into()]);
+    let argv = options.iter().map(String::as_str).collect::<Vec<_>>();
+    let result = f.ok("drawing-preview", &argv);
+    let bytes = fs::read(&output).unwrap();
+    let digest = text(&result, "intent_digest")
+        .parse::<ContentDigest>()
+        .unwrap();
+    let decoded = codec::decode(
+        Asset {
+            name: codec::INTENT_LAYER.into(),
+            digest,
+            bytes: bytes.clone(),
+        },
+        Identity {
+            project: text(at(&result, &["source"]), "project_id"),
+            workspace: DRAWING.into(),
+            revision: digest,
+            generation: 1,
+        },
+        &Control {
+            cancellation: Cancellation::default(),
+            deadline: Instant::now() + Duration::from_secs(30),
+        },
+    )
+    .unwrap();
+    assert_eq!(decoded.spec().id.to_string(), DRAWING);
+    assert_eq!(decoded.spec().source.revision.to_string(), head);
+    assert_eq!(
+        decoded
+            .spec()
+            .dimension
+            .anchors
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>(),
+        list(&result, "anchor_ids")
+            .iter()
+            .map(|j| j.string().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(f.refused("drawing-preview", &argv).0, "INVALID_ARGUMENT");
+    assert_eq!(fs::read(&output).unwrap(), bytes);
+    assert_eq!(f.head(), head);
+    let missing = f.root.join("not-created.usda");
+    let mut invalid = args(MEMBER, &a, &b);
+    invalid.extend([
+        "--intent-out".into(),
+        missing.to_str().unwrap().into(),
+        "--scale".into(),
+        "0".into(),
+    ]);
+    assert_eq!(
+        f.refused(
+            "drawing-preview",
+            &invalid.iter().map(String::as_str).collect::<Vec<_>>()
+        )
+        .0,
+        "INVALID_ARGUMENT"
+    );
+    assert!(!missing.exists());
+}
