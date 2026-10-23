@@ -166,6 +166,180 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn hostile_contexts_metadata_and_pinned_blobs_refuse_without_a_partial_rebase() {
+    use beamcraft_host::revision::{ExpectedBase, NoFault, RevisionDraft};
+    use beamcraft_model::digest::Sha256;
+
+    for case in [
+        "project",
+        "schema",
+        "workspace",
+        "base-manifest",
+        "base-blob",
+        "evidence",
+        "metadata-version",
+        "metadata-cap",
+        "metadata-cap-plus-one",
+    ] {
+        let f = Fixture::new(false);
+        f.update("a", 10, &["--name", "accepted"]);
+        f.update("b", 11, &["--name", "unsent"]);
+        f.publish("a");
+        let draft = f.head("b");
+        let original_accepted = f.head("published");
+        let mut accepted_path = f.path("published");
+        if ["project", "schema", "workspace"].contains(&case) {
+            // A different store with otherwise real, identical layer blobs is not this draft's
+            // accepted project/basis. Do not let matching visible model content authorize it.
+            let published = store(&f.path("published"));
+            let old = published.open().unwrap();
+            let c = old.manifest().content();
+            accepted_path = f.path("wrong-store");
+            fs::create_dir(&accepted_path).unwrap();
+            let wrong = store(&accepted_path);
+            for entry in c.entries() {
+                wrong
+                    .blobs()
+                    .publish(&old.layer_bytes(entry.name()).unwrap())
+                    .unwrap();
+            }
+            wrong
+                .commit_with(
+                    &RevisionDraft {
+                        project: if case == "project" {
+                            Uuid7::parse(&id(900)).unwrap()
+                        } else {
+                            c.project().clone()
+                        },
+                        workspace: if case == "workspace" {
+                            Uuid7::parse(&id(901)).unwrap()
+                        } else {
+                            c.workspace().clone()
+                        },
+                        schema: if case == "schema" {
+                            Sha256::digest(b"unsupported schema").unwrap()
+                        } else {
+                            c.schema()
+                        },
+                        revision: Uuid7::parse(&id(902)).unwrap(),
+                        op: Uuid7::parse(&id(903)).unwrap(),
+                        workspace_generation: c.workspace_generation() + 1,
+                        root_layer: c.root_layer().into(),
+                        entries: c.entries().to_vec(),
+                    },
+                    &ExpectedBase::Initial,
+                    None,
+                    &mut NoFault,
+                )
+                .unwrap();
+        }
+        let metadata_path = f.path("b").join("workspace.json");
+        let meta = workspace::read_meta(&f.path("b")).unwrap();
+        let mut damaged_blob = None;
+        match case {
+            "metadata-version" => {
+                let original = fs::read_to_string(&metadata_path).unwrap();
+                fs::write(
+                    &metadata_path,
+                    original.replacen("workspace 1", "workspace 999", 1),
+                )
+                .unwrap();
+            }
+            "metadata-cap" => fs::write(&metadata_path, vec![b'x'; 4096]).unwrap(),
+            "metadata-cap-plus-one" => fs::write(&metadata_path, vec![b'x'; 4097]).unwrap(),
+            "base-manifest" | "base-blob" | "evidence" => {
+                let (name, digest) = if case == "evidence" {
+                    (
+                        "b",
+                        draft
+                            .manifest()
+                            .content()
+                            .operation_evidence()
+                            .unwrap()
+                            .digest(),
+                    )
+                } else if case == "base-manifest" {
+                    ("published", meta.base_manifest)
+                } else {
+                    let base = store(&f.path("published"))
+                        .open_at(
+                            store(&f.path("published"))
+                                .sequence_of(&meta.base_revision)
+                                .unwrap()
+                                .unwrap(),
+                        )
+                        .unwrap();
+                    (
+                        "published",
+                        base.manifest()
+                            .content()
+                            .entries()
+                            .iter()
+                            .find(|e| e.name() == plate::AUTHORED_LAYER)
+                            .unwrap()
+                            .digest(),
+                    )
+                };
+                let digest = digest.to_string();
+                let prefix: String = digest.chars().take(2).collect();
+                let path = f.path(name).join("blobs").join(prefix).join(digest);
+                fs::write(&path, b"truncated and not the pinned digest").unwrap();
+                damaged_blob = Some(path);
+            }
+            _ => (),
+        }
+        let accepted = store(&accepted_path).head().unwrap().unwrap();
+        let bytes = fs::read(&metadata_path).unwrap();
+        let (code, result) = f.run(&[
+            "rebase-workspace",
+            "--store",
+            accepted_path.to_str().unwrap(),
+            "--workspace-dir",
+            f.s("b"),
+            "--op-id",
+            &id(500),
+            "--expected-head",
+            accepted.revision().as_str(),
+            "--expected-draft",
+            draft.revision().as_str(),
+        ]);
+        assert_ne!(code, 0, "{case}: {result:?}");
+        assert_ne!(
+            text(&result, "code"),
+            "DEPENDENCY_CONFLICT",
+            "{case}: malformed input is not a semantic conflict"
+        );
+        assert_eq!(
+            f.head("b").manifest_digest(),
+            draft.manifest_digest(),
+            "{case}"
+        );
+        assert_eq!(
+            f.head("published").manifest_digest(),
+            original_accepted.manifest_digest(),
+            "{case}"
+        );
+        assert_eq!(
+            store(&accepted_path)
+                .head()
+                .unwrap()
+                .unwrap()
+                .manifest_digest(),
+            accepted.manifest_digest(),
+            "{case}"
+        );
+        assert_eq!(fs::read(&metadata_path).unwrap(), bytes, "{case}");
+        assert!(!f.path("b").join("rebase.pending").exists(), "{case}");
+        if let Some(path) = damaged_blob {
+            assert_eq!(
+                fs::read(path).unwrap(),
+                b"truncated and not the pinned digest"
+            );
+        }
+    }
+}
+
+#[test]
 fn independent_edits_rebase_without_publishing_and_replay_after_a_later_edit() {
     for same_part in [false, true] {
         let f = Fixture::new(!same_part);
