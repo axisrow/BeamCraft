@@ -77,7 +77,8 @@ impl WorkspaceState {
     /// moving the already-published local prefix backwards. `None` only creates an absent file.
     /// A stale snapshot is `BASE_REVISION_MISMATCH` before any temporary file is written. Equal
     /// expected/result metadata is an unchanged success (`false`), otherwise the result is `true`.
-    /// The old wire bytes remain v1. As with the revision store, directory-entry durability is
+    /// A zero rebase boundary preserves v1 bytes; a nonzero one uses canonical v2. As with the
+    /// revision store, directory-entry durability is
     /// not guaranteed; the complete temporary file is synced before rename.
     pub fn compare_and_swap(
         &mut self,
@@ -89,15 +90,17 @@ impl WorkspaceState {
             return Err(changed());
         }
         if next.synced_sequence == 0
+            || next.rebase_sequence > beamcraft_host::revision::MAX_REVISIONS
             || current.as_ref().is_some_and(|old| {
                 old.workspace_id != next.workspace_id
                     || old.user_id != next.user_id
                     || next.synced_sequence < old.synced_sequence
+                    || next.rebase_sequence < old.rebase_sequence
             })
         {
             return Err(PlateError::new(
                 ErrorCode::InvalidArgument,
-                "workspace identity or published prefix cannot move backwards",
+                "workspace identity, published prefix or rebase boundary cannot move backwards",
             ));
         }
         if current.as_ref() == Some(next) {

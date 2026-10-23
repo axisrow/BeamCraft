@@ -31,9 +31,11 @@ use std::path::{Path, PathBuf};
 
 mod state;
 pub use state::WorkspaceState;
+pub mod rebase_receipt;
 
 const META_FILE: &str = "workspace.json";
 const META_MAGIC: &str = "beamcraft-workspace 1";
+const META_MAGIC_REBASED: &str = "beamcraft-workspace 2";
 const META_CAP: u64 = 4096;
 
 fn unusable() -> PlateError {
@@ -56,23 +58,36 @@ pub struct WorkspaceMeta {
     pub base_manifest: ContentDigest,
     /// Draft head sequence that is already published (or was forked from the published head).
     pub synced_sequence: u64,
+    /// Latest local rebase candidate. Publication cannot end before it. Zero keeps v1 bytes;
+    /// this is separate from the already-published prefix and never marks unsent edits published.
+    pub rebase_sequence: u64,
 }
 
 impl WorkspaceMeta {
     fn encode(&self) -> String {
-        format!(
-            "{META_MAGIC}\nworkspace_id={}\nuser_id={}\nbase_revision={}\nbase_manifest={}\nsynced_sequence={}\n",
+        let magic = if self.rebase_sequence == 0 {
+            META_MAGIC
+        } else {
+            META_MAGIC_REBASED
+        };
+        let mut out = format!(
+            "{magic}\nworkspace_id={}\nuser_id={}\nbase_revision={}\nbase_manifest={}\nsynced_sequence={}\n",
             self.workspace_id.as_str(),
             self.user_id.as_str(),
             self.base_revision.as_str(),
             self.base_manifest,
             self.synced_sequence
-        )
+        );
+        if self.rebase_sequence != 0 {
+            out.push_str(&format!("rebase_sequence={}\n", self.rebase_sequence));
+        }
+        out
     }
 
     fn decode(text: &str) -> Result<Self, PlateError> {
         let mut lines = text.lines();
-        if lines.next() != Some(META_MAGIC) {
+        let magic = lines.next();
+        if magic != Some(META_MAGIC) && magic != Some(META_MAGIC_REBASED) {
             return Err(unusable());
         }
         let mut field = |key: &str| -> Result<&str, PlateError> {
@@ -87,16 +102,32 @@ impl WorkspaceMeta {
         let base_revision = host_uuid(field("base_revision")?)?;
         let base_manifest = field("base_manifest")?.parse().map_err(|_| unusable())?;
         let synced_sequence = field("synced_sequence")?.parse().map_err(|_| unusable())?;
+        let rebase_sequence = if magic == Some(META_MAGIC_REBASED) {
+            let sequence = field("rebase_sequence")?
+                .parse::<u64>()
+                .map_err(|_| unusable())?;
+            if sequence == 0 || sequence > beamcraft_host::revision::MAX_REVISIONS {
+                return Err(unusable());
+            }
+            sequence
+        } else {
+            0
+        };
         if lines.next().is_some() {
             return Err(unusable());
         }
-        Ok(Self {
+        let meta = Self {
             workspace_id,
             user_id,
             base_revision,
             base_manifest,
             synced_sequence,
-        })
+            rebase_sequence,
+        };
+        if rebase_sequence != 0 && meta.encode() != text {
+            return Err(unusable());
+        }
+        Ok(meta)
     }
 }
 
@@ -227,6 +258,7 @@ pub fn create_workspace(
             base_revision: revision.info().revision().clone(),
             base_manifest: revision.info().manifest_digest(),
             synced_sequence: 1,
+            rebase_sequence: 0,
         };
         write_meta(dir, None, &meta)?;
         meta
@@ -264,6 +296,11 @@ pub fn status(
 ) -> Result<WorkspaceStatus, PlateError> {
     let meta = read_meta(dir)?;
     let draft = head_of(workspace)?.ok_or_else(|| integrity("the workspace has no revision"))?;
+    if meta.rebase_sequence > draft.sequence() {
+        return Err(integrity(
+            "workspace rebase boundary is beyond its draft head",
+        ));
+    }
     let head =
         head_of(published)?.ok_or_else(|| integrity("the published store has no revision"))?;
     Ok(WorkspaceStatus {
@@ -302,6 +339,11 @@ pub fn publish_workspace(
     let meta = read_meta(dir)?;
     let draft = workspace.open()?;
     let draft_sequence = draft.info().sequence();
+    if meta.rebase_sequence > draft_sequence {
+        return Err(integrity(
+            "workspace rebase boundary is beyond its draft head",
+        ));
+    }
     let op = draft.info().revision().clone();
     let head = published.open().map_err(|e| match e {
         RevisionError::NoRevision => integrity("the published store has no revision"),

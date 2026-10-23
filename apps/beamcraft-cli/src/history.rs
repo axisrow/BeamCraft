@@ -24,7 +24,8 @@
 //! process restart or a crash between the intent and the commit leaves a consistent state: an
 //! intent without a revision is ignored, and repeating it with the same `op_id` finishes it.
 //!
-//! Limits: undo reaches back to the fork point and not before; the history is read from the log
+//! Limits: snapshot undo stops at the latest rebase candidate (or the fork point), preserving
+//! the combined accepted basis; later edits remain undo/redo units. History is read from the log
 //! (bounded to [`MAX_REVISIONS`] revisions and [`LOG_CAP`] bytes); undo does not touch the
 //! published store (a later publish sends the draft head as it is).
 
@@ -180,8 +181,13 @@ impl Timeline {
 
 /// Derives the undo and redo stacks of the draft in `dir`.
 pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, PlateError> {
-    read_meta(dir)?;
+    let meta = read_meta(dir)?;
     let head = head_of(workspace)?;
+    if meta.rebase_sequence > head.sequence() {
+        return Err(integrity(
+            "workspace rebase boundary is beyond its draft head",
+        ));
+    }
     if head.sequence() > MAX_REVISIONS {
         return Err(PlateError {
             code: ErrorCode::LimitExceeded,
@@ -197,7 +203,10 @@ pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, Plate
     for sequence in 1..=head.sequence() {
         let info = workspace.info_at(sequence)?;
         let before = sequence.saturating_sub(1);
-        if sequence > 1 {
+        if sequence == meta.rebase_sequence {
+            undo.clear();
+            redo.clear();
+        } else if sequence > 1 {
             match kinds.get(info.revision().as_str()) {
                 Some(Direction::Undo) => {
                     undo.pop()

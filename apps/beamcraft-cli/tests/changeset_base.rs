@@ -253,6 +253,91 @@ fn a_stale_workspace_packages_the_pinned_historical_base_instead_of_the_current_
 }
 
 #[test]
+fn a_changeset_cannot_end_before_the_recorded_rebase_boundary() {
+    use beamcraft_cli::workspace::{WorkspaceState, read_meta};
+    let f = Fixture::new();
+    f.rename("draft", ONE, "Mine");
+    let (old_digest, _) = f.create();
+    f.rename("draft", TWO, "Also retained");
+    // Isolate the metadata/publication boundary with real committed edits. This fixture does
+    // not claim a runtime rebase: the old payload names a valid earlier source interval.
+    let dir = f.0.join("draft");
+    let old_meta = read_meta(&dir).unwrap();
+    let mut rebased = old_meta.clone();
+    rebased.rebase_sequence = f.head("draft").sequence();
+    WorkspaceState::open(&dir)
+        .unwrap()
+        .compare_and_swap(Some(&old_meta), &rebased)
+        .unwrap();
+    let published = f.head("published");
+    let (code, json) = f.run(&[
+        "changeset-apply",
+        "--store",
+        &f.path("published"),
+        "--workspace-dir",
+        &f.path("draft"),
+        "--changeset",
+        &old_digest.to_string(),
+        "--actor-id",
+        USER,
+    ]);
+    assert_eq!(code, 2, "{json:?}");
+    assert_eq!(text(&json, "code"), "INTEGRITY_ERROR");
+    assert_eq!(f.head("published"), published);
+    assert_eq!(read_meta(&dir).unwrap(), rebased);
+    let status = f.ok(&[
+        "workspace-status",
+        "--store",
+        &f.path("published"),
+        "--workspace-dir",
+        &f.path("draft"),
+    ]);
+    assert_eq!(
+        text(status.get("workspace").unwrap(), "rebase_sequence"),
+        rebased.rebase_sequence.to_string()
+    );
+    let (digest, _) = f.create();
+    f.ok(&[
+        "changeset-apply",
+        "--store",
+        &f.path("published"),
+        "--workspace-dir",
+        &f.path("draft"),
+        "--changeset",
+        &digest.to_string(),
+        "--actor-id",
+        USER,
+    ]);
+    assert_eq!(f.names("published"), ["Also retained", "Mine"]);
+    assert_eq!(
+        read_meta(&dir).unwrap().rebase_sequence,
+        rebased.rebase_sequence
+    );
+    let mut future = read_meta(&dir).unwrap();
+    let old = future.clone();
+    future.rebase_sequence = f.head("draft").sequence() + 1;
+    WorkspaceState::open(&dir)
+        .unwrap()
+        .compare_and_swap(Some(&old), &future)
+        .unwrap();
+    let published = f.head("published");
+    let draft = f.head("draft");
+    for command in ["workspace-status", "workspace-publish", "changeset-create"] {
+        let (code, json) = f.run(&[
+            command,
+            "--store",
+            &f.path("published"),
+            "--workspace-dir",
+            &f.path("draft"),
+        ]);
+        assert_eq!(code, 2, "{command}: {json:?}");
+        assert_eq!(text(&json, "code"), "INTEGRITY_ERROR");
+        assert_eq!(f.head("published"), published);
+        assert_eq!(f.head("draft"), draft);
+    }
+}
+
+#[test]
 fn wrong_missing_or_corrupt_accepted_pins_refuse_packaging_without_changing_either_head() {
     for variant in 0..4 {
         let f = Fixture::new();

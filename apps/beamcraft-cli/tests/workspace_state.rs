@@ -37,6 +37,7 @@ fn initial() -> WorkspaceMeta {
         base_revision: id(3),
         base_manifest: Sha256::digest(b"synthetic accepted pin").unwrap(),
         synced_sequence: 1,
+        rebase_sequence: 0,
     }
 }
 fn next(old: &WorkspaceMeta, n: usize) -> WorkspaceMeta {
@@ -138,6 +139,43 @@ fn metadata_cas_retains_v1_bytes_and_refuses_stale_identity_or_prefix() {
     }
     drop(state);
     assert_eq!(read_meta(&f.0).unwrap(), accepted);
+}
+
+#[test]
+fn rebased_metadata_uses_strict_v2_without_publishing_unsent_work_or_rolling_back_its_boundary() {
+    let f = Fixture::new();
+    let old = f.initialize();
+    let mut rebased = next(&old, 1);
+    rebased.rebase_sequence = 3;
+    {
+        let mut state = WorkspaceState::open(&f.0).unwrap();
+        state.compare_and_swap(Some(&old), &rebased).unwrap();
+        assert_eq!(state.meta().unwrap().synced_sequence, 1);
+        let mut rollback = rebased.clone();
+        rollback.rebase_sequence = 2;
+        assert_eq!(
+            state
+                .compare_and_swap(Some(&rebased), &rollback)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+    }
+    assert_eq!(read_meta(&f.0).unwrap(), rebased);
+    let bytes = String::from_utf8(f.bytes()).unwrap();
+    assert!(bytes.starts_with("beamcraft-workspace 2\n"));
+    assert!(bytes.ends_with("rebase_sequence=3\n"));
+    for malformed in [
+        bytes.replace("rebase_sequence=3", "rebase_sequence=0"),
+        bytes.replace("rebase_sequence=3", "rebase_sequence=03"),
+        bytes.replace("rebase_sequence=3", "rebase_sequence=100001"),
+        bytes.replace('\n', "\r\n"),
+        bytes.replacen("workspace 2", "workspace 999", 1),
+    ] {
+        fs::write(f.0.join("workspace.json"), malformed.as_bytes()).unwrap();
+        assert!(read_meta(&f.0).is_err());
+        assert_eq!(f.bytes(), malformed.as_bytes());
+    }
 }
 
 #[test]

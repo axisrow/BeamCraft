@@ -87,10 +87,25 @@ CAS, so concurrent model edits remain possible and must participate in the rebas
 The OS releases the lease after a killed process; it does not itself recover a rebase or make a
 draft-head change and metadata finalization atomic.
 
-The workspace metadata needs an explicitly pinned accepted base separate from the unsent
-operation prefix. A new encoding must read the current version safely and refuse unsupported
-versions explicitly; it must not reinterpret the old synced sequence as a different snapshot.
-C01 packaging must use the newly pinned base for layer base digests and footprint comparison.
+`workspace::rebase_receipt` supplies the bounded canonical evidence format: original metadata,
+project/schema, old accepted-base sequence, pinned draft and new accepted head, ordered unsent
+operation/result identities and retained dependencies. Its request fingerprint covers every
+input coordinate and binds the embedded command-footprint record to the rebase operation. The
+candidate revision uses that operation identity. Operation count and footprint entries are each
+capped at 4096; the whole record fits the host's one-MiB evidence cap. Lengths, decimal values,
+field order and re-encoding are strict. A codec round trip proves no ancestry, authority or
+correct model: the adapter must recompute dependencies and verify the actual committed candidate
+before using its receipt. No runtime producer or recovery path is implemented by the codec.
+
+Metadata keeps the accepted base pin, already-published operation prefix and latest local rebase
+sequence separate. Zero rebase sequence preserves exact v1 bytes; nonzero uses strict canonical
+v2 with one additional `rebase_sequence` field. Unsupported, redundant or noncanonical v2 is
+refused, and the metadata CAS cannot move the boundary backwards. C01 packaging still uses the
+accepted pin for layer bases. A received changeset cannot end before the rebase boundary, even
+when its earlier source interval and output are otherwise valid. Status, packaging and publication
+refuse a boundary beyond the draft head. Snapshot undo clears its older stacks at the boundary;
+later edits remain undo/redo units, while the combined basis cannot be restored to an old snapshot.
+These guards do not produce a rebase; compensation of earlier accepted work remains C06.
 
 Use an idempotent rebase intent containing the three original verified pins, source operation
 identities, request fingerprint and candidate identity. Stage and verify immutable candidate

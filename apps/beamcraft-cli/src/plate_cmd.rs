@@ -1134,6 +1134,10 @@ fn workspace_json(status: &WorkspaceStatus) -> Json {
         ),
         ("base_is_current", Json::Bool(status.base_is_current)),
         (
+            "rebase_sequence",
+            Json::text(status.meta.rebase_sequence.to_string()),
+        ),
+        (
             "unsent_revisions",
             Json::text(status.unsent_revisions.to_string()),
         ),

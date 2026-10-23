@@ -134,6 +134,52 @@ impl Drop for Fixture {
     }
 }
 
+#[test]
+fn undo_after_a_rebase_boundary_restores_only_later_edits_and_keeps_the_combined_basis() {
+    use beamcraft_cli::workspace::{WorkspaceState, read_meta};
+    let f = Fixture::new();
+    let (published, dir, id) = f.forked();
+    let accepted = f.ok(&["revision-open", "--store", &published]);
+    f.edit(
+        &dir,
+        &["update-element", "--id", &id, "--name", "Original draft"],
+    );
+    f.edit(
+        &dir,
+        &["update-element", "--id", &id, "--name", "Combined basis"],
+    );
+    // Isolate the undo boundary with real revisions; runtime merge is separate acceptance.
+    let old = read_meta(Path::new(&dir)).unwrap();
+    let mut rebased = old.clone();
+    rebased.rebase_sequence = 3;
+    WorkspaceState::open(Path::new(&dir))
+        .unwrap()
+        .compare_and_swap(Some(&old), &rebased)
+        .unwrap();
+    let layers = f.layers(&dir);
+    assert_eq!(f.units(&dir), ("0".into(), "0".into()));
+    assert_eq!(
+        f.code(&["workspace-undo", "--workspace-dir", &dir]),
+        (2, "INVALID_ARGUMENT".into())
+    );
+    assert_eq!(f.layers(&dir), layers);
+    f.edit(
+        &dir,
+        &["update-element", "--id", &id, "--name", "Later local edit"],
+    );
+    f.ok(&["workspace-undo", "--workspace-dir", &dir]);
+    assert_eq!(text(&f.plates(&dir)[0], "name"), "Combined basis");
+    assert_eq!(f.units(&dir), ("0".into(), "1".into()));
+    assert_eq!(
+        f.code(&["workspace-undo", "--workspace-dir", &dir]),
+        (2, "INVALID_ARGUMENT".into())
+    );
+    f.ok(&["workspace-redo", "--workspace-dir", &dir]);
+    assert_eq!(text(&f.plates(&dir)[0], "name"), "Later local edit");
+    assert_eq!(read_meta(Path::new(&dir)).unwrap().rebase_sequence, 3);
+    assert_eq!(f.ok(&["revision-open", "--store", &published]), accepted);
+}
+
 fn text(json: &Json, key: &str) -> String {
     json.get(key).unwrap().string().unwrap().to_owned()
 }

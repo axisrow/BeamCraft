@@ -305,6 +305,12 @@ model edits still use the draft revision CAS. The metadata guard also blocks com
 held. Workspace/user identity and the published local prefix cannot be rolled back, and legacy
 v1 metadata bytes stay unchanged. This primitive does not implement rebase or its recovery.
 
+A nonzero `rebase_sequence` uses canonical metadata v2 and identifies the earliest source endpoint
+publication may send. Older payloads and a boundary beyond the draft head are refused. Status
+exposes that sequence; snapshot undo stops there, while later edits remain undo/redo units. The
+bounded `workspace::rebase_receipt` codec binds original metadata, source/accepted pins, ordered
+operations and dependency evidence. It does not itself produce or recover a runtime rebase.
+
 ## P07 undo and redo
 
 ```text

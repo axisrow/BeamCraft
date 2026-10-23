@@ -382,8 +382,10 @@ pub fn create_changeset(
     let meta = read_meta(dir)?;
     let draft = workspace.open()?;
     let head_sequence = draft.info().sequence();
-    if meta.synced_sequence == 0 {
-        return Err(integrity("workspace metadata names no synced revision"));
+    if meta.synced_sequence == 0 || meta.rebase_sequence > head_sequence {
+        return Err(integrity(
+            "workspace metadata disagrees with its draft head",
+        ));
     }
     if head_sequence <= meta.synced_sequence {
         return Err(PlateError {
@@ -545,10 +547,11 @@ pub fn apply_changeset(
     // The workspace metadata is checked before anything is published, so a later workspace update
     // can fail for I/O or a concurrent metadata transition. A published result stays successful.
     let meta = read_meta(dir)?;
-    if workspace
-        .head()?
-        .is_none_or(|head| meta.synced_sequence == 0 || meta.synced_sequence > head.sequence())
-    {
+    if workspace.head()?.is_none_or(|head| {
+        meta.synced_sequence == 0
+            || meta.synced_sequence > head.sequence()
+            || meta.rebase_sequence > head.sequence()
+    }) {
         return Err(integrity("workspace metadata disagrees with its revisions"));
     }
     // An operation id committed for something else is never this changeset's publication.
@@ -592,7 +595,8 @@ pub fn apply_changeset(
     let source =
         crate::command_evidence::aggregate(workspace, meta.synced_sequence, &changeset.operations)?;
     let source_content = source.head.manifest().content();
-    if source_content.project() != content.project()
+    if source.head.sequence() < meta.rebase_sequence
+        || source_content.project() != content.project()
         || source_content.workspace() != &meta.workspace_id
         || changeset.workspace.to_string() != meta.workspace_id.as_str()
         || changeset.base_revision.to_string() != meta.base_revision.as_str()
