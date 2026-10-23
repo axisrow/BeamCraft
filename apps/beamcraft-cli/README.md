@@ -355,6 +355,32 @@ to a nonexistent directory to retain its stores, materialized `layers/` and clos
 No SDK or Python dependency is installed by the test. The independent test reader has its own
 finite inventory/value budgets; production protocol and layer-engine limits stay unchanged.
 
+## C06 compensate an accepted operation
+
+```text
+beamcraft compensate-operation --store PUBLISHED --workspace-dir CLEAN_DRAFT
+  --source-workspace-dir ORIGINAL --original-revision UUID --op-id UUID
+  --expected-head UUID --expected-draft UUID [--actor-id UUID]
+```
+
+Creates one new personal revision containing the original operation's semantic inverse. Publish
+it separately with C01/C02 or `workspace-publish`. Later independent fields remain present;
+later overlapping writes, reverted writes, copy-source reads and links refuse with complete
+`DEPENDENCY_CONFLICT` diagnostics. The original accepted history is retained. Geometry and
+quantities pass the ordinary strict verifier before staging and during commit.
+
+This slice accepts a clean current workspace and a proven direct `workspace-publish` delta
+fully accounted for by one terminal command: original source before/after layers and footprints
+must match the accepted before/after exactly. Retained source history is required. A larger
+publication delta, C01 payload proof, rebase administration or unsupported content refuses;
+there is no full-snapshot inverse fallback. Keep existing unsent work in its workspace and create
+a fresh clean workspace when necessary. The local actor must own both personal workspaces;
+the recorded default actor is trusted local CLI context, not authentication.
+
+Reuse the same operation and explicit expected pins after a lost response. Replay returns the
+historical compensating revision while keeping later local work; another request under that ID
+refuses. Accepted state stays pinned during the draft CAS; a concurrent draft winner is retained.
+
 ## P07 undo and redo
 
 ```text

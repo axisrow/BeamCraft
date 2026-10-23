@@ -19,6 +19,8 @@ use beamcraft_host::{
 use beamcraft_model::error::ErrorCode;
 use std::path::Path;
 
+pub mod runtime;
+
 /// Verified immutable original images, retaining maintenance guards against history collection.
 /// Fields are private: an inverse caller cannot substitute arbitrary before/after USD bytes.
 pub struct Original {

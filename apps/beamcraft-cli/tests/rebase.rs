@@ -36,6 +36,9 @@ mod conflicts;
 
 #[path = "rebase/compensation_proof.rs"]
 mod compensation_proof;
+
+#[path = "rebase/compensation.rs"]
+mod compensation;
 fn id(n: usize) -> String {
     format!("019a7bf0-0000-7000-8000-{n:012x}")
 }
