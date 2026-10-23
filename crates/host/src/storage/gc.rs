@@ -16,8 +16,11 @@ use beamcraft_model::digest::ContentDigest;
 
 use super::{BlobStore, MAX_SCANNED_ENTRIES, NEXT_TEMP, StorageError, io_error, is_link};
 
-/// Name of the store lock file in the store root.
-const LOCK_FILE: &str = "maintenance.lock";
+/// Internal lock names; no caller-supplied path can become a lock file.
+pub(crate) enum LockFile {
+    Maintenance,
+    WorkspaceState,
+}
 
 /// One installed blob as found on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,8 +241,20 @@ impl BlobStore {
     /// advisory lock is the state (see [`crate::lease`]). A link or a non-regular entry under
     /// that name is [`StorageError::UnsafeEntry`].
     pub(crate) fn open_lock_file(&self, create: bool) -> Result<Option<File>, StorageError> {
+        self.open_named_lock_file(LockFile::Maintenance, create)
+    }
+
+    pub(crate) fn open_named_lock_file(
+        &self,
+        kind: LockFile,
+        create: bool,
+    ) -> Result<Option<File>, StorageError> {
         self.check_root()?;
-        let path: PathBuf = self.root.join(LOCK_FILE);
+        let name = match kind {
+            LockFile::Maintenance => "maintenance.lock",
+            LockFile::WorkspaceState => "workspace-state.lock",
+        };
+        let path: PathBuf = self.root.join(name);
         match fs::symlink_metadata(&path) {
             Ok(metadata) if is_link(&metadata) || !metadata.is_file() => {
                 return Err(StorageError::UnsafeEntry);

@@ -79,6 +79,14 @@ over another: independent edits may share both files.
 
 ## Durable base and recovery
 
+`WorkspaceState` holds a separate exclusive metadata lease and a shared maintenance lease. Its
+compare-and-swap requires the complete expected metadata snapshot before staging a replacement;
+workspace/user identity and the published local prefix cannot move backwards. Existing metadata
+reads and writes use this guard. A holder can still commit a draft through the ordinary revision
+CAS, so concurrent model edits remain possible and must participate in the rebase checks below.
+The OS releases the lease after a killed process; it does not itself recover a rebase or make a
+draft-head change and metadata finalization atomic.
+
 The workspace metadata needs an explicitly pinned accepted base separate from the unsent
 operation prefix. A new encoding must read the current version safely and refuse unsupported
 versions explicitly; it must not reinterpret the old synced sequence as a different snapshot.

@@ -512,11 +512,12 @@ fn advance_workspace(
         if info.manifest_digest() == last.result {
             return write_meta(
                 dir,
+                Some(&meta),
                 &WorkspaceMeta {
                     base_revision: published.revision().clone(),
                     base_manifest: published.manifest_digest(),
                     synced_sequence: sequence,
-                    ..meta
+                    ..meta.clone()
                 },
             );
         }
@@ -542,7 +543,7 @@ pub fn apply_changeset(
     let id = as_host(&changeset.changeset_id.to_string())?;
     let receipt = changeset.admit(trusted_actor, published.changeset_claim(&id)?)?;
     // The workspace metadata is checked before anything is published, so a later workspace update
-    // can only fail for I/O reasons.
+    // can fail for I/O or a concurrent metadata transition. A published result stays successful.
     let meta = read_meta(dir)?;
     if workspace
         .head()?

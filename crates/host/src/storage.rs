@@ -31,6 +31,7 @@ use beamcraft_model::ErrorCode;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 
 mod gc;
+pub(crate) use gc::LockFile;
 
 pub(crate) use gc::BlobInfo;
 

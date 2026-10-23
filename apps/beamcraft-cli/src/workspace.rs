@@ -27,9 +27,10 @@ use beamcraft_host::revision::{
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
+
+mod state;
+pub use state::WorkspaceState;
 
 const META_FILE: &str = "workspace.json";
 const META_MAGIC: &str = "beamcraft-workspace 1";
@@ -105,33 +106,19 @@ fn meta_path(dir: &Path) -> PathBuf {
 
 /// Reads and validates the metadata of a workspace directory.
 pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
-    let path = meta_path(dir);
-    // A link is never followed: the metadata is a regular file inside the workspace.
-    let metadata = fs::symlink_metadata(&path).map_err(|_| unusable())?;
-    if !metadata.is_file() || metadata.len() > META_CAP {
-        return Err(unusable());
-    }
-    let text = fs::read_to_string(&path).map_err(|_| unusable())?;
-    WorkspaceMeta::decode(&text)
+    WorkspaceState::open(dir)?
+        .meta()
+        .cloned()
+        .ok_or_else(unusable)
 }
 
-/// Replaces the metadata atomically: a temporary file, synced, then renamed over the old one.
-pub(crate) fn write_meta(dir: &Path, meta: &WorkspaceMeta) -> Result<(), PlateError> {
-    let temporary = dir.join(format!("{META_FILE}.tmp"));
-    // Exclusive creation: a leftover or planted entry (even a link) is removed as an entry, never
-    // written through.
-    if fs::symlink_metadata(&temporary).is_ok() {
-        fs::remove_file(&temporary).map_err(|_| unusable())?;
-    }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)
-        .map_err(|_| unusable())?;
-    file.write_all(meta.encode().as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|_| unusable())?;
-    fs::rename(&temporary, meta_path(dir)).map_err(|_| unusable())
+pub(crate) fn write_meta(
+    dir: &Path,
+    expected: Option<&WorkspaceMeta>,
+    next: &WorkspaceMeta,
+) -> Result<(), PlateError> {
+    WorkspaceState::open(dir)?.compare_and_swap(expected, next)?;
+    Ok(())
 }
 
 /// Identities of one `create` call.
@@ -241,7 +228,7 @@ pub fn create_workspace(
             base_manifest: revision.info().manifest_digest(),
             synced_sequence: 1,
         };
-        write_meta(dir, &meta)?;
+        write_meta(dir, None, &meta)?;
         meta
     };
     if head_of(workspace)?.is_none() {
@@ -326,9 +313,9 @@ pub fn publish_workspace(
             base_revision: head.info().revision().clone(),
             base_manifest: head.info().manifest_digest(),
             synced_sequence: draft_sequence,
-            ..meta
+            ..meta.clone()
         };
-        write_meta(dir, &next)?;
+        write_meta(dir, Some(&meta), &next)?;
         return Ok(Published {
             replayed: true,
             revision: summarize(head.info()),
@@ -404,11 +391,12 @@ pub fn publish_workspace(
     )?;
     write_meta(
         dir,
+        Some(&meta),
         &WorkspaceMeta {
             base_revision: committed.info.revision().clone(),
             base_manifest: committed.info.manifest_digest(),
             synced_sequence: draft_sequence,
-            ..meta
+            ..meta.clone()
         },
     )?;
     Ok(Published {

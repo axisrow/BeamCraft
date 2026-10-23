@@ -298,6 +298,13 @@ only: a moved published head is `BASE_REVISION_MISMATCH`, a fresh fork is `INVAL
 repeating a finished or interrupted publish is a replay. There is no authentication and no merge.
 See the [design note](../../docs/design/p06-workspace.md).
 
+`workspace::WorkspaceState` serializes metadata transitions with an OS lease and a complete
+expected-snapshot comparison. Reads and base updates return `BACKEND_UNAVAILABLE` while another
+holder is transitioning; a stale metadata writer gets `BASE_REVISION_MISMATCH`. Ordinary local
+model edits still use the draft revision CAS. The metadata guard also blocks compaction while
+held. Workspace/user identity and the published local prefix cannot be rolled back, and legacy
+v1 metadata bytes stay unchanged. This primitive does not implement rebase or its recovery.
+
 ## P07 undo and redo
 
 ```text
