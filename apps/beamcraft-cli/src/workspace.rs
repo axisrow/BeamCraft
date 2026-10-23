@@ -31,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 mod state;
 pub use state::WorkspaceState;
+mod pending;
 pub mod rebase_receipt;
 
 const META_FILE: &str = "workspace.json";
@@ -38,7 +39,7 @@ const META_MAGIC: &str = "beamcraft-workspace 1";
 const META_MAGIC_REBASED: &str = "beamcraft-workspace 2";
 const META_CAP: u64 = 4096;
 
-fn unusable() -> PlateError {
+pub(crate) fn unusable() -> PlateError {
     PlateError {
         code: ErrorCode::BackendUnavailable,
         message: "workspace metadata is not usable",
@@ -135,7 +136,7 @@ fn meta_path(dir: &Path) -> PathBuf {
     dir.join(META_FILE)
 }
 
-/// Reads and validates the metadata of a workspace directory.
+/// Recovers any pending rebase, then reads and validates workspace metadata.
 pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
     WorkspaceState::open(dir)?
         .meta()
@@ -294,7 +295,8 @@ pub fn status(
     workspace: &RevisionStore,
     dir: &Path,
 ) -> Result<WorkspaceStatus, PlateError> {
-    let meta = read_meta(dir)?;
+    let state = WorkspaceState::open(dir)?;
+    let meta = state.meta().cloned().ok_or_else(unusable)?;
     let draft = head_of(workspace)?.ok_or_else(|| integrity("the workspace has no revision"))?;
     if meta.rebase_sequence > draft.sequence() {
         return Err(integrity(
@@ -336,7 +338,8 @@ pub fn publish_workspace(
     dir: &Path,
     hook: &mut dyn CommitHook,
 ) -> Result<Published, PlateError> {
-    let meta = read_meta(dir)?;
+    let mut state = WorkspaceState::open(dir)?;
+    let meta = state.meta().cloned().ok_or_else(unusable)?;
     let draft = workspace.open()?;
     let draft_sequence = draft.info().sequence();
     if meta.rebase_sequence > draft_sequence {
@@ -357,7 +360,8 @@ pub fn publish_workspace(
             synced_sequence: draft_sequence,
             ..meta.clone()
         };
-        write_meta(dir, Some(&meta), &next)?;
+        state.compare_and_swap(Some(&meta), &next)?;
+        drop(state);
         return Ok(Published {
             replayed: true,
             revision: summarize(head.info()),
@@ -431,8 +435,7 @@ pub fn publish_workspace(
         evidence,
         hook,
     )?;
-    write_meta(
-        dir,
+    state.compare_and_swap(
         Some(&meta),
         &WorkspaceMeta {
             base_revision: committed.info.revision().clone(),
@@ -441,6 +444,7 @@ pub fn publish_workspace(
             ..meta.clone()
         },
     )?;
+    drop(state);
     Ok(Published {
         replayed: committed.outcome == CommitOutcome::Replayed,
         revision: summarize(&committed.info),

@@ -298,6 +298,22 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
             .unwrap(),
         "1"
     );
+    // A pending rebase must be resolved before any interpretation of base/unsent state.
+    fs::write(draft.join("rebase.pending"), b"torn rebase intent").unwrap();
+    for command in ["workspace-status", "workspace-publish", "changeset-create"] {
+        let (code, json) = f.cli(&[command, "--store", pub_path, "--workspace-dir", draft_path]);
+        assert_eq!(code, 2, "{command}: {json:?}");
+        assert_eq!(
+            json.get("code").unwrap().string().unwrap(),
+            "INTEGRITY_ERROR"
+        );
+        assert_eq!(
+            revision_store(&published).head().unwrap().unwrap(),
+            accepted
+        );
+        assert_eq!(revision_store(&draft).head().unwrap().unwrap(), edited);
+    }
+    fs::remove_file(draft.join("rebase.pending")).unwrap();
     f.ok(&[
         "workspace-publish",
         "--store",

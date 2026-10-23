@@ -311,6 +311,18 @@ exposes that sequence; snapshot undo stops there, while later edits remain undo/
 bounded `workspace::rebase_receipt` codec binds original metadata, source/accepted pins, ordered
 operations and dependency evidence. It does not itself produce or recover a runtime rebase.
 
+`WorkspaceState::stage_rebase` syncs `rebase.pending` before the candidate CAS; the caller must
+first verify/pin the accepted basis, prove independence and materialize the candidate. Every state
+open resolves that intent before exposing metadata. Recovery verifies the original source union,
+the exact candidate slot/base, strict-verifier index and receipt pin; it advances metadata once
+without classifying retained commands or later edits as published. A missing/other CAS winner
+abandons the intent without changing metadata. Corrupt or unavailable evidence fails closed.
+As with other store writes, the complete file is synced; directory-entry durability is not promised.
+Status, packaging, direct publication and undo retain the state guard across their snapshots.
+Receipt aggregation checks ordered prefixes and prior bases, retaining the original command IDs
+without counting administrative copies of their dependencies again. This is recovery plumbing;
+an explicit rebase command and its complete acceptance remain separate.
+
 ## P07 undo and redo
 
 ```text

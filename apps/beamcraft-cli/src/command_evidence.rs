@@ -188,8 +188,18 @@ pub fn read(revision: &Revision) -> Result<Option<CapturedFootprint>, PlateError
 }
 
 fn decode_for(bytes: &[u8], op: &Uuid7) -> Result<CapturedFootprint, PlateError> {
-    let captured = CapturedFootprint::decode(bytes)
-        .map_err(|_| integrity("operation footprint evidence is malformed"))?;
+    let captured = if bytes.starts_with(b"beamcraft-workspace-rebase ") {
+        let receipt = crate::workspace::rebase_receipt::RebaseReceipt::decode(bytes)
+            .map_err(|_| integrity("rebase evidence is malformed"))?;
+        CapturedFootprint {
+            op_id: receipt.op_id,
+            fingerprint: receipt.fingerprint()?,
+            footprint: receipt.footprint,
+        }
+    } else {
+        CapturedFootprint::decode(bytes)
+            .map_err(|_| integrity("operation footprint evidence is malformed"))?
+    };
     if captured.op_id.to_string() != op.as_str() {
         return Err(integrity(
             "operation footprint evidence belongs to another operation",
@@ -240,7 +250,8 @@ pub(crate) fn aggregate(
     let mut combined = Footprint::default();
     let mut complete = true;
     let mut raw_entries = 0usize;
-    for operation in operations {
+    let mut last_rebase: Option<(u64, crate::workspace::rebase_receipt::RevisionPin)> = None;
+    for (position, operation) in operations.iter().enumerate() {
         let bytes = store
             .blobs()
             .read_capped(&operation.result, MAX_MANIFEST_BYTES)
@@ -278,6 +289,43 @@ pub(crate) fn aggregate(
             None => complete = false,
             Some(pin) => {
                 let bytes = store.evidence_bytes(pin)?;
+                if bytes.starts_with(b"beamcraft-workspace-rebase ") {
+                    let receipt = crate::workspace::rebase_receipt::RebaseReceipt::decode(&bytes)
+                        .map_err(|_| integrity("rebase evidence is malformed"))?;
+                    let original = head
+                        .as_ref()
+                        .ok_or_else(|| integrity("rebase has no source operations"))?;
+                    let expected =
+                        crate::workspace::rebase_receipt::RevisionPin::from_info(original);
+                    if !complete
+                        || receipt.op_id != operation.op_id
+                        || receipt.draft != expected
+                        || receipt.operations.as_slice()
+                            != operations.get(..position).unwrap_or_default()
+                        || receipt.old_meta.synced_sequence != after
+                        || receipt.old_meta.workspace_id != *content.workspace()
+                        || receipt.project != *content.project()
+                        || receipt.schema != content.schema()
+                        || receipt.footprint != combined
+                        || info.manifest().index().is_none()
+                        || last_rebase.as_ref().is_some_and(|(boundary, accepted)| {
+                            receipt.old_meta.rebase_sequence != *boundary
+                                || receipt.old_meta.base_revision != accepted.revision
+                                || receipt.old_meta.base_manifest != accepted.manifest
+                                || receipt.old_base_sequence != accepted.sequence
+                        })
+                    {
+                        return Err(integrity(
+                            "rebase receipt disagrees with its verified source interval",
+                        ));
+                    }
+                    last_rebase = Some((next, receipt.accepted));
+                    // An administrative receipt retains the earlier commands; it is not a second
+                    // copy of their modelling work and consumes no additional footprint budget.
+                    previous = next;
+                    head = Some(info);
+                    continue;
+                }
                 let captured = decode_for(&bytes, content.op())?;
                 if info.manifest().index().is_none() {
                     complete = false;

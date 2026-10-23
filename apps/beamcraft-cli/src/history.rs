@@ -30,7 +30,7 @@
 //! published store (a later publish sends the draft head as it is).
 
 use crate::plate::{PlateError, RevisionSummary, commit_verified, host_uuid, integrity, summarize};
-use crate::workspace::read_meta;
+use crate::workspace::WorkspaceState;
 use beamcraft_host::revision::{
     CommitHook, ExpectedBase, LayerEntry, RevisionDraft, RevisionInfo, RevisionStore, Uuid7,
 };
@@ -181,7 +181,8 @@ impl Timeline {
 
 /// Derives the undo and redo stacks of the draft in `dir`.
 pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, PlateError> {
-    let meta = read_meta(dir)?;
+    let state = WorkspaceState::open(dir)?;
+    let meta = state.meta().ok_or_else(crate::workspace::unusable)?;
     let head = head_of(workspace)?;
     if meta.rebase_sequence > head.sequence() {
         return Err(integrity(

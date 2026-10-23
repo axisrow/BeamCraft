@@ -379,7 +379,8 @@ pub fn create_changeset(
     dir: &Path,
     request: &CreateChangeset,
 ) -> Result<StoredChangeset, PlateError> {
-    let meta = read_meta(dir)?;
+    let state = crate::workspace::WorkspaceState::open(dir)?;
+    let meta = state.meta().ok_or_else(crate::workspace::unusable)?;
     let draft = workspace.open()?;
     let head_sequence = draft.info().sequence();
     if meta.synced_sequence == 0 || meta.rebase_sequence > head_sequence {
@@ -400,7 +401,7 @@ pub fn create_changeset(
             message: "too many unsent revisions for one changeset",
         });
     }
-    let base = crate::workspace::published_base(published, &meta)?;
+    let base = crate::workspace::published_base(published, meta)?;
     let content = draft.manifest().content();
     let base_content = base.manifest().content();
     if content.project() != base_content.project()
