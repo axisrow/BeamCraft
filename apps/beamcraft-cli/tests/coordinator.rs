@@ -238,6 +238,171 @@ fn publish(
 }
 
 #[test]
+fn a_rebased_workspace_packages_the_new_basis_and_publishes_and_replays_under_its_token() {
+    use beamcraft_cli::{changeset::read_changeset, plate};
+    use beamcraft_host::{
+        revision::{RevisionStore, Uuid7},
+        storage::BlobStore,
+    };
+    let f = Fixture::new();
+    let a = f.draft("a", "Accepted label");
+    let published = f.path("published");
+    let b = f.path("workspaces/b");
+    f.ok(&[
+        "workspace-create",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &b,
+        "--user-id",
+        USER,
+    ]);
+    f.ok(&[
+        "update-element",
+        "--store",
+        &b,
+        "--id",
+        PLATE,
+        "--translation",
+        "12,34,56",
+    ]);
+    let old = f.ok(&[
+        "changeset-create",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &b,
+    ]);
+    let old = at(&old, &["changeset"]);
+    let old_digest = text(old, "digest");
+    let old_base = text(old, "base_revision");
+    let token = f.token("token", TOKEN);
+    let stranger = f.token("stranger", OTHER_TOKEN);
+    let server = f.serve(&[(USER, &token), (STRANGER, &stranger)], 6);
+    let (code, result) = publish(&f, &server.address, &token, "a", &a);
+    assert_eq!(code, 0, "{result:?}");
+    let accepted_id = f.head();
+    let (code, result) = publish(
+        &f,
+        &server.address,
+        &token,
+        "b",
+        &(old_digest.clone(), old_base.clone()),
+    );
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "BASE_REVISION_MISMATCH");
+    // C01's refused payload remains bound even after this workspace is rebased and repackaged.
+    let (code, refused) = f.run(&[
+        "changeset-apply",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &b,
+        "--changeset",
+        &old_digest,
+        "--actor-id",
+        USER,
+    ]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "BASE_REVISION_MISMATCH");
+    let at_store = |path: &str| RevisionStore::new(BlobStore::new(path).unwrap());
+    let source = at_store(&b);
+    let destination = at_store(&published);
+    let old_payload = read_changeset(&source, &old_digest.parse().unwrap()).unwrap();
+    let old_op = Uuid7::parse(&old_payload.changeset.changeset_id.to_string()).unwrap();
+    let draft_id = source.head().unwrap().unwrap().revision().to_string();
+    let accepted = destination.open().unwrap();
+    f.ok(&[
+        "rebase-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &b,
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000c301",
+        "--expected-head",
+        &accepted_id,
+        "--expected-draft",
+        &draft_id,
+    ]);
+    assert_eq!(f.head(), accepted_id);
+    let packaged = f.ok(&[
+        "changeset-create",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &b,
+    ]);
+    let packaged = at(&packaged, &["changeset"]);
+    let digest = text(packaged, "digest");
+    let base = text(packaged, "base_revision");
+    let payload = read_changeset(&source, &digest.parse().unwrap()).unwrap();
+    assert_eq!(
+        payload.changeset.base_manifest,
+        accepted.info().manifest_digest()
+    );
+    assert_eq!(base, accepted_id);
+    assert_eq!(payload.changeset.operations.len(), 2);
+    assert_eq!(
+        payload.changeset.operations[0],
+        old_payload.changeset.operations[0]
+    );
+    for layer in &payload.changeset.layers {
+        let expected = accepted
+            .manifest()
+            .content()
+            .entries()
+            .iter()
+            .find(|entry| entry.name() == layer.name)
+            .map(|entry| entry.digest());
+        assert_eq!(layer.base, expected, "{}", layer.name);
+    }
+    let (code, result) = publish(
+        &f,
+        &server.address,
+        &stranger,
+        "b",
+        &(digest.clone(), base.clone()),
+    );
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "PERMISSION_DENIED");
+    assert_eq!(f.head(), accepted_id);
+    let (code, applied) = publish(
+        &f,
+        &server.address,
+        &token,
+        "b",
+        &(digest.clone(), base.clone()),
+    );
+    assert_eq!(code, 0, "{applied:?}");
+    let final_id = text(&applied, "revision_id");
+    let (code, replay) = publish(&f, &server.address, &token, "b", &(digest, base));
+    assert_eq!(code, 0, "{replay:?}");
+    assert_eq!(text(&replay, "outcome"), "changeset_replayed");
+    assert_eq!(text(&replay, "revision_id"), final_id);
+    let (code, _) = publish(
+        &f,
+        &server.address,
+        &token,
+        "b",
+        &(old_digest.clone(), old_base),
+    );
+    assert_eq!(code, 2);
+    assert_eq!(
+        destination.changeset_claim(&old_op).unwrap(),
+        Some(old_digest.parse().unwrap())
+    );
+    let report = plate::inspect(&destination).unwrap();
+    assert_eq!(report.plates.len(), 1);
+    let part = &report.plates[0];
+    assert_eq!(part.authored.name, "Accepted label");
+    assert_eq!(part.authored.placement.translation_mm, [12.0, 34.0, 56.0]);
+    assert_eq!(part.quantities.volume_mm3, 5_000_000.0);
+    assert_eq!(f.head(), final_id);
+    drop(server);
+}
+
+#[test]
 fn a_coordinator_needs_a_token_and_refuses_strangers() {
     let f = Fixture::new();
     let (store, root) = (f.path("published"), f.path("workspaces"));

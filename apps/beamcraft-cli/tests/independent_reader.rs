@@ -206,6 +206,87 @@ fn the_reader_reads_the_committed_revision_and_agrees_with_the_closed_form() {
 }
 
 #[test]
+fn the_independent_reader_agrees_with_both_clients_after_rebase_and_publication() {
+    let scratch = Scratch::new("c03-independent-reader");
+    let store = scratch.store_arg();
+    let first = run_binary(&plate_args(
+        store,
+        "1000",
+        "500",
+        "10",
+        &["--name", "Initial"],
+    ));
+    let second = run_binary(&plate_args(
+        store,
+        "800",
+        "300",
+        "12.5",
+        &["--name", "Untouched", "--translation", "2000,-150.5,25"],
+    ));
+    let first_id = text(first.get("plate").unwrap(), "element_id");
+    let second_id = text(second.get("plate").unwrap(), "element_id");
+    let a = scratch.root.join("a");
+    let b = scratch.root.join("b");
+    let a = a.to_str().unwrap();
+    let b = b.to_str().unwrap();
+    for workspace in [a, b] {
+        run_binary(&[
+            "workspace-create",
+            "--store",
+            store,
+            "--workspace-dir",
+            workspace,
+        ]);
+    }
+    run_binary(&[
+        "update-element",
+        "--store",
+        a,
+        "--id",
+        &first_id,
+        "--name",
+        "Accepted name",
+    ]);
+    run_binary(&[
+        "update-element",
+        "--store",
+        b,
+        "--id",
+        &first_id,
+        "--translation",
+        "12,34,56",
+    ]);
+    let original = run_binary(&["revision-open", "--store", b]);
+    run_binary(&["workspace-publish", "--store", store, "--workspace-dir", a]);
+    let accepted = run_binary(&["revision-open", "--store", store]);
+    run_binary(&[
+        "rebase-workspace",
+        "--store",
+        store,
+        "--workspace-dir",
+        b,
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000c302",
+        "--expected-head",
+        &text(&accepted, "revision_id"),
+        "--expected-draft",
+        &text(&original, "revision_id"),
+    ]);
+    run_binary(&["workspace-publish", "--store", store, "--workspace-dir", b]);
+    let inspected = run_binary(&["plate-inspect", "--store", store]);
+    copy_layers(&scratch.store, &scratch.layers(), &inspected);
+    // Expected geometry/placement/volume are explicit closed forms, not copied from an engine
+    // snapshot. The other process shares no USD parser, composition or geometry implementation.
+    let expected = format!(
+        r#"[
+        {{"id":"{first_id}","name":"Accepted name","width":1000,"length":500,"thickness":10,"translation":[12,34,56],"cli_volume_mm3":5000000}},
+        {{"id":"{second_id}","name":"Untouched","width":800,"length":300,"thickness":12.5,"translation":[2000,-150.5,25],"cli_volume_mm3":3000000}}
+    ]"#
+    );
+    assert_eq!(plates(&run_oracle(&scratch.layers(), &expected)), 2);
+}
+
+#[test]
 fn the_reader_reads_pinned_materials_and_the_mass_agrees_with_the_closed_form() {
     let scratch = Scratch::new("p02-reader");
     let store_arg = scratch.store_arg();
