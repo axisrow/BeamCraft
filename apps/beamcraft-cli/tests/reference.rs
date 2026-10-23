@@ -355,6 +355,26 @@ fn reference_measure_refuses_declared_units_until_interpreted() {
 }
 
 #[test]
+fn reference_measure_reports_non_triangle_faces_as_unsupported() {
+    let f = Fixture::new();
+    let source = f.source("site.usda", SITE);
+    let attached = f.attach(&source, &[]);
+    let id = reference_id(&attached);
+    f.ok(
+        "reference-correct-units",
+        &["--id", &id, "--meters-per-unit", "1", "--up-axis", "Y"],
+    );
+    let measured = f.ok("reference-measure", &[]);
+    let result = &at(&measured, &["results"]).array().unwrap()[0];
+    assert_eq!(
+        text(result, "status"),
+        "unsupported_mesh_encoding_or_transform"
+    );
+    assert_eq!(at(result, &["area_mm2"]), &Json::Null);
+    assert_eq!(at(result, &["volume_mm3"]), &Json::Null);
+}
+
+#[test]
 fn every_later_save_carries_the_foreign_layer_unchanged() {
     let f = Fixture::new();
     let source = f.source("site.usda", SITE);
