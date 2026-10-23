@@ -2,6 +2,8 @@
 
 Scope: fork #12 / upstream #126, after C05. This specifies acceptance before the engine/API/CLI
 implementation. Snapshot undo of a personal draft remains P06; it cannot undo accepted state.
+The proposed runtime's supported publication forms, refusal boundaries and executable mapping
+are in [`c03-c06-acceptance.md`](c03-c06-acceptance.md).
 
 ## Operation and proof
 
