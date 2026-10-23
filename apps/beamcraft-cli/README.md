@@ -232,6 +232,14 @@ restores original virtual names and needs no live model or foreign filesystem so
 model layer/count/total-byte budgets apply before capture. Document-store retention and the D03
 CLI publication flow follow separately; an in-memory archive is not yet a published document.
 
+The D02.2 storage prerequisite `drawing::derived::{root, encode, verify}` composes authored
+intent with ordinary linear `BasisCurves` in paper XY. Standard point3f display curves accompany
+exact double3 coordinates and a double model-mm dimension value. A source/algorithm signature
+binds derived data; verification recomputes the engine projection and compares exact bytes.
+Unresolved geometry stores a reason without a successful value. The root composes only drawing
+USD, never source/provenance resources. This API is used by the upcoming document-store commands;
+`drawing-preview` continues to expose the same engine geometry headlessly.
+
 ### Semantic feature addresses (D01.1)
 
 ```text

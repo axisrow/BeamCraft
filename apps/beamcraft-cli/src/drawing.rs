@@ -5,3 +5,4 @@
 
 pub mod archive;
 pub mod codec;
+pub mod derived;
