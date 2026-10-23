@@ -16,6 +16,13 @@ const REV2: &str = "01900000-0000-7000-8000-000000000008";
 const VERSION: &str = "01900000-0000-7000-8000-000000000009";
 const OP3: &str = "01900000-0000-7000-8000-000000000010";
 const REV3: &str = "01900000-0000-7000-8000-000000000011";
+const OP4: &str = "01900000-0000-7000-8000-000000000012";
+const REV4: &str = "01900000-0000-7000-8000-000000000013";
+const VERSION2: &str = "01900000-0000-7000-8000-000000000014";
+const OP5: &str = "01900000-0000-7000-8000-000000000015";
+const REV5: &str = "01900000-0000-7000-8000-000000000016";
+const OP6: &str = "01900000-0000-7000-8000-000000000017";
+const REV6: &str = "01900000-0000-7000-8000-000000000018";
 
 #[test]
 fn document_cli_creates_publishes_inspects_and_lists_versions() {
@@ -43,6 +50,7 @@ fn document_cli_creates_publishes_inspects_and_lists_versions() {
     let created = f.ok("drawing-create", &create_args);
     assert_eq!(text(&created, "state"), "draft");
     let expected_head = text(&created, "revision_id").to_owned();
+    let source_revision = text(&created, "source_revision_id").to_owned();
     let replayed_create = f.ok("drawing-create", &create_args);
     assert_eq!(text(&replayed_create, "revision_id"), expected_head);
     let mut changed_create = create_args.clone();
@@ -80,6 +88,20 @@ fn document_cli_creates_publishes_inspects_and_lists_versions() {
     assert_eq!(text(&published, "state"), "published");
     assert_eq!(text(&published, "version_id"), VERSION);
     let published_head = text(&published, "revision_id").to_owned();
+    f.ok(
+        "update-element",
+        &["--id", MEMBER, "--translation", "11,22,33"],
+    );
+    let stale = f.ok(
+        "drawing-inspect",
+        &[
+            "--document-dir",
+            document_path,
+            "--model-store",
+            f.root.join("store").to_str().unwrap(),
+        ],
+    );
+    assert_eq!(text(&stale, "freshness"), "stale");
     let mut refresh_args = vec![
         "--document-dir",
         document_path,
@@ -91,6 +113,77 @@ fn document_cli_creates_publishes_inspects_and_lists_versions() {
     let refreshed = f.ok("drawing-refresh", &refresh_args);
     assert_eq!(text(&refreshed, "state"), "draft");
     assert_eq!(text(&refreshed, "latest_published_version_id"), VERSION);
+    let refreshed_head = text(&refreshed, "revision_id").to_owned();
+    let published_second = f.ok(
+        "drawing-publish",
+        &[
+            "--document-dir",
+            document_path,
+            "--expected-head",
+            &refreshed_head,
+            "--op-id",
+            OP4,
+            "--revision-id",
+            REV4,
+            "--actor-id",
+            ACTOR,
+            "--version-id",
+            VERSION2,
+        ],
+    );
+    assert_eq!(text(&published_second, "version_id"), VERSION2);
+    let published_second_head = text(&published_second, "revision_id").to_owned();
+    let refreshed_second = f.ok(
+        "drawing-refresh",
+        &[
+            "--document-dir",
+            document_path,
+            "--expected-head",
+            &published_second_head,
+            "--drawing-id",
+            DRAWING,
+            "--view-id",
+            VIEW,
+            "--dimension-id",
+            DIMENSION,
+            "--id",
+            MEMBER,
+            "--anchor-a",
+            &format!("fid1:{MEMBER}:member:v.x0.y0.z0"),
+            "--anchor-b",
+            &format!("fid1:{MEMBER}:member:v.x0.y0.z1"),
+            "--op-id",
+            OP5,
+            "--revision-id",
+            REV5,
+            "--actor-id",
+            ACTOR,
+        ],
+    );
+    assert_eq!(
+        text(&refreshed_second, "latest_published_version_id"),
+        VERSION2
+    );
+    let refreshed_second_head = text(&refreshed_second, "revision_id").to_owned();
+    let duplicate_version = f.run(
+        "drawing-publish",
+        &[
+            "--document-dir",
+            document_path,
+            "--expected-head",
+            &refreshed_second_head,
+            "--op-id",
+            OP6,
+            "--revision-id",
+            REV6,
+            "--actor-id",
+            ACTOR,
+            "--version-id",
+            VERSION,
+        ],
+    );
+    assert_eq!(duplicate_version.0, 2);
+    assert_eq!(text(&duplicate_version.1, "code"), "DUPLICATE_ID");
     let replayed_publish = f.ok(
         "drawing-publish",
         &[
@@ -109,9 +202,64 @@ fn document_cli_creates_publishes_inspects_and_lists_versions() {
         ],
     );
     assert_eq!(text(&replayed_publish, "revision_id"), published_head);
+    let svg_a = f.root.join("drawing-a.svg");
+    let svg_b = f.root.join("drawing-b.svg");
+    let exported = f.ok(
+        "drawing-export-svg",
+        &[
+            "--document-dir",
+            document_path,
+            "--version-id",
+            VERSION,
+            "--out",
+            svg_a.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(text(&exported, "version_id"), VERSION);
+    f.ok(
+        "drawing-export-svg",
+        &[
+            "--document-dir",
+            document_path,
+            "--version-id",
+            VERSION,
+            "--out",
+            svg_b.to_str().unwrap(),
+        ],
+    );
+    let svg_bytes = fs::read(&svg_a).unwrap();
+    assert_eq!(svg_bytes, fs::read(&svg_b).unwrap());
+    let svg = std::str::from_utf8(&svg_bytes).unwrap();
+    assert!(svg.starts_with("<?xml version=\"1.0\""));
+    assert!(svg.contains("<svg xmlns=\"http://www.w3.org/2000/svg\""));
+    assert!(svg.contains("data-version-id=\""));
+    assert!(svg.contains(&format!("data-source-revision=\"{source_revision}\"")));
+    assert!(svg.contains("data-dimension-mm=\"3000\""));
+    assert!(svg.contains("data-feature-id=\"fid1:"));
+    assert!(!svg.contains("<text"));
+    assert!(!svg.contains("<image"));
+    assert!(!svg.contains("href="));
+    assert!(!svg.contains("url("));
+    let protected = f.root.join("protected.svg");
+    fs::write(&protected, b"keep this file").unwrap();
+    let (exit, refusal) = f.run(
+        "drawing-export-svg",
+        &[
+            "--document-dir",
+            document_path,
+            "--version-id",
+            VERSION,
+            "--out",
+            protected.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(exit, 2);
+    assert_eq!(text(&refusal, "code"), "INVALID_ARGUMENT");
+    assert_eq!(fs::read(protected).unwrap(), b"keep this file");
     let history = f.ok("drawing-versions", &["--document-dir", document_path]);
     let versions = list(&history, "versions");
-    assert_eq!(versions.len(), 1);
+    assert_eq!(versions.len(), 2);
     assert_eq!(text(&versions[0], "state"), "published");
     assert_eq!(text(&versions[0], "version_id"), VERSION);
+    assert_eq!(text(&versions[1], "version_id"), VERSION2);
 }

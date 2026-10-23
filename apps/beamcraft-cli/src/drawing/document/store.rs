@@ -7,6 +7,7 @@ use super::{Metadata, State};
 use crate::drawing::{archive::SourceArchive, codec, derived};
 use crate::plate::{PlateError, control, host_uuid, integrity};
 use beamcraft_engine::drawing::Drawing;
+use beamcraft_engine::drawing::projection::{self, BodyProjection, DimensionProjection};
 use beamcraft_host::ledger::{Outcome, OutcomeSource};
 use beamcraft_host::revision::{
     CommitOutcome, ExpectedBase, LayerEntry, LayerRole, Revision, RevisionDraft, RevisionInfo,
@@ -24,6 +25,8 @@ use std::path::Path;
 
 const INTENT_LAYER: &str = "drawing.usda";
 const SOURCE_MANIFEST: &str = "source-manifest";
+const VERSION_PREFIX: &str = "version/";
+const VERSION_MARKER: &[u8] = b"beamcraft-document-version/1\n";
 const INITIAL_REVISION: &[u8] = b"beamcraft-p01-initial-base";
 
 /// A fully reopened document revision; every layer, source archive, and projection was verified.
@@ -257,7 +260,7 @@ impl DocumentStore {
         if content.schema() != super::schema_identity()?
             || content.root_layer() != "root.usda"
             || content.entries().len() < 4
-            || content.entries().len() > Budgets::MODEL.layers + 4
+            || content.entries().len() > Budgets::MODEL.layers + 5
         {
             return Err(integrity(
                 "document revision manifest is outside its schema",
@@ -267,7 +270,14 @@ impl DocumentStore {
         let mut assets = Vec::with_capacity(entries.len());
         let mut names = std::collections::BTreeSet::new();
         for entry in entries {
-            if !names.insert(entry.name().to_owned()) || entry.role() != layer_role(entry.name()) {
+            if !names.insert(entry.name().to_owned())
+                || entry.role() != layer_role(entry.name())
+                || !(matches!(
+                    entry.name(),
+                    "root.usda" | INTENT_LAYER | "drawing-derived.usda" | SOURCE_MANIFEST
+                ) || entry.name().starts_with("model/")
+                    || entry.name().starts_with(VERSION_PREFIX))
+            {
                 return Err(integrity("document revision layer names or roles disagree"));
             }
             let bytes = revision.layer_bytes(entry.name())?;
@@ -289,6 +299,29 @@ impl DocumentStore {
         let derived_asset = find("drawing-derived.usda")?;
         let metadata = metadata_from_root(&root, &revision)?;
         super::verify(&root, metadata)?;
+        let version_markers = assets
+            .iter()
+            .filter(|asset| asset.name.starts_with(VERSION_PREFIX))
+            .collect::<Vec<_>>();
+        match metadata.version {
+            Some(version) => {
+                let name = format!("{VERSION_PREFIX}{version}");
+                match version_markers.as_slice() {
+                    [marker] if marker.name == name && marker.bytes == VERSION_MARKER => {}
+                    _ => {
+                        return Err(integrity(
+                            "published version marker is missing or inconsistent",
+                        ));
+                    }
+                }
+            }
+            None if !version_markers.is_empty() => {
+                return Err(integrity(
+                    "draft revision contains a published version marker",
+                ));
+            }
+            None => {}
+        }
         let digest = revision
             .manifest()
             .base()
@@ -422,6 +455,21 @@ impl DocumentStore {
                     && head.latest_published != Some(version) => {}
             _ => return Err(bad("document lifecycle transition is invalid")),
         }
+        if let Some(version) = version {
+            let resource_name = format!("{VERSION_PREFIX}{version}");
+            if self
+                .revisions
+                .history_info()?
+                .iter()
+                .flat_map(|info| info.manifest().content().entries())
+                .any(|entry| entry.name() == resource_name)
+            {
+                return Err(PlateError {
+                    code: ErrorCode::DuplicateId,
+                    message: "document version id was already published",
+                });
+            }
+        }
         let metadata = Metadata {
             state,
             version,
@@ -432,9 +480,29 @@ impl DocumentStore {
         };
         let root = super::encode(metadata)?;
         let intent = codec::encode(drawing)?;
-        let projected = derived::encode(drawing, &source.inspect()?.snapshot)?;
+        let snapshot = source.inspect()?.snapshot;
+        if state == State::Published {
+            let projection = projection::resolve(drawing, &snapshot)?;
+            if !matches!(projection.body, BodyProjection::Resolved(_))
+                || !matches!(projection.dimension, DimensionProjection::Resolved(_))
+            {
+                return Err(PlateError {
+                    code: ErrorCode::DependencyUnavailable,
+                    message: "unresolved drawing geometry cannot be published",
+                });
+            }
+        }
+        let projected = derived::encode(drawing, &snapshot)?;
         let mut assets = vec![root, intent, projected];
         assets.extend_from_slice(source.resources());
+        if let Some(version) = version {
+            assets.push(Asset {
+                name: format!("{VERSION_PREFIX}{version}"),
+                digest: Sha256::digest(VERSION_MARKER)
+                    .map_err(|_| integrity("document version marker digest failed"))?,
+                bytes: VERSION_MARKER.to_vec(),
+            });
+        }
         let mut layer_entries = Vec::with_capacity(assets.len());
         for asset in &assets {
             self.revisions

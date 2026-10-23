@@ -156,6 +156,10 @@ fn commit_and_open_round_trip_with_a_verified_chain() {
     assert!(first.info.manifest().base().is_none());
     let second = commit_n(&store, 2);
     assert_eq!(second.sequence(), 2);
+    assert_eq!(
+        store.history_info().unwrap(),
+        vec![first.info.clone(), second.clone()]
+    );
     let base = second.manifest().base().unwrap();
     assert_eq!(base.revision, id(101));
     assert_eq!(base.manifest, first.info.manifest_digest());
