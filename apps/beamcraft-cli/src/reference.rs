@@ -183,7 +183,7 @@ fn layer_placement(p: &Placement) -> LayerPlacement {
     }
 }
 
-fn wrapper_of(view: &ReferenceView) -> Result<Wrapper, PlateError> {
+pub(crate) fn wrapper_of(view: &ReferenceView) -> Result<Wrapper, PlateError> {
     let record = ReferenceRecord {
         id: ElementId::parse(&view.id)
             .map_err(|_| integrity("a wrapper identity is not a full UUIDv7"))?,

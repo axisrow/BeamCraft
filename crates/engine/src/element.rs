@@ -48,7 +48,7 @@ pub enum ElementKind {
     Assembly,
     /// Connection (reserved).
     Connection,
-    /// Reference to foreign content (reserved).
+    /// Read-only reference to foreign content.
     Reference,
 }
 

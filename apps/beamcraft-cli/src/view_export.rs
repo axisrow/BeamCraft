@@ -142,6 +142,9 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         message: "store root is not usable",
     })?;
     let inspection = inspect(&RevisionStore::new(blobs))?;
+    if let Some(error) = inspection.reference_view_error {
+        return Err(error);
+    }
     let snapshot = &inspection.snapshot;
     let bundle = snapshot.to_bundle().map_err(|e| PlateError {
         code: e.f04_code(),

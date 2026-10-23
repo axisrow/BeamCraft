@@ -25,7 +25,8 @@ const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";
 const COPY: &str = "019a7bf0-0000-7000-8000-000000700003";
 const HOLED: &str = "019a7bf0-0000-7000-8000-000000700004";
 const IBEAM: &str = "019a7bf0-0000-7000-8000-000000700005";
-const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n    def Mesh \"Body\"\n    {\n        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]\n        int[] faceVertexCounts = [3]\n        int[] faceVertexIndices = [0, 1, 2]\n    }\n}\n";
+const REFERENCE: &str = "019a7bf0-0000-7000-8000-000000700006";
+const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n    def Mesh \"Body\"\n    {\n        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]\n        int[] faceVertexCounts = [3]\n        int[] faceVertexIndices = [0, 1, 2]\n        uniform token subdivisionScheme = \"none\"\n    }\n}\n";
 
 struct Fixture {
     root: PathBuf,
@@ -426,6 +427,8 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
             source.to_str().unwrap(),
             "--translation",
             "8000,0,0",
+            "--new-id",
+            REFERENCE,
         ],
     );
     let head = f.head();
@@ -454,23 +457,16 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
         assert!(matches!(at(&hits[0], &["feature_id"]), Json::Null));
         assert_eq!(text(&hits[0], "feature_kind"), "face");
         assert_eq!(triple(at(&hits[0], &["point_world_mm"])), point);
-        assert!(list(&picked, "skipped").is_empty(), "{origin}");
+        // The read-only reference is never considered by engineering picking, so every pick
+        // of this model reports it as skipped.
+        let skipped: Vec<String> = list(&picked, "skipped")
+            .iter()
+            .map(|s| s.string().unwrap().to_owned())
+            .collect();
+        assert_eq!(skipped, [REFERENCE]);
     }
-    // Through the plate's hole (world x 5100..5150, y 100..150) there is no hit.
-    let picked = f.ok(
-        "pick",
-        &[
-            "--origin",
-            "5125,125,100",
-            "--direction",
-            "0,0,-1",
-            "--targets",
-            "face",
-        ],
-    );
-    assert!(list(&picked, "hits").is_empty(), "{picked:?}");
-    // The foreign content is never a hit, and nothing is skipped on the ray form: every
-    // engine body was considered.
+    // The read-only reference is in the view scene but has no engineering features: no hit,
+    // and it is explicitly reported as skipped.
     let picked = f.ok(
         "pick",
         &[
@@ -485,8 +481,26 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
         ],
     );
     assert!(list(&picked, "hits").is_empty(), "{picked:?}");
-    assert!(list(&picked, "skipped").is_empty(), "{picked:?}");
-    // The point form measures to features, which a mesh body has none of: both stay skipped.
+    let skipped: Vec<String> = list(&picked, "skipped")
+        .iter()
+        .map(|s| s.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(skipped, [REFERENCE]);
+    // Through the plate's hole (world x 5100..5150, y 100..150) there is no hit.
+    let picked = f.ok(
+        "pick",
+        &[
+            "--origin",
+            "5125,125,100",
+            "--direction",
+            "0,0,-1",
+            "--targets",
+            "face",
+        ],
+    );
+    assert!(list(&picked, "hits").is_empty(), "{picked:?}");
+    // The point form measures to features, which a mesh body has none of: they stay skipped,
+    // and the read-only reference is never considered at all.
     let picked = f.ok(
         "pick",
         &[
@@ -502,7 +516,7 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
         .iter()
         .map(|s| s.string().unwrap().to_owned())
         .collect();
-    assert_eq!(skipped, [HOLED, IBEAM]);
+    assert_eq!(skipped, [HOLED, IBEAM, REFERENCE]);
     assert_eq!(
         f.refused(
             "feature-lookup",

@@ -36,6 +36,12 @@ digest, instance and triangle tables, ids and bounds, and computes no engineerin
 
 ## Limits
 
+Read-only reference display is exposed by `scene::{ReferenceGeometry, reference_element}`:
+bounded Cube and triangle/convex-quad Mesh cages become ordinary reference-kind scene elements,
+without acquiring certified bodies, quantities or engineering pick features. Source translations
+and explicit R01 units correction are supported; wrapper rotation and other foreign transforms
+are not. See the [R01 viewport profile](../../docs/design/r01-readonly-reference.md#translation-only-viewport-path-issue-137).
+
 All caps are checked before the work they bound, with checked arithmetic and no
 input-derived indexing. A caller may lower a limit with `Limits::new`, never raise it.
 

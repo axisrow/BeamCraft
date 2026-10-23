@@ -255,3 +255,84 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
     assert!(lit > 200, "lit pixels {lit}");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
+    let Some(cli) = cli() else { return };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("v03-tests")
+        .join(format!("reference-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let store = root.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let file = root.join("box.usda");
+    // Contributor-original synthetic source, MPL-2.0; no third-party model.
+    let bytes = b"#usda 1.0\n(defaultPrim = \"Box\"\nmetersPerUnit = 0.001\nupAxis = \"Z\")\ndef Cube \"Box\" { double size = 2000 }\n";
+    std::fs::write(&file, bytes).unwrap();
+    let id = "019a7bf0-0000-7000-8000-000000000137";
+    run(
+        &cli,
+        &[
+            "reference-attach",
+            "--store",
+            store.to_str().unwrap(),
+            "--source",
+            file.to_str().unwrap(),
+            "--new-id",
+            id,
+            "--translation",
+            "5000,1000,2000",
+        ],
+    );
+    let snapshot = source::load(&cli, &store, &Stats::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    assert_eq!(
+        scene.elements, 1,
+        "a reference-only store is not an empty viewport"
+    );
+    assert_eq!(scene.counts(), (1, 1));
+    assert_eq!(scene.triangles, 12);
+    assert_eq!(scene.origin_mm, [5000.0, 1000.0, 2000.0]);
+    assert_eq!(scene.min, [-1000.0; 3]);
+    assert_eq!(scene.max, [1000.0; 3]);
+    assert_eq!(scene.meshes[0].vertex_count, 36);
+    assert_eq!(scene.meshes[0].instances, [0u8; 12]);
+    assert_eq!(
+        Scene::from_snapshot(&snapshot, Representation::Simplified).unwrap(),
+        scene,
+        "both display representations include the reference",
+    );
+    run(
+        &cli,
+        &[
+            "reference-move",
+            "--store",
+            store.to_str().unwrap(),
+            "--id",
+            id,
+            "--translation",
+            "9000,2000,3000",
+        ],
+    );
+    let moved = source::load(&cli, &store, &Stats::default()).unwrap();
+    assert_ne!(snapshot.token(), moved.token());
+    assert_eq!(
+        snapshot.meshes(),
+        moved.meshes(),
+        "a move reuses the foreign mesh"
+    );
+    let moved = Scene::from_snapshot(&moved, Representation::Full).unwrap();
+    assert_eq!(moved.origin_mm, [9000.0, 2000.0, 3000.0]);
+    assert_eq!(std::fs::read(&file).unwrap(), bytes);
+    let _ = std::fs::remove_dir_all(&root);
+    let Some(gpu) = gpu() else { return };
+    let (corner, centre, lit) = render(&gpu, &scene);
+    eprintln!("reference render: {lit} lit pixels in the 128 x 128 target");
+    assert!(is_background(corner), "background {corner:?}");
+    assert!(is_lit(centre), "reference at the centre {centre:?}");
+    assert!(
+        lit > 200,
+        "the reference must cover visible pixels, got {lit}"
+    );
+    assert_eq!(render(&gpu, &moved), (corner, centre, lit));
+}

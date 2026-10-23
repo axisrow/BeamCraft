@@ -10,6 +10,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use beamcraft_engine::{ElementKind, Limits as ViewLimits, ViewSnapshot};
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
@@ -39,6 +40,7 @@ def Xform "Site"
         custom string note = "declared by the source"
         def Mesh "Body"
         {
+            uniform token subdivisionScheme = "none"
             point3f[] points = [(0, 0, 0), (2, 0, 0), (2, 1, 0), (0, 1, 0), (0, 0, 3), (2, 0, 3), (2, 1, 3), (0, 1, 3)]
             int[] faceVertexCounts = [4, 4, 4, 4, 4, 4]
             int[] faceVertexIndices = [0, 3, 2, 1, 4, 5, 6, 7, 0, 1, 5, 4, 1, 2, 6, 5, 2, 3, 7, 6, 3, 0, 4, 7]
@@ -46,6 +48,234 @@ def Xform "Site"
     }
 }
 "#;
+
+#[test]
+fn an_attached_reference_enters_the_pinned_view_scene() {
+    let f = Fixture::new();
+    let source = f.source("site.usda", SITE);
+    let id = "019a7bf0-0000-7000-8000-000000000137";
+    f.ok(
+        "reference-attach",
+        &[
+            "--source",
+            &source,
+            "--new-id",
+            id,
+            "--translation",
+            "100,200,300",
+        ],
+    );
+    let snapshot = view(&f);
+    assert_eq!(
+        snapshot.len(),
+        1,
+        "the attached wrapper must reach the viewport"
+    );
+    let element = &snapshot.elements()[0];
+    assert_eq!(element.id.to_string(), id);
+    assert_eq!(element.kind, ElementKind::Reference);
+    assert_eq!(element.placement_mm, [100.0, 200.0, 300.0]);
+    assert_eq!(element.full.world_bounds.min, [100.0, 200.0, 300.0]);
+    assert_eq!(element.full.world_bounds.max, [102.0, 201.0, 303.0]);
+    assert_eq!(snapshot.meshes()[0].triangle_count(), 12);
+    assert_eq!(snapshot.pin().generation(), 1);
+    f.ok(
+        "reference-correct-units",
+        &["--id", id, "--meters-per-unit", "1", "--up-axis", "Y"],
+    );
+    let corrected = view(&f);
+    assert_eq!(
+        corrected.elements()[0].full.world_bounds.min,
+        [100.0, -2800.0, 300.0]
+    );
+    assert_eq!(
+        corrected.elements()[0].full.world_bounds.max,
+        [2100.0, 200.0, 1300.0]
+    );
+    assert_ne!(snapshot.meshes(), corrected.meshes());
+    f.ok(
+        "reference-move",
+        &["--id", id, "--translation", "200,300,400"],
+    );
+    let moved = view(&f);
+    assert_eq!(moved.meshes(), corrected.meshes());
+    assert_eq!(
+        moved.elements()[0].full.world_bounds.min,
+        [200.0, -2700.0, 400.0]
+    );
+    assert_ne!(moved.token(), corrected.token());
+    assert_eq!(moved.pin().generation(), 3);
+    assert_eq!(std::fs::read(source).unwrap(), SITE.as_bytes());
+}
+
+fn view(f: &Fixture) -> ViewSnapshot {
+    let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+        .args(["view-export", "--store", &f.store(), "--out", "-"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    ViewSnapshot::from_bundle(&output.stdout, &ViewLimits::default()).unwrap()
+}
+
+#[test]
+fn source_translations_visibility_multiple_surfaces_and_shared_sources_reach_the_scene() {
+    let f = Fixture::new();
+    let bytes = r#"#usda 1.0
+(defaultPrim = "Site")
+def Xform "Site" {
+    double3 xformOp:translate = (10, 20, 30)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    def Cube "Translated" {
+        double size = 2
+        double3 xformOp:translate:offset = (4, 5, 6)
+        uniform token[] xformOpOrder = ["xformOp:translate:offset"]
+    }
+    def Cube "DefaultSize" {
+        double xformOp:rotateZ = 45
+    }
+    def Mesh "Triangle" {
+        point3f[] points = [(0, 0, 0), (2, 0, 0), (0, 2, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        uniform token subdivisionScheme = "none"
+        uniform token orientation = "leftHanded"
+    }
+    def Xform "Hidden" {
+        token visibility = "invisible"
+        double xformOp:rotateZ = 30
+        uniform token[] xformOpOrder = ["xformOp:rotateZ"]
+        def Cube "NotDrawn" {
+            double size = 10000
+            token visibility = "inherited"
+        }
+    }
+}
+"#;
+    let source = f.source("translated.usda", bytes);
+    let ids = [
+        "019a7bf0-0000-7000-8000-000000000137",
+        "019a7bf0-0000-7000-8000-000000000138",
+    ];
+    for id in ids {
+        f.ok(
+            "reference-attach",
+            &[
+                "--source",
+                &source,
+                "--new-id",
+                id,
+                "--translation",
+                "100,200,300",
+            ],
+        );
+    }
+    f.ok(
+        "create-plate",
+        &["--width", "3", "--length", "4", "--thickness", "5"],
+    );
+    let snapshot = view(&f);
+    assert_eq!(
+        snapshot.len(),
+        3,
+        "two references coexist with native steel"
+    );
+    assert_eq!(
+        snapshot.meshes().len(),
+        2,
+        "identical foreign representations share one mesh"
+    );
+    for id in ids {
+        let element = snapshot
+            .element(&beamcraft_engine::ElementId::parse(id).unwrap())
+            .unwrap();
+        assert_eq!(element.kind, ElementKind::Reference);
+        assert_eq!(element.full.world_bounds.min, [109.0, 219.0, 329.0]);
+        assert_eq!(element.full.world_bounds.max, [115.0, 226.0, 337.0]);
+        let mesh = snapshot.mesh_at(element.full.mesh_slot).unwrap();
+        assert_eq!(mesh.vertex_count(), 19);
+        assert_eq!(
+            mesh.triangle_count(),
+            25,
+            "the invisible subtree contributes nothing"
+        );
+    }
+    assert_eq!(std::fs::read(source).unwrap(), bytes.as_bytes());
+}
+
+#[test]
+fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_file() {
+    for (kind, properties, expected) in [
+        (
+            "Cube",
+            "double xformOp:rotateZ = 30\nuniform token[] xformOpOrder = [\"xformOp:rotateZ\"]",
+            "UNSUPPORTED_GEOMETRY",
+        ),
+        (
+            "Cube",
+            "double3 xformOp:scale = (2, 2, 2)\nuniform token[] xformOpOrder = [\"xformOp:scale\"]",
+            "UNSUPPORTED_GEOMETRY",
+        ),
+        (
+            "Cube",
+            "uniform token[] xformOpOrder = [\"!resetXformStack!\"]",
+            "UNSUPPORTED_GEOMETRY",
+        ),
+        ("Sphere", "double radius = 3", "UNSUPPORTED_GEOMETRY"),
+        (
+            "Mesh",
+            "uniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0, 0, 0), (2, 0, 0), (0, 2, 0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [-1, 1, 2]",
+            "INVALID_ARGUMENT",
+        ),
+        (
+            "Mesh",
+            "point3f[] points = [(0, 0, 0), (2, 0, 0), (0, 2, 0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0, 1, 2]",
+            "UNSUPPORTED_GEOMETRY",
+        ),
+    ] {
+        let f = Fixture::new();
+        let source = f.source(
+            "unsupported.usda",
+            format!(
+                "#usda 1.0\n(defaultPrim = \"Site\")\ndef {kind} \"Site\" {{\n{properties}\n}}\n"
+            ),
+        );
+        f.ok("reference-attach", &["--source", &source]);
+        f.ok("reference-inspect", &[]);
+        f.ok("plate-inspect", &[]);
+        let out = f.root.join("refused.bundle");
+        assert_eq!(
+            f.rejected("view-export", &["--out", out.to_str().unwrap()]),
+            expected
+        );
+        assert!(!out.exists());
+    }
+    let f = Fixture::new();
+    let source = f.source("site.usda", SITE);
+    let id = "019a7bf0-0000-7000-8000-000000000137";
+    f.ok(
+        "reference-attach",
+        &[
+            "--source",
+            &source,
+            "--new-id",
+            id,
+            "--rotation-z-deg",
+            "90",
+        ],
+    );
+    assert_eq!(
+        f.rejected("view-export", &["--out", "-"]),
+        "UNSUPPORTED_GEOMETRY"
+    );
+    f.ok("reference-inspect", &[]);
+    f.ok("plate-inspect", &[]);
+    f.ok("reference-move", &["--id", id, "--translation", "0,0,0"]);
+    assert_eq!(
+        view(&f).len(),
+        1,
+        "an identity placement restores the supported view"
+    );
+}
 
 struct Fixture {
     root: PathBuf,

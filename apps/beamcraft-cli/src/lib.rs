@@ -24,6 +24,7 @@ pub mod numbering;
 pub mod numbering_approval;
 pub mod plate;
 pub mod reference;
+mod reference_view;
 pub mod source_file;
 pub mod weld;
 pub mod workspace;

@@ -95,7 +95,7 @@ pub struct RepresentationRef {
     /// Whether this is the exact geometry. The full representation is always exact; a
     /// simplified one is exact only when it is the same mesh as the full one.
     pub exact: bool,
-    /// World bounds of this representation, computed by the engine from kernel vertices.
+    /// World bounds of this representation, computed by the engine from mesh vertices.
     pub world_bounds: Aabb,
 }
 

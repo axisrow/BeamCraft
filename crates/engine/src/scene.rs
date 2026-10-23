@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The input of the snapshot builder: elements with sealed kernel results.
-//!
-//! P01 will derive these from authored model elements. Until then a caller supplies the kernel
-//! plate results directly (the only body the kernel builds today). The builder trusts neither the
-//! caller's `kind` nor any mesh: it re-validates every blob.
+//! The input of the snapshot builder: evaluated bodies and read-only reference representations.
+//! The builder trusts neither the caller's `kind` nor any mesh: it re-validates every blob.
+
+mod reference;
+pub use reference::{ReferenceGeometry, reference_element};
 
 use crate::element::{ElementId, ElementKind};
 use beamcraft_geom::{Point3, Translation3};
@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 /// The mesh of one representation: the exact BCMESH01 blob, its digest and the vertex positions
 /// (element-local millimetres) the bounds are computed from. Any sealed kernel body can be
-/// offered: a plate or member box, or a solid with through holes. The bytes and vertices are
+/// offered, as can a display-only foreign reference mesh. The bytes and vertices are
 /// shared, so elements that reuse one mesh (copies) hold it once in memory.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneMesh {
@@ -27,7 +27,7 @@ pub struct SceneMesh {
 impl SceneMesh {
     /// A mesh from its blob, digest and vertices. The snapshot builder re-validates the blob and
     /// checks that the digest is the blob's. Crate-private: outside the engine a mesh can only
-    /// come from a certified kernel or `SolidMesh` result, so its vertices always match its blob.
+    /// come from kernel results or the bounded reference conversion, so its vertices match its blob.
     pub(crate) fn new(blob: Vec<u8>, digest: ContentDigest, vertices: Vec<Point3>) -> Self {
         Self::shared(blob.into(), digest, vertices)
     }
@@ -75,7 +75,7 @@ pub struct SceneElement {
 }
 
 impl SceneElement {
-    /// An element whose kernel body is `full`, placed by a translation (the only placement of
+    /// An element whose representation is `full`, placed by a translation (the only placement of
     /// the first scope).
     pub fn new(
         id: ElementId,

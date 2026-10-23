@@ -8,9 +8,10 @@
 //! columns), a FeatureId, and carries world positions computed by the engine; no hit contains a
 //! triangle, vertex or buffer index. A ray pick also hits bodies without FeatureIds (an I-section
 //! member, a plate with a through hole) by their mesh: the nearest front-facing triangle names
-//! its element only, with `feature_id` `None`. A body a query cannot consider at all (no engine
-//! mesh, the point form, no face target) is listed in [`PickResult::skipped`] rather than
-//! approximated.
+//! its element only, with `feature_id` `None`. A read-only reference is never picked (R01): it is
+//! reported as skipped even though it carries a display mesh. A body a query cannot consider at
+//! all (no engine mesh, the point form, no face target) is listed in [`PickResult::skipped`]
+//! rather than approximated.
 //!
 //! Pick follows F06 exactly: closed face rectangles enlarged by `eps_pick` with the parallel
 //! test `|u . n| < 1e-6`; edge and vertex distances to the closed finite segment
@@ -26,7 +27,7 @@
 //! member box runs between the centres of its `f.z0` and `f.z1` faces, which are the authored
 //! axis points plus the translation (F06 section 6).
 
-use crate::element::ElementId;
+use crate::element::{ElementId, ElementKind};
 use crate::error::{ViewCode, ViewError};
 use crate::query::feature::{
     BodyKind, BoxFeatures, FeatureId, FeatureKind, V3, add, cross, dot, finite, norm, scale, sub,
@@ -157,8 +158,8 @@ pub struct PickResult {
     pub hits: Vec<Hit>,
     /// True when more hits qualified than were returned.
     pub truncated: bool,
-    /// Elements a query could not consider: no engine mesh, the point form, or no face target
-    /// against a body without FeatureIds, in id order.
+    /// Elements a query could not consider: no engine mesh, the point form, no face target
+    /// against a body without FeatureIds, or a read-only reference, in id order.
     pub skipped: Vec<ElementId>,
 }
 
@@ -687,6 +688,12 @@ pub fn pick(snapshot: &ViewSnapshot, query: &PickQuery) -> Result<PickResult, Vi
     let mut truncated = false;
     let mut skipped = Vec::new();
     for entry in snapshot.elements() {
+        // Foreign display geometry is never engineering picking (R01): a read-only reference
+        // stays in `skipped` even though it carries a display mesh.
+        if entry.kind == ElementKind::Reference {
+            skipped.push(entry.id);
+            continue;
+        }
         match BoxFeatures::world(snapshot, entry) {
             Some(features) => hits.extend(hits_of(&features, query, dir)?),
             None => match query {

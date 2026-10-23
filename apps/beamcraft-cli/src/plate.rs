@@ -381,6 +381,8 @@ pub(crate) struct Decoded {
     pub(crate) levels: Levels,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
+    /// Display conversion must not reject otherwise valid R01 attachment or inspection.
+    reference_scene: Result<Vec<beamcraft_engine::SceneElement>, PlateError>,
 }
 
 pub(crate) fn number(value: &Value) -> Option<f64> {
@@ -716,7 +718,7 @@ pub(crate) fn decode(
             Some("column") => {
                 members.push((decode_member(prim, id, MemberKind::Column)?, mesh()));
             }
-            // R01 wrappers are decoded by `beamcraft_cli::reference`.
+            // The read-only reference representation is decoded separately below.
             Some("reference") => {}
             _ => other += 1,
         }
@@ -730,6 +732,7 @@ pub(crate) fn decode(
         definitions,
         levels,
         elements,
+        reference_scene: crate::reference_view::scene_elements(&prims),
     })
 }
 
@@ -1759,6 +1762,9 @@ pub struct Inspection {
     pub definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The pinned view snapshot built from committed data.
     pub snapshot: ViewSnapshot,
+    /// A reference outside the translation-only display profile. Non-view inspection still
+    /// works, but a viewport must refuse the incomplete bundle rather than silently omit it.
+    pub reference_view_error: Option<PlateError>,
     /// D1: the ProjectId recorded in the root layer of the revision, or `None` for a store whose
     /// first revision predates the record (never invented for it).
     pub project_record: Option<String>,
@@ -1827,12 +1833,16 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         revision.info().manifest_digest(),
         content.workspace_generation(),
     );
-    let snapshot = ViewSnapshot::build(
-        pin,
-        scene_elements_with_members(&plates, &members)?,
-        &Limits::default(),
-    )
-    .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
+    let mut scene = scene_elements_with_members(&plates, &members)?;
+    let reference_view_error = match decoded.reference_scene {
+        Ok(references) => {
+            scene.extend(references);
+            None
+        }
+        Err(error) => Some(error),
+    };
+    let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())
+        .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
     Ok(Inspection {
         revision: summarize(revision.info()),
         plates,
@@ -1841,6 +1851,7 @@ pub fn inspect_revision(revision: &Revision) -> Result<Inspection, PlateError> {
         other_elements: decoded.other_elements,
         definitions: decoded.definitions,
         snapshot,
+        reference_view_error,
         project_record: record,
         levels: decoded.levels,
         elements: decoded.elements,

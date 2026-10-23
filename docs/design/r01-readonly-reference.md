@@ -90,11 +90,62 @@ rewrites.
   ordinary element path, so duplicate detection, the U03 index and the footprint machinery apply.
   F10 `DV-KIND-004` (authoring a reserved kind is rejected) needs an amendment that admits this
   one; F04 section 1 defers the attachment commands to R01. Proposed, not edited here.
-- **Placement is a full rigid pose** (the wrapper has no kernel body, so the translation-only view
-  contract does not apply); the CLI offers a plan rotation about Z.
+- **Stored placement is a full rigid pose**; the CLI offers a plan rotation about Z. The
+  translation-only viewport path below supports identity wrapper rotation only; storing a rotated
+  reference is still valid R01 data, but exporting its view is an explicit refusal.
 - **Schema pin.** The U02 descriptor lists the wrapper, so its digest changes. Layers pinned to the
   P02.2 digest contain nothing the new mapping refuses and are accepted next to the earlier
   previous mapping; the next edit rewrites the pin.
+
+## Translation-only viewport path (issue #137)
+
+`view-export` now includes supported foreign surfaces in the ordinary engine view bundle. The
+adapter reads the already verified composed prims (no second file open or resolver); the engine's
+`scene::reference_element` combines a wrapper's visible surfaces into one `reference` element and
+a bounded BCMESH01 display mesh. The existing UI instancing/upload path draws it in both full and
+simplified modes, and it contributes to scene counts, bounds and camera fit. No new dependency or
+bundle format is needed.
+
+Supported profile:
+
+- `Cube` (centred at the source origin, default size 2) and polygonal `Mesh` cages made of triangles
+  or convex quads planar within 1e-6 mm. Groups may be `Xform`, `Scope` or typeless. Multiple
+  surfaces are combined under the wrapper identity; identical representations share a mesh.
+- Ordered `xformOp:translate` operations (including suffixes) on foreign prims accumulate through
+  the foreign hierarchy. Operations absent from `xformOpOrder` are inactive. Wrapper rotation must
+  be identity. General rotation, scale, matrices, inverse operations and reset stacks are refused,
+  not silently ignored. The R01 **explicit** units/up-axis correction is applied to local display
+  vertices before wrapper translation; declared units alone still change nothing.
+- Inactive or invisible subtrees contribute no surface; `inherited` visibility cannot reveal an
+  invisible ancestor. Mesh handedness controls winding. Geometry uses the UI's existing flat
+  shading and palette, not source materials, normals or textures.
+
+This is a polygon-cage view, not subdivision evaluation, a closed-shell certificate or a quantity.
+Subdivision schemes other than an explicit `none` are outside this profile: USD defaults an absent
+`scheme` to catmullClark, so a mesh that does not declare `none` is refused rather than drawn as an
+unsubdivided cage. Holes, creases, other prim types, non-default/render
+purposes, larger polygons and concave/nonplanar quads are outside this profile. A malformed or
+unsupported representation refuses the **entire view export** with a stable code before an output
+file is created. Attachment, reference inspection and non-view model operations remain available;
+`Inspection::reference_view_error` records the display refusal without invalidating R01 data.
+Empty and invisible groups have no representation. References remain skipped by engineering
+picking; R02/R03, full transforms and foreign authoring are not added.
+
+Regression evidence: `crates/engine/tests/reference_scene.rs` covers attach-to-snapshot, combined
+surfaces, bounds, units correction, winding, bundle round-trip, kind hiding, pick exclusion, moves
+without mesh changes, and malformed/over-budget inputs. `apps/beamcraft-cli/tests/reference.rs`
+covers real attachment-to-view export, hierarchical translations, visibility, shared sources,
+coexistence with steel, correction and explicit unsupported-transform refusals without breaking
+inspection. `apps/beamcraft-ui/tests/viewport.rs` loads an attached reference through the CLI,
+asserts buffers/bounds and verifies lit pixels with a native offscreen render (the GPU step reports
+a skip when no adapter is available). No kittest dependency is added: actual pixel readback tests
+the viewport renderer directly.
+
+USD semantics: [Cube size](https://openusd.org/release/api/class_usd_geom_cube.html#details),
+[Xformable operation order](https://openusd.org/release/api/class_usd_geom_xformable.html#details),
+and [Mesh polygon topology](https://openusd.org/release/api/class_usd_geom_mesh.html#details).
+All implementation and generated test models are contributor-original, MPL-2.0; the existing
+generated-fixture entry in `ATTRIBUTION.md` covers the test sources.
 
 ## Negative cases (tests)
 
