@@ -29,6 +29,12 @@ beamcraft changeset-apply   --store PUBLISHED --workspace-dir DIR --changeset SH
   changed (the delta) without a diff format of its own.
 - **Operations.** Every unsent draft revision contributes its operation id and its manifest digest
   (the content identity of its accepted result), in draft order. The order is part of the payload.
+- **Virtual layer names.** Keep owned/root names plain lowercase `.usda` identifiers. Also admit
+  R01's exact `external/<sha256>.usda` form only for an external-role layer whose full lowercase
+  digest equals the filename. No other nested path, traversal, absolute name or owned-layer
+  directory is admitted. The existing 64-byte plain-name cap stays; the canonical external form
+  is exactly 78 bytes, fitting the unchanged length-prefixed wire field. Unchanged and newly attached source blobs still pass the ordinary
+  digest verification and foreign-content guards. Existing plain-name v1 bytes are unchanged.
 - **Accepted base versus local prefix.** The base revision id and manifest digest resolve one
   verified revision of the published store, using the current head or a bounded historical
   lookup. Its layers supply the delta base and the conservative fallback model. The local

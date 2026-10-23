@@ -174,6 +174,70 @@ fn writes(changeset: &Json, target: &str) -> Vec<String> {
         .map(|(group, _)| group)
         .collect()
 }
+
+#[test]
+fn changesets_preserve_existing_and_new_digest_named_external_references() {
+    use beamcraft_host::revision::LayerRole;
+    for already_accepted in [false, true] {
+        let f = Fixture::new();
+        f.forked("seed");
+        let published = f.path("published");
+        let source = f.path("reference.usda");
+        let original = b"#usda 1.0\n(defaultPrim=\"Survey\"\nmetersPerUnit=0.001\nupAxis=\"Z\")\ndef Xform \"Survey\" { custom double original:height=125 }\n";
+        fs::write(&source, original).unwrap();
+        if already_accepted {
+            f.ok(&[
+                "reference-attach",
+                "--store",
+                &published,
+                "--source",
+                &source,
+            ]);
+        }
+        let dir = f.forked("client");
+        if !already_accepted {
+            f.ok(&["reference-attach", "--store", &dir, "--source", &source]);
+        }
+        f.rename(&dir, "accepted with a reference");
+        let draft = RevisionStore::new(BlobStore::new(&dir).unwrap());
+        let revision = draft.open().unwrap();
+        let external = revision
+            .manifest()
+            .content()
+            .entries()
+            .iter()
+            .find(|e| e.role() == LayerRole::External)
+            .unwrap();
+        assert_eq!(
+            external.name(),
+            format!("external/{}.usda", external.digest())
+        );
+        let package = f.create(&dir, &[]);
+        let digest = text(&package, "digest");
+        let payload =
+            beamcraft_cli::changeset::read_changeset(&draft, &digest.parse().unwrap()).unwrap();
+        let layer = payload
+            .changeset
+            .layers
+            .iter()
+            .find(|l| l.name == external.name())
+            .unwrap();
+        assert_eq!(layer.digest, external.digest());
+        assert_eq!(layer.role, beamcraft_model::changeset::LayerRole::External);
+        assert_eq!(layer.base, already_accepted.then_some(external.digest()));
+        f.ok(&f.apply_args(&published, &dir, &digest, USER));
+        let accepted = f.head();
+        let replay = f.ok(&f.apply_args(&published, &dir, &digest, USER));
+        assert_eq!(text(&replay, "outcome"), "changeset_replayed");
+        assert_eq!(f.head(), accepted);
+        let result = RevisionStore::new(BlobStore::new(&published).unwrap())
+            .open()
+            .unwrap();
+        assert_eq!(result.layer_bytes(external.name()).unwrap(), original);
+        assert_eq!(revision.layer_bytes(external.name()).unwrap(), original);
+        assert_eq!(fs::read(&source).unwrap(), original);
+    }
+}
 fn reads(changeset: &Json, target: &str) -> Vec<String> {
     dependencies(changeset, target)
         .into_iter()
