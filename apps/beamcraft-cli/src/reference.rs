@@ -42,15 +42,17 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::reference::{
     ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, write_foreign,
 };
+use beamcraft_engine::reference_measure::{ReferenceMeshMeasurement, measure_reference_mesh};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerRole, Revision, RevisionStore, Uuid7,
 };
+use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, ForeignPrim, Placement as LayerPlacement, Prepare, Reference,
     ReferenceView, SourcePin, UpAxis, read_references, schema_identity, validate_layers,
 };
-use beamcraft_layer_engine::{Asset, Budgets, Opened, Prim, Reader, inspect_foreign_layer};
+use beamcraft_layer_engine::{Asset, Budgets, Opened, Prim, Reader, Value, inspect_foreign_layer};
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -639,6 +641,178 @@ pub struct ReferenceInspection {
     /// The external (foreign) layers of the revision: name, digest, size. Each was re-verified
     /// against its digest and size when the revision was opened.
     pub foreign_layers: Vec<(String, ContentDigest, u64)>,
+}
+
+/// Independent result or explicit refusal for one foreign USD mesh.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForeignMeshResult {
+    /// Wrapper identity.
+    pub reference_id: String,
+    /// Path in the source USD namespace.
+    pub source_path: String,
+    /// Exact foreign source identity even when geometry is unsupported.
+    pub source_digest: ContentDigest,
+    /// Explicit source snapshot number even when geometry is unsupported.
+    pub source_version: u32,
+    /// Stable shell status or a bounded unsupported reason.
+    pub status: String,
+    /// Present only when the source mesh parses and G06 certifies its shell.
+    pub measurement: Option<ReferenceMeshMeasurement>,
+}
+
+fn mesh_buffers(prim: &Prim) -> Option<TriMesh> {
+    let property = |name: &str, type_name: &str| {
+        prim.properties
+            .iter()
+            .find(|p| p.name == name && p.type_name == type_name)
+            .and_then(|p| p.value.as_ref())
+    };
+    if has_authored_transform_ops(prim) {
+        return None;
+    }
+    let points_value = ["point3f[]", "point3d[]"]
+        .iter()
+        .find_map(|kind| property("points", kind))?;
+    let Value::Array(points_value) = points_value else {
+        return None;
+    };
+    let points = points_value
+        .iter()
+        .map(|point| match point {
+            Value::Array(values) => match values.as_slice() {
+                [Value::Number(x), Value::Number(y), Value::Number(z)] => Some([*x, *y, *z]),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let Value::Array(counts) = property("faceVertexCounts", "int[]")? else {
+        return None;
+    };
+    if counts.iter().any(|count| *count != Value::Int(3)) {
+        return None;
+    }
+    let Value::Array(indices) = property("faceVertexIndices", "int[]")? else {
+        return None;
+    };
+    if indices.len() != counts.len().checked_mul(3)? {
+        return None;
+    }
+    let triangles = indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|face| match face {
+            [Value::Int(a), Value::Int(b), Value::Int(c)] => Some([
+                u32::try_from(*a).ok()?,
+                u32::try_from(*b).ok()?,
+                u32::try_from(*c).ok()?,
+            ]),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    TriMesh::from_buffers(&points, &triangles).ok()
+}
+
+fn has_authored_transform_ops(prim: &Prim) -> bool {
+    prim.properties.iter().any(|property| {
+        (property.name == "xformOpOrder"
+            && matches!(&property.value, Some(Value::Array(items)) if !items.is_empty()))
+            || property.name.starts_with("xformOp:")
+    })
+}
+
+fn source_transform_is_identity(wrapper: &Wrapper, prims: &[Prim], source_path: &str) -> bool {
+    let mut prefix = String::new();
+    for segment in source_path.split('/').filter(|part| !part.is_empty()) {
+        prefix.push('/');
+        prefix.push_str(segment);
+        if let Some(foreign) = wrapper
+            .foreign
+            .iter()
+            .find(|foreign| foreign.source_path == prefix)
+            && let Some(prim) = prims.iter().find(|prim| prim.path == foreign.path)
+            && has_authored_transform_ops(prim)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Measures supported triangle meshes in the verified, pinned reference snapshot.
+pub fn measure_foreign_meshes(store: &RevisionStore) -> Result<Vec<ForeignMeshResult>, PlateError> {
+    let (_revision, _reader, _opened, prims) = open_head(store)?;
+    let mut result = Vec::new();
+    for view in read_references(&prims)? {
+        let wrapper = wrapper_of(&view)?;
+        for foreign in wrapper
+            .foreign
+            .iter()
+            .filter(|p| p.type_name.as_deref() == Some("Mesh"))
+        {
+            let Some(prim) = prims.iter().find(|p| p.path == foreign.path) else {
+                return Err(integrity(
+                    "a pinned foreign mesh disappeared during measurement",
+                ));
+            };
+            if !source_transform_is_identity(&wrapper, &prims, &foreign.source_path) {
+                result.push(ForeignMeshResult {
+                    reference_id: wrapper.record.id.to_string(),
+                    source_path: foreign.source_path.clone(),
+                    source_digest: wrapper.record.source.digest,
+                    source_version: wrapper.record.source.version,
+                    status: "unsupported_mesh_encoding_or_transform".to_owned(),
+                    measurement: None,
+                });
+                continue;
+            }
+            if matches!(
+                wrapper.record.units_status(),
+                UnitsStatus::NeedsCorrection | UnitsStatus::Undeclared
+            ) {
+                result.push(ForeignMeshResult {
+                    reference_id: wrapper.record.id.to_string(),
+                    source_path: foreign.source_path.clone(),
+                    source_digest: wrapper.record.source.digest,
+                    source_version: wrapper.record.source.version,
+                    status: "units_interpretation_required".to_owned(),
+                    measurement: None,
+                });
+                continue;
+            }
+            let Some(mesh) = mesh_buffers(prim) else {
+                result.push(ForeignMeshResult {
+                    reference_id: wrapper.record.id.to_string(),
+                    source_path: foreign.source_path.clone(),
+                    source_digest: wrapper.record.source.digest,
+                    source_version: wrapper.record.source.version,
+                    status: "unsupported_mesh_encoding_or_transform".to_owned(),
+                    measurement: None,
+                });
+                continue;
+            };
+            match measure_reference_mesh(&wrapper.record, &mesh) {
+                Ok(measurement) => result.push(ForeignMeshResult {
+                    reference_id: wrapper.record.id.to_string(),
+                    source_path: foreign.source_path.clone(),
+                    source_digest: wrapper.record.source.digest,
+                    source_version: wrapper.record.source.version,
+                    status: measurement.shell_status.as_str().to_owned(),
+                    measurement: Some(measurement),
+                }),
+                Err(_) => result.push(ForeignMeshResult {
+                    reference_id: wrapper.record.id.to_string(),
+                    source_path: foreign.source_path.clone(),
+                    source_digest: wrapper.record.source.digest,
+                    source_version: wrapper.record.source.version,
+                    status: "unsupported_geometry".to_owned(),
+                    measurement: None,
+                }),
+            }
+        }
+    }
+    Ok(result)
 }
 
 fn open_head(store: &RevisionStore) -> Result<(Revision, Reader, Opened, Vec<Prim>), PlateError> {

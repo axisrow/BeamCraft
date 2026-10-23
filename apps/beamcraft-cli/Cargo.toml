@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 beamcraft-model.workspace = true
+beamcraft-kernel = { path = "../../crates/kernel", version = "0.0.1" }
 beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }
 beamcraft-host = { path = "../../crates/host", version = "0.0.1" }
 beamcraft-json.workspace = true

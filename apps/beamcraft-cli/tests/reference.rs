@@ -47,6 +47,23 @@ def Xform "Site"
 }
 "#;
 
+const TRIANGLE_CUBE: &str = r#"#usda 1.0
+(
+    defaultPrim = "Cube"
+    metersPerUnit = 1.0
+    upAxis = "Z"
+)
+def Xform "Cube"
+{
+    def Mesh "Body"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)]
+        int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
+        int[] faceVertexIndices = [0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7]
+    }
+}
+"#;
+
 struct Fixture {
     root: PathBuf,
 }
@@ -298,6 +315,43 @@ fn attach_stores_the_foreign_bytes_unchanged_and_the_original_file_is_only_read(
             .unwrap(),
         0
     );
+}
+
+#[test]
+fn reference_measure_reports_certified_mesh_enclosures_without_inventing_mass() {
+    let f = Fixture::new();
+    let source = f.source("cube.usda", TRIANGLE_CUBE);
+    let attached = f.attach(&source, &[]);
+    let id = reference_id(&attached);
+    f.ok(
+        "reference-correct-units",
+        &["--id", &id, "--meters-per-unit", "1", "--up-axis", "Z"],
+    );
+    let digest = sha(TRIANGLE_CUBE.as_bytes());
+    let original = fs::read(f.blob_path(&digest)).unwrap();
+    let measured = f.ok("reference-measure", &[]);
+    let result = &at(&measured, &["results"]).array().unwrap()[0];
+    assert_eq!(text(result, "status"), "certified");
+    assert_eq!(text(result, "source_path"), "/Cube/Body");
+    assert!(number(result, &["area_mm2", "lower"]) <= 6_000_000.0);
+    assert!(number(result, &["area_mm2", "upper"]) >= 6_000_000.0);
+    assert!(number(result, &["volume_mm3", "lower"]) <= 1_000_000_000.0);
+    assert!(number(result, &["volume_mm3", "upper"]) >= 1_000_000_000.0);
+    assert_eq!(at(result, &["mass_kg"]), &Json::Null);
+    assert_eq!(text(result, "engineering_quantity_status"), "unsupported");
+    assert_eq!(fs::read(f.blob_path(&digest)).unwrap(), original);
+}
+
+#[test]
+fn reference_measure_refuses_declared_units_until_interpreted() {
+    let f = Fixture::new();
+    let source = f.source("site.usda", SITE);
+    f.attach(&source, &[]);
+    let measured = f.ok("reference-measure", &[]);
+    let result = &at(&measured, &["results"]).array().unwrap()[0];
+    assert_eq!(text(result, "status"), "units_interpretation_required");
+    assert_eq!(at(result, &["area_mm2"]), &Json::Null);
+    assert_eq!(at(result, &["volume_mm3"]), &Json::Null);
 }
 
 #[test]
