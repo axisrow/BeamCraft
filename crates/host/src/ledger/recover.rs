@@ -490,6 +490,12 @@ impl RevisionStore {
                 referenced.extend(
                     info.manifest()
                         .content()
+                        .operation_evidence()
+                        .map(|pin| pin.digest()),
+                );
+                referenced.extend(
+                    info.manifest()
+                        .content()
                         .entries()
                         .iter()
                         .map(|e| e.digest()),

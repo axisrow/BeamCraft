@@ -62,6 +62,17 @@ the compare-and-swap for the expected base.
   `Switched` is `OutcomeUnknown`; a hook that unwinds simulates a crash (U07 fault injection).
 - `beamcraft revision-commit` / `revision-open` are the headless commands.
 
+`RevisionStore::commit_with_evidence` additionally pins one opaque operation-evidence blob by
+full SHA-256 and byte size (at most 1 MiB). A pin uses canonical manifest version 2; commits
+without one retain exactly version 1 bytes, and new readers support both. Evidence participates
+in operation/revision replay identity, is verified on commit/open/historical read, remains
+protected by unresolved intents and recovery reports, and is retained by compaction with its
+revision. `Revision::operation_evidence()` re-verifies the bytes and returns explicit `None`
+for old revisions. The host does not interpret the evidence or treat its presence as semantic
+proof: command codecs, dependency verification and rebase remain application/engine work. It
+is not another USD layer and is never given to the USD content verifier. Older binaries refuse
+version 2, as they should; no existing stored version 1 revision is rewritten.
+
 Not promised: directory-entry crash durability, garbage collection, protection from a hostile
 writer to the store directory. Not implemented: personal workspaces, collaboration, a CLI
 verifier.

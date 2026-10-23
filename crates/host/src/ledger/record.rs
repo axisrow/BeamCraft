@@ -27,6 +27,8 @@ use crate::revision::{MAX_ENTRIES, Uuid7};
 /// Longest record line the parser accepts, including its newline.
 pub const MAX_RECORD_BYTES: usize = 8192;
 const VERSION: &str = "L1";
+// At most MAX_ENTRIES USD layers plus the optional operation-evidence blob of manifest v2.
+const MAX_INTENT_BLOBS: usize = MAX_ENTRIES + 1;
 
 /// The write-ahead record of one commit attempt, written and synced before anything of the
 /// attempt becomes visible in the root.
@@ -52,7 +54,8 @@ pub struct Intent {
     /// two identical commits started in the same second still have different intents and one
     /// attempt's closing record can never close another's.
     pub attempt: ContentDigest,
-    /// Digests of the layer blobs the revision references, in manifest order.
+    /// Digests of the layer blobs in manifest order, followed by the optional operation-evidence
+    /// digest. Both are protected while this intent is unresolved.
     pub blobs: Vec<ContentDigest>,
 }
 
@@ -214,7 +217,7 @@ impl Record {
                 let created = decimal(tokens.next()?)?;
                 let attempt = digest(tokens.next())?;
                 let count = usize::try_from(decimal(tokens.next()?)?).ok()?;
-                if count == 0 || count > MAX_ENTRIES {
+                if count == 0 || count > MAX_INTENT_BLOBS {
                     return None;
                 }
                 let mut blobs = Vec::with_capacity(count);
@@ -284,6 +287,7 @@ mod tests {
             Record::Genesis { head: u64::MAX },
             Record::Intent(intent(1)),
             Record::Intent(intent(MAX_ENTRIES)),
+            Record::Intent(intent(MAX_INTENT_BLOBS)),
             Record::Intent(Intent {
                 base: None,
                 ..intent(2)
@@ -356,7 +360,9 @@ mod tests {
         let mut zero = intent(1);
         zero.blobs.clear();
         let mut many = intent(1);
-        many.blobs = (0..=MAX_ENTRIES).map(|n| digest(&n.to_string())).collect();
+        many.blobs = (0..=MAX_INTENT_BLOBS)
+            .map(|n| digest(&n.to_string()))
+            .collect();
         for body in [Record::Intent(zero).body(), Record::Intent(many).body()] {
             assert_eq!(Record::parse(&resign(&body)), None);
         }

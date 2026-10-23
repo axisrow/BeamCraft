@@ -54,6 +54,9 @@ impl RevisionStore {
         for (index, entry) in info.manifest.content().entries().iter().enumerate() {
             self.read_entry(index, entry)?;
         }
+        if let Some(pin) = info.manifest.content().operation_evidence() {
+            self.read_evidence(pin)?;
+        }
         Ok(Revision {
             store: self.clone(),
             info,
@@ -99,6 +102,9 @@ impl RevisionStore {
         let info = self.info_at(sequence)?;
         for (index, entry) in info.manifest.content().entries().iter().enumerate() {
             self.read_entry(index, entry)?;
+        }
+        if let Some(pin) = info.manifest.content().operation_evidence() {
+            self.read_evidence(pin)?;
         }
         Ok(Revision {
             store: self.clone(),
@@ -189,6 +195,24 @@ impl RevisionStore {
         Ok(RevisionInfo { record, manifest })
     }
 
+    /// Reads the operation evidence for a verified pin, capped, and checks its pinned size.
+    pub(super) fn read_evidence(&self, pin: super::EvidencePin) -> Result<Vec<u8>, RevisionError> {
+        let cap = usize::try_from(super::MAX_OPERATION_EVIDENCE_BYTES)
+            .map_err(|_| RevisionError::LimitExceeded)?;
+        let bytes = self
+            .blobs
+            .read_capped(&pin.digest(), cap)
+            .map_err(|error| match error {
+                StorageError::NotFound => RevisionError::MissingOperationEvidence,
+                StorageError::Io(_) => RevisionError::Storage(error),
+                _ => RevisionError::CorruptOperationEvidence,
+            })?;
+        if u64::try_from(bytes.len()) != Ok(pin.size()) {
+            return Err(RevisionError::CorruptOperationEvidence);
+        }
+        Ok(bytes)
+    }
+
     /// Reads one referenced layer blob and checks its digest (by the blob store) and size.
     pub(super) fn read_entry(
         &self,
@@ -221,6 +245,16 @@ impl Revision {
     /// The manifest.
     pub fn manifest(&self) -> &Manifest {
         &self.info.manifest
+    }
+
+    /// Re-verifies and reads this revision's opaque operation evidence. Legacy absence is
+    /// explicit and never becomes an empty or fabricated successful evidence record.
+    pub fn operation_evidence(&self) -> Result<Option<Vec<u8>>, RevisionError> {
+        self.manifest()
+            .content()
+            .operation_evidence()
+            .map(|pin| self.store.read_evidence(pin))
+            .transpose()
     }
 
     /// Verified bytes of one layer by its virtual name. An unknown name is a storage miss

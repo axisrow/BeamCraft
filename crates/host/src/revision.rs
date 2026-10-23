@@ -70,7 +70,9 @@ pub use commit::{
     ExpectedBase, IndexEvidence, Injected, NoFault, VerifiedLayer, VerifyRequest,
 };
 pub(crate) use floor::Span;
-pub use manifest::{BaseRef, Content, IndexRecord, LayerEntry, LayerRole, Manifest, RevisionDraft};
+pub use manifest::{
+    BaseRef, Content, EvidencePin, IndexRecord, LayerEntry, LayerRole, Manifest, RevisionDraft,
+};
 pub use read::{Revision, RevisionStore};
 pub use root::{RevisionInfo, RootRecord};
 
@@ -80,6 +82,8 @@ pub const MAX_ENTRIES: usize = 64;
 pub const MAX_NAME_BYTES: usize = 128;
 /// Largest encoded manifest.
 pub const MAX_MANIFEST_BYTES: usize = 65_536;
+/// Maximum bytes of opaque operation evidence pinned by one revision.
+pub const MAX_OPERATION_EVIDENCE_BYTES: u64 = 1_048_576;
 /// Largest revision sequence number (and head-log length) this store accepts. Every commit reads
 /// all records to prove revision-id uniqueness, so the cap bounds that linear cost.
 pub const MAX_REVISIONS: u64 = 100_000;
@@ -180,6 +184,10 @@ pub enum RevisionError {
         /// Position in the sorted manifest entry list.
         entry: usize,
     },
+    /// The revision's pinned operation evidence is absent.
+    MissingOperationEvidence,
+    /// Pinned operation evidence has a different digest/size or is not a safe regular blob.
+    CorruptOperationEvidence,
     /// The content verifier rejected the layers (duplicate or short ID, dangling relationship,
     /// foreign override, invalid layer, ...) with its own stable code.
     Content(ContentRejection),
@@ -223,6 +231,9 @@ impl RevisionError {
             | Self::MissingBlob { .. }
             | Self::CorruptBlob { .. }
             | Self::SizeMismatch { .. } => ErrorCode::IntegrityError,
+            Self::MissingOperationEvidence | Self::CorruptOperationEvidence => {
+                ErrorCode::IntegrityError
+            }
             Self::Content(rejection) => rejection.code,
             Self::IndexIncomplete => ErrorCode::DependencyUnavailable,
             Self::IndexMismatch => ErrorCode::StaleWorkspace,
@@ -257,6 +268,8 @@ impl fmt::Display for RevisionError {
             Self::MissingBlob { .. } => "a referenced layer blob is missing",
             Self::CorruptBlob { .. } => "a referenced layer blob is corrupt",
             Self::SizeMismatch { .. } => "a referenced layer blob has an unexpected size",
+            Self::MissingOperationEvidence => "pinned operation evidence is missing",
+            Self::CorruptOperationEvidence => "pinned operation evidence is corrupt",
             Self::Content(rejection) => rejection.message,
             Self::IndexIncomplete => "index evidence is partial",
             Self::IndexMismatch => "index evidence belongs to another context",

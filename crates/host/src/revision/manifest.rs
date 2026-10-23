@@ -22,6 +22,11 @@
 //! Every line ends with a single `\n`; there is no other whitespace, no optional line and no
 //! trailing byte. A parsed manifest is re-encoded and must reproduce the input exactly, so every
 //! stored manifest has exactly one valid byte form.
+//!
+//! Version 2 uses `beamcraft-revision-manifest 2` and exactly one additional
+//! `evidence <sha256> <size>` line between `index` and `layers`. Its opaque, capped blob is
+//! operation evidence, never a USD layer. A revision without this pin retains byte-for-byte
+//! version 1 encoding. New readers accept both; older readers refuse version 2 explicitly.
 
 use std::fmt::Write as _;
 
@@ -35,6 +40,35 @@ use super::{
 };
 
 const MAGIC: &str = "beamcraft-revision-manifest 1";
+const MAGIC_WITH_EVIDENCE: &str = "beamcraft-revision-manifest 2";
+
+/// An opaque operation-evidence blob's complete identity and bounded size. It is not a USD
+/// layer or authority for its contents; the application must decode and verify its semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvidencePin {
+    digest: ContentDigest,
+    size: u64,
+}
+
+impl EvidencePin {
+    /// Admits a pin up to the operation-evidence cap. Commit/read verify its actual bytes.
+    pub fn new(digest: ContentDigest, size: u64) -> Result<Self, RevisionError> {
+        if size > super::MAX_OPERATION_EVIDENCE_BYTES {
+            return Err(RevisionError::LimitExceeded);
+        }
+        Ok(Self { digest, size })
+    }
+
+    /// Full SHA-256 of the opaque blob.
+    pub const fn digest(self) -> ContentDigest {
+        self.digest
+    }
+
+    /// Declared byte length.
+    pub const fn size(self) -> u64 {
+        self.size
+    }
+}
 
 /// Role of one layer in a revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -197,6 +231,7 @@ pub struct Content {
     schema: ContentDigest,
     root_layer: String,
     entries: Vec<LayerEntry>,
+    operation_evidence: Option<EvidencePin>,
 }
 
 impl Content {
@@ -204,6 +239,15 @@ impl Content {
     /// least one authored and one derived layer, a root layer that is an entry, and a bounded
     /// total size. Entries are sorted by name.
     pub fn from_draft(draft: &RevisionDraft) -> Result<Self, RevisionError> {
+        Self::from_draft_with_evidence(draft, None)
+    }
+
+    /// Normalizes the same draft with an optional immutable operation-evidence pin. The pin
+    /// participates in the content fingerprint and every operation/revision replay comparison.
+    pub fn from_draft_with_evidence(
+        draft: &RevisionDraft,
+        operation_evidence: Option<EvidencePin>,
+    ) -> Result<Self, RevisionError> {
         if draft.entries.len() > MAX_ENTRIES {
             return Err(RevisionError::LimitExceeded);
         }
@@ -224,6 +268,7 @@ impl Content {
             schema: draft.schema,
             root_layer: draft.root_layer.clone(),
             entries,
+            operation_evidence,
         };
         content.check()?;
         Ok(content)
@@ -295,6 +340,11 @@ impl Content {
     pub fn entries(&self) -> &[LayerEntry] {
         &self.entries
     }
+
+    /// Opaque operation evidence; absent in legacy revisions and commits without evidence.
+    pub const fn operation_evidence(&self) -> Option<EvidencePin> {
+        self.operation_evidence
+    }
 }
 
 /// One immutable, canonical revision manifest.
@@ -358,7 +408,12 @@ impl Manifest {
         let c = &self.content;
         let mut out = String::new();
         // Writing to a String cannot fail, so the results are intentionally ignored.
-        let _ = writeln!(out, "{MAGIC}");
+        let magic = if c.operation_evidence.is_some() {
+            MAGIC_WITH_EVIDENCE
+        } else {
+            MAGIC
+        };
+        let _ = writeln!(out, "{magic}");
         let _ = writeln!(out, "project {}", c.project);
         let _ = writeln!(out, "workspace {}", c.workspace);
         let _ = writeln!(out, "revision {}", c.revision);
@@ -382,6 +437,9 @@ impl Manifest {
             None => {
                 let _ = writeln!(out, "index none");
             }
+        }
+        if let Some(pin) = c.operation_evidence {
+            let _ = writeln!(out, "evidence {} {}", pin.digest, pin.size);
         }
         let _ = writeln!(out, "layers {}", c.entries.len());
         for e in &c.entries {
@@ -413,9 +471,11 @@ impl Manifest {
         let text = std::str::from_utf8(bytes).map_err(|_| bad)?;
         let body = text.strip_suffix('\n').ok_or(bad)?;
         let mut lines = body.split('\n');
-        if lines.next() != Some(MAGIC) {
-            return Err(bad);
-        }
+        let has_evidence = match lines.next() {
+            Some(MAGIC) => false,
+            Some(MAGIC_WITH_EVIDENCE) => true,
+            _ => return Err(bad),
+        };
         let id = |value: &str| Uuid7::parse(value).map_err(|_| bad);
         let digest = |value: &str| value.parse::<ContentDigest>().map_err(|_| bad);
         let project = id(field(&mut lines, "project")?)?;
@@ -451,6 +511,15 @@ impl Manifest {
                     prims: decimal(p)?,
                 })
             }
+        };
+        let operation_evidence = if has_evidence {
+            let mut parts = field(&mut lines, "evidence")?.split(' ');
+            let (Some(d), Some(size), None) = (parts.next(), parts.next(), parts.next()) else {
+                return Err(bad);
+            };
+            Some(EvidencePin::new(digest(d)?, decimal(size)?).map_err(|_| bad)?)
+        } else {
+            None
         };
         let count = usize::try_from(decimal(field(&mut lines, "layers")?)?).map_err(|_| bad)?;
         if count > MAX_ENTRIES {
@@ -493,6 +562,7 @@ impl Manifest {
             schema,
             root_layer,
             entries,
+            operation_evidence,
         };
         content.check().map_err(|_| bad)?;
         let manifest = Self::assemble(content, sequence, base, index).map_err(|_| bad)?;

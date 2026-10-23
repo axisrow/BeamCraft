@@ -268,9 +268,23 @@ impl RevisionStore {
         verifier: Option<&dyn ContentVerifier>,
         hook: &mut dyn CommitHook,
     ) -> Result<Committed, RevisionError> {
+        self.commit_with_evidence(draft, expected, None, verifier, hook)
+    }
+
+    /// Commits the same verified revision with optional opaque operation evidence, pinned in
+    /// manifest version 2. The evidence's full digest and size are checked before publication
+    /// and are part of the ledger/replay identity. Omitting evidence keeps version 1 bytes.
+    pub fn commit_with_evidence(
+        &self,
+        draft: &RevisionDraft,
+        expected: &ExpectedBase,
+        evidence: Option<super::EvidencePin>,
+        verifier: Option<&dyn ContentVerifier>,
+        hook: &mut dyn CommitHook,
+    ) -> Result<Committed, RevisionError> {
         // Compaction holds the store exclusively; a commit never runs beside it.
         let _lease = StoreLease::shared(&self.blobs)?;
-        let content = Content::from_draft(draft)?;
+        let content = Content::from_draft_with_evidence(draft, evidence)?;
         let fingerprint = content.fingerprint()?;
         let directory = self.head_dir()?;
         let head = match &directory {
@@ -349,7 +363,12 @@ impl RevisionStore {
             fingerprint,
             created: now_secs(),
             attempt: new_attempt(content.op()),
-            blobs: content.entries().iter().map(|e| e.digest()).collect(),
+            blobs: content
+                .entries()
+                .iter()
+                .map(|e| e.digest())
+                .chain(content.operation_evidence().map(|pin| pin.digest()))
+                .collect(),
         };
         let record = Record::Intent(intent);
         let intent_id = record.encode().1;
@@ -560,6 +579,9 @@ impl RevisionStore {
         base: Option<&BaseRef>,
         verifier: Option<&dyn ContentVerifier>,
     ) -> Result<Option<IndexRecord>, RevisionError> {
+        if let Some(pin) = content.operation_evidence() {
+            self.read_evidence(pin)?;
+        }
         let Some(verifier) = verifier else {
             for (index, entry) in content.entries().iter().enumerate() {
                 self.read_entry(index, entry)?;
