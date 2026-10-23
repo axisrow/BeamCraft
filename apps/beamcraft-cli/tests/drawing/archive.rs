@@ -5,12 +5,59 @@
 
 use super::*;
 use beamcraft_cli::drawing::archive::{MANIFEST_RESOURCE, SourceArchive};
+use beamcraft_cli::drawing::document::store::expected_base;
+use beamcraft_cli::drawing::document::{DocumentStore, DocumentWrite, State};
+use beamcraft_engine::drawing::{
+    DimensionSpec, Drawing, DrawingSpec, Plane, SourceModelPin, ViewSpec,
+};
+use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_host::lease::StoreLease;
-use beamcraft_host::revision::{Content, LayerEntry, Manifest, RevisionDraft, RevisionStore};
+use beamcraft_host::revision::{
+    CommitOutcome, Content, ExpectedBase, LayerEntry, Manifest, RevisionDraft, RevisionStore,
+};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_layer_engine::Asset;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::id::{ProjectId, RevisionId};
+
+const DRAWING: &str = "01900000-0000-7000-8000-000000000001";
+const VIEW: &str = "01900000-0000-7000-8000-000000000002";
+const DIMENSION: &str = "01900000-0000-7000-8000-000000000003";
+const ACTOR: &str = "01900000-0000-7000-8000-000000000004";
+const OP1: &str = "01900000-0000-7000-8000-000000000005";
+const REV1: &str = "01900000-0000-7000-8000-000000000006";
+const OP2: &str = "01900000-0000-7000-8000-000000000007";
+const REV2: &str = "01900000-0000-7000-8000-000000000008";
+const VERSION: &str = "01900000-0000-7000-8000-000000000009";
+
+fn drawing(source: SourceModelPin) -> Drawing {
+    Drawing::admit(DrawingSpec {
+        id: beamcraft_model::id::DrawingId::parse(DRAWING).unwrap(),
+        name: "Member drawing".to_owned(),
+        source,
+        member: beamcraft_model::id::ElementId::parse(MEMBER).unwrap(),
+        view: ViewSpec {
+            id: beamcraft_model::id::DrawingViewId::parse(VIEW).unwrap(),
+            plane: Plane::Front,
+            scale_denominator: 100.0,
+            paper_origin_mm: [0.0, 0.0],
+        },
+        dimension: DimensionSpec {
+            id: beamcraft_model::id::DimensionId::parse(DIMENSION).unwrap(),
+            anchors: [
+                FeatureId::parse(&format!("fid1:{MEMBER}:member:v.x0.y0.z0")).unwrap(),
+                FeatureId::parse(&format!("fid1:{MEMBER}:member:v.x0.y0.z1")).unwrap(),
+            ],
+            paper_offset_mm: 10.0,
+            decimal_places: 0,
+        },
+    })
+    .unwrap()
+}
+
+fn actor() -> beamcraft_model::id::ActorId {
+    beamcraft_model::id::ActorId::parse(ACTOR).unwrap()
+}
 
 #[test]
 fn captured_model_and_foreign_source_survive_live_edit_compaction_and_removal() {
@@ -67,6 +114,177 @@ fn captured_model_and_foreign_source_survive_live_edit_compaction_and_removal() 
         old.members[0].authored.placement.translation_mm,
         [0.0, 2000.0, 0.0]
     );
+}
+
+#[test]
+fn document_revision_is_cas_verified_and_operation_replay_survives_a_later_edit() {
+    let f = Fixture::new();
+    f.model();
+    let model_root = f.root.join("store");
+    let first_source = SourceArchive::capture(&model_root).unwrap();
+    let first_drawing = drawing(first_source.pin());
+    let documents = DocumentStore::create(&f.root.join("documents")).unwrap();
+    let first_op = beamcraft_model::id::OpId::parse(OP1).unwrap();
+    let first_revision = beamcraft_model::id::Uuid7::parse(REV1).unwrap();
+    let (outcome, first) = documents
+        .commit(
+            &ExpectedBase::Initial,
+            DocumentWrite {
+                revision: first_revision,
+                operation: first_op,
+                actor: actor(),
+                drawing: &first_drawing,
+                source: &first_source,
+                state: State::Draft,
+                version: None,
+                latest_published: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(outcome, CommitOutcome::Created);
+    assert_eq!(first.state, State::Draft);
+    assert_eq!(first.drawing.spec().source, first_source.pin());
+    assert_eq!(documents.head().unwrap().info, first.info);
+
+    let (replayed, prior) = documents
+        .commit(
+            &ExpectedBase::Initial,
+            DocumentWrite {
+                revision: first_revision,
+                operation: first_op,
+                actor: actor(),
+                drawing: &first_drawing,
+                source: &first_source,
+                state: State::Draft,
+                version: None,
+                latest_published: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(replayed, CommitOutcome::Replayed);
+    assert_eq!(prior.info, first.info);
+
+    f.ok(
+        "update-element",
+        &["--id", MEMBER, "--translation", "4,5,6"],
+    );
+    let second_source = SourceArchive::capture(&model_root).unwrap();
+    let second_drawing = drawing(second_source.pin());
+    let second_op = beamcraft_model::id::OpId::parse(OP2).unwrap();
+    let second_revision = beamcraft_model::id::Uuid7::parse(REV2).unwrap();
+    let base = expected_base(Some(&first.info)).unwrap();
+    let (_, second) = documents
+        .commit(
+            &base,
+            DocumentWrite {
+                revision: second_revision,
+                operation: second_op,
+                actor: actor(),
+                drawing: &second_drawing,
+                source: &second_source,
+                state: State::Draft,
+                version: None,
+                latest_published: None,
+            },
+        )
+        .unwrap();
+    assert_ne!(first.info.revision(), second.info.revision());
+
+    // The exact first operation is answered from the ledger after the head has moved.
+    assert_eq!(
+        documents.query(&first_op).unwrap().unwrap().info,
+        first.info
+    );
+    assert!(
+        documents
+            .commit(
+                &ExpectedBase::Initial,
+                DocumentWrite {
+                    revision: first_revision,
+                    operation: first_op,
+                    actor: actor(),
+                    drawing: &second_drawing,
+                    source: &second_source,
+                    state: State::Draft,
+                    version: None,
+                    latest_published: None,
+                },
+            )
+            .is_err()
+    );
+    assert_eq!(documents.head().unwrap().info, second.info);
+}
+
+#[test]
+fn document_publication_creates_an_immutable_version_and_stale_cas_loses() {
+    let f = Fixture::new();
+    f.model();
+    let source = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let drawing = drawing(source.pin());
+    let documents = DocumentStore::create(&f.root.join("documents")).unwrap();
+    let (_, draft) = documents
+        .commit(
+            &ExpectedBase::Initial,
+            DocumentWrite {
+                revision: beamcraft_model::id::Uuid7::parse(REV1).unwrap(),
+                operation: beamcraft_model::id::OpId::parse(OP1).unwrap(),
+                actor: actor(),
+                drawing: &drawing,
+                source: &source,
+                state: State::Draft,
+                version: None,
+                latest_published: None,
+            },
+        )
+        .unwrap();
+    let base = expected_base(Some(&draft.info)).unwrap();
+    let version = beamcraft_model::id::DocumentVersionId::parse(VERSION).unwrap();
+    let published_op = beamcraft_model::id::OpId::parse(OP2).unwrap();
+    let (_, published) = documents
+        .commit(
+            &base,
+            DocumentWrite {
+                revision: beamcraft_model::id::Uuid7::parse(REV2).unwrap(),
+                operation: published_op,
+                actor: actor(),
+                drawing: &drawing,
+                source: &source,
+                state: State::Published,
+                version: Some(version),
+                latest_published: Some(version),
+            },
+        )
+        .unwrap();
+    assert_eq!(published.version, Some(version));
+    assert_eq!(published.latest_published, Some(version));
+    assert_eq!(
+        documents.query(&published_op).unwrap().unwrap().version,
+        Some(version)
+    );
+    assert!(
+        documents
+            .commit(
+                &base,
+                DocumentWrite {
+                    revision: beamcraft_model::id::Uuid7::parse(
+                        "01900000-0000-7000-8000-000000000010"
+                    )
+                    .unwrap(),
+                    operation: beamcraft_model::id::OpId::parse(
+                        "01900000-0000-7000-8000-000000000011"
+                    )
+                    .unwrap(),
+                    actor: actor(),
+                    drawing: &drawing,
+                    source: &source,
+                    state: State::Draft,
+                    version: None,
+                    latest_published: None,
+                },
+            )
+            .is_err()
+    );
+    assert_eq!(documents.head().unwrap().version, Some(version));
 }
 
 #[test]

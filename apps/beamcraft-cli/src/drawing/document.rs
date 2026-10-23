@@ -13,6 +13,9 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, DocumentVersionId, OpId};
 
+pub mod store;
+pub use store::{DocumentRevision, DocumentStore, DocumentWrite};
+
 /// Tight bound for the complete document root, including all persisted operation metadata.
 pub const MAX_DOCUMENT_ROOT_BYTES: usize = 16_384;
 /// Exact descriptor for the separate immutable document/revision contract.
