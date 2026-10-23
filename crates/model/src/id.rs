@@ -190,6 +190,22 @@ typed_id!(
     /// array index. It is distinct from the content digest of the revision's manifest.
     RevisionId
 );
+typed_id!(
+    /// Identity of an associative drawing, separate from its source model's workspace.
+    DrawingId
+);
+typed_id!(
+    /// Identity of a view owned by a drawing.
+    DrawingViewId
+);
+typed_id!(
+    /// Identity of an associative dimension owned by a drawing.
+    DimensionId
+);
+typed_id!(
+    /// Identity of an immutable published drawing version, separate from its source revision.
+    DocumentVersionId
+);
 
 impl ElementId {
     /// The canonical USD path, using the immutable category and the complete UUIDv7.
