@@ -230,8 +230,10 @@ mod tests {
 
         let result = measure_reference_mesh(&placed, &cube()).unwrap();
         assert_eq!(result.shell_status, ShellStatus::Certified);
-        assert!(result.area_mm2.unwrap().contains(6_000_000.0));
-        assert!(result.volume_mm3.unwrap().contains(1_000_000_000.0));
+        let area = result.area_mm2.unwrap();
+        let volume = result.volume_mm3.unwrap();
+        assert!(area.lo <= 6_000_000.0 && area.hi >= 6_000_000.0);
+        assert!(volume.lo <= 1_000_000_000.0 && volume.hi >= 1_000_000_000.0);
         assert_ne!(
             result.input_signature,
             measure_reference_mesh(&reference(1.0), &cube())

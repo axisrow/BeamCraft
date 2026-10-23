@@ -241,7 +241,9 @@ fn number_array(values: &[f64]) -> Result<Json, PlateError> {
     ))
 }
 
-fn enclosure(value: Option<beamcraft_kernel::enclosure::Enclosure>) -> Result<Json, PlateError> {
+fn enclosure(
+    value: Option<beamcraft_engine::reference_measure::MeasurementEnclosure>,
+) -> Result<Json, PlateError> {
     value.map_or(Ok(Json::Null), |value| {
         Ok(Json::object([
             ("lower", json_number(value.lo)?),

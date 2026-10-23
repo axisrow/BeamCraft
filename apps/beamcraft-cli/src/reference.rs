@@ -1101,6 +1101,7 @@ pub struct ForeignMeshResult {
     pub measurement: Option<ReferenceMeshMeasurement>,
 }
 
+#[derive(PartialEq)]
 struct MeshBuffers {
     vertices: Vec<[f64; 3]>,
     triangles: Vec<[u32; 3]>,
