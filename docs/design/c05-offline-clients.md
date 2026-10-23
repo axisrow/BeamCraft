@@ -1,6 +1,8 @@
 # C05: two offline clients, retries and ID integrity
 
 Scope: fork #12 / upstream #126, after C04. This specifies the stress harness before its code.
+The proposed harness's supported profile, commands and recorded reader checks are in
+[`c03-c06-acceptance.md`](c03-c06-acceptance.md).
 The production API remains explicit C01/C02 publication and C03 rebase; no new service or
 automatic network synchronization is needed.
 

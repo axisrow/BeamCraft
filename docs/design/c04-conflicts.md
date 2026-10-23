@@ -1,6 +1,8 @@
 # C04: semantic conflict detection
 
 Scope: fork #12 / upstream #126, after C03. This specifies acceptance before the C04 package.
+The proposed runtime's supported profile and executable mapping are in
+[`c03-c06-acceptance.md`](c03-c06-acceptance.md).
 The implementation plan calls for detection and preservation of both sides. Choosing a winner,
 merging a conflicted value or building a resolution UI is separate work.
 

@@ -1,6 +1,8 @@
 # C03: rebase of independent workspace edits
 
-Status: runtime and acceptance work proposed in stacked PRs #71–#81, #83 and #86; not integrated.
+Status: runtime and acceptance work proposed in stacked PRs #71–#81, #83, #86 and #88;
+not integrated. The supported profile and executable evidence for all C03–C06 packages are in
+[`c03-c06-acceptance.md`](c03-c06-acceptance.md).
 Scope: C03 from fork issue #12 / upstream #126. C04 semantic conflict detection, C05 offline
 stress and C06 compensation retain their own packages and PRs. C04 does not require a conflict
 resolution UI. This document does not complete those packages or change implementation-plan

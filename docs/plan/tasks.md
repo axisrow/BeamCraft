@@ -123,10 +123,10 @@ Time-boxed research with a report; never a production gate.
 |----|------|------------|--------|------------|--------|
 | C01 / M | Changeset and idempotency | P06, P08, F05 | Base, op_id, actor, dependencies, USD delta, assets; bounded validation | The same op_id with the same payload is safe, with another refused; an author string grants nothing | merged |
 | C02 / M | Local coordinator | C01, U07 | Explicit loopback server, token auth, one publish queue, expected head | Off by default; refused without a token; no parallel overwrite of the head | merged |
-| C03 / M | Rebase of independent edits | C02, P04 | Footprint comparison with intermediate revisions | Two independent edits kept; unsent draft never lost | deferred |
-| C04 / M | Semantic conflicts | C03, R01 | Same property, atomic groups, read dependencies, delete/link | A conflict keeps both sides; no silent server-wins | deferred |
-| C05 / M | Two offline clients | C04, P05, P07 | Harness for 1000 + 1000 IDs, retries, crash and two workspaces | No path collisions; accepted snapshot readable by OpenUSD | deferred |
-| C06 / M | Undo of a published operation | C05 | Compensating command with current preconditions | A later edit by someone else is never rolled back | deferred |
+| C03 / M | Rebase of independent edits | C02, P04 | Footprint comparison with intermediate revisions | Two independent edits kept; unsent draft never lost | proposed in fork; [acceptance/integration](../design/c03-c06-acceptance.md) |
+| C04 / M | Semantic conflicts | C03, R01 | Same property, atomic groups, read dependencies, delete/link | A conflict keeps both sides; no silent server-wins | proposed in fork; [acceptance/integration](../design/c03-c06-acceptance.md) |
+| C05 / M | Two offline clients | C04, P05, P07 | Harness for 1000 + 1000 IDs, retries, crash and two workspaces | No path collisions; accepted snapshot readable by OpenUSD | proposed in fork; [acceptance/integration](../design/c03-c06-acceptance.md) |
+| C06 / M | Undo of a published operation | C05 | Compensating command with current preconditions | A later edit by someone else is never rolled back | proposed in fork; [acceptance/integration](../design/c03-c06-acceptance.md) |
 | C07 / M | Live delta channel | C05 | Optional loopback channel over the same changesets | Off by default; same conflict semantics | later |
 | C08 / M | Permissions and layer storage | C02 | Permission model and remote storage | Separate owner decision on hosting | later |
 
