@@ -4,6 +4,9 @@
 //! Read-only D02 drawing preview over one strictly inspected committed source revision.
 
 use crate::plate_cmd::num;
+use beamcraft_cli::drawing::archive::SourceArchive;
+use beamcraft_cli::drawing::document::store::request_fingerprint;
+use beamcraft_cli::drawing::document::{DocumentStore, DocumentWrite, State};
 use beamcraft_cli::plate::{PlateError, inspect_revision};
 use beamcraft_engine::drawing::projection::{
     self, BodyProjection, DimensionProjection, Projection,
@@ -12,11 +15,13 @@ use beamcraft_engine::drawing::{
     DEFAULT_SCALE_DENOMINATOR, DimensionSpec, Drawing, DrawingSpec, Plane, SourceModelPin, ViewSpec,
 };
 use beamcraft_engine::query::feature::FeatureId;
-use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
+use beamcraft_host::revision::{ExpectedBase, RevisionStore};
+use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{
-    DimensionId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
+    ActorId, DimensionId, DocumentVersionId, DrawingId, DrawingViewId, ElementId, OpId, ProjectId,
+    RevisionId, Uuid7,
 };
 use std::io::Write;
 use std::{collections::BTreeMap, ffi::OsString};
@@ -32,7 +37,17 @@ fn invalid(message: &'static str) -> PlateError {
 
 /// Whether the command is the D02 read-only preview.
 pub fn handles(command: &OsString) -> bool {
-    command == "drawing-preview"
+    matches!(
+        command.to_str(),
+        Some(
+            "drawing-preview"
+                | "drawing-create"
+                | "drawing-refresh"
+                | "drawing-publish"
+                | "drawing-inspect"
+                | "drawing-versions"
+        )
+    )
 }
 
 /// Runs the headless adapter; successful unresolved geometry is explicit in the JSON result.
@@ -110,7 +125,328 @@ fn geometry_json(result: Projection) -> Run<(Json, Json)> {
     Ok((body, dimension))
 }
 
+fn document_options(args: &[OsString]) -> Run<BTreeMap<&str, &str>> {
+    if args.len() > 39 {
+        return Err(invalid("too many drawing document options"));
+    }
+    let args = args
+        .iter()
+        .skip(1)
+        .map(|arg| {
+            arg.to_str()
+                .filter(|text| text.len() <= 4096)
+                .ok_or_else(|| invalid("argument must be bounded UTF-8"))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    if !args.len().is_multiple_of(2) {
+        return Err(invalid("options must be KEY VALUE pairs"));
+    }
+    let mut options = BTreeMap::new();
+    for [key, value] in args.as_chunks::<2>().0 {
+        if !matches!(
+            *key,
+            "--store"
+                | "--document-dir"
+                | "--expected-head"
+                | "--id"
+                | "--drawing-id"
+                | "--view-id"
+                | "--dimension-id"
+                | "--anchor-a"
+                | "--anchor-b"
+                | "--name"
+                | "--plane"
+                | "--scale"
+                | "--origin"
+                | "--offset"
+                | "--decimals"
+                | "--op-id"
+                | "--revision-id"
+                | "--actor-id"
+                | "--version-id"
+                | "--model-store"
+        ) || options.insert(*key, *value).is_some()
+        {
+            return Err(invalid("unknown or repeated drawing document option"));
+        }
+    }
+    Ok(options)
+}
+
+fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> Run<Drawing> {
+    let required = |key| {
+        options
+            .get(key)
+            .copied()
+            .ok_or_else(|| invalid("required drawing option is missing"))
+    };
+    let id_error = |_| PlateError {
+        code: ErrorCode::InvalidId,
+        message: "drawing and member identities must be full canonical UUIDv7",
+    };
+    let id = DrawingId::parse(required("--drawing-id")?).map_err(id_error)?;
+    let view_id = DrawingViewId::parse(required("--view-id")?).map_err(id_error)?;
+    let dimension_id = DimensionId::parse(required("--dimension-id")?).map_err(id_error)?;
+    let member = ElementId::parse(required("--id")?).map_err(id_error)?;
+    let anchor = |key| {
+        FeatureId::parse(required(key)?).map_err(|error| PlateError {
+            code: error.f04_code(),
+            message: "anchor must be a full semantic FeatureId, never an index",
+        })
+    };
+    let number = |key, default| {
+        options.get(key).map_or(Ok(default), |value| {
+            value
+                .parse::<f64>()
+                .map_err(|_| invalid("invalid drawing number"))
+        })
+    };
+    let origin = options.get("--origin").map_or(Ok([0.0, 0.0]), |text| {
+        let mut parts = text.split(',');
+        let mut next = || {
+            parts
+                .next()
+                .ok_or_else(|| invalid("origin requires X,Y"))?
+                .parse::<f64>()
+                .map_err(|_| invalid("invalid origin number"))
+        };
+        let value = [next()?, next()?];
+        if parts.next().is_some() {
+            return Err(invalid("origin requires exactly X,Y"));
+        }
+        Ok(value)
+    })?;
+    Drawing::admit(DrawingSpec {
+        id,
+        name: options
+            .get("--name")
+            .copied()
+            .unwrap_or("Member drawing")
+            .to_owned(),
+        source,
+        member,
+        view: ViewSpec {
+            id: view_id,
+            plane: Plane::parse(options.get("--plane").copied().unwrap_or("front"))
+                .ok_or_else(|| invalid("plane must be front, top or right"))?,
+            scale_denominator: number("--scale", DEFAULT_SCALE_DENOMINATOR)?,
+            paper_origin_mm: origin,
+        },
+        dimension: DimensionSpec {
+            id: dimension_id,
+            anchors: [anchor("--anchor-a")?, anchor("--anchor-b")?],
+            paper_offset_mm: number("--offset", 10.0)?,
+            decimal_places: options.get("--decimals").map_or(Ok(0), |value| {
+                value
+                    .parse::<u8>()
+                    .map_err(|_| invalid("invalid decimal count"))
+            })?,
+        },
+    })
+    .map_err(Into::into)
+}
+
+fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) -> Json {
+    Json::object([
+        (
+            "revision_id",
+            Json::text(revision.info.revision().to_string()),
+        ),
+        ("sequence", Json::text(revision.info.sequence().to_string())),
+        (
+            "drawing_id",
+            Json::text(revision.drawing.spec().id.to_string()),
+        ),
+        (
+            "state",
+            Json::text(match revision.state {
+                State::Draft => "draft",
+                State::Published => "published",
+            }),
+        ),
+        (
+            "version_id",
+            revision
+                .version
+                .map_or(Json::Null, |id| Json::text(id.to_string())),
+        ),
+        (
+            "latest_published_version_id",
+            revision
+                .latest_published
+                .map_or(Json::Null, |id| Json::text(id.to_string())),
+        ),
+        (
+            "source_revision_id",
+            Json::text(revision.source.pin().revision.to_string()),
+        ),
+        (
+            "source_manifest",
+            Json::text(revision.source.pin().manifest.to_string()),
+        ),
+        ("request_digest", Json::text(revision.request.to_string())),
+    ])
+}
+
+fn run_document(args: &[OsString]) -> Run<Json> {
+    let command = args
+        .first()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| invalid("drawing command is missing"))?;
+    let options = document_options(args)?;
+    let required = |key| {
+        options
+            .get(key)
+            .copied()
+            .ok_or_else(|| invalid("required drawing document option is missing"))
+    };
+    match command {
+        "drawing-create" | "drawing-refresh" => {
+            let model_path = required("--store")?;
+            let document_path = required("--document-dir")?;
+            let op = OpId::parse(required("--op-id")?)
+                .map_err(|_| invalid("operation id must be UUIDv7"))?;
+            let revision = Uuid7::parse(required("--revision-id")?)
+                .map_err(|_| invalid("revision id must be UUIDv7"))?;
+            let actor = ActorId::parse(required("--actor-id")?)
+                .map_err(|_| invalid("actor id must be UUIDv7"))?;
+            let expected = if command == "drawing-create" {
+                ExpectedBase::Initial
+            } else {
+                ExpectedBase::Revision(
+                    beamcraft_host::revision::Uuid7::parse(required("--expected-head")?)
+                        .map_err(|_| invalid("expected head must be UUIDv7"))?,
+                )
+            };
+            let source = SourceArchive::capture(std::path::Path::new(model_path))?;
+            let drawing = document_drawing(&options, source.pin())?;
+            let document_path = std::path::Path::new(document_path);
+            let documents = if command == "drawing-create" && !document_path.exists() {
+                DocumentStore::create(document_path)?
+            } else {
+                DocumentStore::open(document_path)?
+            };
+            let latest_published = if command == "drawing-create" {
+                None
+            } else if let Some(previous) = documents.query(&op)? {
+                previous.latest_published
+            } else {
+                documents.head()?.latest_published
+            };
+            let (_, revision) = documents.commit(
+                &expected,
+                DocumentWrite {
+                    revision,
+                    operation: op,
+                    actor,
+                    drawing: &drawing,
+                    source: &source,
+                    state: State::Draft,
+                    version: None,
+                    latest_published,
+                },
+            )?;
+            Ok(document_json(&revision))
+        }
+        "drawing-publish" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let expected = ExpectedBase::Revision(
+                beamcraft_host::revision::Uuid7::parse(required("--expected-head")?)
+                    .map_err(|_| invalid("expected head must be UUIDv7"))?,
+            );
+            let op = OpId::parse(required("--op-id")?)
+                .map_err(|_| invalid("operation id must be UUIDv7"))?;
+            let revision = Uuid7::parse(required("--revision-id")?)
+                .map_err(|_| invalid("revision id must be UUIDv7"))?;
+            let actor = ActorId::parse(required("--actor-id")?)
+                .map_err(|_| invalid("actor id must be UUIDv7"))?;
+            let version = DocumentVersionId::parse(required("--version-id")?)
+                .map_err(|_| invalid("document version id must be UUIDv7"))?;
+            if let Some(previous) = documents.query(&op)? {
+                let request = request_fingerprint(
+                    &previous.drawing,
+                    State::Published,
+                    Some(version),
+                    Some(version),
+                    actor,
+                    &expected,
+                )?;
+                if previous.request == request {
+                    return Ok(document_json(&previous));
+                }
+                return Err(PlateError {
+                    code: ErrorCode::OpIdReuse,
+                    message: "document operation id was already used for another request",
+                });
+            }
+            let current = documents.head()?;
+            let (_, published) = documents.commit(
+                &expected,
+                DocumentWrite {
+                    revision,
+                    operation: op,
+                    actor,
+                    drawing: &current.drawing,
+                    source: &current.source,
+                    state: State::Published,
+                    version: Some(version),
+                    latest_published: Some(version),
+                },
+            )?;
+            Ok(document_json(&published))
+        }
+        "drawing-inspect" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let current = documents.head()?;
+            let freshness = match options.get("--model-store") {
+                Some(model_path) => {
+                    match SourceArchive::capture(std::path::Path::new(model_path)) {
+                        Ok(current_model) if current_model.pin() == current.source.pin() => {
+                            "current"
+                        }
+                        Ok(_) => "stale",
+                        Err(_) => "unavailable",
+                    }
+                }
+                None => "unknown",
+            };
+            let mut fields = match document_json(&current) {
+                Json::Object(fields) => fields,
+                _ => {
+                    return Err(PlateError {
+                        code: ErrorCode::IntegrityError,
+                        message: "drawing inspect response is malformed",
+                    });
+                }
+            };
+            fields.insert("freshness".to_owned(), Json::text(freshness));
+            Ok(Json::Object(fields))
+        }
+        "drawing-versions" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            Ok(Json::object([
+                ("outcome", Json::text("drawing_versions")),
+                (
+                    "versions",
+                    Json::Array(
+                        documents
+                            .history()?
+                            .iter()
+                            .filter(|revision| revision.state == State::Published)
+                            .map(document_json)
+                            .collect(),
+                    ),
+                ),
+            ]))
+        }
+        _ => Err(invalid("unknown drawing command")),
+    }
+}
+
 fn run(args: &[OsString]) -> Run<Json> {
+    if args.first().is_some_and(|arg| arg != "drawing-preview") {
+        return run_document(args);
+    }
     if args.len() > 31 {
         return Err(invalid("too many drawing options"));
     }

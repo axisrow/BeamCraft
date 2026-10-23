@@ -215,6 +215,9 @@ fn metadata_from_root(root: &Asset, revision: &Revision) -> Result<Metadata, Pla
 impl DocumentStore {
     /// Creates a new dedicated document directory. Existing paths are never adopted implicitly.
     pub fn create(root: &Path) -> Result<Self, PlateError> {
+        if !root.is_absolute() {
+            return Err(bad("document directory must be an absolute path"));
+        }
         fs::create_dir(root).map_err(|_| bad("document directory could not be created"))?;
         Self::open(root)
     }

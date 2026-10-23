@@ -26,6 +26,9 @@ mod drawing_projection;
 #[path = "drawing/archive.rs"]
 mod drawing_archive;
 
+#[path = "drawing/lifecycle.rs"]
+mod drawing_lifecycle;
+
 #[path = "drawing/derived.rs"]
 mod drawing_derived;
 
