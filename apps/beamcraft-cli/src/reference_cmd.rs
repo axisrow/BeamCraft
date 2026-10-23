@@ -6,6 +6,7 @@
 //! `beamcraft_cli::reference` and print one JSON object (the same error shape and exit codes as
 //! the other store commands: 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 //!
+//! `reference-measure` reports bounded triangle-shell enclosures from a pinned foreign USD mesh.
 //! `reference-write` has no success path. It exists so that a write to the source file or to a
 //! foreign prim is an observable, scriptable refusal (`FOREIGN_READ_ONLY`, exit 2) and not only a
 //! missing feature.
@@ -16,7 +17,8 @@ use crate::plate_cmd::{
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::reference::{
     AttachRequest, Attached, Edited, Ids, ReferenceInspection, Wrapper, attach_reference,
-    correct_wrapper_units, inspect_references, move_wrapper, refuse_foreign_write,
+    correct_wrapper_units, inspect_references, measure_foreign_meshes, move_wrapper,
+    refuse_foreign_write,
 };
 use beamcraft_host::{
     ids::IdSource,
@@ -44,6 +46,7 @@ pub fn handles(command: &std::ffi::OsStr) -> bool {
                 | "reference-correct-units"
                 | "reference-write"
                 | "reference-inspect"
+                | "reference-measure"
         )
     })
 }
@@ -73,7 +76,7 @@ fn options_of(command: &str) -> Option<Vec<&'static str>> {
         "reference-move" => &["--id", "--translation", "--rotation-z-deg"],
         "reference-correct-units" => &["--id", "--meters-per-unit", "--up-axis", "--clear"],
         "reference-write" => &["--id", "--target", "--prim", "--attribute"],
-        "reference-inspect" => &[],
+        "reference-inspect" | "reference-measure" => &[],
         _ => return None,
     };
     let mut all = vec!["--store"];
@@ -132,6 +135,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "reference-move" => move_command(&store, &options),
         "reference-correct-units" => correct_command(&store, &options),
         "reference-write" => write_command(&store, &options),
+        "reference-measure" => measurement_json(&measure_foreign_meshes(&store)?),
         _ => Ok(inspection_json(&inspect_references(&store)?)?),
     }
 }
@@ -484,6 +488,65 @@ fn inspection_json(inspection: &ReferenceInspection) -> Run<Json> {
                         ])
                     })
                     .collect(),
+            ),
+        ),
+    ]))
+}
+
+fn measurement_json(results: &[beamcraft_cli::reference::ForeignMeshResult]) -> Run<Json> {
+    let enclosure =
+        |value: Option<beamcraft_engine::reference_measure::MeasurementEnclosure>| -> Run<Json> {
+            match value {
+                Some(value) => Ok(Json::object([
+                    (
+                        "lower",
+                        Json::number(value.lo).map_err(|_| invalid("non-finite enclosure"))?,
+                    ),
+                    (
+                        "upper",
+                        Json::number(value.hi).map_err(|_| invalid("non-finite enclosure"))?,
+                    ),
+                ])),
+                None => Ok(Json::Null),
+            }
+        };
+    Ok(Json::object([
+        ("outcome", Json::text("reference_measurements")),
+        (
+            "results",
+            Json::Array(
+                results
+                    .iter()
+                    .map(|result| {
+                        let measurement = result.measurement.as_ref();
+                        Ok(Json::object([
+                            ("reference_id", Json::text(result.reference_id.clone())),
+                            ("source_path", Json::text(result.source_path.clone())),
+                            ("status", Json::text(result.status.clone())),
+                            (
+                                "source_digest",
+                                Json::text(result.source_digest.to_string()),
+                            ),
+                            (
+                                "source_version",
+                                Json::uint(u64::from(result.source_version)),
+                            ),
+                            (
+                                "input_signature",
+                                measurement.map_or(Json::Null, |m| {
+                                    Json::text(m.input_signature.to_string())
+                                }),
+                            ),
+                            ("area_mm2", enclosure(measurement.and_then(|m| m.area_mm2))?),
+                            (
+                                "volume_mm3",
+                                enclosure(measurement.and_then(|m| m.volume_mm3))?,
+                            ),
+                            ("mass_kg", Json::Null),
+                            ("engineering_quantity_status", Json::text("unsupported")),
+                        ]))
+                    })
+                    .collect::<Run<Vec<_>>>()?,
             ),
         ),
     ]))
