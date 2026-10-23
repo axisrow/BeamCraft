@@ -6,7 +6,9 @@
 //! committed revisions. Every expected position is derived here from the command inputs and the
 //! F06 frame rules, never read back from the engine. FeatureIds survive a move and differ on a
 //! copy; no answer contains an index and an index is refused as an address; the queries write
-//! nothing; a foreign reference is never a hit and a holed plate has no FeatureIds.
+//! nothing; a foreign reference is never a hit; a body without box features (an I-section
+//! member, a plate with a through hole) has no FeatureIds but is picked at element level by its
+//! mesh, through the hole as well as onto the material.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -22,6 +24,7 @@ const PLATE: &str = "019a7bf0-0000-7000-8000-000000700001";
 const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";
 const COPY: &str = "019a7bf0-0000-7000-8000-000000700003";
 const HOLED: &str = "019a7bf0-0000-7000-8000-000000700004";
+const IBEAM: &str = "019a7bf0-0000-7000-8000-000000700005";
 const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n    def Mesh \"Body\"\n    {\n        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]\n        int[] faceVertexCounts = [3]\n        int[] faceVertexIndices = [0, 1, 2]\n    }\n}\n";
 
 struct Fixture {
@@ -364,7 +367,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
 }
 
 #[test]
-fn foreign_references_are_never_hit_and_holed_plates_are_skipped() {
+fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
     let f = Fixture::new();
     f.model();
     f.ok(
@@ -384,6 +387,36 @@ fn foreign_references_are_never_hit_and_holed_plates_are_skipped() {
             HOLED,
         ],
     );
+    // An I-section member along +X at y = 400: h = 200 is world-up (F06 P-2), so the top
+    // flange's upper surface is at z = 100.
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--family", "i_shape", "--h", "200", "--b", "100", "--tw", "6", "--tf", "10",
+                    "--r", "0",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "3000,0,0",
+            "--translation",
+            "0,400,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            IBEAM,
+        ],
+    );
     let source = f.root.join("site.usda");
     fs::write(&source, SITE).unwrap();
     f.ok(
@@ -396,29 +429,80 @@ fn foreign_references_are_never_hit_and_holed_plates_are_skipped() {
         ],
     );
     let head = f.head();
-    // Through the foreign content and the holed plate: no hit, and only the holed plate is
-    // reported as skipped (the wrapper has no engine body at all).
-    for x in ["8000.5", "5200"] {
+    // Solid material of the holed plate (world x 5200) and of the I-beam's top flange are
+    // hits at element level: no FeatureId, but selectable.
+    for (element, origin, point) in [
+        (HOLED, "5200,200,100", [5200.0, 200.0, 10.0]),
+        (IBEAM, "1500,400,1000", [1500.0, 400.0, 100.0]),
+    ] {
         let picked = f.ok(
             "pick",
             &[
                 "--origin",
-                &format!("{x},0.5,100"),
+                origin,
                 "--direction",
                 "0,0,-1",
                 "--targets",
-                "face,edge,vertex",
-                "--radius",
+                "face",
+                "--max-hits",
                 "1",
             ],
         );
-        assert!(list(&picked, "hits").is_empty(), "{picked:?}");
-        let skipped: Vec<String> = list(&picked, "skipped")
-            .iter()
-            .map(|s| s.string().unwrap().to_owned())
-            .collect();
-        assert_eq!(skipped, [HOLED]);
+        let hits = list(&picked, "hits");
+        assert_eq!(hits.len(), 1, "{origin}");
+        assert_eq!(text(&hits[0], "element_id"), element);
+        assert!(matches!(at(&hits[0], &["feature_id"]), Json::Null));
+        assert_eq!(text(&hits[0], "feature_kind"), "face");
+        assert_eq!(triple(at(&hits[0], &["point_world_mm"])), point);
+        assert!(list(&picked, "skipped").is_empty(), "{origin}");
     }
+    // Through the plate's hole (world x 5100..5150, y 100..150) there is no hit.
+    let picked = f.ok(
+        "pick",
+        &[
+            "--origin",
+            "5125,125,100",
+            "--direction",
+            "0,0,-1",
+            "--targets",
+            "face",
+        ],
+    );
+    assert!(list(&picked, "hits").is_empty(), "{picked:?}");
+    // The foreign content is never a hit, and nothing is skipped on the ray form: every
+    // engine body was considered.
+    let picked = f.ok(
+        "pick",
+        &[
+            "--origin",
+            "8000.5,0.5,100",
+            "--direction",
+            "0,0,-1",
+            "--targets",
+            "face,edge,vertex",
+            "--radius",
+            "1",
+        ],
+    );
+    assert!(list(&picked, "hits").is_empty(), "{picked:?}");
+    assert!(list(&picked, "skipped").is_empty(), "{picked:?}");
+    // The point form measures to features, which a mesh body has none of: both stay skipped.
+    let picked = f.ok(
+        "pick",
+        &[
+            "--point",
+            "5200,200,5",
+            "--radius",
+            "2",
+            "--targets",
+            "face",
+        ],
+    );
+    let skipped: Vec<String> = list(&picked, "skipped")
+        .iter()
+        .map(|s| s.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(skipped, [HOLED, IBEAM]);
     assert_eq!(
         f.refused(
             "feature-lookup",

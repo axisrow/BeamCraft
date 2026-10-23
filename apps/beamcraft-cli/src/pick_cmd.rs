@@ -295,7 +295,12 @@ fn ids_json(ids: &[beamcraft_engine::element::ElementId]) -> Json {
 fn hit_json(h: &Hit) -> Run<Json> {
     Ok(Json::object([
         ("element_id", Json::text(h.element_id.to_string())),
-        ("feature_id", Json::text(h.feature_id.to_string())),
+        (
+            "feature_id",
+            h.feature_id
+                .as_ref()
+                .map_or(Json::Null, |f| Json::text(f.to_string())),
+        ),
         ("feature_kind", Json::text(h.feature_kind.as_str())),
         ("t_mm", h.t_mm.map_or(Ok(Json::Null), num)?),
         ("distance_mm", num(h.distance_mm)?),

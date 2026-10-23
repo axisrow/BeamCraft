@@ -4,10 +4,13 @@
 //! V04 `Pick` (F06 section 9) and snap queries over a pinned view snapshot.
 //!
 //! Both are read-only, bounded and answered at exactly the snapshot's revision. Every hit names
-//! an element and a FeatureId (or, for an axis snap, an element, a role and a parameter) and
-//! carries world positions computed by the engine; no hit contains a triangle, vertex or buffer
-//! index. Only bodies with FeatureIds (canonical boxes of plates, beams and columns) are scanned;
-//! the others are listed in [`PickResult::skipped`] rather than approximated.
+//! an element and, when its body has FeatureIds (the canonical boxes of plates, beams and
+//! columns), a FeatureId, and carries world positions computed by the engine; no hit contains a
+//! triangle, vertex or buffer index. A ray pick also hits bodies without FeatureIds (an I-section
+//! member, a plate with a through hole) by their mesh: the nearest front-facing triangle names
+//! its element only, with `feature_id` `None`. A body a query cannot consider at all (no engine
+//! mesh, the point form, no face target) is listed in [`PickResult::skipped`] rather than
+//! approximated.
 //!
 //! Pick follows F06 exactly: closed face rectangles enlarged by `eps_pick` with the parallel
 //! test `|u . n| < 1e-6`; edge and vertex distances to the closed finite segment
@@ -26,9 +29,9 @@
 use crate::element::ElementId;
 use crate::error::{ViewCode, ViewError};
 use crate::query::feature::{
-    BodyKind, BoxFeatures, FeatureId, FeatureKind, V3, add, dot, finite, norm, scale, sub,
+    BodyKind, BoxFeatures, FeatureId, FeatureKind, V3, add, cross, dot, finite, norm, scale, sub,
 };
-use crate::query::snapshot::{SnapshotToken, ViewSnapshot};
+use crate::query::snapshot::{ElementEntry, SnapshotToken, ViewSnapshot};
 use core::cmp::Ordering;
 
 /// The pick band of F06 section 9: one micrometre.
@@ -127,8 +130,8 @@ pub enum PickQuery {
 pub struct Hit {
     /// The owning element.
     pub element_id: ElementId,
-    /// The feature.
-    pub feature_id: FeatureId,
+    /// The feature, when the body has FeatureIds; `None` for an element-level mesh hit.
+    pub feature_id: Option<FeatureId>,
     /// Its kind.
     pub feature_kind: FeatureKind,
     /// Ray parameter (ray form only).
@@ -154,7 +157,8 @@ pub struct PickResult {
     pub hits: Vec<Hit>,
     /// True when more hits qualified than were returned.
     pub truncated: bool,
-    /// Elements whose bodies have no FeatureIds and were not scanned, in id order.
+    /// Elements a query could not consider: no engine mesh, the point form, or no face target
+    /// against a body without FeatureIds, in id order.
     pub skipped: Vec<ElementId>,
 }
 
@@ -343,7 +347,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
                     }
                     out.push(Hit {
                         element_id,
-                        feature_id: id(FeatureKind::Face, role)?,
+                        feature_id: Some(id(FeatureKind::Face, role)?),
                         feature_kind: FeatureKind::Face,
                         t_mm: Some(t),
                         distance_mm: 0.0,
@@ -366,7 +370,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
                     if distance <= band(ray.radius_mm) {
                         out.push(Hit {
                             element_id,
-                            feature_id: id(FeatureKind::Edge, role)?,
+                            feature_id: Some(id(FeatureKind::Edge, role)?),
                             feature_kind: FeatureKind::Edge,
                             t_mm: Some(t),
                             distance_mm: distance,
@@ -388,7 +392,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
                     if distance <= band(ray.radius_mm) {
                         out.push(Hit {
                             element_id,
-                            feature_id: id(FeatureKind::Vertex, role)?,
+                            feature_id: Some(id(FeatureKind::Vertex, role)?),
                             feature_kind: FeatureKind::Vertex,
                             t_mm: Some(t),
                             distance_mm: distance,
@@ -419,7 +423,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
                     if distance <= band(point.radius_mm) {
                         out.push(Hit {
                             element_id,
-                            feature_id: id(FeatureKind::Face, role)?,
+                            feature_id: Some(id(FeatureKind::Face, role)?),
                             feature_kind: FeatureKind::Face,
                             t_mm: None,
                             distance_mm: distance,
@@ -442,7 +446,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
                     if distance <= band(point.radius_mm) {
                         out.push(Hit {
                             element_id,
-                            feature_id: id(FeatureKind::Edge, role)?,
+                            feature_id: Some(id(FeatureKind::Edge, role)?),
                             feature_kind: FeatureKind::Edge,
                             t_mm: None,
                             distance_mm: distance,
@@ -463,7 +467,7 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
                     if distance <= band(point.radius_mm) {
                         out.push(Hit {
                             element_id,
-                            feature_id: id(FeatureKind::Vertex, role)?,
+                            feature_id: Some(id(FeatureKind::Vertex, role)?),
                             feature_kind: FeatureKind::Vertex,
                             t_mm: None,
                             distance_mm: distance,
@@ -480,6 +484,153 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
     Ok(out)
 }
 
+fn word(bytes: &[u8], at: usize) -> Option<f64> {
+    Some(f64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
+}
+
+fn triangle_index(bytes: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+}
+
+/// Whether the closed ray segment `o + t*u`, `0 <= t <= t_max`, meets the axis-aligned box.
+fn ray_meets_box(o: V3, u: V3, t_max: f64, min: V3, max: V3) -> bool {
+    let (mut lo, mut hi) = (0.0_f64, t_max);
+    for (((d, at), near), far) in u.iter().zip(o.iter()).zip(min.iter()).zip(max.iter()) {
+        if d.abs() < PARALLEL {
+            if at < near || at > far {
+                return false;
+            }
+        } else {
+            let (mut a, mut b) = ((near - at) / d, (far - at) / d);
+            if a > b {
+                core::mem::swap(&mut a, &mut b);
+            }
+            lo = lo.max(a);
+            hi = hi.min(b);
+            if lo > hi {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The nearest front-facing triangle of a body without box features, along the ray: an
+/// element-level hit with no FeatureId (F06 section 5 rule 9 forbids inventing box roles for
+/// such a body). The face band and rectangle enlargement of the box form have no mesh
+/// counterpart: the hit lies on the exact triangle, `boundary` is always false, and back faces
+/// follow `include_backfaces`. Several triangles may share the smallest parameter; the first
+/// scanned wins, which no result can observe (one hit per element, the same surface).
+fn mesh_hit(
+    snapshot: &ViewSnapshot,
+    entry: &ElementEntry,
+    ray: &RayPick,
+    dir: V3,
+) -> Result<Option<Hit>, ViewError> {
+    let Some(mesh) = snapshot.mesh_at(entry.full.mesh_slot) else {
+        return Err(uncertain());
+    };
+    if !ray_meets_box(
+        ray.origin_mm,
+        dir,
+        ray.t_max_mm,
+        entry.full.world_bounds.min,
+        entry.full.world_bounds.max,
+    ) {
+        return Ok(None);
+    }
+    let bytes = mesh.bytes();
+    // The blob was validated on admission, so every read below is in range; a short read is
+    // reported, never panicked on.
+    let vertices = usize::try_from(mesh.vertex_count()).map_err(|_| uncertain())?;
+    let count = usize::try_from(mesh.triangle_count()).map_err(|_| uncertain())?;
+    let indices = 32 + vertices * 24;
+    let vertex = |i: u32| -> Option<V3> {
+        let at = 32 + usize::try_from(i).ok()? * 24;
+        Some([
+            word(bytes, at)?,
+            word(bytes, at + 8)?,
+            word(bytes, at + 16)?,
+        ])
+    };
+    let o = ray.origin_mm;
+    let mut best: Option<(f64, V3, V3, bool)> = None;
+    for triangle in 0..count {
+        let at = indices + triangle * 12;
+        let (Some(a), Some(b), Some(c)) = (
+            triangle_index(bytes, at).and_then(vertex),
+            triangle_index(bytes, at + 4).and_then(vertex),
+            triangle_index(bytes, at + 8).and_then(vertex),
+        ) else {
+            return Err(uncertain());
+        };
+        // World positions: the blob is element-local, the placement a translation.
+        let (a, b, c) = (
+            add(a, entry.placement_mm),
+            add(b, entry.placement_mm),
+            add(c, entry.placement_mm),
+        );
+        let (e1, e2) = (sub(b, a), sub(c, a));
+        let n = cross(e1, e2);
+        let length = norm(n);
+        if !(length > 0.0 && length.is_finite()) {
+            continue;
+        }
+        let n = scale(n, 1.0 / length);
+        let un = dot(dir, n);
+        if un.abs() < PARALLEL {
+            continue;
+        }
+        let back = un > 0.0;
+        if back && !ray.include_backfaces {
+            continue;
+        }
+        let t = canonical(dot(sub(a, o), n) / un);
+        if !t.is_finite() {
+            return Err(uncertain());
+        }
+        if !(0.0..=ray.t_max_mm).contains(&t) {
+            continue;
+        }
+        let point = add(o, scale(dir, t));
+        let rel = sub(point, a);
+        let (d11, d12, d22) = (dot(e1, e1), dot(e1, e2), dot(e2, e2));
+        let det = d11 * d22 - d12 * d12;
+        if det <= 0.0 {
+            continue;
+        }
+        let (su, sv) = (
+            (d22 * dot(rel, e1) - d12 * dot(rel, e2)) / det,
+            (d11 * dot(rel, e2) - d12 * dot(rel, e1)) / det,
+        );
+        if !(su.is_finite() && sv.is_finite() && finite(point)) {
+            return Err(uncertain());
+        }
+        // The closed triangle: an edge or corner hit belongs to both neighbours and names the
+        // same element either way.
+        if su < 0.0 || sv < 0.0 || su + sv > 1.0 {
+            continue;
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(smallest, _, _, _)| t < *smallest)
+        {
+            best = Some((t, point, n, back));
+        }
+    }
+    Ok(best.map(|(t, point, normal, back)| Hit {
+        element_id: entry.id,
+        feature_id: None,
+        feature_kind: FeatureKind::Face,
+        t_mm: Some(t),
+        distance_mm: 0.0,
+        point_world_mm: point,
+        normal_world: Some(normal),
+        back_facing: back,
+        boundary: false,
+    }))
+}
+
 /// `x` with negative zero replaced by positive zero: `total_cmp` orders `-0.0` before `0.0`,
 /// which would let a sign decide a tie that F06 breaks by identity.
 fn canonical(x: f64) -> f64 {
@@ -493,11 +644,12 @@ fn quantum(x: f64) -> f64 {
 
 fn order(a: &Hit, b: &Hit) -> Ordering {
     let key = |h: &Hit| quantum(h.t_mm.unwrap_or(h.distance_mm));
+    let local = |h: &Hit| h.feature_id.as_ref().map(FeatureId::local_id);
     key(a)
         .total_cmp(&key(b))
         .then_with(|| a.element_id.to_string().cmp(&b.element_id.to_string()))
         .then_with(|| a.feature_kind.rank().cmp(&b.feature_kind.rank()))
-        .then_with(|| a.feature_id.local_id().cmp(&b.feature_id.local_id()))
+        .then_with(|| local(a).cmp(&local(b)))
         .then_with(|| {
             canonical(a.t_mm.unwrap_or(a.distance_mm))
                 .total_cmp(&canonical(b.t_mm.unwrap_or(b.distance_mm)))
@@ -535,11 +687,17 @@ pub fn pick(snapshot: &ViewSnapshot, query: &PickQuery) -> Result<PickResult, Vi
     let mut truncated = false;
     let mut skipped = Vec::new();
     for entry in snapshot.elements() {
-        let Some(features) = BoxFeatures::world(snapshot, entry) else {
-            skipped.push(entry.id);
-            continue;
-        };
-        hits.extend(hits_of(&features, query, dir)?);
+        match BoxFeatures::world(snapshot, entry) {
+            Some(features) => hits.extend(hits_of(&features, query, dir)?),
+            None => match query {
+                PickQuery::Ray(ray) if wanted(&ray.targets, FeatureKind::Face) => {
+                    if let Some(hit) = mesh_hit(snapshot, entry, ray, dir)? {
+                        hits.push(hit);
+                    }
+                }
+                _ => skipped.push(entry.id),
+            },
+        }
         if hits.len() > KEEP {
             truncated |= keep_best(&mut hits, max, order);
         }
@@ -731,14 +889,64 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::element::ElementKind;
     use crate::limits::Limits;
     use crate::query::snapshot::ViewPin;
+    use crate::scene::{SceneElement, SceneMesh};
     use crate::synthetic::plate_scene;
+    use beamcraft_geom::{Point3, Translation3};
+    use beamcraft_kernel::trimesh::TriMesh;
     use beamcraft_model::digest::Sha256;
 
     fn snapshot(count: u32) -> ViewSnapshot {
         let pin = ViewPin::new(Sha256::digest(b"v04").unwrap(), 1);
         ViewSnapshot::build(pin, plate_scene(count, false).unwrap(), &Limits::default()).unwrap()
+    }
+
+    /// A triangular prism, 200 x 100 x 10 mm at the origin: a real closed kernel mesh that is
+    /// not the canonical box, so its body has no FeatureIds.
+    fn prism_mesh() -> SceneMesh {
+        let mesh = TriMesh::from_buffers(
+            &[
+                [0.0, 0.0, 0.0],
+                [200.0, 0.0, 0.0],
+                [0.0, 100.0, 0.0],
+                [0.0, 0.0, 10.0],
+                [200.0, 0.0, 10.0],
+                [0.0, 100.0, 10.0],
+            ],
+            &[
+                [0, 2, 1],
+                [3, 4, 5],
+                [0, 1, 4],
+                [0, 4, 3],
+                [1, 2, 5],
+                [1, 5, 4],
+                [2, 0, 3],
+                [2, 3, 5],
+            ],
+        )
+        .unwrap();
+        let blob = mesh.to_blob();
+        SceneMesh::new(
+            blob.clone(),
+            Sha256::digest(&blob).unwrap(),
+            mesh.vertices()
+                .iter()
+                .map(|p| Point3::new(p[0], p[1], p[2]))
+                .collect(),
+        )
+    }
+
+    fn prism_scene() -> ViewSnapshot {
+        let pin = ViewPin::new(Sha256::digest(b"v04").unwrap(), 1);
+        let element = SceneElement::new(
+            ElementId::parse("01990000-0000-7000-8000-00000000face").unwrap(),
+            ElementKind::Plate,
+            Translation3::new(1000.0, 2000.0, 0.0).unwrap(),
+            prism_mesh(),
+        );
+        ViewSnapshot::build(pin, vec![element], &Limits::default()).unwrap()
     }
 
     fn bounds(s: &ViewSnapshot, i: usize) -> ([f64; 3], [f64; 3]) {
@@ -759,7 +967,13 @@ mod tests {
         let result = pick(&s, &PickQuery::Ray(ray.clone())).unwrap();
         assert_eq!(result.hits.len(), 1);
         let top = &result.hits[0];
-        assert!(top.feature_id.to_string().ends_with(":plate:f.z1"));
+        assert!(
+            top.feature_id
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .ends_with(":plate:f.z1")
+        );
         assert_eq!(top.t_mm, Some(100.0));
         assert_eq!(top.normal_world, Some([0.0, 0.0, 1.0]));
         assert!(!top.back_facing && !top.boundary);
@@ -773,7 +987,14 @@ mod tests {
         .unwrap();
         assert_eq!(both.hits.len(), 2);
         assert!(both.hits[1].back_facing);
-        assert!(both.hits[1].feature_id.to_string().ends_with(":plate:f.z0"));
+        assert!(
+            both.hits[1]
+                .feature_id
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .ends_with(":plate:f.z0")
+        );
     }
 
     #[test]
@@ -791,6 +1012,8 @@ mod tests {
         assert!(
             hits[0]
                 .feature_id
+                .as_ref()
+                .unwrap()
                 .to_string()
                 .ends_with(":plate:v.x1.y1.z1")
         );
@@ -803,7 +1026,14 @@ mod tests {
         let near = PointPick::new([mid_x, max[1] + 0.0009, max[2]], vec![FeatureKind::Edge]);
         let hits = pick(&s, &PickQuery::Point(near)).unwrap().hits;
         assert_eq!(hits.len(), 1);
-        assert!(hits[0].feature_id.to_string().ends_with(":plate:e.y1.z1"));
+        assert!(
+            hits[0]
+                .feature_id
+                .as_ref()
+                .unwrap()
+                .to_string()
+                .ends_with(":plate:e.y1.z1")
+        );
         let far = PointPick::new([mid_x, max[1] + 0.0011, max[2]], vec![FeatureKind::Edge]);
         assert!(pick(&s, &PickQuery::Point(far)).unwrap().hits.is_empty());
     }
@@ -921,9 +1151,90 @@ mod tests {
         assert!(
             result.hits[0]
                 .feature_id
+                .as_ref()
+                .unwrap()
                 .to_string()
                 .ends_with(":plate:f.x0")
         );
         assert_eq!(result.hits[0].t_mm.map(f64::is_sign_negative), Some(false));
+    }
+
+    #[test]
+    fn a_body_without_box_features_is_picked_by_its_mesh() {
+        let s = prism_scene();
+        let id = s.elements()[0].id;
+        assert!(!crate::query::feature::has_features(&s, &id));
+        // A vertical ray onto the prism's top face: hit at the surface, named by its element
+        // only. It is scanned, so it is not in `skipped`.
+        let ray = RayPick::new(
+            [1060.0, 2020.0, 100.0],
+            [0.0, 0.0, -1.0],
+            vec![FeatureKind::Face],
+        );
+        let result = pick(&s, &PickQuery::Ray(ray)).unwrap();
+        assert!(result.skipped.is_empty());
+        assert_eq!(result.hits.len(), 1);
+        let hit = &result.hits[0];
+        assert_eq!(hit.element_id, id);
+        assert_eq!(hit.feature_id, None);
+        assert_eq!(hit.feature_kind, FeatureKind::Face);
+        assert_eq!(hit.t_mm, Some(90.0));
+        assert_eq!(hit.point_world_mm, [1060.0, 2020.0, 10.0]);
+        assert_eq!(hit.normal_world, Some([0.0, 0.0, 1.0]));
+        assert!(!hit.back_facing && !hit.boundary);
+        // From below, the bottom surface is a front face (its outward normal is -Z).
+        let ray = RayPick::new(
+            [1060.0, 2020.0, -100.0],
+            [0.0, 0.0, 1.0],
+            vec![FeatureKind::Face],
+        );
+        let hit = &pick(&s, &PickQuery::Ray(ray)).unwrap().hits[0];
+        assert!(!hit.back_facing);
+        assert_eq!(hit.point_world_mm, [1060.0, 2020.0, 0.0]);
+        // A ray from inside the solid leaves through the far surface: a back-facing hit, and
+        // with back faces excluded there is none.
+        let ray = RayPick::new(
+            [1060.0, 2020.0, 5.0],
+            [0.0, 0.0, 1.0],
+            vec![FeatureKind::Face],
+        );
+        assert!(
+            pick(&s, &PickQuery::Ray(ray.clone()))
+                .unwrap()
+                .hits
+                .is_empty()
+        );
+        let hit = &pick(
+            &s,
+            &PickQuery::Ray(RayPick {
+                include_backfaces: true,
+                ..ray
+            }),
+        )
+        .unwrap()
+        .hits[0];
+        assert!(hit.back_facing);
+        assert_eq!(hit.point_world_mm, [1060.0, 2020.0, 10.0]);
+        // Inside the world bounds but beyond the slanted edge (the face covers x <= 200 - 2*y
+        // at local y = 90): the ray finds nothing, and the element was still scanned.
+        let ray = RayPick::new(
+            [1100.0, 2090.0, 100.0],
+            [0.0, 0.0, -1.0],
+            vec![FeatureKind::Face],
+        );
+        let result = pick(&s, &PickQuery::Ray(ray)).unwrap();
+        assert!(result.hits.is_empty() && result.skipped.is_empty());
+        // Without the face target the mesh cannot be considered: the body is skipped, as in
+        // the point form.
+        let ray = RayPick::new(
+            [1100.0, 2050.0, 100.0],
+            [0.0, 0.0, -1.0],
+            vec![FeatureKind::Edge],
+        );
+        let result = pick(&s, &PickQuery::Ray(ray)).unwrap();
+        assert!(result.hits.is_empty() && result.skipped == [id]);
+        let point = PointPick::new([1100.0, 2050.0, 10.0], vec![FeatureKind::Face]);
+        let result = pick(&s, &PickQuery::Point(point)).unwrap();
+        assert!(result.hits.is_empty() && result.skipped == [id]);
     }
 }

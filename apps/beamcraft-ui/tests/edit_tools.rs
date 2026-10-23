@@ -34,6 +34,8 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 
 const A: &str = "019a7bf0-0000-7000-8000-00000000a001";
 const B: &str = "019a7bf0-0000-7000-8000-00000000a002";
+const IBEAM: &str = "019a7bf0-0000-7000-8000-00000000a003";
+const HOLED: &str = "019a7bf0-0000-7000-8000-00000000a004";
 
 fn cli() -> Option<PathBuf> {
     let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
@@ -286,6 +288,117 @@ fn a_click_selects_what_the_engine_picks() {
     assert!(picked.is_none());
     // A click that is not inside the view is not a click.
     assert!(ndc_of([1700.0, 10.0], [0.0, 0.0], size).is_none());
+}
+
+#[test]
+fn a_click_selects_an_i_section_member_and_a_holed_plate() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let ui = stores.ui();
+    let store = s(&ui);
+    // The shapes of the issue #63 reproducer: an invented I-section member and a plate with a
+    // round through hole. Neither body has box FeatureIds, so before the engine's mesh pick a
+    // click on either cleared the selection.
+    let profile = text(
+        &ok(
+            &cli,
+            &[
+                "define-profile",
+                "--store",
+                store,
+                "--family",
+                "i_shape",
+                "--h",
+                "200",
+                "--b",
+                "100",
+                "--tw",
+                "6",
+                "--tf",
+                "10",
+                "--r",
+                "0",
+            ],
+        ),
+        &["definition", "digest"],
+    );
+    ok(
+        &cli,
+        &[
+            "create-member",
+            "--store",
+            store,
+            "--start",
+            "0,0,0",
+            "--end",
+            "1000,0,0",
+            "--translation",
+            "0,400,0",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "I",
+            "--new-id",
+            IBEAM,
+        ],
+    );
+    ok(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "300",
+            "--length",
+            "300",
+            "--thickness",
+            "10",
+            "--hole-round",
+            "150,150,100",
+            "--translation",
+            "300,800,0",
+            "--name",
+            "P",
+            "--new-id",
+            HOLED,
+        ],
+    );
+    let snapshot = source::load(&cli, &stores.ui(), &Stats::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let (framing_target, extent) = scene.framing();
+    let aspect = 1.6;
+    let camera = Camera::new(framing_target, extent, aspect).unwrap();
+    let view = camera.view(aspect).unwrap();
+    let size = [1600.0f32, 1000.0];
+    // A pixel on the I-beam's top flange (h is world-up, so its surface is at z = 100) and one
+    // on solid plate material beside the hole: each click selects the part and loads its
+    // properties, and the CLI's own pick answers the same element.
+    for (id, world, kind, translation) in [
+        (IBEAM, [500.0, 400.0, 100.0], "beam", [0.0, 400.0, 0.0]),
+        (HOLED, [350.0, 850.0, 10.0], "plate", [300.0, 800.0, 0.0]),
+    ] {
+        let relative = [0, 1, 2].map(|i| (world[i] - scene.origin_mm[i]) as f32);
+        let [nx, ny, _] = view.project(relative);
+        let pixel = [(nx * 0.5 + 0.5) * size[0], (0.5 - ny * 0.5) * size[1]];
+        let ndc = ndc_of(pixel, [0.0, 0.0], size).unwrap();
+        let ray = ray_through(&view, ndc, scene.origin_mm).unwrap();
+        assert_eq!(cli_pick(&cli, &stores.ui(), &ray).as_deref(), Some(id));
+        let selected = command::select(
+            &cli,
+            &stores.ui(),
+            &snapshot,
+            &ray,
+            &AtomicBool::new(false),
+            &Stats::default(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(selected.id, id);
+        let info = selected.info.unwrap();
+        assert_eq!(info.kind, kind);
+        assert_eq!(info.translation_mm, translation);
+    }
 }
 
 #[test]
