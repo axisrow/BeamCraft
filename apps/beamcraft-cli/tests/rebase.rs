@@ -33,6 +33,9 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[path = "rebase/conflicts.rs"]
 mod conflicts;
+
+#[path = "rebase/compensation_proof.rs"]
+mod compensation_proof;
 fn id(n: usize) -> String {
     format!("019a7bf0-0000-7000-8000-{n:012x}")
 }
