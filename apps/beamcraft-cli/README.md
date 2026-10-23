@@ -193,6 +193,25 @@ is idempotent by content digest; in-process layer engine as above. See the
 
 ## P03 straight member
 
+### Semantic feature addresses (D01.1)
+
+```text
+beamcraft feature-list --store ROOT --id ELEMENT_UUIDV7
+beamcraft feature-lookup --store ROOT --feature-id QUALIFIED_FEATURE_ID
+```
+
+`feature-list` opens and strictly verifies the committed model, then enumerates the selected
+canonical box body's 6 face, 12 edge and 8 vertex addresses. Each full `fid1` address includes
+the owning ElementId and semantic role; array positions are not addresses. The result includes
+the model revision UUID, manifest digest, generation and snapshot token. Both queries are
+read-only. A move preserves addresses and changes the pin/coordinates; a copy has new addresses.
+Missing owners and unsupported non-box bodies (including I-sections and holed plates) refuse
+with `GEO_FEATURE_NOT_FOUND`. Triangle, numeric vertex and instance addresses refuse with
+`GEO_TRIANGLE_ADDRESS_FORBIDDEN`. This query supplies associative references; it does not yet
+create or publish a drawing.
+
+### Create a member
+
 ```text
 beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256
   [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--name TEXT]

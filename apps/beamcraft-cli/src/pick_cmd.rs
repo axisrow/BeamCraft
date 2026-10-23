@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! V04 headless queries: `pick`, `feature-lookup` and `snap` against the verified head's pinned
+//! Headless queries: `pick`, `feature-list`, `feature-lookup` and `snap` against the verified head's pinned
 //! view snapshot. They call the engine queries (`beamcraft_engine::query::{pick, feature}`) and
 //! add no computation: the CLI parses the options, the engine decides and measures.
 //!
@@ -14,7 +14,7 @@ use crate::plate_cmd::{num, translation, triple};
 use beamcraft_cli::plate::{PlateError, inspect};
 use beamcraft_engine::error::{ViewCode, ViewError};
 use beamcraft_engine::query::feature::{
-    FeatureGeometry, FeatureKind, FeatureLookup, lookup_feature,
+    FeatureGeometry, FeatureKind, FeatureLookup, list_features, lookup_feature,
 };
 use beamcraft_engine::query::pick::{
     DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SnapKind, SnapQuery, pick, snap,
@@ -64,7 +64,10 @@ fn invalid(message: &'static str) -> Failure {
 
 /// Whether `command` is one of the V04 queries.
 pub fn handles(command: &OsString) -> bool {
-    command == "pick" || command == "feature-lookup" || command == "snap"
+    command == "pick"
+        || command == "feature-lookup"
+        || command == "feature-list"
+        || command == "snap"
 }
 
 /// Runs one query and returns the JSON result and the process exit code.
@@ -113,6 +116,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--max-hits",
         ],
         "feature-lookup" => &["--store", "--feature-id"],
+        "feature-list" => &["--store", "--id"],
         "snap" => &["--store", "--point", "--radius", "--kinds", "--max-hits"],
         _ => return Err(invalid("unknown command")),
     };
@@ -152,6 +156,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     enum Request {
         Pick(PickQuery),
         Lookup(String),
+        List(beamcraft_model::id::ElementId),
         Snap(SnapQuery),
     }
     let request = match *command {
@@ -201,6 +206,16 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .ok_or_else(|| invalid("--feature-id is required"))?
                 .to_owned(),
         ),
+        "feature-list" => Request::List(
+            beamcraft_model::id::ElementId::parse(
+                given("--id").ok_or_else(|| invalid("--id is required"))?,
+            )
+            .map_err(|_| Failure {
+                code: ErrorCode::InvalidId,
+                reason: None,
+                message: "--id must be a full canonical UUIDv7",
+            })?,
+        ),
         _ => Request::Snap(SnapQuery {
             point_mm: point("--point")?,
             radius_mm: number("--radius", 0.0)?,
@@ -248,6 +263,34 @@ fn run(args: &[OsString]) -> Run<Json> {
             let found = lookup_feature(snapshot, &text)?;
             let mut fields = header("feature");
             fields.extend(lookup_json(&found)?);
+            fields
+        }
+        Request::List(element) => {
+            let features = list_features(snapshot, &element)?;
+            let mut fields = header("features_listed");
+            fields.push(("element_id".into(), Json::text(element.to_string())));
+            fields.push((
+                "model_manifest".into(),
+                Json::text(snapshot.pin().revision().to_string()),
+            ));
+            fields.push((
+                "workspace_generation".into(),
+                Json::text(snapshot.pin().generation().to_string()),
+            ));
+            fields.push((
+                "features".into(),
+                Json::Array(
+                    features
+                        .into_iter()
+                        .map(|feature| {
+                            Json::object([
+                                ("feature_id", Json::text(feature.to_string())),
+                                ("kind", Json::text(feature.kind().as_str())),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ));
             fields
         }
         Request::Snap(query) => {

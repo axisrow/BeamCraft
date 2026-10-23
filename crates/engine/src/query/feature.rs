@@ -537,6 +537,27 @@ pub fn lookup_feature(snapshot: &ViewSnapshot, text: &str) -> Result<FeatureLook
     Ok(FeatureLookup { id, local, world })
 }
 
+/// Lists the 26 semantic addresses of one canonical box at this exact snapshot pin.
+///
+/// The order is faces, edges, then vertices, using each frozen F06 role table's order. No mesh
+/// index is exposed as an address. A missing element or unsupported/non-box body is explicitly
+/// `GEO_FEATURE_NOT_FOUND`, rather than an empty successful list or fabricated bounding box.
+pub fn list_features(
+    snapshot: &ViewSnapshot,
+    element: &ElementId,
+) -> Result<Vec<FeatureId>, ViewError> {
+    let missing = || ViewError::new(ViewCode::FeatureNotFound);
+    let entry = snapshot.element(element).ok_or_else(missing)?;
+    let features = BoxFeatures::world(snapshot, entry).ok_or_else(missing)?;
+    let mut result = Vec::with_capacity(26);
+    for kind in [FeatureKind::Face, FeatureKind::Edge, FeatureKind::Vertex] {
+        for role in 0..role_table(kind).len() {
+            result.push(features.id(kind, role).ok_or_else(missing)?);
+        }
+    }
+    Ok(result)
+}
+
 /// Whether the element's body has FeatureIds (a canonical box of a plate, beam or column).
 pub fn has_features(snapshot: &ViewSnapshot, id: &ElementId) -> bool {
     snapshot
@@ -642,6 +663,40 @@ mod tests {
         );
         assert_eq!(
             code("fid1:019a7bf0-0000-7000-8000-0000000000ff:plate:f.z1".to_owned()),
+            ViewCode::FeatureNotFound
+        );
+    }
+
+    #[test]
+    fn listed_addresses_are_complete_unique_and_resolve_at_the_same_pin() {
+        let s = snapshot();
+        for element in s.elements() {
+            let features = list_features(&s, &element.id).unwrap();
+            assert_eq!(features.len(), 26);
+            let unique: std::collections::BTreeSet<_> = features.iter().cloned().collect();
+            assert_eq!(unique.len(), 26);
+            for (kind, count) in [
+                (FeatureKind::Face, 6),
+                (FeatureKind::Edge, 12),
+                (FeatureKind::Vertex, 8),
+            ] {
+                assert_eq!(features.iter().filter(|f| f.kind() == kind).count(), count);
+            }
+            for feature in features {
+                assert_eq!(feature.element(), element.id);
+                assert_eq!(
+                    lookup_feature(&s, &feature.to_string()).unwrap().id,
+                    feature
+                );
+            }
+        }
+        assert_eq!(
+            list_features(
+                &s,
+                &ElementId::parse("019a7bf0-0000-7000-8000-0000000000ff").unwrap()
+            )
+            .unwrap_err()
+            .code(),
             ViewCode::FeatureNotFound
         );
     }

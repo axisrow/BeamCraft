@@ -145,6 +145,169 @@ fn triple(json: &Json) -> [f64; 3] {
 fn fid(element: &str, local: &str) -> String {
     format!("fid1:{element}:{local}")
 }
+
+#[test]
+fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_and_copy() {
+    let f = Fixture::new();
+    f.model();
+    let head = f.head();
+    let listed = f.ok("feature-list", &["--id", MEMBER]);
+    assert_eq!(text(&listed, "outcome"), "features_listed");
+    assert_eq!(text(&listed, "revision_id"), head);
+    assert_eq!(text(&listed, "element_id"), MEMBER);
+    let features = list(&listed, "features");
+    assert_eq!(features.len(), 26);
+    for (kind, count) in [("face", 6), ("edge", 12), ("vertex", 8)] {
+        assert_eq!(
+            features.iter().filter(|v| text(v, "kind") == kind).count(),
+            count
+        );
+    }
+    let ids: Vec<_> = features.iter().map(|v| text(v, "feature_id")).collect();
+    assert_eq!(
+        ids.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        26
+    );
+    assert!(
+        ids.iter()
+            .all(|id| id.starts_with(&format!("fid1:{MEMBER}:member:")))
+    );
+    let near = fid(MEMBER, "member:v.x0.y0.z0");
+    let far = fid(MEMBER, "member:v.x0.y0.z1");
+    assert!(ids.contains(&near) && ids.contains(&far));
+    assert_eq!(
+        triple(at(
+            &f.ok("feature-lookup", &["--feature-id", &near]),
+            &["world", "position"]
+        )),
+        [0.0, 1950.0, -25.0]
+    );
+    assert_eq!(
+        triple(at(
+            &f.ok("feature-lookup", &["--feature-id", &far]),
+            &["world", "position"]
+        )),
+        [3000.0, 1950.0, -25.0]
+    );
+    assert_eq!(
+        f.head(),
+        head,
+        "feature queries cannot write a model revision"
+    );
+    let mut all_keys = Vec::new();
+    keys(&listed, &mut all_keys);
+    assert!(
+        all_keys.iter().all(|key| !key.contains("index")
+            && !key.contains("triangle")
+            && !key.contains("slot"))
+    );
+    f.ok(
+        "update-element",
+        &["--id", MEMBER, "--translation", "10,20,30"],
+    );
+    let moved = f.ok("feature-list", &["--id", MEMBER]);
+    assert_eq!(list(&moved, "features"), features);
+    assert_ne!(
+        text(&moved, "model_manifest"),
+        text(&listed, "model_manifest")
+    );
+    assert_ne!(
+        text(&moved, "workspace_generation"),
+        text(&listed, "workspace_generation")
+    );
+    assert_eq!(
+        triple(at(
+            &f.ok("feature-lookup", &["--feature-id", &near]),
+            &["world", "position"]
+        )),
+        [10.0, -30.0, 5.0]
+    );
+    f.ok(
+        "copy-element",
+        &["--id", MEMBER, "--new-id", COPY, "--offset", "0,0,100"],
+    );
+    let copied = f.ok("feature-list", &["--id", COPY]);
+    let copied_ids: Vec<_> = list(&copied, "features")
+        .iter()
+        .map(|v| text(v, "feature_id"))
+        .collect();
+    assert_eq!(
+        copied_ids,
+        ids.iter()
+            .map(|id| id.replace(MEMBER, COPY))
+            .collect::<Vec<_>>()
+    );
+    assert!(ids.iter().all(|id| !copied_ids.contains(id)));
+    f.ok("delete-element", &["--id", MEMBER]);
+    assert_eq!(
+        f.refused("feature-list", &["--id", MEMBER]),
+        ("NOT_FOUND".into(), Some("GEO_FEATURE_NOT_FOUND".into()))
+    );
+    assert_eq!(
+        list(&f.ok("feature-list", &["--id", COPY]), "features").len(),
+        26
+    );
+}
+
+#[test]
+fn feature_listing_refuses_non_box_geometry_and_numeric_addresses() {
+    let f = Fixture::new();
+    f.model();
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "400",
+            "--length",
+            "400",
+            "--thickness",
+            "10",
+            "--hole-rect",
+            "100,100,50,50",
+            "--new-id",
+            HOLED,
+        ],
+    );
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--family", "i_shape", "--h", "200", "--b", "100", "--tw", "6", "--tf", "10",
+                    "--r", "0",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "3000,0,0",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            IBEAM,
+        ],
+    );
+    let head = f.head();
+    for id in [HOLED, IBEAM, "019a7bf0-0000-7000-8000-000000700099"] {
+        assert_eq!(
+            f.refused("feature-list", &["--id", id]),
+            ("NOT_FOUND".into(), Some("GEO_FEATURE_NOT_FOUND".into()))
+        );
+    }
+    for option in ["--triangle", "--vertex-index", "--instance"] {
+        let (_, reason) = f.refused("feature-list", &["--id", MEMBER, option, "0"]);
+        assert_eq!(reason.as_deref(), Some("GEO_TRIANGLE_ADDRESS_FORBIDDEN"));
+    }
+    assert_eq!(f.refused("feature-list", &["--id", "0"]).0, "INVALID_ID");
+    assert_eq!(f.head(), head);
+}
 /// Every key anywhere in a JSON value.
 fn keys(json: &Json, out: &mut Vec<String>) {
     match json {
