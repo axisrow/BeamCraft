@@ -747,6 +747,20 @@ mod tests {
     }
 
     #[test]
+    fn a_long_axis_value_is_reported_in_full_for_the_panel() {
+        let mut beam = details(BEAM, 3, "d3");
+        beam.axis_points_mm = Some([
+            [12345.678, 23456.789, 34567.891],
+            [12645.678, 23756.789, 34867.891],
+        ]);
+        // The exact expected value from issue 65; the UI reports it, never rounds or clips it.
+        assert!(beam.read_only_rows().contains(&(
+            "Axis".into(),
+            "12345.678,23456.789,34567.891 to 12645.678,23756.789,34867.891 mm".into()
+        )));
+    }
+
+    #[test]
     fn a_value_the_engine_did_not_report_is_labelled_unknown_never_guessed() {
         let beam = details(BEAM, 3, "d3");
         let rows = beam.read_only_rows();

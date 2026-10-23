@@ -1159,13 +1159,7 @@ impl App {
                 details.kind,
                 details.revision.label()
             ));
-            egui::Grid::new("props-readonly").show(ui, |ui| {
-                for (label, value) in details.read_only_rows() {
-                    ui.label(label);
-                    ui.label(value);
-                    ui.end_row();
-                }
-            });
+            read_only_grid(ui, &details.read_only_rows());
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
@@ -2012,13 +2006,30 @@ impl eframe::App for App {
     }
 }
 
+/// The read-only rows of the properties panel. A value wraps within the fixed 320-point sidebar
+/// instead of being clipped at its edge: a Grid cell extends by default, and without the column
+/// count the last column would only ever get the smallest widget width it once had.
+fn read_only_grid(ui: &mut egui::Ui, rows: &[(String, String)]) {
+    egui::Grid::new("props-readonly")
+        .num_columns(2)
+        .show(ui, |ui| {
+            for (label, value) in rows {
+                ui.label(label);
+                ui.add(egui::Label::new(value).wrap());
+                ui.end_row();
+            }
+        });
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{App, Source, load_icon, needs_refit, target_size, volume_note};
+    use super::{
+        App, Source, inter, load_icon, needs_refit, read_only_grid, target_size, volume_note,
+    };
     use crate::Error;
     use crate::command;
     use crate::perf::RefreshTiming;
-    use crate::render::Gpu;
+    use crate::render::{Gpu, wait};
     use crate::scene::Scene;
     use crate::source::{Refreshed, Reloaded};
     use crate::stats::Stats;
@@ -2382,6 +2393,223 @@ mod tests {
                 .as_ref()
                 .is_some_and(|s| (s.unsent_revisions, s.draft_sequence) == (2, 3))
         });
+    }
+
+    /// The issue 65 axis value in the read-only properties panel: the painted text carries the
+    /// whole string, fits the fixed 320-point sidebar and wraps onto several rows instead of
+    /// being clipped at the edge. On a native adapter the rendered grid is saved as a PNG beside
+    /// the target directory, the visible proof.
+    #[test]
+    fn a_long_axis_value_is_painted_in_full_within_the_sidebar() {
+        let beam = crate::props::Details {
+            id: "beam".into(),
+            kind: "beam".into(),
+            revision: crate::props::RevisionStamp {
+                revision_id: "r1".into(),
+                manifest_digest: "d1".into(),
+                sequence: 1,
+            },
+            name: "B1".into(),
+            material: None,
+            material_name: None,
+            translation_mm: [0.0; 3],
+            thickness_mm: None,
+            plate_size_mm: None,
+            section_mm: Some([80.0, 160.0]),
+            axis_points_mm: Some([
+                [12345.678, 23456.789, 34567.891],
+                [12645.678, 23756.789, 34867.891],
+            ]),
+            profile_name: Some("R80x160".into()),
+            level: None,
+            quantities: crate::props::Quantities::default(),
+        };
+        let rows = beam.read_only_rows();
+        let axis = "12345.678,23456.789,34567.891 to 12645.678,23756.789,34867.891 mm";
+        assert!(
+            rows.contains(&("Axis".into(), axis.into())),
+            "the row reports the value in full: {rows:?}"
+        );
+        let ctx = egui::Context::default();
+        assert!(inter(&ctx), "Inter is unavailable where this test runs");
+        // The app's own sidebar (app.rs Panel::left) at the issue's default window, driven by
+        // eframe's own pass loop. A fresh Grid discards its first pass and still lays the rows
+        // of the next one out on the old heights; the run after it is the settled frame the
+        // user sees, and the one the test reads.
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let frame = |ctx: &egui::Context| {
+            ctx.run_ui(input(), |ui| {
+                egui::Panel::left("info")
+                    .exact_size(320.0)
+                    .show(ui, |ui| read_only_grid(ui, &rows));
+            })
+        };
+        // The texture deltas (the font atlas arrives with the first frame) are kept for the
+        // render below; a failed assert must never unwind into an unapplied delta.
+        let mut fonts = Vec::new();
+        let mut warmup = frame(&ctx);
+        for (id, deltas) in warmup.textures_delta.set.drain() {
+            for delta in deltas {
+                fonts.push((id, delta));
+            }
+        }
+        warmup.textures_delta.clear();
+        let mut output = frame(&ctx);
+        for (id, deltas) in output.textures_delta.set.drain() {
+            for delta in deltas {
+                fonts.push((id, delta));
+            }
+        }
+        output.textures_delta.clear();
+        let painted = output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(text) => Some(text.galley.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let value = painted
+            .iter()
+            .find(|g| g.text().starts_with("12345.678"))
+            .expect("the axis value is painted");
+        assert_eq!(value.text(), axis, "the painted text is the whole value");
+        assert!(!value.elided, "the value is not cut off");
+        assert!(
+            value.size().x <= 320.0,
+            "the value fits the sidebar width, was {}",
+            value.size().x
+        );
+        assert!(
+            value.rows.len() >= 2,
+            "the value wraps onto several rows, had {}",
+            value.rows.len()
+        );
+
+        // A real render of the same grid as the screenshot evidence. Skipped like the other
+        // window tests where no adapter answers.
+        let gpu = match pollster::block_on(Gpu::headless()) {
+            Ok(gpu) => gpu,
+            Err(Error::NoAdapter) => {
+                eprintln!("SKIP properties screenshot: no native wgpu adapter");
+                return;
+            }
+            Err(e) => panic!("adapter or device failed: {e}"),
+        };
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let mut renderer =
+            egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
+        for (id, delta) in &fonts {
+            renderer.update_texture(&gpu.device, &gpu.queue, *id, delta);
+        }
+        // The target covers the painted grid: the lowest text bottom, at least one row.
+        let height = output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some(t.pos.y + t.galley.size().y),
+                _ => None,
+            })
+            .fold(1.0, f32::max)
+            .ceil() as u32;
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("props-axis-screenshot"),
+            size: wgpu::Extent3d {
+                width: 320,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let screen = egui_wgpu::ScreenDescriptor {
+            size_in_pixels: [320, height],
+            pixels_per_point: 1.0,
+        };
+        let egui::FullOutput {
+            shapes,
+            pixels_per_point,
+            ..
+        } = output;
+        let painted = ctx.tessellate(shapes, pixels_per_point);
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        for buffer in
+            renderer.update_buffers(&gpu.device, &gpu.queue, &mut encoder, &painted, &screen)
+        {
+            gpu.queue.submit([buffer]);
+        }
+        {
+            let mut pass = encoder
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("props-axis-screenshot"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    ..Default::default()
+                })
+                .forget_lifetime();
+            renderer.render(&mut pass, &painted, &screen);
+        }
+        // 320 x 4 bytes is a multiple of the 256-byte copy alignment, so the rows carry no
+        // padding (the same readback as render.rs).
+        let row = (320u32 * 4).div_ceil(256) * 256;
+        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("props-axis-readback"),
+            size: u64::from(row) * u64::from(height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width: 320,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let index = gpu.queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+            let _ = tx.send(r);
+        });
+        wait(&gpu.device, index).unwrap();
+        rx.recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+            .unwrap();
+        let pixels = buffer.get_mapped_range(..).unwrap().to_vec();
+        buffer.unmap();
+        let path = std::env::temp_dir().join("beamcraft-props-axis-wrap.png");
+        image::RgbaImage::from_raw(320, height, pixels)
+            .expect("the readback is one full RGBA frame")
+            .save(&path)
+            .unwrap();
+        eprintln!("Properties screenshot: {}", path.display());
     }
 }
 

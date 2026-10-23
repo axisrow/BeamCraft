@@ -220,6 +220,7 @@ dependencies = [
  "beamcraft-model",
  "eframe",
  "egui",
+ "image",
  "pollster",
  "skrifa",
  "wgpu",
