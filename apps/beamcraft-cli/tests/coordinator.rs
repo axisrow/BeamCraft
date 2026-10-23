@@ -403,6 +403,119 @@ fn a_rebased_workspace_packages_the_new_basis_and_publishes_and_replays_under_it
 }
 
 #[test]
+fn a_compensating_changeset_preserves_another_token_owners_move_and_replays_original_receipts() {
+    use beamcraft_cli::plate;
+    use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
+    let f = Fixture::new();
+    let original_packet = f.draft("a", "Accepted original");
+    let token = f.token("token", TOKEN);
+    let stranger = f.token("stranger", OTHER_TOKEN);
+    let server = f.serve(&[(USER, &token), (STRANGER, &stranger)], 6);
+    let published = f.path("published");
+    let (code, original_result) = publish(&f, &server.address, &token, "a", &original_packet);
+    assert_eq!(code, 0, "{original_result:?}");
+    let original = f.head();
+    let other = f.path("workspaces/other");
+    f.ok(&[
+        "workspace-create",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &other,
+        "--user-id",
+        STRANGER,
+    ]);
+    f.ok(&[
+        "update-element",
+        "--store",
+        &other,
+        "--id",
+        PLATE,
+        "--translation",
+        "12,34,56",
+    ]);
+    let package = f.ok(&[
+        "changeset-create",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &other,
+    ]);
+    let package = at(&package, &["changeset"]);
+    let other_packet = (text(package, "digest"), text(package, "base_revision"));
+    let (code, moved) = publish(&f, &server.address, &stranger, "other", &other_packet);
+    assert_eq!(code, 0, "{moved:?}");
+    let accepted = f.head();
+    let c = f.path("workspaces/c");
+    f.ok(&[
+        "workspace-create",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &c,
+        "--user-id",
+        USER,
+    ]);
+    let draft = f.ok(&["revision-open", "--store", &c]);
+    f.ok(&[
+        "compensate-operation",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &c,
+        "--source-workspace-dir",
+        &f.path("workspaces/a"),
+        "--original-revision",
+        &original,
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000c606",
+        "--expected-head",
+        &accepted,
+        "--expected-draft",
+        &text(&draft, "revision_id"),
+    ]);
+    assert_eq!(f.head(), accepted);
+    let package = f.ok(&[
+        "changeset-create",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &c,
+    ]);
+    let package = at(&package, &["changeset"]);
+    let inverse = (text(package, "digest"), text(package, "base_revision"));
+    let (code, denied) = publish(&f, &server.address, &stranger, "c", &inverse);
+    assert_eq!(code, 2, "{denied:?}");
+    assert_eq!(text(&denied, "code"), "PERMISSION_DENIED");
+    assert_eq!(f.head(), accepted);
+    let (code, applied) = publish(&f, &server.address, &token, "c", &inverse);
+    assert_eq!(code, 0, "{applied:?}");
+    let final_head = f.head();
+    let (code, replay) = publish(&f, &server.address, &token, "c", &inverse);
+    assert_eq!(code, 0, "{replay:?}");
+    assert_eq!(text(&replay, "outcome"), "changeset_replayed");
+    assert_eq!(text(&replay, "revision_id"), final_head);
+    let (code, original_replay) = publish(&f, &server.address, &token, "a", &original_packet);
+    assert_eq!(code, 0, "{original_replay:?}");
+    assert_eq!(text(&original_replay, "outcome"), "changeset_replayed");
+    assert_eq!(text(&original_replay, "revision_id"), original);
+    assert_eq!(
+        f.head(),
+        final_head,
+        "an original receipt cannot reapply the compensated edit"
+    );
+    let report = plate::inspect(&RevisionStore::new(BlobStore::new(&published).unwrap())).unwrap();
+    assert_eq!(report.plates.len(), 1);
+    assert_eq!(report.plates[0].authored.name, "Plate");
+    assert_eq!(
+        report.plates[0].authored.placement.translation_mm,
+        [12.0, 34.0, 56.0]
+    );
+    assert_eq!(report.plates[0].quantities.volume_mm3, 5_000_000.0);
+    drop(server);
+}
+
+#[test]
 fn a_coordinator_needs_a_token_and_refuses_strangers() {
     let f = Fixture::new();
     let (store, root) = (f.path("published"), f.path("workspaces"));
