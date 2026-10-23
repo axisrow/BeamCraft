@@ -238,6 +238,7 @@ impl Fixture {
                 });
             assert!(reached);
             assert_eq!(attempted.err().unwrap().code, ErrorCode::OutcomeUnknown);
+            replay_in_another_process(&self.root, name, &request, false);
         }
         let result =
             rebase::rebase_workspace(&self.published, draft, &dir, &request, &mut NoFault).unwrap();
@@ -284,6 +285,98 @@ impl Drop for Fixture {
         if std::env::var_os("BEAMCRAFT_C05_OUTPUT").is_none() {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+}
+
+fn replay_in_another_process(
+    root: &Path,
+    name: &str,
+    request: &rebase::RebaseRequest,
+    publish: bool,
+) {
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "workspace::offline_tests::offline_replay_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("BEAMCRAFT_C05_REPLAY_ROOT", root)
+        .env("BEAMCRAFT_C05_REPLAY_WORKSPACE", name)
+        .env("BEAMCRAFT_C05_REPLAY_OP", request.op_id.to_string())
+        .env(
+            "BEAMCRAFT_C05_REPLAY_HEAD",
+            request.expected_head.to_string(),
+        )
+        .env(
+            "BEAMCRAFT_C05_REPLAY_DRAFT",
+            request.expected_draft.to_string(),
+        )
+        .env(
+            "BEAMCRAFT_C05_REPLAY_PUBLISH",
+            if publish { "true" } else { "false" },
+        )
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "fresh process: {} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "child endpoint for the explicit C05 release stress test"]
+fn offline_replay_child() {
+    let Some(root) = std::env::var_os("BEAMCRAFT_C05_REPLAY_ROOT") else {
+        return;
+    };
+    let root = PathBuf::from(root);
+    let dir = root.join(std::env::var("BEAMCRAFT_C05_REPLAY_WORKSPACE").unwrap());
+    let published = store(&root.join("published")).unwrap();
+    let draft = store(&dir).unwrap();
+    let mut request = rebase::RebaseRequest {
+        op_id: OpId::parse(&std::env::var("BEAMCRAFT_C05_REPLAY_OP").unwrap()).unwrap(),
+        actor: id(3),
+        expected_head: Uuid7::parse(&std::env::var("BEAMCRAFT_C05_REPLAY_HEAD").unwrap()).unwrap(),
+        expected_draft: Uuid7::parse(&std::env::var("BEAMCRAFT_C05_REPLAY_DRAFT").unwrap())
+            .unwrap(),
+    };
+    let before_draft = draft.head().unwrap().unwrap();
+    let before_accepted = published.head().unwrap().unwrap();
+    let result =
+        rebase::rebase_workspace(&published, &draft, &dir, &request, &mut NoFault).unwrap();
+    let rebase::RebaseResult::Rebased(result) = result else {
+        panic!("replayed request conflicted")
+    };
+    assert!(result.replayed);
+    assert_eq!(
+        draft.head().unwrap().unwrap().manifest_digest(),
+        before_draft.manifest_digest()
+    );
+    assert_eq!(
+        published.head().unwrap().unwrap().manifest_digest(),
+        before_accepted.manifest_digest()
+    );
+    request.expected_draft = before_draft.revision().clone();
+    assert_eq!(
+        rebase::rebase_workspace(&published, &draft, &dir, &request, &mut NoFault)
+            .err()
+            .unwrap()
+            .code,
+        ErrorCode::OpIdReuse
+    );
+    if std::env::var("BEAMCRAFT_C05_REPLAY_PUBLISH").unwrap() == "true" {
+        assert!(
+            publish_workspace(&published, &draft, &dir, &mut NoFault)
+                .unwrap()
+                .replayed
+        );
+        assert_eq!(
+            published.head().unwrap().unwrap().manifest_digest(),
+            before_accepted.manifest_digest()
+        );
     }
 }
 
@@ -378,6 +471,21 @@ fn two_offline_clients_retain_one_thousand_new_ids_each_through_retry_and_recove
         "reader: {} {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt = super::rebase_receipt::RebaseReceipt::decode(
+        &f.b.open().unwrap().operation_evidence().unwrap().unwrap(),
+    )
+    .unwrap();
+    replay_in_another_process(
+        &f.root,
+        "b",
+        &rebase::RebaseRequest {
+            op_id: receipt.op_id,
+            actor: id(3),
+            expected_head: receipt.accepted.revision,
+            expected_draft: receipt.draft.revision,
+        },
+        true,
     );
     println!(
         "C05: 1000+1000 new IDs, 8 offline rounds of 125/client, 2001 final parts including seed; independent reader passed"
