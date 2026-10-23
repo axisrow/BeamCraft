@@ -154,7 +154,7 @@ fn a_publication_containing_another_parts_change_cannot_claim_a_single_commands_
 }
 
 #[test]
-fn a_changeset_publication_does_not_masquerade_as_a_direct_source_pin() {
+fn a_changeset_publication_uses_its_exact_payload_and_original_source_result() {
     let f = Fixture::new(false);
     f.update("a", 10, &["--name", "accepted through C01"]);
     let original = f.head("a");
@@ -188,6 +188,26 @@ fn a_changeset_publication_does_not_masquerade_as_a_direct_source_pin() {
         )
         .is_err()
     );
+    let proof = verify_original(
+        &store(&f.path("published")),
+        &store(&f.path("a")),
+        &f.path("a"),
+        &Uuid7::parse(&id(3)).unwrap(),
+        accepted.revision(),
+    )
+    .unwrap();
+    assert_eq!(
+        proof.after().info().manifest_digest(),
+        original.manifest_digest()
+    );
+    assert_eq!(
+        proof.published().info().manifest_digest(),
+        accepted.manifest_digest()
+    );
+    drop(proof);
+    let prefix: String = digest.chars().take(2).collect();
+    let payload = f.path("a").join("blobs").join(prefix).join(digest);
+    fs::write(&payload, b"damaged canonical changeset").unwrap();
     assert!(
         verify_original(
             &store(&f.path("published")),
@@ -197,6 +217,51 @@ fn a_changeset_publication_does_not_masquerade_as_a_direct_source_pin() {
             accepted.revision()
         )
         .is_err()
+    );
+    assert_eq!(fs::read(payload).unwrap(), b"damaged canonical changeset");
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        accepted.manifest_digest()
+    );
+}
+
+#[test]
+fn a_larger_changeset_is_not_guessed_to_be_its_last_commands_inverse() {
+    let f = Fixture::new(false);
+    f.update("a", 11, &["--name", "first"]);
+    f.update("a", 10, &["--name", "second"]);
+    let package = f.ok(&[
+        "changeset-create",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("a"),
+    ]);
+    let digest = text(package.get("changeset").unwrap(), "digest");
+    f.ok(&[
+        "changeset-apply",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("a"),
+        "--actor-id",
+        &id(3),
+        "--changeset",
+        digest,
+    ]);
+    let accepted = f.head("published");
+    assert_eq!(
+        verify_original(
+            &store(&f.path("published")),
+            &store(&f.path("a")),
+            &f.path("a"),
+            &Uuid7::parse(&id(3)).unwrap(),
+            accepted.revision()
+        )
+        .err()
+        .unwrap()
+        .code,
+        ErrorCode::DependencyUnavailable
     );
     assert_eq!(
         f.head("published").manifest_digest(),

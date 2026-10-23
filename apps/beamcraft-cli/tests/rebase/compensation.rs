@@ -26,6 +26,27 @@ fn publish(f: &Fixture, name: &str) {
         f.path(name).to_str().unwrap(),
     ]);
 }
+fn publish_changeset(f: &Fixture, name: &str) {
+    let package = f.ok(&[
+        "changeset-create",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.path(name).to_str().unwrap(),
+    ]);
+    let digest = text(package.get("changeset").unwrap(), "digest");
+    f.ok(&[
+        "changeset-apply",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.path(name).to_str().unwrap(),
+        "--actor-id",
+        &id(3),
+        "--changeset",
+        digest,
+    ]);
+}
 fn compensate(
     f: &Fixture,
     original: &RevisionInfo,
@@ -53,8 +74,9 @@ fn compensate(
 
 #[test]
 fn supported_inverses_keep_another_users_later_fields_until_explicit_publication() {
-    for case in ["rename", "thickness", "create", "delete"] {
-        let f = Fixture::new(case == "rename");
+    for case in ["rename", "thickness", "create", "delete", "changeset"] {
+        let same_part = matches!(case, "rename" | "changeset");
+        let f = Fixture::new(same_part);
         match case {
             "create" => {
                 f.ok(&[
@@ -77,7 +99,11 @@ fn supported_inverses_keep_another_users_later_fields_until_explicit_publication
             "thickness" => f.update("a", 10, &["--thickness", "20"]),
             _ => f.update("a", 10, &["--name", "original accepted rename"]),
         }
-        f.publish("a");
+        if case == "changeset" {
+            publish_changeset(&f, "a");
+        } else {
+            f.publish("a");
+        }
         let original = f.head("published");
         fresh(&f, "other", 4);
         f.update(
@@ -90,7 +116,7 @@ fn supported_inverses_keep_another_users_later_fields_until_explicit_publication
                 "5,6,7",
             ],
         );
-        if case == "rename" {
+        if same_part {
             f.update("other", 10, &["--translation", "100,200,300"]);
         }
         publish(&f, "other");
@@ -115,14 +141,18 @@ fn supported_inverses_keep_another_users_later_fields_until_explicit_publication
         assert_eq!(code, 0, "{replay:?}");
         assert_eq!(text(&replay, "outcome"), "compensation_replayed");
         assert_eq!(f.head("c").manifest_digest(), candidate.manifest_digest());
-        publish(&f, "c");
+        if case == "changeset" {
+            publish_changeset(&f, "c");
+        } else {
+            publish(&f, "c");
+        }
         let report = plate::inspect(&store(&f.path("published"))).unwrap();
         assert_eq!(report.plates.len(), 2, "{case}");
         for (n, name, placement) in [
             (
                 10,
                 "Plate",
-                if case == "rename" {
+                if same_part {
                     [100.0, 200.0, 300.0]
                 } else {
                     [0.0; 3]
