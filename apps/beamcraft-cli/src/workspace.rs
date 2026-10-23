@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 mod state;
 pub use state::WorkspaceState;
 mod pending;
+pub mod rebase;
 pub mod rebase_receipt;
 
 const META_FILE: &str = "workspace.json";

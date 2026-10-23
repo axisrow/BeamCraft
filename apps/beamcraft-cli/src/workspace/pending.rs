@@ -45,7 +45,10 @@ fn store(dir: &Path) -> Result<RevisionStore, PlateError> {
     Ok(RevisionStore::new(BlobStore::new(dir).map_err(|_| bad())?))
 }
 
-fn verify_source(store: &RevisionStore, receipt: &RebaseReceipt) -> Result<(), PlateError> {
+pub(super) fn verify_source(
+    store: &RevisionStore,
+    receipt: &RebaseReceipt,
+) -> Result<(), PlateError> {
     let info = store.info_at(receipt.draft.sequence)?;
     if RevisionPin::from_info(&info) != receipt.draft
         || info.manifest().content().project() != &receipt.project

@@ -323,6 +323,17 @@ Receipt aggregation checks ordered prefixes and prior bases, retaining the origi
 without counting administrative copies of their dependencies again. This is recovery plumbing;
 an explicit rebase command and its complete acceptance remain separate.
 
+`rebase-workspace --store PUBLISHED --workspace-dir DRAFT --op-id UUID --expected-head UUID
+--expected-draft UUID [--actor-id UUID]` explicitly retains independent unsent work over a newer
+accepted basis. It pins publication while planning/committing the personal draft, verifies all
+intervening command evidence, materializes in isolation and runs the kernel/quantity verifier.
+It never publishes automatically. Missing proof refuses; semantic conflicts return complete
+target/group and operation diagnostics. Unknown/reference-wrapper deltas retain their dedicated
+writers and refuse this materializer. The local actor defaults to the recorded workspace owner;
+this is trusted CLI context, not authentication. The authenticated coordinator rebase endpoint
+is separate. Retrying the same ID/pins returns its original revision, preserving later edits;
+another payload under that ID is refused, including after a failed attempt.
+
 ## P07 undo and redo
 
 ```text

@@ -942,7 +942,7 @@ pub struct QuantityReport {
 /// authored inputs, and a stored quantity record must be the engine's or, outside `strict` mode,
 /// is reported as stale. Publishing is strict: a layer whose stored quantities disagree with the
 /// kernel cannot become a revision.
-fn verify_derived(
+pub(crate) fn verify_derived(
     records: &[PlateRecord],
     member_records: &[MemberRecord],
     decoded: &Decoded,
