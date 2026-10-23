@@ -42,12 +42,13 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::reference::{
     ReferenceRecord, UnitsStatus, attach, correct_units, move_reference, write_foreign,
 };
-use beamcraft_engine::reference_measure::{ReferenceMeshMeasurement, measure_reference_mesh};
+use beamcraft_engine::reference_measure::{
+    ReferenceMeshMeasurement, measure_reference_mesh_buffers,
+};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerRole, Revision, RevisionStore, Uuid7,
 };
-use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, ForeignPrim, Placement as LayerPlacement, Prepare, Reference,
     ReferenceView, SourcePin, UpAxis, read_references, schema_identity, validate_layers,
@@ -660,7 +661,12 @@ pub struct ForeignMeshResult {
     pub measurement: Option<ReferenceMeshMeasurement>,
 }
 
-fn mesh_buffers(prim: &Prim) -> Option<TriMesh> {
+struct MeshBuffers {
+    vertices: Vec<[f64; 3]>,
+    triangles: Vec<[u32; 3]>,
+}
+
+fn mesh_buffers(prim: &Prim) -> Option<MeshBuffers> {
     let property = |name: &str, type_name: &str| {
         prim.properties
             .iter()
@@ -711,7 +717,10 @@ fn mesh_buffers(prim: &Prim) -> Option<TriMesh> {
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    TriMesh::from_buffers(&points, &triangles).ok()
+    Some(MeshBuffers {
+        vertices: points,
+        triangles,
+    })
 }
 
 fn has_authored_transform_ops(prim: &Prim) -> bool {
@@ -792,7 +801,7 @@ pub fn measure_foreign_meshes(store: &RevisionStore) -> Result<Vec<ForeignMeshRe
                 });
                 continue;
             };
-            match measure_reference_mesh(&wrapper.record, &mesh) {
+            match measure_reference_mesh_buffers(&wrapper.record, &mesh.vertices, &mesh.triangles) {
                 Ok(measurement) => result.push(ForeignMeshResult {
                     reference_id: wrapper.record.id.to_string(),
                     source_path: foreign.source_path.clone(),

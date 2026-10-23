@@ -145,7 +145,6 @@ dependencies = [
  "beamcraft-host",
  "beamcraft-ifc",
  "beamcraft-json",
- "beamcraft-kernel",
  "beamcraft-layer-engine",
  "beamcraft-model",
 ]

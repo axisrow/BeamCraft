@@ -494,21 +494,22 @@ fn inspection_json(inspection: &ReferenceInspection) -> Run<Json> {
 }
 
 fn measurement_json(results: &[beamcraft_cli::reference::ForeignMeshResult]) -> Run<Json> {
-    let enclosure = |value: Option<beamcraft_kernel::enclosure::Enclosure>| -> Run<Json> {
-        match value {
-            Some(value) => Ok(Json::object([
-                (
-                    "lower",
-                    Json::number(value.lo).map_err(|_| invalid("non-finite enclosure"))?,
-                ),
-                (
-                    "upper",
-                    Json::number(value.hi).map_err(|_| invalid("non-finite enclosure"))?,
-                ),
-            ])),
-            None => Ok(Json::Null),
-        }
-    };
+    let enclosure =
+        |value: Option<beamcraft_engine::reference_measure::MeasurementEnclosure>| -> Run<Json> {
+            match value {
+                Some(value) => Ok(Json::object([
+                    (
+                        "lower",
+                        Json::number(value.lo).map_err(|_| invalid("non-finite enclosure"))?,
+                    ),
+                    (
+                        "upper",
+                        Json::number(value.hi).map_err(|_| invalid("non-finite enclosure"))?,
+                    ),
+                ])),
+                None => Ok(Json::Null),
+            }
+        };
     Ok(Json::object([
         ("outcome", Json::text("reference_measurements")),
         (
