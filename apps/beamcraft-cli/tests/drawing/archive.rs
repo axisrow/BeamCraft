@@ -13,12 +13,14 @@ use beamcraft_engine::drawing::{
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_host::lease::StoreLease;
 use beamcraft_host::revision::{
-    CommitOutcome, Content, ExpectedBase, LayerEntry, Manifest, RevisionDraft, RevisionStore,
+    CommitOutcome, CommitPoint, Content, ExpectedBase, Injected, LayerEntry, Manifest,
+    RevisionDraft, RevisionStore,
 };
 use beamcraft_host::storage::BlobStore;
 use beamcraft_layer_engine::Asset;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::id::{ProjectId, RevisionId};
+use std::sync::{Arc, Barrier};
 
 const DRAWING: &str = "01900000-0000-7000-8000-000000000001";
 const VIEW: &str = "01900000-0000-7000-8000-000000000002";
@@ -213,6 +215,107 @@ fn document_revision_is_cas_verified_and_operation_replay_survives_a_later_edit(
             .is_err()
     );
     assert_eq!(documents.head().unwrap().info, second.info);
+}
+
+#[test]
+fn document_commit_replay_recovers_a_switched_root_after_unknown_outcome() {
+    let f = Fixture::new();
+    f.model();
+    let source = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let drawing = drawing(source.pin());
+    let documents = DocumentStore::create(&f.root.join("documents")).unwrap();
+    let write = || DocumentWrite {
+        revision: beamcraft_model::id::Uuid7::parse(REV1).unwrap(),
+        operation: beamcraft_model::id::OpId::parse(OP1).unwrap(),
+        actor: actor(),
+        drawing: &drawing,
+        source: &source,
+        state: State::Draft,
+        version: None,
+        latest_published: None,
+    };
+    let interrupted = documents.commit_with_hook(&ExpectedBase::Initial, write(), &mut |point| {
+        if point == CommitPoint::Switched {
+            Err(Injected)
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(interrupted.unwrap_err().code.as_str(), "OUTCOME_UNKNOWN");
+    let operation = beamcraft_model::id::OpId::parse(OP1).unwrap();
+    let recovered = documents.query(&operation).unwrap().unwrap();
+    assert_eq!(recovered.info.revision().to_string(), REV1);
+    let (outcome, replayed) = documents.commit(&ExpectedBase::Initial, write()).unwrap();
+    assert_eq!(outcome, CommitOutcome::Replayed);
+    assert_eq!(replayed.info, recovered.info);
+}
+
+#[test]
+fn concurrent_document_creates_have_exactly_one_cas_winner() {
+    let f = Fixture::new();
+    f.model();
+    let source = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let drawing = drawing(source.pin());
+    let source = Arc::new(source);
+    let root = f.root.join("documents");
+    let first = DocumentStore::create(&root).unwrap();
+    let second = DocumentStore::open(&root).unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+    let start = |store: DocumentStore,
+                 source: Arc<SourceArchive>,
+                 drawing: Drawing,
+                 revision: &str,
+                 operation: &str,
+                 barrier: Arc<Barrier>| {
+        let revision = revision.to_owned();
+        let operation = operation.to_owned();
+        std::thread::spawn(move || {
+            barrier.wait();
+            store.commit(
+                &ExpectedBase::Initial,
+                DocumentWrite {
+                    revision: beamcraft_model::id::Uuid7::parse(&revision).unwrap(),
+                    operation: beamcraft_model::id::OpId::parse(&operation).unwrap(),
+                    actor: actor(),
+                    drawing: &drawing,
+                    source: source.as_ref(),
+                    state: State::Draft,
+                    version: None,
+                    latest_published: None,
+                },
+            )
+        })
+    };
+    let a = start(
+        first,
+        source.clone(),
+        drawing.clone(),
+        "01900000-0000-7000-8000-00000000000a",
+        "01900000-0000-7000-8000-00000000000b",
+        barrier.clone(),
+    );
+    let b = start(
+        second,
+        source,
+        drawing,
+        "01900000-0000-7000-8000-00000000000c",
+        "01900000-0000-7000-8000-00000000000d",
+        barrier,
+    );
+    let outcomes = [a.join().unwrap(), b.join().unwrap()];
+    assert_eq!(outcomes.iter().filter(|result| result.is_ok()).count(), 1);
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|result| {
+                result
+                    .as_ref()
+                    .is_err_and(|error| error.code.as_str() == "BASE_REVISION_MISMATCH")
+            })
+            .count(),
+        1
+    );
+    assert!(DocumentStore::open(&root).unwrap().head().is_ok());
 }
 
 #[test]

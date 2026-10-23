@@ -10,8 +10,8 @@ use beamcraft_engine::drawing::Drawing;
 use beamcraft_engine::drawing::projection::{self, BodyProjection, DimensionProjection};
 use beamcraft_host::ledger::{Outcome, OutcomeSource};
 use beamcraft_host::revision::{
-    CommitOutcome, ExpectedBase, LayerEntry, LayerRole, Revision, RevisionDraft, RevisionInfo,
-    RevisionStore,
+    CommitHook, CommitOutcome, ExpectedBase, LayerEntry, LayerRole, NoFault, Revision,
+    RevisionDraft, RevisionInfo, RevisionStore,
 };
 use beamcraft_host::storage::BlobStore;
 use beamcraft_layer_engine::{
@@ -392,6 +392,16 @@ impl DocumentStore {
         expected: &ExpectedBase,
         write: DocumentWrite<'_>,
     ) -> Result<(CommitOutcome, DocumentRevision), PlateError> {
+        self.commit_with_hook(expected, write, &mut NoFault)
+    }
+
+    /// Commits with the host journal's fault-injection hook for recovery tests.
+    pub fn commit_with_hook(
+        &self,
+        expected: &ExpectedBase,
+        write: DocumentWrite<'_>,
+        hook: &mut dyn CommitHook,
+    ) -> Result<(CommitOutcome, DocumentRevision), PlateError> {
         let DocumentWrite {
             revision,
             operation,
@@ -528,7 +538,7 @@ impl DocumentStore {
             root_layer: "root.usda".to_owned(),
             entries: layer_entries,
         };
-        let committed = self.revisions.commit(&draft, expected)?;
+        let committed = self.revisions.commit_with(&draft, expected, None, hook)?;
         let opened = self.revisions.open_at(committed.info.sequence())?;
         let verified = self.verify_revision(opened)?;
         Ok((committed.outcome, verified))
