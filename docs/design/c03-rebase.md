@@ -1,9 +1,11 @@
 # C03: rebase of independent workspace edits
 
-Status: design and executable-acceptance specification; runtime implementation is not present.
-Scope: C03 from fork issue #12 / upstream #126. C04 conflict-resolution UI, C05 offline stress
-and C06 compensation retain their own packages and PRs. This document does not complete any
-of those packages or change the deferred implementation-plan statuses.
+Status: runtime and acceptance work proposed in stacked PRs #71–#81, #83 and #86; not integrated.
+Scope: C03 from fork issue #12 / upstream #126. C04 semantic conflict detection, C05 offline
+stress and C06 compensation retain their own packages and PRs. C04 does not require a conflict
+resolution UI. This document does not complete those packages or change implementation-plan
+statuses. Their acceptance specifications are in `c04-conflicts.md`, `c05-offline-clients.md`
+and `c06-compensation.md`.
 
 Baseline inspected: fork `master` `dae17846453b0e18d58b9fad55f3acbd6c22100d`.
 
@@ -26,11 +28,12 @@ legacy conservative dependencies into a narrower read set.
 the exact published revision/manifest pin as its layer/footprint base, independently of the local
 prefix. An unavailable or corrupt pin refuses packaging. Using the old local prefix as the base,
 or setting that prefix to the merged draft to classify unsent work as published, is incorrect.
-Runtime rebase still needs the durable metadata transition and recovery specified below.
+The proposed runtime uses the durable metadata transition and recovery specified below.
 
 ## Public operation
 
-An explicit `rebase-workspace --store PUBLISHED --workspace-dir DRAFT --expected-head REVISION`
+An explicit `rebase-workspace --store PUBLISHED --workspace-dir DRAFT --op-id OPERATION
+--expected-head REVISION --expected-draft REVISION [--actor-id USER]`
 operation calls a pure engine planner, then the application/storage adapter. It never publishes
 automatically, starts a service or widens a bind address. The existing token-derived actor is
 required when reached through the coordinator. A claimed author field grants no authority.
@@ -95,7 +98,8 @@ candidate revision uses that operation identity. Operation count and footprint e
 capped at 4096; the whole record fits the host's one-MiB evidence cap. Lengths, decimal values,
 field order and re-encoding are strict. A codec round trip proves no ancestry, authority or
 correct model: the adapter must recompute dependencies and verify the actual committed candidate
-before using its receipt. No runtime producer or recovery path is implemented by the codec.
+before using its receipt. The codec alone implements neither production nor recovery; the
+separate pending-intent adapter and runtime supply those checks.
 
 Metadata keeps the accepted base pin, already-published operation prefix and latest local rebase
 sequence separate. Zero rebase sequence preserves exact v1 bytes; nonzero uses strict canonical
@@ -131,11 +135,13 @@ commits a different store. Acquire it before reading the accepted pin and retain
 draft CAS. The guard also holds a shared maintenance lease, so a serving coordinator is compatible
 and compaction is excluded. A conflicting writer/pinner receives `BACKEND_UNAVAILABLE` before a
 commit intent; reads and edits of another draft remain available. This primitive does not itself
-plan, merge or recover a rebase, and the runtime still needs to use it with the metadata guard.
+plan, merge or recover a rebase; the runtime uses it with the metadata guard.
 
 ## Executable acceptance required before completion
 
-These are required tests to implement, not claims that they already pass:
+These are the required observable tests. The proposed implementation has tests across the
+planner, materializer, receipt, workspace-state, recovery and real CLI/coordinator suites.
+The table remains an acceptance specification, rather than a claim of integrated gate completion:
 
 | Case | Required observable assertions |
 |---|---|
