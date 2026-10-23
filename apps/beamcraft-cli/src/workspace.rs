@@ -29,6 +29,8 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+mod offline_tests;
 mod state;
 pub use state::WorkspaceState;
 mod pending;

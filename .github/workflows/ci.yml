@@ -47,6 +47,13 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # C05 keeps real model verification at 1000+1000 IDs; debug parsing is intentionally
+      # excluded from this stress test's cost. The ordinary workspace suite still runs above.
+      - name: Two offline clients, 1000 + 1000 IDs
+        run: |
+          cargo build --locked --release -p beamcraft-cli --bin beamcraft-usd-oracle
+          cargo test --locked --release -p beamcraft-cli --lib offline_tests -- --ignored --nocapture
+
       # F07: committed fixtures must equal the generator output and their manifest digests.
       - name: Verify original fixtures
         run: cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07

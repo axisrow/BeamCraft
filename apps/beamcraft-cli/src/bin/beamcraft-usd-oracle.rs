@@ -27,13 +27,25 @@ use std::path::{Path, PathBuf};
 
 use beamcraft_json::{Json, Limits};
 
+// Test-oracle inventories and reports can contain thousands of parts. These separate bounded
+// limits do not change the control protocol or production CLI reply budgets.
+const ORACLE_JSON_LIMITS: Limits = Limits {
+    bytes: 4 * 1024 * 1024,
+    depth: 16,
+    tokens: 131_072,
+    string_bytes: 4096,
+    scratch_bytes: 64 * 1024 * 1024,
+};
+
 /// The owned layers, strongest first, exactly as the writer composes a revision.
 const OWNED_STACK: [&str; 3] = ["root.usda", "authored.usda", "derived.usda"];
 
 /// Bounded text limits for one layer file.
 const MAX_LAYER_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DEPTH: usize = 32;
-const MAX_VALUES: usize = 200_000;
+// A 2001-part C05 stage has more than 200000 values in its derived layer. Keep a separate
+// finite oracle budget within the unchanged eight-MiB per-layer byte cap.
+const MAX_VALUES: usize = 1_000_000;
 const MAX_STRING_BYTES: usize = 4096;
 const MAX_NAME_BYTES: usize = 512;
 
@@ -65,7 +77,7 @@ fn main() -> std::process::ExitCode {
         ),
     };
     if messages.is_empty() {
-        match report.encode(&Limits::DEFAULT) {
+        match report.encode(&ORACLE_JSON_LIMITS) {
             Ok(bytes) => {
                 println!("{}", String::from_utf8_lossy(&bytes));
                 return std::process::ExitCode::SUCCESS;
@@ -94,14 +106,20 @@ fn run(mode: &str, root: &Path, expect_path: &str, marks_only: bool) -> Result<J
             return findings.messages.is_empty().then_some(report);
         }
         // An unreadable or undecodable expectation is a failure, never a silent pass.
-        let bytes = match std::fs::read(expect_path) {
+        let bytes = match std::fs::File::open(expect_path).and_then(|file| {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            file.take(ORACLE_JSON_LIMITS.bytes as u64 + 1)
+                .read_to_end(&mut bytes)?;
+            Ok(bytes)
+        }) {
             Ok(bytes) => bytes,
             Err(e) => {
                 findings.fail(format!("{expect_path}: {e}"));
                 return None;
             }
         };
-        let expect = match beamcraft_json::decode(&bytes, &Limits::DEFAULT) {
+        let expect = match beamcraft_json::decode(&bytes, &ORACLE_JSON_LIMITS) {
             Ok(expect) => expect,
             Err(e) => {
                 findings.fail(format!("{expect_path}: {e}"));

@@ -334,6 +334,27 @@ this is trusted CLI context, not authentication. The authenticated coordinator r
 is separate. Retrying the same ID/pins returns its original revision, preserving later edits;
 another payload under that ID is refused, including after a failed attempt.
 
+## C05 offline-client stress acceptance
+
+The test-only harness admits 1000 new part IDs per client in eight offline rounds of 125 each,
+using actual typed-create footprints, strict USD commits, publication and rebase. Both personal
+workspaces belong to the same user. It checks stale publication, exact request replay, a lost
+publication reply and interrupted draft switching; all 2000 IDs plus the seed part survive.
+The final USD stage is checked by the separate independent-reader process against closed forms.
+No production bulk command or increased production budget is implied by its synthetic batches.
+
+```sh
+cargo build --locked --release -p beamcraft-cli --bin beamcraft-usd-oracle
+cargo test --locked --release -p beamcraft-cli --lib offline_tests -- --ignored --nocapture
+```
+
+CI explicitly runs this release stress test on both test platforms. Set `BEAMCRAFT_C05_OUTPUT`
+to a nonexistent directory to retain its stores, materialized `layers/` and closed-form
+`layers/expected.json`. With an installed official OpenUSD SDK, run its Python interpreter on
+`tools/check-c05-openusd.py OUTPUT/layers` for the additional ordinary-OpenUSD acceptance.
+No SDK or Python dependency is installed by the test. The independent test reader has its own
+finite inventory/value budgets; production protocol and layer-engine limits stay unchanged.
+
 ## P07 undo and redo
 
 ```text
