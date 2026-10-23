@@ -7,6 +7,8 @@
 //! Geometry resolution, USD persistence and publication are separate operations. A storage DTO
 //! must enter through [`Drawing::admit`] before it can authorize any of them.
 
+pub mod projection;
+
 use crate::query::feature::{BodyKind, FeatureId, FeatureKind};
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::digest::ContentDigest;

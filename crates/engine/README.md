@@ -38,6 +38,13 @@ digest, instance and triangle tables, ids and bounds, and computes no engineerin
 
 ## Limits
 
+`drawing::projection::resolve` (D02.1) consumes admitted intent and the exact captured snapshot.
+It returns twelve semantic wireframe edges and a projected, scale-independent model-mm dimension,
+or typed unresolved states for lost/unsupported/collapsed geometry. It checks the pin before
+geometry, caps all paper output, and performs fixed work over 26 roles and two anchors. The CLI's
+`drawing-preview` strictly inspects one opened model revision before calling it; no UI geometry
+or buffer address enters a measurement. Drawing USD persistence/publication remains D01.3/D03.
+
 All caps are checked before the work they bound, with checked arithmetic and no
 input-derived indexing. A caller may lower a limit with `Limits::new`, never raise it.
 

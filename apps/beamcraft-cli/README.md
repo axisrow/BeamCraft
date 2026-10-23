@@ -193,6 +193,28 @@ is idempotent by content digest; in-process layer engine as above. See the
 
 ## P03 straight member
 
+### Associative projection preview (D02.1)
+
+```text
+beamcraft drawing-preview --store ROOT --id MEMBER_UUIDV7
+  --drawing-id UUIDV7 --view-id UUIDV7 --dimension-id UUIDV7
+  --anchor-a QUALIFIED_VERTEX_ID --anchor-b QUALIFIED_VERTEX_ID
+  [--plane front|top|right] [--scale 100] [--origin X,Y] [--offset MM]
+  [--decimals 0..3] [--name TEXT]
+```
+
+The engine projects twelve named edges of a real canonical rectangular member and measures the
+projected interval between the selected member's two semantic vertices. Front uses model X/Z,
+top X/Y and right Y/Z. Paper geometry is in millimetres; scale is a denominator (default 1:100),
+and the dimension label reports projected model millimetres before scaling. This is a wireframe
+with coincident/hidden edges retained, not hidden-line removal or a true 3D measurement.
+
+The JSON includes the exact source project/revision/manifest/schema/generation, document object
+IDs, retained anchor IDs, paper geometry and resolution states. A deleted owner, unsupported
+body or anchors that project to less than 0.001 mm are explicitly unresolved with no numeric
+dimension value. All output coordinates/offsets are capped at 10000 paper mm; scale is 1..10000.
+The command is read-only and does not yet save/publish a drawing or export a document version.
+
 ### Semantic feature addresses (D01.1)
 
 ```text

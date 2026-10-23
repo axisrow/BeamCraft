@@ -204,3 +204,38 @@ fn refresh_is_explicit_and_preserves_object_identity_and_references() {
     assert_eq!(next.spec().view, old.spec().view);
     assert_eq!(next.spec().dimension, old.spec().dimension);
 }
+
+#[test]
+fn resolution_refuses_a_mismatched_snapshot_before_trying_to_find_geometry() {
+    use beamcraft_engine::drawing::projection::{
+        self, BodyProjection, DimensionProjection, UnresolvedReason,
+    };
+    use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
+    let drawing = Drawing::admit(spec()).unwrap();
+    let pin = drawing.spec().source;
+    let snapshot = ViewSnapshot::build(
+        ViewPin::new(pin.manifest, pin.generation),
+        vec![],
+        &Limits::default(),
+    )
+    .unwrap();
+    let missing = projection::resolve(&drawing, &snapshot).unwrap();
+    assert_eq!(
+        missing.body,
+        BodyProjection::Unresolved(UnresolvedReason::MissingOwner)
+    );
+    assert_eq!(
+        missing.dimension,
+        DimensionProjection::Unresolved(UnresolvedReason::MissingOwner)
+    );
+    for other_pin in [
+        ViewPin::new(ContentDigest::from_bytes([9; 32]), pin.generation),
+        ViewPin::new(pin.manifest, pin.generation + 1),
+    ] {
+        let other = ViewSnapshot::build(other_pin, vec![], &Limits::default()).unwrap();
+        assert_eq!(
+            projection::resolve(&drawing, &other).unwrap_err().code,
+            ErrorCode::StaleWorkspace
+        );
+    }
+}
