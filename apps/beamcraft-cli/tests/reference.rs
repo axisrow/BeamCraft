@@ -343,6 +343,57 @@ fn reference_measure_reports_certified_mesh_enclosures_without_inventing_mass() 
 }
 
 #[test]
+fn reference_measure_checks_y_up_mesh_and_never_publishes_a_revision() {
+    let f = Fixture::new();
+    let source_bytes = TRIANGLE_CUBE.replace("upAxis = \"Z\"", "upAxis = \"Y\"");
+    let source = f.source("cube-y-up.usda", &source_bytes);
+    let attached = f.attach(&source, &[]);
+    let id = reference_id(&attached);
+    f.ok(
+        "reference-correct-units",
+        &["--id", &id, "--meters-per-unit", "1", "--up-axis", "Y"],
+    );
+    let unplaced = f.ok("reference-measure", &[]);
+    let unplaced_result = &at(&unplaced, &["results"]).array().unwrap()[0];
+    assert_eq!(text(unplaced_result, "status"), "certified");
+    let unplaced_signature = text(unplaced_result, "input_signature");
+    f.ok(
+        "reference-move",
+        &[
+            "--id",
+            &id,
+            "--translation",
+            "1200,-3400,5600",
+            "--rotation-z-deg",
+            "90",
+        ],
+    );
+    let digest = sha(source_bytes.as_bytes());
+    let stored_bytes = fs::read(f.blob_path(&digest)).unwrap();
+    let before = f.inspect();
+
+    let measured = f.ok("reference-measure", &[]);
+    let result = &at(&measured, &["results"]).array().unwrap()[0];
+    assert_eq!(text(result, "status"), "certified");
+    assert_ne!(text(result, "input_signature"), unplaced_signature);
+    assert!(number(result, &["area_mm2", "lower"]) <= 6_000_000.0);
+    assert!(number(result, &["area_mm2", "upper"]) >= 6_000_000.0);
+    assert!(number(result, &["volume_mm3", "lower"]) <= 1_000_000_000.0);
+    assert!(number(result, &["volume_mm3", "upper"]) >= 1_000_000_000.0);
+
+    let after = f.inspect();
+    assert_eq!(
+        text(at(&before, &["revision"]), "revision_id"),
+        text(at(&after, &["revision"]), "revision_id")
+    );
+    assert_eq!(
+        text(at(&before, &["revision"]), "manifest_digest"),
+        text(at(&after, &["revision"]), "manifest_digest")
+    );
+    assert_eq!(fs::read(f.blob_path(&digest)).unwrap(), stored_bytes);
+}
+
+#[test]
 fn reference_measure_refuses_declared_units_until_interpreted() {
     let f = Fixture::new();
     let source = f.source("site.usda", SITE);
@@ -394,6 +445,10 @@ fn explicit_reference_update_retains_old_pin_versions_source_and_replays_exactly
             "Z",
         ],
     );
+    let old_measurement = f.ok("reference-measure", &[]);
+    let old_result = &at(&old_measurement, &["results"]).array().unwrap()[0];
+    assert_eq!(text(old_result, "status"), "certified");
+    let old_signature = text(old_result, "input_signature");
 
     let new_bytes = TRIANGLE_CUBE
         .replace("(1, 0, 0)", "(2, 0, 0)")
@@ -423,7 +478,7 @@ fn explicit_reference_update_retains_old_pin_versions_source_and_replays_exactly
     assert_eq!(text(at(wrapper, &["source"]), "digest"), new_digest);
     assert_eq!(number(wrapper, &["source", "version"]), 2.0);
     assert_eq!(text(wrapper, "units_status"), "needs_correction");
-    assert_eq!(fs::read(old_blob).unwrap(), old_bytes);
+    assert_eq!(fs::read(&old_blob).unwrap(), old_bytes);
     let layers = at(&updated, &["foreign_layers"]).array().unwrap();
     assert!(
         layers
@@ -465,6 +520,26 @@ fn explicit_reference_update_retains_old_pin_versions_source_and_replays_exactly
         text(&at(&measured, &["results"]).array().unwrap()[0], "status"),
         "units_interpretation_required"
     );
+    f.ok(
+        "reference-correct-units",
+        &[
+            "--id",
+            &reference,
+            "--meters-per-unit",
+            "1",
+            "--up-axis",
+            "Z",
+        ],
+    );
+    let updated_measurement = f.ok("reference-measure", &[]);
+    let updated_result = &at(&updated_measurement, &["results"]).array().unwrap()[0];
+    assert_eq!(text(updated_result, "status"), "certified");
+    assert_ne!(text(updated_result, "input_signature"), old_signature);
+    assert!(number(updated_result, &["area_mm2", "lower"]) <= 10_000_000.0);
+    assert!(number(updated_result, &["area_mm2", "upper"]) >= 10_000_000.0);
+    assert!(number(updated_result, &["volume_mm3", "lower"]) <= 2_000_000_000.0);
+    assert!(number(updated_result, &["volume_mm3", "upper"]) >= 2_000_000_000.0);
+    assert_eq!(fs::read(&old_blob).unwrap(), old_bytes);
 }
 
 #[test]

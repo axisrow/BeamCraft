@@ -51,6 +51,8 @@ Required end-to-end fixtures include a closed triangle shell with independent ar
 metres and Y-up correction, wrapper rotation/translation, open and self-intersecting shells,
 malformed and over-budget arrays, and a changed source that preserves the old result while making
 it stale. Tests must prove the foreign layer bytes remain identical and the model is not modified
-by measurement. CLI source update and comparison tests now cover changed triangle geometry,
-retained old source bytes, version increment, cleared units correction, and exact replay. W03
-lifecycle coverage and broader measurement fixtures remain outstanding, so R02/R03 stay open.
+by measurement. Tests now cover the independent 1 m cube enclosures, a Y-up cube under wrapper
+rotation and translation, unchanged revision and foreign bytes after measurement, and source update
+to a 2 m × 1 m × 1 m shell with a changed signature and new enclosures. Update tests also verify
+retained old source bytes, version increment, cleared units correction, and exact replay. Saved W03
+result objects and broader rejection fixtures remain outstanding, so R02/R03 stay open.

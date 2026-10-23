@@ -184,6 +184,31 @@ mod tests {
     }
 
     #[test]
+    fn y_up_units_and_rigid_placement_preserve_independent_cube_measurements() {
+        let mut placed = reference(1.0);
+        placed.units = Some(UnitsInterpretation {
+            meters_per_unit: 1.0,
+            up_axis: UpAxis::Y,
+        });
+        let quarter_turn = core::f64::consts::FRAC_1_SQRT_2;
+        placed.placement = Placement {
+            translation_mm: [1200.0, -3400.0, 5600.0],
+            orientation_xyzw: [0.0, 0.0, quarter_turn, quarter_turn],
+        };
+
+        let result = measure_reference_mesh(&placed, &cube()).unwrap();
+        assert_eq!(result.shell_status, ShellStatus::Certified);
+        assert!(result.area_mm2.unwrap().contains(6_000_000.0));
+        assert!(result.volume_mm3.unwrap().contains(1_000_000_000.0));
+        assert_ne!(
+            result.input_signature,
+            measure_reference_mesh(&reference(1.0), &cube())
+                .unwrap()
+                .input_signature
+        );
+    }
+
+    #[test]
     fn open_foreign_mesh_has_no_area_or_volume_value() {
         let open = TriMesh::from_buffers(
             &[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
