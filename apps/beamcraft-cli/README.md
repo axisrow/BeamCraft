@@ -370,12 +370,15 @@ later overlapping writes, reverted writes, copy-source reads and links refuse wi
 quantities pass the ordinary strict verifier before staging and during commit.
 
 This slice accepts a clean current workspace and a proven `workspace-publish` delta fully
-accounted for by one terminal command, or a single-operation C01/C02 publication. For C01,
-the retained canonical payload must match its accepted operation, actor, workspace, exact base,
-complete layers and original source result in verified history. Original source before/after
-layers and footprints must account for the accepted transition exactly. Retained source history
-and the C01 payload are required. A larger publication delta, rebase administration or unsupported content refuses;
-there is no full-snapshot inverse fallback. Keep existing unsent work in its workspace and create
+accounted for by one terminal command, or a complete verified C01/C02 publication. For C01,
+`--original-revision` selects the whole published changeset as one compensating unit. The
+retained canonical payload must match its accepted operation, actor, workspace, exact base,
+complete layers and every original source result/dependency in verified history. Administrative
+rebase records retain original commands without duplicating dependencies. The inverse uses the
+actual accepted before/after images; an older local prefix cannot replace the accepted basis.
+Retained source history and the C01 payload are required. Unsupported direct publication deltas,
+incomplete legacy evidence and unsupported content refuse; there is no snapshot inverse fallback.
+Keep existing unsent work in its workspace and create
 a fresh clean workspace when necessary. The local actor must own both personal workspaces;
 the recorded default actor is trusted local CLI context, not authentication.
 
