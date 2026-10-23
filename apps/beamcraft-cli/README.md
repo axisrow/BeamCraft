@@ -13,6 +13,15 @@ Build offline with `cargo build --offline -p beamcraft-cli --bins`.
 `beamcraft --help` describes the bounded arguments. Results are one JSON object on standard
 output, with strings for generations and other lossless integers.
 
+Modelling commits also pin the admitted command's exact read/write footprint and typed request
+fingerprint as operation evidence in the revision manifest. This includes unchanged copy sources,
+linked parts and immutable definitions, which a state diff cannot recover. The public
+`command_evidence::read` API verifies canonical bytes and operation binding; legacy absence stays
+explicit. The host protects the evidence through replay, recovery and compaction. Low-level
+`revision-commit`, workspace forks/publication and history restoration do not fabricate a
+command footprint. Their aggregate/rebase evidence is separate work; missing evidence never
+proves independence. This capture does not itself merge, rebase or publish a workspace.
+
 Exit codes: 0 success, 2 input or validation refusal or an unavailable command, 3 backend
 unavailable, 4 outcome unknown, 124 deadline, 130 cancelled. `--timeout-ms` accepts 1..120000
 (default 30000) and `--cancel-after-ms` accepts 0..120000 on the blob and revision commands

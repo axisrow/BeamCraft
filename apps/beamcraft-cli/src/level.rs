@@ -326,6 +326,8 @@ pub fn create_level(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &creation.footprint,
+            fingerprint: command.content_fingerprint()?,
             prepared: &prepared,
             schema,
             project: &project,

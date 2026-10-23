@@ -337,6 +337,8 @@ pub fn update_element(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &footprint,
+            fingerprint,
             prepared: &prepared,
             schema,
             project: &project,

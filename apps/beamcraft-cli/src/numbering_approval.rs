@@ -394,6 +394,8 @@ pub fn approve_numbering(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &footprint,
+            fingerprint: command.fingerprint()?,
             prepared: &prepared,
             schema,
             project: &base.project,

@@ -184,6 +184,8 @@ pub fn create_member(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &outcome.footprint,
+            fingerprint: outcome.fingerprint,
             prepared: &prepared,
             schema,
             project: &project,

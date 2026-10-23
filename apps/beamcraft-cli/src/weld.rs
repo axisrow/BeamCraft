@@ -347,6 +347,8 @@ pub fn create_weld(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &footprint,
+            fingerprint: command.content_fingerprint()?,
             prepared: &prepared,
             schema,
             project: &base.project,

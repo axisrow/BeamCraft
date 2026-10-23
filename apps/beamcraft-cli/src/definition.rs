@@ -663,6 +663,8 @@ pub fn define(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &footprint,
+            fingerprint: digest,
             prepared: &prepared,
             schema,
             project: &project,

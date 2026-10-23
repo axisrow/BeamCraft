@@ -443,6 +443,8 @@ pub fn create_bolt(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &footprint,
+            fingerprint: command.content_fingerprint()?,
             prepared: &prepared,
             schema,
             project: &base.project,

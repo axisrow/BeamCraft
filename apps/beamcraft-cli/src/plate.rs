@@ -1646,6 +1646,8 @@ pub fn create_plate(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &transaction.outcome.footprint,
+            fingerprint: transaction.outcome.fingerprint,
             prepared: &prepared,
             schema,
             project: &project,
@@ -1667,6 +1669,8 @@ pub fn create_plate(
 
 /// What `publish_revision` needs to turn a prepared candidate into a committed revision.
 pub(crate) struct PublishRequest<'a> {
+    pub(crate) footprint: &'a Footprint,
+    pub(crate) fingerprint: ContentDigest,
     pub(crate) prepared: &'a Prepared,
     pub(crate) schema: SchemaIdentity,
     pub(crate) project: &'a str,
@@ -1727,7 +1731,25 @@ pub(crate) fn publish_revision(
         root_layer: ROOT_LAYER.into(),
         entries,
     };
-    Ok(store.commit_with(&draft, request.expected, Some(&PlateVerifier), hook)?)
+    let captured = crate::command_evidence::CapturedFootprint {
+        op_id: beamcraft_model::id::OpId::parse(request.op.as_str())
+            .map_err(|_| integrity("operation identity is invalid"))?,
+        fingerprint: request.fingerprint,
+        footprint: request.footprint.clone(),
+    };
+    let bytes = captured.encode()?;
+    let (digest, _) = store
+        .blobs()
+        .publish(&bytes)
+        .map_err(|e| PlateError::new(e.code(), "operation evidence blob could not be stored"))?;
+    let pin = beamcraft_host::revision::EvidencePin::new(digest, bytes.len() as u64)?;
+    Ok(store.commit_with_evidence(
+        &draft,
+        request.expected,
+        Some(pin),
+        Some(&PlateVerifier),
+        hook,
+    )?)
 }
 
 /// Commits a complete layer set through U06/U07 with the content verifier of this module (U03

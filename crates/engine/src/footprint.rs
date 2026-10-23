@@ -80,6 +80,23 @@ pub struct Footprint {
 }
 
 impl Footprint {
+    /// Reconstructs a bounded captured footprint from explicit entries. This checks structure,
+    /// not authority: callers must verify its immutable evidence and command provenance before
+    /// treating it as an engine-derived dependency set. Raw counts are capped before allocation.
+    pub fn from_entries(reads: &[Entry], writes: &[Entry]) -> Result<Self, CommandError> {
+        if reads.len().saturating_add(writes.len()) > MAX_FOOTPRINT_ENTRIES {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "footprint",
+                "captured footprint exceeds 4096 entries",
+            ));
+        }
+        Ok(Self {
+            reads: reads.iter().copied().collect(),
+            writes: writes.iter().copied().collect(),
+        })
+    }
+
     /// The footprint of `CreatePlate` (F04 section 8: "read ID absence and pinned definitions;
     /// write new lifecycle, complete authored fields and relationships"): it reads the absence of
     /// the new ID (lifecycle), reads the pinned material definition's relationship when there is

@@ -395,6 +395,8 @@ pub fn attach_reference(
     let committed = publish_revision(
         store,
         &PublishRequest {
+            footprint: &outcome.footprint,
+            fingerprint,
             prepared: &prepared,
             schema,
             project: &project,
@@ -532,6 +534,8 @@ fn edit(
             project: &base.project,
             workspace: &base.workspace,
             revision_id: &ids.revision_id,
+            footprint: &step.footprint,
+            fingerprint: step.fingerprint,
             op: op_host,
             base_generation: base.generation,
             expected: &base.expected,
