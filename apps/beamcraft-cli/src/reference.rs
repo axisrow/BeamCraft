@@ -64,7 +64,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::reference::{
     AttachReference, CorrectReferenceUnits, ForeignTarget, MAX_SOURCE_BYTES, MoveReference,
-    UpdateReferenceSource, WriteForeign, check_source_path,
+    UnitsInterpretation, UpdateReferenceSource, WriteForeign, check_source_path,
 };
 use std::collections::BTreeSet;
 use std::convert::Infallible;
@@ -1074,6 +1074,10 @@ pub struct ReferenceInspection {
 /// Independent result or explicit refusal for one foreign USD mesh.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForeignMeshResult {
+    /// Project that owns the model revision being measured.
+    pub model_project_id: String,
+    /// Workspace that owns the model revision being measured.
+    pub model_workspace_id: String,
     /// Wrapper identity.
     pub reference_id: String,
     /// Path in the source USD namespace.
@@ -1082,6 +1086,14 @@ pub struct ForeignMeshResult {
     pub source_digest: ContentDigest,
     /// Explicit source snapshot number even when geometry is unsupported.
     pub source_version: u32,
+    /// Exact model revision at which the wrapper was read.
+    pub model_revision_id: String,
+    /// Manifest identity of that model revision.
+    pub model_manifest_digest: ContentDigest,
+    /// Explicit source-unit interpretation, if one has been recorded.
+    pub units: Option<UnitsInterpretation>,
+    /// Wrapper placement used by the measurement.
+    pub placement: Placement,
     /// Stable shell status or a bounded unsupported reason.
     pub status: String,
     /// Present only when the source mesh parses and G06 certifies its shell.
@@ -1170,7 +1182,11 @@ fn source_transform_is_identity(wrapper: &Wrapper, prims: &[Prim], source_path: 
 
 /// Measures supported triangle meshes in the verified, pinned reference snapshot.
 pub fn measure_foreign_meshes(store: &RevisionStore) -> Result<Vec<ForeignMeshResult>, PlateError> {
-    let (_revision, _reader, _opened, prims) = open_head(store)?;
+    let (revision, _reader, _opened, prims) = open_head(store)?;
+    let model_revision_id = revision.info().revision().to_string();
+    let model_manifest_digest = revision.info().manifest_digest();
+    let model_project_id = revision.manifest().content().project().to_string();
+    let model_workspace_id = revision.manifest().content().workspace().to_string();
     let mut result = Vec::new();
     for view in read_references(&prims)? {
         let wrapper = wrapper_of(&view)?;
@@ -1186,10 +1202,16 @@ pub fn measure_foreign_meshes(store: &RevisionStore) -> Result<Vec<ForeignMeshRe
             };
             if !source_transform_is_identity(&wrapper, &prims, &foreign.source_path) {
                 result.push(ForeignMeshResult {
+                    model_project_id: model_project_id.clone(),
+                    model_workspace_id: model_workspace_id.clone(),
                     reference_id: wrapper.record.id.to_string(),
                     source_path: foreign.source_path.clone(),
                     source_digest: wrapper.record.source.digest,
                     source_version: wrapper.record.source.version,
+                    model_revision_id: model_revision_id.clone(),
+                    model_manifest_digest,
+                    units: wrapper.record.units,
+                    placement: wrapper.record.placement,
                     status: "unsupported_mesh_encoding_or_transform".to_owned(),
                     measurement: None,
                 });
@@ -1200,10 +1222,16 @@ pub fn measure_foreign_meshes(store: &RevisionStore) -> Result<Vec<ForeignMeshRe
                 UnitsStatus::NeedsCorrection | UnitsStatus::Undeclared
             ) {
                 result.push(ForeignMeshResult {
+                    model_project_id: model_project_id.clone(),
+                    model_workspace_id: model_workspace_id.clone(),
                     reference_id: wrapper.record.id.to_string(),
                     source_path: foreign.source_path.clone(),
                     source_digest: wrapper.record.source.digest,
                     source_version: wrapper.record.source.version,
+                    model_revision_id: model_revision_id.clone(),
+                    model_manifest_digest,
+                    units: wrapper.record.units,
+                    placement: wrapper.record.placement,
                     status: "units_interpretation_required".to_owned(),
                     measurement: None,
                 });
@@ -1211,10 +1239,16 @@ pub fn measure_foreign_meshes(store: &RevisionStore) -> Result<Vec<ForeignMeshRe
             }
             let Some(mesh) = mesh_buffers(prim) else {
                 result.push(ForeignMeshResult {
+                    model_project_id: model_project_id.clone(),
+                    model_workspace_id: model_workspace_id.clone(),
                     reference_id: wrapper.record.id.to_string(),
                     source_path: foreign.source_path.clone(),
                     source_digest: wrapper.record.source.digest,
                     source_version: wrapper.record.source.version,
+                    model_revision_id: model_revision_id.clone(),
+                    model_manifest_digest,
+                    units: wrapper.record.units,
+                    placement: wrapper.record.placement,
                     status: "unsupported_mesh_encoding_or_transform".to_owned(),
                     measurement: None,
                 });
@@ -1222,18 +1256,30 @@ pub fn measure_foreign_meshes(store: &RevisionStore) -> Result<Vec<ForeignMeshRe
             };
             match measure_reference_mesh(&wrapper.record, &mesh) {
                 Ok(measurement) => result.push(ForeignMeshResult {
+                    model_project_id: model_project_id.clone(),
+                    model_workspace_id: model_workspace_id.clone(),
                     reference_id: wrapper.record.id.to_string(),
                     source_path: foreign.source_path.clone(),
                     source_digest: wrapper.record.source.digest,
                     source_version: wrapper.record.source.version,
+                    model_revision_id: model_revision_id.clone(),
+                    model_manifest_digest,
+                    units: wrapper.record.units,
+                    placement: wrapper.record.placement,
                     status: measurement.shell_status.as_str().to_owned(),
                     measurement: Some(measurement),
                 }),
                 Err(_) => result.push(ForeignMeshResult {
+                    model_project_id: model_project_id.clone(),
+                    model_workspace_id: model_workspace_id.clone(),
                     reference_id: wrapper.record.id.to_string(),
                     source_path: foreign.source_path.clone(),
                     source_digest: wrapper.record.source.digest,
                     source_version: wrapper.record.source.version,
+                    model_revision_id: model_revision_id.clone(),
+                    model_manifest_digest,
+                    units: wrapper.record.units,
+                    placement: wrapper.record.placement,
                     status: "unsupported_geometry".to_owned(),
                     measurement: None,
                 }),

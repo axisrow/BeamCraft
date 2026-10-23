@@ -1,8 +1,8 @@
 # R02–R03 foreign-reference measurements and updates
 
-Status: the R02 engine seam, CLI read command, and R03 explicit source update/comparison are
-implemented experimentally. Persisted W03 result lifecycle remains follow-up work. Neither K3 nor
-the R02/R03 plan rows are accepted by this note alone.
+Status: the R02 engine seam, CLI read/save commands, W03 result lifecycle, and R03 explicit source
+update/comparison are implemented experimentally. Neither K3 nor the R02/R03 plan rows are
+accepted by this note alone.
 
 ## R02 result contract
 
@@ -29,9 +29,13 @@ not a product tolerance.
 The engine seam is `beamcraft_engine::reference_measure::measure_reference_mesh`. It takes a
 bounded, already validated `TriMesh`, transforms its vertices using the R01 record, re-certifies
 the transformed shell, and returns the source pin, input signature, shell status, enclosures and
-`unsupported` engineering-quantity status. The CLI returns a result for every supported foreign
-mesh, with source path/digest/version, input signature, enclosures, and explicit null mass. These
-results are presently read-only command output; saved W03 result objects remain follow-up work.
+`unsupported` engineering-quantity status. The CLI returns a result for every foreign mesh, with
+source path/digest/version, input signature where available, enclosures, and explicit null mass.
+`reference-measure --save true` appends immutable W03 objects to a separate revision journal under
+`ROOT/measurements`, split into authored input pins and derived results. `reference-measurements`
+recomputes current signatures and labels saved objects `current`, `stale`, or `unsupported`.
+Repeated saves of an identical supported input reuse the object; changed inputs append a new object
+and retain the old result.
 
 ## R03 explicit source update
 
@@ -40,7 +44,8 @@ and validates the new USD snapshot under R01's byte and structure budgets, then 
 wrapper revision with incremented source version and the new digest. It does not modify foreign
 content, resolve network paths, or update on file-system change. Existing measurements remain
 immutable and become stale because their digest/version no longer match; a units correction is
-cleared and must be explicitly applied to the new pin. The command reports added/removed prims,
+cleared and must be explicitly applied to the new pin. Saved W03 objects use the transformed
+geometry signature to make this stale state visible. The command reports added/removed prims,
 changed typed properties, and changed triangle buffers for supported static USDA. Binary USD and
 unsupported mesh geometry produce explicit unsupported comparison status, never equality. Replay
 returns the recorded update without reapplying it.
@@ -51,8 +56,9 @@ Required end-to-end fixtures include a closed triangle shell with independent ar
 metres and Y-up correction, wrapper rotation/translation, open and self-intersecting shells,
 malformed and over-budget arrays, and a changed source that preserves the old result while making
 it stale. Tests must prove the foreign layer bytes remain identical and the model is not modified
-by measurement. Tests now cover the independent 1 m cube enclosures, a Y-up cube under wrapper
-rotation and translation, unchanged revision and foreign bytes after measurement, and source update
-to a 2 m × 1 m × 1 m shell with a changed signature and new enclosures. Update tests also verify
-retained old source bytes, version increment, cleared units correction, and exact replay. Saved W03
-result objects and broader rejection fixtures remain outstanding, so R02/R03 stay open.
+by measurement. Tests cover independent 1 m cube enclosures, a Y-up cube under wrapper rotation
+and translation, open and self-intersecting shells with no values, unchanged model revision and
+foreign bytes after measurement, and source update to a 2 m × 1 m × 1 m shell with a changed
+signature and new enclosures. W03 tests verify separate immutable storage, exact-input idempotency,
+staleness after a move and source update, and retention of previous results. Update tests also
+verify retained old source bytes, version increment, cleared units correction, and exact replay.

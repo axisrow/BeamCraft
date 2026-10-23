@@ -49,6 +49,7 @@ pub fn handles(command: &std::ffi::OsStr) -> bool {
                 | "reference-write"
                 | "reference-inspect"
                 | "reference-measure"
+                | "reference-measurements"
         )
     })
 }
@@ -79,7 +80,8 @@ fn options_of(command: &str) -> Option<Vec<&'static str>> {
         "reference-correct-units" => &["--id", "--meters-per-unit", "--up-axis", "--clear"],
         "reference-update" => &["--id", "--expected-source-digest", "--source"],
         "reference-write" => &["--id", "--target", "--prim", "--attribute"],
-        "reference-inspect" | "reference-measure" => &[],
+        "reference-inspect" | "reference-measurements" => &[],
+        "reference-measure" => &["--save"],
         _ => return None,
     };
     let mut all = vec!["--store"];
@@ -139,7 +141,18 @@ fn run(args: &[OsString]) -> Run<Json> {
         "reference-correct-units" => correct_command(&store, &options),
         "reference-update" => update_command(&store, &options),
         "reference-write" => write_command(&store, &options),
-        "reference-measure" => measurement_json(&measure_foreign_meshes(&store)?),
+        "reference-measure" => {
+            let results = measure_foreign_meshes(&store)?;
+            match options.get("--save").copied() {
+                Some("true") => beamcraft_cli::reference_measurements::save(&store, &results),
+                Some("false") | None => measurement_json(&results),
+                Some(_) => Err(invalid("--save must be true or false")),
+            }
+        }
+        "reference-measurements" => {
+            let current = measure_foreign_meshes(&store)?;
+            beamcraft_cli::reference_measurements::list(&store, &current)
+        }
         _ => Ok(inspection_json(&inspect_references(&store)?)?),
     }
 }

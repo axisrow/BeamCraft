@@ -397,3 +397,24 @@ layer into its revision unchanged. See the [design note](../../docs/design/r01-r
 U16 uses the [category-based prim paths](../../docs/architecture.md#prim-hierarchy-and-naming-rule)
 in saved layers and `prim_path` output. Stores with earlier paths or schema pins are refused;
 there is no migration during this pre-alpha compatibility break.
+
+## R02/R03 experimental reference measurements
+
+```text
+beamcraft reference-measure --store ROOT [--save true]
+beamcraft reference-measurements --store ROOT
+beamcraft reference-update --store ROOT --id UUID --expected-source-digest SHA256 --source FILE
+```
+
+`reference-measure` reports G06-certified triangle-shell area and volume enclosures in world mm²
+and mm³. It never authors to the model. `--save true` records immutable W03 result objects in a
+separate `measurements/` revision journal with the source pin, model revision, units, wrapper pose,
+precision, status, values and input signature. `reference-measurements` compares those signatures
+with the current model and reports `current`, `stale` or `unsupported`; saving again after a move or
+source update appends a new object and retains the older result. Mass remains null and unsupported.
+
+The adapter currently measures static triangle-only USD meshes without authored source transform
+ops. Non-triangle faces, unsupported transforms and uncertified shells have no successful values.
+R03 update is explicit, retains old source bytes, increments the source version and clears units
+interpretation so the new pin must be corrected deliberately. See the
+[R02/R03 design note](../../docs/design/r02-r03-reference-measurements.md).

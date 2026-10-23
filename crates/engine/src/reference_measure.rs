@@ -220,4 +220,18 @@ mod tests {
         assert_eq!(result.area_mm2, None);
         assert_eq!(result.volume_mm3, None);
     }
+
+    #[test]
+    fn self_intersecting_foreign_shell_never_gets_measurement_values() {
+        let cube = cube();
+        let mut vertices = cube.vertices().to_vec();
+        let last = vertices.get_mut(7).unwrap();
+        *last = [10.0, 10.0, -5.0];
+        let folded = TriMesh::from_buffers(&vertices, cube.triangles()).unwrap();
+
+        let result = measure_reference_mesh(&reference(0.001), &folded).unwrap();
+        assert_ne!(result.shell_status, ShellStatus::Certified);
+        assert_eq!(result.area_mm2, None);
+        assert_eq!(result.volume_mm3, None);
+    }
 }
