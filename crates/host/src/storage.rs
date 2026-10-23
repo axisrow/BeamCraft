@@ -194,6 +194,15 @@ impl BlobStore {
         &self.canonical_root
     }
 
+    /// The absolute path originally supplied when this store was opened.
+    ///
+    /// Use this path when opening a sibling or child store. On Windows, the canonical path may
+    /// use the verbatim `\\?\` namespace, whose filesystem validation differs from ordinary
+    /// drive paths even though both refer to the same directory.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Opens a store with a smaller blob/read memory cap (zero permits only empty blobs).
     /// Caps above [`MAX_BLOB_BYTES`] are invalid; errors never include the root path.
     pub fn with_limit(root: impl AsRef<Path>, cap: usize) -> Result<Self, StorageError> {
