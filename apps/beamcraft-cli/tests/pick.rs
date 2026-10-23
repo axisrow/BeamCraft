@@ -23,6 +23,9 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 #[path = "drawing/projection.rs"]
 mod drawing_projection;
 
+#[path = "drawing/archive.rs"]
+mod drawing_archive;
+
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000700001";
 const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";
 const COPY: &str = "019a7bf0-0000-7000-8000-000000700003";

@@ -224,6 +224,14 @@ archive. The library `drawing::codec::{encode, decode}` uses admitted engine int
 USD reading/re-admission (16 KiB, three prims, canonical closed fields); source verification is
 still a separate prerequisite. Historical publication/archive and derived geometry follow in D03.
 
+The D03.1 prerequisite `drawing::archive::SourceArchive` captures a source revision under the
+source store's shared maintenance guard. It retains exact `source-manifest` provenance and all
+USD bytes under `model/`, outside drawing composition. Verification binds every source-pin field,
+layer name/role/size/digest and the existing strict USD/schema/index/kernel inspection. Reopening
+restores original virtual names and needs no live model or foreign filesystem source. Existing
+model layer/count/total-byte budgets apply before capture. Document-store retention and the D03
+CLI publication flow follow separately; an in-memory archive is not yet a published document.
+
 ### Semantic feature addresses (D01.1)
 
 ```text

@@ -3,4 +3,5 @@
 
 //! Drawing application adapters. USD intent has its own schema, separate from engineering USD.
 
+pub mod archive;
 pub mod codec;
