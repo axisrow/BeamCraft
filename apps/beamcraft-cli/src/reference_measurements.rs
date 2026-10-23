@@ -490,7 +490,7 @@ pub fn save(
             "measurement batch spans multiple model workspaces",
         ));
     }
-    let measurement_root = model_store.blobs().canonical_root().join("measurements");
+    let measurement_root = model_store.blobs().root().join("measurements");
     if !measurement_root.exists() {
         match fs::create_dir(&measurement_root) {
             Ok(()) => {}
@@ -556,7 +556,7 @@ pub fn list(
     model_store: &RevisionStore,
     current: &[ForeignMeshResult],
 ) -> Result<Json, PlateError> {
-    let measurement_root = model_store.blobs().canonical_root().join("measurements");
+    let measurement_root = model_store.blobs().root().join("measurements");
     if !measurement_root.exists() {
         return Ok(Json::object([
             ("outcome", Json::text("saved_measurements")),
