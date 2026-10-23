@@ -77,6 +77,15 @@ before replacement; mixed-layer geometry fails rather than revealing a weaker st
 Unknown admitted metadata, attributes, relationships, specs and sublayer order survive
 editing; untouched layers retain their exact bytes. No flatten operation is used.
 
+`authored::rebase::prepare` builds an isolated snapshot from a base, a local source and an
+accepted snapshot. It transfers only closed-schema source deltas covered by verified writes,
+merges child membership and retains accepted opinions and untouched asset bytes. Every input
+and the output pass structural/index checks; foreign contributions, unknown source deltas,
+overlapping groups and deltas outside the two edit targets refuse. References retain their
+dedicated wrapper writer. The caller must first prove independence using all command reads and
+intervening history, then run the kernel verifier before a durable commit. This API performs no
+publication, metadata transition, recovery or request replay and does not complete C03.
+
 Resources are contributor/engine-supplied rectangular profiles or optional-density
 materials. A batch may consist of resources only (no element change): it publishes the
 definitions, declares each newly written one as a write of its digest, and rewrites nothing

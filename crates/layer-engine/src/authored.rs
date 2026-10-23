@@ -7,6 +7,7 @@
 mod derive;
 mod edit;
 mod guard;
+pub mod rebase;
 mod reference;
 mod validate;
 
