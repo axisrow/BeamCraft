@@ -216,6 +216,33 @@ mod tests {
     }
 
     #[test]
+    fn y_up_units_and_rigid_placement_preserve_independent_cube_measurements() {
+        let mut placed = reference(1.0);
+        placed.units = Some(UnitsInterpretation {
+            meters_per_unit: 1.0,
+            up_axis: UpAxis::Y,
+        });
+        let quarter_turn = core::f64::consts::FRAC_1_SQRT_2;
+        placed.placement = Placement {
+            translation_mm: [1200.0, -3400.0, 5600.0],
+            orientation_xyzw: [0.0, 0.0, quarter_turn, quarter_turn],
+        };
+
+        let result = measure_reference_mesh(&placed, &cube()).unwrap();
+        assert_eq!(result.shell_status, ShellStatus::Certified);
+        let area = result.area_mm2.unwrap();
+        let volume = result.volume_mm3.unwrap();
+        assert!(area.lo <= 6_000_000.0 && area.hi >= 6_000_000.0);
+        assert!(volume.lo <= 1_000_000_000.0 && volume.hi >= 1_000_000_000.0);
+        assert_ne!(
+            result.input_signature,
+            measure_reference_mesh(&reference(1.0), &cube())
+                .unwrap()
+                .input_signature
+        );
+    }
+
+    #[test]
     fn open_foreign_mesh_has_no_area_or_volume_value() {
         let open = TriMesh::from_buffers(
             &[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
@@ -223,6 +250,20 @@ mod tests {
         )
         .unwrap();
         let result = measure_reference_mesh(&reference(0.001), &open).unwrap();
+        assert_ne!(result.shell_status, ShellStatus::Certified);
+        assert_eq!(result.area_mm2, None);
+        assert_eq!(result.volume_mm3, None);
+    }
+
+    #[test]
+    fn self_intersecting_foreign_shell_never_gets_measurement_values() {
+        let cube = cube();
+        let mut vertices = cube.vertices().to_vec();
+        let last = vertices.get_mut(7).unwrap();
+        *last = [10.0, 10.0, -5.0];
+        let folded = TriMesh::from_buffers(&vertices, cube.triangles()).unwrap();
+
+        let result = measure_reference_mesh(&reference(0.001), &folded).unwrap();
         assert_ne!(result.shell_status, ShellStatus::Certified);
         assert_eq!(result.area_mm2, None);
         assert_eq!(result.volume_mm3, None);

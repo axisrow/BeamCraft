@@ -16,9 +16,9 @@ use crate::plate_cmd::{
 };
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::reference::{
-    AttachRequest, Attached, Edited, Ids, ReferenceInspection, Wrapper, attach_reference,
-    correct_wrapper_units, inspect_references, measure_foreign_meshes, move_wrapper,
-    refuse_foreign_write,
+    AttachRequest, Attached, Edited, Ids, ReferenceInspection, UpdateSourceRequest, Wrapper,
+    attach_reference, correct_wrapper_units, inspect_references, measure_foreign_meshes,
+    move_wrapper, refuse_foreign_write, update_wrapper_source,
 };
 use beamcraft_host::{
     ids::IdSource,
@@ -27,6 +27,7 @@ use beamcraft_host::{
 };
 use beamcraft_json::Json;
 use beamcraft_model::command::Placement;
+use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::reference::{
@@ -44,9 +45,11 @@ pub fn handles(command: &std::ffi::OsStr) -> bool {
             "reference-attach"
                 | "reference-move"
                 | "reference-correct-units"
+                | "reference-update"
                 | "reference-write"
                 | "reference-inspect"
                 | "reference-measure"
+                | "reference-measurements"
         )
     })
 }
@@ -75,15 +78,17 @@ fn options_of(command: &str) -> Option<Vec<&'static str>> {
         ],
         "reference-move" => &["--id", "--translation", "--rotation-z-deg"],
         "reference-correct-units" => &["--id", "--meters-per-unit", "--up-axis", "--clear"],
+        "reference-update" => &["--id", "--expected-source-digest", "--source"],
         "reference-write" => &["--id", "--target", "--prim", "--attribute"],
-        "reference-inspect" | "reference-measure" => &[],
+        "reference-inspect" | "reference-measurements" => &[],
+        "reference-measure" => &["--save"],
         _ => return None,
     };
     let mut all = vec!["--store"];
     all.extend_from_slice(own);
     if matches!(
         command,
-        "reference-attach" | "reference-move" | "reference-correct-units"
+        "reference-attach" | "reference-move" | "reference-correct-units" | "reference-update"
     ) {
         all.extend_from_slice(&IDS);
     }
@@ -113,7 +118,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             return Err(invalid("unknown or repeated option"));
         }
     }
-    if *command == "reference-attach" {
+    if matches!(*command, "reference-attach" | "reference-update") {
         // Before the store, the file system or a resolver is touched: a URL or a network path
         // is refused on its text alone.
         let source = options
@@ -134,8 +139,20 @@ fn run(args: &[OsString]) -> Run<Json> {
         "reference-attach" => attach_command(&store, &options),
         "reference-move" => move_command(&store, &options),
         "reference-correct-units" => correct_command(&store, &options),
+        "reference-update" => update_command(&store, &options),
         "reference-write" => write_command(&store, &options),
-        "reference-measure" => measurement_json(&measure_foreign_meshes(&store)?),
+        "reference-measure" => {
+            let results = measure_foreign_meshes(&store)?;
+            match options.get("--save").copied() {
+                Some("true") => beamcraft_cli::reference_measurements::save(&store, &results),
+                Some("false") | None => measurement_json(&results),
+                Some(_) => Err(invalid("--save must be true or false")),
+            }
+        }
+        "reference-measurements" => {
+            let current = measure_foreign_meshes(&store)?;
+            beamcraft_cli::reference_measurements::list(&store, &current)
+        }
         _ => Ok(inspection_json(&inspect_references(&store)?)?),
     }
 }
@@ -304,6 +321,29 @@ fn correct_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run
     edited_json(&edited, ids.op_id, "reference_units_corrected")
 }
 
+fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let ids = ids(options)?;
+    let expected_source_digest = options
+        .get("--expected-source-digest")
+        .ok_or_else(|| invalid("--expected-source-digest is required"))?
+        .parse::<ContentDigest>()
+        .map_err(|_| invalid("--expected-source-digest must be a SHA-256 digest"))?;
+    let edited = update_wrapper_source(
+        store,
+        &UpdateSourceRequest {
+            ids: ids.clone(),
+            target_id: element_id(options, "--id")?,
+            expected_source_digest,
+            source_path: options
+                .get("--source")
+                .ok_or_else(|| invalid("--source is required"))?
+                .to_string(),
+        },
+        &mut NoFault,
+    )?;
+    edited_json(&edited, ids.op_id, "reference_source_updated")
+}
+
 fn edited_json(edited: &Edited, op_id: OpId, done: &'static str) -> Run<Json> {
     Ok(Json::object([
         (
@@ -337,7 +377,32 @@ fn edited_json(edited: &Edited, op_id: OpId, done: &'static str) -> Run<Json> {
         ),
         ("revision", revision_json(&edited.revision)),
         ("footprint", footprint_json(edited.footprint.as_ref())),
+        (
+            "source_comparison",
+            edited
+                .source_comparison
+                .as_ref()
+                .map_or(Json::Null, source_comparison_json),
+        ),
     ]))
+}
+
+fn source_comparison_json(comparison: &beamcraft_cli::reference::SourceComparison) -> Json {
+    let list = |values: &[String]| Json::Array(values.iter().cloned().map(Json::text).collect());
+    Json::object([
+        ("status", Json::text(comparison.status.clone())),
+        ("added_paths", list(&comparison.added_paths)),
+        ("removed_paths", list(&comparison.removed_paths)),
+        (
+            "changed_geometry_paths",
+            list(&comparison.changed_geometry_paths),
+        ),
+        (
+            "unsupported_geometry_paths",
+            list(&comparison.unsupported_geometry_paths),
+        ),
+        ("changed_properties", list(&comparison.changed_properties)),
+    ])
 }
 
 /// `reference-write`: always a rejection. `--target source` addresses the stored source layer;

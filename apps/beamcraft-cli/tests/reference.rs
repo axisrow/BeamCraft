@@ -343,6 +343,123 @@ fn reference_measure_reports_certified_mesh_enclosures_without_inventing_mass() 
 }
 
 #[test]
+fn reference_measure_checks_y_up_mesh_and_never_publishes_a_revision() {
+    let f = Fixture::new();
+    let source_bytes = TRIANGLE_CUBE.replace("upAxis = \"Z\"", "upAxis = \"Y\"");
+    let source = f.source("cube-y-up.usda", &source_bytes);
+    let attached = f.attach(&source, &[]);
+    let id = reference_id(&attached);
+    f.ok(
+        "reference-correct-units",
+        &["--id", &id, "--meters-per-unit", "1", "--up-axis", "Y"],
+    );
+    let unplaced = f.ok("reference-measure", &[]);
+    let unplaced_result = &at(&unplaced, &["results"]).array().unwrap()[0];
+    assert_eq!(text(unplaced_result, "status"), "certified");
+    let unplaced_signature = text(unplaced_result, "input_signature");
+    f.ok(
+        "reference-move",
+        &[
+            "--id",
+            &id,
+            "--translation",
+            "1200,-3400,5600",
+            "--rotation-z-deg",
+            "90",
+        ],
+    );
+    let digest = sha(source_bytes.as_bytes());
+    let stored_bytes = fs::read(f.blob_path(&digest)).unwrap();
+    let before = f.inspect();
+
+    let measured = f.ok("reference-measure", &[]);
+    let result = &at(&measured, &["results"]).array().unwrap()[0];
+    assert_eq!(text(result, "status"), "certified");
+    assert_ne!(text(result, "input_signature"), unplaced_signature);
+    assert!(number(result, &["area_mm2", "lower"]) <= 6_000_000.0);
+    assert!(number(result, &["area_mm2", "upper"]) >= 6_000_000.0);
+    assert!(number(result, &["volume_mm3", "lower"]) <= 1_000_000_000.0);
+    assert!(number(result, &["volume_mm3", "upper"]) >= 1_000_000_000.0);
+
+    let after = f.inspect();
+    assert_eq!(
+        text(at(&before, &["revision"]), "revision_id"),
+        text(at(&after, &["revision"]), "revision_id")
+    );
+    assert_eq!(
+        text(at(&before, &["revision"]), "manifest_digest"),
+        text(at(&after, &["revision"]), "manifest_digest")
+    );
+    assert_eq!(fs::read(f.blob_path(&digest)).unwrap(), stored_bytes);
+}
+
+#[test]
+fn saved_measurements_are_separate_immutable_objects_and_turn_stale_on_move() {
+    let f = Fixture::new();
+    let source = f.source("cube.usda", TRIANGLE_CUBE);
+    let attached = f.attach(&source, &[]);
+    let id = reference_id(&attached);
+    f.ok(
+        "reference-correct-units",
+        &["--id", &id, "--meters-per-unit", "1", "--up-axis", "Z"],
+    );
+    let model_before_save = f.inspect();
+    let first_save = f.ok("reference-measure", &["--save", "true"]);
+    let first_objects = at(&first_save, &["objects"]).array().unwrap();
+    assert_eq!(first_objects.len(), 1);
+    let first_id = text(&first_objects[0], "id");
+    assert_eq!(text(&first_objects[0], "freshness"), "current");
+    assert_eq!(
+        text(&first_objects[0], "model_revision_id"),
+        text(at(&model_before_save, &["revision"]), "revision_id")
+    );
+    assert_eq!(
+        text(&first_objects[0], "model_manifest_digest"),
+        text(at(&model_before_save, &["revision"]), "manifest_digest")
+    );
+    assert_eq!(
+        text(&first_objects[0], "algorithm"),
+        "reference-triangle-shell-enclosure/1"
+    );
+    assert_eq!(at(&first_objects[0], &["mass_kg"]), &Json::Null);
+
+    let replay = f.ok("reference-measure", &["--save", "true"]);
+    let replay_objects = at(&replay, &["objects"]).array().unwrap();
+    assert_eq!(replay_objects.len(), 1);
+    assert_eq!(text(&replay_objects[0], "id"), first_id);
+    let model_after_save = f.inspect();
+    assert_eq!(
+        text(at(&model_before_save, &["revision"]), "revision_id"),
+        text(at(&model_after_save, &["revision"]), "revision_id")
+    );
+
+    f.ok(
+        "reference-move",
+        &["--id", &id, "--translation", "10,20,30"],
+    );
+    let stale = f.ok("reference-measurements", &[]);
+    let stale_objects = at(&stale, &["objects"]).array().unwrap();
+    assert_eq!(stale_objects.len(), 1);
+    assert_eq!(text(&stale_objects[0], "id"), first_id);
+    assert_eq!(text(&stale_objects[0], "freshness"), "stale");
+
+    let second_save = f.ok("reference-measure", &["--save", "true"]);
+    let current_objects = at(&second_save, &["objects"]).array().unwrap();
+    assert_eq!(current_objects.len(), 2);
+    assert_eq!(text(&current_objects[0], "freshness"), "stale");
+    assert_eq!(text(&current_objects[1], "freshness"), "current");
+    assert_ne!(
+        text(&current_objects[0], "id"),
+        text(&current_objects[1], "id")
+    );
+    let digest = sha(TRIANGLE_CUBE.as_bytes());
+    assert_eq!(
+        fs::read(f.blob_path(&digest)).unwrap(),
+        TRIANGLE_CUBE.as_bytes()
+    );
+}
+
+#[test]
 fn reference_measure_refuses_declared_units_until_interpreted() {
     let f = Fixture::new();
     let source = f.source("site.usda", SITE);
@@ -372,6 +489,154 @@ fn reference_measure_reports_non_triangle_faces_as_unsupported() {
     );
     assert_eq!(at(result, &["area_mm2"]), &Json::Null);
     assert_eq!(at(result, &["volume_mm3"]), &Json::Null);
+}
+
+#[test]
+fn reference_measure_rejects_a_self_intersecting_triangle_shell() {
+    let f = Fixture::new();
+    let source_bytes = TRIANGLE_CUBE.replace("(0, 1, 1)", "(10, 10, -5)");
+    let source = f.source("folded-cube.usda", &source_bytes);
+    let attached = f.attach(&source, &[]);
+    let id = reference_id(&attached);
+    f.ok(
+        "reference-correct-units",
+        &["--id", &id, "--meters-per-unit", "1", "--up-axis", "Z"],
+    );
+
+    let measured = f.ok("reference-measure", &[]);
+    let result = &at(&measured, &["results"]).array().unwrap()[0];
+    assert_eq!(text(result, "status"), "overlapping");
+    assert_eq!(at(result, &["area_mm2"]), &Json::Null);
+    assert_eq!(at(result, &["volume_mm3"]), &Json::Null);
+}
+
+#[test]
+fn explicit_reference_update_retains_old_pin_versions_source_and_replays_exactly() {
+    let f = Fixture::new();
+    let old_path = f.source("cube-v1.usda", TRIANGLE_CUBE);
+    let attached = f.attach(&old_path, &[]);
+    let reference = reference_id(&attached);
+    let old_digest = sha(TRIANGLE_CUBE.as_bytes());
+    let old_blob = f.blob_path(&old_digest);
+    let old_bytes = fs::read(&old_blob).unwrap();
+    f.ok(
+        "reference-correct-units",
+        &[
+            "--id",
+            &reference,
+            "--meters-per-unit",
+            "1",
+            "--up-axis",
+            "Z",
+        ],
+    );
+    let old_measurement = f.ok("reference-measure", &["--save", "true"]);
+    let old_result = &at(&old_measurement, &["objects"]).array().unwrap()[0];
+    assert_eq!(text(old_result, "freshness"), "current");
+    let old_signature = text(old_result, "input_signature");
+
+    let new_bytes = TRIANGLE_CUBE
+        .replace("(1, 0, 0)", "(2, 0, 0)")
+        .replace("(1, 1, 0)", "(2, 1, 0)")
+        .replace("(1, 0, 1)", "(2, 0, 1)")
+        .replace("(1, 1, 1)", "(2, 1, 1)")
+        + "\n# second explicit source snapshot\n";
+    let new_path = f.source("cube-v2.usda", &new_bytes);
+    let new_digest = sha(new_bytes.as_bytes());
+    let update_args = [
+        "--id",
+        reference.as_str(),
+        "--expected-source-digest",
+        old_digest.as_str(),
+        "--source",
+        new_path.as_str(),
+        "--op-id",
+        "01900000-0000-7000-8000-00000000000e",
+        "--revision-id",
+        "01900000-0000-7000-8000-00000000000f",
+        "--actor-id",
+        "01900000-0000-7000-8000-000000000010",
+    ];
+    let updated = f.ok("reference-update", &update_args);
+    assert_eq!(text(&updated, "outcome"), "reference_source_updated");
+    let wrapper = at(&updated, &["reference"]);
+    assert_eq!(text(at(wrapper, &["source"]), "digest"), new_digest);
+    assert_eq!(number(wrapper, &["source", "version"]), 2.0);
+    assert_eq!(text(wrapper, "units_status"), "needs_correction");
+    assert_eq!(fs::read(&old_blob).unwrap(), old_bytes);
+    let layers = at(&updated, &["foreign_layers"]).array().unwrap();
+    assert!(
+        layers
+            .iter()
+            .any(|layer| text(layer, "digest") == old_digest)
+    );
+    assert!(
+        layers
+            .iter()
+            .any(|layer| text(layer, "digest") == new_digest)
+    );
+    let comparison = at(&updated, &["source_comparison"]);
+    assert!(
+        at(comparison, &["changed_geometry_paths"])
+            .array()
+            .unwrap()
+            .iter()
+            .any(|path| path.string().unwrap() == "/Cube/Body")
+    );
+    assert!(
+        at(comparison, &["changed_properties"])
+            .array()
+            .unwrap()
+            .iter()
+            .any(|path| path.string().unwrap() == "/Cube/Body:points")
+    );
+
+    let replay = f.ok("reference-update", &update_args);
+    assert_eq!(
+        text(&replay, "outcome"),
+        "reference_source_updated_replayed"
+    );
+    assert_eq!(
+        text(at(&replay, &["reference", "source"]), "digest"),
+        new_digest
+    );
+    let measured = f.ok("reference-measure", &[]);
+    assert_eq!(
+        text(&at(&measured, &["results"]).array().unwrap()[0], "status"),
+        "units_interpretation_required"
+    );
+    let stale_measurements = f.ok("reference-measurements", &[]);
+    assert_eq!(
+        text(
+            &at(&stale_measurements, &["objects"]).array().unwrap()[0],
+            "freshness"
+        ),
+        "stale"
+    );
+    f.ok(
+        "reference-correct-units",
+        &[
+            "--id",
+            &reference,
+            "--meters-per-unit",
+            "1",
+            "--up-axis",
+            "Z",
+        ],
+    );
+    let updated_measurement = f.ok("reference-measure", &["--save", "true"]);
+    let updated_objects = at(&updated_measurement, &["objects"]).array().unwrap();
+    assert_eq!(updated_objects.len(), 2);
+    assert_eq!(text(&updated_objects[0], "freshness"), "stale");
+    assert_eq!(text(&updated_objects[1], "freshness"), "current");
+    let updated_result = &updated_objects[1];
+    assert_eq!(text(updated_result, "status"), "certified");
+    assert_ne!(text(updated_result, "input_signature"), old_signature);
+    assert!(number(updated_result, &["area_mm2", "lower"]) <= 10_000_000.0);
+    assert!(number(updated_result, &["area_mm2", "upper"]) >= 10_000_000.0);
+    assert!(number(updated_result, &["volume_mm3", "lower"]) <= 2_000_000_000.0);
+    assert!(number(updated_result, &["volume_mm3", "upper"]) >= 2_000_000_000.0);
+    assert_eq!(fs::read(&old_blob).unwrap(), old_bytes);
 }
 
 #[test]

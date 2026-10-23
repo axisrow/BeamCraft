@@ -81,6 +81,27 @@ pub(super) fn check_new(r: &Reference) -> Result<(), Diagnostic> {
     r.source.validate().map_err(refused)
 }
 
+/// Checks the old source pin and exact next version of an explicit replacement.
+pub(super) fn check_replacement(
+    prim: &Prim,
+    expected_digest: ContentDigest,
+    source: &SourcePin,
+) -> Result<(), Diagnostic> {
+    source.validate().map_err(refused)?;
+    let current = read_pin(prim)?;
+    if current.digest != expected_digest || current.digest == source.digest {
+        return Err(fail(
+            ErrorCode::BaseRevisionMismatch,
+            "the reference source no longer matches the expected pin",
+        ));
+    }
+    let next = current.version.checked_add(1).ok_or_else(limit)?;
+    if source.version != next {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 /// Admission of a units interpretation.
 pub(super) fn check_units(i: &Option<UnitsInterpretation>) -> Result<(), Diagnostic> {
     i.as_ref().map_or(Ok(()), |i| i.validate().map_err(refused))
@@ -206,6 +227,83 @@ pub(super) fn attach(data: &mut sdf::Data, r: &Reference, actor: &str) -> Result
             custom_data: Default::default(),
         }])),
     )
+}
+
+/// Replaces the source pin and arc of an existing wrapper. The caller has already checked the
+/// old digest and the replacement version against the verified base; old correction opinions
+/// are cleared because they were pinned to the old digest.
+pub(super) fn replace_source(
+    data: &mut sdf::Data,
+    id: &str,
+    pin: &SourcePin,
+) -> Result<(), Diagnostic> {
+    pin.validate().map_err(refused)?;
+    let p = element_path(id, ElementCategory::Reference)?;
+    for (name, ty, value) in [
+        (
+            SOURCE_DIGEST,
+            "string",
+            sdf::Value::String(pin.digest.to_string()),
+        ),
+        (
+            SOURCE_BYTES,
+            "int",
+            sdf::Value::Int(i32::try_from(pin.bytes).map_err(|_| limit())?),
+        ),
+        (
+            SOURCE_FORMAT,
+            "token",
+            sdf::Value::token(pin.format.as_str()),
+        ),
+        (
+            SOURCE_VERSION,
+            "int",
+            sdf::Value::Int(i32::try_from(pin.version).map_err(|_| limit())?),
+        ),
+        (
+            SOURCE_LABEL,
+            "string",
+            sdf::Value::String(pin.label.clone()),
+        ),
+        (
+            SOURCE_DEFAULT_PRIM,
+            "string",
+            sdf::Value::String(pin.default_prim.clone()),
+        ),
+    ] {
+        attr(data, &p, name, ty, value)?;
+    }
+    for (name, ty, value) in [
+        (
+            DECLARED_UNITS,
+            "double",
+            pin.declared_meters_per_unit.map(sdf::Value::Double),
+        ),
+        (
+            DECLARED_UP_AXIS,
+            "token",
+            pin.declared_up_axis
+                .map(|axis| sdf::Value::token(axis.as_str())),
+        ),
+    ] {
+        match value {
+            Some(value) => attr(data, &p, name, ty, value)?,
+            None => attribute(data, &p, name, ty, Opinion::Remove, true)?,
+        }
+    }
+    let source = format!("{p}/{CORRECTION}/{SOURCE}");
+    field(
+        data,
+        &source,
+        "references",
+        sdf::Value::ReferenceListOp(sdf::ListOp::prepended([sdf::Reference {
+            asset_path: pin.layer_name(),
+            prim_path: path(&format!("/{}", pin.default_prim))?,
+            layer_offset: sdf::LayerOffset::IDENTITY,
+            custom_data: Default::default(),
+        }])),
+    )?;
+    units(data, id, &None, pin.digest)
 }
 
 /// The operations an interpretation authors on the units level, outermost first: the rotation

@@ -82,6 +82,14 @@ fn pin_of(text: &str) -> SourcePin {
         declared_up_axis: Some(UpAxis::Y),
     }
 }
+
+fn updated_source() -> (SourcePin, String) {
+    let bytes = FOREIGN.replace("declared by the source", "updated foreign source");
+    let mut source = pin_of(&bytes);
+    source.version = 2;
+    source.label = "site-v2.usda".into();
+    (source, bytes)
+}
 fn pin() -> SourcePin {
     pin_of(FOREIGN)
 }
@@ -950,6 +958,90 @@ fn two_wrappers_may_share_one_stored_source_and_stay_independent() {
     let views = read_references(&snapshot(&a, &o.context)).unwrap();
     assert_eq!(views.iter().filter(|v| v.units.is_some()).count(), 1);
     assert!(validate(exported(&a, &o.context)).is_ok());
+}
+
+#[test]
+fn explicit_source_update_increments_pin_clears_units_and_keeps_old_blob() {
+    let (new_pin, new_bytes) = updated_source();
+    let mut request = initial();
+    request
+        .assets
+        .push(asset(&new_pin.layer_name(), &new_bytes));
+    request.manifest = request.manifest_digest().unwrap();
+    let (mut author, opened) = open(request);
+    let initial_attach = author
+        .prepare(batch(&opened.context, vec![attach(WRAPPER)]), &control())
+        .unwrap();
+    let opened = install(&mut author, &opened.context, &initial_attach);
+    let correction = UnitsInterpretation {
+        meters_per_unit: 1.0,
+        up_axis: UpAxis::Y,
+    };
+    let corrected = author
+        .prepare(
+            batch(
+                &opened.context,
+                vec![Change::ReferenceUnits {
+                    id: WRAPPER.into(),
+                    interpretation: Some(correction),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let opened = install(&mut author, &opened.context, &corrected);
+    let old = pin();
+    let replaced = author
+        .prepare(
+            batch(
+                &opened.context,
+                vec![Change::ReplaceReferenceSource {
+                    id: WRAPPER.into(),
+                    expected_digest: old.digest,
+                    source: new_pin.clone(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    assert!(
+        replaced
+            .retained
+            .iter()
+            .any(|asset| asset.name == old.layer_name())
+    );
+    assert!(
+        replaced
+            .retained
+            .iter()
+            .any(|asset| asset.name == new_pin.layer_name())
+    );
+    let opened = install(&mut author, &opened.context, &replaced);
+    let views = read_references(&snapshot(&author, &opened.context)).unwrap();
+    let [view] = views.as_slice() else {
+        panic!("one updated wrapper")
+    };
+    assert_eq!(view.source.digest, new_pin.digest);
+    assert_eq!(view.source.version, 2);
+    assert_eq!(view.units, None);
+    assert!(
+        view.foreign
+            .iter()
+            .any(|prim| prim.source_path == "/Site/Block/Body")
+    );
+
+    let stale = author.prepare(
+        batch(
+            &opened.context,
+            vec![Change::ReplaceReferenceSource {
+                id: WRAPPER.into(),
+                expected_digest: old.digest,
+                source: new_pin,
+            }],
+        ),
+        &control(),
+    );
+    refused(stale.unwrap_err(), ErrorCode::BaseRevisionMismatch);
 }
 
 #[test]
