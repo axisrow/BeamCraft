@@ -34,7 +34,7 @@ pub struct CompensationRequest {
     pub op_id: OpId,
     /// Acting owner of the source and destination personal workspaces.
     pub actor: Uuid7,
-    /// Direct publication accounted for by one original terminal command.
+    /// Direct or C01/C02 publication accounted for by one original command.
     pub original: Uuid7,
     /// Exact observed accepted revision.
     pub expected_head: Uuid7,
@@ -48,7 +48,7 @@ pub struct Compensated {
     pub replayed: bool,
     /// The original compensating revision, possibly historical after a later edit.
     pub revision: RevisionSummary,
-    /// Original direct publication; its immutable history was not rewritten.
+    /// Original publication; its immutable history was not rewritten.
     pub original: Uuid7,
     /// Accepted basis used by this personal operation; publication remains explicit.
     pub accepted: Uuid7,
