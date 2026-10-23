@@ -29,6 +29,12 @@ beamcraft changeset-apply   --store PUBLISHED --workspace-dir DIR --changeset SH
   changed (the delta) without a diff format of its own.
 - **Operations.** Every unsent draft revision contributes its operation id and its manifest digest
   (the content identity of its accepted result), in draft order. The order is part of the payload.
+- **Accepted base versus local prefix.** The base revision id and manifest digest resolve one
+  verified revision of the published store, using the current head or a bounded historical
+  lookup. Its layers supply the delta base and the conservative fallback model. The local
+  `synced_sequence` only identifies the already-published operation prefix; it cannot substitute
+  for the accepted pin or mark later unsent work as published. Wrong, missing, compacted or corrupt
+  pins and mismatched draft project/workspace/schema refuse packaging without moving either head.
 - **Dependencies.** Modelling revisions pin their admitted command's exact footprint. A complete,
   verified interval contributes its union, including reads of unchanged copy sources, linked parts
   and definitions. The receiver checks every ordered source operation/result and its identity,
@@ -92,6 +98,11 @@ single-byte flips, caps before allocation, ordering, duplicates and the admissio
 and copy dependencies, forged dependencies/source intervals/output, explicit legacy fallback,
 malformed evidence after a missing record, numbering and raw aggregate work limits. Coordinator
 tests verify that the accepted publication retains the same exact footprint and request digest.
+`apps/beamcraft-cli/tests/changeset_base.rs` constructs an advanced accepted pin with an unchanged
+local prefix, then checks exact delta bases, retained unsent operations and successful publication
+of both clients' fields. This boundary fixture does not implement runtime rebase. It also covers
+stale historical bases, wrong or corrupt pins, another project's pin and compaction removing a
+base while its old local copy remains readable.
 
 ## Not done
 

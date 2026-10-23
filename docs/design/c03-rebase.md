@@ -15,18 +15,18 @@ in `workspace.rs` and `coordinator.rs` already prove that one concurrent publish
 the other keeps its draft with `BASE_REVISION_MISMATCH`. This is the existing safety behavior,
 not a bug to remove by ignoring the expected-base check.
 
-The current C01 payload contains complete resulting USD layers and a conservative footprint.
-`changeset.rs::footprint` reads every group of every element and definition in the base/head.
-The engine's precise per-command reads are not journaled. A USD difference can identify writes
-but cannot prove a read did not occur: copying an unchanged source or moving an element may
-depend on unchanged shape/definitions. Rebase must not silently turn that conservative footprint
-into a narrower read set.
+The C01 payload contains complete resulting USD layers and dependencies. Captured command
+evidence supplies exact dependencies for complete verified intervals; legacy intervals retain
+`changeset.rs::footprint`, which reads every group of every element and definition in the
+base/head. A USD difference cannot prove a read did not occur: copying an unchanged source or
+moving an element may depend on unchanged shape/definitions. Rebase must not silently turn
+legacy conservative dependencies into a narrower read set.
 
-`workspace.json` stores a published base identity and a local `synced_sequence`. C01 currently
-uses `workspace.open_at(synced_sequence)` as the layer/footprint base. Updating only the published
-base fields after a merge would make that local revision describe the old base. Conversely,
-setting the synced sequence to the merged draft would classify unsent work as published. Both
-shortcuts are incorrect.
+`workspace.json` stores a published base identity and a local `synced_sequence`. C01 resolves
+the exact published revision/manifest pin as its layer/footprint base, independently of the local
+prefix. An unavailable or corrupt pin refuses packaging. Using the old local prefix as the base,
+or setting that prefix to the merged draft to classify unsent work as published, is incorrect.
+Runtime rebase still needs the durable metadata transition and recovery specified below.
 
 ## Public operation
 

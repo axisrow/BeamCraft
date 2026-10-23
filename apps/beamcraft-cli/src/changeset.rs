@@ -398,7 +398,17 @@ pub fn create_changeset(
             message: "too many unsent revisions for one changeset",
         });
     }
-    let base = workspace.open_at(meta.synced_sequence)?;
+    let base = crate::workspace::published_base(published, &meta)?;
+    let content = draft.manifest().content();
+    let base_content = base.manifest().content();
+    if content.project() != base_content.project()
+        || content.schema() != base_content.schema()
+        || content.workspace() != &meta.workspace_id
+    {
+        return Err(integrity(
+            "the draft context differs from its accepted base",
+        ));
+    }
     let operations =
         crate::command_evidence::interval(workspace, meta.synced_sequence, head_sequence)?;
     let evidence =
@@ -414,7 +424,6 @@ pub fn create_changeset(
         .iter()
         .map(|e| (e.name(), e.digest()))
         .collect();
-    let content = draft.manifest().content();
     let mut layers = Vec::new();
     let mut assets = BTreeSet::new();
     for entry in content.entries() {
@@ -434,16 +443,9 @@ pub fn create_changeset(
         layers.push(delta);
     }
     layers.sort();
-    let project = published
-        .head()?
-        .ok_or_else(|| integrity("the published store has no revision"))?
-        .manifest()
-        .content()
-        .project()
-        .clone();
     let changeset = Changeset {
         changeset_id: request.changeset_id,
-        project: ProjectId::from_uuid(host_id(&project)?),
+        project: ProjectId::from_uuid(host_id(base_content.project())?),
         workspace: WorkspaceId::from_uuid(host_id(&meta.workspace_id)?),
         actor: match request.actor {
             Some(actor) => actor,

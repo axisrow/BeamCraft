@@ -22,7 +22,7 @@
 
 use crate::plate::{PlateError, RevisionSummary, commit_verified, host_uuid, integrity, summarize};
 use beamcraft_host::revision::{
-    CommitHook, CommitOutcome, ExpectedBase, LayerEntry, RevisionDraft, RevisionError,
+    CommitHook, CommitOutcome, ExpectedBase, LayerEntry, Revision, RevisionDraft, RevisionError,
     RevisionStore, Uuid7,
 };
 use beamcraft_model::digest::ContentDigest;
@@ -166,6 +166,32 @@ fn head_of(
     store: &RevisionStore,
 ) -> Result<Option<beamcraft_host::revision::RevisionInfo>, PlateError> {
     store.head().map_err(PlateError::from)
+}
+
+/// Resolves the exact accepted pin independently of the local published-operation prefix.
+/// The current-head path avoids a history search; `sequence_of` bounds a historical lookup by
+/// the host's MAX_REVISIONS cap. An unavailable or compacted pin never falls back to local USD.
+pub(crate) fn published_base(
+    published: &RevisionStore,
+    meta: &WorkspaceMeta,
+) -> Result<Revision, PlateError> {
+    let head = published
+        .head()?
+        .ok_or_else(|| integrity("the published store has no revision"))?;
+    let info = if head.revision() == &meta.base_revision {
+        head
+    } else {
+        let sequence = published
+            .sequence_of(&meta.base_revision)?
+            .ok_or_else(|| integrity("the accepted workspace base is unavailable"))?;
+        published.info_at(sequence)?
+    };
+    if info.manifest_digest() != meta.base_manifest {
+        return Err(integrity(
+            "the accepted workspace base pin disagrees with history",
+        ));
+    }
+    Ok(published.open_at(info.sequence())?)
 }
 
 /// Forks the published head into a new workspace directory.
