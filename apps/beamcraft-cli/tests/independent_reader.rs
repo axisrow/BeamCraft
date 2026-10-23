@@ -287,6 +287,140 @@ fn the_independent_reader_agrees_with_both_clients_after_rebase_and_publication(
 }
 
 #[test]
+fn the_independent_reader_retains_a_later_users_edits_after_compensation() {
+    let scratch = Scratch::new("c06-independent-reader");
+    let store = scratch.store_arg();
+    let owner = "019a7bf0-0000-7000-8000-00000000c603";
+    let other = "019a7bf0-0000-7000-8000-00000000c604";
+    let first = run_binary(&plate_args(
+        store,
+        "1000",
+        "500",
+        "10",
+        &["--name", "Before"],
+    ));
+    let second = run_binary(&plate_args(
+        store,
+        "800",
+        "300",
+        "12.5",
+        &["--name", "Other"],
+    ));
+    let first_id = text(first.get("plate").unwrap(), "element_id");
+    let second_id = text(second.get("plate").unwrap(), "element_id");
+    let a = scratch.root.join("a");
+    let b = scratch.root.join("b");
+    let c = scratch.root.join("c");
+    let a = a.to_str().unwrap();
+    let b = b.to_str().unwrap();
+    let c = c.to_str().unwrap();
+    run_binary(&[
+        "workspace-create",
+        "--store",
+        store,
+        "--workspace-dir",
+        a,
+        "--user-id",
+        owner,
+    ]);
+    run_binary(&[
+        "update-element",
+        "--store",
+        a,
+        "--id",
+        &first_id,
+        "--name",
+        "Accepted",
+    ]);
+    let package = run_binary(&["changeset-create", "--store", store, "--workspace-dir", a]);
+    run_binary(&[
+        "changeset-apply",
+        "--store",
+        store,
+        "--workspace-dir",
+        a,
+        "--actor-id",
+        owner,
+        "--changeset",
+        &text(package.get("changeset").unwrap(), "digest"),
+    ]);
+    let original = run_binary(&["revision-open", "--store", store]);
+    run_binary(&[
+        "workspace-create",
+        "--store",
+        store,
+        "--workspace-dir",
+        b,
+        "--user-id",
+        other,
+    ]);
+    run_binary(&[
+        "update-element",
+        "--store",
+        b,
+        "--id",
+        &first_id,
+        "--translation",
+        "12,34,56",
+    ]);
+    run_binary(&[
+        "update-element",
+        "--store",
+        b,
+        "--id",
+        &second_id,
+        "--name",
+        "Other later",
+    ]);
+    run_binary(&["workspace-publish", "--store", store, "--workspace-dir", b]);
+    let accepted = run_binary(&["revision-open", "--store", store]);
+    run_binary(&[
+        "workspace-create",
+        "--store",
+        store,
+        "--workspace-dir",
+        c,
+        "--user-id",
+        owner,
+    ]);
+    let draft = run_binary(&["revision-open", "--store", c]);
+    run_binary(&[
+        "compensate-operation",
+        "--store",
+        store,
+        "--workspace-dir",
+        c,
+        "--source-workspace-dir",
+        a,
+        "--original-revision",
+        &text(&original, "revision_id"),
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000c605",
+        "--expected-head",
+        &text(&accepted, "revision_id"),
+        "--expected-draft",
+        &text(&draft, "revision_id"),
+    ]);
+    assert_eq!(
+        text(
+            &run_binary(&["revision-open", "--store", store]),
+            "revision_id"
+        ),
+        text(&accepted, "revision_id")
+    );
+    run_binary(&["workspace-publish", "--store", store, "--workspace-dir", c]);
+    let inspected = run_binary(&["plate-inspect", "--store", store]);
+    copy_layers(&scratch.store, &scratch.layers(), &inspected);
+    let expected = format!(
+        r#"[
+        {{"id":"{first_id}","name":"Before","width":1000,"length":500,"thickness":10,"translation":[12,34,56],"cli_volume_mm3":5000000}},
+        {{"id":"{second_id}","name":"Other later","width":800,"length":300,"thickness":12.5,"translation":[0,0,0],"cli_volume_mm3":3000000}}
+    ]"#
+    );
+    assert_eq!(plates(&run_oracle(&scratch.layers(), &expected)), 2);
+}
+
+#[test]
 fn the_reader_reads_pinned_materials_and_the_mass_agrees_with_the_closed_form() {
     let scratch = Scratch::new("p02-reader");
     let store_arg = scratch.store_arg();
