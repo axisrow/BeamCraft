@@ -365,6 +365,25 @@ fn concurrent_publications_accept_one_and_never_overwrite_the_head() {
 
     // The same payload replays; the head stays the accepted one.
     let winner_cs = if winner == "a" { &a } else { &b };
+    let store = beamcraft_host::revision::RevisionStore::new(
+        beamcraft_host::storage::BlobStore::new(f.path("published")).unwrap(),
+    );
+    let captured = beamcraft_cli::command_evidence::read(&store.open().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(captured.fingerprint.to_string(), winner_cs.0);
+    assert_eq!(
+        captured.footprint,
+        beamcraft_engine::footprint::Footprint::for_update(
+            beamcraft_model::id::ElementId::parse(PLATE).unwrap(),
+            true,
+            false,
+            false,
+            false,
+            None,
+        )
+        .unwrap()
+    );
     let (code, replay) = publish(&f, &address, &token, winner, winner_cs);
     assert_eq!(
         (code, text(&replay, "outcome").as_str()),

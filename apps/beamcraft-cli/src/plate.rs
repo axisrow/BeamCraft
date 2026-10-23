@@ -100,7 +100,7 @@ pub struct PlateError {
 }
 
 impl PlateError {
-    const fn new(code: ErrorCode, message: &'static str) -> Self {
+    pub(crate) const fn new(code: ErrorCode, message: &'static str) -> Self {
         Self { code, message }
     }
 }
@@ -1731,18 +1731,8 @@ pub(crate) fn publish_revision(
         root_layer: ROOT_LAYER.into(),
         entries,
     };
-    let captured = crate::command_evidence::CapturedFootprint {
-        op_id: beamcraft_model::id::OpId::parse(request.op.as_str())
-            .map_err(|_| integrity("operation identity is invalid"))?,
-        fingerprint: request.fingerprint,
-        footprint: request.footprint.clone(),
-    };
-    let bytes = captured.encode()?;
-    let (digest, _) = store
-        .blobs()
-        .publish(&bytes)
-        .map_err(|e| PlateError::new(e.code(), "operation evidence blob could not be stored"))?;
-    let pin = beamcraft_host::revision::EvidencePin::new(digest, bytes.len() as u64)?;
+    let pin =
+        crate::command_evidence::store(store, &request.op, request.fingerprint, request.footprint)?;
     Ok(store.commit_with_evidence(
         &draft,
         request.expected,
@@ -1761,7 +1751,17 @@ pub(crate) fn commit_verified(
     expected: &ExpectedBase,
     hook: &mut dyn CommitHook,
 ) -> Result<Committed, PlateError> {
-    Ok(store.commit_with(draft, expected, Some(&PlateVerifier), hook)?)
+    commit_verified_with_evidence(store, draft, expected, None, hook)
+}
+
+pub(crate) fn commit_verified_with_evidence(
+    store: &RevisionStore,
+    draft: &RevisionDraft,
+    expected: &ExpectedBase,
+    evidence: Option<beamcraft_host::revision::EvidencePin>,
+    hook: &mut dyn CommitHook,
+) -> Result<Committed, PlateError> {
+    Ok(store.commit_with_evidence(draft, expected, evidence, Some(&PlateVerifier), hook)?)
 }
 
 /// A plate as listed from a committed revision.

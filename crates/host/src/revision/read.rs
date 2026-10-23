@@ -36,6 +36,13 @@ impl RevisionStore {
         &self.blobs
     }
 
+    /// Verifies an opaque evidence pin's digest and size without loading unrelated USD layers.
+    /// This does not assert that the pin belongs to a revision; callers must establish that
+    /// binding from a verified manifest and validate the application evidence separately.
+    pub fn evidence_bytes(&self, pin: super::EvidencePin) -> Result<Vec<u8>, RevisionError> {
+        self.read_evidence(pin)
+    }
+
     /// The current root without verifying layer blobs: the record, its manifest and the base
     /// link are checked. `Ok(None)` means nothing was ever published.
     pub fn head(&self) -> Result<Option<RevisionInfo>, RevisionError> {

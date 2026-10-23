@@ -19,7 +19,7 @@ beamcraft changeset-apply   --store PUBLISHED --workspace-dir DIR --changeset SH
 |---|---|
 | `beamcraft_model::changeset` | `Changeset { changeset_id, project, workspace, actor, base_revision, base_manifest, revision, operations, dependencies, layers, root_layer, assets }`; canonical binary `encode`/`decode` (versioned, length-prefixed, sorted, bounded at 1 MiB, round trip enforced); `digest`; `validate`; `admit(trusted_actor, recorded) -> Apply | Replay`. `ActorId` joins the typed ids. Pure and WASM-compatible. |
 | `beamcraft_host::changeset` | `RevisionStore::claim_changeset` / `changeset_claim`: an append-only, checksummed `changesets/claims.log`; the first valid line of an id is its binding. |
-| `beamcraft_cli::changeset` | `create_changeset` (from a workspace: base, unsent operations, complete layer set with base digests, changed layers as assets, conservative footprint from the USD difference), `read_changeset`, `apply_changeset` (decode, actor, replay, claim, base, blob copy and verification, commit with the strict verifier, workspace base advanced). |
+| `beamcraft_cli::changeset` | `create_changeset` (from a workspace: base, unsent operations, complete layer set with base digests, changed layers as assets, captured command dependencies or conservative legacy fallback), `read_changeset`, `apply_changeset` (decode, actor, replay, claim, base, source/dependency checks, blob copy and verification, commit with the strict verifier, workspace base advanced). |
 
 ## Decisions
 
@@ -29,15 +29,27 @@ beamcraft changeset-apply   --store PUBLISHED --workspace-dir DIR --changeset SH
   changed (the delta) without a diff format of its own.
 - **Operations.** Every unsent draft revision contributes its operation id and its manifest digest
   (the content identity of its accepted result), in draft order. The order is part of the payload.
-- **Dependencies.** The per-command engine footprints of draft operations are not journaled.
-  Writes come from the difference between the base model and the draft head, in the F04 section 8
+- **Dependencies.** Modelling revisions pin their admitted command's exact footprint. A complete,
+  verified interval contributes its union, including reads of unchanged copy sources, linked parts
+  and definitions. The receiver checks every ordered source operation/result and its identity,
+  recomputes dependencies and requires the exact final source layer set. It refuses omitted,
+  reordered, narrowed or widened claims before publication. The destination pins the aggregate
+  under its own operation id and the changeset digest; workspace publication uses the source head
+  manifest digest instead. This is integrity evidence, not authentication of arbitrary local bytes.
+  Both the interval and aggregate work are bounded at 4096, counting entries before union.
+  Missing evidence or an unverified source revision makes the whole interval conservative;
+  later malformed evidence is still an integrity failure. Legacy writes come from the difference
+  between the base model and the draft head, in the F04 section 8
   groups: a changed field writes its group (an unknown field: every group), a placement change
   also writes `derived`, a changed descendant writes `derived`, created and removed elements write
   every group, new definitions are written; provenance changes alone are not changes. Reads cannot
   come from a difference (a copy reads its unchanged source, a move reads the shape), so the
   changeset reads every group of every element and every definition of the base and the head, a
-  superset of any operation's reads; over 4096 entries it is `LIMIT_EXCEEDED`. Recording
-  per-command footprints would make reads precise.
+  superset of any operation's reads; over 4096 entries it is `LIMIT_EXCEEDED`. Such an interval
+  publishes without precise evidence. Wire v1 bytes and tags remain unchanged; `mark` (tag 7)
+  requires canonical v2, and v2 without that group is rejected. Legacy v1 fallback payloads retain
+  their original seven groups. This does not reinterpret a command's groups: A09 approval still
+  declares label writes, and that exact footprint is retained.
 - **Idempotency (project-wide).** A changeset id names one payload forever. The receiver binds the
   id to the payload digest durably *before* it publishes anything, so a crash after the binding
   resumes on retry, a retry of the same payload is a replay (the ledger proves the commit), and
@@ -66,7 +78,7 @@ beamcraft changeset-apply   --store PUBLISHED --workspace-dir DIR --changeset SH
 
 ## Evidence
 
-`apps/beamcraft-cli/tests/changeset.rs` (4 end-to-end tests through the binary): a changeset of two
+`apps/beamcraft-cli/tests/changeset.rs` (end-to-end tests through the binary): a changeset of two
 renames carries the base, both operations, the label/lifecycle footprint, one changed layer and one
 asset; the digest is deterministic; inspect shows the same; apply publishes revision and op ids as
 declared and moves the workspace base; a retry replays with nothing written. The caller must be the
@@ -76,12 +88,16 @@ draft stays unsent. Garbage, a non-canonical trailing byte, a future version and
 are refused with nothing published. `crates/host/tests/changeset_claims.rs` covers reopen and an
 eight-thread race. `beamcraft_model::changeset` unit tests cover the round trip, every prefix,
 single-byte flips, caps before allocation, ordering, duplicates and the admission matrix.
+`apps/beamcraft-cli/tests/publication_evidence.rs` covers both publication paths, precise rename
+and copy dependencies, forged dependencies/source intervals/output, explicit legacy fallback,
+malformed evidence after a missing record, numbering and raw aggregate work limits. Coordinator
+tests verify that the accepted publication retains the same exact footprint and request digest.
 
 ## Not done
 
-- No coordinator, server, token or queue (C02); no rebase (C03) or semantic conflicts (C04).
-- The footprint is derived from the USD difference, not recorded per command; it is conservative
-  but coarser than the engine's command footprints for some edits.
+- No rebase (C03) or semantic conflict resolution (C04); a moved head is refused. C02's opt-in,
+  authenticated coordinator uses the same changeset receiver.
+- Legacy source intervals still have conservative dependencies; absence never proves independence.
 - Changesets travel inside the workspace store (the receiver reads the workspace's blobs); there is
   no transport or bundle format yet.
 - Claims are never garbage-collected; the claims file is capped at 16 MiB.

@@ -199,9 +199,9 @@ fn a_changeset_carries_base_operations_dependencies_and_delta_and_publishes_once
     assert_eq!(text(&changeset, "base_revision"), base);
     assert_eq!(text(&changeset, "actor_id"), USER);
     assert_eq!(list(&changeset, "operations").len(), 2);
-    // A rename writes the label alone; reads are conservative: every group of every element.
+    // Captured commands preserve the exact label/lifecycle reads instead of all model groups.
     assert_eq!(writes(&changeset, PLATE), ["label"]);
-    assert_eq!(reads(&changeset, PLATE).len(), 7);
+    assert_eq!(reads(&changeset, PLATE), ["label", "lifecycle"]);
     let changed: Vec<String> = list(&changeset, "layers")
         .iter()
         .filter(|l| at(l, &["changed"]) == &Json::Bool(true))
@@ -411,7 +411,17 @@ fn a_copy_reads_its_unchanged_source_and_a_move_writes_the_derived_invalidation(
     let changeset = f.create(&dir, &[]);
     // The source is unchanged, yet the copy read all of it (Footprint::for_copy).
     assert!(writes(&changeset, PLATE).is_empty());
-    assert_eq!(reads(&changeset, PLATE).len(), 7);
+    assert_eq!(
+        reads(&changeset, PLATE),
+        [
+            "label",
+            "shape_inputs",
+            "placement",
+            "material_ref",
+            "relationship",
+            "lifecycle"
+        ]
+    );
     assert_eq!(writes(&changeset, copy).len(), 7);
     let dir = f.forked("moved");
     f.ok(&[

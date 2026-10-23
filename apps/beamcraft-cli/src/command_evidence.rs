@@ -9,7 +9,13 @@
 
 use crate::plate::{PlateError, integrity};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
-use beamcraft_host::revision::{MAX_OPERATION_EVIDENCE_BYTES, Revision};
+use beamcraft_host::revision::{
+    EvidencePin, MAX_MANIFEST_BYTES, MAX_OPERATION_EVIDENCE_BYTES, Manifest, Revision,
+    RevisionInfo, RevisionStore, Uuid7,
+};
+use beamcraft_model::changeset::{
+    Access, Dependency, DependencyGroup, DependencyTarget, MAX_OPERATIONS, Operation,
+};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -19,12 +25,13 @@ use std::fmt::Write as _;
 
 const MAGIC: &str = "beamcraft-command-footprint 1";
 
-/// The creating engine command's exact identity, typed-argument fingerprint and read/write set.
+/// A command/publication identity, request fingerprint and actual semantic read/write set.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapturedFootprint {
     /// Full operation identity; it must match the revision manifest.
     pub op_id: OpId,
-    /// Existing command-specific typed-argument digest, not the unimplemented RFC 8785 envelope.
+    /// A typed command's argument digest or an aggregate publication request's immutable
+    /// source/payload digest. This is not the unimplemented RFC 8785 envelope.
     pub fingerprint: ContentDigest,
     /// Actual engine-derived semantic dependencies.
     pub footprint: Footprint,
@@ -174,12 +181,187 @@ pub fn read(revision: &Revision) -> Result<Option<CapturedFootprint>, PlateError
     let Some(bytes) = revision.operation_evidence()? else {
         return Ok(None);
     };
-    let captured = CapturedFootprint::decode(&bytes)
+    Ok(Some(decode_for(
+        &bytes,
+        revision.manifest().content().op(),
+    )?))
+}
+
+fn decode_for(bytes: &[u8], op: &Uuid7) -> Result<CapturedFootprint, PlateError> {
+    let captured = CapturedFootprint::decode(bytes)
         .map_err(|_| integrity("operation footprint evidence is malformed"))?;
-    if captured.op_id.to_string() != revision.manifest().content().op().as_str() {
+    if captured.op_id.to_string() != op.as_str() {
         return Err(integrity(
             "operation footprint evidence belongs to another operation",
         ));
     }
-    Ok(Some(captured))
+    Ok(captured)
+}
+
+pub(crate) fn store(
+    store: &RevisionStore,
+    op: &Uuid7,
+    fingerprint: ContentDigest,
+    footprint: &Footprint,
+) -> Result<EvidencePin, PlateError> {
+    let captured = CapturedFootprint {
+        op_id: OpId::parse(op.as_str()).map_err(|_| integrity("operation identity is invalid"))?,
+        fingerprint,
+        footprint: footprint.clone(),
+    };
+    let bytes = captured.encode()?;
+    let (digest, _) = store
+        .blobs()
+        .publish(&bytes)
+        .map_err(|e| PlateError::new(e.code(), "operation evidence blob could not be stored"))?;
+    Ok(EvidencePin::new(digest, bytes.len() as u64)?)
+}
+
+pub(crate) struct SourceInterval {
+    pub(crate) head: RevisionInfo,
+    pub(crate) footprint: Option<Footprint>,
+}
+
+/// Verify the complete contiguous source interval. Absence is conservative, not an empty proof;
+/// later malformed records are still checked after an absent one. No publication happens here.
+pub(crate) fn aggregate(
+    store: &RevisionStore,
+    after: u64,
+    operations: &[Operation],
+) -> Result<SourceInterval, PlateError> {
+    if operations.is_empty() || operations.len() > MAX_OPERATIONS {
+        return Err(PlateError::new(
+            ErrorCode::LimitExceeded,
+            "operation interval is empty or exceeds its cap",
+        ));
+    }
+    let mut previous = after;
+    let mut head: Option<RevisionInfo> = None;
+    let mut combined = Footprint::default();
+    let mut complete = true;
+    let mut raw_entries = 0usize;
+    for operation in operations {
+        let bytes = store
+            .blobs()
+            .read_capped(&operation.result, MAX_MANIFEST_BYTES)
+            .map_err(|_| integrity("source operation manifest is unavailable"))?;
+        let manifest = Manifest::parse(&bytes)?;
+        let next = previous
+            .checked_add(1)
+            .ok_or_else(|| integrity("source sequence overflow"))?;
+        if manifest.sequence() != next {
+            return Err(integrity(
+                "source operations are not a complete ordered interval",
+            ));
+        }
+        let info = store.info_at(next)?;
+        let content = info.manifest().content();
+        if info.manifest_digest() != operation.result
+            || content.op().as_str() != operation.op_id.to_string()
+        {
+            return Err(integrity(
+                "source operation identity or result disagrees with history",
+            ));
+        }
+        if let Some(prior) = head.as_ref() {
+            let old = prior.manifest().content();
+            if old.project() != content.project()
+                || old.workspace() != content.workspace()
+                || old.schema() != content.schema()
+            {
+                return Err(integrity(
+                    "source operation context changed within one interval",
+                ));
+            }
+        }
+        match content.operation_evidence() {
+            None => complete = false,
+            Some(pin) => {
+                let bytes = store.evidence_bytes(pin)?;
+                let captured = decode_for(&bytes, content.op())?;
+                if info.manifest().index().is_none() {
+                    complete = false;
+                }
+                raw_entries = raw_entries
+                    .saturating_add(captured.footprint.reads().len())
+                    .saturating_add(captured.footprint.writes().len());
+                if raw_entries > MAX_FOOTPRINT_ENTRIES {
+                    return Err(PlateError::new(
+                        ErrorCode::LimitExceeded,
+                        "aggregate operation footprint exceeds 4096 entries",
+                    ));
+                }
+                combined = combined.union(captured.footprint)?;
+            }
+        }
+        previous = next;
+        head = Some(info);
+    }
+    Ok(SourceInterval {
+        head: head.ok_or_else(|| integrity("source interval has no head"))?,
+        footprint: complete.then_some(combined),
+    })
+}
+
+pub(crate) fn interval(
+    store: &RevisionStore,
+    after: u64,
+    through: u64,
+) -> Result<Vec<Operation>, PlateError> {
+    let count = through
+        .checked_sub(after)
+        .filter(|n| *n > 0 && *n <= MAX_OPERATIONS as u64)
+        .ok_or_else(|| {
+            PlateError::new(
+                ErrorCode::LimitExceeded,
+                "source interval exceeds operation limits",
+            )
+        })?;
+    let mut operations = Vec::with_capacity(usize::try_from(count).map_err(|_| invalid())?);
+    for sequence in after.saturating_add(1)..=through {
+        let info = store.info_at(sequence)?;
+        operations.push(Operation {
+            op_id: OpId::parse(info.manifest().content().op().as_str())
+                .map_err(|_| integrity("source operation identity is invalid"))?,
+            result: info.manifest_digest(),
+        });
+    }
+    Ok(operations)
+}
+
+pub(crate) fn dependencies(footprint: &Footprint) -> Vec<Dependency> {
+    let mut result = Vec::with_capacity(
+        footprint
+            .reads()
+            .len()
+            .saturating_add(footprint.writes().len()),
+    );
+    for (entries, access) in [
+        (footprint.reads(), Access::Read),
+        (footprint.writes(), Access::Write),
+    ] {
+        for entry in entries {
+            let target = match entry.target {
+                Target::Element(id) => DependencyTarget::Element(id),
+                Target::Definition(digest) => DependencyTarget::Definition(digest),
+            };
+            let group = match entry.group {
+                Group::Label => DependencyGroup::Label,
+                Group::ShapeInputs => DependencyGroup::ShapeInputs,
+                Group::Placement => DependencyGroup::Placement,
+                Group::MaterialRef => DependencyGroup::MaterialRef,
+                Group::Relationship => DependencyGroup::Relationship,
+                Group::Mark => DependencyGroup::Mark,
+                Group::Lifecycle => DependencyGroup::Lifecycle,
+                Group::Derived => DependencyGroup::Derived,
+            };
+            result.push(Dependency {
+                target,
+                group,
+                access,
+            });
+        }
+    }
+    result.sort();
+    result
 }

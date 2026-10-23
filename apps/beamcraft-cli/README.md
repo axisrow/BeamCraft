@@ -17,10 +17,19 @@ Modelling commits also pin the admitted command's exact read/write footprint and
 fingerprint as operation evidence in the revision manifest. This includes unchanged copy sources,
 linked parts and immutable definitions, which a state diff cannot recover. The public
 `command_evidence::read` API verifies canonical bytes and operation binding; legacy absence stays
-explicit. The host protects the evidence through replay, recovery and compaction. Low-level
-`revision-commit`, workspace forks/publication and history restoration do not fabricate a
-command footprint. Their aggregate/rebase evidence is separate work; missing evidence never
-proves independence. This capture does not itself merge, rebase or publish a workspace.
+explicit. The host protects the evidence through replay, recovery and compaction. Workspace
+publication and changeset application aggregate a complete, verified source interval, preserving
+reads of unchanged objects. A receiver recomputes dependencies and checks the ordered source
+operations and exact final layer set before publishing. The aggregate is bound to the destination
+operation and immutable source-manifest or changeset digest. Operations and aggregate read/write
+entries are capped at 4096, counting repeated entries before union.
+
+Low-level `revision-commit`, workspace forks and history restoration do not fabricate command
+evidence. An interval with any absent or unverified record uses conservative changeset dependencies
+and publishes without precise evidence; malformed evidence still fails closed. C01 wire v1 stays
+byte-compatible; the additional `mark` group uses canonical v2 without changing existing tags.
+This preserves the command's actual groups (A09 approval currently declares label writes). Missing
+evidence never proves independence. Publication still requires the current base; rebase is separate.
 
 Exit codes: 0 success, 2 input or validation refusal or an unavailable command, 3 backend
 unavailable, 4 outcome unknown, 124 deadline, 130 cancelled. `--timeout-ms` accepts 1..120000

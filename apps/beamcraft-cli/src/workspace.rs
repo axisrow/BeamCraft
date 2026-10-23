@@ -349,10 +349,31 @@ pub fn publish_workspace(
         root_layer: content.root_layer().to_owned(),
         entries,
     };
-    let committed = commit_verified(
+    let operations =
+        crate::command_evidence::interval(workspace, meta.synced_sequence, draft_sequence)?;
+    let source = crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
+    if source.head.manifest_digest() != draft.info().manifest_digest() {
+        return Err(integrity(
+            "publication source differs from the verified draft head",
+        ));
+    }
+    let evidence = source
+        .footprint
+        .as_ref()
+        .map(|footprint| {
+            crate::command_evidence::store(
+                published,
+                &next.op,
+                draft.info().manifest_digest(),
+                footprint,
+            )
+        })
+        .transpose()?;
+    let committed = crate::plate::commit_verified_with_evidence(
         published,
         &next,
         &ExpectedBase::Revision(meta.base_revision.clone()),
+        evidence,
         hook,
     )?;
     write_meta(

@@ -45,6 +45,7 @@ pub const MAX_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_LAYER_NAME_BYTES: usize = 64;
 
 const MAGIC: &[u8] = b"BeamCraft/C01/Changeset/v1\0";
+const MAGIC_WITH_MARK: &[u8] = b"BeamCraft/C01/Changeset/v2\0";
 
 /// One operation the changeset carries, in draft order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,11 +82,13 @@ pub enum DependencyGroup {
     Lifecycle,
     /// Derived geometry, quantities and their signatures.
     Derived,
+    /// Numbering mark and its approval state (A08/A09); added as tag 7 without retagging v1.
+    Mark,
 }
 
 impl DependencyGroup {
     /// Every group, in tag order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Label,
         Self::ShapeInputs,
         Self::Placement,
@@ -93,6 +96,7 @@ impl DependencyGroup {
         Self::Relationship,
         Self::Lifecycle,
         Self::Derived,
+        Self::Mark,
     ];
 
     /// The F04 token.
@@ -105,6 +109,7 @@ impl DependencyGroup {
             Self::Relationship => "relationship",
             Self::Lifecycle => "lifecycle",
             Self::Derived => "derived",
+            Self::Mark => "mark",
         }
     }
 
@@ -117,6 +122,7 @@ impl DependencyGroup {
             Self::Relationship => 4,
             Self::Lifecycle => 5,
             Self::Derived => 6,
+            Self::Mark => 7,
         }
     }
 }
@@ -365,7 +371,16 @@ impl Changeset {
     pub fn encode(&self) -> Result<Vec<u8>, CommandError> {
         self.validate()?;
         let mut out = Vec::with_capacity(512);
-        out.extend_from_slice(MAGIC);
+        let magic = if self
+            .dependencies
+            .iter()
+            .any(|d| d.group == DependencyGroup::Mark)
+        {
+            MAGIC_WITH_MARK
+        } else {
+            MAGIC
+        };
+        out.extend_from_slice(magic);
         for id in [
             self.changeset_id.uuid(),
             self.project.uuid(),
@@ -443,11 +458,12 @@ impl Changeset {
             return Err(limit("changeset"));
         }
         let mut r = Reader { bytes, at: 0 };
-        if r.take(MAGIC.len())? != MAGIC {
+        let magic = r.take(MAGIC.len())?;
+        if magic != MAGIC && magic != MAGIC_WITH_MARK {
             return Err(error(
                 ErrorCode::UnsupportedVersion,
                 "changeset",
-                "not a version 1 changeset",
+                "not a supported changeset version",
             ));
         }
         let changeset_id = OpId::from_uuid(r.uuid()?);
@@ -726,6 +742,39 @@ mod tests {
             root_layer: "root.usda".into(),
             assets,
         }
+    }
+
+    #[test]
+    fn legacy_payloads_stay_v1_and_numbering_dependencies_use_canonical_v2() {
+        let legacy = sample();
+        let bytes = legacy.encode().unwrap();
+        assert!(bytes.starts_with(MAGIC));
+        assert_eq!(Changeset::decode(&bytes).unwrap(), legacy);
+        let mut numbered = legacy;
+        numbered.dependencies.push(Dependency {
+            target: DependencyTarget::Element(ElementId::from_uuid(uuid(0x10))),
+            group: DependencyGroup::Mark,
+            access: Access::Write,
+        });
+        numbered.dependencies.sort();
+        let marked = numbered.encode().unwrap();
+        assert!(marked.starts_with(MAGIC_WITH_MARK));
+        assert_eq!(Changeset::decode(&marked).unwrap(), numbered);
+        let mut wrong = marked.clone();
+        wrong.get_mut(..MAGIC.len()).unwrap().copy_from_slice(MAGIC);
+        assert!(
+            Changeset::decode(&wrong).is_err(),
+            "v1 cannot silently acquire a new group tag"
+        );
+        let mut redundant = bytes;
+        redundant
+            .get_mut(..MAGIC.len())
+            .unwrap()
+            .copy_from_slice(MAGIC_WITH_MARK);
+        assert!(
+            Changeset::decode(&redundant).is_err(),
+            "one payload must have exactly one canonical encoding"
+        );
     }
 
     #[test]
