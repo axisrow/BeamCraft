@@ -1,0 +1,120 @@
+name: Platform icon screenshots
+
+on:
+  push:
+    branches: ['feat/platform-icons']
+  pull_request:
+    paths:
+      - '.github/workflows/platform-icon-screenshots.yml'
+      - 'apps/beamcraft-ui/**'
+      - 'assets/icons/**'
+
+permissions:
+  contents: read
+
+jobs:
+  screenshot:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # GNOME 46 supports the X11/Xvfb desktop used by this acceptance capture.
+          # Newer ubuntu-latest images can ship GNOME without --x11.
+          - os: ubuntu-latest
+            runner: ubuntu-24.04
+          - os: windows-latest
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Install Linux desktop tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb imagemagick ubuntu-session gnome-shell gnome-shell-extension-ubuntu-dock dbus-x11 xdotool x11-utils libgtk-3-bin desktop-file-utils libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libvulkan1 mesa-vulkan-drivers libgl1-mesa-dri
+      - name: Build application
+        run: cargo build --locked -p beamcraft-cli -p beamcraft-ui
+      - name: Capture Linux window
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p screenshots
+          for driver in /usr/share/vulkan/icd.d/lvp*.json; do
+            export VK_DRIVER_FILES="$driver"
+            export VK_ICD_FILENAMES="$driver"
+          done
+          mkdir -p screenshot-app
+          cp target/debug/beamcraft target/debug/beamcraft-ui screenshot-app/
+          cp -R assets environments screenshot-app/
+          cp packaging/install-linux.sh screenshot-app/
+          mkdir -p screenshot-app/assets/icons
+          cp assets/icons/beamcraft-linux-1024.png screenshot-app/assets/icons/beamcraft-icon.png
+          bash screenshot-app/install-linux.sh
+          desktop-file-validate "$HOME/.local/share/applications/com.apibim.BeamCraft.desktop"
+          xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- bash -euo pipefail -c '
+            export XDG_CURRENT_DESKTOP=ubuntu:GNOME
+            export XDG_SESSION_TYPE=x11
+            export GNOME_SHELL_SESSION_MODE=ubuntu
+            export LIBGL_ALWAYS_SOFTWARE=1
+            export BEAMCRAFT_THEME=light
+            gnome-shell --x11 --mode=ubuntu > screenshots/gnome-shell.log 2>&1 &
+            shell_pid=$!
+            if ! gdbus wait --session --timeout 60 org.gnome.Shell; then
+              cat screenshots/gnome-shell.log
+              exit 1
+            fi
+            kill -0 "$shell_pid"
+            gsettings set org.gnome.shell favorite-apps "[\"com.apibim.BeamCraft.desktop\"]"
+            gtk-launch com.apibim.BeamCraft > screenshots/application.log 2>&1
+            window_id=""
+            for attempt in {1..60}; do
+              if window_id="$(xdotool search --onlyvisible --class com.apibim.BeamCraft | head -n 1)"; then
+                break
+              fi
+              sleep 1
+            done
+            if [[ -z "$window_id" ]]; then
+              cat screenshots/application.log
+              exit 1
+            fi
+            pgrep -x beamcraft-ui
+            xdotool key Escape
+            sleep 2
+            xprop -id "$window_id" WM_CLASS > screenshots/window-class.txt
+            grep -q com.apibim.BeamCraft screenshots/window-class.txt
+            import -window root screenshots/linux.png
+            gsettings set org.gnome.shell favorite-apps "[]"
+            sleep 2
+            xdotool key super+a
+            sleep 5
+            import -window root screenshots/linux-applications.png
+          '
+      - name: Capture Windows window
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force screenshots | Out-Null
+          $env:BEAMCRAFT_THEME = 'light'
+          $app = Start-Process target/debug/beamcraft-ui.exe -PassThru
+          Start-Sleep -Seconds 12
+          if ($app.HasExited) { throw 'BeamCraft exited before capture' }
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+          $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bounds.Size)
+          $bitmap.Save("$PWD/screenshots/windows.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          $graphics.Dispose()
+          $bitmap.Dispose()
+          Stop-Process -Id $app.Id
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: platform-screenshot-${{ runner.os }}
+          path: screenshots/
+          if-no-files-found: error

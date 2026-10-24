@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
-"""Compose the unchanged official mark with our original macOS tile; emit PNG/ICNS."""
+"""Compose the unchanged official mark with our original tile; emit platform icons."""
 from copy import deepcopy
 from io import BytesIO
 from pathlib import Path
@@ -44,6 +44,13 @@ def main():
     # Guarantee fully transparent outer margins, including the blurred shadow tails.
     canvas = canvas.resize((1024, 1024), Image.Resampling.LANCZOS)
     canvas.save(ROOT / 'assets/icons/beamcraft-macos-1024.png')
+    # Windows and Linux use the same composition as the macOS icon.
+    canvas.save(ROOT / 'assets/icons/beamcraft-windows.ico', format='ICO',
+                sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64),
+                       (128, 128), (256, 256)])
+    canvas.save(ROOT / 'assets/icons/beamcraft-linux-1024.png')
+    canvas.resize((256, 256), Image.Resampling.LANCZOS).save(
+        ROOT / 'assets/icons/beamcraft-linux-256.png')
     chunks = []
     # PNG-backed ICNS representations, including explicit Retina slots.
     for kind, size in ((b'icp4', 16), (b'icp5', 32), (b'icp6', 64),

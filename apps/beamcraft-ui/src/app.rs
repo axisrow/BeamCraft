@@ -482,11 +482,40 @@ pub fn icon() -> egui::IconData {
     }
 }
 
-/// The window/application icon: the official logo (`assets/icons/beamcraft-1024.png` next to the
-/// program or in the source tree, `Contents/Resources/beamcraft-icon.png` in the macOS bundle,
-/// where eframe also applies it to the Dock), averaged down to 256 x 256. When it cannot be
-/// read, the coded [`icon`] is used, so no asset bytes are compiled into the binary.
+/// The window/application icon. Windows and Linux packages carry a PNG alongside the program;
+/// macOS continues to use the bundle resource for its Dock icon. The coded [`icon`] remains the
+/// fallback when no artwork can be read.
 pub fn load_icon() -> egui::IconData {
+    {
+        let mut candidates = Vec::new();
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(dir) = exe.parent()
+        {
+            if cfg!(target_os = "macos") {
+                candidates.push(dir.join("../Resources/beamcraft-icon.png"));
+            }
+            candidates.push(dir.join("assets/icons/beamcraft-icon.png"));
+        }
+        let artwork = if cfg!(target_os = "macos") {
+            "../../assets/icons/beamcraft-macos-1024.png"
+        } else {
+            "../../assets/icons/beamcraft-linux-1024.png"
+        };
+        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join(artwork));
+        if let Some(png) = candidates.iter().find_map(|path| std::fs::read(path).ok())
+            && let Ok(source) = image::load_from_memory(&png)
+        {
+            let rgba = source
+                .resize_exact(256, 256, image::imageops::FilterType::Lanczos3)
+                .into_rgba8();
+            return egui::IconData {
+                rgba: rgba.into_raw(),
+                width: 256,
+                height: 256,
+            };
+        }
+    }
+
     const SIDE: u32 = 256;
     match crate::theme::logo_rgba(SIDE as usize) {
         Some(rgba) => egui::IconData {

@@ -1,6 +1,8 @@
 name: macOS icon acceptance
 
 on:
+  push:
+    branches: ['feat/platform-icons']
   pull_request:
     paths:
       - '.github/workflows/macos-icon-acceptance.yml'

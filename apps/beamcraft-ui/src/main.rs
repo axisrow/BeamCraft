@@ -219,6 +219,8 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
         .with_inner_size(size)
         .with_title("BeamCraft")
         .with_icon(load_icon());
+    #[cfg(target_os = "linux")]
+    let viewport = viewport.with_app_id("com.apibim.BeamCraft");
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
