@@ -32,8 +32,11 @@ beamcraft plate-inspect --store ROOT   (plates and members, one pinned view snap
 
 1. **Axis points define the local layout.** A horizontal beam is the local axis
    `(0,0,0) -> (L,0,0)`; the frame rules of F06 section 4 then fix which section edge is vertical
-   (width along `Y`, height along `Z`). The rigid element placement is applied after local shape
-   construction and does not change the mesh or quantities.
+   (width along `Y`, height along `Z`). A rigid placement *rotation* is part of the body since
+   issue #130: the placement quaternion maps the rolled member frame (`R_placement . (axis x
+   up/roll)`; the roll composes about the member axis first), so the mesh is the detailed outline
+   in the composed frame, and a non-normalized or degenerate quaternion is `INVALID_ARGUMENT`.
+   The placement translation stays a scene placement and the quantities never change.
 2. **Profile is required and pinned.** A missing digest is `NOT_FOUND`, a material digest where a
    profile is required is `INVALID_ARGUMENT`; the profile values are re-read from the committed
    definition and re-admitted on every evaluation.
@@ -46,9 +49,11 @@ beamcraft plate-inspect --store ROOT   (plates and members, one pinned view snap
 
 * No logical `UpdateElement`, move or delete of a member (P04, P08); no signatures or stored
   quantities (P04); `shapeKey` is the mesh digest as in P01.
-* Other profile kinds, curved members, cuts, holes, bolts and welds. Rotated member placement is
-  implemented for engine admission, committed reopen, world bounds, feature geometry, picking,
-  and viewport rendering; rotated plates and IFC transform acceptance remain P10 work.
+* Other profile kinds beyond families and custom outlines, curved members, holes, bolts and
+  welds. Rotated member placement composes into the body mesh (issue #130) and is carried
+  through engine admission, committed reopen, world bounds, feature geometry, picking and
+  viewport rendering; the IFC pose of a member carries the translation only (the rotation is in
+  the mesh). Rotated plates and IFC transform acceptance remain P10 work.
 * Sin/cos reproducibility across targets for a nonzero roll is still an open owner decision.
 * The layer engine runs in the CLI process (LEW-03 open); no workspace or undo (P06, P07).
 

@@ -97,7 +97,8 @@ These are software-rasterizer numbers on one machine, not hardware GPU results; 
   engine snapshots. That budget is outside V03.
 - No picking, selection, snapping (V04), tools (V05), properties or publication UI (V06); no
   representation switch in the UI (the engine supports full and simplified).
-- Rigid member placements, including rotation, are drawn from the snapshot transform; rotated
+- Rigid member placements, including rotation, are drawn from the snapshot: the rotation is
+  composed into the member mesh (issue #130) and the snapshot carries the translation; rotated
   plate placements remain outside the current placement admission path.
 - No live refresh: R reloads; no change subscription.
 - Windows and macOS builds and runs, and the Rust 1.96 MSRV build of this stack, were not run here.

@@ -251,7 +251,9 @@ fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
     };
     let local = vector("local");
     let world = vector("world");
-    let expected = [-local[1] - 50.0, local[0] + 70.0, local[2] + 1000.0];
+    // The member mesh carries the placement rotation (issue #130), so the snapshot places it
+    // by the translation only and the world position is the rotated local plus the translation.
+    let expected = [local[0] - 50.0, local[1] + 70.0, local[2] + 1000.0];
     for (actual, expected) in world.iter().zip(expected) {
         assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
     }

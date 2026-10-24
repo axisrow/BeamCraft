@@ -341,6 +341,12 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
         );
     }
     for r in &inspection.members {
+        // The member mesh already carries the placement rotation (the composed section frame),
+        // so the exported pose contributes the translation only.
+        let placement = beamcraft_model::command::Placement {
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            ..r.authored.placement
+        };
         out.insert(
             r.authored.id,
             Body {
@@ -349,7 +355,7 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
                     beamcraft_model::command::MemberKind::Column => Entity::Column,
                 },
                 mesh: mesh_of(&r.body.solid),
-                placement: r.authored.placement,
+                placement,
                 material: r.authored.material,
                 profile: Some(r.authored.profile),
                 holes: None,

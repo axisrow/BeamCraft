@@ -245,23 +245,7 @@ fn placed_bounds(
     bounds.ok_or_else(numeric)
 }
 
-pub(crate) fn rotate_vector(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
-    let [x, y, z, w] = q;
-    let [vx, vy, vz] = v;
-    let norm = (((x * x + y * y) + z * z) + w * w).sqrt();
-    let (x, y, z, w) = (x / norm, y / norm, z / norm, w / norm);
-    [
-        (1.0 - 2.0 * (y * y + z * z)) * vx
-            + 2.0 * (x * y - z * w) * vy
-            + 2.0 * (x * z + y * w) * vz,
-        2.0 * (x * y + z * w) * vx
-            + (1.0 - 2.0 * (x * x + z * z)) * vy
-            + 2.0 * (y * z - x * w) * vz,
-        2.0 * (x * z - y * w) * vx
-            + 2.0 * (y * z + x * w) * vy
-            + (1.0 - 2.0 * (x * x + y * y)) * vz,
-    ]
-}
+pub(crate) use crate::solid::rotate_vector;
 
 fn slot_of(meshes: &[MeshEntry], digest: &ContentDigest) -> Result<u32, ViewError> {
     let bad = || ViewError::new(ViewCode::BlobInvalid);

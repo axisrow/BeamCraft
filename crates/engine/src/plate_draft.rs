@@ -200,7 +200,7 @@ pub fn evaluate_committed_drafts_cached(
                     return Err(CommandError::new(
                         ErrorCode::UnsupportedGeometry,
                         "placement.orientation_xyzw",
-                        "rotated placement is not evaluated in this slice",
+                        "rotated plate placement is not evaluated in this slice",
                     ));
                 }
                 let quantities = body.quantities_for(material)?;
@@ -265,7 +265,7 @@ mod tests {
         assert_eq!(error.field, "placement.orientation_xyzw");
         assert_eq!(
             error.message,
-            "rotated placement is not evaluated in this slice"
+            "rotated plate placement is not evaluated in this slice"
         );
         // The identity neighbour still evaluates, cached or not.
         let (evaluated, unsupported) = evaluate_committed_drafts_cached(
