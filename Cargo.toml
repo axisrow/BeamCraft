@@ -39,6 +39,15 @@ todo = "warn"
 unreachable = "warn"
 indexing_slicing = "warn"
 
+# Test workloads repeatedly hash blobs, certify meshes and parse USD. Optimize these
+# hot packages while keeping applications and GUI dependencies cheap to build.
+# Debug assertions and overflow checks stay enabled through the test profile.
+[profile.test.package]
+beamcraft-geom = { opt-level = 1 }
+beamcraft-kernel = { opt-level = 1 }
+beamcraft-model = { opt-level = 1 }
+openusd = { opt-level = 1 }
+
 [profile.release]
 # Local optimized builds prioritize compile time. Distribution builds retain the
 # full optimization settings below; neither profile changes runtime checks.

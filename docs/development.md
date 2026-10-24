@@ -34,6 +34,27 @@ measured fast enough to stay in the inner loop. Nothing is removed or permanentl
 unfiltered `default` profile and CI always run everything, and an explicit command-line filter
 overrides the profile's `default-filter`.
 
+### Test profile optimization
+
+The `test` profile optimizes only `beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel` and
+`openusd` at level 1 (the `[profile.test.package]` table in `Cargo.toml`). These libraries do
+the repeated geometry certification, blob hashing and USD parsing inside the integration tests;
+a full warm workspace run measured 256.1 s → 97.7 s on Linux x86_64 (2-CPU quota, rustc 1.99.1,
+nextest 0.9.149). Other packages, GUI dependencies and host build tools keep Cargo's defaults,
+debug assertions and overflow checks stay enabled, and no test, seed or iteration count changes.
+The first test build recompiles the selected libraries and their dependants; nextest archives
+and every CI partition inherit the settings automatically. To re-measure against the
+unoptimized baseline, pass all four level-0 overrides to **both** the build and the timed
+command:
+
+```sh
+cargo test --workspace --locked --no-run \
+  --config 'profile.test.package.beamcraft-geom.opt-level=0' \
+  --config 'profile.test.package.beamcraft-model.opt-level=0' \
+  --config 'profile.test.package.beamcraft-kernel.opt-level=0' \
+  --config 'profile.test.package.openusd.opt-level=0'
+```
+
 ## Optimized local builds and cold timings
 
 For an optimized local build of both applications:
