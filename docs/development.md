@@ -34,6 +34,32 @@ measured fast enough to stay in the inner loop. Nothing is removed or permanentl
 unfiltered `default` profile and CI always run everything, and an explicit command-line filter
 overrides the profile's `default-filter`.
 
+## Faster test execution
+
+The test profile optimizes only `beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel` and
+`openusd` at level 1. These libraries handle the repeated geometry certification, blob hashing
+and USD parsing in the integration tests. Other workspace packages, GUI dependencies and host
+build tools keep Cargo's default optimization settings. Debug assertions and overflow
+checks remain enabled, and the test cases, fuzz seeds, iteration counts and independent oracles
+are unchanged. The first test build recompiles the selected libraries and their dependants;
+subsequent runs reuse those artifacts. Development and release profiles are unaffected.
+`cargo test --workspace` remains supported and uses the same optimized test libraries.
+CI's test archives and all eight partitions per OS use this test profile automatically;
+no partition or platform is excluded.
+
+Compare runtime on the same machine and toolchain after building both variants with
+`cargo test --workspace --no-run --locked`. Time the subsequent `cargo test --workspace --locked`
+commands separately from compilation. To reproduce the unoptimized baseline without editing
+the manifest, pass all four overrides to **both** the build and timed commands:
+
+```sh
+cargo test --workspace --locked \
+  --config 'profile.test.package.beamcraft-geom.opt-level=0' \
+  --config 'profile.test.package.beamcraft-model.opt-level=0' \
+  --config 'profile.test.package.beamcraft-kernel.opt-level=0' \
+  --config 'profile.test.package.openusd.opt-level=0'
+```
+
 ## Optimized local builds and cold timings
 
 For an optimized local build of both applications:
