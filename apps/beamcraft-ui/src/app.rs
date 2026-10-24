@@ -496,11 +496,7 @@ pub fn load_icon() -> egui::IconData {
             }
             candidates.push(dir.join("assets/icons/beamcraft-icon.png"));
         }
-        let artwork = if cfg!(target_os = "macos") {
-            "../../assets/icons/beamcraft-macos-1024.png"
-        } else {
-            "../../assets/icons/beamcraft-linux-1024.png"
-        };
+        let artwork = "../../assets/icons/beamcraft-1024.png";
         candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join(artwork));
         if let Some(png) = candidates.iter().find_map(|path| std::fs::read(path).ok())
             && let Ok(source) = image::load_from_memory(&png)

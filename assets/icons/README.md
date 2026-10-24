@@ -1,53 +1,46 @@
 # Application icons
 
-The original `beamcraft-1024.png` and everything under `docs/brand/` remain unchanged.
-The macOS composition places the official SVG's I-beam group, without changing its
-paths or colours, on a contributor-original continuous-corner enamel tile. The
-824-unit tile has 100-unit canvas insets, a subtle rim, directional lighting and
-soft shadows. No grid competes with the mark at small Dock sizes.
+The official BeamCraft logo is the application icon everywhere: the macOS Dock,
+Finder and Spotlight, the Windows Explorer and taskbar, the Ubuntu launcher and
+the Linux window managers, and — as the raster behind the start window, the
+start page and the runtime window icon — inside the application itself. The
+master artwork is `assets/icons/beamcraft-1024.png`, the unmodified official
+raster attached to the brand issue; `docs/brand/beamcraft-logo.svg` is its
+vector source. Neither file is ever modified.
 
-`macos-tile.svg` is the editable design source of the composition;
-`beamcraft-macos-1024.png` is its checked-in 1024px raster. Rebuild the ICNS from
-the raster with the tools included with macOS:
+## macOS
+
+`BeamCraft.icns` is resampled from the official raster with the tools included
+with macOS:
 
 ```sh
 ./packaging/generate-icon.sh
 ```
 
-## Windows and Linux icons
+`packaging/package.sh` installs the ICNS for Finder/Spotlight and copies the
+official raster into the bundle as `Contents/Resources/beamcraft-icon.png` for
+eframe's runtime Dock icon. Release smoke checks decode the packaged ICNS with
+`iconutil`.
 
-The Windows ICO and Linux PNG use the same composition. The ICO contains 16, 24,
-32, 48, 64, 128 and 256 pixel representations. Windows/Linux runtime window icons
-load the packaged PNG from `assets/icons/beamcraft-icon.png`; the Windows archive
-also includes `BeamCraft.ico`.
+## Windows and Linux
 
-Rebuild the Windows and Linux artwork from any directory with Python 3.12,
-CairoSVG 2.8.2 (system Cairo required) and Pillow 12.3.0:
-
-```sh
-python3 -m pip install CairoSVG==2.8.2 Pillow==12.3.0
-python3 packaging/generate-icon.py
-```
-
-The SVG tile and compositor are the editable sources. The generator reads
-`docs/brand/beamcraft-logo.svg` without writing it. It supersamples at 2048px and
-writes the Linux PNGs and the Windows ICO. Pinned renderer versions in the same
-environment produce identical bytes; Cairo/zlib versions can affect encoding
-across operating systems.
-
-`packaging/package.sh` installs the ICNS for Finder/Spotlight and the same
-composition as `Contents/Resources/beamcraft-icon.png` for eframe's runtime Dock
-icon. Attribution and retained trademark terms are in `ATTRIBUTION.md`.
+`beamcraft-windows.ico` contains 16, 24, 32, 48, 64, 128 and 256 pixel
+representations, each a resize of the official raster; `beamcraft-linux-256.png`
+is the hicolor launcher size. Windows/Linux packages ship the official raster
+as `assets/icons/beamcraft-icon.png`, which the runtime window icon loads. The
+ICO container is packed as a one-off from the resized rasters (PNG payloads,
+no script shipped); provenance is recorded in `ATTRIBUTION.md`.
 
 ## Native acceptance still required
 
-On macOS, build the distribution binaries and run the packaging command described
-in `packaging/package.sh`. Extract the archive, open BeamCraft.app and check the
-running Dock icon alongside stock apps at normal and magnified sizes. Quit and
-check the bundle icon in Finder and Spotlight. Capture actual screenshots of all
-three surfaces, including the running Dock; generated previews do not establish
-native acceptance. Verify transparent corners, comparable tile scale, clean small
-sizes and matching running/closed icons.
+On macOS, build the distribution binaries and run the packaging command
+described in `packaging/package.sh`. Extract the archive, open BeamCraft.app
+and check the running Dock icon alongside stock apps at normal and magnified
+sizes. Quit and check the bundle icon in Finder and Spotlight. Capture actual
+screenshots of all three surfaces, including the running Dock; generated
+previews do not establish native acceptance. Verify clean small sizes and
+matching running/closed icons. On Windows and Linux, capture the desktop,
+taskbar and launcher through the screenshot workflow.
 
 ## Ubuntu application menu and Dock
 
