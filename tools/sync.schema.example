@@ -1,0 +1,29 @@
+# Fork sync schema -- an example, not a runnable script.
+#
+# A mirror (fork) keeps its own master aligned with this repository's
+# master. Upstream has no write access to any mirror and holds no mirror
+# credentials, so no sync automation lives here and none is committed here.
+# This file only records the shape of a correct sync: implement it inside
+# your mirror, against your own credentials, and hold your implementation
+# to this schema.
+
+invariants:
+  - the mirror master is a superset of upstream master: upstream commits
+    are merged, never rewritten, and the mirror push is non-force
+  - a merge conflict is a decision, not something to auto-resolve: the
+    sync stops, reports the conflicting paths and waits for a human verdict
+  - the quality gate runs while the merge is still uncommitted:
+    fmt --check, clippy -D warnings, test --workspace (the same triple CI
+    runs; CONTRIBUTING.md step 3)
+  - a fetch that finds nothing new exits early and silently
+
+phases:
+  1 fetch: upstream master and the mirror master; remember the merge base
+  2 fast-forward: move a stale local master to the mirror master, no merge yet
+  3 merge: merge upstream master into the local master without committing;
+    on a conflict, stop and keep the tree dirty for inspection
+  4 gate: run the triple on the merged tree
+  5 commit: record every upstream pull-request number the merge carries
+    in the commit message
+  6 push: push the mirror master; a lost race exits and a later run redoes it
+  7 clean: drop the sync-only state, leave no branches or stashes behind

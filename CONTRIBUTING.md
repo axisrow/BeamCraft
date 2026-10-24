@@ -32,6 +32,14 @@ Thanks for helping. Humans and AI agents follow the same rules.
    automatically when a PR merges into fork `master` and on `workflow_dispatch` with a PR
    number. Direct pushes to fork `master` bypass the PR trigger: mirror those by hand.
 
+Mirrors (forks) of this repository keep their own `master` aligned with this one. This
+repository ships only [`tools/sync.schema.example`](tools/sync.schema.example) — the schema
+of such a sync, given as an example. No runnable sync script is committed here: upstream has
+no write access to any mirror, so sync automation cannot run from here. Keep your script
+inside your mirror and hold it to the schema: merge upstream commits without rewriting them,
+stop on a conflict for a human decision, and run the triple from step 3 before committing
+the merge.
+
 An AI agent that works through a hosted GitHub integration needs write access for that
 integration. For example, OpenAI Codex cloud fails to create a branch or a pull request with
 `403 Resource not accessible by integration` until the owner of the account that holds the fork or
