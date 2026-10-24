@@ -206,9 +206,10 @@ impl Footprint {
     /// The footprint of `UpdateElement` (F04 section 8): it reads the element's lifecycle and the
     /// groups it changes, reads a newly pinned definition, and writes only the groups of the
     /// supported fields it changes, plus the derived group when the shape or the material does.
-    /// A rename touches the label alone. A move reads the local shape and the placement and writes
-    /// the placement plus the derived group (the world-measurement invalidation of F04 section 8;
-    /// the element-local body is not rebuilt).
+    /// A rename touches the label alone. A move or an orientation change reads the local shape
+    /// and the placement and writes the placement plus the derived group (the world-measurement
+    /// invalidation of F04 section 8; only an orientation change of a member also rebuilds its
+    /// element-local body, as a mesh write inside the derived group).
     pub fn for_update(
         id: ElementId,
         name: bool,

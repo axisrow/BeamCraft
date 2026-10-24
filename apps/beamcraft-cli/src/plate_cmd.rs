@@ -200,6 +200,7 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--material-digest",
     "--thickness",
     "--translation",
+    "--orientation-xyzw",
     "--level",
     "--op-id",
     "--revision-id",
@@ -953,6 +954,11 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
             })
             .transpose()?,
         translation_mm: given("--translation").map(translation).transpose()?,
+        orientation_xyzw: match given("--orientation-xyzw") {
+            None => None,
+            Some("none") => Some([0.0, 0.0, 0.0, 1.0]),
+            Some(text) => Some(quaternion(text)?),
+        },
         level: given("--level")
             .map(|text| match text {
                 "none" => Ok(None),
@@ -993,6 +999,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 ("material", Json::Bool(updated.effect.material)),
                 ("shape", Json::Bool(updated.effect.shape)),
                 ("placement", Json::Bool(updated.effect.placement)),
+                ("orientation", Json::Bool(updated.effect.orientation)),
                 ("level", Json::Bool(updated.effect.level)),
             ]),
         ),

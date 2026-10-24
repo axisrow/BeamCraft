@@ -103,14 +103,27 @@ impl Placement {
                 "translation component exceeds the coordinate cap",
             ));
         }
-        let [x, y, z, w] = self.orientation_xyzw;
-        if self.orientation_xyzw.iter().any(|v| v.abs() > 1.0) {
+        Self::validate_orientation(self.orientation_xyzw)
+    }
+
+    /// Checks a quaternion alone: non-finite is `NON_FINITE_NUMBER`; a component outside
+    /// `[-1, 1]` or a squared norm farther than 1e-6 from one is `INVALID_ARGUMENT`.
+    pub fn validate_orientation(xyzw: [f64; 4]) -> Result<(), CommandError> {
+        if xyzw.iter().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "placement.orientation_xyzw",
+                "value is not finite",
+            ));
+        }
+        if xyzw.iter().any(|v| v.abs() > 1.0) {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "placement.orientation_xyzw",
                 "quaternion component is outside [-1, 1]",
             ));
         }
+        let [x, y, z, w] = xyzw;
         let squared = ((x * x + y * y) + z * z) + w * w;
         if (squared - 1.0).abs() > ORIENTATION_NORM_TOLERANCE {
             return Err(CommandError::new(
@@ -561,6 +574,10 @@ pub struct ElementPatch {
     pub thickness_mm: Option<f64>,
     /// New placement translation in millimetres, absolute; the rotation is kept (a move).
     pub translation_mm: Option<[f64; 3]>,
+    /// New placement rotation, absolute. Replaces the stored quaternion (the identity resets a
+    /// member or plate to the unrotated pose); the translation is kept. The quaternion follows
+    /// the `Placement` rules and is validated.
+    pub orientation_xyzw: Option<[f64; 4]>,
     /// D2: new level assignment of a plate, beam or column, or its explicit removal
     /// (`Some(None)`). Whether the level exists is the engine's decision.
     pub level: Option<Option<ElementId>>,
@@ -586,6 +603,7 @@ impl UpdateElement {
             && patch.material.is_none()
             && patch.thickness_mm.is_none()
             && patch.translation_mm.is_none()
+            && patch.orientation_xyzw.is_none()
             && patch.level.is_none()
         {
             return Err(CommandError::new(
@@ -609,6 +627,9 @@ impl UpdateElement {
                     "translation component exceeds the coordinate cap",
                 ));
             }
+        }
+        if let Some(xyzw) = patch.orientation_xyzw {
+            Placement::validate_orientation(xyzw)?;
         }
         if patch.name.as_deref().is_some_and(|n| !label_is_valid(n)) {
             return Err(CommandError::new(
@@ -691,6 +712,19 @@ impl UpdateElement {
             Some(Some(level)) => {
                 bytes.extend_from_slice(&[3, 1]);
                 bytes.extend_from_slice(level.as_bytes());
+            }
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(xyzw) = self.patch.orientation_xyzw {
+            bytes.extend_from_slice(&[4, 1]);
+            for v in xyzw {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "placement.orientation_xyzw",
+                        "value cannot be encoded",
+                    )
+                })?);
             }
         }
         Sha256::digest(&bytes).map_err(|_| {
@@ -1717,6 +1751,45 @@ mod tests {
 
     fn id(n: u8) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap()
+    }
+
+    #[test]
+    fn an_orientation_patch_has_argument_rules_and_a_fingerprint() {
+        let update = |orientation: Option<[f64; 4]>| UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                orientation_xyzw: orientation,
+                name: Some("Beam".into()),
+                ..ElementPatch::default()
+            },
+        };
+        let quarter = [0.0, 0.0, 0.5_f64.sqrt(), 0.5_f64.sqrt()];
+        let base = update(None).content_fingerprint().unwrap();
+        assert_ne!(update(Some(quarter)).content_fingerprint().unwrap(), base);
+        // Setting the identity is a real (clearing) change with its own fingerprint.
+        assert_ne!(
+            update(Some([0.0, 0.0, 0.0, 1.0]))
+                .content_fingerprint()
+                .unwrap(),
+            base
+        );
+        let code = |u: UpdateElement| u.validate_arguments().unwrap_err().code;
+        assert_eq!(
+            code(update(Some([0.0, 0.0, 0.5, 0.5]))),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(code(update(Some([0.0; 4]))), ErrorCode::InvalidArgument);
+        assert_eq!(
+            code(update(Some([f64::NAN, 0.0, 0.0, 1.0]))),
+            ErrorCode::NonFiniteNumber
+        );
+        assert!(update(Some(quarter)).validate_arguments().is_ok());
+        // The fingerprint covers the quaternion bytes themselves.
+        let negated = [-quarter[0], -quarter[1], -quarter[2], -quarter[3]];
+        assert_ne!(
+            update(Some(negated)).content_fingerprint().unwrap(),
+            update(Some(quarter)).content_fingerprint().unwrap()
+        );
     }
 
     #[test]
