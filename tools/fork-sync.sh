@@ -123,7 +123,7 @@ conflict_report() {
     done
     echo "" >&2
     echo "Investigate before re-running (never auto-resolve):" >&2
-    echo "  - was a fork change not promoted upstream yet?" >&2
+    echo "  - was a fork change not mirrored upstream yet?" >&2
     echo "  - or did upstream rework a fork-only artifact (icon pipeline, docs)?" >&2
     echo "  - git log master..upstream/master -- <path> and git log upstream/master..master -- <path>" >&2
 }
@@ -236,7 +236,7 @@ do_status() {
     behind="$(git rev-list --count "$base..upstream/master")"
     ahead="$(git rev-list --count upstream/master..master)"
     echo "upstream commits not in master: $behind"
-    echo "fork commits not in upstream (pending promotion): $ahead"
+    echo "fork commits not in upstream (pending upstreaming): $ahead"
     local local_head origin_head
     local_head="$(git rev-parse master)"
     origin_head="$(git rev-parse origin/master)"

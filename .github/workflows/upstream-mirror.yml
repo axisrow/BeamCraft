@@ -1,7 +1,7 @@
-name: Fork promote
+name: Upstream mirror
 
 # Mirror a merged fork PR to upstream: the closed-PR event carries the merge
-# commit, workflow_dispatch re-runs a promotion by PR number. The script is
+# commit, workflow_dispatch re-runs a mirroring by PR number. The script is
 # the single implementation (local run and the workflow share it). A red run
 # is the alarm (owner decision), matching the fork-sync contract.
 on:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       pr-number:
-        description: Merged fork PR number to promote
+        description: Merged fork PR number to mirror
         required: true
         type: number
 
@@ -19,25 +19,25 @@ env:
 
 # A run must not overlap itself; queued, not cancelled, so nothing is lost.
 concurrency:
-  group: fork-promote
+  group: upstream-mirror
   cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
-  promote:
+  mirror:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'master')
-    name: promote to upstream
+    name: mirror to upstream
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       # Secrets cannot appear in step conditions directly; mirror the presence
       # check into env. Until the secret exists the run stays green and the
-      # promotion happens locally (bash tools/fork-promote.sh promote <n>).
-      HAS_UPSTREAM_TOKEN: ${{ secrets.UPSTREAM_PROMOTE_TOKEN != '' }}
+      # mirroring happens locally (bash tools/upstream-mirror.sh mirror <n>).
+      HAS_UPSTREAM_SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN != '' }}
     steps:
       # ref: master keeps the script's clean-tree guard meaningful; full
       # history is needed for the merge commit's parents.
@@ -58,14 +58,14 @@ jobs:
       # The token must read the fork and open PRs in upstream: one fine-grained
       # PAT covering both repositories (Contents R on the fork, Contents and
       # pull requests R/W on upstream). GITHUB_TOKEN cannot cross repositories.
-      - name: Promote
-        if: env.HAS_UPSTREAM_TOKEN == 'true'
+      - name: Mirror
+        if: env.HAS_UPSTREAM_SYNC_TOKEN == 'true'
         env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_PROMOTE_TOKEN }}
-        run: bash tools/fork-promote.sh promote "${{ github.event.pull_request.number || inputs.pr-number }}"
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: bash tools/upstream-mirror.sh mirror "${{ github.event.pull_request.number || inputs.pr-number }}"
 
-      - name: Promotion skipped, no UPSTREAM_PROMOTE_TOKEN
-        if: env.HAS_UPSTREAM_TOKEN != 'true'
+      - name: Mirroring skipped, no UPSTREAM_SYNC_TOKEN
+        if: env.HAS_UPSTREAM_SYNC_TOKEN != 'true'
         run: |
-          echo "UPSTREAM_PROMOTE_TOKEN is not set; automatic promotion is off."
-          echo "Promote by hand meanwhile: bash tools/fork-promote.sh promote <pr-number>"
+          echo "UPSTREAM_SYNC_TOKEN is not set; automatic mirroring is off."
+          echo "Mirror by hand meanwhile: bash tools/upstream-mirror.sh mirror <pr-number>"
