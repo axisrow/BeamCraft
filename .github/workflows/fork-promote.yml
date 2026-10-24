@@ -33,6 +33,11 @@ jobs:
     name: promote to upstream
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # Secrets cannot appear in step conditions directly; mirror the presence
+      # check into env. Until the secret exists the run stays green and the
+      # promotion happens locally (bash tools/fork-promote.sh promote <n>).
+      HAS_UPSTREAM_TOKEN: ${{ secrets.UPSTREAM_PROMOTE_TOKEN != '' }}
     steps:
       # ref: master keeps the script's clean-tree guard meaningful; full
       # history is needed for the merge commit's parents.
@@ -54,6 +59,13 @@ jobs:
       # PAT covering both repositories (Contents R on the fork, Contents and
       # pull requests R/W on upstream). GITHUB_TOKEN cannot cross repositories.
       - name: Promote
+        if: env.HAS_UPSTREAM_TOKEN == 'true'
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_PROMOTE_TOKEN }}
         run: bash tools/fork-promote.sh promote "${{ github.event.pull_request.number || inputs.pr-number }}"
+
+      - name: Promotion skipped, no UPSTREAM_PROMOTE_TOKEN
+        if: env.HAS_UPSTREAM_TOKEN != 'true'
+        run: |
+          echo "UPSTREAM_PROMOTE_TOKEN is not set; automatic promotion is off."
+          echo "Promote by hand meanwhile: bash tools/fork-promote.sh promote <pr-number>"
