@@ -175,18 +175,16 @@ archive into a fresh directory and runs `beamcraft --version` from it.
 Manual check on each OS: extract the package, run `beamcraft --version`, start `beamcraft-ui` and
 confirm the window opens with text (without the font the window has no text).
 
-The macOS bundle uses `assets/icons/BeamCraft.icns` for Finder and the Dock. Its original
-artwork is `assets/icons/beamcraft-macos-1024.png`: the official BeamCraft mark composed
-on our own tile (`assets/icons/macos-tile.svg`). Regenerate the artwork, the standard/Retina
-icon set and the committed ICNS with `bash packaging/generate-icon.sh`; the script runs
-`packaging/generate-icon.py`, which needs locally installed Python packages (Pillow and
-CairoSVG) and is never run by CI. The prebuilt ICNS is committed so release
-packaging needs no image tools. Release smoke checks decode the packaged ICNS with `iconutil`.
-The same PNG ships inside the bundle as `Contents/Resources/beamcraft-icon.png`: while
-`beamcraft-ui` runs, the Dock shows the process icon, so the UI loads that file and applies
-it (`eframe::icon_data::from_png_bytes`), falling back to the coded I-section outside a
-bundle. `cargo test -p beamcraft-cli --test macos_icon` checks the committed ICNS structure
-without a Rust build of the UI or macOS. On macOS, also confirm the official BeamCraft icon
-appears in Finder, the Dock and the app switcher. The icon and `docs/brand/beamcraft-logo.svg`
-are the official BeamCraft logo (see `ATTRIBUTION.md`); the brand terms in
-`docs/brand/LICENSE-brand.txt` apply to them.
+The macOS bundle uses `assets/icons/BeamCraft.icns` for Finder and the Dock. Its artwork is
+the enamel-tile composition: the mark of `docs/brand/beamcraft-logo.svg` on a
+contributor-original tile, checked in as `assets/icons/beamcraft-macos-1024.png`; on macOS,
+regenerate the standard/Retina icon set from that raster with `bash packaging/generate-icon.sh`.
+The prebuilt ICNS is committed so release packaging needs no image tools. Release smoke checks
+decode the packaged ICNS with `iconutil`. The same composition ships inside the bundle as
+`Contents/Resources/beamcraft-icon.png`: while `beamcraft-ui` runs, the Dock shows the process
+icon, so the UI loads that file and applies it (`eframe::icon_data::from_png_bytes`), falling
+back to the coded I-section outside a bundle. `cargo test -p beamcraft-cli --test macos_icon`
+checks the committed ICNS structure without a Rust build of the UI or macOS. On macOS, also
+confirm the enamel-tile icon appears in Finder, the Dock and the app switcher. The tile leaves
+the official BeamCraft logo (`docs/brand/beamcraft-logo.svg`) unchanged; attribution and the
+brand terms in `docs/brand/LICENSE-brand.txt` apply to the mark.

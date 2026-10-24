@@ -114,4 +114,121 @@ fn document_cli_creates_publishes_inspects_and_lists_versions() {
     assert_eq!(versions.len(), 1);
     assert_eq!(text(&versions[0], "state"), "published");
     assert_eq!(text(&versions[0], "version_id"), VERSION);
+
+    // Publish another version, then try the historical ID again from a fresh draft. Comparing
+    // only latest_published misses this V1 -> V2 -> V1 reuse across separate CLI processes.
+    let second_version = "01900000-0000-7000-8000-000000000012";
+    let refreshed_head = text(&refreshed, "revision_id");
+    let second_published = f.ok(
+        "drawing-publish",
+        &[
+            "--document-dir",
+            document_path,
+            "--expected-head",
+            &refreshed_head,
+            "--op-id",
+            "01900000-0000-7000-8000-000000000013",
+            "--revision-id",
+            "01900000-0000-7000-8000-000000000014",
+            "--actor-id",
+            ACTOR,
+            "--version-id",
+            second_version,
+        ],
+    );
+    let second_published_head = text(&second_published, "revision_id");
+    let mut next_refresh = vec![
+        "--document-dir",
+        document_path,
+        "--expected-head",
+        &second_published_head,
+        "--name",
+        "Changed drawing",
+        "--op-id",
+        "01900000-0000-7000-8000-000000000015",
+        "--revision-id",
+        "01900000-0000-7000-8000-000000000016",
+        "--actor-id",
+        ACTOR,
+    ];
+    next_refresh.extend_from_slice(&intent);
+    let next_draft = f.ok("drawing-refresh", &next_refresh);
+    let next_head = text(&next_draft, "revision_id");
+    let before_history = f.ok("drawing-versions", &["--document-dir", document_path]);
+    for reused in [VERSION, second_version] {
+        let (exit, refusal) = f.run(
+            "drawing-publish",
+            &[
+                "--document-dir",
+                document_path,
+                "--expected-head",
+                &next_head,
+                "--op-id",
+                "01900000-0000-7000-8000-000000000017",
+                "--revision-id",
+                "01900000-0000-7000-8000-000000000018",
+                "--actor-id",
+                ACTOR,
+                "--version-id",
+                reused,
+            ],
+        );
+        assert_eq!(exit, 2, "historical version reuse: {refusal:?}");
+        assert_eq!(text(&refusal, "code"), "DUPLICATE_ID");
+        let after = f.ok("drawing-inspect", &["--document-dir", document_path]);
+        assert_eq!(
+            text(&after, "revision_id"),
+            text(&next_draft, "revision_id")
+        );
+        assert_eq!(
+            f.ok("drawing-versions", &["--document-dir", document_path]),
+            before_history
+        );
+    }
+    // Replaying the original accepted operation remains safe after newer publications.
+    let replayed = f.ok(
+        "drawing-publish",
+        &[
+            "--document-dir",
+            document_path,
+            "--expected-head",
+            &expected_head,
+            "--op-id",
+            OP2,
+            "--revision-id",
+            REV2,
+            "--actor-id",
+            ACTOR,
+            "--version-id",
+            VERSION,
+        ],
+    );
+    assert_eq!(text(&replayed, "revision_id"), published_head);
+    assert_eq!(
+        f.ok("drawing-versions", &["--document-dir", document_path]),
+        before_history
+    );
+    // A refusal must not consume a revision or prevent a subsequent valid publication.
+    let third = f.ok(
+        "drawing-publish",
+        &[
+            "--document-dir",
+            document_path,
+            "--expected-head",
+            &next_head,
+            "--op-id",
+            "01900000-0000-7000-8000-000000000017",
+            "--revision-id",
+            "01900000-0000-7000-8000-000000000018",
+            "--actor-id",
+            ACTOR,
+            "--version-id",
+            "01900000-0000-7000-8000-000000000019",
+        ],
+    );
+    assert_eq!(text(&third, "state"), "published");
+    let final_history = f.ok("drawing-versions", &["--document-dir", document_path]);
+    let final_versions = list(&final_history, "versions");
+    assert_eq!(final_versions.len(), 3);
+    assert_eq!(&final_versions[..2], list(&before_history, "versions"));
 }
