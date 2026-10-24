@@ -191,7 +191,11 @@ do_promote() {
         exit $EXIT_OK
     fi
 
-    if ! git push origin "HEAD:refs/heads/$branch" >/dev/null 2>&1; then
+    # The promotion namespace is automation-owned and single-writer (the
+    # workflow's concurrency group serialises runs): --force lets a re-run
+    # after a failure replace a stale branch instead of wedging forever on a
+    # non-fast-forward rejection.
+    if ! git push --force origin "HEAD:refs/heads/$branch" >/dev/null 2>&1; then
         die "could not push $branch to origin" $EXIT_PUBLISH
     fi
 
