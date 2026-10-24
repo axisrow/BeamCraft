@@ -119,7 +119,14 @@ jobs:
           path: nextest-archive
 
       - name: Run archived test partition
-        run: cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        # The tests read CARGO_TARGET_TMPDIR and CARGO_BIN_EXE_* with the
+        # compile-time env!() macro, so the archive must be extracted to the
+        # build job's exact layout (<workspace>/target), and <workspace>/
+        # target/tmp must exist: the archive carries binaries only, while the
+        # tests create their scratch dirs inside target/tmp. --extract-to .
+        # refuses an existing <workspace>/target; --extract-overwrite unpacks
+        # over it without wiping, so the pre-created tmp directory survives.
+        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
 
   build-timings:
     name: cold release (${{ matrix.target }})
