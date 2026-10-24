@@ -89,7 +89,7 @@ already_mirrored() {
 # Resolve the conflicts of the in-progress cherry-pick to the upstream side if
 # and only if every conflicted path is fork-only; anything else is a stop.
 resolve_or_stop() {
-    local commit conflicted path fork_only=true
+    local commit=$1 conflicted path fork_only=true
     conflicted="$(git diff --name-only --diff-filter=U)"
     for path in $conflicted; do
         if ! is_fork_only "$path"; then
