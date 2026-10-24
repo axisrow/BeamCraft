@@ -289,7 +289,8 @@ create or publish a drawing.
 ```text
 beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest SHA256
   [--kind beam|column] [--roll RAD] [--material-digest SHA256] [--name TEXT]
-  [--translation X,Y,Z] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+  [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W]
+  [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
   [--project-id UUID] [--workspace-id UUID]
 ```
 
@@ -301,8 +302,21 @@ default frame of F06 section 4 plus the explicit roll), and the commit runs the 
 plates, which now re-evaluates members too. Output: element id, kind, profile and material digests,
 section, axis points, roll, placement, volume and mass (as for plates), mesh digest, revision and
 footprint (the profile and material are reads). `plate-inspect` lists `plates` and `members` and
-puts both in the one pinned snapshot. A placement rotation is `UNSUPPORTED_GEOMETRY`: lay a member
-out with its axis points (an axis along `+X` gives width along `Y` and height along `Z`).
+puts both in the one pinned snapshot. Axis points may differ in all three coordinates: horizontal,
+vertical and inclined beams use the same command, with no separate 3D flag. Coordinates are in
+millimetres in a right-handed system with Z up; `--roll` rotates the section about the axis in
+radians. An axis along `+X` gives width along `Y` and height along `Z` before roll. Optional rigid
+placement (`--translation`, `--orientation-xyzw`) transforms the member without changing its local
+mesh or quantities.
+
+For example, after defining a profile, create an inclined beam with a 13000 mm axis:
+
+```sh
+beamcraft define-profile --store ROOT --width 200 --height 300
+# Use the returned definition.digest as PROFILE_SHA256.
+beamcraft create-member --store ROOT --kind beam --profile-digest PROFILE_SHA256 \
+  --start 100,200,300 --end 3100,4200,12300
+```
 See the [design note](../../docs/design/p03-straight-member.md).
 
 ## P04 update-element and stored quantities
