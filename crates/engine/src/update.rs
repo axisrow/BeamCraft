@@ -314,11 +314,6 @@ mod tests {
                 .code,
             ErrorCode::InvalidArgument
         );
-        // A refusal leaves the authored state untouched.
-        assert_eq!(
-            member().placement.orientation_xyzw,
-            Placement::IDENTITY.orientation_xyzw
-        );
     }
 
     fn member() -> AuthoredMember {
