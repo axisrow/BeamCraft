@@ -428,12 +428,16 @@ pub fn scene_elements(records: &[PlateRecord]) -> Result<Vec<SceneElement>, Comm
 }
 
 /// The snapshot-builder input for committed plates and members, in element-id order.
+///
+/// A scene placement is a translation for both kinds: a member's placement rotation is already
+/// composed into its body mesh (the section frame), and a plate keeps the identity-rotation
+/// refusal, so no scene element carries an orientation.
 pub fn scene_elements_with_members(
     plates: &[PlateRecord],
     members: &[MemberRecord],
 ) -> Result<Vec<SceneElement>, CommandError> {
-    let placement = |placement: &beamcraft_model::command::Placement, allow_rotation: bool| {
-        if !allow_rotation && !placement.is_identity_rotation() {
+    let translation = |placement: &beamcraft_model::command::Placement| {
+        if !placement.is_identity_rotation() {
             return Err(CommandError::new(
                 ErrorCode::UnsupportedGeometry,
                 "placement.orientation_xyzw",
@@ -441,6 +445,30 @@ pub fn scene_elements_with_members(
             ));
         }
         let [x, y, z] = placement.translation_mm;
+        Translation3::new(x, y, z).map_err(|_| {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "placement.translation_mm",
+                "value is not finite",
+            )
+        })
+    };
+    let mut elements = Vec::with_capacity(plates.len().saturating_add(members.len()));
+    for r in plates {
+        elements.push(SceneElement::new(
+            r.authored.id,
+            ElementKind::Plate,
+            translation(&r.authored.placement)?,
+            r.body.solid.scene_mesh(),
+        ));
+    }
+    for r in members {
+        let kind = match r.authored.kind {
+            MemberKind::Beam => ElementKind::Beam,
+            MemberKind::Column => ElementKind::Column,
+        };
+        // The member mesh carries the composed section frame; only the translation remains.
+        let [x, y, z] = r.authored.placement.translation_mm;
         let translation = Translation3::new(x, y, z).map_err(|_| {
             CommandError::new(
                 ErrorCode::NonFiniteNumber,
@@ -448,31 +476,12 @@ pub fn scene_elements_with_members(
                 "value is not finite",
             )
         })?;
-        Ok((translation, placement.orientation_xyzw))
-    };
-    let mut elements = Vec::with_capacity(plates.len().saturating_add(members.len()));
-    for r in plates {
-        let (translation, orientation) = placement(&r.authored.placement, false)?;
-        elements.push(
-            SceneElement::new(
-                r.authored.id,
-                ElementKind::Plate,
-                translation,
-                r.body.solid.scene_mesh(),
-            )
-            .with_orientation(orientation),
-        );
-    }
-    for r in members {
-        let kind = match r.authored.kind {
-            MemberKind::Beam => ElementKind::Beam,
-            MemberKind::Column => ElementKind::Column,
-        };
-        let (translation, orientation) = placement(&r.authored.placement, true)?;
-        elements.push(
-            SceneElement::new(r.authored.id, kind, translation, r.body.solid.scene_mesh())
-                .with_orientation(orientation),
-        );
+        elements.push(SceneElement::new(
+            r.authored.id,
+            kind,
+            translation,
+            r.body.solid.scene_mesh(),
+        ));
     }
     elements.sort_by_key(SceneElement::id);
     Ok(elements)
@@ -606,7 +615,10 @@ mod tests {
             member.placement = Placement::IDENTITY;
             super::evaluate_committed_members(&[member], &profiles, &no_materials).unwrap()
         };
-        assert_eq!(records[0].body.solid, identity[0].body.solid);
+        // The rotation composes into the mesh (same triangles, rotated vertices), so the body
+        // differs from the identity one while the quantities stay the same.
+        assert_eq!(records[0].quantities, identity[0].quantities);
+        assert_ne!(records[0].body.solid, identity[0].body.solid);
         let elements = scene_elements_with_members(&[], &records).unwrap();
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
         let snapshot = ViewSnapshot::build(pin, elements, &Limits::default()).unwrap();

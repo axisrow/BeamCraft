@@ -753,7 +753,7 @@ pub fn create_plate(
         return Err(CommandError::new(
             ErrorCode::UnsupportedGeometry,
             "placement.orientation_xyzw",
-            "rotated placement is not evaluated in this slice",
+            "rotated plate placement is not evaluated in this slice",
         ));
     }
     let quantities = body.quantities_for(material)?;
