@@ -1,18 +1,21 @@
 name: Fork sync
 
-# Hourly upstream sync per the fork contract: the script is the single
-# implementation (local run and cron share it), the cron adds only --yes.
-# A green run is silent by design; a red run is the alarm (owner decision).
+# Upstream sync on a 5-minute cadence per the fork contract: the script is the
+# single implementation (local run and cron share it), the cron adds only --yes.
+# An idle run exits at the guard step before the toolchain, so the fast cadence
+# costs seconds. A green run is silent by design; a red run is the alarm
+# (owner decision). A true push-event trigger needs a secret on the upstream
+# side; tracked in Apibim-com/BeamCraft issue #206.
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 # A cron run must not overlap itself. A race with a local sync is safe: the
-# script's push is non-force, so the loser exits 4 and the next hour redoes it.
+# script's push is non-force, so the loser exits 4 and the next run redoes it.
 concurrency:
   group: fork-sync
   cancel-in-progress: false
@@ -33,21 +36,36 @@ jobs:
           ref: master
           fetch-depth: 0
 
+      # The script guards on both remotes; checkout configures only origin.
+      - name: Add the upstream remote
+        run: git remote add upstream https://github.com/Apibim-com/BeamCraft.git
+
+      # The fast cadence is cheap only if an idle run never reaches the
+      # toolchain; the sync script re-fetches and re-checks on its own.
+      - id: guard
+        name: Early exit when upstream is unchanged
+        run: |
+          git fetch origin master
+          git fetch upstream master
+          pending="$(git rev-list --count origin/master..upstream/master)"
+          echo "upstream commits not in origin/master: $pending"
+          echo "pending=$pending" >> "$GITHUB_OUTPUT"
+
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        if: steps.guard.outputs.pending != '0'
         with:
           toolchain: stable
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-
-      # The script guards on both remotes; checkout configures only origin.
-      - name: Add the upstream remote
-        run: git remote add upstream https://github.com/Apibim-com/BeamCraft.git
+        if: steps.guard.outputs.pending != '0'
 
       - name: Identify the committer
+        if: steps.guard.outputs.pending != '0'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Sync
+        if: steps.guard.outputs.pending != '0'
         run: bash tools/fork-sync.sh sync --yes

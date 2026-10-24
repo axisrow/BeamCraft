@@ -1,0 +1,59 @@
+name: Fork promote
+
+# Mirror a merged fork PR to upstream: the closed-PR event carries the merge
+# commit, workflow_dispatch re-runs a promotion by PR number. The script is
+# the single implementation (local run and the workflow share it). A red run
+# is the alarm (owner decision), matching the fork-sync contract.
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: Merged fork PR number to promote
+        required: true
+        type: number
+
+env:
+  CARGO_TERM_COLOR: always
+
+# A run must not overlap itself; queued, not cancelled, so nothing is lost.
+concurrency:
+  group: fork-promote
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'master')
+    name: promote to upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # ref: master keeps the script's clean-tree guard meaningful; full
+      # history is needed for the merge commit's parents.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: master
+          fetch-depth: 0
+
+      # The script guards on both remotes; checkout configures only origin.
+      - name: Add the upstream remote
+        run: git remote add upstream https://github.com/Apibim-com/BeamCraft.git
+
+      - name: Identify the committer
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # The token must read the fork and open PRs in upstream: one fine-grained
+      # PAT covering both repositories (Contents R on the fork, Contents and
+      # pull requests R/W on upstream). GITHUB_TOKEN cannot cross repositories.
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_PROMOTE_TOKEN }}
+        run: bash tools/fork-promote.sh promote "${{ github.event.pull_request.number || inputs.pr-number }}"
