@@ -158,6 +158,14 @@ fn triple(json: &Json) -> [f64; 3] {
 fn fid(element: &str, local: &str) -> String {
     format!("fid1:{element}:{local}")
 }
+/// World positions of an oblique member carry the rounding of the irrational frame entries:
+/// a 1e-6 absolute slack, far above it and far below any engineering band.
+fn near(json: &Json, want: [f64; 3]) {
+    let got = triple(json);
+    for (g, w) in got.iter().zip(want) {
+        assert!((g - w).abs() < 1e-6, "{got:?} != {want:?}");
+    }
+}
 
 #[test]
 fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_and_copy() {
@@ -822,4 +830,167 @@ fn a_small_member_far_from_the_origin_keeps_its_features() {
     );
     let c = &list(&snapped, "candidates")[0];
     assert!(number(at(c, &["distance_mm"])) < 1e-3);
+}
+
+/// The axis snap of a 45-degree sloped beam (issue #132 acceptance): the F06 Horizontal branch
+/// projects world +Z onto the plane perpendicular to the axis, so `Y_m = (-1,0,1)/sqrt(2)` and
+/// `X_m = +Y`, and the axis is the authored segment `(0,0,0)..(4000,0,4000)` — the snap
+/// endpoints are its world `f.z0`/`f.z1` face centres, the nearest point its projection.
+#[test]
+fn snap_answers_axis_start_end_and_nearest_for_a_45_degree_sloped_beam() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "4000,0,4000",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            MEMBER,
+        ],
+    );
+    // The start endpoint, queried from 1,0,1: on the axis line, sqrt(2) from the start, so only
+    // the start is in band.
+    let snapped = f.ok(
+        "snap",
+        &["--point", "1,0,1", "--radius", "5", "--kinds", "axis_end"],
+    );
+    assert!(list(&snapped, "skipped").is_empty(), "{snapped:?}");
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(text(c, "element_id"), MEMBER);
+    assert_eq!(text(c, "kind"), "axis_end");
+    assert_eq!(number(at(c, &["axis_parameter"])), 0.0);
+    near(at(c, &["point_world_mm"]), [0.0, 0.0, 0.0]);
+    assert!((number(at(c, &["distance_mm"])) - 2f64.sqrt()).abs() < 1e-6);
+
+    // The end endpoint, queried just before it.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "3999,0,3999",
+            "--radius",
+            "5",
+            "--kinds",
+            "axis_end",
+        ],
+    );
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(number(at(c, &["axis_parameter"])), 1.0);
+    near(at(c, &["point_world_mm"]), [4000.0, 0.0, 4000.0]);
+
+    // The nearest axis point: 100 mm off the middle of the slope.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "2000,100,2000",
+            "--radius",
+            "150",
+            "--kinds",
+            "axis",
+        ],
+    );
+    assert!(list(&snapped, "skipped").is_empty(), "{snapped:?}");
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(text(c, "kind"), "axis");
+    near(at(c, &["point_world_mm"]), [2000.0, 0.0, 2000.0]);
+    assert!((number(at(c, &["distance_mm"])) - 100.0).abs() < 1e-6);
+    assert!((number(at(c, &["axis_parameter"])) - 0.5).abs() < 1e-6);
+}
+
+/// The axis snap of a member with a rotated placement: the same 90-degree-about-Z beam as
+/// `a_rotated_member_reopens_with_world_bounds_and_unchanged_shape` (members.rs), where the
+/// rotation is composed into the body, so the authored axis `(0,0,0)..(4000,0,0)` answers in
+/// world at `(-50,70,1000)..(-50,4070,1000)`. A rotated member must not land in the skipped
+/// bucket (issue #132).
+#[test]
+fn snap_answers_the_axis_of_a_member_with_a_rotated_placement() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "200", "--height", "300"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "4000,0,0",
+            "--orientation-xyzw",
+            "0,0,0.7071067811865476,0.7071067811865476",
+            "--translation",
+            "-50,70,1000",
+            "--profile-digest",
+            &profile,
+            "--new-id",
+            MEMBER,
+        ],
+    );
+    // The start endpoint, queried 1 mm off it.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "-49,70,1000",
+            "--radius",
+            "5",
+            "--kinds",
+            "axis_end",
+        ],
+    );
+    assert!(list(&snapped, "skipped").is_empty(), "{snapped:?}");
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(text(c, "element_id"), MEMBER);
+    assert_eq!(number(at(c, &["axis_parameter"])), 0.0);
+    near(at(c, &["point_world_mm"]), [-50.0, 70.0, 1000.0]);
+    assert!((number(at(c, &["distance_mm"])) - 1.0).abs() < 1e-6);
+
+    // The end endpoint, queried just before it.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "-49,4069,1000",
+            "--radius",
+            "5",
+            "--kinds",
+            "axis_end",
+        ],
+    );
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(number(at(c, &["axis_parameter"])), 1.0);
+    near(at(c, &["point_world_mm"]), [-50.0, 4070.0, 1000.0]);
+
+    // The nearest axis point: 30 mm off the middle of the rotated axis.
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "-50,2070,1030",
+            "--radius",
+            "50",
+            "--kinds",
+            "axis",
+        ],
+    );
+    let c = &list(&snapped, "candidates")[0];
+    assert_eq!(text(c, "kind"), "axis");
+    near(at(c, &["point_world_mm"]), [-50.0, 2070.0, 1000.0]);
+    assert!((number(at(c, &["distance_mm"])) - 30.0).abs() < 1e-6);
+    assert!((number(at(c, &["axis_parameter"])) - 0.5).abs() < 1e-6);
 }
