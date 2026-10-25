@@ -231,7 +231,8 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
 
 /// The key of a member body with its resolved profile. Every field of [`AuthoredMember`] and of
 /// the profile is named, as for [`plate_key`]; the pinned profile digest is not an input, its
-/// resolved values are.
+/// resolved values are. The placement rotation is a shape input (it composes into the member
+/// mesh); the translation is not.
 fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
     let AuthoredMember {
         id: _,
@@ -240,7 +241,7 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         axis_points_mm,
         profile: _,
         roll_rad,
-        placement: _,
+        placement,
         material: _,
         cut,
     } = member;
@@ -249,6 +250,11 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
     push_points(&mut key, axis_points_mm);
     push_option(&mut key, *roll_rad);
     push_cut(&mut key, cut.as_ref());
+    let [qx, qy, qz, qw] = placement.orientation_xyzw;
+    push_f64(&mut key, qx);
+    push_f64(&mut key, qy);
+    push_f64(&mut key, qz);
+    push_f64(&mut key, qw);
     match profile {
         ProfileInfo::Rectangle {
             width_mm,

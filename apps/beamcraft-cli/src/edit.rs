@@ -4,13 +4,14 @@
 //! P04 adapter: `UpdateElement` for a plate or a member, committed as the next revision.
 //!
 //! The patch is typed (label, material reference, a plate's thickness, the placement translation,
-//! the D2 level assignment)
+//! the placement rotation, the D2 level assignment)
 //! and the adapter writes only what the patch changes: a rename touches the authored layer alone,
 //! a material change rewrites the quantity record next to an unchanged mesh, a thickness change
-//! rebuilds the mesh and the records, and a move (P08) rewrites the placement alone: the
-//! element-local body, its mesh and its stored quantities are not copied or rebuilt. The engine
-//! decides which groups changed and the layer engine's own write set is checked against the
-//! footprint it declares.
+//! rebuilds the mesh and the records, a move (P08) rewrites the placement alone: the
+//! element-local body, its mesh and its stored quantities are not copied or rebuilt. An
+//! orientation change rewrites the placement and, for a member, rebuilds the rotated body (the
+//! placement rotation is part of the member mesh). The engine decides which groups changed and
+//! the layer engine's own write set is checked against the footprint it declares.
 //!
 //! Honesty limits: replay of an `op_id` is decided from the head model (the update is a replay
 //! when the head already holds the patched state), not from a stored canonical request; a later
@@ -18,7 +19,7 @@
 //! request (F04 section 3) replaces this. One implicit workspace, in-process layer engine, as in
 //! `plate`.
 
-use crate::definition::material_lookup;
+use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
     check_footprint, control, decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base,
@@ -27,7 +28,7 @@ use crate::plate::{
 };
 use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::member_quantities;
+use beamcraft_engine::member::{evaluate_member, member_quantities};
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
@@ -197,12 +198,20 @@ pub fn update_element(
         Target::Member(head) => {
             let authored = patch_member(&head.authored, &command.patch)?;
             let material = authored.material.as_ref().map(&materials).transpose()?;
-            let quantities = member_quantities(&head.body, material)?;
+            // The placement rotation is part of the member mesh: an orientation change rebuilds
+            // the body, every other patch keeps the head's mesh.
+            let body = if patch_effect.orientation {
+                let profile = profile_lookup(&definitions)(&authored.profile)?;
+                evaluate_member(&authored, profile)?
+            } else {
+                head.body.clone()
+            };
+            let quantities = member_quantities(&body, material)?;
             (
                 UpdatedElement::Member(Box::new(head.clone())),
                 UpdatedElement::Member(Box::new(MemberRecord {
                     authored,
-                    body: head.body.clone(),
+                    body,
                     quantities,
                 })),
             )
@@ -261,7 +270,7 @@ pub fn update_element(
         patch_effect.name,
         patch_effect.material,
         patch_effect.shape,
-        patch_effect.placement,
+        patch_effect.placement || patch_effect.orientation,
         new_material,
     )?;
     // The level decision needs the model (kind of the target, existence and kind of the level);
@@ -299,7 +308,7 @@ pub fn update_element(
             mm,
         });
     }
-    if patch_effect.placement {
+    if patch_effect.placement || patch_effect.orientation {
         let placement = match &next {
             UpdatedElement::Plate(r) => r.authored.placement,
             UpdatedElement::Member(r) => r.authored.placement,
@@ -319,7 +328,10 @@ pub fn update_element(
             level: level.map(|l| l.to_string()),
         });
     }
-    if patch_effect.material || patch_effect.shape {
+    if patch_effect.material
+        || patch_effect.shape
+        || (patch_effect.orientation && matches!(next, UpdatedElement::Member(_)))
+    {
         changes.push(match &next {
             UpdatedElement::Plate(r) => {
                 mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?

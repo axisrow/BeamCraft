@@ -489,6 +489,235 @@ fn replay_reuse_and_a_duplicate_id_across_kinds() {
 }
 
 #[test]
+fn hostile_orientation_input_is_refused_and_publishes_nothing() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let create = |orientation: &str| {
+        f.rejected(
+            "create-member",
+            &[
+                "--start",
+                "0,0,0",
+                "--end",
+                "6000,0,0",
+                "--profile-digest",
+                profile.as_str(),
+                "--orientation-xyzw",
+                orientation,
+            ],
+        )
+    };
+    // Hostile create-member input: non-normalized, zero, extra components and NaN. Every
+    // refusal is a typed exit, never a crash, and nothing is written.
+    assert_eq!(create("0,0,0.5,0.5"), "INVALID_ARGUMENT");
+    assert_eq!(create("0,0,0,0"), "INVALID_ARGUMENT");
+    assert_eq!(
+        create("0,0,0.7071067811865476,0.7071067811865476,1"),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(create("0,NaN,0,1"), "NON_FINITE_NUMBER");
+    assert_eq!(num(&f.ok("plate-inspect", &[]), &["member_count"]), 0.0);
+
+    // The same input on update-element, against a member that exists: the head stays where it
+    // was and the stored orientation is untouched.
+    let created = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            profile.as_str(),
+            "--new-id",
+            "01a00000-0000-7000-8000-000000000031",
+        ],
+    );
+    let member_id = text(at(&created, &["member"]), "element_id");
+    let before = f.ok("plate-inspect", &[]);
+    let head = text(at(&before, &["revision"]), "revision_id");
+    let update = |orientation: &str| {
+        f.rejected(
+            "update-element",
+            &[
+                "--id",
+                member_id.as_str(),
+                "--orientation-xyzw",
+                orientation,
+            ],
+        )
+    };
+    assert_eq!(update("0,0,0.5,0.5"), "INVALID_ARGUMENT");
+    assert_eq!(update("0,0,0,0"), "INVALID_ARGUMENT");
+    assert_eq!(
+        update("0,0,0.7071067811865476,0.7071067811865476,1"),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(update("NaN,0,0,1"), "NON_FINITE_NUMBER");
+    let after = f.ok("plate-inspect", &[]);
+    assert_eq!(
+        text(at(&after, &["revision"]), "revision_id"),
+        head,
+        "a refusal must not commit"
+    );
+    let member = &at(&after, &["members"]).array().unwrap()[0];
+    let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    for (actual, expected) in quaternion.iter().zip([0.0, 0.0, 0.0, 1.0]) {
+        assert!((actual - expected).abs() < 1e-12, "{quaternion:?}");
+    }
+}
+
+#[test]
+fn an_orientation_update_sets_clears_and_replays() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let created = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            profile.as_str(),
+            "--new-id",
+            "01a00000-0000-7000-8000-000000000041",
+        ],
+    );
+    let member = at(&created, &["member"]);
+    let member_id = text(member, "element_id");
+    let plain = text(member, "mesh_digest");
+
+    // Set: the stored orientation is the quarter turn and the mesh carries the rotation.
+    let quarter = "0,0,0.7071067811865476,0.7071067811865476";
+    let set = |op: &str| {
+        f.ok(
+            "update-element",
+            &[
+                "--id",
+                member_id.as_str(),
+                "--orientation-xyzw",
+                quarter,
+                "--op-id",
+                op,
+            ],
+        )
+    };
+    let turned = set("01a00000-0000-7000-8000-000000000042");
+    assert_eq!(text(&turned, "outcome"), "element_updated");
+    assert_eq!(at(&turned, &["effect", "orientation"]), &Json::Bool(true));
+    assert_eq!(at(&turned, &["effect", "placement"]), &Json::Bool(false));
+    let inspected = f.ok("plate-inspect", &[]);
+    let member = &at(&inspected, &["members"]).array().unwrap()[0];
+    let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    for (actual, expected) in quaternion
+        .iter()
+        .zip([0.0, 0.0, 0.5_f64.sqrt(), 0.5_f64.sqrt()])
+    {
+        assert!((actual - expected).abs() < 1e-8, "{quaternion:?}");
+    }
+    assert_ne!(text(member, "mesh_digest"), plain);
+    let translation: Vec<f64> = at(member, &["placement", "translation_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    assert_eq!(
+        translation, [0.0; 3],
+        "an orientation change keeps the translation"
+    );
+
+    // An immediate retry of the same --op-id is a replay of the same state.
+    let replayed = set("01a00000-0000-7000-8000-000000000042");
+    assert_eq!(text(&replayed, "outcome"), "element_update_replayed");
+
+    // Clear: none resets the rotation to the identity and the body to the unrotated mesh.
+    let cleared = f.ok(
+        "update-element",
+        &[
+            "--id",
+            member_id.as_str(),
+            "--orientation-xyzw",
+            "none",
+            "--op-id",
+            "01a00000-0000-7000-8000-000000000043",
+        ],
+    );
+    assert_eq!(text(&cleared, "outcome"), "element_updated");
+    let member = at(&cleared, &["element"]);
+    let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    assert_eq!(quaternion, [0.0, 0.0, 0.0, 1.0]);
+    assert_eq!(
+        text(member, "mesh_digest"),
+        plain,
+        "the identity rebuild is the original mesh"
+    );
+}
+
+#[test]
+fn a_rotated_member_replays_identically_on_the_same_op_id() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let args = [
+        "--start",
+        "0,0,0",
+        "--end",
+        "4000,0,0",
+        "--profile-digest",
+        profile.as_str(),
+        "--orientation-xyzw",
+        "0,0,0.7071067811865476,0.7071067811865476",
+        "--new-id",
+        "01a00000-0000-7000-8000-000000000051",
+        "--op-id",
+        "01a00000-0000-7000-8000-000000000052",
+    ];
+    let first = f.ok("create-member", &args);
+    assert_eq!(text(&first, "outcome"), "member_created");
+    let replay = f.ok("create-member", &args);
+    assert_eq!(text(&replay, "outcome"), "member_replayed");
+    assert_eq!(
+        text(at(&replay, &["member"]), "mesh_digest"),
+        text(at(&first, &["member"]), "mesh_digest")
+    );
+    assert_eq!(
+        text(at(&replay, &["member"]), "element_id"),
+        text(at(&first, &["member"]), "element_id")
+    );
+    // The rotated state is what a fresh process reports for the stored orientation.
+    let inspected = f.ok("plate-inspect", &[]);
+    let member = &at(&inspected, &["members"]).array().unwrap()[0];
+    let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    for (actual, expected) in quaternion
+        .iter()
+        .zip([0.0, 0.0, 0.5_f64.sqrt(), 0.5_f64.sqrt()])
+    {
+        assert!((actual - expected).abs() < 1e-8, "{quaternion:?}");
+    }
+}
+
+#[test]
 fn a_member_whose_mesh_would_collapse_in_float32_is_refused() {
     let f = Fixture::new();
     let profile = f.profile("1", "1");

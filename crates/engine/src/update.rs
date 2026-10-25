@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! `UpdateElement` for the supported fields (F04 section 7, P04, P08, D2): a typed patch of the
-//! label, the material reference, a plate's thickness, the placement translation (a move) and the
-//! level assignment.
+//! label, the material reference, a plate's thickness, the placement translation (a move), the
+//! placement rotation and the level assignment.
 //!
 //! The engine applies the patch to the authored state, re-evaluates what depends on it and says
 //! which groups changed, so the adapter writes only those:
@@ -14,11 +14,14 @@
 //! | `material` | no | yes | quantity record only (same mesh bytes) |
 //! | `thickness_mm` | yes | yes | mesh and quantity record |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
+//! | `orientation_xyzw` | a member: yes (the rotation is in the mesh), a plate: no | no | the placement attribute; for a member also the mesh |
 //! | `level` | no | no | untouched (a relationship of the element only) |
 //!
 //! A move keeps the rotation and never touches the shape, the body or the stored quantities, so
-//! no geometry is copied or rebuilt. Fields outside this list (contour, axis, roll, profile) are
-//! `UNSUPPORTED_PROPERTY`: they belong to later tasks.
+//! no geometry is copied or rebuilt. An orientation change replaces the stored quaternion as a
+//! whole (a member body is rebuilt with the new rotation, the quantities are unchanged). Fields
+//! outside this list (contour, axis, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to
+//! later tasks.
 
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
@@ -36,6 +39,8 @@ pub struct UpdateEffect {
     pub shape: bool,
     /// The placement translation changes (a move); the body is untouched.
     pub placement: bool,
+    /// The placement rotation changes; the translation is kept.
+    pub orientation: bool,
     /// The level assignment changes (D2), including its removal; no geometry is touched.
     pub level: bool,
 }
@@ -48,6 +53,7 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         material: patch.material.is_some(),
         shape: patch.thickness_mm.is_some(),
         placement: patch.translation_mm.is_some(),
+        orientation: patch.orientation_xyzw.is_some(),
         level: patch.level.is_some(),
     }
 }
@@ -67,7 +73,7 @@ pub fn patch_plate(
     if let Some(thickness) = patch.thickness_mm {
         next.thickness_mm = thickness;
     }
-    next.placement = moved(&plate.placement, patch)?;
+    next.placement = placement_after(&plate.placement, patch)?;
     Ok(next)
 }
 
@@ -91,19 +97,21 @@ pub fn patch_member(
     if let Some(material) = patch.material {
         next.material = material;
     }
-    next.placement = moved(&member.placement, patch)?;
+    next.placement = placement_after(&member.placement, patch)?;
     Ok(next)
 }
 
-/// The placement after the patch: the translation is replaced, the rotation kept, and the result
-/// is validated (`LIMIT_EXCEEDED` outside the coordinate range).
-fn moved(placement: &Placement, patch: &ElementPatch) -> Result<Placement, CommandError> {
-    let Some(translation_mm) = patch.translation_mm else {
+/// The placement after the patch: the translation is replaced when the patch names one, the
+/// rotation is replaced when the patch names one, and the result is validated
+/// (`LIMIT_EXCEEDED` outside the coordinate range, `NON_FINITE_NUMBER` or `INVALID_ARGUMENT`
+/// for a hostile quaternion).
+fn placement_after(placement: &Placement, patch: &ElementPatch) -> Result<Placement, CommandError> {
+    if patch.translation_mm.is_none() && patch.orientation_xyzw.is_none() {
         return Ok(*placement);
-    };
+    }
     let next = Placement {
-        translation_mm,
-        orientation_xyzw: placement.orientation_xyzw,
+        translation_mm: patch.translation_mm.unwrap_or(placement.translation_mm),
+        orientation_xyzw: patch.orientation_xyzw.unwrap_or(placement.orientation_xyzw),
     };
     next.validate()?;
     Ok(next)
@@ -147,6 +155,7 @@ mod tests {
                 material: false,
                 shape: false,
                 placement: false,
+                orientation: false,
                 level: false
             }
         );
@@ -234,6 +243,91 @@ mod tests {
         )
         .unwrap();
         assert_eq!(same.material, Some(steel));
+    }
+
+    #[test]
+    fn an_orientation_patch_replaces_the_rotation_and_keeps_everything_else() {
+        let quarter = [0.0, 0.0, 0.5_f64.sqrt(), 0.5_f64.sqrt()];
+        let turning = |xyzw: [f64; 4]| ElementPatch {
+            orientation_xyzw: Some(xyzw),
+            ..ElementPatch::default()
+        };
+        let turned = patch_member(&member(), &turning(quarter)).unwrap();
+        assert_eq!(turned.placement.orientation_xyzw, quarter);
+        assert_eq!(turned.placement.translation_mm, [0.0; 3]);
+        assert_eq!(turned.axis_points_mm, member().axis_points_mm);
+        assert_eq!(turned.roll_rad, None);
+        let effect = effect(&turning(quarter));
+        assert!(effect.orientation && !effect.placement && !effect.shape);
+        // A move after the turn keeps the new rotation; an orientation patch keeps the move.
+        let moved = patch_member(
+            &turned,
+            &ElementPatch {
+                translation_mm: Some([5.0, 6.0, 7.0]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(moved.placement.orientation_xyzw, quarter);
+        assert_eq!(moved.placement.translation_mm, [5.0, 6.0, 7.0]);
+        let plate_turned = patch_plate(
+            &plate(),
+            &ElementPatch {
+                orientation_xyzw: Some(quarter),
+                translation_mm: Some([1.0, 0.0, 0.0]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(plate_turned.placement.orientation_xyzw, quarter);
+        assert_eq!(plate_turned.placement.translation_mm, [1.0, 0.0, 0.0]);
+        assert_eq!(plate_turned.contour_points_mm, plate().contour_points_mm);
+    }
+
+    #[test]
+    fn a_hostile_orientation_patch_is_refused_by_code() {
+        let patch = |xyzw: [f64; 4]| ElementPatch {
+            orientation_xyzw: Some(xyzw),
+            ..ElementPatch::default()
+        };
+        // Non-normalized (squared norm 0.5) and the zero quaternion.
+        assert_eq!(
+            patch_member(&member(), &patch([0.0, 0.0, 0.5, 0.5]))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            patch_member(&member(), &patch([0.0; 4])).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        // NaN and an out-of-range component.
+        assert_eq!(
+            patch_member(&member(), &patch([f64::NAN, 0.0, 0.0, 1.0]))
+                .unwrap_err()
+                .code,
+            ErrorCode::NonFiniteNumber
+        );
+        assert_eq!(
+            patch_plate(&plate(), &patch([2.0, 0.0, 0.0, 0.0]))
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    fn member() -> AuthoredMember {
+        AuthoredMember {
+            id: ElementId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap(),
+            kind: MemberKind::Beam,
+            name: "Beam".into(),
+            axis_points_mm: [[0.0; 3], [1000.0, 0.0, 0.0]],
+            profile: Sha256::digest(b"profile").unwrap(),
+            roll_rad: None,
+            placement: Placement::IDENTITY,
+            material: None,
+            cut: None,
+        }
     }
 
     #[test]
