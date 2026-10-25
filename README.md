@@ -89,9 +89,9 @@ or from a local checkout instead of GitHub:
 claude plugin install beamcraft --marketplace /path/to/BeamCraft
 ```
 
-The commands are `/beamcraft:model`, `/beamcraft:store`, `/beamcraft:view`, `/beamcraft:pick`
-and `/beamcraft:open`, which launches the native viewport app on a store; the same workflows
-are also available as skills that Claude picks up from the request.
+The workflows are skills that Claude picks up from the request, and each is also a slash
+command: `/beamcraft:model`, `/beamcraft:store`, `/beamcraft:view`, `/beamcraft:pick` and
+`/beamcraft:open`, which launches the native viewport app on a store.
 See [`.claude-plugin/plugin.json`](.claude-plugin/plugin.json) and the
 `skills/` guides, which embed real captured CLI output as their acceptance evidence.
 
