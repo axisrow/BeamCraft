@@ -102,6 +102,51 @@ beamcraft feature-lookup --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.
 Resolve a hit's id with `feature-lookup` instead of reading geometry out of the letter; the
 frame still needs documenting in the CLI (follow-up issue #147).
 
+The captured letter-to-normal map, quoted from real runs against the member above (all four
+outputs are from the same head, unedited apart from line wrapping). The ray onto the +width
+face (world normal `[0,1,0]`) returns `f.x1`, not `f.y1`:
+
+```json
+{"elements":4,"hits":[{"back_facing":false,"boundary":false,"distance_mm":0,
+  "element_id":"6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d",
+  "feature_id":"fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:f.x1","feature_kind":"face",
+  "normal_world":[0,0.9999999999999999,0],"point_world_mm":[1500,100,0],"t_mm":900}],
+ "outcome":"picked","revision_id":"01a17111-d7f3-707c-a9c2-bdd8396ebcdc","truncated":false}
+```
+
+```json
+{"feature_id":"fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:f.x1",
+ "local":{"corners":[[0,100,-150],[0,100,150],[3000,100,150],[3000,100,-150]],
+  "normal":[0,0.9999999999999999,0],"vertex_ids":["fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y0.z0",
+  "fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y1.z0","fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y1.z1",
+  "fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y0.z1"]},"local_id":"member:f.x1","outcome":"feature",
+ "world":{"corners":[[0,100,-150],[0,100,150],[3000,100,150],[3000,100,-150]],
+  "normal":[0,0.9999999999999999,0]}}
+```
+
+```json
+{"feature_id":"fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:f.y1",
+ "local":{"corners":[[0,-100,150],[3000,-100,150],[3000,100,150],[0,100,150]],
+  "normal":[0,0,1],"vertex_ids":["fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x0.y1.z0",
+  "fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x0.y1.z1","fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y1.z1",
+  "fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y1.z0"]},"local_id":"member:f.y1","outcome":"feature",
+ "world":{"corners":[[0,-100,150],[3000,-100,150],[3000,100,150],[0,100,150]],"normal":[0,0,1]}}
+```
+
+```json
+{"feature_id":"fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:f.z1",
+ "local":{"corners":[[3000,-100,-150],[3000,100,-150],[3000,100,150],[3000,-100,150]],
+  "normal":[1,0,0],"vertex_ids":["fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x0.y0.z1",
+  "fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y0.z1","fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y1.z1",
+  "fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x0.y1.z1"]},"local_id":"member:f.z1","outcome":"feature",
+ "world":{"corners":[[3000,-100,-150],[3000,100,-150],[3000,100,150],[3000,-100,150]],"normal":[1,0,0]}}
+```
+
+Note the self-consistency in the captures: each face's `vertex_ids` carry the same letter as
+the face (`f.z1` holds the four `v.*.z1` vertices, `f.x1` the four `v.x1.*`), and those
+vertices sit on the world axes the section frame predicts - `v.x1.*` at world `y = +100`
+(width), `v.*.z1` at world `x = 3000` (axis end).
+
 Pass `--radius` for the point form (and `--include-backfaces true` if needed). A point inside a
 solid or a ray into space is a normal, empty result:
 
