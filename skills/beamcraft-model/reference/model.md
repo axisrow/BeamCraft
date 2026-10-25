@@ -37,7 +37,7 @@ not accepted. Generate a fresh id for every use; never reuse one value for two d
 uuidgen | tr 'A-Z' 'a-z' | awk '{print substr($1,1,14) "7" substr($1,16,4) "b" substr($1,21)}'
 ```
 
-Follow `reference/store.md` if no store exists yet. A definition must be published
+Follow the sibling `store.md` reference if no store exists yet. A definition must be published
 before an element can pin it.
 
 ## 1. Publish definitions (once per store)
@@ -177,7 +177,7 @@ plates only.
 
 `beamcraft plate-inspect --store STORE` opens and verifies the head revision and lists plates
 and members with quantities; `--element UUID` lists only that element. Full documentation and
-captured output: `reference/store.md`. Always prove a modelling change by inspecting
+captured output: the sibling `store.md` reference. Always prove a modelling change by inspecting
 afterwards and reporting element ids, the new `sequence` and the quantities from the real output.
 
 `copy-element` and `delete-element` also exist (see `apps/beamcraft-cli/README.md`, P05/P08).
@@ -192,7 +192,7 @@ afterwards and reporting element ids, the new `sequence` and the quantities from
 Model BeamCraft elements exactly as described in the request.
 
 1. Build the `beamcraft` binary if it is not built (the command is above).
-2. Ensure a store exists - follow `reference/store.md` when the user has not named one.
+2. Ensure a store exists - follow the sibling `store.md` reference when the user has not named one.
 3. Run the real binary for every step; quote only captured JSON as evidence.
 4. Prove the result: run `plate-inspect` afterwards and report the element ids, the new
    revision `sequence` and the quantities from the real output.
