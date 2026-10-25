@@ -14,6 +14,7 @@ argument; if it is missing, ask for one before running anything.
    command; the CLI is built alongside, because the app finds it next to its own executable.
 2. Launch the app in the background against the store exactly as §3 shows, with a log file.
 3. Prove the launch with the real process: it is alive and the log is clean; quote what you
-   captured. Refreshing the store's head inside the window is `R`.
+   captured. The window reloads the store's head by itself when the CLI commits to it; a manual
+   reload is `R`.
 4. The picture itself is accepted by the owner's eyes: report that the window is up and wait
    for that confirmation.
