@@ -77,7 +77,22 @@ The destination is never overwritten: an existing `--out FILE` is a refusal, and
 installed only after a complete write. `--with-definitions true` and `--with-element UUID` frame
 definition and element replies into the bundle, but only together with `--out -`.
 
-## 3. Prove a workflow with evidence
+## 3. Open the native viewport
+
+The desktop app shows the accepted head of a store in a real 3D window. Build it from the same
+checkout; it finds the CLI next to its own executable unless `--cli` names it:
+
+```sh
+cargo build --offline -p beamcraft-ui --bins
+<checkout>/target/debug/beamcraft-ui --store ROOT
+```
+
+Launch it in the background with a log file and prove the launch by the living process and a
+clean log. In the window, `R` reloads the store's head, `F` fits the view, a click selects.
+What the picture shows is accepted by the person looking at it: launch evidence is not visual
+acceptance.
+
+## 4. Prove a workflow with evidence
 
 - snapshot: `outcome` is `view_snapshot` with the element count you asked for;
 - export: `outcome` is `view_exported`, and the file exists with the reported `bytes`.
