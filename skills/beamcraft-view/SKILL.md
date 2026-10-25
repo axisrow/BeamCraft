@@ -1,6 +1,7 @@
 ---
-name: beamcraft-view
+name: view
 description: Snapshot and export a BeamCraft view through the beamcraft-cli (view-snapshot, view-export), and open the model in the native viewport app. Use when the user asks for a view snapshot of a scene or store, for a view-export bundle for the native BeamCraft viewport, or to open the model in the viewport.
+argument-hint: [snapshot or export, and where]
 ---
 
 # Snapshot and export views with the BeamCraft CLI
@@ -102,3 +103,13 @@ acceptance.
 A view-export bundle plus `plate-inspect` output is the complete acceptance evidence for the
 "show the model headlessly" workflow. No mesh bytes are in the snapshot JSON; a consumer reads
 blobs by digest through the engine API.
+
+## Apply it to the request
+
+Produce the BeamCraft view as described in the request - `view-snapshot` for a synthetic
+scene without a store, `view-export` for the verified head of a store, §3 to open the native
+viewport on it.
+
+1. Build the `beamcraft` binary if it is not built (the command is above).
+2. Quote only captured JSON as evidence (§4); for an export, confirm the file exists with the
+   reported `bytes`.

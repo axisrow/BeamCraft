@@ -1,6 +1,7 @@
 ---
-name: beamcraft-store
+name: store
 description: Create, open and verify a BeamCraft store through the beamcraft-cli (project-create, revision-open, plate-inspect). Use when the user asks to create a BeamCraft project/store, check that a store is intact, or list what a store contains.
+argument-hint: [store path, or what to check]
 ---
 
 # Open and verify a BeamCraft store
@@ -110,3 +111,12 @@ A claim about a store is proven by captured output, not by a description:
 Raw byte storage (`blob-put`/`blob-verify`) and revision recovery
 (`revision-recover`/`revision-outcome`) exist as well; see `apps/beamcraft-cli/README.md`
 (U05/U06/U07) before touching them.
+
+## Apply it to the request
+
+Open and verify the BeamCraft store as described in the request.
+
+1. Build the `beamcraft` binary if it is not built (the command is above).
+2. Verify with the real binary: `revision-open` for integrity (`revision_verified`),
+   `plate-inspect` for content (element ids, placements, quantities).
+3. Quote only captured JSON as evidence and state the head `sequence` you saw.

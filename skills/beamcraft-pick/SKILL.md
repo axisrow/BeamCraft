@@ -1,6 +1,7 @@
 ---
-name: beamcraft-pick
+name: pick
 description: Pick and resolve coordinates in a BeamCraft store through the beamcraft-cli (pick, feature-list, feature-lookup, snap). Use when the user asks what is at a coordinate, to snap to a point or member axis, or to resolve a semantic feature address.
+argument-hint: [coordinate or element to resolve]
 ---
 
 # Pick and resolve features with the BeamCraft CLI
@@ -171,3 +172,13 @@ nearest point on the member axis, here mid-span):
 ```
 
 Pass `--radius` explicitly: with the default the same point 14 mm away found nothing.
+
+## Apply it to the request
+
+Resolve the coordinate or element as described in the request.
+
+1. Build the `beamcraft` binary if it is not built (the command is above).
+2. Use `feature-list`/`feature-lookup` for semantic feature addresses, `pick` for a ray or a
+   point, `snap` for the nearest vertex, axis end or axis point (pass `--radius`).
+3. Quote only captured JSON as evidence; an empty hit list is a normal result, and feature ids
+   exist for canonical box bodies only.
