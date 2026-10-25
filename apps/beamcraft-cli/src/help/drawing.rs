@@ -17,5 +17,7 @@ pub(super) const DOCUMENTS: &str = concat!(
     "--store MODEL_ROOT --document-dir DIR --expected-head UUID (same IDs); publish-drawing ",
     "--document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID ",
     "--version-id UUID; inspect-drawing --document-dir DIR [--model-store ROOT]; ",
-    "inspect-drawing-versions --document-dir DIR.",
+    "inspect-drawing-versions --document-dir DIR; export-drawing --document-dir DIR ",
+    "--version-id UUID --out NEW_FILE.svg (one exact published version from its own archived ",
+    "source; deterministic bytes; refuses an existing destination; the live model is not read).",
 );

@@ -8,6 +8,7 @@
 //! must enter through [`Drawing::admit`] before it can authorize any of them.
 
 pub mod projection;
+pub mod svg;
 
 use crate::query::feature::{BodyKind, FeatureId, FeatureKind};
 use beamcraft_model::command::{CommandError, label_is_valid};

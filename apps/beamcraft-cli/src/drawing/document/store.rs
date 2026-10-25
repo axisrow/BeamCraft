@@ -7,6 +7,7 @@ use super::{Metadata, State};
 use crate::drawing::{archive::SourceArchive, codec, derived};
 use crate::plate::{PlateError, control, host_uuid, integrity};
 use beamcraft_engine::drawing::Drawing;
+use beamcraft_engine::drawing::projection::{self, BodyProjection, DimensionProjection};
 use beamcraft_host::lease::StoreLease;
 use beamcraft_host::ledger::{Outcome, OutcomeSource};
 use beamcraft_host::revision::{
@@ -473,7 +474,21 @@ impl DocumentStore {
         };
         let root = super::encode(metadata)?;
         let intent = codec::encode(drawing)?;
-        let projected = derived::encode(drawing, &source.inspect()?.snapshot)?;
+        let snapshot = source.inspect()?.snapshot;
+        // Publication requires a fully resolved draft: an explicit unresolved state never enters
+        // an immutable version, and this refuses before any resource is stored or head moves.
+        if state == State::Published {
+            let checked = projection::resolve(drawing, &snapshot)?;
+            if matches!(checked.body, BodyProjection::Unresolved(_))
+                || matches!(checked.dimension, DimensionProjection::Unresolved(_))
+            {
+                return Err(PlateError {
+                    code: ErrorCode::InvalidArgument,
+                    message: "unresolved drawing geometry cannot be published",
+                });
+            }
+        }
+        let projected = derived::encode(drawing, &snapshot)?;
         let mut assets = vec![root, intent, projected];
         assets.extend_from_slice(source.resources());
         let mut layer_entries = Vec::with_capacity(assets.len());
