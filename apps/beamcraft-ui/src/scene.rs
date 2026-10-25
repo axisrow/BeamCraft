@@ -37,6 +37,74 @@ pub struct DrawMesh {
     pub resident: bool,
 }
 
+/// The display-only ghost preview of the member being placed (issue #134): the engine's own
+/// body mesh for the two picked points, expanded for drawing and tinted by its own pipeline.
+/// Nothing here decides whether the placement is acceptable; the engine says so at commit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GhostMesh {
+    /// Expanded position/normal triangles, relative to [`GhostMesh::anchor_mm`].
+    pub vertices: Vec<u8>,
+    /// Corner count (three per triangle).
+    pub vertex_count: u32,
+    /// World point (millimetres) the vertices are relative to: the centre of the ghost bounds.
+    pub anchor_mm: [f64; 3],
+    /// The one instance: the anchor relative to the scene origin, identity orientation.
+    pub instance: [u8; INSTANCE_BYTES],
+}
+
+impl GhostMesh {
+    /// Expands the engine's member body (already in world coordinates: the placement rotation
+    /// composes into the body) into a ghost drawn at the scene origin.
+    pub fn of(vertices: &[[f64; 3]], triangles: &[[u32; 3]], origin_mm: [f64; 3]) -> Self {
+        let mut low = [f64::INFINITY; 3];
+        let mut high = [f64::NEG_INFINITY; 3];
+        for p in vertices {
+            for ((l, h), x) in low.iter_mut().zip(high.iter_mut()).zip(*p) {
+                *l = l.min(x);
+                *h = h.max(x);
+            }
+        }
+        let mut anchor = [0.0; 3];
+        for ((a, l), h) in anchor.iter_mut().zip(low).zip(high) {
+            *a = (l + h) / 2.0;
+        }
+        let mut out = Vec::with_capacity(triangles.len() * 3 * VERTEX_BYTES);
+        for triangle in triangles {
+            let mut corners = [[0.0; 3]; 3];
+            for (k, index) in triangle.iter().enumerate() {
+                // Kernel-validated indices; a stray one degrades one triangle, never a crash.
+                if let Some(slot) = corners.get_mut(k) {
+                    *slot = vertices.get(*index as usize).copied().unwrap_or([0.0; 3]);
+                }
+            }
+            let [a, b, c] = corners;
+            let n = normal(a, b, c);
+            for p in corners {
+                let local = sub(p, anchor).map(|x| x as f32);
+                for value in local.into_iter().chain(n) {
+                    out.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+        }
+        let mut instance = [0u8; INSTANCE_BYTES];
+        for (k, (a, o)) in anchor.iter().zip(origin_mm).enumerate() {
+            if let Some(slot) = instance.get_mut(k * 4..k * 4 + 4) {
+                slot.copy_from_slice(&((*a - o) as f32).to_le_bytes());
+            }
+        }
+        // The identity orientation: x = y = z = 0, w = 1.
+        if let Some(w) = instance.get_mut(24..28) {
+            w.copy_from_slice(&1.0f32.to_le_bytes());
+        }
+        Self {
+            vertex_count: (triangles.len() * 3) as u32,
+            vertices: out,
+            anchor_mm: anchor,
+            instance,
+        }
+    }
+}
+
 /// The display scene of one snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
@@ -463,6 +531,40 @@ mod tests {
         assert_eq!(d, [0.0, 0.0, 1.0]);
         let n = normal([0.0; 3], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
         assert_eq!(n, [0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn a_ghost_mesh_is_relative_to_its_own_anchor_and_places_at_the_scene_origin() {
+        // A unit quad at z = 7, two triangles: the engine's member body stands in for it.
+        let vertices = vec![
+            [0.0, 0.0, 7.0],
+            [10.0, 0.0, 7.0],
+            [10.0, 10.0, 7.0],
+            [0.0, 10.0, 7.0],
+        ];
+        let triangles = vec![[0u32, 1, 2], [0, 2, 3]];
+        let ghost = GhostMesh::of(&vertices, &triangles, [2.0, 1.0, 7.0]);
+        assert_eq!(ghost.anchor_mm, [5.0, 5.0, 7.0]);
+        assert_eq!(ghost.vertex_count, 6);
+        assert_eq!(ghost.vertices.len(), 6 * VERTEX_BYTES);
+        // The first corner is (0, 0, 7) minus the anchor.
+        let part = |at: usize| f32::from_le_bytes(ghost.vertices[at..at + 4].try_into().unwrap());
+        assert_eq!((part(0), part(4), part(8)), (-5.0, -5.0, 0.0));
+        // The instance shifts the anchor relative to the scene origin, orientation identity.
+        let words: Vec<f32> = ghost.instance[12..]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect();
+        assert_eq!(words, [0.0, 0.0, 0.0, 1.0]);
+        let shift: Vec<f32> = ghost.instance[..12]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect();
+        assert_eq!(shift, [3.0, 4.0, 0.0]);
     }
 
     #[test]

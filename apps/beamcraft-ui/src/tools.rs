@@ -111,6 +111,10 @@ pub struct MemberForm {
     pub material: Option<String>,
     /// `--name`, optional.
     pub name: String,
+    /// `--roll RAD`, optional (radians; empty means the flag is absent).
+    pub roll: String,
+    /// `--orientation-xyzw X,Y,Z,W`, optional (empty means the flag is absent).
+    pub orientation: String,
 }
 
 impl Default for MemberForm {
@@ -122,8 +126,25 @@ impl Default for MemberForm {
             profile: None,
             material: None,
             name: String::new(),
+            roll: String::new(),
+            orientation: String::new(),
         }
     }
+}
+
+/// The placement quaternion a member form's orientation text stands for: an empty field is the
+/// identity the commit runs (prepare omits the flag), and `None` is text that would not even
+/// reach the engine's validation — the ghost preview draws nothing then.
+pub fn orientation_or_identity(text: &str) -> Option<[f64; 4]> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some([0.0, 0.0, 0.0, 1.0]);
+    }
+    text.split(',')
+        .map(|part| part.trim().parse::<f64>().ok())
+        .collect::<Option<Vec<f64>>>()?
+        .try_into()
+        .ok()
 }
 
 /// One command, ready to run: the arguments after the binary name and a display summary.
@@ -182,6 +203,22 @@ fn point(field: &'static str, parts: &[String; 3]) -> Result<String, FormError> 
         number(field, y)?,
         number(field, z)?
     ))
+}
+
+/// `X,Y,Z,W`, each a finite decimal: the quaternion form of `--orientation-xyzw`.
+fn quaternion(field: &'static str, text: &str) -> Result<String, FormError> {
+    let text = text.trim();
+    let parts: Vec<&str> = text.split(',').map(str::trim).collect();
+    if parts.len() != 4 {
+        return Err(FormError {
+            field,
+            message: "enter four numbers X,Y,Z,W".into(),
+        });
+    }
+    for part in &parts {
+        number(field, part)?;
+    }
+    Ok(text.to_owned())
 }
 
 fn push_name(args: &mut Vec<String>, name: &str) -> Result<(), FormError> {
@@ -260,10 +297,34 @@ impl MemberForm {
         ];
         push_name(&mut args, &self.name)?;
         push_material(&mut args, self.material.as_ref());
+        // An empty field keeps the flag absent, so the planar form builds exactly the command it
+        // always did; the engine owns every rule about rolls and quaternions.
+        let roll = self.roll.trim();
+        if !roll.is_empty() {
+            args.extend(["--roll".into(), number("Roll", roll)?]);
+        }
+        let orientation = self.orientation.trim();
+        if !orientation.is_empty() {
+            args.extend([
+                "--orientation-xyzw".into(),
+                quaternion("Orientation", orientation)?,
+            ]);
+        }
         Ok(Prepared {
             kind: ToolKind::Member,
             args,
         })
+    }
+
+    /// Fills both endpoints from resolved world points (the two clicks of the viewport
+    /// placement): the shortest decimal text that parses back exactly.
+    pub fn set_endpoints(&mut self, start: [f64; 3], end: [f64; 3]) {
+        let text = |p: [f64; 3]| {
+            let [x, y, z] = p.map(|v| format!("{v}"));
+            [x, y, z]
+        };
+        self.start = text(start);
+        self.end = text(end);
     }
 }
 
@@ -404,16 +465,53 @@ pub fn parse_created(
 }
 
 /// One definition of the store that a form can choose.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Choice {
     /// The definition's content digest (what the CLI takes).
     pub digest: String,
     /// A short label for the list.
     pub label: String,
+    /// Width and height of a rectangle section, when the definition is one: the display-only
+    /// ghost preview is drawn for these and only these (the engine builds the real shape).
+    pub rect_mm: Option<[f64; 2]>,
+}
+
+/// The two-click 3D placement of the member tool (issue #134): the first resolved point arms
+/// the start, the second fills the form's endpoints. The points are resolved outside (the
+/// engine's pick on the viewed snapshot, else the ground plane); this only remembers them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BeamPlace {
+    start: Option<[f64; 3]>,
+}
+
+impl BeamPlace {
+    /// The armed start point, if any.
+    pub fn start(&self) -> Option<[f64; 3]> {
+        self.start
+    }
+
+    /// Records a click. The first arms the start; the second returns the `(start, end)` pair.
+    pub fn click(&mut self, point: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
+        match self.start {
+            None => {
+                self.start = Some(point);
+                None
+            }
+            Some(start) => {
+                self.start = None;
+                Some((start, point))
+            }
+        }
+    }
+
+    /// Drops the armed start (Esc, a mode change, a commit).
+    pub fn reset(&mut self) {
+        self.start = None;
+    }
 }
 
 /// The profile and material definitions of the accepted revision.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Definitions {
     /// Profiles, for `--profile-digest`.
     pub profiles: Vec<Choice>,
@@ -484,21 +582,29 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
             out.materials.push(Choice {
                 label: format!("{grade}{density} ({})", short(&digest)),
                 digest,
+                rect_mm: None,
             });
         } else {
             let name = display
                 .or_else(|| text(definition, "designation"))
                 .unwrap_or_else(|| kind.clone());
-            let size = match (
+            let (width, height) = (
                 dimension(definition, "width_mm"),
                 dimension(definition, "height_mm"),
-            ) {
+            );
+            let size = match (&width, &height) {
                 (Some(w), Some(h)) => format!(" {w} x {h} mm"),
                 _ => String::new(),
             };
+            let rect_mm = width
+                .as_deref()
+                .and_then(|w| w.parse::<f64>().ok())
+                .zip(height.as_deref().and_then(|h| h.parse::<f64>().ok()))
+                .map(|(w, h)| [w, h]);
             out.profiles.push(Choice {
                 label: format!("{name}{size} ({})", short(&digest)),
                 digest,
+                rect_mm,
             });
         }
     }
@@ -705,6 +811,91 @@ mod tests {
     }
 
     #[test]
+    fn the_ghost_orientation_is_identity_for_an_empty_field_and_none_for_garbage() {
+        // Empty is the identity the commit runs: prepare omits the flag then.
+        assert_eq!(orientation_or_identity("  "), Some([0.0, 0.0, 0.0, 1.0]));
+        // The decimal text parses to the nearest f64, which is the constant itself.
+        let half = core::f64::consts::FRAC_1_SQRT_2;
+        assert_eq!(
+            orientation_or_identity("0,0,0.7071067811865476,0.7071067811865476"),
+            Some([0.0, 0.0, half, half])
+        );
+        for bad in ["0,0,1", "0,0,1,2,3", "0,0,x,1", ",,,", "0, 0, 0"] {
+            assert_eq!(orientation_or_identity(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn roll_and_orientation_extend_the_member_command_only_when_filled() {
+        let mut form = MemberForm {
+            profile: Some(DIGEST.into()),
+            ..MemberForm::default()
+        };
+        // The planar default keeps today's exact argument list: no roll, no orientation.
+        let args = form.prepare(store()).unwrap().args;
+        assert!(!args.contains(&"--roll".to_owned()));
+        assert!(!args.contains(&"--orientation-xyzw".to_owned()));
+        form.roll = " 0.7853981633974483 ".into();
+        form.orientation = "0,0,0.7071067811865476,0.7071067811865476".into();
+        let args = form.prepare(store()).unwrap().args;
+        assert_eq!(
+            args.get(args.len() - 4..),
+            Some(
+                &[
+                    "--roll".to_owned(),
+                    "0.7853981633974483".into(),
+                    "--orientation-xyzw".to_owned(),
+                    "0,0,0.7071067811865476,0.7071067811865476".into()
+                ][..]
+            )
+        );
+        let error_of = |roll: &str, orientation: &str| {
+            MemberForm {
+                profile: Some(DIGEST.into()),
+                roll: roll.into(),
+                orientation: orientation.into(),
+                ..MemberForm::default()
+            }
+            .prepare(store())
+            .unwrap_err()
+        };
+        assert_eq!(error_of("x", "").field, "Roll");
+        assert_eq!(error_of("", "0,0,1").field, "Orientation");
+        assert_eq!(error_of("", "0,0,1,2,3").field, "Orientation");
+    }
+
+    #[test]
+    fn the_viewport_clicks_fill_the_endpoints_and_the_place_state_remembers_the_start() {
+        let mut place = BeamPlace::default();
+        assert_eq!(place.start(), None);
+        assert_eq!(place.click([0.0, 0.0, 0.0]), None);
+        assert_eq!(place.start(), Some([0.0, 0.0, 0.0]));
+        assert_eq!(
+            place.click([4000.0, 0.0, 4000.0]),
+            Some(([0.0, 0.0, 0.0], [4000.0, 0.0, 4000.0]))
+        );
+        assert_eq!(place.start(), None);
+        place.reset();
+        assert_eq!(place.start(), None);
+
+        let mut form = MemberForm::default();
+        form.set_endpoints([0.0, -0.25, 1e6], [4000.0, 0.0, 4000.0]);
+        assert_eq!(
+            form.start,
+            ["0".to_owned(), "-0.25".to_owned(), "1000000".to_owned()]
+        );
+        assert_eq!(
+            form.end,
+            ["4000".to_owned(), "0".to_owned(), "4000".to_owned()]
+        );
+        form.profile = Some(DIGEST.into());
+        let args = form.prepare(store()).unwrap().args;
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap() + 1;
+        assert_eq!(args[at("--start")], "0,-0.25,1000000");
+        assert_eq!(args[at("--end")], "4000,0,4000");
+    }
+
+    #[test]
     fn bad_numbers_are_refused_before_anything_runs() {
         for bad in ["", "  ", "abc", "1,5", "NaN", "inf", "-inf", "1e999"] {
             let mut form = plate();
@@ -743,6 +934,7 @@ mod tests {
         let choice = |digest: &str| Choice {
             digest: digest.into(),
             label: digest.into(),
+            rect_mm: None,
         };
         let listed = Definitions {
             profiles: vec![choice("p")],
@@ -871,6 +1063,9 @@ mod tests {
         assert_eq!(definitions.materials.len(), 1);
         assert_eq!(definitions.profiles.len(), 1);
         assert_eq!(definitions.profiles[0].digest, DIGEST);
+        // The rectangle dimensions also feed the display-only ghost preview.
+        assert_eq!(definitions.profiles[0].rect_mm, Some([200.0, 300.0]));
+        assert_eq!(definitions.materials[0].rect_mm, None);
         assert_eq!(
             definitions.profiles[0].label,
             "Roof beams 200 x 300 mm (5d660ddd)"

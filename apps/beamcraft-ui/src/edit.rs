@@ -21,6 +21,7 @@ use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::query::feature::FeatureKind;
 use beamcraft_engine::query::pick::{PickQuery, RayPick, pick};
 use beamcraft_json::Json;
+use beamcraft_model::limits::COORDINATE_CAP_MM;
 use std::path::Path;
 
 /// A world-space ray in millimetres.
@@ -125,13 +126,53 @@ pub fn parse_pick(exit_code: Option<i32>, stdout: &[u8]) -> Result<Option<String
 /// `snapshot` by the same engine query: the element of the nearest front face along the ray, or
 /// `None` for empty space. A refusal carries the engine's code, as the CLI's reply would.
 pub fn pick_in(snapshot: &ViewSnapshot, ray: &Ray) -> Result<Option<String>, ToolError> {
+    Ok(face_pick(snapshot, ray)?.map(|(_, id)| id))
+}
+
+/// Where a click lands in 3D (issue #134 placement): the engine's front-face hit point on the
+/// snapshot on screen together with the element it names. `None` for empty space; the caller
+/// falls back to [`ground_point`] then.
+pub fn pick_point_in(
+    snapshot: &ViewSnapshot,
+    ray: &Ray,
+) -> Result<Option<([f64; 3], String)>, ToolError> {
+    face_pick(snapshot, ray)
+}
+
+fn face_pick(snapshot: &ViewSnapshot, ray: &Ray) -> Result<Option<([f64; 3], String)>, ToolError> {
     let mut query = RayPick::new(ray.origin, ray.direction, vec![FeatureKind::Face]);
     query.max_hits = 1;
     let result = pick(snapshot, &PickQuery::Ray(query)).map_err(|e| ToolError {
         code: e.f04_code().as_str().to_owned(),
         message: format!("the pick was refused ({})", e.code().as_str()),
     })?;
-    Ok(result.hits.first().map(|hit| hit.element_id.to_string()))
+    Ok(result
+        .hits
+        .first()
+        .map(|hit| (hit.point_world_mm, hit.element_id.to_string())))
+}
+
+/// Where `ray` meets the ground plane `z = 0` ahead of the camera: where a placement click
+/// lands when it misses every face. `None` for a parallel ray, a crossing behind the camera or
+/// a point beyond the member endpoint cap `COORDINATE_CAP_MM`: such a point would pass no
+/// `create-member` at Commit, so it is no placement point to begin with.
+pub fn ground_point(ray: &Ray) -> Option<[f64; 3]> {
+    if ray.direction[2].abs() < 1e-9 {
+        return None;
+    }
+    let t = -ray.origin[2] / ray.direction[2];
+    if !(t.is_finite() && t > 0.0) {
+        return None;
+    }
+    let point = [
+        ray.origin[0] + t * ray.direction[0],
+        ray.origin[1] + t * ray.direction[1],
+        0.0,
+    ];
+    (point
+        .iter()
+        .all(|v| v.is_finite() && v.abs() <= COORDINATE_CAP_MM))
+    .then_some(point)
 }
 
 /// What the panel shows about the selected element, as `plate-inspect` reports it.
@@ -1036,5 +1077,37 @@ mod tests {
         editor.select(quoted);
         let edit = editor.prepare(EditKind::Delete, target()).unwrap();
         assert_eq!(edit.argument_list().lines().last(), Some("\"a\\\"b\""));
+    }
+
+    #[test]
+    fn a_placement_click_that_misses_every_face_lands_on_the_ground_plane() {
+        // Down from 100 mm: the crossing is exactly above the origin.
+        let ray = Ray {
+            origin: [500.0, -250.0, 100.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        assert_eq!(ground_point(&ray), Some([500.0, -250.0, 0.0]));
+        // An oblique ray crosses where its slope says; a negative t is behind the camera.
+        let ray = Ray {
+            origin: [0.0, 0.0, 100.0],
+            direction: [0.6, 0.0, -0.8],
+        };
+        assert_eq!(ground_point(&ray), Some([75.0, 0.0, 0.0]));
+        assert_eq!(
+            ground_point(&Ray {
+                origin: [0.0, 0.0, 100.0],
+                direction: [0.0, 0.0, 1.0]
+            }),
+            None
+        );
+        for parallel in [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]] {
+            assert_eq!(
+                ground_point(&Ray {
+                    origin: [0.0, 0.0, 100.0],
+                    direction: parallel
+                }),
+                None
+            );
+        }
     }
 }

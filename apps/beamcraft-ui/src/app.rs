@@ -11,17 +11,22 @@ mod workbench;
 
 use crate::camera::{Camera, View};
 use crate::command::Selected;
-use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
+use crate::edit::{
+    EditKind, Edited, Editor, Epoch, Target, ground_point, ndc_of, pick_point_in, ray_through,
+};
 use crate::perf::{Observed, PerfRun, Phase as PerfPhase, RefreshTiming, Request};
 use crate::props::{Properties, State};
 use crate::publish::{Phase, Published, Publisher, Status};
 use crate::render::{Renderer, Uploaded};
-use crate::scene::SceneSummary;
+use crate::scene::{GhostMesh, SceneSummary};
 use crate::source::{Known, Refreshed, Reloaded};
 use crate::stats::Stats;
-use crate::tools::{Choice, Created, MAX_TEXT, ToolError, ToolKind, Tools};
+use crate::tools::{BeamPlace, Choice, Created, MAX_TEXT, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
+use beamcraft_engine::element::ElementId;
+use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
+use beamcraft_model::command::{MemberKind as ModelMemberKind, Placement};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -87,6 +92,13 @@ pub struct App {
     reload_queued: bool,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
+    /// The two-click 3D placement of the member tool (issue #134).
+    beam: BeamPlace,
+    /// Whether viewport clicks place the beam instead of selecting.
+    beam_mode: bool,
+    /// The millimetre-quantized hover end the current ghost was built for: the buffers rebuild
+    /// only when the preview actually moves.
+    ghost_end: Option<[i64; 3]>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
     /// The scene framing the camera was last fitted to (centre, extent, aspect): a reload that
@@ -385,6 +397,15 @@ fn needs_refit(
     }
 }
 
+/// One resolved world point, for notes and hints.
+struct PointText([f64; 3]);
+impl std::fmt::Display for PointText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let [x, y, z] = self.0;
+        write!(f, "({x:.1}, {y:.1}, {z:.1}) mm")
+    }
+}
+
 /// The volume part of a commit note: cubic millimetres below a thousandth of a cubic metre,
 /// cubic metres from there, so a small plate does not read as `0.000 m3`.
 fn volume_note(volume_mm3: f64) -> String {
@@ -596,6 +617,9 @@ impl App {
             last: Instant::now(),
             fps: 0.0,
             tools: Tools::default(),
+            beam: BeamPlace::default(),
+            beam_mode: false,
+            ghost_end: None,
             job: None,
             reload_job: None,
             reload_queued: false,
@@ -1507,6 +1531,12 @@ impl App {
         let Some(prepared) = self.tools.begin_commit(&self.source.store) else {
             return;
         };
+        // A commit ends the placement: the armed start and the ghost belong to no command.
+        self.beam_mode = false;
+        self.beam.reset();
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
         let cli = self.source.cli.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         self.job = Some(rx);
@@ -1683,11 +1713,180 @@ impl App {
         self.perf = Some((run, report));
     }
 
+    /// Turns viewport placement of the member on or off (issue #134).
+    fn toggle_place(&mut self) {
+        self.beam_mode = !self.beam_mode;
+        self.beam.reset();
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
+        if self.beam_mode {
+            self.tool_note = Some(Ok(
+                "Placing: the next two clicks in the view fill Start and End; nothing is written until Commit."
+                    .into(),
+            ));
+        }
+    }
+
+    /// One click of the placement: the engine's front-face point on the viewed snapshot, else
+    /// the ground plane. The first click arms the start, the second fills the form's endpoints.
+    /// The query is bounded by the snapshot caps and runs only while placing.
+    fn place_beam(&mut self, ray: crate::edit::Ray) {
+        let snapshot = self.loaded.as_ref().map(|l| Arc::clone(&l.snapshot));
+        let resolved = match snapshot.map(|s| pick_point_in(&s, &ray)) {
+            Some(Ok(resolved)) => resolved
+                .map(|(point, _)| point)
+                .or_else(|| ground_point(&ray)),
+            Some(Err(e)) => {
+                self.tool_note = Some(Err(e.to_string()));
+                return;
+            }
+            None => ground_point(&ray),
+        };
+        let Some(point) = resolved else {
+            self.tool_note = Some(Err(
+                "the click has no world point: aim at the model or the ground plane".into(),
+            ));
+            return;
+        };
+        match self.beam.click(point) {
+            None => {
+                self.ghost_end = None;
+                self.tool_note = Some(Ok(format!(
+                    "Start {} armed; the ghost follows the pointer.",
+                    PointText(point)
+                )));
+            }
+            Some((start, end)) => {
+                self.tools.member.set_endpoints(start, end);
+                self.beam_mode = false;
+                self.ghost_end = None;
+                self.renderer
+                    .set_ghost(&self.state.device, &self.state.queue, None);
+                self.tool_note = Some(Ok(
+                    "Endpoints placed: Preview stages the create-member command; the engine builds the shape at Commit.".into(),
+                ));
+            }
+        }
+    }
+
+    /// Rebuilds the ghost preview for the pointer's hover point: the engine's own body mesh for
+    /// start -> hover, where the pointer ray meets the plane through the start parallel to the
+    /// view. Display only: an axis the engine refuses simply draws no ghost, and Commit still
+    /// asks the engine.
+    fn update_ghost(&mut self, view: &View, ndc: [f32; 2]) {
+        let Some(start) = self.beam.start() else {
+            return;
+        };
+        let origin_mm = self
+            .loaded
+            .as_ref()
+            .map_or([0.0; 3], |l| l.summary.origin_mm);
+        let Some(ray) = ray_through(view, ndc, origin_mm) else {
+            return;
+        };
+        // The view plane through the start: every pixel off the horizon maps to a point.
+        let n = [
+            f64::from(view.back[0]),
+            f64::from(view.back[1]),
+            f64::from(view.back[2]),
+        ];
+        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+        let denom = dot(ray.direction, n);
+        if denom.abs() < 1e-9 {
+            return;
+        }
+        let t = dot(
+            [
+                start[0] - ray.origin[0],
+                start[1] - ray.origin[1],
+                start[2] - ray.origin[2],
+            ],
+            n,
+        ) / denom;
+        if !(t.is_finite() && t > 0.0) {
+            return;
+        }
+        let end = [
+            ray.origin[0] + t * ray.direction[0],
+            ray.origin[1] + t * ray.direction[1],
+            ray.origin[2] + t * ray.direction[2],
+        ];
+        let key = end.map(|v| v.round() as i64);
+        if self.ghost_end == Some(key) {
+            return;
+        }
+        self.ghost_end = Some(key);
+        let ghost = self.build_ghost(start, end, origin_mm);
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, ghost.as_ref());
+    }
+
+    /// The engine's body mesh for the staged axis, when a rectangle profile is chosen and the
+    /// engine accepts the inputs; `None` draws no ghost.
+    fn build_ghost(
+        &self,
+        start: [f64; 3],
+        end: [f64; 3],
+        origin_mm: [f64; 3],
+    ) -> Option<GhostMesh> {
+        let rect = self.profile_rect()?;
+        // The form's orientation text as the placement quaternion: empty is the identity the
+        // commit runs, and a field that does not parse draws no ghost. A well-formed
+        // quaternion the engine refuses (a non-normalized one, say) is refused below the same
+        // way, so the preview never disagrees with what Commit would build.
+        let orientation = crate::tools::orientation_or_identity(&self.tools.member.orientation)?;
+        let authored = AuthoredMember {
+            id: ElementId::parse("01990000-0000-7000-8000-00000000e347").ok()?,
+            kind: match self.tools.member.kind {
+                crate::tools::MemberKind::Beam => ModelMemberKind::Beam,
+                crate::tools::MemberKind::Column => ModelMemberKind::Column,
+            },
+            name: "ghost".into(),
+            axis_points_mm: [start, end],
+            profile: self.tools.member.profile.as_deref()?.parse().ok()?,
+            roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
+            placement: Placement {
+                translation_mm: [0.0; 3],
+                orientation_xyzw: orientation,
+            },
+            material: None,
+            cut: None,
+        };
+        let body = beamcraft_engine::member::evaluate_member(
+            &authored,
+            ProfileInfo::Rectangle {
+                width_mm: rect[0],
+                height_mm: rect[1],
+                declared_area_mm2: None,
+            },
+        )
+        .ok()?;
+        Some(GhostMesh::of(
+            body.solid.vertices(),
+            body.solid.triangles(),
+            origin_mm,
+        ))
+    }
+
+    /// Width and height of the selected rectangle profile, for the ghost.
+    fn profile_rect(&self) -> Option<[f64; 2]> {
+        let digest = self.tools.member.profile.as_ref()?;
+        self.tools
+            .definitions
+            .profiles
+            .iter()
+            .find(|c| &c.digest == digest)
+            .and_then(|c| c.rect_mm)
+    }
+
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
         ui.label("Dimensions in mm.");
         // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
         // frame the window draws.
         let definitions = &self.tools.definitions;
+        let placing = self.beam_mode;
+        let mut place_clicked = false;
         match self.tools.active {
             ToolKind::Plate => {
                 let form = &mut self.tools.plate;
@@ -1736,10 +1935,30 @@ impl App {
                     &definitions.materials,
                     false,
                 );
+                // Optional orientation (issue #134): an empty field keeps the flag absent, so
+                // the planar command stays exactly what it always was; the rules are the
+                // engine's, the form only forwards text.
+                field(ui, "Roll (rad)", &mut form.roll, 80.0);
+                field(ui, "Orientation X,Y,Z,W", &mut form.orientation, 140.0);
+                place_clicked = ui.selectable_label(placing, "Place in view").clicked();
+                if placing {
+                    match self.beam.start() {
+                        Some(start) => ui.label(format!(
+                            "Placing: click the end point in the view (start {}).",
+                            PointText(start)
+                        )),
+                        None => ui.label(
+                            "Placing: click the start point in the view. A click lands on a face; in empty space it lands on the ground plane z = 0.",
+                        ),
+                    };
+                }
                 if definitions.profiles.is_empty() {
                     ui.label("The store has no profile definition yet (beamcraft define-profile).");
                 }
             }
+        }
+        if place_clicked {
+            self.toggle_place();
         }
         let busy = self.tools.busy();
         let store = &self.source.store;
@@ -2040,11 +2259,27 @@ impl eframe::App for App {
                             picked = Some(ray);
                         }
                     }
+                    // The ghost preview follows the pointer on the plane through the armed
+                    // start, parallel to the view; the committed endpoint comes from the click.
+                    if self.beam_mode
+                        && let Some(pos) = response.hover_pos()
+                        && let Some(ndc) = ndc_of(
+                            [pos.x, pos.y],
+                            [response.rect.min.x, response.rect.min.y],
+                            [response.rect.width(), response.rect.height()],
+                        )
+                    {
+                        self.update_ghost(&view, ndc);
+                    }
                 }
                 Err(e) => self.error = Some(e.to_string()),
             }
             if let Some(ray) = picked {
-                self.start_select(ray);
+                if self.beam_mode {
+                    self.place_beam(ray);
+                } else {
+                    self.start_select(ray);
+                }
             }
             if self.text {
                 self.view_controls(ui, response.rect);
