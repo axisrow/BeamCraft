@@ -1,9 +1,3 @@
----
-name: store
-description: Create, open and verify a BeamCraft store through the beamcraft-cli (project-create, revision-open, plate-inspect). Use when the user asks to create a BeamCraft project/store, check that a store is intact, or list what a store contains.
-argument-hint: [store path, or what to check]
----
-
 # Open and verify a BeamCraft store
 
 A BeamCraft store is a directory of verified USD revisions. Everything goes through the

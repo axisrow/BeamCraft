@@ -1,9 +1,3 @@
----
-name: view
-description: Snapshot and export a BeamCraft view through the beamcraft-cli (view-snapshot, view-export), and open the model in the native viewport app. Use when the user asks for a view snapshot of a scene or store, for a view-export bundle for the native BeamCraft viewport, or to open the model in the viewport.
-argument-hint: [snapshot or export, and where]
----
-
 # Snapshot and export views with the BeamCraft CLI
 
 ## Build the binary
