@@ -50,18 +50,22 @@ Captured output (trimmed; a canonical box has 6 faces, 12 edges, 8 vertices):
 beamcraft feature-lookup --store STORE --feature-id FID1_ADDRESS
 ```
 
-Captured run of the rotated member's far top vertex (local (100, 6000, 150) placed to world
-(-100, 6000, 150) by the 90 degree Z rotation):
+Captured run of the far top vertex of an unplaced member (axis (0,0,0) to (3000,0,0), identity
+placement). `local` is the element frame and `world` adds the placement, so the two agree here:
 
 ```json
-{"element_id":"01a170f2-6df7-72f9-903d-f5cc74956a9b","elements":3,
- "feature_id":"fid1:01a170f2-6df7-72f9-903d-f5cc74956a9b:member:v.x1.y1.z1","feature_kind":"vertex",
- "local":{"position":[-100.00000000000136,6000.000000000001,150]},
- "outcome":"feature","revision_id":"01a170f3-3fc0-73d9-84c4-fd3c7c20cc5f",
- "world":{"position":[-100.00000000000136,6000.000000000001,150]}}
+{"element_id":"6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d","elements":4,
+ "feature_id":"fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:v.x1.y1.z1","feature_kind":"vertex",
+ "local":{"position":[3000,100,150]},"local_id":"member:v.x1.y1.z1",
+ "outcome":"feature","revision_id":"01a17111-d7f3-707c-a9c2-bdd8396ebcdc",
+ "world":{"position":[3000,100,150]}}
 ```
 
-A move preserves addresses and changes the pin and coordinates; a copy has new addresses.
+A move preserves addresses and changes the pin and coordinates. On a placed member, however,
+the current CLI reports `local` already placed (translation added, rotation baked in; `world` is
+`local` plus the translation). Do not assume `local` is the unplaced element frame for placed
+elements - treat `world` as the coordinate that matters and verify with a fresh run
+(follow-up issue #147).
 
 ## 3. Pick at a coordinate
 
@@ -69,19 +73,23 @@ Two forms. A ray (`--origin` + `--direction`, optional `--t-max`) or a point
 (`--point` + `--radius`); `--targets face,edge,vertex` selects what may hit:
 
 ```sh
-beamcraft pick --store STORE --origin 0,3000,1000 --direction 0,0,-1 --targets face,edge,vertex
-beamcraft pick --store STORE --point 0,3000,150 --radius 20 --targets face
+beamcraft pick --store STORE --origin 1500,0,1000 --direction 0,0,-1 --targets face,edge,vertex
+beamcraft pick --store STORE --point 1500,0,150 --radius 20 --targets face
 ```
 
-Captured ray run against the rotated member's top face:
+Captured ray run against an unplaced member's top face:
 
 ```json
-{"elements":3,"hits":[{"back_facing":false,"boundary":false,"distance_mm":0,
-  "element_id":"01a170f2-6df7-72f9-903d-f5cc74956a9b",
-  "feature_id":"fid1:01a170f2-6df7-72f9-903d-f5cc74956a9b:member:f.y1","feature_kind":"face",
-  "normal_world":[0,0,1],"point_world_mm":[0,3000,150],"t_mm":850}],
- "outcome":"picked","revision_id":"01a170f3-3fc0-73d9-84c4-fd3c7c20cc5f","truncated":false}
+{"elements":4,"hits":[{"back_facing":false,"boundary":false,"distance_mm":0,
+  "element_id":"6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d",
+  "feature_id":"fid1:6a7b8c9d-0e1f-7a2b-8c3d-4e5f6a7b8c9d:member:f.y1","feature_kind":"face",
+  "normal_world":[0,0,1],"point_world_mm":[1500,0,150],"t_mm":850}],
+ "outcome":"picked","revision_id":"01a17111-d7f3-707c-a9c2-bdd8396ebcdc","truncated":false}
 ```
+
+For a member, the role letters follow the member's canonical section frame, not the world axes:
+the +height face (world +Z here) is `f.y1` and the axis end cap is `f.z1`. Resolve a hit's id
+with `feature-lookup` instead of reading geometry out of the letter (follow-up issue #147).
 
 Pass `--radius` for the point form (and `--include-backfaces true` if needed). A point inside a
 solid or a ray into space is a normal, empty result:
