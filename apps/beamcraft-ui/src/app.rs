@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime};
 
 /// Where a `--perf-run` report goes: the JSON object and whether every phase succeeded.
 pub type PerfReport = Sender<(String, bool)>;
@@ -90,6 +90,9 @@ pub struct App {
     job: Option<Receiver<Result<Created, ToolError>>>,
     reload_job: Option<Receiver<Reloaded>>,
     reload_queued: bool,
+    /// The store watcher: one message per head change another process committed, so the view
+    /// refreshes without the `R` key. `None` when the watcher thread could not start.
+    store_watch: Option<Receiver<()>>,
     /// The result of the last Preview, Cancel or Commit.
     tool_note: Option<Result<String, String>>,
     /// The two-click 3D placement of the member tool (issue #134).
@@ -397,6 +400,41 @@ fn needs_refit(
     }
 }
 
+/// How often the window checks the store for revisions another process has committed.
+const WATCH_INTERVAL: Duration = Duration::from_millis(500);
+
+/// The stamp of a store's committed revisions: the directory gains one file per committed
+/// write, so a changed stamp means the head moved. A missing directory is "no signal yet",
+/// not an error: the view-export reports the state of an empty store itself.
+fn revisions_stamp(store: &Path) -> Option<SystemTime> {
+    std::fs::metadata(store.join("revisions"))
+        .and_then(|meta| meta.modified())
+        .ok()
+}
+
+/// Watches a store and reports every change of its revisions as one message, so the window
+/// refreshes by itself when another process (the CLI, an agent) commits to the store it shows.
+/// `None` when the thread could not start: the `R` key keeps working either way.
+fn spawn_watch(store: PathBuf) -> Option<Receiver<()>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("beamcraft-watch".into())
+        .spawn(move || {
+            let mut seen = revisions_stamp(&store);
+            loop {
+                std::thread::sleep(WATCH_INTERVAL);
+                let now = revisions_stamp(&store);
+                if now != seen {
+                    seen = now;
+                    if tx.send(()).is_err() {
+                        return; // the window is gone
+                    }
+                }
+            }
+        });
+    spawned.ok().map(|_| rx)
+}
+
 /// One resolved world point, for notes and hints.
 struct PointText([f64; 3]);
 impl std::fmt::Display for PointText {
@@ -603,6 +641,7 @@ impl App {
             );
             (PerfRun::new(phases, header), report)
         });
+        let store_watch = spawn_watch(source.store.clone());
         let mut app = Self {
             state,
             source,
@@ -623,6 +662,7 @@ impl App {
             job: None,
             reload_job: None,
             reload_queued: false,
+            store_watch,
             tool_note: None,
             refresh_error: None,
             framed: None,
@@ -2134,7 +2174,12 @@ impl eframe::App for App {
                 self.set_bench(workbench::Bench::Select);
             }
         }
-        if reload {
+        // Another process committed to the store: refresh, exactly as the `R` key does.
+        let store_changed = self
+            .store_watch
+            .as_ref()
+            .is_some_and(|rx| rx.try_recv().is_ok());
+        if reload || store_changed {
             self.reload();
         }
         let fit = fit || std::mem::take(&mut self.pending_fit);
@@ -2291,7 +2336,27 @@ impl eframe::App for App {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Source, load_icon, needs_refit, target_size, volume_note};
+    use super::{App, Source, load_icon, needs_refit, revisions_stamp, target_size, volume_note};
+
+    #[test]
+    fn a_committed_revision_moves_the_watch_stamp() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("bc-watch-test-{}-{nanos}", std::process::id()));
+        let revisions = dir.join("revisions");
+        // No revisions directory yet: no signal, and never an error to react to.
+        assert_eq!(revisions_stamp(&dir), None);
+        std::fs::create_dir_all(&revisions).unwrap();
+        let first = revisions_stamp(&dir).expect("the directory exists");
+        // A commit is one new file in the directory: the stamp moves, the store root does not.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        std::fs::write(revisions.join("00000000000000000001"), b"x").unwrap();
+        assert_ne!(first, revisions_stamp(&dir).expect("the directory exists"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
     use crate::Error;
     use crate::perf::RefreshTiming;
     use crate::render::Gpu;

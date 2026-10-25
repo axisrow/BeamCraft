@@ -85,7 +85,8 @@ target/debug/beamcraft-ui --store ROOT > /tmp/bc-ui.log 2>&1 &
 ```
 
 Prove the launch by the living process and a clean log. In the window, `R` reloads the store's
-head, `F` fits the view, a click selects.
+head, `F` fits the view, a click selects; the window also reloads by itself when another
+process commits to the store it shows, so a CLI write is on screen within a second or two.
 What the picture shows is accepted by the person looking at it: launch evidence is not visual
 acceptance.
 
