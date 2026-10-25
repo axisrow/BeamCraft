@@ -38,13 +38,21 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   adapter; `--samples 1|4` overrides it.
 - Controls, `Mouse` preset (the default): the left button is reserved for selection and never
   moves the camera, middle-button drag pans, Ctrl + middle-button drag orbits, the wheel zooms
-  toward the cursor. `Trackpad (macOS)` preset (side panel): primary drag orbits, Shift +
+  toward the cursor. `Trackpad (macOS)` preset (Details window, from the status bar): primary drag orbits, Shift +
   primary drag or secondary drag pans, the wheel or a two-finger scroll or pinch zooms toward
   the cursor (the "Invert zoom" toggle flips the scroll direction for macOS natural scrolling;
   pinch and keys keep theirs). Both presets: `+` and `-` zoom from the keyboard, F fits, R
   reloads (`+`, `-`, F and R are ignored while a text field has the keyboard). A click selects,
   Esc clears the selection.
-- V05.1 Create panel (experimental): a plate (width, length, thickness, optional name and material)
+- Layout (design v1, the BeamCraft look of `src/theme.rs`): a brand header with the project, its
+  save state, the environment and author, and Publish; a ribbon of tools (Select; Plate, Beam,
+  Column; Move, Copy, Delete, Undo, Redo; Shaded); the 3D view with view and zoom buttons; an
+  inspector on the right that shows what the chosen tool needs (properties, a create form or an
+  edit form); a status bar with the selection and a Details window (frame rate, adapter,
+  revision, navigation). Tools that do not exist yet (Bolts, Weld, Wire, the Plan and Grid views,
+  snapping) are shown disabled. Model parts are drawn in the logo's colours on a blueprint
+  ground that follows the light or dark theme.
+- V05.1 Create panel (experimental, now the inspector of Plate, Beam and Column): a plate (width, length, thickness, optional name and material)
   or a straight beam/column (start, end, profile and material chosen from the store's definitions,
   optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell
   command line; no geometry preview), Commit runs it in a separate process and reloads the accepted revision,

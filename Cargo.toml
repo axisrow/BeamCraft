@@ -20,10 +20,11 @@ beamcraft-json = { path = "crates/json", version = "0.0.1" }
 # author and licence) into every binary via `include_bytes!`, which `AGENTS.md` §1 forbids.
 # The patch is a dependency, not vendored code: the fork branch
 # `patch/remove-default-icon-0.37.0` of `Apibim-com/eframe` is that exact crates.io release
-# with the icon bytes removed and the fallback replaced by a generated placeholder, pinned by
-# rev; the fork's PATCH.md records the archive checksum and the diff.
+# with the icon bytes removed and the fallback replaced by a generated placeholder, and with the
+# Windows window icon loaded from the executable's icon resource when it has one (#225), pinned
+# by rev; the fork's PATCH.md records the archive checksum and the diff.
 [patch.crates-io]
-eframe = { git = "https://github.com/Apibim-com/eframe", rev = "18e023c4bd7107c60e2971844794911475a0101d" }
+eframe = { git = "https://github.com/Apibim-com/eframe", rev = "6683d5b7cc150d51212b61cdb774422a6090911b" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

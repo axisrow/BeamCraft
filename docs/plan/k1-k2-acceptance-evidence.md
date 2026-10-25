@@ -2,8 +2,29 @@
 
 This is the verification deliverable for fork issue #11 (upstream #125), against the verified
 fork integration commit `dae17846453b0e18d58b9fad55f3acbd6c22100d`. It does not change an owner gate
-claim or the frozen F04/F06 contracts. The `ROADMAP.md` gate statuses stay open. K0 was accepted
-by the owner on 2026-10-20 and is not re-decided by this report.
+claim or the frozen F04/F06 contracts. K0 was accepted by the owner on 2026-10-20 and is not
+re-decided by this report.
+
+## Owner decision (2026-10-24)
+
+The owner accepted K1 and K2 as passed on 2026-10-24 ([decisions](decisions.md)); `ROADMAP.md`
+records both gates as passed. The verdict below is the evidence as recorded on 2026-10-23. Since
+then:
+
+- #174 fixed the K1 plate contour, body frame and unsupported-draft gaps that #171 tracked:
+  `f04_cases.rs` declares no contour-admission or wrong-code deviation any more.
+- #222 made members accept a rigid placement rotation and refuse negative widths with
+  `INVALID_ARGUMENT`: `f06_member_cases.rs` no longer carries the POS-12, NEG-52 or NEG-53
+  deviation.
+
+Accepted limits, still asserted as such by the fixture adapters so CI notices a change:
+
+- F06-POS-11: a rotated plate placement is `UNSUPPORTED_GEOMETRY` (`f06_cases.rs`).
+- The public face table returns `plate:f.x0` where the fixture names the role `x0`.
+- F04 cases that need a raw envelope decoder, workspace preconditions or a trusted actor
+  context are inventoried and not run.
+- F06 feature lookup, invalidation, delivery, hostile blob and query/injection adapters are not
+  run as whole contract cases, and the ordinary OpenUSD check is a Linux sample, not an OS matrix.
 
 ## Verdict
 

@@ -1,65 +1,56 @@
 # Application icons
 
-The original `beamcraft-1024.png` and everything under `docs/brand/` remain unchanged.
-The macOS composition places the official SVG's I-beam group, without changing its
-paths or colours, on a contributor-original continuous-corner enamel tile. The
-824-unit tile has 100-unit canvas insets, a subtle rim, directional lighting and
-soft shadows. No grid competes with the mark at small Dock sizes.
+BeamCraft has one application icon on every platform: the official logo
+`docs/brand/beamcraft-logo.svg`, rendered unchanged and clipped to a rounded square (corner
+radius 22.5 % of the side). The macOS Dock, Finder and Spotlight, the Windows taskbar and
+Explorer, the Ubuntu launcher and the running window all show this same picture. Only the margin
+differs: Windows and Linux draw icons edge to edge, so there the tile fills the canvas; on macOS
+it sits on Apple's 1024-unit grid, an 824-unit tile with a 100-unit transparent margin. A margin
+on Windows would leave the tile about 19 px wide in a 24 px taskbar slot.
 
-`macos-tile.svg` is the editable design source of the composition;
-`beamcraft-macos-1024.png` is its checked-in 1024px raster. Rebuild the ICNS from
-the raster with the tools included with macOS:
+| File | Use |
+| --- | --- |
+| `beamcraft-icon.png` | 1024 px, edge to edge; the runtime window icon on Windows and Linux |
+| `beamcraft-icon-macos.png` | 1024 px on Apple's grid; the macOS runtime Dock icon |
+| `BeamCraft.icns` | macOS bundle icon, 16 to 1024 px including the Retina slots |
+| `beamcraft-windows.ico` | Windows icon, 16 to 256 px including 20, 24 and 40; shipped as `BeamCraft.ico` |
+| `beamcraft-windows.res` | The ICO as a compiled resource; `build.rs` links it into `beamcraft-ui.exe` |
+| `beamcraft-linux-256.png` | Linux hicolor launcher icon |
 
-```sh
-./packaging/generate-icon.sh
-```
+All of them are derived from the official SVG and committed, so building and packaging need no
+image tools. To redo them after a change to the logo: render the SVG at the tile size (1024 px,
+or 824 px for macOS), clip it to the rounded square, place it on a transparent 1024 px canvas,
+and resample each platform size from that raster with a Lanczos filter. The ICNS holds PNG
+representations (`icp4` to `ic14`); `beamcraft-windows.res` holds the ICO's images as `RT_ICON`
+resources and their directory as `RT_GROUP_ICON` 1, which the window and Explorer load.
 
-## Windows and Linux icons
+`beamcraft-1024.png` is the unmodified official raster. It is not an application icon: it is the
+logo on the start window and start page. It and everything under `docs/brand/` are never
+modified.
 
-The Windows ICO and Linux PNG use the same composition. The ICO contains 16, 24,
-32, 48, 64, 128 and 256 pixel representations. Windows/Linux runtime window icons
-load the packaged PNG from `assets/icons/beamcraft-icon.png`; the Windows archive
-also includes `BeamCraft.ico`.
+## Packaging
 
-Rebuild the Windows and Linux artwork from any directory with Python 3.12,
-CairoSVG 2.8.2 (system Cairo required) and Pillow 12.3.0:
-
-```sh
-python3 -m pip install CairoSVG==2.8.2 Pillow==12.3.0
-python3 packaging/generate-icon.py
-```
-
-The SVG tile and compositor are the editable sources. The generator reads
-`docs/brand/beamcraft-logo.svg` without writing it. It supersamples at 2048px and
-writes the Linux PNGs and the Windows ICO. Pinned renderer versions in the same
-environment produce identical bytes; Cairo/zlib versions can affect encoding
-across operating systems.
-
-`packaging/package.sh` installs the ICNS for Finder/Spotlight and the same
-composition as `Contents/Resources/beamcraft-icon.png` for eframe's runtime Dock
-icon. Attribution and retained trademark terms are in `ATTRIBUTION.md`.
-
-## Native acceptance still required
-
-On macOS, build the distribution binaries and run the packaging command described
-in `packaging/package.sh`. Extract the archive, open BeamCraft.app and check the
-running Dock icon alongside stock apps at normal and magnified sizes. Quit and
-check the bundle icon in Finder and Spotlight. Capture actual screenshots of all
-three surfaces, including the running Dock; generated previews do not establish
-native acceptance. Verify transparent corners, comparable tile scale, clean small
-sizes and matching running/closed icons.
+`packaging/package.sh` installs the ICNS for Finder/Spotlight and copies
+`beamcraft-icon-macos.png` into the bundle as `Contents/Resources/beamcraft-icon.png`, which the
+UI applies at run time to the Dock (eframe shows the process icon while the app runs).
+On Windows the executable's icon resource serves Explorer and shortcuts, and the patched eframe
+(`Apibim-com/eframe`) sets it as the window icon too, so the title bar and the taskbar draw the
+exact ICO size; `beamcraft-icon.png` is only the fallback there. Windows and Linux archives carry
+`assets/icons/beamcraft-icon.png` for the window icon; the Windows archive also carries
+`BeamCraft.ico`, the Linux archive `install-linux.sh` and the launcher PNG.
 
 ## Ubuntu application menu and Dock
 
-After extracting the Linux release, run `bash install-linux.sh` from its folder.
-It installs BeamCraft under `${XDG_DATA_HOME:-$HOME/.local/share}/beamcraft`,
-registers `com.apibim.BeamCraft.desktop` in the user applications directory and
-installs the application icon in the user's `hicolor` icon theme. No sudo is needed.
-Open Ubuntu's Show Applications, search for BeamCraft and launch it. Right-click
-its Dock icon and choose Pin to Dash to keep the launcher there. The Linux window's
-application ID and X11 window class match the desktop entry, so the running window
-groups with that launcher.
-Run the installer again from a newer extracted release to update it.
+After extracting the Linux release, run `bash install-linux.sh` from its folder. It installs
+BeamCraft under `${XDG_DATA_HOME:-$HOME/.local/share}/beamcraft`, registers
+`com.apibim.BeamCraft.desktop` in the user applications directory and installs the icon in the
+user's `hicolor` icon theme; no sudo is needed. The window's Wayland app ID and X11 window class
+match the desktop entry, so the running window groups with the launcher. Run the installer again
+from a newer release to update it.
 
-The Linux screenshot workflow launches the installed desktop entry in Ubuntu's
-GNOME Shell session and captures both the Dock and Show Applications.
+## Native acceptance still required
+
+On macOS, package the app, open BeamCraft.app and compare the running Dock icon with stock apps
+at normal and magnified sizes; quit and check Finder and Spotlight. On Windows, check the
+taskbar; on Ubuntu, the Dock and Show Applications after `install-linux.sh`. Generated previews
+do not establish native acceptance.

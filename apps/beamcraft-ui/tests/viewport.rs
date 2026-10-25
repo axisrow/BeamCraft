@@ -70,8 +70,10 @@ fn is_background([r, g, b, a]: [u8; 4]) -> bool {
     (4..=6).contains(&r) && (7..=9).contains(&g) && (12..=14).contains(&b) && a == 255
 }
 
+/// A pixel of the model: the logo's cream and grey-teal, lit, never darker than its unlit side
+/// (grey-teal at the 0.55 ambient term is about 66, 100, 108).
 fn is_lit([r, g, b, a]: [u8; 4]) -> bool {
-    r > 20 && g > 60 && b > 100 && r < g && g < b && a == 255
+    r > 50 && g > 80 && b > 80 && a == 255
 }
 
 #[test]

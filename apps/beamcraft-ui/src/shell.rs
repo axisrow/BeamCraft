@@ -68,6 +68,8 @@ impl eframe::App for Shell {
             published: None,
             samples: self.samples,
             actor: self.start.actor_id(),
+            environment: self.start.environment().map(str::to_owned),
+            author: self.start.author_name(),
         };
         match App::open(
             ui.ctx(),

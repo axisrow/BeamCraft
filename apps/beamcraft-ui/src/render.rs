@@ -432,6 +432,8 @@ pub struct Renderer {
     pub width: u32,
     /// Offscreen height in pixels.
     pub height: u32,
+    /// The colour behind the model; the window sets it from the theme.
+    pub background: wgpu::Color,
 }
 impl Renderer {
     /// Create bounded targets and pipelines with the adapter's default sample count
@@ -487,6 +489,12 @@ impl Renderer {
             samples,
             width,
             height,
+            background: wgpu::Color {
+                r: 0.02,
+                g: 0.03,
+                b: 0.05,
+                a: 1.0,
+            },
         })
     }
 
@@ -539,12 +547,7 @@ impl Renderer {
                 depth_slice: None,
                 resolve_target: self.msaa.as_ref().map(|_| &self.view),
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.02,
-                        g: 0.03,
-                        b: 0.05,
-                        a: 1.0,
-                    }),
+                    load: wgpu::LoadOp::Clear(self.background),
                     // A multisampled target is resolved into `view` at the end of the pass;
                     // its own samples are never read again.
                     store: if self.msaa.is_some() {

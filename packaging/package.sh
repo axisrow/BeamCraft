@@ -44,7 +44,9 @@ if [ "$kind" = macos ]; then
         "$app/Contents/Resources/licenses"
     sed "s/@VERSION@/${tag#v}/" packaging/Info.plist > "$app/Contents/Info.plist"
     cp assets/icons/BeamCraft.icns "$app/Contents/Resources/"
-    cp assets/icons/beamcraft-macos-1024.png "$app/Contents/Resources/beamcraft-icon.png"
+    cp assets/icons/beamcraft-icon-macos.png "$app/Contents/Resources/beamcraft-icon.png"
+    mkdir -p "$app/Contents/Resources/assets/icons"
+    cp assets/icons/beamcraft-1024.png "$app/Contents/Resources/assets/icons/"
     cp "$release/beamcraft" "$release/beamcraft-ui" "$app/Contents/MacOS/"
     cp assets/fonts/inter/Inter-Regular.ttf assets/fonts/inter/Inter-Bold.ttf \
         "$app/Contents/Resources/assets/fonts/inter/"
@@ -56,19 +58,17 @@ if [ "$kind" = macos ]; then
     codesign --force --deep --sign - "$app" 1>&2
 else
     mkdir -p "$name/assets/fonts/inter" "$name/assets/icons" "$name/licenses"
-    cp assets/icons/beamcraft-1024.png "$name/assets/icons/"
-    cp assets/icons/beamcraft-linux-1024.png "$name/assets/icons/beamcraft-icon.png"
-    if [ "$kind" = win ]; then
-        cp assets/icons/beamcraft-windows.ico "$name/BeamCraft.ico"
-    fi
+    cp assets/icons/beamcraft-1024.png assets/icons/beamcraft-icon.png "$name/assets/icons/"
     cp "$release/beamcraft$ext" "$release/beamcraft-ui$ext" "$name/"
     cp assets/fonts/inter/Inter-Regular.ttf assets/fonts/inter/Inter-Bold.ttf \
         "$name/assets/fonts/inter/"
     cp licenses/OFL-1.1-Inter.txt "$name/licenses/"
     cp -R environments "$name/"
-    if [ "$kind" = linux ]; then
+    if [ "$kind" = win ]; then
+        cp assets/icons/beamcraft-windows.ico "$name/BeamCraft.ico"
+    else
         cp assets/icons/beamcraft-linux-256.png "$name/assets/icons/"
-        cp packaging/install-linux.sh "$name/install-linux.sh"
+        cp packaging/install-linux.sh "$name/"
         chmod +x "$name/install-linux.sh"
     fi
 fi

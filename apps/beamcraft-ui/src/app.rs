@@ -7,6 +7,8 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod workbench;
+
 use crate::camera::{Camera, View};
 use crate::command::Selected;
 use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ndc_of, ray_through};
@@ -17,7 +19,7 @@ use crate::render::{Renderer, Uploaded};
 use crate::scene::SceneSummary;
 use crate::source::{Known, Refreshed, Reloaded};
 use crate::stats::Stats;
-use crate::tools::{Choice, Created, MAX_TEXT, MemberKind, ToolError, ToolKind, Tools};
+use crate::tools::{Choice, Created, MAX_TEXT, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
 use std::path::{Path, PathBuf};
@@ -47,6 +49,10 @@ pub struct Source {
     /// The author identity (UUIDv7) recorded as the actor of the window's edits; `None` lets the
     /// CLI make one per command.
     pub actor: Option<String>,
+    /// The environment chosen at start, shown in the header.
+    pub environment: Option<String>,
+    /// The author's name, shown in the header.
+    pub author: Option<String>,
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -115,6 +121,15 @@ pub struct App {
     selects_finished: u64,
     /// Worker timings of the refreshes consumed while a perf run is active.
     refresh_timings: Vec<RefreshTiming>,
+    /// The tool chosen on the ribbon; the inspector shows what it needs.
+    bench: workbench::Bench,
+    /// Whether the Details window is open.
+    details: bool,
+    /// A zoom (true: in) or fit asked for by the view buttons, applied in the next frame.
+    pending_zoom: Option<bool>,
+    pending_fit: bool,
+    logo: Option<egui::TextureHandle>,
+    logo_tried: bool,
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -482,42 +497,14 @@ pub fn icon() -> egui::IconData {
     }
 }
 
-/// The window/application icon. Windows and Linux packages carry a PNG alongside the program;
-/// macOS continues to use the bundle resource for its Dock icon. The coded [`icon`] remains the
-/// fallback when no artwork can be read.
+/// The window/application icon: the official logo on a rounded tile, the same picture as the
+/// macOS ICNS, the Windows ICO and the Linux launcher icon (`assets/icons/beamcraft-icon.png`
+/// next to the program or in the source tree; in the macOS bundle the grid-margin variant
+/// `Contents/Resources/beamcraft-icon.png`, which eframe also applies to the Dock), averaged down to 256 x 256. When it
+/// cannot be read, the coded [`icon`] is used, so no asset bytes are compiled into the binary.
 pub fn load_icon() -> egui::IconData {
-    {
-        let mut candidates = Vec::new();
-        if let Ok(exe) = std::env::current_exe()
-            && let Some(dir) = exe.parent()
-        {
-            if cfg!(target_os = "macos") {
-                candidates.push(dir.join("../Resources/beamcraft-icon.png"));
-            }
-            candidates.push(dir.join("assets/icons/beamcraft-icon.png"));
-        }
-        let artwork = if cfg!(target_os = "macos") {
-            "../../assets/icons/beamcraft-macos-1024.png"
-        } else {
-            "../../assets/icons/beamcraft-linux-1024.png"
-        };
-        candidates.push(Path::new(env!("CARGO_MANIFEST_DIR")).join(artwork));
-        if let Some(png) = candidates.iter().find_map(|path| std::fs::read(path).ok())
-            && let Ok(source) = image::load_from_memory(&png)
-        {
-            let rgba = source
-                .resize_exact(256, 256, image::imageops::FilterType::Lanczos3)
-                .into_rgba8();
-            return egui::IconData {
-                rgba: rgba.into_raw(),
-                width: 256,
-                height: 256,
-            };
-        }
-    }
-
     const SIDE: u32 = 256;
-    match crate::theme::logo_rgba(SIDE as usize) {
+    match crate::theme::app_icon_rgba(SIDE as usize) {
         Some(rgba) => egui::IconData {
             rgba,
             width: SIDE,
@@ -635,21 +622,25 @@ impl App {
             last_commit_ok: true,
             selects_finished: 0,
             refresh_timings: Vec::new(),
+            bench: workbench::Bench::default(),
+            details: false,
+            pending_zoom: None,
+            pending_fit: false,
+            logo: None,
+            logo_tried: false,
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
         app.props.actor.clone_from(&app.source.actor);
         app.reload();
+        app.refresh_status();
         Ok(app)
     }
 
     /// Starts a refresh on a worker thread (the CLI queries and the scene build); the result is
     /// applied by `poll_reload`. A refresh asked for while one runs is queued, so it still reads
-    /// the store after whatever just changed it. The publication status describes the same
-    /// stores, so every reload reads it again: a create must not leave the panel at the old
-    /// draft, and neither may the reload key (issue 64).
+    /// the store after whatever just changed it.
     fn reload(&mut self) {
-        self.refresh_status();
         if self.reload_job.is_some() {
             self.reload_queued = true;
             return;
@@ -800,20 +791,6 @@ impl App {
             );
         self.stats.resize_ns.add_duration(started.elapsed());
         Ok(())
-    }
-
-    fn panel(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            self.info(ui);
-            ui.separator();
-            self.tools_panel(ui);
-            ui.separator();
-            self.edit_panel(ui);
-            ui.separator();
-            self.props_panel(ui);
-            ui.separator();
-            self.publish_panel(ui);
-        });
     }
 
     fn target(&self) -> Target<'_> {
@@ -1002,12 +979,14 @@ impl App {
                     // The element may have moved, or the undo may have removed it: ask again.
                     _ => self.refresh_selection(),
                 }
+                self.refresh_status();
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
                     self.invalidate_select();
                     self.reload();
                     self.refresh_selection();
+                    self.refresh_status();
                 }
                 self.edit_note = Some(Err(e.to_string()));
             }
@@ -1109,12 +1088,14 @@ impl App {
                     done.sequence
                 )));
                 self.refresh_selection();
+                self.refresh_status();
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
                     self.invalidate_select();
                     self.reload();
                     self.refresh_selection();
+                    self.refresh_status();
                 }
                 self.props_note = Some(Err(e.to_string()));
             }
@@ -1216,7 +1197,6 @@ impl App {
     }
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Properties");
         let Some(id) = self.props.selected().map(str::to_owned) else {
             ui.label("Select a plate or straight member to see its properties.");
             return;
@@ -1243,7 +1223,14 @@ impl App {
                 details.kind,
                 details.revision.label()
             ));
-            read_only_grid(ui, &details.read_only_rows());
+            // One wrapped row per value: the inspector has a fixed width and values can be long.
+            let muted = crate::theme::Palette::current(ui).muted;
+            for (label, value) in details.read_only_rows() {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(egui::RichText::new(label).color(muted));
+                    ui.label(value);
+                });
+            }
             // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in
             // every frame the window draws.
             let materials = &self.tools.definitions.materials;
@@ -1342,7 +1329,6 @@ impl App {
     }
 
     fn publish_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Publish");
         match self.publisher.target() {
             Err(why) => {
                 ui.label(why);
@@ -1420,7 +1406,6 @@ impl App {
     }
 
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Edit");
         ui.label("Click an element in the view to select it. Esc clears the selection.");
         match self.editor.selected() {
             Some(info) => {
@@ -1434,29 +1419,20 @@ impl App {
             }
         }
         let selected = self.editor.selected().is_some();
-        let mut action = self.editor.action();
-        ui.add_enabled_ui(selected, |ui| {
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut action, EditKind::Move, "Move");
-                ui.selectable_value(&mut action, EditKind::Copy, "Copy");
-                ui.selectable_value(&mut action, EditKind::Delete, "Delete");
-            });
-            match action {
-                EditKind::Move => {
-                    ui.label("New position in mm (absolute):");
-                    point_fields(ui, &mut self.editor.move_to);
-                }
-                EditKind::Copy => {
-                    ui.label("Offset of the copy in mm:");
-                    point_fields(ui, &mut self.editor.copy_offset);
-                }
-                _ => {
-                    ui.label("Deletes the element (refused while another element links to it).");
-                }
+        let action = self.editor.action();
+        ui.add_enabled_ui(selected, |ui| match action {
+            EditKind::Move => {
+                ui.label("New position in mm (absolute):");
+                point_fields(ui, &mut self.editor.move_to);
+            }
+            EditKind::Copy => {
+                ui.label("Offset of the copy in mm:");
+                point_fields(ui, &mut self.editor.copy_offset);
+            }
+            _ => {
+                ui.label("Deletes the element (refused while another element links to it).");
             }
         });
-        // Another action needs its own preview.
-        self.editor.set_action(action);
         let busy = self.editor.busy();
         let target = self.target();
         let can_commit = self.editor.can_commit(target);
@@ -1503,27 +1479,6 @@ impl App {
             if !self.editor.can_commit(self.target()) {
                 ui.colored_label(RED, "The parameters changed: preview again.");
             }
-        }
-        let has_workspace = self.source.workspace.is_some();
-        let (mut undo, mut redo) = (false, false);
-        ui.horizontal(|ui| {
-            undo = ui
-                .add_enabled(has_workspace && !busy, egui::Button::new("Undo"))
-                .clicked();
-            redo = ui
-                .add_enabled(has_workspace && !busy, egui::Button::new("Redo"))
-                .clicked();
-        });
-        if undo {
-            self.start_edit(Some(EditKind::Undo));
-        }
-        if redo {
-            self.start_edit(Some(EditKind::Redo));
-        }
-        if !has_workspace {
-            ui.label(
-                "Undo and redo need a personal workspace: open the window with --workspace DIR.",
-            );
         }
         if busy {
             ui.label("Running…");
@@ -1729,11 +1684,6 @@ impl App {
     }
 
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Create");
-        ui.horizontal(|ui| {
-            ui.selectable_value(&mut self.tools.active, ToolKind::Plate, "Plate");
-            ui.selectable_value(&mut self.tools.active, ToolKind::Member, "Member");
-        });
         ui.label("Dimensions in mm.");
         // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
         // frame the window draws.
@@ -1756,10 +1706,6 @@ impl App {
             }
             ToolKind::Member => {
                 let form = &mut self.tools.member;
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut form.kind, MemberKind::Beam, "Beam");
-                    ui.selectable_value(&mut form.kind, MemberKind::Column, "Column");
-                });
                 for (label, point) in [("Start", &mut form.start), ("End", &mut form.end)] {
                     ui.horizontal(|ui| {
                         ui.label(label);
@@ -1869,7 +1815,6 @@ impl App {
     }
 
     fn info(&mut self, ui: &mut egui::Ui) {
-        ui.heading("BeamCraft");
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
         ui.label(format!("{}x MSAA", self.renderer.samples));
@@ -1967,11 +1912,16 @@ impl eframe::App for App {
                 self.invalidate_select();
                 self.editor.deselect();
                 self.props.clear();
+                self.set_bench(workbench::Bench::Select);
             }
         }
         if reload {
             self.reload();
         }
+        let fit = fit || std::mem::take(&mut self.pending_fit);
+        let pending_zoom = self.pending_zoom.take();
+        let zoom_in = zoom_in || pending_zoom == Some(true);
+        let zoom_out = zoom_out || pending_zoom == Some(false);
         if fit && let Some(l) = &self.loaded {
             let (target, extent) = l.summary.framing();
             if let Err(e) = self.camera.fit(target, extent, self.aspect()) {
@@ -1979,12 +1929,15 @@ impl eframe::App for App {
             }
         }
         if self.text {
-            // A fixed width: the 3D view must not shift sideways when a tab or a chosen
-            // definition name is wider, and the coordinate rows must fit at the default size.
-            egui::Panel::left("info")
-                .exact_size(320.0)
-                .show(ui, |ui| self.panel(ui));
-            self.publish_dialog(&ui.ctx().clone());
+            // Header, ribbon and status bar first, then the inspector at a fixed width: the 3D
+            // view must not shift sideways when a chosen definition name is wider.
+            self.header(ui);
+            self.ribbon(ui);
+            self.status_bar(ui);
+            self.inspector(ui);
+            let ctx = ui.ctx().clone();
+            self.details_window(&ctx);
+            self.publish_dialog(&ctx);
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
@@ -2052,6 +2005,14 @@ impl eframe::App for App {
                 .and_then(|()| self.camera.view(aspect))
             {
                 Ok(view) => {
+                    // A pale blueprint behind the model in the light theme, a deep one in the dark.
+                    let rgb = if ui.ctx().theme() == egui::Theme::Dark {
+                        [0x0B, 0x2A, 0x33]
+                    } else {
+                        [0xE3, 0xF5, 0xFA]
+                    };
+                    let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
+                    self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
                     if let Some(l) = &self.loaded {
                         self.renderer.draw(
                             &self.state.device,
@@ -2085,53 +2046,35 @@ impl eframe::App for App {
             if let Some(ray) = picked {
                 self.start_select(ray);
             }
+            if self.text {
+                self.view_controls(ui, response.rect);
+            }
         });
         ui.ctx().request_repaint();
     }
 }
 
-/// The read-only rows of the properties panel. A value wraps within the fixed 320-point sidebar
-/// instead of being clipped at its edge: a Grid cell extends by default, and without the column
-/// count the last column would only ever get the smallest widget width it once had.
-fn read_only_grid(ui: &mut egui::Ui, rows: &[(String, String)]) {
-    egui::Grid::new("props-readonly")
-        .num_columns(2)
-        .show(ui, |ui| {
-            for (label, value) in rows {
-                ui.label(label);
-                ui.add(egui::Label::new(value).wrap());
-                ui.end_row();
-            }
-        });
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        App, Source, inter, load_icon, needs_refit, read_only_grid, target_size, volume_note,
-    };
+    use super::{App, Source, load_icon, needs_refit, target_size, volume_note};
     use crate::Error;
-    use crate::command;
     use crate::perf::RefreshTiming;
-    use crate::render::{Gpu, wait};
+    use crate::render::Gpu;
     use crate::scene::Scene;
     use crate::source::{Refreshed, Reloaded};
-    use crate::stats::Stats;
-    use crate::tools::{ToolError, ToolKind};
+    use crate::tools::ToolError;
     use beamcraft_engine::synthetic::plate_scene;
     use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;
-    use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{Duration, Instant};
+    use std::sync::atomic::Ordering;
 
-    /// The window state on the headless adapter, with no window: a test hands it results itself
-    /// or points it at real stores and the real CLI. `None`, saying so, without a native adapter.
-    /// The counters are this test's own, so parallel tests never count into each other (issue 167).
-    fn headless_at(source: Source) -> Option<App> {
+    /// The window state on the headless adapter, with no window and no CLI behind it: the
+    /// refresh it starts fails and is never read, and a test hands it results itself. `None`,
+    /// saying so, without a native adapter. The counters are this test's own, so parallel tests
+    /// never count into each other (issue 167).
+    fn headless() -> Option<App> {
         let gpu = match pollster::block_on(Gpu::headless()) {
             Ok(gpu) => gpu,
             Err(Error::NoAdapter) => {
@@ -2154,21 +2097,19 @@ mod tests {
             target_format: format,
             renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
         });
-        let stats = Arc::new(Stats::default());
-        Some(App::new(&cc, source, stats).unwrap())
-    }
-
-    /// The window state with no CLI behind it: the refresh it starts fails and is never read.
-    fn headless() -> Option<App> {
         let missing = std::env::temp_dir().join("beamcraft-window-test-no-cli");
-        headless_at(Source {
+        let source = Source {
             store: missing.clone(),
             cli: missing,
             workspace: None,
             published: None,
             samples: None,
             actor: None,
-        })
+            environment: None,
+            author: None,
+        };
+        let stats = Arc::new(crate::stats::Stats::default());
+        Some(App::new(&cc, source, stats).unwrap())
     }
 
     /// A refresh that read `scene`.
@@ -2286,419 +2227,16 @@ mod tests {
         assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
     }
 
-    /// A development build finds the official logo in the source tree; the coded fallback is a
-    /// complete icon too, never an empty one.
+    /// A development build finds the application icon in the source tree; the coded fallback is
+    /// a complete icon too, never an empty one.
     #[test]
-    fn the_icon_loader_uses_the_logo_and_has_a_complete_fallback() {
+    fn the_icon_loader_uses_the_app_icon_and_has_a_complete_fallback() {
         let icon = load_icon();
         assert_eq!((icon.width, icon.height), (256, 256));
         assert_eq!(icon.rgba.len(), 256 * 256 * 4);
         let fallback = super::icon();
         assert_eq!((fallback.width, fallback.height), (32, 32));
         assert_eq!(fallback.rgba.len(), 32 * 32 * 4);
-    }
-
-    /// Stores of one run: a published store and the workspace forked from it, gone afterwards.
-    struct Stores {
-        root: PathBuf,
-    }
-
-    impl Stores {
-        fn new() -> Self {
-            static NEXT: AtomicU64 = AtomicU64::new(0);
-            let root = std::env::temp_dir().join(format!(
-                "beamcraft-issue-64-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            ));
-            let _ = std::fs::remove_dir_all(&root);
-            std::fs::create_dir_all(root.join("published")).unwrap();
-            Self { root }
-        }
-
-        fn published(&self) -> PathBuf {
-            self.root.join("published")
-        }
-
-        fn workspace(&self) -> PathBuf {
-            self.root.join("workspace")
-        }
-    }
-
-    impl Drop for Stores {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.root);
-        }
-    }
-
-    /// The `beamcraft` CLI in this target directory (`cargo test --workspace` builds it); without
-    /// it the store tests are skipped and say so.
-    fn cli() -> Option<PathBuf> {
-        let exe = std::env::current_exe().ok()?;
-        let cli = exe
-            .parent()?
-            .parent()?
-            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-        if cli.is_file() {
-            Some(cli)
-        } else {
-            eprintln!(
-                "SKIP publish-status test: build beamcraft-cli first (cargo test --workspace does)"
-            );
-            None
-        }
-    }
-
-    /// Runs the real CLI; a refusal fails the test with the reply shown.
-    fn ok(cli: &Path, args: &[&str]) {
-        let done = Command::new(cli).args(args).output().unwrap();
-        assert_eq!(
-            done.status.code(),
-            Some(0),
-            "{args:?}: {}",
-            String::from_utf8_lossy(&done.stdout)
-        );
-    }
-
-    /// Pumps the window's polls until `done` holds, as the frame loop would; past the deadline
-    /// the test fails instead of hanging.
-    fn pump(app: &mut App, what: &str, done: impl FnMut(&App) -> bool) {
-        let mut done = done;
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while !done(app) {
-            app.poll_commit();
-            app.poll_status();
-            app.poll_reload();
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
-
-    /// The Publish panel follows the stores, not the last restart: after a created revision it
-    /// shows the new draft head without a restart, and a reload reports a change made outside the
-    /// window too (issue 64). Run against the real CLI and real stores.
-    #[test]
-    fn the_publish_status_follows_a_created_revision_and_a_reload() {
-        let Some(cli) = cli() else { return };
-        let stores = Stores::new();
-        let (published, workspace) = (stores.published(), stores.workspace());
-        let store = published.to_string_lossy().into_owned();
-        ok(
-            &cli,
-            &["define-material", "--store", &store, "--density", "7850"],
-        );
-        ok(
-            &cli,
-            &[
-                "define-profile",
-                "--store",
-                &store,
-                "--width",
-                "200",
-                "--height",
-                "300",
-            ],
-        );
-        ok(
-            &cli,
-            &[
-                "workspace-create",
-                "--store",
-                &store,
-                "--workspace-dir",
-                &workspace.to_string_lossy(),
-            ],
-        );
-        let definitions = command::definitions(&cli, &workspace, &Stats::default()).unwrap();
-        let (profile, material) = (
-            definitions.profiles.first().unwrap().digest.clone(),
-            definitions.materials.first().unwrap().digest.clone(),
-        );
-        let Some(mut app) = headless_at(Source {
-            store: workspace.clone(),
-            cli: cli.clone(),
-            workspace: Some(workspace.clone()),
-            published: Some(published),
-            samples: None,
-            actor: None,
-        }) else {
-            return;
-        };
-
-        // The fork at its base: one draft revision, nothing unsent.
-        pump(&mut app, "the first status read", |app| {
-            app.publisher
-                .status
-                .as_ref()
-                .is_some_and(|s| (s.unsent_revisions, s.draft_sequence) == (0, 1))
-        });
-
-        // A member committed through the Create panel's own path: form, preview, commit.
-        app.tools.active = ToolKind::Member;
-        app.tools.member.start = ["0".into(), "400".into(), "0".into()];
-        app.tools.member.end = ["1000".into(), "400".into(), "0".into()];
-        app.tools.member.profile = Some(profile.clone());
-        app.tools.member.material = Some(material);
-        app.tools.member.name = "IBeam".into();
-        app.tools.preview(&app.source.store).unwrap();
-        app.start_commit();
-        pump(&mut app, "the create to finish", |app| !app.tools.busy());
-        let note = app.tool_note.clone().unwrap().unwrap();
-        assert!(
-            note.contains("Created member") && note.contains("(sequence 2)"),
-            "{note}"
-        );
-
-        // The panel tells the truth about the new draft: one unsent revision, sequence 2.
-        pump(&mut app, "the status to follow the create", |app| {
-            app.publisher.status.as_ref().is_some_and(|s| {
-                (s.unsent_revisions, s.draft_sequence, s.base_is_current) == (1, 2, true)
-            })
-        });
-
-        // A change made outside the window (here, the CLI by hand) is reported after a reload,
-        // the R key's path, not only after a restart.
-        let ws = workspace.to_string_lossy().into_owned();
-        ok(
-            &cli,
-            &[
-                "create-member",
-                "--store",
-                &ws,
-                "--start",
-                "0,500,0",
-                "--end",
-                "2000,500,0",
-                "--profile-digest",
-                &profile,
-                "--name",
-                "Direct",
-            ],
-        );
-        app.reload();
-        pump(&mut app, "the status to follow the reload", |app| {
-            app.publisher
-                .status
-                .as_ref()
-                .is_some_and(|s| (s.unsent_revisions, s.draft_sequence) == (2, 3))
-        });
-    }
-
-    /// The issue 65 axis value in the read-only properties panel: the painted text carries the
-    /// whole string, fits the fixed 320-point sidebar and wraps onto several rows instead of
-    /// being clipped at the edge. On a native adapter the rendered grid is saved as a PNG beside
-    /// the target directory, the visible proof.
-    #[test]
-    fn a_long_axis_value_is_painted_in_full_within_the_sidebar() {
-        let beam = crate::props::Details {
-            id: "beam".into(),
-            kind: "beam".into(),
-            revision: crate::props::RevisionStamp {
-                revision_id: "r1".into(),
-                manifest_digest: "d1".into(),
-                sequence: 1,
-            },
-            name: "B1".into(),
-            material: None,
-            material_name: None,
-            translation_mm: [0.0; 3],
-            thickness_mm: None,
-            plate_size_mm: None,
-            section_mm: Some([80.0, 160.0]),
-            axis_points_mm: Some([
-                [12345.678, 23456.789, 34567.891],
-                [12645.678, 23756.789, 34867.891],
-            ]),
-            profile_name: Some("R80x160".into()),
-            level: None,
-            quantities: crate::props::Quantities::default(),
-        };
-        let rows = beam.read_only_rows();
-        let axis = "12345.678,23456.789,34567.891 to 12645.678,23756.789,34867.891 mm";
-        assert!(
-            rows.contains(&("Axis".into(), axis.into())),
-            "the row reports the value in full: {rows:?}"
-        );
-        let ctx = egui::Context::default();
-        assert!(inter(&ctx), "Inter is unavailable where this test runs");
-        // The app's own sidebar (app.rs Panel::left) at the issue's default window, driven by
-        // eframe's own pass loop. A fresh Grid discards its first pass and still lays the rows
-        // of the next one out on the old heights; the run after it is the settled frame the
-        // user sees, and the one the test reads.
-        let input = || egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(1400.0, 900.0),
-            )),
-            ..Default::default()
-        };
-        let frame = |ctx: &egui::Context| {
-            ctx.run_ui(input(), |ui| {
-                egui::Panel::left("info")
-                    .exact_size(320.0)
-                    .show(ui, |ui| read_only_grid(ui, &rows));
-            })
-        };
-        // The texture deltas (the font atlas arrives with the first frame) are kept for the
-        // render below; a failed assert must never unwind into an unapplied delta.
-        let mut fonts = Vec::new();
-        let mut warmup = frame(&ctx);
-        for (id, deltas) in warmup.textures_delta.set.drain() {
-            for delta in deltas {
-                fonts.push((id, delta));
-            }
-        }
-        warmup.textures_delta.clear();
-        let mut output = frame(&ctx);
-        for (id, deltas) in output.textures_delta.set.drain() {
-            for delta in deltas {
-                fonts.push((id, delta));
-            }
-        }
-        output.textures_delta.clear();
-        let painted = output
-            .shapes
-            .iter()
-            .filter_map(|s| match &s.shape {
-                egui::Shape::Text(text) => Some(text.galley.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let value = painted
-            .iter()
-            .find(|g| g.text().starts_with("12345.678"))
-            .expect("the axis value is painted");
-        assert_eq!(value.text(), axis, "the painted text is the whole value");
-        assert!(!value.elided, "the value is not cut off");
-        assert!(
-            value.size().x <= 320.0,
-            "the value fits the sidebar width, was {}",
-            value.size().x
-        );
-        assert!(
-            value.rows.len() >= 2,
-            "the value wraps onto several rows, had {}",
-            value.rows.len()
-        );
-
-        // A real render of the same grid as the screenshot evidence. Skipped like the other
-        // window tests where no adapter answers.
-        let gpu = match pollster::block_on(Gpu::headless()) {
-            Ok(gpu) => gpu,
-            Err(Error::NoAdapter) => {
-                eprintln!("SKIP properties screenshot: no native wgpu adapter");
-                return;
-            }
-            Err(e) => panic!("adapter or device failed: {e}"),
-        };
-        let format = wgpu::TextureFormat::Rgba8Unorm;
-        let mut renderer =
-            egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions::default());
-        for (id, delta) in &fonts {
-            renderer.update_texture(&gpu.device, &gpu.queue, *id, delta);
-        }
-        // The target covers the painted grid: the lowest text bottom, at least one row.
-        let height = output
-            .shapes
-            .iter()
-            .filter_map(|s| match &s.shape {
-                egui::Shape::Text(t) => Some(t.pos.y + t.galley.size().y),
-                _ => None,
-            })
-            .fold(1.0, f32::max)
-            .ceil() as u32;
-        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("props-axis-screenshot"),
-            size: wgpu::Extent3d {
-                width: 320,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let view = texture.create_view(&Default::default());
-        let screen = egui_wgpu::ScreenDescriptor {
-            size_in_pixels: [320, height],
-            pixels_per_point: 1.0,
-        };
-        let egui::FullOutput {
-            shapes,
-            pixels_per_point,
-            ..
-        } = output;
-        let painted = ctx.tessellate(shapes, pixels_per_point);
-        let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        for buffer in
-            renderer.update_buffers(&gpu.device, &gpu.queue, &mut encoder, &painted, &screen)
-        {
-            gpu.queue.submit([buffer]);
-        }
-        {
-            let mut pass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("props-axis-screenshot"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    ..Default::default()
-                })
-                .forget_lifetime();
-            renderer.render(&mut pass, &painted, &screen);
-        }
-        // 320 x 4 bytes is a multiple of the 256-byte copy alignment, so the rows carry no
-        // padding (the same readback as render.rs).
-        let row = (320u32 * 4).div_ceil(256) * 256;
-        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("props-axis-readback"),
-            size: u64::from(row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        encoder.copy_texture_to_buffer(
-            texture.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(row),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width: 320,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        let index = gpu.queue.submit([encoder.finish()]);
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        buffer.map_async(wgpu::MapMode::Read, .., move |r| {
-            let _ = tx.send(r);
-        });
-        wait(&gpu.device, index).unwrap();
-        rx.recv_timeout(std::time::Duration::from_secs(10))
-            .unwrap()
-            .unwrap();
-        let pixels = buffer.get_mapped_range(..).unwrap().to_vec();
-        buffer.unmap();
-        let path = std::env::temp_dir().join("beamcraft-props-axis-wrap.png");
-        image::RgbaImage::from_raw(320, height, pixels)
-            .expect("the readback is one full RGBA frame")
-            .save(&path)
-            .unwrap();
-        eprintln!("Properties screenshot: {}", path.display());
     }
 }
 

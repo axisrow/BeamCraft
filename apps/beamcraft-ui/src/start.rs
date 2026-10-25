@@ -414,6 +414,11 @@ impl StartPage {
         self.settings.profile.as_ref().map(|p| p.actor_id.clone())
     }
 
+    /// The author's name of the saved profile.
+    pub fn author_name(&self) -> Option<String> {
+        self.settings.profile.as_ref().map(|p| p.name.clone())
+    }
+
     /// The configuration directory the window was started with, if any.
     pub fn config_dir(&self) -> Option<&Path> {
         self.config_dir.as_deref()
@@ -652,6 +657,17 @@ impl StartPage {
                 .show(ui, |ui| {
                     if self.loaded {
                         self.launcher_ui(ui, busy);
+                        // The start window is as tall as its content: no empty band below the
+                        // buttons, and room for a note when one appears.
+                        // The panel's own rect fills the window; the cursor is where the
+                        // content ends.
+                        let needed = (ui.cursor().top() + 30.0).ceil();
+                        let current = ui.ctx().content_rect().height();
+                        if (needed - current).abs() > 2.0 && needed > 200.0 {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::InnerSize(
+                                egui::vec2(LAUNCHER_SIZE.x, needed),
+                            ));
+                        }
                     } else {
                         self.loading_ui(ui, busy);
                     }
@@ -1243,7 +1259,7 @@ impl StartPage {
 }
 
 /// The size of the start window.
-pub const LAUNCHER_SIZE: egui::Vec2 = egui::vec2(500.0, 720.0);
+pub const LAUNCHER_SIZE: egui::Vec2 = egui::vec2(500.0, 640.0);
 /// Height of the profile card at the bottom of the start page's side panel.
 const PROFILE_CARD_HEIGHT: f32 = 190.0;
 /// Height of one row of the model list; tall enough for a model preview.

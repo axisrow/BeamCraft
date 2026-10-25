@@ -20,8 +20,9 @@ path = "src/main.rs"
 # that RustSec now flags as unmaintained; re-enabling it is an owner decision on those advisories.
 # eframe builds from the patched fork branch pinned by the root `[patch.crates-io]`
 # (https://github.com/Apibim-com/eframe, `patch/remove-default-icon-0.37.0`), which keeps
-# eframe's own unattributed default icon out of the binary (issue #149); this crate always
-# sets its own icon (`app::icon`).
+# eframe's own unattributed default icon out of the binary (issue #149) and on Windows sets the
+# window icon from the executable's resource (`build.rs`); this crate always sets its own icon
+# (`app::load_icon`).
 [dependencies]
 beamcraft-model.workspace = true
 beamcraft-json.workspace = true

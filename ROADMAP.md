@@ -28,8 +28,8 @@ that the gate's acceptance is claimed.
 | Gate | Acceptance result | Packages | Status |
 |------|-------------------|----------|--------|
 | K0 | Verified base, requirements, contracts and original fixtures | F01–F11 | **passed 2026-10-20**: F04, F06 and F10 frozen 0.1.0, F08 a living document, F05, F03 and F09 retired by decision; E01 is part of K6 and deferred after the MVP; F08 a living document; F05 retired |
-| K1 | CLI creates a plate and atomically saves a complete revision readable by ordinary OpenUSD | U01–U07, U09, U14, G01–G02, P01 | slices merged; acceptance open |
-| K2 | Straight beam/column, quantities, independent copy, personal workspace and local undo | P02–P08, A07 | slices merged (rolled, custom and library sections); acceptance open |
+| K1 | CLI creates a plate and atomically saves a complete revision readable by ordinary OpenUSD | U01–U07, U09, U14, G01–G02, P01 | **passed 2026-10-24** (owner decision; evidence and accepted limits in [`docs/plan/k1-k2-acceptance-evidence.md`](docs/plan/k1-k2-acceptance-evidence.md)) |
+| K2 | Straight beam/column, quantities, independent copy, personal workspace and local undo | P02–P08, A07 | **passed 2026-10-24** (owner decision; rolled, custom and library sections, rigid member placement; same evidence document) |
 | K3 | Foreign USD references remain read-only; supported measurements are separate results | R01–R03, G08 | R01 merged; R02–R03 deferred |
 | K4 | Two clients safely publish, rebase, detect conflicts, retry and compensate accepted changes | C01–C06 | C01–C02 merged; C03–C06 deferred |
 | K5 | Original native UI uses engine commands and saves the same result as the CLI | V01–V06 | V01–V04, V05.1–V05.2 and V06.1 merged; acceptance open |
@@ -92,7 +92,7 @@ put grids first on 2026-10-23); the task cards are in [`docs/plan/tasks.md`](doc
 3. **M3, attributes and schedules:** I04, I05.
 4. **M4, drawings:** D01 to D08.
 5. **M5, alpha scenario and packaging:** Q01 over the whole scope and a first run of the release
-   workflow (Q02); acceptance of the gates K1, K2, K5, K6 and K8 to K11.
+   workflow (Q02); acceptance of the gates K5, K6 and K8 to K11.
 
 Later work expands supported operations, licensed data packs and DSTV NC export. IFC
 import and foreign-to-native conversion require a new scope decision. BeamCraft is desktop-only on

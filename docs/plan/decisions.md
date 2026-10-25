@@ -4,6 +4,17 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-24
+
+- **Gates K1 and K2 are passed.** Owner decision on [issue #125](https://github.com/Apibim-com/BeamCraft/issues/125):
+  the per-gate verdicts of [the K1 and K2 evidence](k1-k2-acceptance-evidence.md) are accepted
+  together with the fixes merged since (#174 for the K1 plate contours, #222 for rigid member
+  placement and the negative-width code). The limits still listed there are accepted, not
+  waived as passes: a rotated plate placement (F06-POS-11) stays `UNSUPPORTED_GEOMETRY`, the
+  face-table strings carry the `plate:f.` prefix, and the F04 envelope, workspace and
+  trusted-context cases stay unrun until a decoder and a trusted context exist. The sign-off of
+  K3 to K5 in [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129) stays open.
+
 ## 2026-10-23
 
 - **Development starts with grids.** Owner decision ([issue #192](https://github.com/Apibim-com/BeamCraft/issues/192)):

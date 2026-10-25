@@ -327,6 +327,24 @@ pub enum Icon {
     Back,
     /// Refresh arrow.
     Refresh,
+    /// The selection pointer.
+    Select,
+    /// A bolt: hexagon head and shank.
+    Bolt,
+    /// Two plates joined by a weld bead.
+    Weld,
+    /// Four arrows: move.
+    Move,
+    /// Two overlapping sheets: copy.
+    Copy,
+    /// A bin: delete.
+    Delete,
+    /// Arrow turning back: undo.
+    Undo,
+    /// Arrow turning forward: redo.
+    Redo,
+    /// An outlined block: wireframe display.
+    Wire,
 }
 
 #[derive(Clone, Copy)]
@@ -334,6 +352,7 @@ enum Face {
     Cream,
     Teal,
     TealDark,
+    Brand,
 }
 
 /// One convex face on the 24 x 24 icon grid.
@@ -426,6 +445,59 @@ const FOLDER: &[Polygon] = &[
     ),
 ];
 
+const BOLT: &[Polygon] = &[
+    (
+        &[[11.0, 10.5], [13.0, 10.5], [13.0, 21.0], [11.0, 21.0]],
+        Face::Teal,
+    ),
+    (
+        &[[7.0, 6.0], [7.0, 8.5], [12.0, 11.0], [12.0, 8.5]],
+        Face::TealDark,
+    ),
+    (
+        &[[12.0, 8.5], [12.0, 11.0], [17.0, 8.5], [17.0, 6.0]],
+        Face::Teal,
+    ),
+    (
+        &[[7.0, 6.0], [12.0, 3.5], [17.0, 6.0], [12.0, 8.5]],
+        Face::Cream,
+    ),
+];
+const WELD: &[Polygon] = &[
+    (
+        &[[3.0, 16.0], [12.0, 11.5], [21.0, 16.0], [12.0, 20.5]],
+        Face::Cream,
+    ),
+    (
+        &[[8.0, 13.5], [8.0, 5.0], [16.0, 9.0], [16.0, 17.5]],
+        Face::Teal,
+    ),
+    (
+        &[[8.0, 13.5], [16.0, 17.5], [14.5, 18.5], [6.5, 14.5]],
+        Face::Brand,
+    ),
+];
+const COPY: &[Polygon] = &[
+    (
+        &[[8.0, 3.0], [20.0, 3.0], [20.0, 15.0], [8.0, 15.0]],
+        Face::Teal,
+    ),
+    (
+        &[[4.0, 9.0], [16.0, 9.0], [16.0, 21.0], [4.0, 21.0]],
+        Face::Cream,
+    ),
+];
+const DELETE: &[Polygon] = &[
+    (
+        &[[6.0, 8.0], [18.0, 8.0], [17.0, 21.0], [7.0, 21.0]],
+        Face::Cream,
+    ),
+    (
+        &[[4.0, 5.0], [20.0, 5.0], [20.0, 8.0], [4.0, 8.0]],
+        Face::Teal,
+    ),
+];
+
 /// Paints `icon` into `rect`; `line` outlines the faces and draws the strokes.
 pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
     let scale = rect.width().min(rect.height()) / 24.0;
@@ -438,6 +510,7 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
                 Face::Cream => CREAM,
                 Face::Teal => TEAL,
                 Face::TealDark => TEAL_DARK,
+                Face::Brand => BRAND,
             };
             painter.add(egui::Shape::convex_polygon(
                 points.iter().map(|p| at(*p)).collect(),
@@ -453,6 +526,74 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
         ));
     };
     match icon {
+        Icon::Select => {
+            // Star-shaped from its tip: a fan of two triangles, then the outline.
+            let [a, b, c, d] = [[5.0, 3.0], [18.0, 11.0], [12.0, 12.5], [9.0, 19.0]];
+            for triangle in [[a, b, c], [a, c, d]] {
+                painter.add(egui::Shape::convex_polygon(
+                    triangle.map(at).to_vec(),
+                    CREAM,
+                    Stroke::NONE,
+                ));
+            }
+            let tip = [a, b, c, d];
+            painter.add(egui::Shape::closed_line(tip.map(at).to_vec(), stroke));
+        }
+        Icon::Bolt => faces(BOLT),
+        Icon::Weld => faces(WELD),
+        Icon::Copy => faces(COPY),
+        Icon::Delete => {
+            faces(DELETE);
+            polyline(&[[9.0, 5.0], [9.0, 3.0], [15.0, 3.0], [15.0, 5.0]]);
+        }
+        Icon::Move => {
+            polyline(&[[12.0, 3.0], [12.0, 21.0]]);
+            polyline(&[[3.0, 12.0], [21.0, 12.0]]);
+            for arrow in [
+                [[9.0, 6.0], [12.0, 3.0], [15.0, 6.0]],
+                [[9.0, 18.0], [12.0, 21.0], [15.0, 18.0]],
+                [[6.0, 9.0], [3.0, 12.0], [6.0, 15.0]],
+                [[18.0, 9.0], [21.0, 12.0], [18.0, 15.0]],
+            ] {
+                polyline(&arrow);
+            }
+        }
+        Icon::Undo | Icon::Redo => {
+            let flip = |p: [f32; 2]| match icon {
+                Icon::Redo => [24.0 - p[0], p[1]],
+                _ => p,
+            };
+            let arc = [
+                [4.0, 9.0],
+                [14.0, 9.0],
+                [17.0, 9.8],
+                [19.2, 12.0],
+                [20.0, 15.0],
+                [19.2, 18.0],
+                [17.0, 20.2],
+                [14.0, 21.0],
+                [11.0, 21.0],
+            ];
+            polyline(&arc.map(flip));
+            polyline(&[[9.0, 4.0], [4.0, 9.0], [9.0, 14.0]].map(flip));
+        }
+        Icon::Wire => {
+            painter.add(egui::Shape::closed_line(
+                [
+                    [12.0, 3.0],
+                    [20.0, 7.5],
+                    [20.0, 16.5],
+                    [12.0, 21.0],
+                    [4.0, 16.5],
+                    [4.0, 7.5],
+                ]
+                .map(at)
+                .to_vec(),
+                stroke,
+            ));
+            polyline(&[[4.0, 7.5], [12.0, 12.0], [20.0, 7.5]]);
+            polyline(&[[12.0, 12.0], [12.0, 21.0]]);
+        }
         Icon::Block => faces(BLOCK),
         Icon::Plate => faces(PLATE),
         Icon::Beam => faces(BEAM),
@@ -525,21 +666,22 @@ pub fn paint_preview(painter: &Painter, rect: Rect) {
     painter.rect_stroke(rect, radius, Stroke::new(2.0, INK), StrokeKind::Inside);
 }
 
-/// Where the official logo PNG may be: the working directory (an extracted package), the source
-/// tree, next to the program, and in the macOS bundle's resources.
-fn logo_candidates() -> Vec<PathBuf> {
-    let name = "assets/icons/beamcraft-1024.png";
+/// Where a PNG asset under `assets/icons/` may be: the working directory (an extracted
+/// package), the source tree, next to the program, and in the macOS bundle's resources
+/// (`bundled`, relative to `Contents/Resources`).
+fn asset_candidates(file: &str, bundled: &str) -> Vec<PathBuf> {
+    let name = Path::new("assets/icons").join(file);
     let mut candidates = vec![
-        Path::new(name).to_path_buf(),
+        name.clone(),
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
-            .join(name),
+            .join(&name),
     ];
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
-        candidates.push(dir.join(name));
-        candidates.push(dir.join("../Resources/beamcraft-icon.png"));
+        candidates.push(dir.join(&name));
+        candidates.push(dir.join("../Resources").join(bundled));
     }
     candidates
 }
@@ -547,8 +689,27 @@ fn logo_candidates() -> Vec<PathBuf> {
 /// The official logo as `side` x `side` RGBA pixels, averaged down from the PNG; `None` when the
 /// file is missing or does not decode.
 pub fn logo_rgba(side: usize) -> Option<Vec<u8>> {
+    let file = "beamcraft-1024.png";
+    png_rgba(
+        &asset_candidates(file, &format!("assets/icons/{file}")),
+        side,
+    )
+}
+
+/// The application icon (the official logo on a rounded tile; edge to edge, or on Apple's grid
+/// inside the macOS bundle) as `side` x `side` RGBA pixels; `None` when the file is missing or
+/// does not decode.
+pub fn app_icon_rgba(side: usize) -> Option<Vec<u8>> {
+    png_rgba(
+        &asset_candidates("beamcraft-icon.png", "beamcraft-icon.png"),
+        side,
+    )
+}
+
+/// The first readable PNG of `candidates` as `side` x `side` RGBA pixels, averaged down.
+fn png_rgba(candidates: &[PathBuf], side: usize) -> Option<Vec<u8>> {
     use std::io::Read;
-    let path = logo_candidates().into_iter().find(|p| p.is_file())?;
+    let path = candidates.iter().find(|p| p.is_file())?;
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .ok()?
@@ -668,8 +829,21 @@ mod tests {
     }
 
     #[test]
+    fn the_application_icon_is_a_rounded_tile() {
+        // The source tree holds the icon, so a development build always finds it.
+        let rgba = app_icon_rgba(256).unwrap();
+        assert_eq!(rgba.len(), 256 * 256 * 4);
+        // The tile fills the square edge to edge; only the rounded corners are transparent.
+        let alpha = |x: usize, y: usize| rgba[(y * 256 + x) * 4 + 3];
+        assert_eq!(alpha(128, 128), 255);
+        assert_eq!(alpha(128, 0), 255);
+        assert_eq!(alpha(1, 1), 0);
+        assert!(app_icon_rgba(0).is_none());
+    }
+
+    #[test]
     fn icon_faces_are_convex() {
-        for polygons in [BLOCK, PLATE, BEAM, COLUMN, FOLDER] {
+        for polygons in [BLOCK, PLATE, BEAM, COLUMN, FOLDER, BOLT, WELD, COPY, DELETE] {
             for (points, _) in polygons {
                 let n = points.len();
                 let mut sign = 0.0f32;

@@ -175,16 +175,17 @@ archive into a fresh directory and runs `beamcraft --version` from it.
 Manual check on each OS: extract the package, run `beamcraft --version`, start `beamcraft-ui` and
 confirm the window opens with text (without the font the window has no text).
 
-The macOS bundle uses `assets/icons/BeamCraft.icns` for Finder and the Dock. Its artwork is
-the enamel-tile composition: the mark of `docs/brand/beamcraft-logo.svg` on a
-contributor-original tile, checked in as `assets/icons/beamcraft-macos-1024.png`; on macOS,
-regenerate the standard/Retina icon set from that raster with `bash packaging/generate-icon.sh`.
-The prebuilt ICNS is committed so release packaging needs no image tools. Release smoke checks
-decode the packaged ICNS with `iconutil`. The same composition ships inside the bundle as
-`Contents/Resources/beamcraft-icon.png`: while `beamcraft-ui` runs, the Dock shows the process
-icon, so the UI loads that file and applies it (`eframe::icon_data::from_png_bytes`), falling
-back to the coded I-section outside a bundle. `cargo test -p beamcraft-cli --test macos_icon`
-checks the committed ICNS structure without a Rust build of the UI or macOS. On macOS, also
-confirm the enamel-tile icon appears in Finder, the Dock and the app switcher. The tile leaves
-the official BeamCraft logo (`docs/brand/beamcraft-logo.svg`) unchanged; attribution and the
-brand terms in `docs/brand/LICENSE-brand.txt` apply to the mark.
+Every platform uses one application icon: the official logo `docs/brand/beamcraft-logo.svg` on a
+rounded tile, committed as `assets/icons/beamcraft-icon.png` (edge to edge, for Windows and
+Linux), `beamcraft-icon-macos.png` and `BeamCraft.icns` (on Apple's grid), `beamcraft-windows.ico`,
+its compiled resource `beamcraft-windows.res` (linked into `beamcraft-ui.exe` by the crate's
+`build.rs` on MSVC targets, so no resource compiler is needed; the patched eframe sets it as
+the window icon) and `beamcraft-linux-256.png`.
+Release packaging needs no image tools; `assets/icons/README.md` describes the files. Release smoke
+checks decode the packaged ICNS with `iconutil`. The grid raster ships as
+`Contents/Resources/beamcraft-icon.png` in the macOS bundle and the edge-to-edge raster as
+`assets/icons/beamcraft-icon.png` in the Windows/Linux archives: while `beamcraft-ui` runs, the Dock and taskbar show the process
+icon, so the UI loads that file and applies it, falling back to the coded I-section when it is
+missing. `cargo test -p beamcraft-cli --test macos_icon` checks the committed ICNS structure
+without a Rust build of the UI or macOS. On macOS, also confirm the icon in Finder, the Dock and
+the app switcher. The brand terms in `docs/brand/LICENSE-brand.txt` apply to the icon.

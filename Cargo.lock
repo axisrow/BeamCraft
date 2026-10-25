@@ -589,7 +589,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.37.0"
-source = "git+https://github.com/Apibim-com/eframe?rev=18e023c4bd7107c60e2971844794911475a0101d#18e023c4bd7107c60e2971844794911475a0101d"
+source = "git+https://github.com/Apibim-com/eframe?rev=6683d5b7cc150d51212b61cdb774422a6090911b#6683d5b7cc150d51212b61cdb774422a6090911b"
 dependencies = [
  "ahash",
  "bytemuck",
