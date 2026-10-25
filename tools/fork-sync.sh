@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: MPL-2.0
 # Sync the fork with upstream: merge upstream/master into the local fork master,
 # gate the result on the local fmt/clippy/test triple, then push origin/master.
-# The fork inherits upstream 1:1: a merge conflict is an error to investigate,
-# never something to auto-resolve. See CONTRIBUTING.md, "Keep the fork aligned".
+# The fork inherits upstream 1:1 (issue #141): a merge conflict resolves
+# automatically in favor of upstream, and fork-only paths stay on master,
+# reported as mirror-PR candidates for tools/upstream-mirror.sh. See
+# CONTRIBUTING.md, "Keep the fork aligned".
 set -euo pipefail
 
 usage() {
@@ -23,7 +25,7 @@ Options:
   --dry-run  guards, fetch and conflict prediction only; touches no branch.
   --yes      skip the confirmation prompt (for unattended runs).
 
-Exit codes: 0 ok or nothing to sync, 1 environment, 2 merge conflict,
+Exit codes: 0 ok or nothing to sync, 1 environment,
 3 gate failure, 4 push or other git failure.
 
 The gate is the local triple only. Fork CI does not gate a sync: it has no
@@ -33,7 +35,6 @@ EOF
 
 EXIT_OK=0
 EXIT_ENV=1
-EXIT_CONFLICT=2
 EXIT_GATE=3
 EXIT_PUSH=4
 
@@ -114,18 +115,20 @@ align_master() {
     fi
 }
 
-conflict_report() {
+# Every conflicted path takes the upstream version; a path upstream deleted is
+# removed. Fork-only paths are never conflicted this way: one-sided additions
+# merge cleanly and stay, reported as mirror-PR candidates after the push.
+resolve_upstream_wins() {
     local path
-    echo "Merge conflict: a fork/upstream divergence the 1:1 contract does not expect." >&2
-    echo "Conflicting paths:" >&2
-    git diff --name-only --diff-filter=U | while read -r path; do
-        echo "  $path" >&2
-    done
-    echo "" >&2
-    echo "Investigate before re-running (never auto-resolve):" >&2
-    echo "  - was a fork change not mirrored upstream yet?" >&2
-    echo "  - or did upstream rework a fork-only artifact (icon pipeline, docs)?" >&2
-    echo "  - git log master..upstream/master -- <path> and git log upstream/master..master -- <path>" >&2
+    while read -r path; do
+        [ -n "$path" ] || continue
+        if git cat-file -e "upstream/master:$path" 2>/dev/null; then
+            git checkout upstream/master -- "$path"
+        else
+            git rm -f --quiet -- "$path"
+        fi
+        echo "fork-sync: upstream wins: $path"
+    done < <(git diff --name-only --diff-filter=U)
 }
 
 run_triple() {
@@ -208,9 +211,8 @@ do_sync() {
     resolve_cargo
 
     if ! git merge --no-commit --no-ff upstream/master; then
-        conflict_report
-        git merge --abort
-        exit $EXIT_CONFLICT
+        echo "fork-sync: merge conflicts; resolving in favor of upstream"
+        resolve_upstream_wins
     fi
 
     if ! run_triple; then
@@ -226,6 +228,15 @@ do_sync() {
         die "push to origin/master was rejected; the merge commit stays local" $EXIT_PUSH
     fi
     echo "fork-sync: origin/master updated"
+
+    # Fork-only content survives the merge untouched; name it so it has a
+    # route upstream instead of silently piling up on master.
+    local fork_only
+    fork_only="$(git diff --name-only --diff-filter=A upstream/master HEAD)"
+    if [ -n "$fork_only" ]; then
+        echo "fork-sync: fork-only paths kept on master (mirror-PR candidates, tools/upstream-mirror.sh):"
+        echo "  ${fork_only//$'\n'/$'\n'  }"
+    fi
 
     cleanup_branches
 }
