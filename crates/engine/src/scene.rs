@@ -5,6 +5,7 @@
 //! The builder trusts neither the caller's `kind` nor any mesh: it re-validates every blob.
 
 mod reference;
+pub(crate) use reference::foreign_surface;
 pub use reference::{ReferenceGeometry, reference_element};
 
 use crate::element::{ElementId, ElementKind};

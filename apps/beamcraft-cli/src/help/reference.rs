@@ -9,6 +9,7 @@ pub(super) const COMMANDS: &[&str] = &[
     "correct-reference-units",
     "write-reference",
     "inspect-reference",
+    "measure-reference",
 ];
 
 pub(super) const HELP: &str = concat!(
@@ -28,5 +29,11 @@ pub(super) const HELP: &str = concat!(
     "FOREIGN_READ_ONLY: the source layer and every foreign prim are read-only, including ",
     "overrides in owned layers); inspect-reference --store ROOT (verified head: wrappers, ",
     "pinned source, declared and explicit units, units status, foreign prims, external layers ",
-    "with their digests)",
+    "with their digests); measure-reference --store ROOT [--id UUID] (R02, experimental: the ",
+    "kernel measurement of every wrapper's composed foreign surface, or of --id alone; the ",
+    "explicit units correction and the full placement are applied; volume, area and centroid ",
+    "only for a kernel-certified closed shell, as outward-rounded enclosures; an open, ",
+    "self-intersecting, inward, degenerate or unsupported surface reports its status without ",
+    "values, and mass is never invented; read-only: no revision, identity or byte is written, ",
+    "and the same head always answers with the same numbers)",
 );
