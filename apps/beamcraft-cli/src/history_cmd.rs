@@ -94,13 +94,13 @@ pub fn handles(command: &OsString) -> bool {
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     match run(args) {
         Ok(json) => (json, 0),
-        Err(failure) => crate::plate_cmd::report_with(Err(failure.error), failure.diagnostics),
+        Err(failure) => crate::report::report_with(Err(failure.error), failure.diagnostics),
     }
 }
 
 /// The refusal printed when a coordinator cannot take its store lease.
 pub fn lease_refusal(error: PlateError) -> (Json, u8) {
-    crate::plate_cmd::report(Err(error))
+    crate::report::report(Err(error))
 }
 
 /// Holds the store lease of a starting `coordinator-serve`; see

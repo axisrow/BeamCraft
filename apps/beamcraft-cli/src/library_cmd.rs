@@ -7,7 +7,8 @@
 //! store, and print one JSON object with the error shape and exit codes of the plate commands.
 //! Only `library-add` writes, and only the one library file it names.
 
-use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record, report};
+use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record};
+use crate::report::report;
 use beamcraft_cli::library::{
     EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed,
     Source, add_entry, open_lookup,

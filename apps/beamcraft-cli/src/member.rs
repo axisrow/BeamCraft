@@ -12,10 +12,11 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
-    check_footprint, control, decode, evaluate_decoded, host_uuid, load_base, member_record,
-    mesh_change, open_base, prior_op_with, publish_revision, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
+    decode, evaluate_decoded, host_uuid, load_base, member_record, mesh_change, open_base,
+    prior_op_with, replay_summary, summarize,
 };
+use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::member::{MemberAdmission, admit_create_member};
 use beamcraft_engine::query::committed::{MemberRecord, ids};

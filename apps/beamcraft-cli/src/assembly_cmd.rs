@@ -5,6 +5,7 @@
 //! `assemblies`. They call the engine API through `beamcraft_cli::assembly` and print one JSON
 //! object with the same error shape and exit codes as the plate commands.
 
+use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{footprint_json, id_error, revision_json};
 use beamcraft_cli::assembly::{
     AssemblyChange, AssemblyContext, AssemblyView, assemblies, attach, create_assembly, detach,
@@ -12,13 +13,13 @@ use beamcraft_cli::assembly::{
 use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
     ids::IdSource,
-    revision::{NoFault, RevisionStore, Uuid7},
+    revision::{NoFault, RevisionStore},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
 use beamcraft_model::command::{AttachToAssembly, CreateAssembly, DetachFromAssembly};
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::id::{ElementId, OpId};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -31,40 +32,9 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-const CONTEXT_OPTIONS: [&str; 5] = [
-    "--op-id",
-    "--revision-id",
-    "--actor-id",
-    "--project-id",
-    "--workspace-id",
-];
-
 /// Runs one assembly command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    match run(args) {
-        Ok(json) => (json, 0),
-        Err(e) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message)),
-                ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
-            ]),
-            match e.code {
-                ErrorCode::OutcomeUnknown => 4,
-                ErrorCode::BackendUnavailable => 3,
-                _ => 2,
-            },
-        ),
-    }
+    crate::report::report(run(args))
 }
 
 fn run(args: &[OsString]) -> Run<Json> {
@@ -124,27 +94,13 @@ fn run(args: &[OsString]) -> Run<Json> {
     let element = |key: &str, missing: &'static str| -> Run<ElementId> {
         ElementId::parse(given(key).ok_or_else(|| invalid(missing))?).map_err(id_error)
     };
+    let common = command_context::parse(&options, &mut fresh)?;
     let context = AssemblyContext {
-        op_id: match given("--op-id") {
-            Some(text) => OpId::parse(text).map_err(id_error)?,
-            None => OpId::from_uuid(fresh()?),
-        },
-        revision_id: match given("--revision-id") {
-            Some(text) => RevisionId::parse(text).map_err(id_error)?,
-            None => RevisionId::from_uuid(fresh()?),
-        },
-        actor: match given("--actor-id") {
-            Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-            None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
-        },
-        project: match given("--project-id") {
-            Some(text) => ProjectId::parse(text).map_err(id_error)?,
-            None => ProjectId::from_uuid(fresh()?),
-        },
-        workspace: match given("--workspace-id") {
-            Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
-            None => WorkspaceId::from_uuid(fresh()?),
-        },
+        op_id: common.op_id,
+        revision_id: common.revision_id,
+        actor: common.actor,
+        project: common.project,
+        workspace: common.workspace,
     };
     let (outcome, subject, change) = match *command {
         "create-assembly" => {

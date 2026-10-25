@@ -25,10 +25,11 @@
 //!   replay record.
 
 use crate::plate::{
-    Base, PlateError, PublishRequest, RevisionSummary, base_of, control, decode, host_uuid,
-    integrity, load_base, number, open_base, publish_revision, summarize, text,
+    Base, PlateError, RevisionSummary, base_of, control, decode, host_uuid, integrity, load_base,
+    number, open_base, summarize, text,
 };
 use crate::plate::{decode_polygon, decode_polygons};
+use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::command::MaterialInfo;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::member::{ProfileInfo, declared_section_area_warning};

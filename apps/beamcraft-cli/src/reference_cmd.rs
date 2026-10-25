@@ -11,8 +11,9 @@
 //! missing feature.
 
 use crate::plate_cmd::{
-    Run, footprint_json, id_error, invalid, num, report, revision_json, translation, triple,
+    Run, footprint_json, id_error, invalid, num, revision_json, translation, triple,
 };
+use crate::report::report;
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::reference::{
     AttachRequest, Attached, Edited, Ids, ReferenceInspection, Wrapper, attach_reference,

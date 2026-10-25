@@ -35,30 +35,7 @@ fn invalid(message: &'static str) -> PlateError {
 
 /// Runs one changeset command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    match run(args) {
-        Ok(json) => (json, 0),
-        Err(e) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message)),
-                ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
-            ]),
-            match e.code {
-                ErrorCode::OutcomeUnknown => 4,
-                ErrorCode::BackendUnavailable => 3,
-                _ => 2,
-            },
-        ),
-    }
+    crate::report::report(run(args))
 }
 
 fn store_at(path: &Path, message: &'static str) -> Run<RevisionStore> {

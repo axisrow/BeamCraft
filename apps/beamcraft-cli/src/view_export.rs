@@ -15,7 +15,8 @@
 //! prints it; the length and the reply of `beamcraft plate-inspect --store ROOT --element ID`
 //! the same way; then the bundle. A length of zero is a reply that was not asked for.
 
-use crate::plate_cmd::{definitions_json, id_error, inspection_json, report};
+use crate::plate_cmd::{definitions_json, id_error, inspection_json};
+use crate::report::report;
 use beamcraft_cli::plate::{PlateError, inspect};
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;

@@ -20,7 +20,8 @@
 //! merge or rebase, a draft keeps one linear history, and `publish` publishes the draft head as one
 //! revision. Two workspaces of the same user are two directories and do not see each other.
 
-use crate::plate::{PlateError, RevisionSummary, commit_verified, host_uuid, integrity, summarize};
+use crate::plate::{PlateError, RevisionSummary, host_uuid, integrity, summarize};
+use crate::publication::commit_verified;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, ExpectedBase, LayerEntry, Revision, RevisionDraft, RevisionError,
     RevisionStore, Uuid7,
@@ -429,7 +430,7 @@ pub fn publish_workspace(
             )
         })
         .transpose()?;
-    let committed = crate::plate::commit_verified_with_evidence(
+    let committed = crate::publication::commit_verified_with_evidence(
         published,
         &next,
         &ExpectedBase::Revision(meta.base_revision.clone()),

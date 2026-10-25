@@ -6,6 +6,7 @@
 //! as authored data in the next revision) and `numbering-status` (reads the approval back and
 //! says whether the model still matches it).
 
+use crate::command_context::{self, CONTEXT_OPTIONS};
 use beamcraft_cli::numbering::{NumberingView, numbering_preview};
 use beamcraft_cli::numbering_approval::{
     ApprovalContext, Approved, StatusView, approve_numbering, numbering_status,
@@ -15,13 +16,12 @@ use beamcraft_engine::numbering::{GroupKind, Series, Settings, unnumbered};
 use beamcraft_engine::numbering_approval::{ApproveNumbering, Report, compare_group};
 use beamcraft_host::{
     ids::IdSource,
-    revision::{NoFault, RevisionStore, Uuid7},
+    revision::{NoFault, RevisionStore},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -49,7 +49,7 @@ pub fn handles(command: &OsString) -> bool {
 
 /// Runs the command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    crate::plate_cmd::report(run(args))
+    crate::report::report(run(args))
 }
 
 const SETTINGS_OPTIONS: [&str; 6] = [
@@ -61,13 +61,6 @@ const SETTINGS_OPTIONS: [&str; 6] = [
     "--compare-name",
 ];
 const PAGING_OPTIONS: [&str; 2] = ["--offset", "--limit"];
-const CONTEXT_OPTIONS: [&str; 5] = [
-    "--op-id",
-    "--revision-id",
-    "--actor-id",
-    "--project-id",
-    "--workspace-id",
-];
 
 fn series(text: Option<&&str>, default: Series) -> Run<Series> {
     let Some(text) = text else {
@@ -234,28 +227,13 @@ fn context_of(options: &BTreeMap<&str, &str>) -> Run<ApprovalContext> {
             message: "no identity could be generated",
         })
     };
-    let given = |key: &str| options.get(key).copied();
+    let common = command_context::parse(options, &mut fresh)?;
     Ok(ApprovalContext {
-        op_id: match given("--op-id") {
-            Some(text) => OpId::parse(text).map_err(crate::plate_cmd::id_error)?,
-            None => OpId::from_uuid(fresh()?),
-        },
-        revision_id: match given("--revision-id") {
-            Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::id_error)?,
-            None => RevisionId::from_uuid(fresh()?),
-        },
-        actor: match given("--actor-id") {
-            Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-            None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
-        },
-        project: match given("--project-id") {
-            Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::id_error)?,
-            None => ProjectId::from_uuid(fresh()?),
-        },
-        workspace: match given("--workspace-id") {
-            Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::id_error)?,
-            None => WorkspaceId::from_uuid(fresh()?),
-        },
+        op_id: common.op_id,
+        revision_id: common.revision_id,
+        actor: common.actor,
+        project: common.project,
+        workspace: common.workspace,
     })
 }
 

@@ -21,11 +21,11 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
-    check_footprint, control, decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base,
-    member_record, mesh_change, open_base, plate_record, prior_op_with, publish_revision,
-    replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
+    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record,
+    mesh_change, open_base, plate_record, prior_op_with, replay_summary, summarize,
 };
+use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::member::{evaluate_member, member_quantities};

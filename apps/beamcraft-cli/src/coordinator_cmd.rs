@@ -84,23 +84,10 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
             };
             (json, exit)
         }
-        Err(e) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message)),
-                ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
-            ]),
-            exit_for(e.code),
-        ),
+        Err(e) => crate::report::report(Err(beamcraft_cli::plate::PlateError {
+            code: e.code,
+            message: e.message,
+        })),
     }
 }
 

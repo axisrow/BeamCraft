@@ -316,7 +316,7 @@ pub fn rebase_workspace(
             entries,
         };
     let pin = state.stage_rebase(&receipt)?;
-    let committed = plate::commit_verified_with_evidence(
+    let committed = crate::publication::commit_verified_with_evidence(
         workspace,
         &next,
         &ExpectedBase::Revision(receipt.draft.revision.clone()),

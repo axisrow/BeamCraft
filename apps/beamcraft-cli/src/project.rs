@@ -21,9 +21,10 @@
 
 use crate::library::parse_environment;
 use crate::plate::{
-    DERIVED_LAYER, PlateError, ROOT_LAYER, RevisionSummary, claim_project, commit_verified,
-    host_uuid, load_base, summarize,
+    DERIVED_LAYER, PlateError, ROOT_LAYER, RevisionSummary, claim_project, host_uuid, load_base,
+    summarize,
 };
+use crate::publication::commit_verified;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerEntry, LayerRole, RevisionDraft, RevisionStore,
 };

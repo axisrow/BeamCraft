@@ -29,7 +29,8 @@
 //! (bounded to [`MAX_REVISIONS`] revisions and [`LOG_CAP`] bytes); undo does not touch the
 //! published store (a later publish sends the draft head as it is).
 
-use crate::plate::{PlateError, RevisionSummary, commit_verified, host_uuid, integrity, summarize};
+use crate::plate::{PlateError, RevisionSummary, host_uuid, integrity, summarize};
+use crate::publication::commit_verified;
 use crate::workspace::WorkspaceState;
 use beamcraft_host::revision::{
     CommitHook, ExpectedBase, LayerEntry, RevisionDraft, RevisionInfo, RevisionStore, Uuid7,

@@ -25,10 +25,11 @@
 use crate::assembly::read_prims;
 use crate::definition::profile_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary, base_of,
-    check_footprint, control, decode, digest_of, host_uuid, integrity, load_base, number,
-    open_base, prior_op_with, property, publish_revision, replay_summary, summarize, text,
+    AUTHORED_LAYER, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint, control,
+    decode, digest_of, host_uuid, integrity, load_base, number, open_base, prior_op_with, property,
+    replay_summary, summarize, text,
 };
+use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::bolt::Bounds;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;

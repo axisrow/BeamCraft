@@ -5,18 +5,19 @@
 //! `beamcraft_cli::level` and print one JSON object with the same error shape and exit codes as
 //! the plate commands. Assigning an element to a level is `update-element --level`.
 
+use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
 use beamcraft_cli::level::{LevelChange, LevelContext, LevelView, create_level, levels};
 use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
     ids::IdSource,
-    revision::{NoFault, RevisionStore, Uuid7},
+    revision::{NoFault, RevisionStore},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
 use beamcraft_model::command::CreateLevel;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::id::{ElementId, OpId};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -29,14 +30,6 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-const CONTEXT_OPTIONS: [&str; 5] = [
-    "--op-id",
-    "--revision-id",
-    "--actor-id",
-    "--project-id",
-    "--workspace-id",
-];
-
 /// Whether `command` is one of the level commands.
 pub fn handles(command: &OsString) -> bool {
     command == "create-level" || command == "levels"
@@ -44,7 +37,7 @@ pub fn handles(command: &OsString) -> bool {
 
 /// Runs one level command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    crate::plate_cmd::report(run(args))
+    crate::report::report(run(args))
 }
 
 fn run(args: &[OsString]) -> Run<Json> {
@@ -98,27 +91,13 @@ fn run(args: &[OsString]) -> Run<Json> {
         })
     };
     let given = |key: &str| options.get(key).copied();
+    let common = command_context::parse(&options, &mut fresh)?;
     let context = LevelContext {
-        op_id: match given("--op-id") {
-            Some(text) => OpId::parse(text).map_err(id_error)?,
-            None => OpId::from_uuid(fresh()?),
-        },
-        revision_id: match given("--revision-id") {
-            Some(text) => RevisionId::parse(text).map_err(id_error)?,
-            None => RevisionId::from_uuid(fresh()?),
-        },
-        actor: match given("--actor-id") {
-            Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-            None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
-        },
-        project: match given("--project-id") {
-            Some(text) => ProjectId::parse(text).map_err(id_error)?,
-            None => ProjectId::from_uuid(fresh()?),
-        },
-        workspace: match given("--workspace-id") {
-            Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
-            None => WorkspaceId::from_uuid(fresh()?),
-        },
+        op_id: common.op_id,
+        revision_id: common.revision_id,
+        actor: common.actor,
+        project: common.project,
+        workspace: common.workspace,
     };
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,

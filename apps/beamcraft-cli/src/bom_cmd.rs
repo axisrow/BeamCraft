@@ -33,30 +33,7 @@ pub fn handles(command: &OsString) -> bool {
 
 /// Runs `bom-export` and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    match run(args) {
-        Ok(json) => (json, 0),
-        Err(e) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message)),
-                ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
-            ]),
-            match e.code {
-                ErrorCode::OutcomeUnknown => 4,
-                ErrorCode::BackendUnavailable => 3,
-                _ => 2,
-            },
-        ),
-    }
+    crate::report::report(run(args))
 }
 
 /// Creates a new file (never overwrites) and returns its handle; nothing is written yet.

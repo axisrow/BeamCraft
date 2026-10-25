@@ -5,10 +5,11 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    self, AUTHORED_LAYER, CreateRequest, Created, DERIVED_LAYER, PlateError, PublishRequest,
-    RevisionSummary, check_footprint, control, decode, digest_of, host_uuid, integrity, load_base,
-    open_base, prior_op_with, publish_revision, replay_summary, summarize,
+    self, AUTHORED_LAYER, CreateRequest, Created, DERIVED_LAYER, PlateError, RevisionSummary,
+    check_footprint, control, decode, digest_of, host_uuid, integrity, load_base, open_base,
+    prior_op_with, replay_summary, summarize,
 };
+use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::plate_draft::{
     DraftAdmission, PlateDraft, UnsupportedPlate, admit_create_plate_draft,

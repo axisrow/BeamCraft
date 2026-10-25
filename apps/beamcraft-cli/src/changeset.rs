@@ -707,7 +707,7 @@ pub fn apply_changeset(
         .as_ref()
         .map(|footprint| crate::command_evidence::store(published, &draft.op, digest, footprint))
         .transpose()?;
-    let committed = crate::plate::commit_verified_with_evidence(
+    let committed = crate::publication::commit_verified_with_evidence(
         published,
         &draft,
         &ExpectedBase::Revision(head.info().revision().clone()),

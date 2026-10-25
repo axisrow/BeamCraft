@@ -5,6 +5,7 @@
 //! the adapter of `beamcraft_cli::plate` and print one JSON object (same error shape as the other
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
+use crate::report::report_with;
 use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element};
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
@@ -62,41 +63,6 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     let mut candidates = Vec::new();
     let result = run(args, &mut candidates);
     report_with(result, candidates)
-}
-
-/// The shared result shape of the store commands: the JSON object and the exit code (0 success,
-/// 2 rejection, 3 backend unavailable, 4 outcome unknown).
-pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
-    report_with(result, Vec::new())
-}
-
-/// [`report`] with the `diagnostics` array of a rejection filled in (the candidates of an
-/// ambiguous name).
-pub(crate) fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u8) {
-    match result {
-        Ok(json) => (json, 0),
-        Err(e) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message)),
-                ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(diagnostics)),
-            ]),
-            match e.code {
-                ErrorCode::OutcomeUnknown => 4,
-                ErrorCode::BackendUnavailable => 3,
-                _ => 2,
-            },
-        ),
-    }
 }
 
 const CREATE_OPTIONS: &[&str] = &[

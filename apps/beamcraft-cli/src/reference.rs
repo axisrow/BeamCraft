@@ -33,10 +33,11 @@
 //! the other commands. One implicit workspace, in-process layer engine, as in `plate`.
 
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
-    check_footprint, control, digest_of, host_uuid, integrity, load_base, open_base, prior_op_with,
-    publish_revision, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
+    digest_of, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
+    summarize,
 };
+use crate::publication::{PublishRequest, publish_revision};
 use crate::source_file::read_file;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::reference::{

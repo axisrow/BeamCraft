@@ -19,10 +19,11 @@
 //! engine, as in `plate`.
 
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary,
-    check_footprint, control, decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base,
-    open_base, prior_op_with, publish_revision, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
+    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, open_base, prior_op_with,
+    replay_summary, summarize,
 };
+use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};

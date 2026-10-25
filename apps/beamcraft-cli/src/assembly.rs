@@ -22,10 +22,11 @@
 //! is no cascade. An assembly cannot be renamed or moved yet.
 
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, PublishRequest, RevisionSummary, base_of,
-    check_footprint, control, host_uuid, integrity, load_base, open_base, prior_op_with, property,
-    publish_revision, replay_summary, summarize, text,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint,
+    control, host_uuid, integrity, load_base, open_base, prior_op_with, property, replay_summary,
+    summarize, text,
 };
+use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::assembly::{Membership, PartKind};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;

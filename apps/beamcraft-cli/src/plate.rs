@@ -21,19 +21,21 @@
 //! * One implicit personal workspace per store: project and workspace identities are taken from
 //!   the first revision (or supplied for the first one), the generation is the head's plus one.
 //!   `CreatePlate` and `CommitWorkspace` are fused: a successful call is a published revision.
-//!   Workspaces, drafts and undo (P06, P07) do not exist.
+//!   Explicit personal workspaces, publication and durable undo/redo live in `workspace` and
+//!   `history`; this adapter commits commands to the store supplied by its caller.
 //! * The layer engine runs **in this process**, as every USD read and write does (U17). A
 //!   hostile or corrupt layer is an ordinary refusal under the layer engine's size and depth
 //!   budgets, and the project's own layers are verified by SHA-256 before they are parsed.
-//! * Replay (`op_id`): an operation the host ledger proves committed is compared with the
-//!   element of that id in the head revision. This is sound only while no command edits or
-//!   deletes elements (true in P01); a stored canonical request (F04 section 3) replaces it.
-//! * Quantities are returned, not stored: the pinned U02 schema has no quantity attributes.
+//! * Replay (`op_id`): the host ledger identifies the committed operation. Command adapters
+//!   compare its recorded request or operation revision, so later edits cannot substitute a
+//!   different request for an accepted identity.
+//! * Stored quantities are checked against fresh engine evaluation when a revision is opened.
 
 use crate::definition::{
     DefinitionRecord, decode_definitions, definition_digest, material_lookup, profile_lookup,
 };
 use crate::level::levels_of;
+use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::command::AuthoredPlate;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::level::Levels;
@@ -51,14 +53,14 @@ use beamcraft_engine::transaction::{Admission, PriorOp, admit_create_plate};
 use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
 use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{
-    CommitHook, CommitOutcome, Committed, ContentRejection, ContentVerifier, ExpectedBase,
-    IndexEvidence, LayerEntry, LayerRole, Manifest, Revision, RevisionDraft, RevisionError,
-    RevisionInfo, RevisionStore, Uuid7, VerifyRequest,
+    CommitHook, CommitOutcome, ContentRejection, ContentVerifier, ExpectedBase, IndexEvidence,
+    LayerRole, Manifest, Revision, RevisionError, RevisionInfo, RevisionStore, Uuid7,
+    VerifyRequest,
 };
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, PROJECT_RECORD_KEY,
-    Placement as LayerPlacement, Prepare, Prepared, SchemaIdentity, Shape, StoredQuantities,
-    project_record, schema_identity,
+    Placement as LayerPlacement, Prepare, Prepared, Shape, StoredQuantities, project_record,
+    schema_identity,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{
@@ -163,14 +165,6 @@ pub(crate) fn host_uuid(text: &str) -> Result<Uuid7, PlateError> {
 /// The pin of the context that has no base revision.
 fn initial_pin() -> Result<ContentDigest, PlateError> {
     digest_of(b"beamcraft-p01-initial-base")
-}
-
-fn role_of(name: &str) -> LayerRole {
-    if name == DERIVED_LAYER {
-        LayerRole::Derived
-    } else {
-        LayerRole::Authored
-    }
 }
 
 pub(crate) fn open_request(
@@ -1096,7 +1090,7 @@ fn reject(error: impl Into<PlateError>) -> ContentRejection {
 
 /// Opens exactly the committed bytes in a fresh reader and derives everything from them, so the
 /// index and the verified plates cannot be stale, partial or foreign.
-struct PlateVerifier;
+pub(crate) struct PlateVerifier;
 
 impl ContentVerifier for PlateVerifier {
     fn verify(&self, request: &VerifyRequest<'_>) -> Result<IndexEvidence, ContentRejection> {
@@ -1736,103 +1730,6 @@ pub fn create_plate(
         revision: summarize(&committed.info),
         footprint: Some(transaction.outcome.footprint.clone()),
     })
-}
-
-/// What `publish_revision` needs to turn a prepared candidate into a committed revision.
-pub(crate) struct PublishRequest<'a> {
-    pub(crate) footprint: &'a Footprint,
-    pub(crate) fingerprint: ContentDigest,
-    pub(crate) prepared: &'a Prepared,
-    pub(crate) schema: SchemaIdentity,
-    pub(crate) project: &'a str,
-    pub(crate) workspace: &'a str,
-    pub(crate) revision_id: &'a RevisionId,
-    pub(crate) op: Uuid7,
-    pub(crate) base_generation: u64,
-    pub(crate) expected: &'a ExpectedBase,
-}
-
-/// Stores the layer blobs of a prepared candidate and commits them as the next revision through
-/// U06/U07, with the content verifier of this module.
-pub(crate) fn publish_revision(
-    store: &RevisionStore,
-    request: &PublishRequest<'_>,
-    hook: &mut dyn CommitHook,
-) -> Result<Committed, PlateError> {
-    let generation = request
-        .base_generation
-        .checked_add(1)
-        .ok_or(PlateError::new(
-            ErrorCode::LimitExceeded,
-            "generation exhausted",
-        ))?;
-    let mut entries = Vec::new();
-    for layer in &request.prepared.layers {
-        store
-            .blobs()
-            .publish(&layer.bytes)
-            .map_err(|e| PlateError::new(e.code(), "layer blob could not be stored"))?;
-        entries.push(LayerEntry::from_bytes(
-            &layer.name,
-            role_of(&layer.name),
-            &layer.bytes,
-        )?);
-    }
-    // Foreign sources are carried into every revision byte for byte as external entries. Their
-    // blob is published if absent (publication compares existing bytes in full) and is never
-    // rewritten.
-    for layer in &request.prepared.retained {
-        store
-            .blobs()
-            .publish(&layer.bytes)
-            .map_err(|e| PlateError::new(e.code(), "foreign layer blob could not be stored"))?;
-        entries.push(LayerEntry::from_bytes(
-            &layer.name,
-            LayerRole::External,
-            &layer.bytes,
-        )?);
-    }
-    let draft = RevisionDraft {
-        project: host_uuid(request.project)?,
-        workspace: host_uuid(request.workspace)?,
-        revision: host_uuid(&request.revision_id.to_string())?,
-        op: request.op.clone(),
-        workspace_generation: generation,
-        schema: request.schema.digest,
-        root_layer: ROOT_LAYER.into(),
-        entries,
-    };
-    let pin =
-        crate::command_evidence::store(store, &request.op, request.fingerprint, request.footprint)?;
-    Ok(store.commit_with_evidence(
-        &draft,
-        request.expected,
-        Some(pin),
-        Some(&PlateVerifier),
-        hook,
-    )?)
-}
-
-/// Commits a complete layer set through U06/U07 with the content verifier of this module (U03
-/// index, structural validation, kernel re-evaluation of every element). Used where the layers
-/// already exist as bytes, such as forking and publishing a workspace.
-pub(crate) fn commit_verified(
-    store: &RevisionStore,
-    draft: &RevisionDraft,
-    expected: &ExpectedBase,
-    hook: &mut dyn CommitHook,
-) -> Result<Committed, PlateError> {
-    commit_verified_with_evidence(store, draft, expected, None, hook)
-}
-
-pub(crate) fn commit_verified_with_evidence(
-    store: &RevisionStore,
-    draft: &RevisionDraft,
-    expected: &ExpectedBase,
-    evidence: Option<beamcraft_host::revision::EvidencePin>,
-    hook: &mut dyn CommitHook,
-) -> Result<Committed, PlateError> {
-    Ok(store.commit_with_evidence(draft, expected, evidence, Some(&PlateVerifier), hook)?)
 }
 
 /// A plate as listed from a committed revision.
