@@ -21,6 +21,7 @@ use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::query::feature::FeatureKind;
 use beamcraft_engine::query::pick::{PickQuery, RayPick, pick};
 use beamcraft_json::Json;
+use beamcraft_model::limits::COORDINATE_CAP_MM;
 use std::path::Path;
 
 /// A world-space ray in millimetres.
@@ -153,7 +154,8 @@ fn face_pick(snapshot: &ViewSnapshot, ray: &Ray) -> Result<Option<([f64; 3], Str
 
 /// Where `ray` meets the ground plane `z = 0` ahead of the camera: where a placement click
 /// lands when it misses every face. `None` for a parallel ray, a crossing behind the camera or
-/// a point outside the engine's coordinate range.
+/// a point beyond the member endpoint cap `COORDINATE_CAP_MM`: such a point would pass no
+/// `create-member` at Commit, so it is no placement point to begin with.
 pub fn ground_point(ray: &Ray) -> Option<[f64; 3]> {
     if ray.direction[2].abs() < 1e-9 {
         return None;
@@ -167,7 +169,10 @@ pub fn ground_point(ray: &Ray) -> Option<[f64; 3]> {
         ray.origin[1] + t * ray.direction[1],
         0.0,
     ];
-    (point.iter().all(|v| v.is_finite() && v.abs() <= 4.0e9)).then_some(point)
+    (point
+        .iter()
+        .all(|v| v.is_finite() && v.abs() <= COORDINATE_CAP_MM))
+    .then_some(point)
 }
 
 /// What the panel shows about the selected element, as `plate-inspect` reports it.

@@ -397,8 +397,6 @@ fn needs_refit(
     }
 }
 
-/// The volume part of a commit note: cubic millimetres below a thousandth of a cubic metre,
-/// cubic metres from there, so a small plate does not read as `0.000 m3`.
 /// One resolved world point, for notes and hints.
 struct PointText([f64; 3]);
 impl std::fmt::Display for PointText {
@@ -408,6 +406,8 @@ impl std::fmt::Display for PointText {
     }
 }
 
+/// The volume part of a commit note: cubic millimetres below a thousandth of a cubic metre,
+/// cubic metres from there, so a small plate does not read as `0.000 m3`.
 fn volume_note(volume_mm3: f64) -> String {
     if volume_mm3 < 1e6 {
         format!(", volume {volume_mm3:.0} mm3")
@@ -1831,6 +1831,19 @@ impl App {
         origin_mm: [f64; 3],
     ) -> Option<GhostMesh> {
         let rect = self.profile_rect()?;
+        // The form's orientation text, as the placement quaternion; a field that does not
+        // parse draws no ghost, and a well-formed one the engine refuses (a non-normalized
+        // quaternion, say) is refused here the same way.
+        let orientation = self
+            .tools
+            .member
+            .orientation
+            .trim()
+            .split(',')
+            .map(|part| part.trim().parse::<f64>().ok())
+            .collect::<Option<Vec<f64>>>()?
+            .try_into()
+            .ok()?;
         let authored = AuthoredMember {
             id: ElementId::parse("01990000-0000-7000-8000-00000000e347").ok()?,
             kind: match self.tools.member.kind {
@@ -1841,7 +1854,10 @@ impl App {
             axis_points_mm: [start, end],
             profile: self.tools.member.profile.as_deref()?.parse().ok()?,
             roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
-            placement: Placement::IDENTITY,
+            placement: Placement {
+                translation_mm: [0.0; 3],
+                orientation_xyzw: orientation,
+            },
             material: None,
             cut: None,
         };

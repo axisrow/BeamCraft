@@ -92,7 +92,10 @@ impl GhostMesh {
                 slot.copy_from_slice(&((*a - o) as f32).to_le_bytes());
             }
         }
-        instance[24..28].copy_from_slice(&1.0f32.to_le_bytes());
+        // The identity orientation: x = y = z = 0, w = 1.
+        if let Some(w) = instance.get_mut(24..28) {
+            w.copy_from_slice(&1.0f32.to_le_bytes());
+        }
         Self {
             vertex_count: (triangles.len() * 3) as u32,
             vertices: out,
