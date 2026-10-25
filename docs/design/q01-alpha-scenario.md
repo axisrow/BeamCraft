@@ -23,6 +23,19 @@ deterministic BOM bytes with exactly five unique parts, IFC entity counts, and p
 without another revision. Bolts and welds are records; the current bolt slice does not generate
 holes automatically. The holes in this story are explicitly authored plate holes.
 
+## Published drawing slice
+
+The same entry point also creates and publishes a drawing of the first column with semantic
+anchors. It saves `drawing-version.json`, reopens the document and its archived model source,
+and checks exact publication replies and the single retained version. A subsequent draft rename
+is isolated until publication; after publication the drawing reports `stale` and still refers to
+the original source. Retrying its publication returns the original version bytes.
+
+This exercises the existing minimal D03 slice only. It does not cover drawing sheets, broader
+views, PDF/print, or drawing native UI. The retained final model has the same five parts with the
+first column renamed. The original BOM remains the output
+of the earlier numbered source revision.
+
 ## Native UI runbook
 
 Keep the generated stores and output files for the manual portion:

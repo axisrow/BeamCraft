@@ -339,4 +339,131 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     );
     assert_eq!(text(&replay, "outcome"), "workspace_publish_replayed");
     assert_eq!(s.head("published"), accepted_head);
+    drawing_lifecycle(&s, &accepted_head);
+}
+
+/// The existing D03 slice is part of the real frame story, without claiming D04-D08 acceptance.
+fn drawing_lifecycle(s: &Story, accepted_head: &str) {
+    let document = s.path("drawing");
+    let id = |suffix: u16| format!("019a7bf0-0000-7000-8000-{suffix:012}");
+    let drawing = id(9200);
+    let view = id(9201);
+    let dimension = id(9202);
+    let create_op = id(9203);
+    let create_revision = id(9204);
+    let publish_op = id(9205);
+    let publish_revision = id(9206);
+    let version = id(9207);
+    let anchor_a = format!("fid1:{}:member:v.x0.y0.z0", PARTS[0]);
+    let anchor_b = format!("fid1:{}:member:v.x0.y0.z1", PARTS[0]);
+    let created = s.ok(
+        "published",
+        "drawing-create",
+        &[
+            "--document-dir",
+            &document,
+            "--drawing-id",
+            &drawing,
+            "--view-id",
+            &view,
+            "--dimension-id",
+            &dimension,
+            "--id",
+            PARTS[0],
+            "--anchor-a",
+            &anchor_a,
+            "--anchor-b",
+            &anchor_b,
+            "--op-id",
+            &create_op,
+            "--revision-id",
+            &create_revision,
+            "--actor-id",
+            USER,
+        ],
+    );
+    assert_eq!(text(&created, "state"), "draft");
+    assert_eq!(text(&created, "source_revision_id"), accepted_head);
+    let publish_args = [
+        "--document-dir",
+        document.as_str(),
+        "--expected-head",
+        create_revision.as_str(),
+        "--op-id",
+        publish_op.as_str(),
+        "--revision-id",
+        publish_revision.as_str(),
+        "--actor-id",
+        USER,
+        "--version-id",
+        version.as_str(),
+    ];
+    let published = s.ok("published", "drawing-publish", &publish_args);
+    assert_eq!(text(&published, "state"), "published");
+    assert_eq!(text(&published, "version_id"), version);
+    assert_eq!(text(&published, "source_revision_id"), accepted_head);
+    let stored = published.encode(&Limits::DEFAULT).unwrap();
+    fs::write(s.path("drawing-version.json"), &stored).unwrap();
+    let inspect_args = [
+        "--document-dir",
+        document.as_str(),
+        "--model-store",
+        &s.path("published"),
+    ];
+    assert_eq!(
+        text(
+            &s.ok("published", "drawing-inspect", &inspect_args),
+            "freshness"
+        ),
+        "current"
+    );
+
+    // A model edit makes the drawing stale; it cannot silently replace the archived source.
+    s.ok(
+        "draft",
+        "update-element",
+        &["--id", PARTS[0], "--name", "Q01 revised column"],
+    );
+    assert_eq!(s.head("published"), accepted_head);
+    s.ok(
+        "published",
+        "workspace-publish",
+        &["--workspace-dir", &s.path("draft")],
+    );
+    let changed_head = s.head("published");
+    assert_ne!(changed_head, accepted_head);
+    let inspected = s.ok("published", "drawing-inspect", &inspect_args);
+    assert_eq!(text(&inspected, "freshness"), "stale");
+    assert_eq!(text(&inspected, "source_revision_id"), accepted_head);
+    assert_eq!(text(&inspected, "version_id"), version);
+    assert_eq!(
+        s.ok("published", "drawing-publish", &publish_args)
+            .encode(&Limits::DEFAULT)
+            .unwrap(),
+        stored
+    );
+    let versions = s.ok(
+        "published",
+        "drawing-versions",
+        &["--document-dir", &document],
+    );
+    let versions = versions.get("versions").unwrap().array().unwrap();
+    assert_eq!(versions.len(), 1);
+    assert_eq!(versions[0].encode(&Limits::DEFAULT).unwrap(), stored);
+    assert_eq!(s.head("published"), changed_head);
+
+    // Reopen the stored document through a fresh application reader and verify its actual archive.
+    let documents =
+        beamcraft_cli::drawing::document::store::DocumentStore::open(Path::new(&document)).unwrap();
+    let reopened = documents.head().unwrap();
+    assert_eq!(reopened.version.unwrap().to_string(), version);
+    assert_eq!(reopened.source.pin().revision.to_string(), accepted_head);
+    let archived = reopened.source.inspect().unwrap();
+    let column = archived
+        .members
+        .iter()
+        .find(|member| member.authored.id.to_string() == PARTS[0])
+        .unwrap();
+    assert_eq!(column.authored.name, "column");
+    assert_eq!(fs::read(s.path("drawing-version.json")).unwrap(), stored);
 }
