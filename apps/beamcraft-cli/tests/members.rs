@@ -192,6 +192,108 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
 }
 
 #[test]
+fn spatial_beams_reopen_with_their_axis_volume_and_world_bounds() {
+    // Independent section bases: X across the width, Y across the height.
+    // The inclined axis has length sqrt(3000² + 4000² + 12000²) = 13000 mm.
+    for (start, end, length, x, y, roll) in [
+        (
+            [100.0, 200.0, 300.0],
+            [3100.0, 4200.0, 12300.0],
+            13000.0,
+            [-0.8, 0.6, 0.0],
+            [-36.0 / 65.0, -48.0 / 65.0, 5.0 / 13.0],
+            None,
+        ),
+        (
+            [3100.0, 4200.0, 12300.0],
+            [100.0, 200.0, 300.0],
+            13000.0,
+            [0.8, -0.6, 0.0],
+            [-36.0 / 65.0, -48.0 / 65.0, 5.0 / 13.0],
+            None,
+        ),
+        (
+            [100.0, 200.0, 300.0],
+            [100.0, 200.0, 3300.0],
+            3000.0,
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            None,
+        ),
+        (
+            [100.0, 200.0, 300.0],
+            [3100.0, 4200.0, 12300.0],
+            13000.0,
+            [-0.8, 0.6, 0.0],
+            [-36.0 / 65.0, -48.0 / 65.0, 5.0 / 13.0],
+            Some(0.7_f64),
+        ),
+    ] {
+        let f = Fixture::new();
+        let profile = f.profile("200", "300");
+        let point = |p: [f64; 3]| format!("{},{},{}", p[0], p[1], p[2]);
+        let start_arg = point(start);
+        let end_arg = point(end);
+        let mut args = vec![
+            "--kind",
+            "beam",
+            "--start",
+            &start_arg,
+            "--end",
+            &end_arg,
+            "--profile-digest",
+            &profile,
+        ];
+        let roll_arg = roll.unwrap_or(0.0).to_string();
+        if roll.is_some() {
+            args.extend_from_slice(&["--roll", &roll_arg]);
+        }
+        let created = f.ok("create-member", &args);
+        let member = at(&created, &["member"]);
+        let inspected = f.ok("plate-inspect", &[]);
+        let reopened = &at(&inspected, &["members"]).array().unwrap()[0];
+        assert_eq!(text(reopened, "kind"), "beam");
+        assert_eq!(text(reopened, "element_id"), text(member, "element_id"));
+        assert_eq!(text(reopened, "mesh_digest"), text(member, "mesh_digest"));
+        for record in [member, reopened] {
+            let axis = at(record, &["axis_points_mm"]).array().unwrap();
+            for (actual, expected) in axis.iter().zip([start, end]) {
+                let actual: Vec<_> = actual
+                    .array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.float().unwrap())
+                    .collect();
+                assert_eq!(actual, expected);
+            }
+            assert!(
+                (num(record, &["quantities", "volume", "mm3"]) - 60000.0 * length).abs() < 0.001
+            );
+            if let Some(roll) = roll {
+                assert_eq!(num(record, &["roll_rad"]), roll);
+            }
+        }
+        let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
+        assert_eq!(elements.len(), 1);
+        let lo = at(&elements[0], &["world_min_mm"]).array().unwrap();
+        let hi = at(&elements[0], &["world_max_mm"]).array().unwrap();
+        let (sin, cos) = roll.unwrap_or(0.0).sin_cos();
+        for i in 0..3 {
+            let extent =
+                100.0 * (cos * x[i] + sin * y[i]).abs() + 150.0 * (-sin * x[i] + cos * y[i]).abs();
+            // Snapshot bounds enclose the float32 display mesh.
+            assert!((lo[i].float().unwrap() - (start[i].min(end[i]) - extent)).abs() < 0.01);
+            assert!((hi[i].float().unwrap() - (start[i].max(end[i]) + extent)).abs() < 0.01);
+        }
+        let authored = f.authored_text(&created);
+        assert!(authored.contains(&format!(
+            "custom double3[] bim:axisPointsMm = [({:?}, {:?}, {:?}), ({:?}, {:?}, {:?})]",
+            start[0], start[1], start[2], end[0], end[1], end[2],
+        )));
+    }
+}
+
+#[test]
 fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
     let f = Fixture::new();
     let profile = f.profile("200", "300");
@@ -395,6 +497,22 @@ fn rejections_use_the_f04_codes_and_publish_nothing() {
         f.rejected("create-member", &["--start", "0,0,0", "--end", "1,0,0"]),
         "INVALID_ARGUMENT"
     );
+    for end in ["3000,4000,NaN", "3000,Infinity,12000"] {
+        assert_eq!(
+            f.rejected(
+                "create-member",
+                &[
+                    "--start",
+                    "100,200,300",
+                    "--end",
+                    end,
+                    "--profile-digest",
+                    &profile
+                ]
+            ),
+            "NON_FINITE_NUMBER"
+        );
+    }
     // Zero length and a hostile coordinate.
     assert_eq!(
         f.rejected(
