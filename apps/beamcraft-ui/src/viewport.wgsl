@@ -34,3 +34,10 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return vec4f(base * light, 1.0);
 }
+// The ghost preview of the member being placed: the same lighting on a distinct amber, so the
+// not-yet-committed shape never reads as a model element.
+@fragment fn shade_ghost(o: Out) -> @location(0) vec4f {
+    let n = normalize(o.normal);
+    let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
+    return vec4f(vec3f(0.85, 0.55, 0.1) * light, 1.0);
+}

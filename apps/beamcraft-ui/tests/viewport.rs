@@ -21,7 +21,8 @@ use beamcraft_ui::camera::Camera;
 use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::stats::Stats;
-use beamcraft_ui::{Error, source};
+use beamcraft_ui::tools::{ToolKind, Tools};
+use beamcraft_ui::{Error, command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -339,4 +340,126 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
         "the reference must cover visible pixels, got {lit}"
     );
     assert_eq!(render(&gpu, &moved), (corner, centre, lit));
+}
+
+/// Full readback of the framed scene, for pixel-by-pixel comparisons.
+fn render_pixels(gpu: &Gpu, scene: &Scene) -> Vec<u8> {
+    let (target, extent) = scene.framing();
+    let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    let stats = Stats::default();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
+    let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats);
+    wait(&gpu.device, index).unwrap();
+    renderer.readback(&gpu.device, &gpu.queue).unwrap().0
+}
+
+/// A 45-degree sloped beam, created through the UI's own tool state machine, renders a
+/// silhouette that the roll moves (issue #134): the committed member carries `--roll` in its
+/// exact CLI argument list, the snapshot bounds match the unrolled analytic section placement,
+/// and the rolled render differs pixel by pixel from the unrolled one.
+#[test]
+fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
+    let Some(cli) = cli() else { return };
+    let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("v03-tests-oriented");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let stats = Stats::default();
+    // Both stores go through the same path the Commit button runs: form -> preview -> commit.
+    let member_of = |store: &Path, roll: &str| {
+        let mut tools = Tools::default();
+        let definitions = command::definitions(&cli, store, &stats).unwrap();
+        tools.apply_definitions(Ok(definitions));
+        let digest = tools.definitions.profiles[0].digest.clone();
+        assert!(tools.definitions.profiles[0].rect_mm.is_some());
+        tools.active = ToolKind::Member;
+        tools.member.profile = Some(digest);
+        tools
+            .member
+            .set_endpoints([0.0, 0.0, 0.0], [4000.0, 0.0, 4000.0]);
+        tools.member.roll = roll.into();
+        let staged = tools.preview(store).unwrap().clone();
+        (tools, staged)
+    };
+    let store_of = |name: &str| {
+        let store = base.join(name);
+        std::fs::create_dir_all(&store).unwrap();
+        // The first revision comes from the pinned rectangle profile the forms list.
+        run(
+            &cli,
+            &[
+                "define-profile",
+                "--store",
+                store.to_str().unwrap(),
+                "--width",
+                "200",
+                "--height",
+                "300",
+            ],
+        );
+        store
+    };
+
+    let rolled_store = store_of("rolled");
+    let (mut tools, staged) = member_of(&rolled_store, "0.6");
+    assert!(
+        staged
+            .args
+            .windows(2)
+            .any(|w| w[0] == "--roll" && w[1] == "0.6"),
+        "{staged:?}"
+    );
+    let created =
+        command::commit(&cli, &tools.begin_commit(&rolled_store).unwrap(), &stats).unwrap();
+    assert!(!created.replayed);
+
+    let plain_store = store_of("plain");
+    let (mut tools, _) = member_of(&plain_store, "");
+    command::commit(&cli, &tools.begin_commit(&plain_store).unwrap(), &stats).unwrap();
+
+    // The unrolled section frame, by hand: width 200 along X_m = +Y, height 300 along
+    // Y_m = (-1,0,1)/sqrt(2), so the box reaches 100 in Y and 150/sqrt(2) outside the axis.
+    let plain = Scene::from_snapshot(
+        &source::load(&cli, &plain_store, &stats).unwrap(),
+        Representation::Full,
+    )
+    .unwrap();
+    let half = 150.0 / 2.0_f64.sqrt();
+    for (got, want) in plain
+        .min
+        .iter()
+        .zip([-2000.0 - half, -100.0, -2000.0 - half])
+    {
+        assert!((f64::from(*got) - want).abs() < 1.0, "min {got} != {want}");
+    }
+    for (got, want) in plain.max.iter().zip([2000.0 + half, 100.0, 2000.0 + half]) {
+        assert!((f64::from(*got) - want).abs() < 1.0, "max {got} != {want}");
+    }
+
+    let Some(gpu) = gpu() else {
+        let _ = std::fs::remove_dir_all(&base);
+        return;
+    };
+    let rolled = Scene::from_snapshot(
+        &source::load(&cli, &rolled_store, &stats).unwrap(),
+        Representation::Full,
+    )
+    .unwrap();
+    let plain_pixels = render_pixels(&gpu, &plain);
+    let rolled_pixels = render_pixels(&gpu, &rolled);
+    let lit = |pixels: &[u8]| {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| is_lit(**p))
+            .count()
+    };
+    assert!(lit(&plain_pixels) > 200, "plain beam must be visible");
+    assert!(lit(&rolled_pixels) > 200, "rolled beam must be visible");
+    assert_ne!(
+        plain_pixels, rolled_pixels,
+        "the roll must move the silhouette"
+    );
+    let _ = std::fs::remove_dir_all(&base);
 }

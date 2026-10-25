@@ -318,7 +318,15 @@ fn pipeline(
     device: &wgpu::Device,
     samples: u32,
     stats: &Stats,
-) -> Result<(wgpu::RenderPipeline, wgpu::Buffer, wgpu::BindGroup), Error> {
+) -> Result<
+    (
+        wgpu::RenderPipeline,
+        wgpu::RenderPipeline,
+        wgpu::Buffer,
+        wgpu::BindGroup,
+    ),
+    Error,
+> {
     let scopes = error_scopes(device);
     let camera = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("BeamCraft camera"),
@@ -370,13 +378,13 @@ fn pipeline(
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &instance_attributes,
     });
-    let pipeline = |entry, buffers: &[_]| {
+    let pipeline = |label, fragment, buffers: &[_]| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(entry),
+            label: Some(label),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some(entry),
+                entry_point: Some("instanced"),
                 compilation_options: Default::default(),
                 buffers,
             },
@@ -397,7 +405,7 @@ fn pipeline(
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("shade"),
+                entry_point: Some(fragment),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: FORMAT,
@@ -409,10 +417,26 @@ fn pipeline(
             cache: None,
         })
     };
-    let instanced = pipeline("instanced", &[vertex_layout(), instance_layout]);
+    let instanced = pipeline(
+        "BeamCraft instanced",
+        "shade",
+        &[vertex_layout(), instance_layout.clone()],
+    );
+    let ghost = pipeline(
+        "BeamCraft ghost",
+        "shade_ghost",
+        &[vertex_layout(), instance_layout],
+    );
     finish_scopes(scopes)?;
-    stats.pipeline_builds.add(1);
-    Ok((instanced, camera, bind))
+    stats.pipeline_builds.add(2);
+    Ok((instanced, ghost, camera, bind))
+}
+
+/// The ghost preview's device buffers: one mesh, one instance.
+struct GhostDraw {
+    vertices: wgpu::Buffer,
+    instances: wgpu::Buffer,
+    vertex_count: u32,
 }
 
 /// Offscreen target with depth and, by default, 4x MSAA on a hardware adapter that supports it
@@ -424,8 +448,12 @@ pub struct Renderer {
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
     instanced: wgpu::RenderPipeline,
+    /// The ghost preview pipeline: the same vertices, a distinct fragment colour.
+    ghost: wgpu::RenderPipeline,
     camera: wgpu::Buffer,
     bind: wgpu::BindGroup,
+    /// The ghost preview's device buffers, when a placement is armed.
+    ghost_buffers: Option<GhostDraw>,
     /// Actual sample count used.
     pub samples: u32,
     /// Offscreen width in pixels.
@@ -477,15 +505,17 @@ impl Renderer {
             depth,
             msaa,
         } = targets(device, width, height, samples, stats)?;
-        let (instanced, camera, bind) = pipeline(device, samples, stats)?;
+        let (instanced, ghost, camera, bind) = pipeline(device, samples, stats)?;
         Ok(Self {
             view,
             texture,
             depth,
             msaa,
             instanced,
+            ghost,
             camera,
             bind,
+            ghost_buffers: None,
             samples,
             width,
             height,
@@ -524,6 +554,20 @@ impl Renderer {
         self.width = width;
         self.height = height;
         Ok(true)
+    }
+
+    /// Replaces the ghost preview's buffers; `None` drops them.
+    pub fn set_ghost(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        ghost: Option<&crate::scene::GhostMesh>,
+    ) {
+        self.ghost_buffers = ghost.map(|g| GhostDraw {
+            vertices: buffer(device, queue, &g.vertices),
+            instances: buffer(device, queue, &g.instance),
+            vertex_count: g.vertex_count,
+        });
     }
 
     /// Encodes one lit, depth-tested frame and submits it; completion is a separate measurement.
@@ -576,6 +620,13 @@ impl Renderer {
                 pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 pass.set_vertex_buffer(1, mesh.instances.slice(..));
                 pass.draw(0..mesh.vertex_count, 0..mesh.instance_count);
+            }
+            if let Some(g) = &self.ghost_buffers {
+                pass.set_pipeline(&self.ghost);
+                pass.set_bind_group(0, &self.bind, &[]);
+                pass.set_vertex_buffer(0, g.vertices.slice(..));
+                pass.set_vertex_buffer(1, g.instances.slice(..));
+                pass.draw(0..g.vertex_count, 0..1);
             }
         }
         queue.submit([encoder.finish()])
