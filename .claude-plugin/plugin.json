@@ -1,0 +1,17 @@
+{
+  "name": "beamcraft",
+  "version": "0.1.0",
+  "description": "Drive BeamCraft structural steel detailing through the beamcraft-cli: create, update and inspect members and plates, open and verify a store, snapshot and export views, pick features. No MCP server and no background process: the CLI is the only contract.",
+  "author": {
+    "name": "Apibim"
+  },
+  "homepage": "https://github.com/axisrow/BeamCraft",
+  "license": "MPL-2.0",
+  "keywords": [
+    "beamcraft",
+    "steel-detailing",
+    "structural",
+    "headless",
+    "cli"
+  ]
+}
