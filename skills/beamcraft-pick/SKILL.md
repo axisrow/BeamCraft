@@ -86,12 +86,21 @@ Captured ray run against an unplaced member's top face:
  "outcome":"picked","revision_id":"01a17111-d7f3-707c-a9c2-bdd8396ebcdc","truncated":false}
 ```
 
-For a member, the role letters follow the member's section frame, not the world or mesh axes:
-`x` is width, `y` is height and `z` is the axis. On this unrotated member (axis along world +X)
-the +height face (world +Z) is `f.y1` and the axis end cap is `f.z1` - `feature-lookup` resolves
-`f.y1` to normal `[0,0,1]`, `f.z1` to normal `[1,0,0]` and `f.x1` to normal `[0,1,0]`. Resolve a
-hit's id with `feature-lookup` instead of reading geometry out of the letter; the frame still
-needs documenting in the CLI (follow-up issue #147).
+For a member, the role letters follow the F06 member frame, not the world or mesh axes of the
+placed element: `x` is width, `y` is height and `z` is the axis (the module documentation of
+`crates/engine/src/member.rs`: width along `X_m`, height along `Y_m`, F06 sections 2, 4 and 6).
+On this unrotated member (axis along world +X) the +height face (world +Z) is `f.y1` and the
+axis end cap is `f.z1`. Reproduce the letter-to-normal map with three lookups - `f.y1` resolves
+to normal `[0,0,1]`, `f.z1` to normal `[1,0,0]`, `f.x1` to normal `[0,1,0]`:
+
+```sh
+beamcraft feature-lookup --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.y1"
+beamcraft feature-lookup --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.z1"
+beamcraft feature-lookup --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.x1"
+```
+
+Resolve a hit's id with `feature-lookup` instead of reading geometry out of the letter; the
+frame still needs documenting in the CLI (follow-up issue #147).
 
 Pass `--radius` for the point form (and `--include-backfaces true` if needed). A point inside a
 solid or a ray into space is a normal, empty result:
