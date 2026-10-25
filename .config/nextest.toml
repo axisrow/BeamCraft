@@ -7,8 +7,8 @@
 
 [profile.fast]
 # Inner-loop default: everything except the integration suites that each measure
-# at least ~40 s of serial time on the reference Mac (baseline 2026-10-25, fork
-# issue #139): cli export_ifc, numbering_approval, numbering, libraries,
+# at least ~40 s of serial time on the reference Mac (baseline 2026-10-25):
+# cli export_ifc, numbering_approval, numbering, libraries,
 # environments and pick; host recovery, revision and compaction; kernel
 # g09_budget_fuzz and g05_profile_extrusion. Nothing is removed: the skipped
 # suites run in the default profile and in CI. Re-measure and move the line when

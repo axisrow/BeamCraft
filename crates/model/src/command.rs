@@ -575,8 +575,8 @@ pub struct ElementPatch {
     /// New placement translation in millimetres, absolute; the rotation is kept (a move).
     pub translation_mm: Option<[f64; 3]>,
     /// New placement rotation, absolute. Replaces the stored quaternion (the identity resets a
-    /// member or plate to the unrotated pose); the translation is kept. The quaternion follows
-    /// the `Placement` rules and is validated.
+    /// member to the unrotated pose; a plate refuses a non-identity rotation, as at creation);
+    /// the translation is kept. The quaternion follows the `Placement` rules and is validated.
     pub orientation_xyzw: Option<[f64; 4]>,
     /// D2: new level assignment of a plate, beam or column, or its explicit removal
     /// (`Some(None)`). Whether the level exists is the engine's decision.

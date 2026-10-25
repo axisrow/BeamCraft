@@ -11,7 +11,6 @@
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use beamcraft_host::ledger::{
@@ -29,8 +28,6 @@ use beamcraft_model::{
     digest::{ContentDigest, Sha256},
 };
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
-
 fn base_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
@@ -41,16 +38,26 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new() -> Self {
-        let base = base_dir();
-        fs::create_dir_all(&base).unwrap();
-        let id = NEXT.fetch_add(1, Ordering::Relaxed);
         let time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = base.join(format!("test-{time}-{id}"));
-        fs::create_dir(&root).unwrap();
-        Self(root)
+        Self::at_time(time)
+    }
+    fn at_time(time: u128) -> Self {
+        let base = base_dir();
+        fs::create_dir_all(&base).unwrap();
+        // Nextest runs tests in separate processes; a timestamp alone can collide.
+        // Reserve atomically and skip existing directories, including leftovers from a crash.
+        for attempt in 0..1024 {
+            let root = base.join(format!("test-{time}-{}-{attempt}", std::process::id()));
+            match fs::create_dir(&root) {
+                Ok(()) => return Self(root),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("cannot create recovery fixture: {error}"),
+            }
+        }
+        panic!("recovery fixture directory attempts exhausted")
     }
     fn store(&self) -> RevisionStore {
         RevisionStore::new(BlobStore::new(&self.0).unwrap())
@@ -97,6 +104,16 @@ impl Drop for Fixture {
         assert!(self.0.is_absolute() && self.0.starts_with(&base) && self.0 != base);
         fs::remove_dir_all(&self.0).unwrap();
     }
+}
+
+#[test]
+fn fixtures_with_the_same_timestamp_do_not_reuse_existing_directories() {
+    let first = Fixture::at_time(0);
+    fs::write(first.0.join("sentinel"), b"keep").unwrap();
+    let second = Fixture::at_time(0);
+    assert_ne!(first.0, second.0);
+    assert_eq!(fs::read(first.0.join("sentinel")).unwrap(), b"keep");
+    assert_eq!(fs::read_dir(&second.0).unwrap().count(), 0);
 }
 
 fn id(n: u32) -> Uuid7 {

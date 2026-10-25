@@ -26,7 +26,7 @@ cargo test --workspace --doc
 
 `cargo test --workspace` runs the same full set including doctests in one command. The `fast`
 profile (`.config/nextest.toml`) skips only the integration suites that each measure at least
-~40 s of serial time on the reference Apple M5 (baseline 2026-10-25, fork issue #139): in
+~40 s of serial time on the reference Apple M5 (baseline 2026-10-25): in
 `beamcraft-cli` `export_ifc`, `numbering_approval`, `numbering`, `libraries`, `environments`
 and `pick`; in `beamcraft-host` `recovery`, `revision` and `compaction`; in `beamcraft-kernel`
 `g09_budget_fuzz` and `g05_profile_extrusion`. The render/viewport suites in `beamcraft-ui`
