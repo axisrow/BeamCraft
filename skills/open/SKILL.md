@@ -7,8 +7,8 @@ argument-hint: [store path]
 
 # Open a BeamCraft store in the native viewport
 
-Open the BeamCraft store in the native desktop viewport as described in the request:
-$ARGUMENTS
+Open the BeamCraft store named in the request. A store path is normally passed as the command
+argument; if it is missing, ask for one before running anything.
 
 1. Build the app if it is not built - the `view` skill, §3, shows the command; the CLI is
    built alongside, because the app finds it next to its own executable.

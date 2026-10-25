@@ -1,6 +1,7 @@
 ---
 name: model
 description: Create, update and inspect BeamCraft steel members and plates through the beamcraft-cli (define-profile, define-material, create-member, create-plate, update-element, plate-inspect). Use when the user asks to model, edit, move or list elements in a BeamCraft store.
+argument-hint: [what to create or edit, and where]
 ---
 
 # Model members and plates with the BeamCraft CLI
@@ -194,7 +195,7 @@ afterwards and reporting element ids, the new `sequence` and the quantities from
 
 ## Apply it to the request
 
-Model BeamCraft elements exactly as described in the request: $ARGUMENTS
+Model BeamCraft elements exactly as described in the request.
 
 1. Build the `beamcraft` binary if it is not built (the command is above).
 2. Ensure a store exists - follow the `store` skill when the user has not named one.
