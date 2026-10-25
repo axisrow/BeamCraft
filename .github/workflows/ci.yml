@@ -9,6 +9,16 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # CI compiles once per job; incremental state only slows the build and
+  # bloats the restored caches.
+  CARGO_INCREMENTAL: 0
+  # The kernel fuzz and geometry suites are pure numerics: opt-level 1 cuts
+  # the test run ~3.7x (measured 397.7s -> 107.3s locally, full workspace)
+  # with no coverage change. Debug assertions and overflow checks stay
+  # pinned on so the never-crash gate (AGENTS.md §4) keeps its teeth.
+  CARGO_PROFILE_TEST_OPT_LEVEL: 1
+  CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: true
+  CARGO_PROFILE_TEST_OVERFLOW_CHECKS: true
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -96,13 +106,13 @@ jobs:
           if-no-files-found: error
 
   test-ubuntu:
-    name: test (ubuntu-latest, shard ${{ matrix.shard }}/8)
+    name: test (ubuntu-latest, shard ${{ matrix.shard }}/4)
     needs: test-archive-ubuntu
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
     timeout-minutes: 45
     steps:
       # The archive needs the matching revision's source tree for fixtures and runtime assets.
@@ -119,7 +129,7 @@ jobs:
 
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/4
 
   test-archive-windows:
     name: build test archive (windows-latest)
@@ -156,13 +166,13 @@ jobs:
           if-no-files-found: error
 
   test-windows:
-    name: test (windows-latest, shard ${{ matrix.shard }}/8)
+    name: test (windows-latest, shard ${{ matrix.shard }}/12)
     needs: test-archive-windows
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     timeout-minutes: 45
     steps:
       # The archive needs the matching revision's source tree for fixtures and runtime assets.
@@ -179,7 +189,7 @@ jobs:
 
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/12
 
   test-archive-macos:
     name: build test archive (macos-latest)
@@ -216,13 +226,13 @@ jobs:
           if-no-files-found: error
 
   test-macos:
-    name: test (macos-latest, shard ${{ matrix.shard }}/8)
+    name: test (macos-latest, shard ${{ matrix.shard }}/4)
     needs: test-archive-macos
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
     timeout-minutes: 45
     steps:
       # The archive needs the matching revision's source tree for fixtures and runtime assets.
@@ -239,11 +249,15 @@ jobs:
 
       - name: Run archived test partition
         shell: bash
-        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/8
+        run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/4
 
   build-timings:
     name: cold release (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    # The cold-build gate rides master pushes (and dispatch): a release is cut
+    # from a master tag, so master has always passed the gate before a release.
+    # PR runs keep the ~2 min of hosted runners off the critical window.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
