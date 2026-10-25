@@ -75,8 +75,9 @@ More in [`docs/development.md`](docs/development.md) and [`docs/architecture.md`
 
 This repository is also a Claude Code plugin. It teaches Claude Code to run the `beamcraft`
 binary: create, update and inspect members and plates, open and verify a store, snapshot and
-export views, and pick features at coordinates. There is no MCP server and no background
-process; the CLI stays the only contract.
+export views, and pick features at coordinates - and to open the result in the native viewport
+app. There is no MCP server and no background process: commands drive the CLI for modelling,
+and `/beamcraft:open` only launches the viewport app on the store.
 
 ```sh
 claude plugin install beamcraft --marketplace axisrow/BeamCraft
