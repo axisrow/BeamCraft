@@ -10,50 +10,33 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_json::{Json, Limits};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
+use beamcraft_json::Json;
 
 const FRAME: &str = "019a7bf0-0000-7000-8000-000000200001";
 const OUTER: &str = "019a7bf0-0000-7000-8000-000000200002";
 const OTHER: &str = "019a7bf0-0000-7000-8000-000000200003";
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a01-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("a01-tests"),
+        }
     }
+
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.root.join("store").to_str().unwrap().to_owned();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
+
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
         assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
@@ -110,7 +93,7 @@ impl Fixture {
     /// Commits a head-based revision with edited layer text and no content verification, the way
     /// a layer edited outside BeamCraft would arrive through `revision-commit`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
-        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
         let content = head.manifest().content();
         let mut ids = IdSource::system();
@@ -144,12 +127,6 @@ impl Fixture {
     }
     fn assemblies(&self) -> Vec<Json> {
         list(&self.ok("assemblies", &[]), "assemblies").to_vec()
-    }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
