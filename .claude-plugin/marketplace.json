@@ -1,0 +1,29 @@
+{
+  "name": "beamcraft",
+  "description": "BeamCraft's own Claude Code plugin: drive the beamcraft-cli to model and inspect structural steel. No MCP server, no background process.",
+  "owner": {
+    "name": "Apibim",
+    "url": "https://github.com/Apibim-com"
+  },
+  "plugins": [
+    {
+      "name": "beamcraft",
+      "source": "./",
+      "description": "Drive BeamCraft structural steel detailing through the beamcraft-cli. No MCP server, no background process.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Apibim"
+      },
+      "homepage": "https://github.com/axisrow/BeamCraft",
+      "license": "MPL-2.0",
+      "keywords": [
+        "beamcraft",
+        "steel-detailing",
+        "structural",
+        "headless",
+        "cli"
+      ],
+      "category": "productivity"
+    }
+  ]
+}
