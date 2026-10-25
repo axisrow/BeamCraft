@@ -228,8 +228,8 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
     );
     let stats = Stats::default();
     let snapshot = source::load(&cli, &root, &stats).unwrap();
-    // The viewport sees the engine's snapshot of the head: the same token plate-inspect reports.
-    let inspect = run(&cli, &["plate-inspect", "--store", store]);
+    // The viewport sees the engine's snapshot of the head: the same token inspect-elements reports.
+    let inspect = run(&cli, &["inspect-elements", "--store", store]);
     assert!(inspect.contains(snapshot.token().as_str()));
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
     // Units and instancing: six plates share one mesh, the seventh has its own; bounds are in
@@ -276,7 +276,7 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     run(
         &cli,
         &[
-            "reference-attach",
+            "attach-reference",
             "--store",
             store.to_str().unwrap(),
             "--source",
@@ -310,7 +310,7 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     run(
         &cli,
         &[
-            "reference-move",
+            "move-reference",
             "--store",
             store.to_str().unwrap(),
             "--id",

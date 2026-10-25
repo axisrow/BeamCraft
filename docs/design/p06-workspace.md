@@ -11,9 +11,9 @@ workspaces of one user are independent; a draft survives a process restart; publ
 ## What is implemented
 
 ```text
-beamcraft workspace-create  --store PUBLISHED --workspace-dir DIR [--user-id UUID] [--workspace-id UUID]
-beamcraft workspace-status  --store PUBLISHED --workspace-dir DIR
-beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR
+beamcraft create-workspace  --store PUBLISHED --workspace-dir DIR [--user-id UUID] [--workspace-id UUID]
+beamcraft inspect-workspace  --store PUBLISHED --workspace-dir DIR
+beamcraft publish-workspace --store PUBLISHED --workspace-dir DIR
 ```
 
 | Area | What exists |
@@ -26,10 +26,10 @@ beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR
 
 - A workspace is a directory holding its own revision store (blobs, head log, outcome ledger). The
   draft is never connected to the published root, so a half-written draft cannot affect it.
-- `workspace-create` copies the published head's layer bytes as the first draft revision under the
+- `create-workspace` copies the published head's layer bytes as the first draft revision under the
   workspace's own id. Repeating it with the same identities resumes an interrupted fork; another
   user or workspace id for an existing directory is `DUPLICATE_ID`.
-- `workspace-publish` takes no revision id: the published revision id and the operation are both the draft head's revision id, so an interrupted publish retried in a new process is the same request. It is a fast-forward: when the published head is still the base, the draft head's
+- `publish-workspace` takes no revision id: the published revision id and the operation are both the draft head's revision id, so an interrupted publish retried in a new process is the same request. It is a fast-forward: when the published head is still the base, the draft head's
   layers are committed as one new published revision through the same strict verifier. Otherwise
   it is `BASE_REVISION_MISMATCH` and nothing is written. A fresh fork is `INVALID_ARGUMENT`.
 - Publish is atomic in the published store's single head update. It is idempotent: the published

@@ -21,17 +21,17 @@ cargo build --offline -p beamcraft-cli --bins
   invent, paraphrase or simulate output.
 - **Never crashes.** Every refusal is one JSON object with a stable `code` and `message` and
   exit code 2; treat it as the normal error channel.
-- **Reads are safe.** `revision-open` and `plate-inspect` are read-only and take no `--op-id`.
+- **Reads are safe.** `open-revision` and `inspect-elements` are read-only and take no `--op-id`.
 - **Exit codes.** 0 success, 2 input or validation refusal, 3 backend unavailable,
   4 outcome unknown, 124 deadline, 130 cancelled.
 
 ## 1. Create a store
 
-`project-create` makes the folder `DIR/NAME` and commits an empty first revision into it. That
+`create-project` makes the folder `DIR/NAME` and commits an empty first revision into it. That
 folder is the `--store ROOT` of every other command.
 
 ```sh
-beamcraft project-create --parent DIR --name demo-store
+beamcraft create-project --parent DIR --name demo-store
 ```
 
 Captured output (trimmed):
@@ -49,11 +49,11 @@ the author when `--actor-id` is not given. Refused when the folder exists.
 
 ## 2. Verify a store
 
-`revision-open` verifies the root pointer, its manifest and every layer blob, and prints the
+`open-revision` verifies the root pointer, its manifest and every layer blob, and prints the
 head revision:
 
 ```sh
-beamcraft revision-open --store STORE
+beamcraft open-revision --store STORE
 ```
 
 Captured output (trimmed):
@@ -71,11 +71,11 @@ truncated, corrupt or hostile store is an ordinary refusal, never a crash.
 
 ## 3. List what the store holds
 
-`plate-inspect` opens the head revision with full verification and lists plates and members
+`inspect-elements` opens the head revision with full verification and lists plates and members
 (counts first, then every element with its placement, quantities and signatures):
 
 ```sh
-beamcraft plate-inspect --store STORE [--element UUID]
+beamcraft inspect-elements --store STORE [--element UUID]
 ```
 
 Captured output for a store with one rotated beam, one straight beam and one plate (trimmed to
@@ -100,10 +100,10 @@ A claim about a store is proven by captured output, not by a description:
 
 - creation: `project_created` with the store path;
 - integrity: `revision_verified` with the head `sequence`;
-- content: `plate-inspect` listing the element ids and quantities you expect.
+- content: `inspect-elements` listing the element ids and quantities you expect.
 
-Raw byte storage (`blob-put`/`blob-verify`) and revision recovery
-(`revision-recover`/`revision-outcome`) exist as well; see `apps/beamcraft-cli/README.md`
+Raw byte storage (`put-blob`/`verify-blob`) and revision recovery
+(`recover-revision`/`inspect-revision-outcome`) exist as well; see `apps/beamcraft-cli/README.md`
 (U05/U06/U07) before touching them.
 
 ## Apply it to the request
@@ -111,6 +111,6 @@ Raw byte storage (`blob-put`/`blob-verify`) and revision recovery
 Open and verify the BeamCraft store as described in the request.
 
 1. Build the `beamcraft` binary if it is not built (the command is above).
-2. Verify with the real binary: `revision-open` for integrity (`revision_verified`),
-   `plate-inspect` for content (element ids, placements, quantities).
+2. Verify with the real binary: `open-revision` for integrity (`revision_verified`),
+   `inspect-elements` for content (element ids, placements, quantities).
 3. Quote only captured JSON as evidence and state the head `sequence` you saw.

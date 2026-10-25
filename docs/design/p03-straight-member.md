@@ -17,7 +17,7 @@ beamcraft create-member --store ROOT --start X,Y,Z --end X,Y,Z --profile-digest 
   model::CreateStraightMember (F04 caps) --> engine resolves the pinned profile (required) and
   material (optional), kernel::straight_member builds the body --> U02 Shape::Member + Mesh
   --> host U06/U07 commit; the verifier re-evaluates every plate and member with the kernel
-beamcraft plate-inspect --store ROOT   (plates and members, one pinned view snapshot)
+beamcraft inspect-elements --store ROOT   (plates and members, one pinned view snapshot)
 ```
 
 | Area | What exists |

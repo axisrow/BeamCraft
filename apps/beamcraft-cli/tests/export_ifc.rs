@@ -91,10 +91,10 @@ impl Fixture {
         body
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn layer_digests(&self) -> Vec<(String, String)> {
-        list(&self.ok("revision-open", &[]), "layers")
+        list(&self.ok("open-revision", &[]), "layers")
             .iter()
             .map(|l| (text(l, "name"), text(l, "digest")))
             .collect()
@@ -221,7 +221,7 @@ impl Fixture {
             "element_id",
         );
         self.ok(
-            "assembly-attach",
+            "attach-to-assembly",
             &["--id", &beam, "--assembly-id", &assembly],
         );
         let weld = text(
@@ -257,7 +257,7 @@ impl Fixture {
     }
     fn scene_plate(&self) -> String {
         text(
-            &list(&self.ok("plate-inspect", &[]), "plates")[0],
+            &list(&self.ok("inspect-elements", &[]), "plates")[0],
             "element_id",
         )
     }
@@ -273,7 +273,7 @@ impl Fixture {
         verify::parse(&fs::read(self.root.join(name)).unwrap()).unwrap()
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
-    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    /// a layer edited outside BeamCraft would arrive through `commit-revision`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
         let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
         let head = store.open().unwrap();
@@ -516,7 +516,7 @@ fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() 
     );
 
     // The volume recomputed from every face set equals the volume the store published.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let stored: BTreeMap<String, f64> = list(&inspected, "plates")
         .iter()
         .chain(list(&inspected, "members").iter())
@@ -860,7 +860,7 @@ fn a_reference_wrapper_is_a_proxy_with_its_pose_and_no_representation() {
     let wrapper = text(
         at(
             &f.ok(
-                "reference-attach",
+                "attach-reference",
                 &["--source", &source, "--name", "Site ref"],
             ),
             &["reference"],
@@ -869,7 +869,7 @@ fn a_reference_wrapper_is_a_proxy_with_its_pose_and_no_representation() {
     );
     // The units correction lives in a child prim, so the wrapper's own pose stays rigid.
     f.ok(
-        "reference-correct-units",
+        "correct-reference-units",
         &[
             "--id",
             &wrapper,

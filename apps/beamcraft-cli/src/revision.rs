@@ -91,7 +91,7 @@ fn summary(outcome: &str, info: &RevisionInfo) -> Json {
     ])
 }
 
-/// `revision-commit`: all layer blobs must already be in the store (`blob-put`). Each
+/// `commit-revision`: all layer blobs must already be in the store (`put-blob`). Each
 /// `--layers` item is `ROLE:NAME:SHA256`; the size is taken from the verified stored bytes.
 /// The deadline and cancellation of `control` are honoured while preparing and at every commit
 /// point before the root switch; they are never checked after it.
@@ -184,20 +184,20 @@ fn commit_checked(
     ))
 }
 
-/// `revision-open`: opens the current root and verifies the manifest and every layer blob.
+/// `open-revision`: opens the current root and verifies the manifest and every layer blob.
 pub(crate) fn open(blobs: &BlobStore) -> Result<Json, HostError> {
     let revision = RevisionStore::new(blobs.clone()).open().map_err(failure)?;
     Ok(summary("revision_verified", revision.info()))
 }
 
-/// Most unreferenced digests `revision-recover` prints; the total is always exact.
+/// Most unreferenced digests `recover-revision` prints; the total is always exact.
 const MAX_CLI_UNREFERENCED: usize = 256;
 
 fn uuids(ids: &[Uuid7]) -> Json {
     Json::Array(ids.iter().map(|id| Json::text(id.as_str())).collect())
 }
 
-/// `revision-recover`: closes every unresolved intent from the root, removes abandoned
+/// `recover-revision`: closes every unresolved intent from the root, removes abandoned
 /// temporary files, reports unreferenced blobs (never deletes one) and verifies the root.
 /// `--min-age-secs 0` asserts that no commit is running on the store; a larger value leaves
 /// younger intents and files alone. Exit 0 with `recovery_incomplete` when something could not
@@ -297,7 +297,7 @@ pub(crate) fn recover(
     ]))
 }
 
-/// `revision-outcome`: the host-ledger QueryOutcome for one op id. Read-only. A recorded
+/// `inspect-revision-outcome`: the host-ledger QueryOutcome for one op id. Read-only. A recorded
 /// result is exit 0; `OUTCOME_UNKNOWN` is the standard unknown result (exit 4); a ledger that
 /// contradicts the root is `INTEGRITY_ERROR`.
 pub(crate) fn outcome(

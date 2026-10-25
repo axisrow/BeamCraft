@@ -65,7 +65,7 @@ fn captured_model_and_foreign_source_survive_live_edit_compaction_and_removal() 
     f.model();
     let foreign = f.root.join("site.usda");
     fs::write(&foreign, SITE).unwrap();
-    f.ok("reference-attach", &["--source", foreign.to_str().unwrap()]);
+    f.ok("attach-reference", &["--source", foreign.to_str().unwrap()]);
     let root = f.root.join("store");
     let archive = SourceArchive::capture(&root).unwrap();
     let pin = archive.pin();
@@ -95,7 +95,7 @@ fn captured_model_and_foreign_source_survive_live_edit_compaction_and_removal() 
     );
     assert_ne!(pin.revision.to_string(), f.head());
     f.ok(
-        "history-compact",
+        "compact-history",
         &["--keep-head", "--yes", "--no-backup", "--no-workspaces"],
     );
     {
@@ -343,7 +343,7 @@ fn publication_refuses_incomplete_history_and_active_maintenance_without_a_revis
             "compacted" => {
                 let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
                     .args([
-                        "history-compact",
+                        "compact-history",
                         "--store",
                         root.to_str().unwrap(),
                         "--keep-head",

@@ -41,7 +41,7 @@ fn rejected(args: &[&str], f04: &str, wire: &str) {
 #[test]
 fn view_snapshot_reports_the_engine_result_for_a_synthetic_scene() {
     let (json, exit) = run(&[
-        "view-snapshot",
+        "snapshot-view",
         "--plates",
         "20",
         "--hide",
@@ -111,7 +111,7 @@ fn view_snapshot_reports_the_engine_result_for_a_synthetic_scene() {
 #[test]
 fn the_representation_selector_changes_what_is_loaded_not_the_token() {
     let base = [
-        "view-snapshot",
+        "snapshot-view",
         "--plates",
         "20",
         "--stand-in-simplified",
@@ -155,7 +155,7 @@ fn the_representation_selector_changes_what_is_loaded_not_the_token() {
 fn pin_options_are_honoured_and_change_the_token() {
     let revision = "0".repeat(64);
     let (a, _) = run(&[
-        "view-snapshot",
+        "snapshot-view",
         "--plates",
         "2",
         "--generation",
@@ -163,7 +163,7 @@ fn pin_options_are_honoured_and_change_the_token() {
         "--revision",
         &revision,
     ]);
-    let (b, _) = run(&["view-snapshot", "--plates", "2"]);
+    let (b, _) = run(&["snapshot-view", "--plates", "2"]);
     assert_eq!(text(a.get("pin").unwrap(), "generation"), "9");
     assert_eq!(text(a.get("pin").unwrap(), "revision"), revision);
     assert_ne!(text(&a, "snapshot_token"), text(&b, "snapshot_token"));
@@ -172,7 +172,7 @@ fn pin_options_are_honoured_and_change_the_token() {
 #[test]
 fn the_largest_scene_fits_the_control_limits() {
     let (json, exit) = run(&[
-        "view-snapshot",
+        "snapshot-view",
         "--plates",
         "500",
         "--stand-in-simplified",
@@ -185,7 +185,13 @@ fn the_largest_scene_fits_the_control_limits() {
 
 #[test]
 fn view_changes_resends_a_mesh_only_for_a_shape_change() {
-    let (moved, exit) = run(&["view-changes", "--plates", "8", "--edit", "move-first"]);
+    let (moved, exit) = run(&[
+        "inspect-view-changes",
+        "--plates",
+        "8",
+        "--edit",
+        "move-first",
+    ]);
     assert_eq!(exit, 0);
     assert_eq!(text(&moved, "outcome"), "view_changes");
     assert_ne!(text(&moved, "from_token"), text(&moved, "to_token"));
@@ -214,7 +220,7 @@ fn view_changes_resends_a_mesh_only_for_a_shape_change() {
     assert!(moved.get("new_meshes").unwrap().array().unwrap().is_empty());
 
     let (shape, exit) = run(&[
-        "view-changes",
+        "inspect-view-changes",
         "--plates",
         "8",
         "--edit",
@@ -232,7 +238,13 @@ fn view_changes_resends_a_mesh_only_for_a_shape_change() {
     assert_eq!(kinds, ["changed", "added"]);
     assert_eq!(shape.get("new_meshes").unwrap().array().unwrap().len(), 2);
 
-    let (removed, exit) = run(&["view-changes", "--plates", "8", "--edit", "remove-last"]);
+    let (removed, exit) = run(&[
+        "inspect-view-changes",
+        "--plates",
+        "8",
+        "--edit",
+        "remove-last",
+    ]);
     assert_eq!(exit, 0);
     let change = &removed.get("changes").unwrap().array().unwrap()[0];
     assert_eq!(text(change, "change"), "removed");
@@ -244,53 +256,53 @@ fn rejections_carry_the_f04_code_and_the_view_code() {
     let unknown_but_valid = "01990000-0000-7000-8000-00000000ffff";
     let stale = format!("vs1-{}", "0".repeat(64));
     rejected(
-        &["view-snapshot", "--plates", "0"],
+        &["snapshot-view", "--plates", "0"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot", "--plates", "501"],
+        &["snapshot-view", "--plates", "501"],
         "LIMIT_EXCEEDED",
         "VIEW_ELEMENT_LIMIT",
     );
     rejected(
-        &["view-snapshot", "--plates", "x"],
+        &["snapshot-view", "--plates", "x"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot"],
+        &["snapshot-view"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot", "--plates"],
+        &["snapshot-view", "--plates"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot", "--plates", "2", "--plates", "3"],
+        &["snapshot-view", "--plates", "2", "--plates", "3"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot", "--plates", "2", "--bogus", "1"],
+        &["snapshot-view", "--plates", "2", "--bogus", "1"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot", "--plates", "2", "--edit", "move-first"],
+        &["snapshot-view", "--plates", "2", "--edit", "move-first"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot", "--plates", "2", "--hide", "weld"],
+        &["snapshot-view", "--plates", "2", "--hide", "weld"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
         &[
-            "view-snapshot",
+            "snapshot-view",
             "--plates",
             "2",
             "--representation",
@@ -301,7 +313,7 @@ fn rejections_carry_the_f04_code_and_the_view_code() {
     );
     rejected(
         &[
-            "view-snapshot",
+            "snapshot-view",
             "--plates",
             "2",
             "--stand-in-simplified",
@@ -311,13 +323,13 @@ fn rejections_carry_the_f04_code_and_the_view_code() {
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot", "--plates", "2", "--select", "not-an-id"],
+        &["snapshot-view", "--plates", "2", "--select", "not-an-id"],
         "INVALID_ID",
         "VIEW_ID_INVALID",
     );
     rejected(
         &[
-            "view-snapshot",
+            "snapshot-view",
             "--plates",
             "2",
             "--select",
@@ -327,28 +339,28 @@ fn rejections_carry_the_f04_code_and_the_view_code() {
         "VIEW_UNKNOWN_ELEMENT",
     );
     rejected(
-        &["view-snapshot", "--plates", "2", "--revision", "zz"],
+        &["snapshot-view", "--plates", "2", "--revision", "zz"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-snapshot", "--plates", "2", "--generation", "-1"],
+        &["snapshot-view", "--plates", "2", "--generation", "-1"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-changes", "--plates", "2"],
+        &["inspect-view-changes", "--plates", "2"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
-        &["view-changes", "--plates", "2", "--edit", "nope"],
+        &["inspect-view-changes", "--plates", "2", "--edit", "nope"],
         "INVALID_ARGUMENT",
         "VIEW_ARGUMENT_INVALID",
     );
     rejected(
         &[
-            "view-changes",
+            "inspect-view-changes",
             "--plates",
             "2",
             "--edit",
@@ -361,7 +373,7 @@ fn rejections_carry_the_f04_code_and_the_view_code() {
     );
     rejected(
         &[
-            "view-changes",
+            "inspect-view-changes",
             "--plates",
             "2",
             "--edit",
@@ -374,7 +386,7 @@ fn rejections_carry_the_f04_code_and_the_view_code() {
     );
     rejected(
         &[
-            "view-changes",
+            "inspect-view-changes",
             "--plates",
             "1",
             "--edit",

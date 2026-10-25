@@ -120,7 +120,7 @@ fn rectangular_holes_give_the_exact_volume_and_mass_and_reopen_verified() {
     assert!((mass - 38.268_75).abs() <= 1e-9, "{mass}");
     assert!(num(plate, &["triangles"]) > 12.0);
 
-    let inspected = f.run("plate-inspect", &[]).1;
+    let inspected = f.run("inspect-elements", &[]).1;
     let reopened = &at(&inspected, &["plates"]).array().unwrap()[0];
     assert_eq!(text(reopened, "mesh_digest"), text(plate, "mesh_digest"));
     assert_eq!(num(reopened, &["hole_count"]), 2.0);
@@ -207,7 +207,7 @@ fn a_solid_plate_authors_no_hole_attributes_and_holes_join_a_beam_in_one_scene()
         ],
     );
     assert_eq!(code, 0, "{beam:?}");
-    let inspected = f.run("plate-inspect", &[]).1;
+    let inspected = f.run("inspect-elements", &[]).1;
     assert_eq!(num(&inspected, &["plate_count"]), 2.0);
     assert_eq!(num(&inspected, &["member_count"]), 1.0);
     let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
@@ -289,7 +289,7 @@ fn hole_rejections_use_the_f04_codes_and_publish_nothing() {
         .join(";");
     assert_eq!(f.rejected(&["--hole-rect", &many]), "LIMIT_EXCEEDED");
     // Nothing was created: there is no revision at all.
-    let (code, body) = f.run("plate-inspect", &[]);
+    let (code, body) = f.run("inspect-elements", &[]);
     assert_eq!(code, 2, "{body:?}");
 }
 

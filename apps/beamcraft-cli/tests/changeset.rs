@@ -66,14 +66,14 @@ impl Fixture {
     fn head(&self) -> String {
         let store = self.path("published");
         text(
-            &self.ok(&["revision-open", "--store", &store]),
+            &self.ok(&["open-revision", "--store", &store]),
             "revision_id",
         )
     }
     /// A published plate and a workspace of `USER` forked from it.
     fn forked(&self, workspace: &str) -> String {
         let store = self.path("published");
-        if self.run(&["revision-open", "--store", &store]).0 != 0 {
+        if self.run(&["open-revision", "--store", &store]).0 != 0 {
             self.ok(&[
                 "create-plate",
                 "--store",
@@ -90,7 +90,7 @@ impl Fixture {
         }
         let dir = self.path(workspace);
         self.ok(&[
-            "workspace-create",
+            "create-workspace",
             "--store",
             &store,
             "--workspace-dir",
@@ -114,7 +114,7 @@ impl Fixture {
     fn create(&self, dir: &str, extra: &[&str]) -> Json {
         let store = self.path("published");
         let mut args = vec![
-            "changeset-create",
+            "create-changeset",
             "--store",
             &store,
             "--workspace-dir",
@@ -131,7 +131,7 @@ impl Fixture {
         actor: &'a str,
     ) -> [&'a str; 9] {
         [
-            "changeset-apply",
+            "apply-changeset",
             "--store",
             store,
             "--workspace-dir",
@@ -211,7 +211,7 @@ fn a_changeset_carries_base_operations_dependencies_and_delta_and_publishes_once
     assert_eq!(list(&changeset, "assets").len(), 1);
     let digest = text(&changeset, "digest");
     let inspected = f.ok(&[
-        "changeset-inspect",
+        "inspect-changeset",
         "--workspace-dir",
         &dir,
         "--changeset",
@@ -223,17 +223,17 @@ fn a_changeset_carries_base_operations_dependencies_and_delta_and_publishes_once
     let applied = f.ok(&f.apply_args(&store, &dir, &digest, USER));
     assert_eq!(text(&applied, "outcome"), "changeset_applied");
     assert_eq!(at(&applied, &["workspace_synced"]), &Json::Bool(true));
-    let head = f.ok(&["revision-open", "--store", &store]);
+    let head = f.ok(&["open-revision", "--store", &store]);
     assert_eq!(text(&head, "revision_id"), REVISION);
     assert_eq!(text(&head, "op_id"), CHANGESET);
-    let names: Vec<String> = list(&f.ok(&["plate-inspect", "--store", &store]), "plates")
+    let names: Vec<String> = list(&f.ok(&["inspect-elements", "--store", &store]), "plates")
         .iter()
         .map(|p| text(p, "name"))
         .collect();
     assert_eq!(names, ["Renamed twice"]);
     // The workspace base moved: nothing is unsent.
     let status = f.ok(&[
-        "workspace-status",
+        "inspect-workspace",
         "--store",
         &store,
         "--workspace-dir",
@@ -334,7 +334,7 @@ fn a_moved_head_is_refused_and_the_refused_id_stays_bound() {
     );
     // The unsent draft is untouched.
     let status = f.ok(&[
-        "workspace-status",
+        "inspect-workspace",
         "--store",
         &store,
         "--workspace-dir",
@@ -350,7 +350,7 @@ fn bounded_validation_refuses_garbage_missing_and_empty_changesets() {
     let store = f.path("published");
     // Nothing to send.
     let (code, body) = f.run(&[
-        "changeset-create",
+        "create-changeset",
         "--store",
         &store,
         "--workspace-dir",
@@ -467,7 +467,7 @@ fn a_changeset_id_that_names_another_committed_operation_is_reuse_every_time() {
         );
     }
     let status = f.ok(&[
-        "workspace-status",
+        "inspect-workspace",
         "--store",
         &store,
         "--workspace-dir",
@@ -491,7 +491,7 @@ fn an_assembly_membership_writes_the_part_relationship_and_publishes() {
         assembly,
     ]);
     f.ok(&[
-        "assembly-attach",
+        "attach-to-assembly",
         "--store",
         &dir,
         "--id",

@@ -6,12 +6,18 @@ started, and no command opens a socket or a service except the opt-in loopback c
 commands. A
 corrupt or hostile layer is an ordinary refusal with a stable F04 code under the layer engine's
 size and depth budgets; the project's own layers are verified by SHA-256 before they are parsed.
-`revision-commit` and `revision-open` (below) publish already stored blobs and do not parse USD;
+`commit-revision` and `open-revision` (below) publish already stored blobs and do not parse USD;
 `create-plate` (P01, below) and the other modelling commands author USD and publish it.
 
 Build offline with `cargo build --offline -p beamcraft-cli --bins`.
 `beamcraft --help` describes the bounded arguments. Results are one JSON object on standard
 output, with strings for generations and other lossless integers.
+
+CLI help is owned by command family under `src/help/` (for example `member.rs`, `drawing.rs`
+and `workspace.rs`). Edit that family's text and command inventory there. `src/help/mod.rs`
+only composes the inventory and sections in their established order; register a new family
+there without adding help text to `main.rs`. Parsing and execution stay in the existing
+command adapters. No arguments, `--help` and `-h` print the same help.
 
 Modelling commits also pin the admitted command's exact read/write footprint and typed request
 fingerprint as operation evidence in the revision manifest. This includes unchanged copy sources,
@@ -24,7 +30,7 @@ operations and exact final layer set before publishing. The aggregate is bound t
 operation and immutable source-manifest or changeset digest. Operations and aggregate read/write
 entries are capped at 4096, counting repeated entries before union.
 
-Low-level `revision-commit`, workspace forks and history restoration do not fabricate command
+Low-level `commit-revision`, workspace forks and history restoration do not fabricate command
 evidence. An interval with any absent or unverified record uses conservative changeset dependencies
 and publishes without precise evidence; malformed evidence still fails closed. C01 wire v1 stays
 byte-compatible; the additional `mark` group uses canonical v2 without changing existing tags.
@@ -36,22 +42,22 @@ unavailable, 4 outcome unknown, 124 deadline, 130 cancelled. `--timeout-ms` acce
 (default 30000) and `--cancel-after-ms` accepts 0..120000 on the blob and revision commands
 below.
 
-`blob-put --store ROOT --file FILE` and `blob-verify --store ROOT --digest SHA256`
+`put-blob --store ROOT --file FILE` and `verify-blob --store ROOT --digest SHA256`
 use U05 byte storage. They do not publish a project revision.
 
 ## U06 revision commands
 
 ```text
-beamcraft revision-commit --store ROOT --project-id UUIDV7 --workspace-id UUIDV7
+beamcraft commit-revision --store ROOT --project-id UUIDV7 --workspace-id UUIDV7
   --revision-id UUIDV7 --op-id UUIDV7 --generation U64 --base none|REVISION_UUIDV7
   --schema SHA256 --root-layer NAME --layers ROLE:NAME:SHA256,...
-beamcraft revision-open --store ROOT
+beamcraft open-revision --store ROOT
 ```
 
 `ROLE` is `authored`, `derived` or `external`; every layer blob must already be in the store
-(`blob-put`), and each size is taken from the verified stored bytes. The commit verifies the
+(`put-blob`), and each size is taken from the verified stored bytes. The commit verifies the
 expected base, every blob and the op id, then switches the root in one step; a retry of the
-same op returns `revision_replayed`. `revision-open` verifies the root, its manifest and every
+same op returns `revision_replayed`. `open-revision` verifies the root, its manifest and every
 layer blob and prints the revision (`revision_verified`). Output is JSON with decimal strings
 for `sequence`, `workspace_generation` and sizes. Errors use the existing exit codes
 (`BASE_REVISION_MISMATCH`, `OP_ID_REUSE`, `INTEGRITY_ERROR`, ... exit 2). `--timeout-ms` and
@@ -64,23 +70,23 @@ These commands check blob integrity, not USD content: duplicate-ID, dangling-lin
 U03-index checks run only through the host API's injected `ContentVerifier` (exercised in the
 tests with the real layer engine). A CLI commit records `index: null`, and every command that
 later reads the revision parses it under the layer engine's budgets. See the
-[U06 record](../../docs/design/u06-revision-commit.md).
+[U06 record](../../docs/design/u06-commit-revision.md).
 
 ## U07 recovery commands
 
 ```text
-beamcraft revision-recover --store ROOT --min-age-secs U64
-beamcraft revision-outcome --store ROOT --op-id UUIDV7
+beamcraft recover-revision --store ROOT --min-age-secs U64
+beamcraft inspect-revision-outcome --store ROOT --op-id UUIDV7
 ```
 
-Every `revision-commit` now writes a synced intent to `ledger/outcomes.log` before the root
-switch and a committed record after it. `revision-recover` closes unresolved intents from the
+Every `commit-revision` now writes a synced intent to `ledger/outcomes.log` before the root
+switch and a committed record after it. `recover-revision` closes unresolved intents from the
 root, removes abandoned temporary files, reports unreferenced blobs (it deletes none), verifies
 the root and prints one JSON report (`recovery_complete`, or `recovery_incomplete` with exit 0
 when an intent is in flight, unprovable, or the ledger contradicts the root; check `outcome`).
 `--min-age-secs` is required and has no default: `0` asserts that no commit is running on the
 store, a larger value leaves younger intents and temporary files alone. Running it twice changes
-nothing. `revision-outcome` is read-only and prints `outcome_committed` (with `source`
+nothing. `inspect-revision-outcome` is read-only and prints `outcome_committed` (with `source`
 `ledger` or `root`), `outcome_aborted` (with `reason`), `outcome_not_recorded` (only when the
 ledger covers the whole history) or the standard `outcome_unknown` (exit 4); a ledger that the
 root contradicts is `INTEGRITY_ERROR`. Not implemented: a CLI fault-injection switch (the
@@ -89,25 +95,25 @@ rotation, garbage collection. See the [U07 record](../../docs/design/u07-journal
 
 ## V02 view snapshot commands
 
-`view-snapshot` and `view-changes` need no store. They call
+`snapshot-view` and `inspect-view-changes` need no store. They call
 `beamcraft-engine` and print one JSON object (same shape for errors as above, plus a
 `diagnostics` entry with the view code such as `GEO_STALE_TOKEN`; exit 2 on rejection).
-The scene is **synthetic** (see `plate-inspect` for committed plates), built with the real kernel
+The scene is **synthetic** (see `inspect-elements` for committed plates), built with the real kernel
 (`--plates 1..500`): every fifth element is labelled `support` and, with
 `--stand-in-simplified true`, every third carries a distinct stand-in simplified mesh. The
 output marks both under `stand_ins`.
 
 ```text
-beamcraft view-snapshot --plates 20 [--hide plate,support] [--representation full|simplified]
+beamcraft snapshot-view --plates 20 [--hide plate,support] [--representation full|simplified]
   [--stand-in-simplified true|false] [--select ID,ID] [--revision SHA256] [--generation U64]
-beamcraft view-changes --plates 20 --edit move-first,resize-first,add-one,remove-last
+beamcraft inspect-view-changes --plates 20 --edit move-first,resize-first,add-one,remove-last
   [--since TOKEN] [--stand-in-simplified true|false] [--revision SHA256] [--generation U64]
 ```
 
-`view-snapshot` reports the pin, the snapshot token (unchanged by `--hide` and
+`snapshot-view` reports the pin, the snapshot token (unchanged by `--hide` and
 `--representation`), the projected elements with instance slot, triangle range, mesh digest,
 exactness and world bounds, the display and engineering bounds, the meshes the view must load
-(digest, bytes, counts) and, for `--select`, the ids and their instance slots. `view-changes`
+(digest, bytes, counts) and, for `--select`, the ids and their instance slots. `inspect-view-changes`
 snapshots the scene, applies the scripted edits as the next generation and prints the
 `GetChanges` delta, with `new_meshes` empty for a placement-only edit. An unknown `--since`
 token is `GEO_STALE_TOKEN`. No mesh bytes are exported; a consumer reads blobs by digest through
@@ -121,7 +127,7 @@ beamcraft create-plate --store ROOT --width MM --length MM --thickness MM
   [--hole-rect "X,Y,W,H;..."] [--hole-round "X,Y,D;..."] [--hole-segments 8..256]
   [--new-id UUID] [--op-id UUID]
   [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-beamcraft plate-inspect --store ROOT
+beamcraft inspect-elements --store ROOT
 ```
 
 `--hole-rect` and `--hole-round` (A04, see the [design note](../../docs/design/a04-plate-holes.md))
@@ -148,7 +154,7 @@ content (including another material) under that op id is `OP_ID_REUSE`; an owned
 `BASE_REVISION_MISMATCH`. `--store` must be an existing absolute directory; the first call
 creates project and workspace ids (or takes them from the flags), later calls reuse the head's.
 
-`plate-inspect` opens the head revision with full verification in a fresh process, re-reads the
+`inspect-elements` opens the head revision with full verification in a fresh process, re-reads the
 layers with a fresh reader, re-evaluates every plate and checks its committed mesh against the
 kernel's, and prints the plates, the pinned snapshot token, the element table and the meshes a
 viewer must load (`synthetic: false`).
@@ -158,7 +164,7 @@ Plate geometry supports simple counter-clockwise contours in `z=0` and exactly r
 contours in other planes. A framed rectangle extrudes along its ordered normal; holes on this
 new path are unsupported. Nonplanarity beyond the scaled band, clockwise winding and touching
 are `INVALID_ARGUMENT`. Valid near-planar contours and other unsupported-plane polygons without
-operations are saved as authored-only plates: `plate-inspect` reports `validity: valid`,
+operations are saved as authored-only plates: `inspect-elements` reports `validity: valid`,
 `geometry_status: unsupported`, null mesh/key/bounds and null volume/mass with unsupported status.
 They remain in the plate list and inspection snapshot without a render instance. Replays create
 no revision and deletion works. Editing/copying these plates and geometry-dependent numbering,
@@ -223,7 +229,7 @@ is idempotent by content digest; in-process layer engine as above. See the
 ### Associative projection preview (D02.1)
 
 ```text
-beamcraft drawing-preview --store ROOT --id MEMBER_UUIDV7
+beamcraft preview-drawing --store ROOT --id MEMBER_UUIDV7
   --drawing-id UUIDV7 --view-id UUIDV7 --dimension-id UUIDV7
   --anchor-a QUALIFIED_VERTEX_ID --anchor-b QUALIFIED_VERTEX_ID
   [--plane front|top|right] [--scale 100] [--origin X,Y] [--offset MM]
@@ -265,17 +271,17 @@ exact double3 coordinates and a double model-mm dimension value. A source/algori
 binds derived data; verification recomputes the engine projection and compares exact bytes.
 Unresolved geometry stores a reason without a successful value. The root composes only drawing
 USD, never source/provenance resources. This API is used by the document-store commands;
-`drawing-preview` continues to expose the same engine geometry headlessly.
+`preview-drawing` continues to expose the same engine geometry headlessly.
 
 ### Drawing document lifecycle (D03.3)
 
-`drawing-create --store MODEL --document-dir DOCUMENT` takes the same drawing/member/view/
-dimension IDs, anchors and settings as `drawing-preview`, plus required `--op-id`,
+`create-drawing --store MODEL --document-dir DOCUMENT` takes the same drawing/member/view/
+dimension IDs, anchors and settings as `preview-drawing`, plus required `--op-id`,
 `--revision-id` and `--actor-id`. It creates a dedicated document store and archives the exact
-verified model. `drawing-refresh` takes those options and `--expected-head REVISION_UUID`,
+verified model. `refresh-drawing` takes those options and `--expected-head REVISION_UUID`,
 creating a new draft against that document head. Neither command publishes automatically.
 
-`drawing-publish --document-dir DOCUMENT --expected-head REVISION_UUID --op-id UUID
+`publish-drawing --document-dir DOCUMENT --expected-head REVISION_UUID --op-id UUID
 --revision-id UUID --actor-id UUID --version-id UUID` publishes the current draft as an immutable
 version. A new publication must use a version ID that has never been published in this document;
 reusing either the latest or an older ID is `DUPLICATE_ID` without a new revision. The exact
@@ -287,19 +293,19 @@ the candidate CAS; ordinary writers remain subject to the head CAS. Missing or c
 refuses publication. In particular, a compacted document history is `DEPENDENCY_UNAVAILABLE`:
 restore the complete history before publishing again. Retained head inspection still works.
 
-`drawing-inspect --document-dir DOCUMENT [--model-store MODEL]` reports the current document
-and freshness (`current`, `stale`, `unavailable` or `unknown`). `drawing-versions --document-dir
+`inspect-drawing --document-dir DOCUMENT [--model-store MODEL]` reports the current document
+and freshness (`current`, `stale`, `unavailable` or `unknown`). `inspect-drawing-versions --document-dir
 DOCUMENT` lists retained published revisions. Archived models remain outside drawing composition.
 This slice does not implement drawing UI, PDF/print, or the full D03 acceptance gate.
 
 ### Semantic feature addresses (D01.1)
 
 ```text
-beamcraft feature-list --store ROOT --id ELEMENT_UUIDV7
-beamcraft feature-lookup --store ROOT --feature-id QUALIFIED_FEATURE_ID
+beamcraft list-feature --store ROOT --id ELEMENT_UUIDV7
+beamcraft lookup-feature --store ROOT --feature-id QUALIFIED_FEATURE_ID
 ```
 
-`feature-list` opens and strictly verifies the committed model, then enumerates the selected
+`list-feature` opens and strictly verifies the committed model, then enumerates the selected
 canonical box body's 6 face, 12 edge and 8 vertex addresses. Each full `fid1` address includes
 the owning ElementId and semantic role; array positions are not addresses. The result includes
 the model revision UUID, manifest digest, generation and snapshot token. Both queries are
@@ -325,7 +331,7 @@ wrong kind), the kernel builds the box in the F06 member frame (section centred 
 default frame of F06 section 4 plus the explicit roll), and the commit runs the same verifier as
 plates, which now re-evaluates members too. Output: element id, kind, profile and material digests,
 section, axis points, roll, placement, volume and mass (as for plates), mesh digest, revision and
-footprint (the profile and material are reads). `plate-inspect` lists `plates` and `members` and
+footprint (the profile and material are reads). `inspect-elements` lists `plates` and `members` and
 puts both in the one pinned snapshot. Axis points may differ in all three coordinates: horizontal,
 vertical and inclined beams use the same command, with no separate 3D flag. Coordinates are in
 millimetres in a right-handed system with Z up; `--roll` rotates the section about the axis in
@@ -355,7 +361,7 @@ beamcraft update-element --store ROOT --id UUID
 touches the authored layer alone, a material change rewrites the stored mass record at the same
 mesh, a thickness change rebuilds the mesh and volume (plates only). `--material-digest none`
 clears the material, so the mass becomes unknown. An empty patch is `INVALID_ARGUMENT`. Volume
-and mass are stored beside the derived mesh with their own signatures; `plate-inspect` reports
+and mass are stored beside the derived mesh with their own signatures; `inspect-elements` reports
 `stored_quantities` as `current`, `stale` or `missing`, and the publish-time verifier refuses a
 stale record with `INTEGRITY_ERROR`. See the [design note](../../docs/design/p04-quantities-update.md).
 `--translation X,Y,Z` (P08) moves the element: it sets the absolute placement translation and keeps
@@ -396,17 +402,17 @@ source `NOT_FOUND`, and the same `--op-id` is a replay or `OP_ID_REUSE`. See the
 ## P06 personal workspaces
 
 ```text
-beamcraft workspace-create  --store PUBLISHED --workspace-dir DIR [--user-id UUID] [--workspace-id UUID]
+beamcraft create-workspace  --store PUBLISHED --workspace-dir DIR [--user-id UUID] [--workspace-id UUID]
   [--revision-id UUID] [--op-id UUID]
-beamcraft workspace-status  --store PUBLISHED --workspace-dir DIR
-beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR
+beamcraft inspect-workspace  --store PUBLISHED --workspace-dir DIR
+beamcraft publish-workspace --store PUBLISHED --workspace-dir DIR
 ```
 
 A workspace is a directory that is its own revision store, forked from the published head. Every
 edit command (`create-plate`, `update-element`, `copy-element`, ...) works on it with
-`--store DIR`; the published store is untouched until `workspace-publish`. Two workspaces of one
-user are two directories and stay independent. `workspace-status` reports the unsent draft
-revisions and whether the base is still the published head. `workspace-publish` (the published revision id is the draft head's id, so an interrupted publish is retried as the same request) is a fast-forward
+`--store DIR`; the published store is untouched until `publish-workspace`. Two workspaces of one
+user are two directories and stay independent. `inspect-workspace` reports the unsent draft
+revisions and whether the base is still the published head. `publish-workspace` (the published revision id is the draft head's id, so an interrupted publish is retried as the same request) is a fast-forward
 only: a moved published head is `BASE_REVISION_MISMATCH`, a fresh fork is `INVALID_ARGUMENT`, and
 repeating a finished or interrupted publish is a replay. There is no authentication and no merge.
 See the [design note](../../docs/design/p06-workspace.md).
@@ -450,14 +456,14 @@ another payload under that ID is refused, including after a failed attempt.
 ## P07 undo and redo
 
 ```text
-beamcraft workspace-undo    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
-beamcraft workspace-redo    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
-beamcraft workspace-history --workspace-dir DIR
+beamcraft undo-workspace    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
+beamcraft redo-workspace    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
+beamcraft inspect-workspace-history --workspace-dir DIR
 ```
 
-Every accepted command is one revision of the draft and therefore one undo unit. `workspace-undo`
+Every accepted command is one revision of the draft and therefore one undo unit. `undo-workspace`
 commits a **new** verified revision whose layers are those of the state before the last unit, so
-the element, its mesh and its stored quantities come back together; `workspace-redo` restores the
+the element, its mesh and its stored quantities come back together; `redo-workspace` restores the
 undone state. The stacks are derived from the revision log and the append-only `undo.log` (an edit
 after an undo discards the redo stack), so they survive a restart and a crash between an intent
 and its commit; the same `--op-id` replays or finishes a step. Nothing to undo or redo is
@@ -467,32 +473,32 @@ See the [design note](../../docs/design/p07-undo-redo.md).
 ## R01 read-only references
 
 ```text
-beamcraft reference-attach        --store ROOT --source FILE [--name TEXT] [--translation X,Y,Z] [--rotation-z-deg DEG]
+beamcraft attach-reference        --store ROOT --source FILE [--name TEXT] [--translation X,Y,Z] [--rotation-z-deg DEG]
   [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-beamcraft reference-move          --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg DEG] [same ids]
-beamcraft reference-correct-units --store ROOT --id UUID (--meters-per-unit F --up-axis Y|Z | --clear true) [same ids]
-beamcraft reference-write         --store ROOT --id UUID (--target source | --prim /DefaultPrim/Path [--attribute NAME])
-beamcraft reference-inspect       --store ROOT
+beamcraft move-reference          --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg DEG] [same ids]
+beamcraft correct-reference-units --store ROOT --id UUID (--meters-per-unit F --up-axis Y|Z | --clear true) [same ids]
+beamcraft write-reference         --store ROOT --id UUID (--target source | --prim /DefaultPrim/Path [--attribute NAME])
+beamcraft inspect-reference       --store ROOT
 ```
 
-`reference-attach` reads a local USDA or restricted USDC layer (at most 65536 bytes, one
+`attach-reference` reads a local USDA or restricted USDC layer (at most 65536 bytes, one
 self-contained layer with a `defaultPrim`) and publishes a revision in which its bytes are an
 `external` layer named by their SHA-256, composed below an owned wrapper element. The file is only
 read; its path is never stored (only its file name, as a label). A URL, a network share or a device
 path (any `scheme:` of two or more characters, or a path starting with two slashes or two
 backslashes) is `PERMISSION_DENIED` on the text alone,
 before the store or the file system is touched. The wrapper has its own placement
-(`reference-move`, absolute, stored apart from the foreign content) and, only when the owner asks,
-an explicit units and up-axis interpretation (`reference-correct-units`; `--clear true` removes
+(`move-reference`, absolute, stored apart from the foreign content) and, only when the owner asks,
+an explicit units and up-axis interpretation (`correct-reference-units`; `--clear true` removes
 it). The source keeps declaring what it declares; `units_status` in the output says whether it
 matches the project (millimetres, Z up), `needs_correction`, is `undeclared`, or is `corrected`.
 Without a correction the source is taken as stored.
 
-`reference-write` has no success path: the source layer and every prim of the source (existing or
+`write-reference` has no success path: the source layer and every prim of the source (existing or
 not, including an override a layer of ours would author) answer `FOREIGN_READ_ONLY`, exit 2, and
-nothing is written. `reference-inspect` opens the verified head (every blob re-hashed) and lists
+nothing is written. `inspect-reference` opens the verified head (every blob re-hashed) and lists
 the wrappers, their pinned source, the foreign prims and the external layers. Every other command
-(`create-plate`, `update-element`, `workspace-publish`, `workspace-undo`, ...) carries the external
+(`create-plate`, `update-element`, `publish-workspace`, `undo-workspace`, ...) carries the external
 layer into its revision unchanged. See the [design note](../../docs/design/r01-readonly-reference.md).
 
 U16 uses the [category-based prim paths](../../docs/architecture.md#prim-hierarchy-and-naming-rule)

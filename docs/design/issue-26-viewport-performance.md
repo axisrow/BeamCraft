@@ -33,8 +33,8 @@ a redraw regression of #39.
 | Finding | On `538cbed` | This change |
 |---|---|---|
 | Regression of #39 | A refresh whose scene kept its bounds and the viewport aspect replaced the scene without asking for a draw: after an edit inside the bounds, a rename, an undo or a reload the old image stayed on screen until the camera moved. | Every scene swap goes through one `App::show`, which asks for a draw; an unchanged framing still keeps the camera. A window test on the headless adapter fails without the fix. |
-| 2, refresh | 2 or 3 concurrent CLI processes per refresh read the model (`view-export`, `definitions` and, with a selection, `plate-inspect`), each a full verified inspection; the head could move between them. | `view-export --out - --with-definitions true [--with-element ID]` frames the `definitions` and `plate-inspect --element ID` replies of the same inspection before the unchanged bundle (`BCVXFRM1`, then per reply a little-endian `u32` length and the reply as its command prints it, 0 for one not asked, then the bundle). The refresh runs one such process; only a failed export asks the other two on their own. The workspace queries read the draft's history and still run alongside. |
-| 2, selection | A click ran CLI `pick`, then `plate-inspect` twice (editor details, properties panel): three processes and three full inspections in sequence. Both `plate-inspect` replies list the whole model, which exceeds the CLI's bounded reply encoder (1 MiB, 65,536 JSON tokens) at 280 elements: every click there failed with `LIMIT_EXCEEDED`. | The engine's `pick` runs in the window's process on the snapshot it shows (`edit::pick_in`, the query `pick --targets face --max-hits 1` makes; `Arc<ViewSnapshot>` shared with the worker), then one `plate-inspect --element ID` (a reply of one element) gives both the details and the properties. The re-read after an edit uses the same single lookup. |
+| 2, refresh | 2 or 3 concurrent CLI processes per refresh read the model (`export-view`, `definitions` and, with a selection, `inspect-elements`), each a full verified inspection; the head could move between them. | `export-view --out - --with-definitions true [--with-element ID]` frames the `definitions` and `inspect-elements --element ID` replies of the same inspection before the unchanged bundle (`BCVXFRM1`, then per reply a little-endian `u32` length and the reply as its command prints it, 0 for one not asked, then the bundle). The refresh runs one such process; only a failed export asks the other two on their own. The workspace queries read the draft's history and still run alongside. |
+| 2, selection | A click ran CLI `pick`, then `inspect-elements` twice (editor details, properties panel): three processes and three full inspections in sequence. Both `inspect-elements` replies list the whole model, which exceeds the CLI's bounded reply encoder (1 MiB, 65,536 JSON tokens) at 280 elements: every click there failed with `LIMIT_EXCEEDED`. | The engine's `pick` runs in the window's process on the snapshot it shows (`edit::pick_in`, the query `pick --targets face --max-hits 1` makes; `Arc<ViewSnapshot>` shared with the worker), then one `inspect-elements --element ID` (a reply of one element) gives both the details and the properties. The re-read after an edit uses the same single lookup. |
 | 9 | Esc, an accepted edit or the re-read after an edit dropped the lookup's receiver; its CLI processes ran to the end. | `invalidate_select` sets the lookup's cancel flag: a lookup not started yet never starts its process, a running one is killed (`command::run_cancellable`, answer `CANCELLED`, counted as `cli_killed`). Only read-only lookups take the flag. A click while a lookup runs is still ignored, so at most one lookup is wanted at a time. |
 | 3 | `Loaded` kept the expanded CPU display buffers for as long as the scene was shown; every refresh expanded and uploaded every mesh again, also for an unchanged snapshot; the upload waited for the device on the UI thread. | `Loaded` keeps a `SceneSummary` (origin, framing, counts); the expanded buffers are dropped once they are on the device. The worker gets what the window shows (`source::Known`: snapshot token and resident mesh digests): the same token is `Refreshed::Unchanged` and nothing is built, uploaded or drawn; meshes the device holds are not expanded again and `Uploaded::upload` reuses their vertex buffers, sends only new meshes and the instance buffers, and does not wait for the device. |
 | 4, rest | `from_bundle` hashed and copied each blob three times (its digest, a throwaway `MeshEntry` for its positions, the builder's validation). | `MeshEntry` shares its bytes (`Arc<[u8]>`). `from_bundle` admits each blob once (one structural check, one SHA-256, one copy) and hands the entries to the builder, which takes one without validating it again only when an element offers exactly those bytes. #39's refusal of other bytes under a known digest is kept. |
@@ -65,8 +65,8 @@ the head, with identical counting:
   drawn. The frame is untrusted input to the window: magic and lengths are checked, each length
   is bounded by the CLI reply cap and checked against the bytes received, the replies go through
   the bounded JSON decoder and the bundle through the engine's validation. The default
-  `view-export` output and the default `plate-inspect` reply are unchanged.
-- **`plate-inspect --element ID`, not a new command.** The reply has the shape the window already
+  `export-view` output and the default `inspect-elements` reply are unchanged.
+- **`inspect-elements --element ID`, not a new command.** The reply has the shape the window already
   reads (`parse_element`, `parse_element_info`), restricted to one element: the plates, members
   and snapshot entries of that element and its meshes, none when the head does not hold it. The
   counts still describe the whole revision and `element_filter` names the filter. A malformed id
@@ -108,7 +108,7 @@ thin LTO, one codegen unit). Calculated figures are labelled as such.
   *280 elements*: 120 plates (width 200 to 1390 mm, every third with a round 32-segment hole),
   100 copies of the first plate, 60 straight members (I 300 and a 200x300 rectangle), one
   material. *140 elements*: 60 plates, 50 copies, 30 members, same rules. The full
-  `plate-inspect` reply of the 280-element store exceeds the CLI's reply limits
+  `inspect-elements` reply of the 280-element store exceeds the CLI's reply limits
   (`LIMIT_EXCEEDED`); the 140-element store's reply (329 KB) fits, so selection is also measured
   where `master` works.
 - **Window:** `beamcraft-ui --store COPY --perf-run
@@ -279,18 +279,18 @@ Ten runs per build, the two builds alternating; exit 2 is `LIMIT_EXCEEDED`.
 
 | Elements | Command | master + harness: wall, ms | this PR: wall, ms | change | CPU, ms (before → after) | max RSS (this PR), MiB | exit |
 |---|---|---|---|---|---|---|---|
-| 280 | `view-export` | 1,982 (1,706–2,523) | 1,990 (1,879–2,365) | within spread | 1,961 → 1,946 | 45.7 (45.5–45.9) | 0 |
+| 280 | `export-view` | 1,982 (1,706–2,523) | 1,990 (1,879–2,365) | within spread | 1,961 → 1,946 | 45.7 (45.5–45.9) | 0 |
 | 280 | `definitions` | 1,972 (1,703–2,197) | 1,909 (1,816–2,182) | within spread | 1,941 → 1,878 | 46.1 (46.0–46.2) | 0 |
-| 280 | `plate-inspect` | 1,925 (1,661–2,098) | 1,918 (1,744–2,129) | within spread | 1,879 → 1,867 | 46.1 (45.8–46.2) | 2 |
+| 280 | `inspect-elements` | 1,925 (1,661–2,098) | 1,918 (1,744–2,129) | within spread | 1,879 → 1,867 | 46.1 (45.8–46.2) | 2 |
 | 280 | `pick` | 1,846 (1,659–2,162) | 1,931 (1,738–2,451) | within spread | 1,828 → 1,868 | 45.9 (45.8–46.2) | 0 |
-| 280 | `view-export --with-definitions true --with-element ID` | — | 2,053 (1,863–2,303) | new | — → 1,985 | 45.9 (45.7–46.1) | 0 |
-| 280 | `plate-inspect --element ID` | — | 1,841 (1,672–2,420) | new | — → 1,805 | 46.1 (45.9–46.2) | 0 |
-| 140 | `view-export` | 898 (803–1,192) | 881 (800–907) | within spread | 880 → 858 | 27.4 (27.2–27.6) | 0 |
+| 280 | `export-view --with-definitions true --with-element ID` | — | 2,053 (1,863–2,303) | new | — → 1,985 | 45.9 (45.7–46.1) | 0 |
+| 280 | `inspect-elements --element ID` | — | 1,841 (1,672–2,420) | new | — → 1,805 | 46.1 (45.9–46.2) | 0 |
+| 140 | `export-view` | 898 (803–1,192) | 881 (800–907) | within spread | 880 → 858 | 27.4 (27.2–27.6) | 0 |
 | 140 | `definitions` | 901 (839–1,117) | 989 (854–1,140) | within spread | 881 → 956 | 27.8 (27.6–27.9) | 0 |
-| 140 | `plate-inspect` | 922 (882–1,332) | 933 (829–1,180) | within spread | 916 → 908 | 27.8 (27.6–28.0) | 0 |
+| 140 | `inspect-elements` | 922 (882–1,332) | 933 (829–1,180) | within spread | 916 → 908 | 27.8 (27.6–28.0) | 0 |
 | 140 | `pick` | 963 (857–1,271) | 998 (878–1,324) | within spread | 953 → 983 | 27.7 (27.5–27.9) | 0 |
-| 140 | `view-export --with-definitions true --with-element ID` | — | 954 (893–1,136) | new | — → 922 | 27.7 (27.6–27.9) | 0 |
-| 140 | `plate-inspect --element ID` | — | 904 (787–1,082) | new | — → 879 | 27.9 (27.6–28.0) | 0 |
+| 140 | `export-view --with-definitions true --with-element ID` | — | 954 (893–1,136) | new | — → 922 | 27.7 (27.6–27.9) | 0 |
+| 140 | `inspect-elements --element ID` | — | 904 (787–1,082) | new | — → 879 | 27.9 (27.6–28.0) | 0 |
 
 ### Engine queries (`query_bench`)
 

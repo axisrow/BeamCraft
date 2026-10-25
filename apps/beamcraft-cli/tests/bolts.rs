@@ -53,7 +53,7 @@ impl Fixture {
         text(&body, "code")
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     /// The first-slice plate: world bounds `[0,1000] x [0,500] x [0,10]`.
     fn plate(&self) -> String {
@@ -114,7 +114,7 @@ impl Fixture {
         self.ok("create-bolt", &Self::bolt_args(id, main, secondary))
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
-    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    /// a layer edited outside BeamCraft would arrive through `commit-revision`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
         let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
@@ -180,7 +180,7 @@ fn a_bolt_group_authors_its_properties_and_connects_record_and_reads_its_parts()
     let f = Fixture::new();
     let plate = f.plate();
     let beam = f.beam();
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let mesh_before = text(&list(&inspected, "plates")[0], "mesh_digest");
 
     let created = f.bolt(BOLT, &plate, &beam);
@@ -209,7 +209,7 @@ fn a_bolt_group_authors_its_properties_and_connects_record_and_reads_its_parts()
     assert_eq!(strings(b, "direction_mm"), ["1", "0", "0"]);
 
     // The parts' bodies are untouched and the group adds nothing to the view.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(
         text(&list(&inspected, "plates")[0], "mesh_digest"),
         mesh_before

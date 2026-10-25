@@ -214,7 +214,7 @@ pub fn commit_edit(cli: &Path, edit: &Edit, stats: &Stats) -> Result<Edited, Too
 pub struct Selected {
     /// The picked element.
     pub id: String,
-    /// Its kind, name and translation as `plate-inspect` reports them.
+    /// Its kind, name and translation as `inspect-elements` reports them.
     pub info: Result<ElementInfo, ToolError>,
     /// All its reported properties and the revision they were read from.
     pub details: Result<Details, ToolError>,
@@ -251,7 +251,7 @@ pub fn element_details(
     lookup(cli, store, id, &NEVER, stats).1
 }
 
-/// [`element_info`] and [`element_details`] of one element from one `plate-inspect --element ID`:
+/// [`element_info`] and [`element_details`] of one element from one `inspect-elements --element ID`:
 /// one process and one inspection, with a reply of one element whatever the size of the model.
 /// `cancel` gives it up ([`run_cancellable`]).
 pub fn lookup(
@@ -311,13 +311,13 @@ pub fn commit_property(
     parse_edited(EditKind::Move, output.code, &output.stdout)
 }
 
-/// Runs a confirmed `workspace-publish` and reads its reply.
+/// Runs a confirmed `publish-workspace` and reads its reply.
 pub fn publish(cli: &Path, args: &[String], stats: &Stats) -> Result<Published, ToolError> {
     let output = run(cli, args, DEADLINE, stats)?;
     parse_published(output.code, &output.stdout)
 }
 
-/// Reads `workspace-status` for a published store and a workspace directory.
+/// Reads `inspect-workspace` for a published store and a workspace directory.
 pub fn workspace_status(
     cli: &Path,
     published: &Path,

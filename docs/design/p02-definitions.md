@@ -70,7 +70,7 @@ beamcraft definitions --store ROOT   (fresh process: verified head, every defini
   `0.005 m3 * 7850 kg/m3 = 39.25 kg` and `13.5 kg` at 2700, unknown density with no value, the same
   mesh digest for every material, F04 codes for hostile densities and sizes, `NOT_FOUND` and
   `INVALID_ARGUMENT` for wrong digests with no revision written, replay and `OP_ID_REUSE` with a
-  material, fresh-process `plate-inspect` and `definitions`, and plain-text checks of the saved
+  material, fresh-process `inspect-elements` and `definitions`, and plain-text checks of the saved
   layer (units, version, kind, density, the `bim:material` link, no shader).
 * `beamcraft_cli` unit tests: a definition whose stored density, units, label or kind differs from
   its path digest is `INTEGRITY_ERROR`; a hostile density is `LIMIT_EXCEEDED`; unknown kinds and

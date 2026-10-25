@@ -58,7 +58,7 @@ impl Story {
     }
 
     fn head(&self, store: &str) -> String {
-        text(&self.ok(store, "revision-open", &[]), "revision_id")
+        text(&self.ok(store, "open-revision", &[]), "revision_id")
     }
 }
 
@@ -118,7 +118,7 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     let base = s.head("published");
     s.ok(
         "published",
-        "workspace-create",
+        "create-workspace",
         &["--workspace-dir", &s.path("draft"), "--user-id", USER],
     );
 
@@ -180,7 +180,7 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     for id in PARTS {
         s.ok(
             "draft",
-            "assembly-attach",
+            "attach-to-assembly",
             &["--id", id, "--assembly-id", &assembly],
         );
     }
@@ -255,7 +255,7 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     assert_eq!(s.head("draft"), draft_head);
     assert_eq!(s.head("published"), base);
 
-    let before = parts(&s.ok("draft", "plate-inspect", &[]));
+    let before = parts(&s.ok("draft", "inspect-elements", &[]));
     assert_eq!(before.len(), 5);
     let volumes = [5_000_000.0, 5_000_000.0, 4_750_000.0, 396_000.0, 396_000.0];
     for (id, volume) in PARTS.into_iter().zip(volumes) {
@@ -269,15 +269,15 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
             volume * 7.85e-6,
         );
     }
-    let token = text(&s.ok("draft", "numbering-preview", &[]), "preview_token");
-    let approved = s.ok("draft", "numbering-approve", &["--preview-token", &token]);
+    let token = text(&s.ok("draft", "preview-numbering", &[]), "preview_token");
+    let approved = s.ok("draft", "approve-numbering", &["--preview-token", &token]);
     assert_eq!(approved.get("marks").unwrap().unsigned().unwrap(), 6);
-    let numbering = s.ok("draft", "numbering-status", &[]);
+    let numbering = s.ok("draft", "inspect-numbering", &[]);
     assert_eq!(text(at(&numbering, &["approval"]), "state"), "current");
 
     let published = s.ok(
         "published",
-        "workspace-publish",
+        "publish-workspace",
         &["--workspace-dir", &s.path("draft")],
     );
     assert_eq!(text(&published, "outcome"), "workspace_published");
@@ -285,21 +285,21 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     let accepted_head = s.head("published");
     let status = s.ok(
         "published",
-        "workspace-status",
+        "inspect-workspace",
         &["--workspace-dir", &s.path("draft")],
     );
     assert_eq!(text(at(&status, &["workspace"]), "unsent_revisions"), "0");
-    let reopened = parts(&s.ok("published", "plate-inspect", &[]));
+    let reopened = parts(&s.ok("published", "inspect-elements", &[]));
     for id in PARTS {
         for key in ["name", "mesh_digest", "quantities"] {
             assert_eq!(reopened[id].get(key).unwrap(), before[id].get(key).unwrap());
         }
     }
-    assert_eq!(s.ok("published", "numbering-status", &[]), numbering);
+    assert_eq!(s.ok("published", "inspect-numbering", &[]), numbering);
 
     // Five parts, once each: assembly membership and connection records add no BOM rows.
     for name in ["bom.csv", "bom-again.csv"] {
-        s.ok("published", "bom-export", &["--out", &s.path(name)]);
+        s.ok("published", "export-bom", &["--out", &s.path(name)]);
     }
     let csv = fs::read_to_string(s.path("bom.csv")).unwrap();
     assert_eq!(csv, fs::read_to_string(s.path("bom-again.csv")).unwrap());
@@ -334,7 +334,7 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     );
     let replay = s.ok(
         "published",
-        "workspace-publish",
+        "publish-workspace",
         &["--workspace-dir", &s.path("draft")],
     );
     assert_eq!(text(&replay, "outcome"), "workspace_publish_replayed");
@@ -358,7 +358,7 @@ fn drawing_lifecycle(s: &Story, accepted_head: &str) {
     let anchor_b = format!("fid1:{}:member:v.x0.y0.z1", PARTS[0]);
     let created = s.ok(
         "published",
-        "drawing-create",
+        "create-drawing",
         &[
             "--document-dir",
             &document,
@@ -398,7 +398,7 @@ fn drawing_lifecycle(s: &Story, accepted_head: &str) {
         "--version-id",
         version.as_str(),
     ];
-    let published = s.ok("published", "drawing-publish", &publish_args);
+    let published = s.ok("published", "publish-drawing", &publish_args);
     assert_eq!(text(&published, "state"), "published");
     assert_eq!(text(&published, "version_id"), version);
     assert_eq!(text(&published, "source_revision_id"), accepted_head);
@@ -412,7 +412,7 @@ fn drawing_lifecycle(s: &Story, accepted_head: &str) {
     ];
     assert_eq!(
         text(
-            &s.ok("published", "drawing-inspect", &inspect_args),
+            &s.ok("published", "inspect-drawing", &inspect_args),
             "freshness"
         ),
         "current"
@@ -427,24 +427,24 @@ fn drawing_lifecycle(s: &Story, accepted_head: &str) {
     assert_eq!(s.head("published"), accepted_head);
     s.ok(
         "published",
-        "workspace-publish",
+        "publish-workspace",
         &["--workspace-dir", &s.path("draft")],
     );
     let changed_head = s.head("published");
     assert_ne!(changed_head, accepted_head);
-    let inspected = s.ok("published", "drawing-inspect", &inspect_args);
+    let inspected = s.ok("published", "inspect-drawing", &inspect_args);
     assert_eq!(text(&inspected, "freshness"), "stale");
     assert_eq!(text(&inspected, "source_revision_id"), accepted_head);
     assert_eq!(text(&inspected, "version_id"), version);
     assert_eq!(
-        s.ok("published", "drawing-publish", &publish_args)
+        s.ok("published", "publish-drawing", &publish_args)
             .encode(&Limits::DEFAULT)
             .unwrap(),
         stored
     );
     let versions = s.ok(
         "published",
-        "drawing-versions",
+        "inspect-drawing-versions",
         &["--document-dir", &document],
     );
     let versions = versions.get("versions").unwrap().array().unwrap();

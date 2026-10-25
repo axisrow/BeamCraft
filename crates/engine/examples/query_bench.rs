@@ -3,7 +3,7 @@
 // Contributor-original synthetic scenes, MPL-2.0.
 
 //! Timing harness for the view snapshot paths the viewport and the CLI use: building a snapshot
-//! from kernel results, writing and re-reading its bundle (what `beamcraft view-export` sends and
+//! from kernel results, writing and re-reading its bundle (what `beamcraft export-view` sends and
 //! the window rebuilds), and the ray, point and snap queries over it.
 //!
 //! ```text

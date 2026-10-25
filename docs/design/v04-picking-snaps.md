@@ -12,7 +12,7 @@ positions; references read-only; frame indices never become ids.
 ```text
 beamcraft pick --store ROOT (--origin X,Y,Z --direction X,Y,Z [--t-max MM] [--include-backfaces true|false]
                              | --point X,Y,Z) --targets face,edge,vertex [--radius MM] [--max-hits 1..64]
-beamcraft feature-lookup --store ROOT --feature-id FID
+beamcraft lookup-feature --store ROOT --feature-id FID
 beamcraft snap --store ROOT --point X,Y,Z [--radius MM] [--kinds vertex,axis_end,axis] [--max-hits 1..64]
 ```
 
@@ -21,7 +21,7 @@ beamcraft snap --store ROOT --point X,Y,Z [--radius MM] [--kinds vertex,axis_end
 | `beamcraft_engine::query::feature` | `FeatureId` (`fid1:` + ElementId + `:` + `plate:`/`member:` + face, edge or vertex role; at most 64 bytes; parse and display), `FeatureKind`, `BodyKind`, `lookup_feature` (kind, owner, local id, local and world geometry: face normal and corners with vertex ids, edge ends with vertex ids, vertex position), `has_features`. |
 | `beamcraft_engine::query::pick` | `pick` with `RayPick` and `PointPick` as F06 section 9 specifies (closed rectangles enlarged by `eps_pick`, parallel test, back faces, closed finite segment with clamped `t`, point-form distances, inclusive band, quantized ordering, `max_hits` and `truncated`, the limit and input codes), and `snap` (`vertex`, `axis_end`, `axis`). A ray pick additionally hits bodies without FeatureIds at element level, by their mesh (amendment of 2026-10-23 below). |
 | `beamcraft_engine::error::ViewCode` | `GEO_NON_FINITE`, `GEO_PICK_INPUT_INVALID`, `GEO_PICK_LIMIT`, `GEO_FEATURE_ID_INVALID`, `GEO_FEATURE_NOT_FOUND`, `GEO_TRIANGLE_ADDRESS_FORBIDDEN`, mapped to F04 codes as F06 section 3 lists. |
-| CLI | `pick`, `feature-lookup` and `snap` over the verified head's view snapshot (the one `plate-inspect` builds); errors carry the F04 `code` and the F06 `reason` token. |
+| CLI | `pick`, `lookup-feature` and `snap` over the verified head's view snapshot (the one `inspect-elements` builds); errors carry the F04 `code` and the F06 `reason` token. |
 
 ## Decisions
 

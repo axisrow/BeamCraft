@@ -9,8 +9,8 @@ Baseline inspected: fork `master` `dae17846453b0e18d58b9fad55f3acbd6c22100d`.
 
 ## Existing behavior and constraints
 
-`workspace-publish` and `changeset-apply` require the published head to equal the recorded base.
-`coordinator-publish` also requires its expected head to equal that changeset's base. The tests
+`publish-workspace` and `apply-changeset` require the published head to equal the recorded base.
+`publish-changeset` also requires its expected head to equal that changeset's base. The tests
 in `workspace.rs` and `coordinator.rs` already prove that one concurrent publisher succeeds and
 the other keeps its draft with `BASE_REVISION_MISMATCH`. This is the existing safety behavior,
 not a bug to remove by ignoring the expected-base check.

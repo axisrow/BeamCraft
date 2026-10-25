@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, members and assemblies, MPL-2.0.
 
-//! A08 end to end through the real CLI binary: `numbering-preview` groups equivalent parts,
+//! A08 end to end through the real CLI binary: `preview-numbering` groups equivalent parts,
 //! proposes series, shows overlaps, goes stale exactly when an edit changes the numbering, and
 //! never writes to the store.
 
@@ -65,7 +65,7 @@ impl Fixture {
         body
     }
     fn preview(&self, extra: &[&str]) -> Json {
-        self.ok("numbering-preview", extra)
+        self.ok("preview-numbering", extra)
     }
     fn plate(&self, material: &str, thickness: &str, extra: &[&str]) -> String {
         let mut args = vec![
@@ -108,10 +108,10 @@ impl Fixture {
         )
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn layers(&self) -> Vec<(String, String)> {
-        list(&self.ok("revision-open", &[]), "layers")
+        list(&self.ok("open-revision", &[]), "layers")
             .iter()
             .map(|l| (text(l, "name"), text(l, "digest")))
             .collect()
@@ -422,7 +422,7 @@ fn assemblies_with_the_same_content_share_a_mark() {
     ] {
         let id = text(&f.ok("create-assembly", &["--name", name]), "element_id");
         for part in parts {
-            f.ok("assembly-attach", &["--id", part, "--assembly-id", &id]);
+            f.ok("attach-to-assembly", &["--id", part, "--assembly-id", &id]);
         }
         marks.push(id);
     }
@@ -479,7 +479,7 @@ fn bad_input_is_refused_without_a_preview() {
         vec!["--bogus", "1"],
         vec!["--limit", "1", "--limit", "2"],
     ] {
-        let (code, body) = f.run("numbering-preview", &extra);
+        let (code, body) = f.run("preview-numbering", &extra);
         assert_eq!(
             (code, text(&body, "code").as_str()),
             (2, "INVALID_ARGUMENT"),
@@ -487,7 +487,7 @@ fn bad_input_is_refused_without_a_preview() {
         );
     }
     let (code, body) = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-        .args(["numbering-preview"])
+        .args(["preview-numbering"])
         .output()
         .map(|o| {
             (

@@ -3,7 +3,7 @@
 Date: 2026-10-16. Status: **experimental engine API plus headless commands; a durable outcome
 ledger, a write-ahead intent in the U06 commit, recovery of an unfinished commit and fault-injection
 proofs are implemented. Personal workspaces, collaboration, ledger rotation and garbage collection
-are not.** Branch `feat/u07-journal-recovery`, stacked on `feat/u06-revision-commit` (PR #57);
+are not.** Branch `feat/u07-journal-recovery`, stacked on `feat/u06-commit-revision` (PR #57);
 retarget to `master` after #57 merges.
 
 Plan row: U07 / M, depends on U06. Result: consistent recording of intent/commit and recovery of
@@ -24,9 +24,9 @@ new complete snapshot; recovery is idempotent.
 | Recovery | `RevisionStore::recover(RecoveryPolicy)` closes each unresolved intent from the root: if the head log holds the intent's revision (same id, op and content fingerprint) at the intent's sequence it appends `committed`; if the root has not reached that sequence or holds another revision there it appends `aborted`; if the root cannot be verified the intent stays open and is reported. It removes abandoned `.tmp-*` (revision record) and `.publish-*` (blob) temporaries, reports every ledger `committed` record that the root contradicts (wrong revision, manifest or operation at its sequence, an unreadable or unreached sequence; all records are checked, not only recent ones), and reports unreferenced blobs without deleting any. `open_recovered` recovers and then opens the root. |
 | Replay and reuse | The ledger recognises an op id beyond the head log's 64-record look-back (`Replayed`; the revision-id scan of U06 does the same for an identical retry). While an attempt is unresolved or committed, a different content or expected base under the same op id is `OP_ID_REUSE`; an attempt closed as not accepted leaves the id free. Each attempt has its own identity, so closing one attempt never closes another identical one. A replay of an op whose ledger record is missing writes the missing `committed` record. |
 
-CLI (`beamcraft`): `revision-recover --store ROOT --min-age-secs N` and
-`revision-outcome --store ROOT --op-id UUID`, machine-readable JSON, exit codes of the existing
-table. Every `revision-commit` goes through the ledger.
+CLI (`beamcraft`): `recover-revision --store ROOT --min-age-secs N` and
+`inspect-revision-outcome --store ROOT --op-id UUID`, machine-readable JSON, exit codes of the existing
+table. Every `commit-revision` goes through the ledger.
 
 ## Decisions to review
 
@@ -63,7 +63,7 @@ table. Every `revision-commit` goes through the ledger.
    `OP_ID_REUSE`. A closed (`aborted`) attempt had no effect, so a corrected retry under the same id is allowed,
    as in U06 before the ledger. This is the one place where the ledger could be stricter; it is
    not, to keep U06's behaviour for a rejected-then-fixed command.
-7. **`revision-outcome` is the QueryOutcome.** The ledger answers it; U17 removed the older
+7. **`inspect-revision-outcome` is the QueryOutcome.** The ledger answers it; U17 removed the older
    `query-outcome` command, which could only return `OUTCOME_UNKNOWN`.
 
 ## Crash points and what recovery yields

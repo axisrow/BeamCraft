@@ -60,7 +60,7 @@ beamcraft definitions   --store ROOT
    one reads the store after the change that asked for it. The snapshot export runs under the
    same 120 s deadline as the create commands (`source::load_within`, built on
    `command::run_capped`; its output cap stays the engine's bundle limit, which a 4 MiB cap would
-   break), so a hung CLI ends in a typed error (`view-export did not finish in time`) shown in the
+   break), so a hung CLI ends in a typed error (`export-view did not finish in time`) shown in the
    panel instead of an endless refresh.
 8. **Two statuses, never one.** The result of the last Preview/Cancel/Commit and the error of the
    last definitions refresh are separate fields and both are shown, so a refresh failure (which

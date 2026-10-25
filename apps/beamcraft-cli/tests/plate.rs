@@ -6,7 +6,7 @@
 // attribute names; it uses no BeamCraft crate to read the saved layers.
 
 //! P01 end to end through the real `beamcraft` binary: `create-plate` commits a USD revision,
-//! fresh processes reopen it (`plate-inspect`, `revision-open`), and a hand-written USDA reader
+//! fresh processes reopen it (`inspect-elements`, `open-revision`), and a hand-written USDA reader
 //! checks the saved bytes without BeamCraft or `openusd`. Failure injection kills a real child
 //! process at every commit point.
 //!
@@ -67,7 +67,7 @@ impl Fixture {
         self.run(&args)
     }
     fn inspect(&self) -> (i32, Json) {
-        self.run(&["plate-inspect", "--store", &self.store_arg()])
+        self.run(&["inspect-elements", "--store", &self.store_arg()])
     }
 }
 impl Drop for Fixture {
@@ -416,8 +416,8 @@ fn two_plates_in_two_commits_are_independent_complete_revisions_readable_without
         149.5
     );
 
-    // `revision-open` (the U06 verified reader) agrees.
-    let (code, opened) = fx.run(&["revision-open", "--store", &fx.store_arg()]);
+    // `open-revision` (the U06 verified reader) agrees.
+    let (code, opened) = fx.run(&["open-revision", "--store", &fx.store_arg()]);
     assert_eq!(code, 0, "{opened:?}");
     assert_eq!(text(&opened, "outcome"), "revision_verified");
     assert_eq!(
@@ -632,7 +632,7 @@ fn rejected_commands_leave_no_revision_and_report_the_f04_code() {
     ]);
     assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
     // No rejected command published anything: there is no revision at all.
-    let (code, opened) = fx.run(&["revision-open", "--store", &fx.store_arg()]);
+    let (code, opened) = fx.run(&["open-revision", "--store", &fx.store_arg()]);
     assert_eq!(code, 2, "{opened:?}");
     assert!(fx.revisions().head().unwrap().is_none());
     let (code, body) = fx.inspect();
@@ -851,7 +851,7 @@ fn a_killed_process_leaves_the_old_or_the_new_complete_revision_at_every_commit_
             }
             // The ledger claims no more than is proven.
             let (_, outcome) = fx.run(&[
-                "revision-outcome",
+                "inspect-revision-outcome",
                 "--store",
                 &fx.store_arg(),
                 "--op-id",
@@ -871,7 +871,7 @@ fn a_killed_process_leaves_the_old_or_the_new_complete_revision_at_every_commit_
             // Recovery is idempotent and leaves the same complete revision.
             for _ in 0..2 {
                 let (code, recovery) = fx.run(&[
-                    "revision-recover",
+                    "recover-revision",
                     "--store",
                     &fx.store_arg(),
                     "--min-age-secs",

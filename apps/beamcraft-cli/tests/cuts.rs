@@ -129,7 +129,7 @@ fn a_cut_plate_has_the_exact_volume_and_mass_and_reopens_verified() {
     assert_eq!(point, vec![250.0, 0.0, 0.0]);
 
     // A fresh process re-evaluates the authored cut and agrees.
-    let inspected = f.run("plate-inspect", &[]).1;
+    let inspected = f.run("inspect-elements", &[]).1;
     let reopened = &at(&inspected, &["plates"]).array().unwrap()[0];
     assert_eq!(text(reopened, "mesh_digest"), text(plate, "mesh_digest"));
     assert_eq!(num(reopened, &["quantities", "volume", "mm3"]), volume);
@@ -235,7 +235,7 @@ fn cut_rejections_use_the_f04_codes_and_publish_nothing() {
         "LIMIT_EXCEEDED"
     );
     // Nothing was created: there is no revision at all.
-    let (code, body) = f.run("plate-inspect", &[]);
+    let (code, body) = f.run("inspect-elements", &[]);
     assert_eq!(code, 2, "{body:?}");
 }
 
@@ -292,7 +292,7 @@ fn a_copy_carries_the_cut_and_the_copy_is_cut_too() {
         250.0
     );
     // A fresh process re-verifies both elements against their authored cuts.
-    let inspected = f.run("plate-inspect", &[]).1;
+    let inspected = f.run("inspect-elements", &[]).1;
     assert_eq!(num(&inspected, &["plate_count"]), 2.0);
     let plates = at(&inspected, &["plates"]).array().unwrap();
     for plate in plates {

@@ -306,7 +306,7 @@ any refusal, changes nothing. CLI option names are indicative; T01.1 fixes them.
 
 **Queries** (read-only, no revision): `grids` (every grid with its frame and each line: id, label,
 and the world coordinates of its end points, and each family's expression), `grid-point` (section
-7.2), `grid-plane` (section 7.3) and `snap` with the new kinds. `plate-inspect` lists grids beside
+7.2), `grid-plane` (section 7.3) and `snap` with the new kinds. `inspect-elements` lists grids beside
 levels.
 
 **Footprints.** Create: read the absence of the GridId and of every AxisId, write the new lifecycle

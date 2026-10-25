@@ -239,7 +239,7 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
         &plate,
     ]);
     f.ok(&[
-        "workspace-create",
+        "create-workspace",
         "--store",
         pub_path,
         "--workspace-dir",
@@ -267,7 +267,7 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
     ]);
     let edited = revision_store(&draft).head().unwrap().unwrap();
     assert_ne!(edited, old_draft);
-    for command in ["workspace-status", "workspace-publish", "changeset-create"] {
+    for command in ["inspect-workspace", "publish-workspace", "create-changeset"] {
         let (code, json) = f.cli(&[command, "--store", pub_path, "--workspace-dir", draft_path]);
         assert_eq!(code, 3, "{command}: {json:?}");
         assert_eq!(
@@ -282,7 +282,7 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
     }
     drop(state);
     let status = f.ok(&[
-        "workspace-status",
+        "inspect-workspace",
         "--store",
         pub_path,
         "--workspace-dir",
@@ -300,7 +300,7 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
     );
     // A pending rebase must be resolved before any interpretation of base/unsent state.
     fs::write(draft.join("rebase.pending"), b"torn rebase intent").unwrap();
-    for command in ["workspace-status", "workspace-publish", "changeset-create"] {
+    for command in ["inspect-workspace", "publish-workspace", "create-changeset"] {
         let (code, json) = f.cli(&[command, "--store", pub_path, "--workspace-dir", draft_path]);
         assert_eq!(code, 2, "{command}: {json:?}");
         assert_eq!(
@@ -315,7 +315,7 @@ fn metadata_serialization_still_allows_draft_edits_and_protects_cli_publication(
     }
     fs::remove_file(draft.join("rebase.pending")).unwrap();
     f.ok(&[
-        "workspace-publish",
+        "publish-workspace",
         "--store",
         pub_path,
         "--workspace-dir",

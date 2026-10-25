@@ -7,7 +7,7 @@
 
 //! P02 end to end through the real `beamcraft` binary: `define-material` and `define-profile`
 //! publish immutable definitions as USD assets of a committed revision, `create-plate
-//! --material-digest` pins one, fresh processes reopen the result (`plate-inspect`,
+//! --material-digest` pins one, fresh processes reopen the result (`inspect-elements`,
 //! `definitions`), and the saved layer text is checked without BeamCraft.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -160,7 +160,7 @@ fn a_material_with_density_gives_the_plate_a_current_mass_across_processes() {
     );
 
     // A fresh process reads the same material, mass and shape back from the saved bytes.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let plate = &at(&inspected, &["plates"]).array().unwrap()[0];
     assert_eq!(text(plate, "material_digest"), digest);
     assert_eq!(num(plate, &["quantities", "mass", "kg"]), 39.25);
@@ -503,7 +503,7 @@ fn rejections_use_the_f04_codes_and_publish_nothing() {
     assert_eq!(with("not-a-digest"), "INVALID_ARGUMENT");
     assert_eq!(with(&steel.to_uppercase()), "INVALID_ARGUMENT");
     // Nothing was created by any rejection: still the two definitions and no plate.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["plate_count"]), 0.0);
     assert_eq!(sequence(&inspected), 2);
     assert_eq!(num(&f.ok("definitions", &[]), &["definition_count"]), 2.0);

@@ -40,12 +40,12 @@ pub fn handles(command: &OsString) -> bool {
     matches!(
         command.to_str(),
         Some(
-            "drawing-preview"
-                | "drawing-create"
-                | "drawing-refresh"
-                | "drawing-publish"
-                | "drawing-inspect"
-                | "drawing-versions"
+            "preview-drawing"
+                | "create-drawing"
+                | "refresh-drawing"
+                | "publish-drawing"
+                | "inspect-drawing"
+                | "inspect-drawing-versions"
         )
     )
 }
@@ -301,7 +301,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             .ok_or_else(|| invalid("required drawing document option is missing"))
     };
     match command {
-        "drawing-create" | "drawing-refresh" => {
+        "create-drawing" | "refresh-drawing" => {
             let model_path = required("--store")?;
             let document_path = required("--document-dir")?;
             let op = OpId::parse(required("--op-id")?)
@@ -310,7 +310,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 .map_err(|_| invalid("revision id must be UUIDv7"))?;
             let actor = ActorId::parse(required("--actor-id")?)
                 .map_err(|_| invalid("actor id must be UUIDv7"))?;
-            let expected = if command == "drawing-create" {
+            let expected = if command == "create-drawing" {
                 ExpectedBase::Initial
             } else {
                 ExpectedBase::Revision(
@@ -321,12 +321,12 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let source = SourceArchive::capture(std::path::Path::new(model_path))?;
             let drawing = document_drawing(&options, source.pin())?;
             let document_path = std::path::Path::new(document_path);
-            let documents = if command == "drawing-create" && !document_path.exists() {
+            let documents = if command == "create-drawing" && !document_path.exists() {
                 DocumentStore::create(document_path)?
             } else {
                 DocumentStore::open(document_path)?
             };
-            let latest_published = if command == "drawing-create" {
+            let latest_published = if command == "create-drawing" {
                 None
             } else if let Some(previous) = documents.query(&op)? {
                 previous.latest_published
@@ -348,7 +348,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             )?;
             Ok(document_json(&revision))
         }
-        "drawing-publish" => {
+        "publish-drawing" => {
             let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
             let expected = ExpectedBase::Revision(
                 beamcraft_host::revision::Uuid7::parse(required("--expected-head")?)
@@ -395,7 +395,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             )?;
             Ok(document_json(&published))
         }
-        "drawing-inspect" => {
+        "inspect-drawing" => {
             let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
             let current = documents.head()?;
             let freshness = match options.get("--model-store") {
@@ -422,7 +422,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             fields.insert("freshness".to_owned(), Json::text(freshness));
             Ok(Json::Object(fields))
         }
-        "drawing-versions" => {
+        "inspect-drawing-versions" => {
             let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
             Ok(Json::object([
                 ("outcome", Json::text("drawing_versions")),
@@ -444,7 +444,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
 }
 
 fn run(args: &[OsString]) -> Run<Json> {
-    if args.first().is_some_and(|arg| arg != "drawing-preview") {
+    if args.first().is_some_and(|arg| arg != "preview-drawing") {
         return run_document(args);
     }
     if args.len() > 31 {

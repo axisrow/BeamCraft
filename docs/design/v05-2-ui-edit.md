@@ -10,21 +10,21 @@ commands the CLI runs: move, copy, delete, undo and redo. Property editing is V0
 
 | Area | What exists |
 |---|---|
-| `beamcraft_ui::edit` (pure) | `ndc_of` and `ray_through` (a clicked pixel to a world ray: the inverse of `View::project`, shifted back by the scene origin in f64); `pick_args` / `parse_pick` (the CLI `pick`: nearest face hit only); `inspect_args` / `parse_element_info` (name, kind and translation of one element from `plate-inspect`); `Editor` (the selection, the move and copy forms and the preview, commit and cancel state machine); `Edit` / `parse_edited` (the argument list and the reply of one edit). No window, GPU or process, so it is unit-tested directly |
+| `beamcraft_ui::edit` (pure) | `ndc_of` and `ray_through` (a clicked pixel to a world ray: the inverse of `View::project`, shifted back by the scene origin in f64); `pick_args` / `parse_pick` (the CLI `pick`: nearest face hit only); `inspect_args` / `parse_element_info` (name, kind and translation of one element from `inspect-elements`); `Editor` (the selection, the move and copy forms and the preview, commit and cancel state machine); `Edit` / `parse_edited` (the argument list and the reply of one edit). No window, GPU or process, so it is unit-tested directly |
 | `beamcraft_ui::command` | `select_at` (runs `pick`, then looks the hit element up), `element_info`, `commit_edit` (runs an edit in a separate process under the V05.1 deadline and output cap) |
 | `beamcraft_ui::app` | A click on the view selects (a drag still orbits); the selection is drawn as the projected box of the engine's world bounds of the element; an Edit panel with Move, Copy and Delete (preview, commit, cancel, as the Create panel) and Undo and Redo buttons; Esc clears the selection. Lookups and commits run on worker threads and a success reloads the accepted revision |
-| `beamcraft-ui --workspace DIR` | opens the window on a personal workspace (a store made by `workspace-create`). It is also the store every command and the viewport use, so edits are draft revisions of the workspace; Undo and Redo act on it |
+| `beamcraft-ui --workspace DIR` | opens the window on a personal workspace (a store made by `create-workspace`). It is also the store every command and the viewport use, so edits are draft revisions of the workspace; Undo and Redo act on it |
 
 Commands used, exactly as a user types them:
 
 ```text
 beamcraft pick            --store ROOT --origin X,Y,Z --direction X,Y,Z --targets face --max-hits 1
-beamcraft plate-inspect   --store ROOT                                  (details of the picked element)
+beamcraft inspect-elements   --store ROOT                                  (details of the picked element)
 beamcraft update-element  --store ROOT --id UUID --translation X,Y,Z
 beamcraft copy-element    --store ROOT --id UUID --offset X,Y,Z
 beamcraft delete-element  --store ROOT --id UUID
-beamcraft workspace-undo  --workspace-dir DIR
-beamcraft workspace-redo  --workspace-dir DIR
+beamcraft undo-workspace  --workspace-dir DIR
+beamcraft redo-workspace  --workspace-dir DIR
 ```
 
 ## Decisions
@@ -70,10 +70,10 @@ beamcraft workspace-redo  --workspace-dir DIR
   the view (`snap` exists in the CLI, V04, but is not wired); a move is typed.
 * No property editing (V06), no rotate, no mirror, no array copy, no keyboard Delete (a delete is
   always previewed and committed).
-* Selection details come from `plate-inspect`, whose reply is bounded by the control-message
+* Selection details come from `inspect-elements`, whose reply is bounded by the control-message
   limits; for a very large model the details lookup fails and the element is selected without
   them (decision 6).
-* Undo and redo exist only in a workspace; publishing a workspace is `beamcraft workspace-publish`.
+* Undo and redo exist only in a workspace; publishing a workspace is `beamcraft publish-workspace`.
 * The click path (mouse, panel buttons) was not exercised by an automated GUI test; the logic under
   it is the tested `edit` and `command` modules, and the panel only wires widgets to them. The window
   has not been started in this environment (no display).
@@ -88,7 +88,7 @@ beamcraft workspace-redo  --workspace-dir DIR
   the preview, commit and cancel rules; direct undo and redo not while busy.
 * `apps/beamcraft-ui/tests/edit_tools.rs` (7, real `beamcraft` binary, no GPU): a computed click on
   the middle of each plate's top face selects that plate through the real `pick` and
-  `plate-inspect` and a click on empty space selects nothing; a move, a copy and a delete made by the tools leave the
+  `inspect-elements` and a click on empty space selects nothing; a move, a copy and a delete made by the tools leave the
   store in exactly the state of the same commands by hand (translation, mesh digest, world
   bounds); a cancelled preview leaves the head unchanged; an engine refusal (a translation of
   1e12, a delete of a welded part) reaches the panel with the CLI's code and message and publishes

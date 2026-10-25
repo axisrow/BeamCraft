@@ -10,9 +10,9 @@ different payload it is rejected; the author string grants no rights.
 ## What is implemented
 
 ```text
-beamcraft changeset-create  --store PUBLISHED --workspace-dir DIR [--changeset-id UUID] [--revision-id UUID] [--actor-id UUID]
-beamcraft changeset-inspect --workspace-dir DIR --changeset SHA256
-beamcraft changeset-apply   --store PUBLISHED --workspace-dir DIR --changeset SHA256 --actor-id UUID
+beamcraft create-changeset  --store PUBLISHED --workspace-dir DIR [--changeset-id UUID] [--revision-id UUID] [--actor-id UUID]
+beamcraft inspect-changeset --workspace-dir DIR --changeset SHA256
+beamcraft apply-changeset   --store PUBLISHED --workspace-dir DIR --changeset SHA256 --actor-id UUID
 ```
 
 | Area | What exists |

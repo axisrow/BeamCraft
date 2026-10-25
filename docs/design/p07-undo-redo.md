@@ -11,9 +11,9 @@ restart.
 ## What is implemented
 
 ```text
-beamcraft workspace-undo    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
-beamcraft workspace-redo    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
-beamcraft workspace-history --workspace-dir DIR
+beamcraft undo-workspace    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
+beamcraft redo-workspace    --workspace-dir DIR [--revision-id UUID] [--op-id UUID]
+beamcraft inspect-workspace-history --workspace-dir DIR
 ```
 
 | Area | What exists |

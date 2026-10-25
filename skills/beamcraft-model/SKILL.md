@@ -1,6 +1,6 @@
 ---
 name: model
-description: Drive BeamCraft steel detailing through the beamcraft-cli - create, update and inspect members and plates (define-profile, define-material, create-member, create-plate, update-element, plate-inspect), create and verify a store (project-create, revision-open), pick and resolve coordinates (pick, feature-list, feature-lookup, snap), and snapshot or export views (view-snapshot, view-export). Use when the user asks to model, edit, move or list elements in a BeamCraft store, to check or create a store, to snap or resolve a coordinate or feature address, or for a view snapshot or export. The slash command /beamcraft:open launches the native viewport app separately.
+description: Drive BeamCraft steel detailing through the beamcraft-cli - create, update and inspect members and plates (define-profile, define-material, create-member, create-plate, update-element, inspect-elements), create and verify a store (create-project, open-revision), pick and resolve coordinates (pick, list-feature, lookup-feature, snap), and snapshot or export views (snapshot-view, export-view). Use when the user asks to model, edit, move or list elements in a BeamCraft store, to check or create a store, to snap or resolve a coordinate or feature address, or for a view snapshot or export. The slash command /beamcraft:open launches the native viewport app separately.
 argument-hint: [what to do, and where]
 ---
 
@@ -36,19 +36,19 @@ cargo build --offline -p beamcraft-cli --bins
 
 ## References - follow the one the task needs
 
-- `reference/store.md` - `project-create`, `revision-open`, `plate-inspect`: create a store,
+- `reference/store.md` - `create-project`, `open-revision`, `inspect-elements`: create a store,
   verify its integrity, list what it holds.
 - `reference/model.md` - `define-profile`, `define-material`, `create-member`, `create-plate`,
   `update-element`: publish definitions and model or edit elements.
-- `reference/pick.md` - `pick`, `feature-list`, `feature-lookup`, `snap`: resolve coordinates,
+- `reference/pick.md` - `pick`, `list-feature`, `lookup-feature`, `snap`: resolve coordinates,
   feature addresses and snaps.
-- `reference/view.md` - `view-snapshot`, `view-export`: snapshot a scene, export a view bundle,
+- `reference/view.md` - `snapshot-view`, `export-view`: snapshot a scene, export a view bundle,
   open the native viewport.
 
 ## Apply it to the request
 
 1. Build the `beamcraft` binary if it is not built (the command is above).
-2. Ensure a store exists - `reference/store.md` shows `project-create` - and read the reference
+2. Ensure a store exists - `reference/store.md` shows `create-project` - and read the reference
    file for the task.
 3. Run the real binary for every step; quote only captured JSON as evidence, and prove a write
    by inspecting afterwards (element ids, the new revision `sequence`, quantities).

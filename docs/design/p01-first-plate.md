@@ -2,7 +2,7 @@
 
 Date: 2026-10-16. Status: **experimental first vertical slice; K1 is NOT claimed complete.**
 Branch `feat/p01-first-plate`, stacked on `feat/u07-journal-recovery` (PR #60), which is stacked on
-`feat/u06-revision-commit` (PR #57). Merge order: #57, #60, then this PR.
+`feat/u06-commit-revision` (PR #57). Merge order: #57, #60, then this PR.
 
 Plan row: P01 / M, depends on U03, U04, U07, G02. Result: CreatePlate -> USD authoring -> derived ->
 commit -> open. Acceptance: API/CLI E2E saves 2 independent IDs; pxr (any ordinary OpenUSD reader)
@@ -17,7 +17,7 @@ beamcraft create-plate --store ROOT --width W --length L --thickness T ...
   --layer engine (U02 Author)-->  authored.usda + derived.usda (standard Xform/Mesh, no plugin)
   --host (U06/U07)-->  layer blobs, intent, verifier (U02 check, U03 index, kernel re-evaluation),
                        root switch (hard link), committed record
-beamcraft plate-inspect --store ROOT
+beamcraft inspect-elements --store ROOT
   verified head revision --fresh U01 reader--> authored plates --engine--> kernel body, snapshot
 ```
 
@@ -28,7 +28,7 @@ beamcraft plate-inspect --store ROOT
 | `beamcraft_engine::{command, footprint, transaction}` | `create_plate`, `evaluate_plate`, `origin_rectangle_contour`; Create footprint (reads ID absence, writes all authored groups and derived), conflict test and the check that the layer engine writes nothing outside it; `admit_create_plate` decides Apply / Replay / `OP_ID_REUSE`. |
 | `beamcraft_engine::query::committed` | Committed authored plates -> kernel re-evaluation -> `SceneElement`s -> V02 `ViewSnapshot` (so `ListElements`/mesh blobs come from a committed revision). `ElementId` moved onto `model::id`; V02 tests unchanged and green. |
 | `beamcraft_host::ids` | `IdSource`: system clock + per-process `RandomState` entropy (no new dependency, uniqueness not secrecy). |
-| `beamcraft_cli` | New library target `plate` (the wiring) and commands `create-plate`, `plate-inspect`. |
+| `beamcraft_cli` | New library target `plate` (the wiring) and commands `create-plate`, `inspect-elements`. |
 
 ## Decisions
 
@@ -62,7 +62,7 @@ beamcraft plate-inspect --store ROOT
 | F04 section 3 P-1: any planar contour is accepted; a four-point rectangle is evaluated in its body frame | **A02.1 update:** a simple counter-clockwise contour in the plane `z = 0` is now evaluated ([A02 note](a02-contour-plates.md)); the rest of this row describes P01. Only the origin rectangle is evaluated. Other contours that pass the structural stages are `UNSUPPORTED_GEOMETRY` and **rejected** (nothing authored). F04-POS-18, 19, 20, 25, 26, 28 expect `accepted_draft`. | A02/G04: body-frame adapter and contour admission with exact rational planarity/winding/simplicity; schema/status to record `unsupported` geometry. |
 | Planarity and simplicity as `INVALID_ARGUMENT` | F04-NEG-29, -30, -38 return `UNSUPPORTED_GEOMETRY`. **A02.1 update:** self-intersection in the plane `z = 0` (F04-NEG-30) is `INVALID_ARGUMENT`; a contour with a varying `z` (F04-NEG-29, -38) stays `UNSUPPORTED_GEOMETRY`. | Same task. |
 | Rotated placement | Accepted by validation; `UNSUPPORTED_GEOMETRY` for create (the view contract is translation-only). | V02/G04 transform support. |
-| F04 section 5: published revisions include quantities | Volume is returned by the command and recomputed by `plate-inspect`; **not stored in USD**: the pinned U02 schema has no quantity attributes and the F06 keys are absent. | U02 schema amendment plus P04 signatures. |
+| F04 section 5: published revisions include quantities | Volume is returned by the command and recomputed by `inspect-elements`; **not stored in USD**: the pinned U02 schema has no quantity attributes and the F06 keys are absent. | U02 schema amendment plus P04 signatures. |
 | Mesh `extent` | The U02 Mesh has `points`, topology, `orientation`, `subdivisionScheme`, `bim:shapeKey` and no `extent`. Readers compute it. | U02 schema amendment. |
 | Mesh precision | USD `point3f` is float32; the kernel blob is float64. The committed mesh equals the float32 cast; volumes agree within 1e-6 for the first-scope sizes. | Decide the F06/U02 precision policy (or double-precision points) before large coordinates matter. |
 | F04 section 6 envelope, `OpId` canonical bytes, `CommitWorkspace` | Not implemented (see decision 3). | P06, `model::canonical`. |
@@ -72,7 +72,7 @@ beamcraft plate-inspect --store ROOT
 
 * **Two independent IDs, saved, reopened in fresh processes** (`apps/beamcraft-cli/tests/plate.rs`):
   two real-binary `create-plate` calls give distinct complete UUIDv7 ids, sequences 1 and 2,
-  generations 1 and 2, one project, and a fresh `plate-inspect` and `revision-open` list both.
+  generations 1 and 2, one project, and a fresh `inspect-elements` and `open-revision` list both.
 * **Volume**: closed form `width*length*thickness` in the tests (1000x500x10 = 5,000,000 mm3 =
   0.005 m3; 800x300x12.5), and a divergence-theorem volume of the saved mesh computed by the test.
 * **Independent reader**: a hand-written USDA text parser in the test (knows only USDA syntax and
@@ -102,8 +102,8 @@ beamcraft plate-inspect --store ROOT
   to the installed wheel, which is not redistributed.
 * **Failure injection with real process death**: a child re-executes the test binary and
   `abort()`s inside the commit hook at each of the seven U06/U07 commit points, with and without a
-  base revision. After each, a fresh `plate-inspect` sees one complete revision (old before the
-  switch, new from `Switched`), `revision-outcome` claims no more than is proven, two recoveries
+  base revision. After each, a fresh `inspect-elements` sees one complete revision (old before the
+  switch, new from `Switched`), `inspect-revision-outcome` claims no more than is proven, two recoveries
   succeed, and a retry of the same op id creates exactly one plate (replay if the root had switched).
 * **Concurrency**: four parallel `create-plate` processes publish only acknowledged plates; losers
   get typed `BASE_REVISION_MISMATCH`.

@@ -55,7 +55,7 @@ fn an_attached_reference_enters_the_pinned_view_scene() {
     let source = f.source("site.usda", SITE);
     let id = "019a7bf0-0000-7000-8000-000000000137";
     f.ok(
-        "reference-attach",
+        "attach-reference",
         &[
             "--source",
             &source,
@@ -80,7 +80,7 @@ fn an_attached_reference_enters_the_pinned_view_scene() {
     assert_eq!(snapshot.meshes()[0].triangle_count(), 12);
     assert_eq!(snapshot.pin().generation(), 1);
     f.ok(
-        "reference-correct-units",
+        "correct-reference-units",
         &["--id", id, "--meters-per-unit", "1", "--up-axis", "Y"],
     );
     let corrected = view(&f);
@@ -94,7 +94,7 @@ fn an_attached_reference_enters_the_pinned_view_scene() {
     );
     assert_ne!(snapshot.meshes(), corrected.meshes());
     f.ok(
-        "reference-move",
+        "move-reference",
         &["--id", id, "--translation", "200,300,400"],
     );
     let moved = view(&f);
@@ -110,7 +110,7 @@ fn an_attached_reference_enters_the_pinned_view_scene() {
 
 fn view(f: &Fixture) -> ViewSnapshot {
     let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-        .args(["view-export", "--store", &f.store(), "--out", "-"])
+        .args(["export-view", "--store", &f.store(), "--out", "-"])
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
@@ -158,7 +158,7 @@ def Xform "Site" {
     ];
     for id in ids {
         f.ok(
-            "reference-attach",
+            "attach-reference",
             &[
                 "--source",
                 &source,
@@ -239,12 +239,12 @@ fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_fi
                 "#usda 1.0\n(defaultPrim = \"Site\")\ndef {kind} \"Site\" {{\n{properties}\n}}\n"
             ),
         );
-        f.ok("reference-attach", &["--source", &source]);
-        f.ok("reference-inspect", &[]);
-        f.ok("plate-inspect", &[]);
+        f.ok("attach-reference", &["--source", &source]);
+        f.ok("inspect-reference", &[]);
+        f.ok("inspect-elements", &[]);
         let out = f.root.join("refused.bundle");
         assert_eq!(
-            f.rejected("view-export", &["--out", out.to_str().unwrap()]),
+            f.rejected("export-view", &["--out", out.to_str().unwrap()]),
             expected
         );
         assert!(!out.exists());
@@ -253,7 +253,7 @@ fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_fi
     let source = f.source("site.usda", SITE);
     let id = "019a7bf0-0000-7000-8000-000000000137";
     f.ok(
-        "reference-attach",
+        "attach-reference",
         &[
             "--source",
             &source,
@@ -264,12 +264,12 @@ fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_fi
         ],
     );
     assert_eq!(
-        f.rejected("view-export", &["--out", "-"]),
+        f.rejected("export-view", &["--out", "-"]),
         "UNSUPPORTED_GEOMETRY"
     );
-    f.ok("reference-inspect", &[]);
-    f.ok("plate-inspect", &[]);
-    f.ok("reference-move", &["--id", id, "--translation", "0,0,0"]);
+    f.ok("inspect-reference", &[]);
+    f.ok("inspect-elements", &[]);
+    f.ok("move-reference", &["--id", id, "--translation", "0,0,0"]);
     assert_eq!(
         view(&f).len(),
         1,
@@ -334,10 +334,10 @@ impl Fixture {
     fn attach(&self, source: &str, extra: &[&str]) -> Json {
         let mut args = vec!["--source", source];
         args.extend_from_slice(extra);
-        self.ok("reference-attach", &args)
+        self.ok("attach-reference", &args)
     }
     fn inspect(&self) -> Json {
-        self.ok("reference-inspect", &[])
+        self.ok("inspect-reference", &[])
     }
     /// Every file below the store root with its size, in path order.
     fn listing(&self) -> BTreeMap<String, u64> {
@@ -491,7 +491,7 @@ fn attach_stores_the_foreign_bytes_unchanged_and_the_original_file_is_only_read(
     assert_eq!(external[0].1, digest);
     assert_eq!(external[0].0, format!("external/{digest}.usda"));
     assert_eq!(fs::read(f.blob_path(&digest)).unwrap(), SITE.as_bytes());
-    let blob_check = f.ok("blob-verify", &["--digest", &digest]);
+    let blob_check = f.ok("verify-blob", &["--digest", &digest]);
     assert_eq!(text(&blob_check, "outcome"), "blob_verified");
     // The user's file was only read.
     assert_eq!(fs::read(&source).unwrap(), SITE.as_bytes());
@@ -519,7 +519,7 @@ fn attach_stores_the_foreign_bytes_unchanged_and_the_original_file_is_only_read(
     assert_eq!(text(foreign, "digest"), digest);
     assert!(foreign.get("verified").unwrap().boolean().unwrap());
     // Plates and wrappers coexist; the wrapper is not an unknown element.
-    let plates = f.ok("plate-inspect", &[]);
+    let plates = f.ok("inspect-elements", &[]);
     assert_eq!(
         plates
             .get("other_element_count")
@@ -560,8 +560,8 @@ fn every_later_save_carries_the_foreign_layer_unchanged() {
     ));
     let id = reference_id(&steps[0].1);
     steps.push((
-        "reference-move",
-        f.ok("reference-move", &["--id", &id, "--translation", "5,6,7"]),
+        "move-reference",
+        f.ok("move-reference", &["--id", &id, "--translation", "5,6,7"]),
     ));
     steps.push(("delete-element", f.ok("delete-element", &["--id", &plate])));
     let mut sequences = Vec::new();
@@ -602,7 +602,7 @@ fn moving_and_correcting_change_only_the_wrapper_and_the_correction_is_explicit(
     let digest = sha(SITE.as_bytes());
     // A move: the owned authored layer changes, the derived layer and the foreign layer do not.
     let moved = f.ok(
-        "reference-move",
+        "move-reference",
         &[
             "--id",
             &id,
@@ -641,7 +641,7 @@ fn moving_and_correcting_change_only_the_wrapper_and_the_correction_is_explicit(
     // The explicit correction: metres, Y up. The status becomes corrected and the source pin is
     // unchanged.
     let corrected = f.ok(
-        "reference-correct-units",
+        "correct-reference-units",
         &["--id", &id, "--meters-per-unit", "1", "--up-axis", "Y"],
     );
     assert_eq!(text(&corrected, "outcome"), "reference_units_corrected");
@@ -673,7 +673,7 @@ fn moving_and_correcting_change_only_the_wrapper_and_the_correction_is_explicit(
     );
     // A correction that contradicts the declaration is honoured and flagged.
     let differs = f.ok(
-        "reference-correct-units",
+        "correct-reference-units",
         &["--id", &id, "--meters-per-unit", "0.01", "--up-axis", "Z"],
     );
     assert_eq!(
@@ -681,7 +681,7 @@ fn moving_and_correcting_change_only_the_wrapper_and_the_correction_is_explicit(
         "corrected_differs_from_declared"
     );
     // Clearing removes the interpretation and nothing else.
-    let cleared = f.ok("reference-correct-units", &["--id", &id, "--clear", "true"]);
+    let cleared = f.ok("correct-reference-units", &["--id", &id, "--clear", "true"]);
     assert!(matches!(at(&cleared, &["reference", "units"]), Json::Null));
     assert_eq!(
         text(at(&cleared, &["reference"]), "units_status"),
@@ -716,7 +716,7 @@ fn moving_and_correcting_change_only_the_wrapper_and_the_correction_is_explicit(
         let mut args = vec!["--id", id.as_str()];
         args.extend(extra.iter().copied());
         assert_eq!(
-            f.rejected("reference-correct-units", &args),
+            f.rejected("correct-reference-units", &args),
             code,
             "{args:?}"
         );
@@ -736,14 +736,14 @@ fn moving_and_correcting_change_only_the_wrapper_and_the_correction_is_explicit(
     for target in [plate.as_str(), "019a7bf0-0000-7000-8000-0000000000ff"] {
         assert_eq!(
             f.rejected(
-                "reference-move",
+                "move-reference",
                 &["--id", target, "--translation", "1,1,1"]
             ),
             "NOT_FOUND"
         );
         assert_eq!(
             f.rejected(
-                "reference-correct-units",
+                "correct-reference-units",
                 &["--id", target, "--clear", "true"]
             ),
             "NOT_FOUND"
@@ -775,13 +775,13 @@ fn replay_and_reuse_of_an_operation_id() {
         SITE.replace("declared by the source", "other note"),
     );
     let (code, body) = f.run(
-        "reference-attach",
+        "attach-reference",
         &["--source", &other, "--op-id", op, "--new-id", new_id],
     );
     assert_eq!((code, text(&body, "code")), (2, "OP_ID_REUSE".to_owned()));
     // A used identity is a duplicate.
     let (code, body) = f.run(
-        "reference-attach",
+        "attach-reference",
         &["--source", &other, "--new-id", new_id],
     );
     assert_eq!((code, text(&body, "code")), (2, "DUPLICATE_ID".to_owned()));
@@ -789,16 +789,16 @@ fn replay_and_reuse_of_an_operation_id() {
     let move_op = "019a7bf0-0000-7000-8000-0000000000e3";
     let args = ["--id", new_id, "--translation", "1,2,3", "--op-id", move_op];
     assert_eq!(
-        text(&f.ok("reference-move", &args), "outcome"),
+        text(&f.ok("move-reference", &args), "outcome"),
         "reference_moved"
     );
     assert_eq!(
-        text(&f.ok("reference-move", &args), "outcome"),
+        text(&f.ok("move-reference", &args), "outcome"),
         "reference_moved_replayed"
     );
     assert_eq!(
         f.rejected(
-            "reference-move",
+            "move-reference",
             &["--id", new_id, "--translation", "9,9,9", "--op-id", move_op]
         ),
         "OP_ID_REUSE"
@@ -834,7 +834,7 @@ fn the_same_bytes_attached_twice_share_one_stored_layer() {
     // Correcting one wrapper leaves the other alone.
     let id = reference_id(&b);
     f.ok(
-        "reference-correct-units",
+        "correct-reference-units",
         &["--id", &id, "--meters-per-unit", "1", "--up-axis", "Y"],
     );
     let inspected = f.inspect();
@@ -896,7 +896,7 @@ fn every_write_to_the_source_or_a_foreign_prim_is_refused_and_writes_nothing() {
     for (extra, code) in attempts {
         let mut args = vec!["--id", id.as_str()];
         args.extend(extra.iter().copied());
-        let (exit, body) = f.run("reference-write", &args);
+        let (exit, body) = f.run("write-reference", &args);
         assert_eq!(exit, 2, "{args:?}: {body:?}");
         assert_eq!(text(&body, "code"), code, "{args:?}");
         assert_eq!(text(&body, "outcome"), "rejected");
@@ -904,7 +904,7 @@ fn every_write_to_the_source_or_a_foreign_prim_is_refused_and_writes_nothing() {
     // An unknown wrapper and a store without one.
     assert_eq!(
         f.rejected(
-            "reference-write",
+            "write-reference",
             &[
                 "--id",
                 "019a7bf0-0000-7000-8000-0000000000ff",
@@ -942,14 +942,14 @@ fn network_urls_and_device_paths_are_refused_before_any_io() {
         "\\\\server\\share\\model.usd",
         "//server/share/model.usd",
     ] {
-        let (code, body) = f.run_in(&missing, "reference-attach", &["--source", url]);
+        let (code, body) = f.run_in(&missing, "attach-reference", &["--source", url]);
         assert_eq!(code, 2, "{url}: {body:?}");
         assert_eq!(text(&body, "code"), "PERMISSION_DENIED", "{url}");
     }
     assert!(!f.root.join("no-such-store").exists());
     // The same on a real, empty store: still nothing written.
     let (code, body) = f.run(
-        "reference-attach",
+        "attach-reference",
         &["--source", "https://example.invalid/m.usd"],
     );
     assert_eq!(
@@ -965,7 +965,7 @@ fn network_urls_and_device_paths_are_refused_before_any_io() {
         "#usda 1.0\n(defaultPrim = \"A\" subLayers = [@omniverse://server/x.usd@])\ndef Scope \"A\" {}\n",
     ] {
         let source = f.source("net.usda", text_body);
-        let (code, body) = f.run("reference-attach", &["--source", &source]);
+        let (code, body) = f.run("attach-reference", &["--source", &source]);
         assert_eq!(code, 2, "{text_body}: {body:?}");
         assert_eq!(text(&body, "code"), "PERMISSION_DENIED", "{text_body}");
     }
@@ -1033,20 +1033,20 @@ fn sources_outside_the_static_profile_are_refused_with_an_explicit_diagnostic() 
     ];
     for (what, bytes, code) in cases {
         let source = f.source("bad.usda", &bytes);
-        let (exit, body) = f.run("reference-attach", &["--source", &source]);
+        let (exit, body) = f.run("attach-reference", &["--source", &source]);
         assert_eq!(exit, 2, "{what}: {body:?}");
         assert_eq!(text(&body, "code"), code, "{what}: {body:?}");
         assert!(
-            f.run("reference-inspect", &[]).0 != 0,
+            f.run("inspect-reference", &[]).0 != 0,
             "{what}: no revision may exist"
         );
     }
     // Missing and non-regular paths.
     let missing = f.root.join("sources").join("missing.usda");
-    let (_, body) = f.run("reference-attach", &["--source", missing.to_str().unwrap()]);
+    let (_, body) = f.run("attach-reference", &["--source", missing.to_str().unwrap()]);
     assert_eq!(text(&body, "code"), "NOT_FOUND");
     let dir = f.root.join("sources");
-    let (_, body) = f.run("reference-attach", &["--source", dir.to_str().unwrap()]);
+    let (_, body) = f.run("attach-reference", &["--source", dir.to_str().unwrap()]);
     assert_eq!(text(&body, "code"), "INVALID_ARGUMENT");
     // A rejected attach does not leave a revision; only blobs of a failed verification could.
     assert!(
@@ -1068,12 +1068,12 @@ fn a_tampered_stored_source_is_detected_when_the_head_is_opened() {
     let at = changed.len() - 3;
     changed[at] ^= 1;
     fs::write(&blob, &changed).unwrap();
-    let (code, body) = f.run("reference-inspect", &[]);
+    let (code, body) = f.run("inspect-reference", &[]);
     assert_eq!(
         (code, text(&body, "code")),
         (2, "INTEGRITY_ERROR".to_owned())
     );
-    for command in ["plate-inspect", "revision-open"] {
+    for command in ["inspect-elements", "open-revision"] {
         let (code, body) = f.run(command, &[]);
         assert_eq!(
             (code, text(&body, "code")),
@@ -1095,15 +1095,15 @@ fn a_workspace_forks_publishes_and_undoes_with_the_foreign_layer_intact() {
     let digest = sha(SITE.as_bytes());
     let name = format!("external/{digest}.usda");
     let draft = f.root.join("draft").to_str().unwrap().to_owned();
-    f.ok_in(&published, "workspace-create", &["--workspace-dir", &draft]);
+    f.ok_in(&published, "create-workspace", &["--workspace-dir", &draft]);
     // The draft is a separate store holding the same foreign bytes.
     let moved = f.ok_in(
         &draft,
-        "reference-move",
+        "move-reference",
         &["--id", &id, "--translation", "7,8,9"],
     );
     assert_eq!(external(&moved), vec![(name.clone(), digest.clone())]);
-    let inspected = f.ok_in(&draft, "reference-inspect", &[]);
+    let inspected = f.ok_in(&draft, "inspect-reference", &[]);
     assert_eq!(at(&inspected, &["references"]).array().unwrap().len(), 1);
     // The published head has not moved.
     let before = f.inspect();
@@ -1122,7 +1122,7 @@ fn a_workspace_forks_publishes_and_undoes_with_the_foreign_layer_intact() {
     );
     f.ok_in(
         &published,
-        "workspace-publish",
+        "publish-workspace",
         &["--workspace-dir", &draft],
     );
     let after = f.inspect();
@@ -1141,16 +1141,16 @@ fn a_workspace_forks_publishes_and_undoes_with_the_foreign_layer_intact() {
     let draft2 = f.root.join("draft2").to_str().unwrap().to_owned();
     f.ok_in(
         &published,
-        "workspace-create",
+        "create-workspace",
         &["--workspace-dir", &draft2],
     );
     f.ok_in(
         &draft2,
-        "reference-move",
+        "move-reference",
         &["--id", &id, "--translation", "1,1,1"],
     );
     let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-        .args(["workspace-undo", "--workspace-dir", &draft2])
+        .args(["undo-workspace", "--workspace-dir", &draft2])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(0));
@@ -1160,7 +1160,7 @@ fn a_workspace_forks_publishes_and_undoes_with_the_foreign_layer_intact() {
             .iter()
             .any(|(n, d, r)| *n == name && *d == digest && r == "external")
     );
-    let inspected = f.ok_in(&draft2, "reference-inspect", &[]);
+    let inspected = f.ok_in(&draft2, "inspect-reference", &[]);
     let wrapper = &at(&inspected, &["references"]).array().unwrap()[0];
     assert_eq!(
         at(wrapper, &["placement", "translation_mm"])
@@ -1177,44 +1177,44 @@ fn a_workspace_forks_publishes_and_undoes_with_the_foreign_layer_intact() {
 fn unknown_options_and_missing_arguments_are_invalid_arguments() {
     let f = Fixture::new();
     let source = f.source("site.usda", SITE);
-    assert_eq!(f.rejected("reference-attach", &[]), "INVALID_ARGUMENT");
+    assert_eq!(f.rejected("attach-reference", &[]), "INVALID_ARGUMENT");
     assert_eq!(
         f.rejected(
-            "reference-attach",
+            "attach-reference",
             &["--source", &source, "--nonsense", "1"]
         ),
         "INVALID_ARGUMENT"
     );
     assert_eq!(
         f.rejected(
-            "reference-attach",
+            "attach-reference",
             &["--source", &source, "--rotation-z-deg", "nan"]
         ),
         "INVALID_ARGUMENT"
     );
     assert_eq!(
         f.rejected(
-            "reference-attach",
+            "attach-reference",
             &["--source", &source, "--translation", "1,2"]
         ),
         "INVALID_ARGUMENT"
     );
     assert_eq!(
         f.rejected(
-            "reference-attach",
+            "attach-reference",
             &["--source", &source, "--translation", "nan,0,0"]
         ),
         "NON_FINITE_NUMBER"
     );
     assert_eq!(
         f.rejected(
-            "reference-attach",
+            "attach-reference",
             &["--source", &source, "--new-id", "short"]
         ),
         "INVALID_ID"
     );
     assert_eq!(
-        f.rejected("reference-move", &["--translation", "1,1,1"]),
+        f.rejected("move-reference", &["--translation", "1,1,1"]),
         "INVALID_ARGUMENT"
     );
     assert!(f.listing().is_empty());
@@ -1223,7 +1223,7 @@ fn unknown_options_and_missing_arguments_are_invalid_arguments() {
 #[test]
 fn a_revision_edited_outside_beamcraft_to_override_foreign_content_is_refused_on_read_and_write() {
     // Each edit is one text change to the owned authored layer that an ordinary text editor could
-    // make. The commit goes in without content verification (as revision-commit would); every
+    // make. The commit goes in without content verification (as commit-revision would); every
     // BeamCraft command that opens the head then refuses it.
     let holder_open = "                {
                 }
@@ -1264,11 +1264,11 @@ fn a_revision_edited_outside_beamcraft_to_override_foreign_content_is_refused_on
         let source = f.source("site.usda", SITE);
         f.attach(&source, &[]);
         f.tamper_authored(edit);
-        let (code, body) = f.run("reference-inspect", &[]);
+        let (code, body) = f.run("inspect-reference", &[]);
         assert_eq!(
             (code, text(&body, "code")),
             (2, "FOREIGN_READ_ONLY".to_owned()),
-            "{what}: reference-inspect {body:?}"
+            "{what}: inspect-reference {body:?}"
         );
         let (code, body) = f.run(
             "create-plate",
@@ -1298,7 +1298,7 @@ fn the_stage_budget_limits_how_many_distinct_sources_a_revision_can_hold() {
         "site-5.usda",
         SITE.replace("declared by the source", "number five"),
     );
-    let (code, body) = f.run("reference-attach", &["--source", &sixth]);
+    let (code, body) = f.run("attach-reference", &["--source", &sixth]);
     assert_eq!(
         (code, text(&body, "code")),
         (2, "LIMIT_EXCEEDED".to_owned())

@@ -164,7 +164,7 @@ fn two_plates(cli: &Path, store: &Path) {
 
 /// What the store holds about the plates: (id, translation, mesh digest, world bounds), by id.
 fn state(cli: &Path, store: &Path) -> Vec<(String, String, String, String)> {
-    let reply = ok(cli, &["plate-inspect", "--store", s(store)]);
+    let reply = ok(cli, &["inspect-elements", "--store", s(store)]);
     let plates = at(&reply, &["plates"]).array().unwrap();
     let snapshot = at(&reply, &["snapshot", "elements"]).array().unwrap();
     plates
@@ -194,7 +194,7 @@ fn state(cli: &Path, store: &Path) -> Vec<(String, String, String, String)> {
 
 fn head(cli: &Path, store: &Path) -> String {
     text(
-        &ok(cli, &["revision-open", "--store", s(store)]),
+        &ok(cli, &["open-revision", "--store", s(store)]),
         &["revision_id"],
     )
 }
@@ -428,7 +428,7 @@ fn a_move_from_the_tool_equals_the_move_by_hand() {
     );
     assert_eq!(state(&cli, &stores.ui()), state(&cli, &stores.hand()));
     // The reply names the accepted revision: the head of the store.
-    let head_reply = ok(&cli, &["revision-open", "--store", s(&stores.ui())]);
+    let head_reply = ok(&cli, &["open-revision", "--store", s(&stores.ui())]);
     assert_eq!(
         done.manifest_digest,
         text(&head_reply, &["manifest_digest"])
@@ -585,7 +585,7 @@ fn undo_and_redo_run_in_a_workspace_and_never_touch_the_published_store() {
     ok(
         &cli,
         &[
-            "workspace-create",
+            "create-workspace",
             "--store",
             s(&published),
             "--workspace-dir",
@@ -677,7 +677,7 @@ fn a_launch_without_arguments_bootstraps_a_default_workspace_and_forks_it_once()
     assert!(workspace.is_dir());
     assert!(published.is_dir());
     let status = [
-        "workspace-status",
+        "inspect-workspace",
         "--store",
         s(&published),
         "--workspace-dir",

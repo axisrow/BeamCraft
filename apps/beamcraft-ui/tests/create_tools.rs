@@ -98,14 +98,20 @@ fn text(json: &Json, path: &[&str]) -> String {
 
 /// The inspected element (`plates` or `members`, the only one) of a store, run by hand.
 fn inspected(cli: &Path, store: &Path, list: &str) -> Json {
-    let reply = ok(cli, &["plate-inspect", "--store", store.to_str().unwrap()]);
+    let reply = ok(
+        cli,
+        &["inspect-elements", "--store", store.to_str().unwrap()],
+    );
     let items = at(&reply, &[list]).array().unwrap();
     assert_eq!(items.len(), 1);
     items[0].clone()
 }
 
 fn bounds(cli: &Path, store: &Path) -> (Json, Json) {
-    let reply = ok(cli, &["plate-inspect", "--store", store.to_str().unwrap()]);
+    let reply = ok(
+        cli,
+        &["inspect-elements", "--store", store.to_str().unwrap()],
+    );
     let element = &at(&reply, &["snapshot", "elements"]).array().unwrap()[0];
     (
         at(element, &["world_min_mm"]).clone(),

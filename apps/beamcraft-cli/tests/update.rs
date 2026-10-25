@@ -81,7 +81,7 @@ impl Fixture {
         self.ok("create-plate", &args)
     }
     fn inspected(&self) -> Json {
-        self.ok("plate-inspect", &[])
+        self.ok("inspect-elements", &[])
     }
     /// Commits a head-based revision with changed layer text and no content verification, the way
     /// a layer edited outside BeamCraft would arrive.

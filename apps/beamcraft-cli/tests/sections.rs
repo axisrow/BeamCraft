@@ -6,7 +6,7 @@
 
 //! A07.1 end to end through the real `beamcraft` binary: `define-profile --family` defines
 //! section profiles of the parametric families and custom outlines, `create-member` builds members
-//! of them, and fresh processes reopen the revision with `plate-inspect` and `definitions`.
+//! of them, and fresh processes reopen the revision with `inspect-elements` and `definitions`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -173,7 +173,7 @@ fn an_i_beam_from_a_family_definition_is_built_and_reopened() {
         "pmass-member-area-x-length/1;section-exact-area;tolerance-policy-3"
     );
 
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["member_count"]), 1.0);
     let reopened = &at(&inspected, &["members"]).array().unwrap()[0];
     assert_eq!(text(reopened, "mesh_digest"), text(&beam, "mesh_digest"));
@@ -233,7 +233,7 @@ fn cold_formed_and_custom_members_share_one_revision() {
     let block = member(&f, "beam", "0,2000,0", "1000,2000,0", &custom);
     // A custom outline is exact: (100^2 - 20^2) mm2 along 1000 mm.
     assert_eq!(num(&block, &["quantities", "volume", "mm3"]), 9_600_000.0);
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["member_count"]), 3.0);
 }
 
@@ -307,6 +307,6 @@ fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
             &profile,
         );
     }
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["member_count"]), 8.0);
 }

@@ -82,7 +82,7 @@ impl Fixture {
         if reference {
             fs::write(f.path("reference.usda"),b"#usda 1.0\n(defaultPrim=\"Survey\"\nmetersPerUnit=0.001\nupAxis=\"Z\")\ndef Xform \"Survey\" { custom double original:height=125 }\n").unwrap();
             f.ok(&[
-                "reference-attach",
+                "attach-reference",
                 "--store",
                 f.s("published"),
                 "--source",
@@ -91,7 +91,7 @@ impl Fixture {
         }
         for name in ["a", "b"] {
             f.ok(&[
-                "workspace-create",
+                "create-workspace",
                 "--store",
                 f.s("published"),
                 "--workspace-dir",
@@ -136,7 +136,7 @@ impl Fixture {
     }
     fn publish(&self, name: &str) {
         self.ok(&[
-            "workspace-publish",
+            "publish-workspace",
             "--store",
             self.s("published"),
             "--workspace-dir",
@@ -321,7 +321,7 @@ fn semantic_conflicts_include_indirect_reads_and_intermediate_reverted_writes() 
 fn absent_evidence_and_wrong_actor_do_not_become_independence() {
     let f = Fixture::new(false);
     f.update("b", 10, &["--name", "temporary"]);
-    f.ok(&["workspace-undo", "--workspace-dir", f.s("b")]);
+    f.ok(&["undo-workspace", "--workspace-dir", f.s("b")]);
     f.update("a", 11, &["--name", "remote"]);
     f.publish("a");
     let accepted = f.head("published");

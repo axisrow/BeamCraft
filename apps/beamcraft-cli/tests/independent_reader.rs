@@ -149,7 +149,7 @@ fn a_missing_expectation_file_fails_the_reader() {
         "10",
         &["--name", "Oracle A"],
     ));
-    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    let inspected = run_binary(&["inspect-elements", "--store", store_arg]);
     copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
     let absent = scratch.layers().join("absent-expectation.json");
     let output = Command::new(env!("CARGO_BIN_EXE_beamcraft-usd-oracle"))
@@ -184,7 +184,7 @@ fn the_reader_reads_the_committed_revision_and_agrees_with_the_closed_form() {
         "12.5",
         &["--translation", "2000,-150.5,25", "--name", "Oracle B"],
     ));
-    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    let inspected = run_binary(&["inspect-elements", "--store", store_arg]);
     copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
     let expectation = |reply: &Json, name: &str, w: f64, l: f64, t: f64, tr: [f64; 3]| {
         format!(
@@ -249,7 +249,7 @@ fn the_reader_reads_pinned_materials_and_the_mass_agrees_with_the_closed_form() 
         "8",
         &["--name", "Plain"],
     ));
-    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    let inspected = run_binary(&["inspect-elements", "--store", store_arg]);
     copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
     let expectation = |reply: &Json,
                        name: &str,
@@ -315,7 +315,7 @@ fn the_reader_reads_a_plate_with_through_holes_against_the_closed_form() {
             "250,250,100",
         ],
     ));
-    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    let inspected = run_binary(&["inspect-elements", "--store", store_arg]);
     copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
     // Closed form: the box minus a 200 x 200 square and a regular 32-gon inscribed in a circle of
     // diameter 100, whose area is (32 / 2) * r^2 * sin(2 pi / 32).
@@ -386,7 +386,7 @@ fn the_reader_reads_a_beam_and_a_column_against_the_closed_form() {
         "--name",
         "Column",
     ]);
-    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    let inspected = run_binary(&["inspect-elements", "--store", store_arg]);
     copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
     let member = |reply: &Json, name: &str, kind: &str, roll: &str, tail: &str| {
         let m = reply.get("member").unwrap();
@@ -476,7 +476,7 @@ fn the_reader_reads_the_ordered_3d_plate_frame_and_its_element_local_vertices() 
         "--name",
         "Tilted plate",
     ]);
-    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    let inspected = run_binary(&["inspect-elements", "--store", store_arg]);
     copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
     // Bounds are world bounds: the element-local bounds shifted by the translation.
     let expect = format!(
@@ -514,7 +514,7 @@ fn the_reader_sees_valid_unsupported_authored_input_without_any_partial_result()
         "--name",
         "Unsupported original",
     ]);
-    let inspected = run_binary(&["plate-inspect", "--store", store_arg]);
+    let inspected = run_binary(&["inspect-elements", "--store", store_arg]);
     copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
     let expect = format!(
         r#"[{{"id":"{}","name":"Unsupported original","width":0,"length":0,"thickness":10,"unsupported":true,

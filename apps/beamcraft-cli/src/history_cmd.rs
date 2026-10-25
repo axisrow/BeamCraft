@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! U14 headless commands `history-stats` and `history-compact`.
+//! U14 headless commands `inspect-history` and `compact-history`.
 //!
 //! ```text
-//! beamcraft history-stats   --store ROOT [--workspaces-root DIR]... [--workspace-dir DIR]...
-//! beamcraft history-compact --store ROOT (--keep-head | --keep N) --dry-run
+//! beamcraft inspect-history   --store ROOT [--workspaces-root DIR]... [--workspace-dir DIR]...
+//! beamcraft compact-history --store ROOT (--keep-head | --keep N) --dry-run
 //!                           [--workspaces-root DIR]... [--workspace-dir DIR]...
 //!                           [--ledger-tail N] [--orphan-grace-secs N]
-//! beamcraft history-compact --store ROOT (--keep-head | --keep N) --yes
+//! beamcraft compact-history --store ROOT (--keep-head | --keep N) --yes
 //!                           (--backup DIR | --no-backup)
 //!                           (--workspaces-root DIR | --workspace-dir DIR | --no-workspaces)
 //!                           [--ledger-tail N] [--orphan-grace-secs N]
 //! ```
 //!
-//! `history-stats` and `--dry-run` change nothing. A real compaction deletes history for good, so
+//! `inspect-history` and `--dry-run` change nothing. A real compaction deletes history for good, so
 //! it is refused unless the operator confirms (`--yes`), chooses a backup (`--backup DIR`, copied
 //! and verified under the exclusive store lease before the first change) or explicitly declines it
 //! (`--no-backup`), and declares where the live personal workspaces are (or that there are none),
@@ -87,7 +87,7 @@ fn invalid(message: &'static str) -> Failure {
 
 /// Whether `command` is one of the history commands.
 pub fn handles(command: &OsString) -> bool {
-    command == "history-stats" || command == "history-compact"
+    command == "inspect-history" || command == "compact-history"
 }
 
 /// Runs the command and returns the JSON result and the process exit code.
@@ -103,7 +103,7 @@ pub fn lease_refusal(error: PlateError) -> (Json, u8) {
     crate::report::report(Err(error))
 }
 
-/// Holds the store lease of a starting `coordinator-serve`; see
+/// Holds the store lease of a starting `serve-coordinator`; see
 /// [`beamcraft_cli::history_compact::hold_coordinator_lease`].
 pub fn coordinator_lease(args: &[OsString]) -> Result<Option<StoreLease>, (Json, u8)> {
     hold_coordinator_lease(args).map_err(lease_refusal)
@@ -189,11 +189,11 @@ fn run(args: &[OsString]) -> Run<Json> {
         return Err(invalid("too many arguments"));
     }
     match *command {
-        "history-stats" => {
+        "inspect-history" => {
             let parsed = parse(tail, &["--store", "--workspaces-root", "--workspace-dir"])?;
             history_stats(&parsed)
         }
-        "history-compact" => {
+        "compact-history" => {
             let parsed = parse(tail, &[VALUE_OPTIONS.as_slice(), FLAGS.as_slice()].concat())?;
             history_compact(&parsed)
         }
@@ -243,7 +243,7 @@ fn blocker_json(blocker: &Blocker) -> Json {
         Blocker::OpenIntents(n) => obj(vec![
             ("kind", Json::text("open_intents")),
             ("count", Json::uint(u64::try_from(*n).unwrap_or(u64::MAX))),
-            ("action", Json::text("run revision-recover first")),
+            ("action", Json::text("run recover-revision first")),
         ]),
         Blocker::StoreInUse => obj(vec![
             ("kind", Json::text("store_in_use")),

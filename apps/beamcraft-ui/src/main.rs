@@ -7,8 +7,8 @@
 //! `beamcraft-ui --store ROOT [--cli PATH]` opens the window on the published revision;
 //! `--actor-id UUID` records that author on its edits.
 //! `beamcraft-ui --workspace DIR [--cli PATH]` opens it on a personal workspace (a store made by
-//! `beamcraft workspace-create`), which also enables undo and redo. Adding `--published ROOT`
-//! (the store the workspace was forked from) enables Publish (`beamcraft workspace-publish`).
+//! `beamcraft create-workspace`), which also enables undo and redo. Adding `--published ROOT`
+//! (the store the workspace was forked from) enables Publish (`beamcraft publish-workspace`).
 //! `beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--cli PATH]` renders the
 //! same snapshot offscreen, headless, and prints baseline GPU metrics as one JSON object.
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine

@@ -8,7 +8,7 @@
 //!
 //! - `head`: the published head's revision id (or `null` for an empty store).
 //! - `publish` with `workspace` (a directory name under the coordinator's workspaces root),
-//!   `changeset` (the digest `changeset-create` printed) and `expected_head` (the revision the
+//!   `changeset` (the digest `create-changeset` printed) and `expected_head` (the revision the
 //!   client believes is the published head). The expected head must be the changeset's base;
 //!   then C01's receipt runs with the **authenticated actor** as the trusted caller, so a token
 //!   publishes only its own actor's changesets (`PERMISSION_DENIED` otherwise). Publication is

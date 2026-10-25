@@ -4,8 +4,8 @@
 // `beamcraft-usd-oracle` process is used as the external test reader: it is not a dependency
 // and shares no code with the layer engine.
 
-//! A09 end to end through the real CLI binary: `numbering-approve` stores the approved marks as
-//! authored data through the normal revision path, `numbering-status` and `numbering-preview` read
+//! A09 end to end through the real CLI binary: `approve-numbering` stores the approved marks as
+//! authored data through the normal revision path, `inspect-numbering` and `preview-numbering` read
 //! them back, a stale token, overlapping series and an empty model are refused with nothing
 //! written, fabrication edits make the approval stale while a move and a rename do not, and an
 //! undo restores the earlier marks.
@@ -94,7 +94,7 @@ impl Fixture {
         text(&body, "code")
     }
     fn preview(&self, extra: &[&str]) -> Json {
-        self.ok("numbering-preview", extra)
+        self.ok("preview-numbering", extra)
     }
     fn token(&self, extra: &[&str]) -> String {
         text(&self.preview(extra), "preview_token")
@@ -102,10 +102,10 @@ impl Fixture {
     fn approve(&self, token: &str, extra: &[&str]) -> Json {
         let mut args = vec!["--preview-token", token];
         args.extend_from_slice(extra);
-        self.ok("numbering-approve", &args)
+        self.ok("approve-numbering", &args)
     }
     fn status(&self) -> Json {
-        self.ok("numbering-status", &[])
+        self.ok("inspect-numbering", &[])
     }
     fn marks(&self) -> BTreeMap<String, String> {
         list(&self.status(), "marks")
@@ -117,7 +117,7 @@ impl Fixture {
         text(at(&self.status(), &["approval"]), "state")
     }
     fn layers(&self) -> Vec<(String, String)> {
-        match self.run("revision-open", &[]) {
+        match self.run("open-revision", &[]) {
             (0, body) => list(&body, "layers")
                 .iter()
                 .map(|l| (text(l, "name"), text(l, "digest")))
@@ -126,7 +126,7 @@ impl Fixture {
         }
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn plate(&self, material: &str, thickness: &str, extra: &[&str]) -> String {
         let mut args = vec![
@@ -207,7 +207,7 @@ impl Fixture {
         Scene { plates, beams }
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
-    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    /// a layer edited outside BeamCraft would arrive through `commit-revision`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
         let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
         let head = store.open().unwrap();
@@ -286,12 +286,12 @@ fn approval_stores_one_mark_per_group_as_authored_data_and_reads_back() {
     for (name, plate, beam) in [("Frame 1", 0, 0), ("Frame 2", 1, 1)] {
         let id = text(&f.ok("create-assembly", &["--name", name]), "element_id");
         for part in [&s.plates[plate], &s.beams[beam]] {
-            f.ok("assembly-attach", &["--id", part, "--assembly-id", &id]);
+            f.ok("attach-to-assembly", &["--id", part, "--assembly-id", &id]);
         }
         frames.push(id);
     }
     assert_eq!(f.state(), "not_approved");
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let derived_before = f
         .layers()
         .into_iter()
@@ -383,8 +383,8 @@ fn approval_stores_one_mark_per_group_as_authored_data_and_reads_back() {
             .count(),
         10
     );
-    // plate-inspect still lists the same plates with the same bodies.
-    let after = f.ok("plate-inspect", &[]);
+    // inspect-elements still lists the same plates with the same bodies.
+    let after = f.ok("inspect-elements", &[]);
     assert_eq!(
         list(&after, "plates").len(),
         list(&inspected, "plates").len()
@@ -402,14 +402,14 @@ fn a_stale_token_overlapping_series_and_an_empty_model_are_refused_with_nothing_
     let f = Fixture::new();
     // A store with no revision at all, then one with only a material.
     assert_eq!(
-        f.run("numbering-approve", &["--preview-token", &"0".repeat(64)])
+        f.run("approve-numbering", &["--preview-token", &"0".repeat(64)])
             .0,
         2
     );
     f.ok("define-material", &["--density", "7850"]);
     let empty_token = f.token(&[]);
     assert_eq!(
-        f.refused("numbering-approve", &["--preview-token", &empty_token]),
+        f.refused("approve-numbering", &["--preview-token", &empty_token]),
         "INVALID_ARGUMENT"
     );
     assert_eq!(f.state(), "not_approved");
@@ -422,7 +422,7 @@ fn a_stale_token_overlapping_series_and_an_empty_model_are_refused_with_nothing_
         &["--id", &s.plates[1], "--thickness", "30"],
     );
     assert_eq!(
-        f.refused("numbering-approve", &["--preview-token", &token]),
+        f.refused("approve-numbering", &["--preview-token", &token]),
         "STALE_WORKSPACE"
     );
     assert_eq!(f.state(), "not_approved");
@@ -430,7 +430,7 @@ fn a_stale_token_overlapping_series_and_an_empty_model_are_refused_with_nothing_
     let current = f.token(&[]);
     assert_eq!(
         f.refused(
-            "numbering-approve",
+            "approve-numbering",
             &["--preview-token", &current, "--compare-name", "true"]
         ),
         "STALE_WORKSPACE"
@@ -440,7 +440,7 @@ fn a_stale_token_overlapping_series_and_an_empty_model_are_refused_with_nothing_
     let overlapping = f.token(&overlap);
     assert_eq!(
         f.refused(
-            "numbering-approve",
+            "approve-numbering",
             &["--preview-token", &overlapping, "--beam-series", "PL:1"]
         ),
         "INVALID_ARGUMENT"
@@ -449,7 +449,7 @@ fn a_stale_token_overlapping_series_and_an_empty_model_are_refused_with_nothing_
     for bad in ["--plate-series", "--assembly-series"] {
         assert_eq!(
             f.refused(
-                "numbering-approve",
+                "approve-numbering",
                 &["--preview-token", &current, bad, "TOOLONG_PREFIX_OVER_16:1"]
             ),
             "INVALID_ARGUMENT"
@@ -485,7 +485,7 @@ fn approving_again_is_unchanged_and_the_same_operation_replays() {
     let other = f.token(&["--plate-series", "P:10"]);
     assert_eq!(
         f.refused(
-            "numbering-approve",
+            "approve-numbering",
             &[
                 "--preview-token",
                 &other,
@@ -540,7 +540,7 @@ fn fabrication_changes_make_the_approval_stale_and_a_move_or_a_rename_do_not() {
         "update-element",
         &["--id", &s.plates[1], "--name", "Renamed"],
     );
-    f.ok("plate-inspect", &[]);
+    f.ok("inspect-elements", &[]);
     f.preview(&["--tolerance", "5"]);
     assert_eq!(f.state(), "current");
     let marks = f.marks();
@@ -615,7 +615,7 @@ fn an_undo_of_an_approval_restores_the_earlier_marks() {
     let dir = f.dir("ws");
     f.ok_in(
         &published,
-        "workspace-create",
+        "create-workspace",
         &["--workspace-dir", &dir, "--user-id", USER],
     );
     let history = |op: &str| {
@@ -628,7 +628,10 @@ fn an_undo_of_an_approval_restores_the_earlier_marks() {
     };
     let layers = || {
         list(
-            at(&history("workspace-history"), &["draft_head", "manifest"]),
+            at(
+                &history("inspect-workspace-history"),
+                &["draft_head", "manifest"],
+            ),
             "layers",
         )
         .iter()
@@ -636,30 +639,30 @@ fn an_undo_of_an_approval_restores_the_earlier_marks() {
         .collect::<Vec<_>>()
     };
     let marks = || -> BTreeMap<String, String> {
-        list(&f.ok_in(&dir, "numbering-status", &[]), "marks")
+        list(&f.ok_in(&dir, "inspect-numbering", &[]), "marks")
             .iter()
             .map(|m| (text(m, "id"), text(m, "mark")))
             .collect()
     };
     let before = layers();
-    let token = text(&f.ok_in(&dir, "numbering-preview", &[]), "preview_token");
-    f.ok_in(&dir, "numbering-approve", &["--preview-token", &token]);
+    let token = text(&f.ok_in(&dir, "preview-numbering", &[]), "preview_token");
+    f.ok_in(&dir, "approve-numbering", &["--preview-token", &token]);
     let approved = layers();
     assert_ne!(approved, before);
     let first = marks();
     assert_eq!(first.len(), 2);
     assert!(first.values().all(|m| m == "PL1"));
 
-    history("workspace-undo");
+    history("undo-workspace");
     assert_eq!(layers(), before, "undo restores the layers byte for byte");
     assert!(marks().is_empty());
-    let undone = f.ok_in(&dir, "numbering-status", &[]);
+    let undone = f.ok_in(&dir, "inspect-numbering", &[]);
     assert_eq!(text(at(&undone, &["approval"]), "state"), "not_approved");
-    history("workspace-redo");
+    history("redo-workspace");
     assert_eq!(layers(), approved);
     assert_eq!(marks(), first);
     // The published store never saw the approval.
-    let published_status = f.ok_in(&published, "numbering-status", &[]);
+    let published_status = f.ok_in(&published, "inspect-numbering", &[]);
     assert_eq!(number(&published_status, "count"), 0);
 }
 
@@ -685,14 +688,14 @@ fn damaged_and_oversized_input_is_refused() {
         vec!["--preview-token", &token, "--compare-name", "maybe"],
     ] {
         assert_eq!(
-            f.refused("numbering-approve", &args),
+            f.refused("approve-numbering", &args),
             "INVALID_ARGUMENT",
             "{args:?}"
         );
     }
     assert_eq!(
         f.refused(
-            "numbering-approve",
+            "approve-numbering",
             &["--preview-token", &token, "--op-id", "not-an-id"]
         ),
         "INVALID_ID"
@@ -704,7 +707,7 @@ fn damaged_and_oversized_input_is_refused() {
         vec!["--preview-token", &token],
     ] {
         assert_eq!(
-            f.refused("numbering-status", &args),
+            f.refused("inspect-numbering", &args),
             "INVALID_ARGUMENT",
             "{args:?}"
         );
@@ -743,11 +746,11 @@ fn damaged_and_oversized_input_is_refused() {
                 text
             }
         });
-        for command in ["numbering-status", "numbering-preview", "plate-inspect"] {
+        for command in ["inspect-numbering", "preview-numbering", "inspect-elements"] {
             let (code, body) = f.run(command, &[]);
             assert_eq!(code, 2, "{command} {to}: {body:?}");
         }
-        let (code, body) = f.run("numbering-approve", &["--preview-token", &token]);
+        let (code, body) = f.run("approve-numbering", &["--preview-token", &token]);
         assert_eq!(code, 2, "{to}: {body:?}");
         // Put the model back for the next case: the tamper commits a new head, so rewind the text.
         f.tamper(|name, text| {
@@ -771,7 +774,7 @@ fn the_reader_reads_the_stored_marks() {
     f.approve(&f.token(&[]), &[]);
     let layers = f.root.join("layers");
     fs::create_dir(&layers).unwrap();
-    let opened = f.ok("revision-open", &[]);
+    let opened = f.ok("open-revision", &[]);
     for entry in list(&opened, "layers") {
         let digest = text(entry, "digest");
         fs::copy(

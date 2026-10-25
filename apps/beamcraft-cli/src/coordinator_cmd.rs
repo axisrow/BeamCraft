@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! C02 headless commands: `coordinator-serve` starts a local coordinator explicitly (nothing
-//! starts it otherwise), `coordinator-publish` and `coordinator-head` are its clients.
+//! C02 headless commands: `serve-coordinator` starts a local coordinator explicitly (nothing
+//! starts it otherwise), `publish-changeset` and `inspect-coordinator-head` are its clients.
 //!
-//! `coordinator-serve` prints one `listening` JSON line with the bound loopback address as soon
+//! `serve-coordinator` prints one `listening` JSON line with the bound loopback address as soon
 //! as it accepts connections, then serves until `--max-requests` requests were handled (or until
 //! it is stopped) and prints its final JSON object. Tokens are read from files only, never from
 //! the command line, where other users could read them.
@@ -65,9 +65,9 @@ fn exit_for(code: ErrorCode) -> u8 {
 
 /// Whether `command` is one of the coordinator commands.
 pub fn handles(command: &OsString) -> bool {
-    command == "coordinator-serve"
-        || command == "coordinator-publish"
-        || command == "coordinator-head"
+    command == "serve-coordinator"
+        || command == "publish-changeset"
+        || command == "inspect-coordinator-head"
 }
 
 /// Runs one coordinator command and returns the JSON result and the process exit code.
@@ -104,21 +104,21 @@ fn run(args: &[OsString]) -> Run<Json> {
         .split_first()
         .ok_or_else(|| invalid("missing command"))?;
     let own: &[&str] = match *command {
-        "coordinator-serve" => &[
+        "serve-coordinator" => &[
             "--store",
             "--workspaces-root",
             "--client",
             "--port",
             "--max-requests",
         ],
-        "coordinator-publish" => &[
+        "publish-changeset" => &[
             "--address",
             "--token-file",
             "--workspace",
             "--changeset",
             "--expected-head",
         ],
-        "coordinator-head" => &["--address", "--token-file"],
+        "inspect-coordinator-head" => &["--address", "--token-file"],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 64 {
@@ -140,7 +140,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     }
     let given = |key: &str| single.get(key).copied();
     let required = |key: &str, missing: &'static str| given(key).ok_or_else(|| invalid(missing));
-    if *command == "coordinator-serve" {
+    if *command == "serve-coordinator" {
         let clients = clients
             .iter()
             .map(|spec| {
@@ -198,7 +198,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "--token-file",
         "--token-file is required",
     )?))?;
-    if *command == "coordinator-head" {
+    if *command == "inspect-coordinator-head" {
         return Ok(call(address, &token, "head", [])?);
     }
     let fields = [

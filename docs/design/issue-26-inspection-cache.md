@@ -9,7 +9,7 @@ inside the one inspection that every read command runs.
 
 ## Problem
 
-Every read command (`plate-inspect`, `definitions`, `view-export`, `pick`, `bom-export`,
+Every read command (`inspect-elements`, `definitions`, `export-view`, `pick`, `export-bom`,
 `export-ifc`, the numbering commands) runs one `beamcraft_cli::plate::inspect`, and every write
 command evaluates the head and then the candidate again in its commit verifier. An inspection:
 
@@ -21,7 +21,7 @@ command evaluates the head and then the candidate again in its commit verifier. 
 4. for `definitions`, scans every plate for every listed definition to build `used_by`, once
    per `fit_page` attempt.
 
-Where one `plate-inspect` spends its time on `master` (milliseconds, median of five runs; phases
+Where one `inspect-elements` spends its time on `master` (milliseconds, median of five runs; phases
 from a temporary probe in the experiment binary with every change switched off, see below; the
 rest is process start, output and exit):
 
@@ -119,21 +119,21 @@ Median wall time in milliseconds (`c`, `p` and `r` give each switch, 1 is on):
 
 | Fixture | Command | `master` | c0p0r0 | c0p0r1 | c0p1r0 | c0p1r1 | c1p0r0 | c1p0r1 | c1p1r0 | c1p1r1 |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| F1 | `plate-inspect` | 581 | 569 | 563 | 358 | 371 | 522 | 536 | 313 | 284 |
+| F1 | `inspect-elements` | 581 | 569 | 563 | 358 | 371 | 522 | 536 | 313 | 284 |
 | F1 | `definitions` | 555 | 561 | 551 | 368 | 346 | 520 | 490 | 282 | 272 |
-| F1 | `view-export` | 600 | 589 | 567 | 363 | 338 | 507 | 527 | 290 | 290 |
+| F1 | `export-view` | 600 | 589 | 567 | 363 | 338 | 507 | 527 | 290 | 290 |
 | F1 | `copy-element` | 1643 | 1576 | 1537 | 1343 | 1377 | 1427 | 1467 | 1161 | 1186 |
-| F2 | `plate-inspect` | 612 | 616 | 634 | 394 | 404 | 609 | 642 | 380 | 381 |
+| F2 | `inspect-elements` | 612 | 616 | 634 | 394 | 404 | 609 | 642 | 380 | 381 |
 | F2 | `definitions` | 564 | 556 | 558 | 342 | 347 | 591 | 543 | 353 | 344 |
-| F2 | `view-export` | 551 | 553 | 578 | 351 | 321 | 553 | 554 | 334 | 327 |
+| F2 | `export-view` | 551 | 553 | 578 | 351 | 321 | 553 | 554 | 334 | 327 |
 | F2 | `copy-element` | 1672 | 1621 | 1594 | 1345 | 1357 | 1527 | 1553 | 1325 | 1308 |
-| F3 | `plate-inspect` | 12897 | 12695 | 12755 | 12412 | 12348 | 1712 | 1728 | 1300 | 1320 |
+| F3 | `inspect-elements` | 12897 | 12695 | 12755 | 12412 | 12348 | 1712 | 1728 | 1300 | 1320 |
 | F3 | `definitions` | 13290 | 12892 | 12580 | 12417 | 12666 | 1769 | 1690 | 1281 | 1295 |
-| F3 | `view-export` | 12793 | 12738 | 13169 | 12714 | 12617 | 1781 | 1720 | 1326 | 1308 |
+| F3 | `export-view` | 12793 | 12738 | 13169 | 12714 | 12617 | 1781 | 1720 | 1326 | 1308 |
 | F3 | `copy-element` | 27815 | 27670 | 27374 | 26968 | 26345 | 3859 | 3966 | 3369 | 3625 |
-| F4 | `plate-inspect` | 3012 | 2953 | 2902 | 2748 | 2668 | 2941 | 2957 | 2899 | 2574 |
+| F4 | `inspect-elements` | 3012 | 2953 | 2902 | 2748 | 2668 | 2941 | 2957 | 2899 | 2574 |
 | F4 | `definitions` | 2904 | 2968 | 3032 | 2688 | 2721 | 2994 | 2987 | 2742 | 2667 |
-| F4 | `view-export` | 2813 | 2728 | 2853 | 2572 | 2430 | 2845 | 2878 | 2550 | 2599 |
+| F4 | `export-view` | 2813 | 2728 | 2853 | 2572 | 2430 | 2845 | 2878 | 2550 | 2599 |
 | F4 | `copy-element` | 6421 | 6404 | 6337 | 6178 | 6185 | 4114 | 4120 | 3801 | 3803 |
 
 On/off ratio of the median over the four pairs of each change (a * marks a fixture and command
@@ -141,21 +141,21 @@ where every pair passed the rule):
 
 | Fixture | Command | C (body cache) | P (one parse) | R (one read) |
 |---|---|---|---|---|
-| F1 | `plate-inspect` | 0.77-0.95 | 0.53-0.66 * | 0.91-1.04 |
+| F1 | `inspect-elements` | 0.77-0.95 | 0.53-0.66 * | 0.91-1.04 |
 | F1 | `definitions` | 0.77-0.93 | 0.54-0.66 * | 0.94-0.98 |
-| F1 | `view-export` | 0.80-0.93 | 0.55-0.62 * | 0.93-1.04 |
+| F1 | `export-view` | 0.80-0.93 | 0.55-0.62 * | 0.93-1.04 |
 | F1 | `copy-element` | 0.86-0.95 | 0.81-0.90 | 0.98-1.03 |
-| F2 | `plate-inspect` | 0.94-1.01 | 0.59-0.64 * | 1.00-1.05 |
+| F2 | `inspect-elements` | 0.94-1.01 | 0.59-0.64 * | 1.00-1.05 |
 | F2 | `definitions` | 0.97-1.06 | 0.60-0.64 * | 0.92-1.02 |
-| F2 | `view-export` | 0.95-1.02 | 0.55-0.63 * | 0.91-1.05 |
+| F2 | `export-view` | 0.95-1.02 | 0.55-0.63 * | 0.91-1.05 |
 | F2 | `copy-element` | 0.94-0.99 | 0.83-0.87 | 0.98-1.02 |
-| F3 | `plate-inspect` | 0.11-0.14 * | 0.76-0.98 | 0.99-1.02 |
+| F3 | `inspect-elements` | 0.11-0.14 * | 0.76-0.98 | 0.99-1.02 |
 | F3 | `definitions` | 0.10-0.14 * | 0.72-1.01 | 0.96-1.02 |
-| F3 | `view-export` | 0.10-0.14 * | 0.74-1.00 | 0.97-1.03 |
+| F3 | `export-view` | 0.10-0.14 * | 0.74-1.00 | 0.97-1.03 |
 | F3 | `copy-element` | 0.13-0.15 * | 0.87-0.98 | 0.98-1.08 |
-| F4 | `plate-inspect` | 0.97-1.06 | 0.87-0.99 | 0.89-1.01 |
+| F4 | `inspect-elements` | 0.97-1.06 | 0.87-0.99 | 0.89-1.01 |
 | F4 | `definitions` | 0.98-1.02 | 0.89-0.92 | 0.97-1.02 |
-| F4 | `view-export` | 0.99-1.07 | 0.85-0.94 | 0.95-1.05 |
+| F4 | `export-view` | 0.99-1.07 | 0.85-0.94 | 0.95-1.05 |
 | F4 | `copy-element` | 0.62-0.65 * | 0.92-0.98 | 0.99-1.00 |
 
 * **C is kept.** It cuts the frame (F3) by 85 to 90 % for every command and the write path of
@@ -180,28 +180,28 @@ noisier than the experiment, which the min-max ranges show; the medians agree wi
 
 | Fixture | Command | `master` median (min-max), ms | This change, ms | Change | Max RSS, MiB | Output |
 |---|---|---:|---:|---:|---:|---|
-| F1 copies | `plate-inspect` | 821 (607-976) | 401 (295-543) | -51 % | 37.2 / 37.0 | identical |
+| F1 copies | `inspect-elements` | 821 (607-976) | 401 (295-543) | -51 % | 37.2 / 37.0 | identical |
 | F1 copies | `definitions` | 708 (606-914) | 351 (282-463) | -50 % | 37.2 / 37.0 | identical |
-| F1 copies | `view-export` | 731 (588-869) | 341 (285-415) | -53 % | 36.8 / 36.8 | identical |
+| F1 copies | `export-view` | 731 (588-869) | 341 (285-415) | -53 % | 36.8 / 36.8 | identical |
 | F1 copies | `copy-element` | 1,920 (1,628-2,423) | 1,389 (1,229-2,185) | -28 % | 74.1 / 73.8 | identical |
-| F2 distinct plates | `plate-inspect` | 754 (561-951) | 471 (388-556) | -38 % | 37.2 / 37.0 | identical |
+| F2 distinct plates | `inspect-elements` | 754 (561-951) | 471 (388-556) | -38 % | 37.2 / 37.0 | identical |
 | F2 distinct plates | `definitions` | 656 (555-876) | 400 (355-507) | -39 % | 37.2 / 37.0 | identical |
-| F2 distinct plates | `view-export` | 687 (557-916) | 420 (337-579) | -39 % | 36.8 / 36.7 | identical |
+| F2 distinct plates | `export-view` | 687 (557-916) | 420 (337-579) | -39 % | 36.8 / 36.7 | identical |
 | F2 distinct plates | `copy-element` | 1,791 (1,550-2,219) | 1,488 (1,339-1,992) | -17 % | 74.1 / 74.2 | identical |
-| F3 frame | `plate-inspect` | 14,177 (13,005-15,207) | 1,424 (1,294-1,991) | -90 % | 70.7 / 67.9 | identical |
+| F3 frame | `inspect-elements` | 14,177 (13,005-15,207) | 1,424 (1,294-1,991) | -90 % | 70.7 / 67.9 | identical |
 | F3 frame | `definitions` | 14,100 (13,022-14,965) | 1,377 (1,293-1,756) | -90 % | 70.7 / 68.0 | identical |
-| F3 frame | `view-export` | 13,686 (12,929-15,479) | 1,350 (1,250-1,584) | -90 % | 70.4 / 67.6 | identical |
+| F3 frame | `export-view` | 13,686 (12,929-15,479) | 1,350 (1,250-1,584) | -90 % | 70.4 / 67.6 | identical |
 | F3 frame | `copy-element` | 28,201 (26,726-30,227) | 4,004 (3,892-4,799) | -86 % | 168.3 / 165.5 | identical |
-| F4 distinct members | `plate-inspect` | 3,016 (2,823-3,588) | 2,801 (2,590-3,189) | -7 % | 42.9 / 41.9 | identical |
+| F4 distinct members | `inspect-elements` | 3,016 (2,823-3,588) | 2,801 (2,590-3,189) | -7 % | 42.9 / 41.9 | identical |
 | F4 distinct members | `definitions` | 2,999 (2,719-3,209) | 2,676 (2,592-2,776) | -11 % | 43.0 / 42.0 | identical |
-| F4 distinct members | `view-export` | 2,897 (2,715-3,107) | 2,718 (2,431-3,075) | -6 % | 42.6 / 41.6 | identical |
+| F4 distinct members | `export-view` | 2,897 (2,715-3,107) | 2,718 (2,431-3,075) | -6 % | 42.6 / 41.6 | identical |
 | F4 distinct members | `copy-element` | 6,560 (6,265-7,249) | 3,921 (3,689-4,208) | -40 % | 96.5 / 96.8 | identical |
 
 CPU time follows the wall time within a few percent: every command is single-threaded. On all
-four fixtures `plate-inspect` answers `LIMIT_EXCEEDED` on both binaries, with identical bytes
+four fixtures `inspect-elements` answers `LIMIT_EXCEEDED` on both binaries, with identical bytes
 (see "Not changed"); its time is still the whole inspection.
 
-Where the time goes after the change (`plate-inspect`, same probe, milliseconds):
+Where the time goes after the change (`inspect-elements`, same probe, milliseconds):
 
 | Phase | F1 copies | F2 distinct plates | F3 frame | F4 distinct members |
 |---|---:|---:|---:|---:|
@@ -240,17 +240,17 @@ none: U17 removed the USD worker, and the window reads through CLI processes.
   implementation of the rules with `validate_layers`, so a rule added there applies to both.
 * A body is still cloned into every element's record; sharing by reference would change public
   record types.
-* On `538cbed` the native window ran `view-export`, `definitions` and `plate-inspect` as separate
+* On `538cbed` the native window ran `export-view`, `definitions` and `inspect-elements` as separate
   processes per refresh. Current `master` (the issue 26 follow-up,
   [Apibim-com/BeamCraft#159](https://github.com/Apibim-com/BeamCraft/pull/159)) runs one
-  `view-export --with-definitions` per refresh and one `plate-inspect --element` per selection.
+  `export-view --with-definitions` per refresh and one `inspect-elements --element` per selection.
   Each of them is one inspection and pays less in the same way.
 * **Found while measuring, not changed here:** on every fixture of about 300 elements,
-  `plate-inspect` answers `{"outcome":"rejected","code":"LIMIT_EXCEEDED"}` (exit 2), on `master`
+  `inspect-elements` answers `{"outcome":"rejected","code":"LIMIT_EXCEEDED"}` (exit 2), on `master`
   as after this change. The whole inspection runs, but its JSON exceeds the read-profile
   encoder limits that `print_json` enforces, so the command cannot report a model of that size.
   On `538cbed` the window's property lookup ran this command and failed the same way; current
-  `master` asks for one element (`plate-inspect --element`), which fits. Its timings above are
+  `master` asks for one element (`inspect-elements --element`), which fits. Its timings above are
   still the inspection's. Paging the whole-model reply is a separate change.
 
 ## Reproduction
@@ -283,8 +283,8 @@ for k in $(seq 1 299); do
     --offset "$((k * 1100)),0,0" > /dev/null
 done
 # One measurement: wall time, CPU and max RSS of one process.
-/usr/bin/time -v "$b" plate-inspect --store "$s" > /dev/null   # Linux
-/usr/bin/time -l "$b" plate-inspect --store "$s" > /dev/null   # macOS
+/usr/bin/time -v "$b" inspect-elements --store "$s" > /dev/null   # Linux
+/usr/bin/time -l "$b" inspect-elements --store "$s" > /dev/null   # macOS
 ```
 
 The figures above were taken with a harness that does what `/usr/bin/time` does (`wait4`:

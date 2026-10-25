@@ -72,7 +72,7 @@ impl Fixture {
         text(&body, "code")
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn plate_with(&self, extra: &[&str]) -> String {
         let mut args = vec!["--width", "1000", "--length", "500", "--thickness", "10"];
@@ -116,13 +116,13 @@ impl Fixture {
         self.ok("update-element", &["--id", element, "--level", level])
     }
     fn inspect(&self) -> Json {
-        self.ok("plate-inspect", &[])
+        self.ok("inspect-elements", &[])
     }
     fn levels(&self) -> Vec<Json> {
         list(&self.ok("levels", &[]), "levels").to_vec()
     }
     fn layer_digest(&self, name: &str) -> String {
-        let body = self.ok("revision-open", &[]);
+        let body = self.ok("open-revision", &[]);
         list(&body, "layers")
             .iter()
             .find(|l| text(l, "name") == name)
@@ -135,7 +135,7 @@ impl Fixture {
         String::from_utf8(head.layer_bytes(name).unwrap()).unwrap()
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
-    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    /// a layer edited outside BeamCraft would arrive through `commit-revision`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
         let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
@@ -292,7 +292,7 @@ fn a_generated_project_is_recorded_and_a_fork_reports_its_parent_project() {
 
     let dir = f.shared.root.join("draft").to_str().unwrap().to_owned();
     f.ok(
-        "workspace-create",
+        "create-workspace",
         &[
             "--workspace-dir",
             &dir,
@@ -300,7 +300,7 @@ fn a_generated_project_is_recorded_and_a_fork_reports_its_parent_project() {
             "019a7bf0-0000-7000-8000-00000000d0aa",
         ],
     );
-    let (code, forked) = f.run_in(&dir, "plate-inspect", &[]);
+    let (code, forked) = f.run_in(&dir, "inspect-elements", &[]);
     assert_eq!(code, 0, "{forked:?}");
     assert_eq!(project_record(&forked).as_deref(), Some(project.as_str()));
     assert_eq!(manifest_project(&forked), project);
@@ -325,7 +325,7 @@ fn a_generated_project_is_recorded_and_a_fork_reports_its_parent_project() {
     );
     assert_eq!(code, 2, "{refused:?}");
     assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
-    let (_, again) = f.run_in(&dir, "plate-inspect", &[]);
+    let (_, again) = f.run_in(&dir, "inspect-elements", &[]);
     assert_eq!(project_record(&again).as_deref(), Some(project.as_str()));
 }
 
@@ -369,7 +369,7 @@ fn a_store_without_a_record_is_never_given_one_and_damaged_records_are_typed_err
                 text
             }
         });
-        let (status, body) = g.run("plate-inspect", &[]);
+        let (status, body) = g.run("inspect-elements", &[]);
         assert_eq!(status, 2, "{value}: {body:?}");
         assert_eq!(text(&body, "code"), code, "{value}");
         // Nothing builds on a damaged record either.
@@ -695,7 +695,7 @@ fn level_records_stored_outside_beamcraft_are_refused_when_read() {
         if case == "wrapper" {
             let source = g.source();
             g.ok(
-                "reference-attach",
+                "attach-reference",
                 &["--source", &source, "--new-id", WRAPPER],
             );
         }
@@ -730,7 +730,7 @@ fn level_records_stored_outside_beamcraft_are_refused_when_read() {
             assert!(text.contains(&from), "{text}");
             text.replace(&from, &to)
         });
-        for command in ["levels", "plate-inspect"] {
+        for command in ["levels", "inspect-elements"] {
             let (status, body) = g.run(command, &[]);
             assert_eq!(status, 2, "{case} {command}: {body:?}");
             assert_eq!(text(&body, "code"), code, "{case} {command}");

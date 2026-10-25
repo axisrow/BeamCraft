@@ -11,8 +11,8 @@ and assembly UUIDs are independent; BC-ASM coverage is listed.
 
 ```text
 beamcraft create-assembly --store ROOT --name TEXT [--new-id UUID] [--op-id UUID ...]
-beamcraft assembly-attach --store ROOT --id PART_UUID --assembly-id UUID [--op-id UUID ...]
-beamcraft assembly-detach --store ROOT --id PART_UUID [--op-id UUID ...]
+beamcraft attach-to-assembly --store ROOT --id PART_UUID --assembly-id UUID [--op-id UUID ...]
+beamcraft detach-from-assembly --store ROOT --id PART_UUID [--op-id UUID ...]
 beamcraft assemblies --store ROOT
 ```
 
@@ -41,7 +41,7 @@ beamcraft assemblies --store ROOT
 - The layer engine's read set for an attach covers the target's whole chain (with the batch's own
   records applied), matching `Footprint::for_part_of`. `assemblies` and every A01 command run the
   structural validator before interpreting the hierarchy, so a cyclic or wrong-kind graph stored
-  through `revision-commit` is refused, not reported or replayed.
+  through `commit-revision` is refused, not reported or replayed.
 - Nested assemblies are allowed (`DVC-REL-005-P`); there is no depth limit in the vocabulary, so the
   walks are bounded by the element count.
 - `bim:geometryMode` is `parametric` for an assembly to keep the common base uniform; it has no

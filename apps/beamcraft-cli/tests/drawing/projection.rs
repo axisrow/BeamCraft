@@ -54,7 +54,7 @@ fn preview(f: &Fixture, owner: &str, plane: &str, scale: &str) -> Json {
     let mut options = args(owner, &a, &b);
     options.extend(["--plane", plane, "--scale", scale].map(str::to_owned));
     f.ok(
-        "drawing-preview",
+        "preview-drawing",
         &options.iter().map(String::as_str).collect::<Vec<_>>(),
     )
 }
@@ -80,7 +80,7 @@ fn a_real_member_has_named_wireframe_and_scale_independent_projected_dimension()
     assert_eq!(text(&result, "view_id"), VIEW);
     assert_eq!(text(&result, "dimension_id"), DIMENSION);
     assert_eq!(text(at(&result, &["source"]), "revision_id"), head);
-    let listed = f.ok("feature-list", &["--id", MEMBER]);
+    let listed = f.ok("list-feature", &["--id", MEMBER]);
     assert_eq!(
         text(at(&result, &["source"]), "manifest"),
         text(&listed, "model_manifest")
@@ -126,7 +126,7 @@ fn a_real_member_has_named_wireframe_and_scale_independent_projected_dimension()
     let b = format!("fid1:{MEMBER}:member:v.x1.y1.z1");
     let options = args(MEMBER, &a, &b);
     let diagonal = f.ok(
-        "drawing-preview",
+        "preview-drawing",
         &options.iter().map(String::as_str).collect::<Vec<_>>(),
     );
     near(
@@ -242,7 +242,7 @@ fn malformed_or_unbounded_preview_refuses_without_writing_the_model() {
         options.extend([key.to_owned(), value.to_owned()]);
         assert_eq!(
             f.refused(
-                "drawing-preview",
+                "preview-drawing",
                 &options.iter().map(String::as_str).collect::<Vec<_>>()
             )
             .0,
@@ -258,7 +258,7 @@ fn malformed_or_unbounded_preview_refuses_without_writing_the_model() {
         let options = args(MEMBER, &a, &anchor);
         assert_eq!(
             f.refused(
-                "drawing-preview",
+                "preview-drawing",
                 &options.iter().map(String::as_str).collect::<Vec<_>>()
             )
             .0,
@@ -270,7 +270,7 @@ fn malformed_or_unbounded_preview_refuses_without_writing_the_model() {
     options.extend(["--origin", "10000,0"].map(str::to_owned));
     assert_eq!(
         f.refused(
-            "drawing-preview",
+            "preview-drawing",
             &options.iter().map(String::as_str).collect::<Vec<_>>()
         )
         .0,
@@ -281,7 +281,7 @@ fn malformed_or_unbounded_preview_refuses_without_writing_the_model() {
     duplicate[slot] = DRAWING.to_owned();
     assert_eq!(
         f.refused(
-            "drawing-preview",
+            "preview-drawing",
             &duplicate.iter().map(String::as_str).collect::<Vec<_>>()
         )
         .0,
@@ -305,7 +305,7 @@ fn real_cli_exports_reopenable_usd_intent_without_overwriting_or_modifying_the_m
     let mut options = args(MEMBER, &a, &b);
     options.extend(["--intent-out".into(), output.to_str().unwrap().into()]);
     let argv = options.iter().map(String::as_str).collect::<Vec<_>>();
-    let result = f.ok("drawing-preview", &argv);
+    let result = f.ok("preview-drawing", &argv);
     let bytes = fs::read(&output).unwrap();
     let digest = text(&result, "intent_digest")
         .parse::<ContentDigest>()
@@ -343,7 +343,7 @@ fn real_cli_exports_reopenable_usd_intent_without_overwriting_or_modifying_the_m
             .map(|j| j.string().unwrap().to_owned())
             .collect::<Vec<_>>()
     );
-    assert_eq!(f.refused("drawing-preview", &argv).0, "INVALID_ARGUMENT");
+    assert_eq!(f.refused("preview-drawing", &argv).0, "INVALID_ARGUMENT");
     assert_eq!(fs::read(&output).unwrap(), bytes);
     assert_eq!(f.head(), head);
     let missing = f.root.join("not-created.usda");
@@ -356,7 +356,7 @@ fn real_cli_exports_reopenable_usd_intent_without_overwriting_or_modifying_the_m
     ]);
     assert_eq!(
         f.refused(
-            "drawing-preview",
+            "preview-drawing",
             &invalid.iter().map(String::as_str).collect::<Vec<_>>()
         )
         .0,

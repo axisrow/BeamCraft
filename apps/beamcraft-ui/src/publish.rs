@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! V06.1 workspace publication, as pure logic: the Publish action is the argument list of the
-//! CLI's `workspace-publish`, confirmed first, and the reply becomes a result or the engine's own
+//! CLI's `publish-workspace`, confirmed first, and the reply becomes a result or the engine's own
 //! refusal. The window computes no verdict about publishability: a refusal (a moved published
 //! head is `BASE_REVISION_MISMATCH`, an unchanged draft is `INVALID_ARGUMENT`) is only displayed
 //! with its stable code and message. There is no merge, rebase or conflict resolution here
@@ -17,10 +17,10 @@ use crate::tools::{ToolError, decode, rejection, text};
 use beamcraft_json::Json;
 use std::path::{Path, PathBuf};
 
-/// The arguments of `workspace-publish` for a published store and a workspace directory.
+/// The arguments of `publish-workspace` for a published store and a workspace directory.
 pub fn publish_args(published: &Path, workspace: &Path) -> Vec<String> {
     vec![
-        "workspace-publish".into(),
+        "publish-workspace".into(),
         "--store".into(),
         published.to_string_lossy().into_owned(),
         "--workspace-dir".into(),
@@ -28,10 +28,10 @@ pub fn publish_args(published: &Path, workspace: &Path) -> Vec<String> {
     ]
 }
 
-/// The arguments of `workspace-status` for a published store and a workspace directory.
+/// The arguments of `inspect-workspace` for a published store and a workspace directory.
 pub fn status_args(published: &Path, workspace: &Path) -> Vec<String> {
     vec![
-        "workspace-status".into(),
+        "inspect-workspace".into(),
         "--store".into(),
         published.to_string_lossy().into_owned(),
         "--workspace-dir".into(),
@@ -48,7 +48,7 @@ pub struct Published {
     pub replayed: bool,
 }
 
-/// Reads the reply of `workspace-publish`: the published revision or the engine's refusal.
+/// Reads the reply of `publish-workspace`: the published revision or the engine's refusal.
 pub fn parse_published(exit_code: Option<i32>, stdout: &[u8]) -> Result<Published, ToolError> {
     let reply = match decode(stdout) {
         Ok(reply) => reply,
@@ -81,7 +81,7 @@ pub fn parse_published(exit_code: Option<i32>, stdout: &[u8]) -> Result<Publishe
     Ok(Published { revision, replayed })
 }
 
-/// What `workspace-status` reports, as the engine states it.
+/// What `inspect-workspace` reports, as the engine states it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Status {
     /// False when the published head moved since the workspace was forked (a publish is then
@@ -110,7 +110,7 @@ impl Status {
     }
 }
 
-/// Reads the reply of `workspace-status`.
+/// Reads the reply of `inspect-workspace`.
 pub fn parse_status(exit_code: Option<i32>, stdout: &[u8]) -> Result<Status, ToolError> {
     let reply = decode(stdout)?;
     if let Some(error) = rejection(&reply, exit_code) {
@@ -146,7 +146,7 @@ pub enum Phase {
     Idle,
     /// The confirm dialog is open; nothing has run.
     Confirming,
-    /// `workspace-publish` is running.
+    /// `publish-workspace` is running.
     Running,
 }
 
@@ -276,11 +276,11 @@ mod tests {
     fn the_command_is_workspace_publish_with_both_directories() {
         assert_eq!(
             publish_args(Path::new("P"), Path::new("W")),
-            ["workspace-publish", "--store", "P", "--workspace-dir", "W"]
+            ["publish-workspace", "--store", "P", "--workspace-dir", "W"]
         );
         assert_eq!(
             status_args(Path::new("P"), Path::new("W")).first().unwrap(),
-            "workspace-status"
+            "inspect-workspace"
         );
     }
 
@@ -313,7 +313,7 @@ mod tests {
         assert!(p.confirm().is_none());
         p.request().unwrap();
         let args = p.confirm().unwrap();
-        assert_eq!(args.first().unwrap(), "workspace-publish");
+        assert_eq!(args.first().unwrap(), "publish-workspace");
         assert_eq!(p.phase(), Phase::Running);
         assert!(p.confirm().is_none(), "no second run while running");
         assert!(p.request().is_err());

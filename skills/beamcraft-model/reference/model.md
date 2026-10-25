@@ -95,7 +95,7 @@ Captured output (trimmed):
 
 The rotation is rigid: the local mesh and quantities are unchanged; only the placement turns
 (world vertex v.x1.y1.z1 of this member sits at (-100, 6000, 150), verified below by
-`feature-lookup`). Axis points define the local layout: an axis along +X gives width along Y and
+`lookup-feature`). Axis points define the local layout: an axis along +X gives width along Y and
 height along Z; `--roll` rolls the section about the axis before the quaternion maps it.
 
 Acceptance evidence of the refusals (exit 2 in both cases):
@@ -175,7 +175,7 @@ plates only.
 
 ## 6. Inspect what you built
 
-`beamcraft plate-inspect --store STORE` opens and verifies the head revision and lists plates
+`beamcraft inspect-elements --store STORE` opens and verifies the head revision and lists plates
 and members with quantities; `--element UUID` lists only that element. Full documentation and
 captured output: the sibling `store.md` reference. Always prove a modelling change by inspecting
 afterwards and reporting element ids, the new `sequence` and the quantities from the real output.
@@ -194,5 +194,5 @@ Model BeamCraft elements exactly as described in the request.
 1. Build the `beamcraft` binary if it is not built (the command is above).
 2. Ensure a store exists - follow the sibling `store.md` reference when the user has not named one.
 3. Run the real binary for every step; quote only captured JSON as evidence.
-4. Prove the result: run `plate-inspect` afterwards and report the element ids, the new
+4. Prove the result: run `inspect-elements` afterwards and report the element ids, the new
    revision `sequence` and the quantities from the real output.

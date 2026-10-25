@@ -343,7 +343,7 @@ fn members_from_the_synthetic_library_follow_their_declared_or_computed_area() {
     .clone();
     assert_eq!(num(&q, &["section_area_mm2"]), 2400.0);
     // Every member reopens in a fresh process with the same figures and a current record.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     for member in at(&inspected, &["members"]).array().unwrap() {
         let stored = at(member, &["stored_quantities"]);
         assert_eq!(text(at(stored, &["volume"]), "freshness"), "current");
@@ -408,7 +408,7 @@ fn a_store_from_before_this_slice_reads_stale_and_stays_usable() {
     let profile = f.profile(I298);
     let beam = f.beam(&profile, Some(&steel));
     let id = text(&beam, "element_id");
-    let current = f.ok("plate-inspect", &[]);
+    let current = f.ok("inspect-elements", &[]);
     let member = &at(&current, &["members"]).array().unwrap()[0];
     assert_eq!(
         text(at(member, &["stored_quantities", "volume"]), "freshness"),
@@ -447,7 +447,7 @@ fn a_store_from_before_this_slice_reads_stale_and_stays_usable() {
             + "\n"
     });
     // Reported stale, as a superseded value; the engine's own figures are the exact ones.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let member = &at(&inspected, &["members"]).array().unwrap()[0];
     let stored = at(member, &["stored_quantities"]);
     assert_eq!(text(at(stored, &["volume"]), "freshness"), "stale");
@@ -474,7 +474,7 @@ fn a_store_from_before_this_slice_reads_stale_and_stays_usable() {
         "update-element",
         &["--id", &id, "--material-digest", &light],
     );
-    let rewritten = f.ok("plate-inspect", &[]);
+    let rewritten = f.ok("inspect-elements", &[]);
     let member = at(&rewritten, &["members"])
         .array()
         .unwrap()

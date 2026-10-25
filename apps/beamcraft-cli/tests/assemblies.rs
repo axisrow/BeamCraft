@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, beams and assemblies, MPL-2.0.
 
-//! A01 end to end: `create-assembly`, `assembly-attach`, `assembly-detach` and `assemblies`
+//! A01 end to end: `create-assembly`, `attach-to-assembly`, `detach-from-assembly` and `assemblies`
 //! through the real CLI binary and committed revisions. An assembly has its own identity and no
 //! body; the `part-of` record lives with the part; kinds, cardinality, self-links and cycles are
 //! refused with nothing written; an assembly with parts cannot be deleted and a part with a
@@ -51,7 +51,7 @@ impl Fixture {
         text(&body, "code")
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn plate(&self) -> String {
         let body = self.ok(
@@ -86,12 +86,12 @@ impl Fixture {
     }
     fn attach(&self, part: &str, assembly: &str) -> Json {
         self.ok(
-            "assembly-attach",
+            "attach-to-assembly",
             &["--id", part, "--assembly-id", assembly],
         )
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
-    /// a layer edited outside BeamCraft would arrive through `revision-commit`.
+    /// a layer edited outside BeamCraft would arrive through `commit-revision`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
         let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
@@ -161,7 +161,7 @@ fn create_attach_nest_and_detach_write_only_the_part() {
     let plate = f.plate();
     let beam = f.beam();
     let mesh_before = text(
-        &f.ok("plate-inspect", &[])
+        &f.ok("inspect-elements", &[])
             .get("plates")
             .unwrap()
             .array()
@@ -205,7 +205,7 @@ fn create_attach_nest_and_detach_write_only_the_part() {
     assert_eq!(at(assembly(&all, OUTER), &["part_of"]), &Json::Null);
 
     // Membership never touches the parts' bodies, and the verified head still inspects.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(
         text(
             &inspected.get("plates").unwrap().array().unwrap()[0],
@@ -214,7 +214,7 @@ fn create_attach_nest_and_detach_write_only_the_part() {
         mesh_before
     );
 
-    let detached = f.ok("assembly-detach", &["--id", &plate]);
+    let detached = f.ok("detach-from-assembly", &["--id", &plate]);
     assert_eq!(text(&detached, "outcome"), "part_detached");
     assert_eq!(
         groups(&detached, "writes"),
@@ -237,7 +237,7 @@ fn kinds_cardinality_self_links_and_cycles_are_refused_with_nothing_written() {
 
     let attach = |part: &str, assembly: &str| {
         f.rejected(
-            "assembly-attach",
+            "attach-to-assembly",
             &["--id", part, "--assembly-id", assembly],
         )
     };
@@ -257,7 +257,7 @@ fn kinds_cardinality_self_links_and_cycles_are_refused_with_nothing_written() {
     assert_eq!(attach(missing, FRAME), "NOT_FOUND");
     assert_eq!(attach(&beam, missing), "NOT_FOUND");
     assert_eq!(
-        f.rejected("assembly-detach", &["--id", &beam]),
+        f.rejected("detach-from-assembly", &["--id", &beam]),
         "INVALID_ARGUMENT"
     );
     // The identity of a new assembly must be free, whatever the kind that holds it.
@@ -305,8 +305,8 @@ fn replay_reuse_delete_and_copy_follow_the_part_of_records() {
         "--op-id",
         attach_op,
     ];
-    f.ok("assembly-attach", &args);
-    let replay = f.ok("assembly-attach", &args);
+    f.ok("attach-to-assembly", &args);
+    let replay = f.ok("attach-to-assembly", &args);
     assert_eq!(text(&replay, "outcome"), "part_attached_replayed");
     assert_eq!(at(&replay, &["footprint"]), &Json::Null);
 
@@ -394,14 +394,14 @@ fn a_different_request_under_an_accepted_op_id_is_reuse_not_a_replay() {
     let (one, two) = (f.plate(), f.plate());
     let attach = |part: &str, o: String| {
         f.run(
-            "assembly-attach",
+            "attach-to-assembly",
             &["--id", part, "--assembly-id", FRAME, "--op-id", &o],
         )
     };
     assert_eq!(attach(&one, op(3)).0, 0);
     assert_eq!(attach(&two, op(4)).0, 0);
     let reused = f.rejected(
-        "assembly-attach",
+        "attach-to-assembly",
         &["--id", &two, "--assembly-id", FRAME, "--op-id", &op(3)],
     );
     assert_eq!(reused, "OP_ID_REUSE");
@@ -409,10 +409,11 @@ fn a_different_request_under_an_accepted_op_id_is_reuse_not_a_replay() {
     assert_eq!(code, 0);
     assert_eq!(text(&body, "outcome"), "part_attached_replayed");
 
-    let detach = |part: &str, o: String| f.run("assembly-detach", &["--id", part, "--op-id", &o]);
+    let detach =
+        |part: &str, o: String| f.run("detach-from-assembly", &["--id", part, "--op-id", &o]);
     assert_eq!(detach(&one, op(5)).0, 0);
     assert_eq!(detach(&two, op(6)).0, 0);
-    let reused = f.rejected("assembly-detach", &["--id", &two, "--op-id", &op(5)]);
+    let reused = f.rejected("detach-from-assembly", &["--id", &two, "--op-id", &op(5)]);
     assert_eq!(reused, "OP_ID_REUSE");
     let (code, body) = detach(&one, op(5));
     assert_eq!(code, 0);

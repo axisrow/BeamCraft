@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! P01 headless commands: `create-plate` and `plate-inspect`. They call the engine API through
+//! P01 headless commands: `create-plate` and `inspect-elements`. They call the engine API through
 //! the adapter of `beamcraft_cli::plate` and print one JSON object (same error shape as the other
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
@@ -227,12 +227,12 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" => COPY_OPTIONS,
-        "workspace-create" | "workspace-status" | "workspace-publish" => WORKSPACE_OPTIONS,
-        "workspace-undo" | "workspace-redo" => HISTORY_OPTIONS,
-        "workspace-history" => &["--workspace-dir"],
+        "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
+        "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
+        "inspect-workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
-        "plate-inspect" => &["--store", "--element"],
+        "inspect-elements" => &["--store", "--element"],
         "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
@@ -248,7 +248,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     }
     if matches!(
         *command,
-        "workspace-undo" | "workspace-redo" | "workspace-history"
+        "undo-workspace" | "redo-workspace" | "inspect-workspace-history"
     ) {
         return history_command(command, &options);
     }
@@ -272,7 +272,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options),
-        "workspace-create" | "workspace-status" | "workspace-publish" => {
+        "create-workspace" | "inspect-workspace" | "publish-workspace" => {
             workspace_command(&store, command, &options)
         }
         "define-material" | "define-profile" => define_command(&store, command, &options),
@@ -548,7 +548,7 @@ fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
 /// The profile definition that explicit `define-profile`-style options describe: a rectangle from
 /// `--width` and `--height`, a family from `--family` and its parameters, or a custom outline,
 /// with the optional `--designation`, `--standard` and declared section numbers. Shared by
-/// `define-profile` and `library-add`; the display name is left to the caller.
+/// `define-profile` and `add-library`; the display name is left to the caller.
 pub(crate) fn profile_record(options: &BTreeMap<&str, &str>) -> Run<DefinitionRecord> {
     let given = |key: &str| options.get(key).copied();
     let optional_float = |key: &str| {
@@ -1176,7 +1176,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
                 .collect(),
         )
     };
-    if command == "workspace-history" {
+    if command == "inspect-workspace-history" {
         let line = timeline(&workspace, dir)?;
         return Ok(Json::object([
             ("outcome", Json::text("workspace_history")),
@@ -1200,7 +1200,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
                 .and_then(|id| Uuid7::parse(&id.to_string()).map_err(PlateError::from)),
         }
     };
-    let (direction, done, replayed) = if command == "workspace-undo" {
+    let (direction, done, replayed) = if command == "undo-workspace" {
         (
             Direction::Undo,
             "workspace_undone",
@@ -1259,12 +1259,12 @@ fn workspace_command(
     let dir = std::path::Path::new(
         given("--workspace-dir").ok_or_else(|| invalid("--workspace-dir is required"))?,
     );
-    if command == "workspace-publish" && given("--revision-id").is_some() {
+    if command == "publish-workspace" && given("--revision-id").is_some() {
         return Err(invalid(
-            "workspace-publish takes its revision id from the draft head",
+            "publish-workspace takes its revision id from the draft head",
         ));
     }
-    if command == "workspace-create" && !dir.exists() {
+    if command == "create-workspace" && !dir.exists() {
         std::fs::create_dir(dir).map_err(|_| PlateError {
             code: ErrorCode::BackendUnavailable,
             message: "workspace directory could not be created",
@@ -1288,7 +1288,7 @@ fn workspace_command(
         }
     };
     match command {
-        "workspace-create" => {
+        "create-workspace" => {
             let created = create_workspace(
                 store,
                 &workspace,
@@ -1306,7 +1306,7 @@ fn workspace_command(
                 ("workspace", workspace_json(&created)),
             ]))
         }
-        "workspace-status" => Ok(Json::object([
+        "inspect-workspace" => Ok(Json::object([
             ("outcome", Json::text("workspace_status")),
             (
                 "workspace",
@@ -1768,7 +1768,7 @@ fn plate_users(plates: &[PlateRecord]) -> BTreeMap<ContentDigest, Vec<ElementId>
     users
 }
 
-/// The `definitions` reply for `inspection` (also framed by `view-export --with-definitions`).
+/// The `definitions` reply for `inspection` (also framed by `export-view --with-definitions`).
 pub(crate) fn definitions_json(
     inspection: &Inspection,
     options: &BTreeMap<&str, &str>,
@@ -2189,7 +2189,7 @@ fn with_names(
     Json::Object(object)
 }
 
-/// The `plate-inspect` reply for `inspection` (also framed by `view-export --with-element`).
+/// The `inspect-elements` reply for `inspection` (also framed by `export-view --with-element`).
 /// `only` keeps one element in the lists (plates, members, the snapshot's elements and their
 /// meshes), none when the revision does not hold it, and names it as `element_filter`; the
 /// counts still describe the whole revision. Without it the reply lists everything.

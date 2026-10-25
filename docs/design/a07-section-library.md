@@ -209,8 +209,8 @@ loading, and nothing in a library entry can name a path, URL or executable.
 **Commands (headless first).**
 
 ```text
-beamcraft library-list   --environment FILE [--family F] [--filter TEXT]
-beamcraft library-show   --environment FILE --designation NAME
+beamcraft list-library   --environment FILE [--family F] [--filter TEXT]
+beamcraft show-library   --environment FILE --designation NAME
 beamcraft create-member  --store ROOT --environment FILE --profile NAME --start .. --end ..
 ```
 
@@ -218,7 +218,7 @@ beamcraft create-member  --store ROOT --environment FILE --profile NAME --start 
 yet (content-addressed, so it is idempotent) and pins it, in one revision.
 
 **User sections (A07.3).** A user library is the same format in the user's data directory.
-`library-add` writes an admitted entry to it (parametric, cold-formed or `custom` outline), so
+`add-library` writes an admitted entry to it (parametric, cold-formed or `custom` outline), so
 the UI "new profile" dialog of V05 calls the same API.
 
 ## 7. Owner decisions needed
@@ -242,8 +242,8 @@ the UI "new profile" dialog of V05 calls the same API.
 | Sub-task | Result | Depends on |
 |---|---|---|
 | A07.1 | Families of section 3 (hot-rolled and cold-formed) and `custom`, detailed and simplified outlines, kernel `section_member`, layer-engine definition, engine, `define-profile --family`, end-to-end test | D4 |
-| A07.2 | USD library and environment layers, loader, `library-list`, `library-show`, `create-member --profile NAME`, synthetic test library, end-to-end test | A07.1 |
-| A07.3 | Environment files and lookup order, user library, `library-add` for parametric, cold-formed and custom sections (section 11) | A07.2 |
+| A07.2 | USD library and environment layers, loader, `list-library`, `show-library`, `create-member --profile NAME`, synthetic test library, end-to-end test | A07.1 |
+| A07.3 | Environment files and lookup order, user library, `add-library` for parametric, cold-formed and custom sections (section 11) | A07.2 |
 | V05 | UI: insert member, pick from the library; new-profile dialog | A07.2, A07.3 |
 
 Each sub-task is its own PR. Completing a sub-task does not complete A07.
@@ -296,8 +296,8 @@ refusal codes).
 Branch `feat/a07-2-libraries`, based on `origin/master` `5c54c0a`.
 
 ```text
-beamcraft library-list   --library FILE [--family F] [--filter TEXT]
-beamcraft library-show   --library FILE --designation NAME
+beamcraft list-library   --library FILE [--family F] [--filter TEXT]
+beamcraft show-library   --library FILE --designation NAME
 beamcraft define-profile --store ROOT --library FILE --designation NAME [--name TEXT]
 beamcraft define-profile|define-material ... [--name TEXT]
 beamcraft create-member  --store ROOT --start .. --end .. (--profile-digest SHA256 | --profile NAME)
@@ -310,10 +310,10 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
 | `beamcraft_cli::library` | `load(path)` / `load_bytes`: bounded local read (8 MiB, no network or device path), the layer engine opens the file as one read-only foreign layer under library budgets (1 layer, 8,208 prims, 8,192 array items, 64 MiB decoded), metres per unit 0.001 and Z up are required, sublayers and external references cannot be resolved (the engine is given no other asset). Root `customLayerData` must carry `bim:library:id`; `title`, `version`, `source` and `licence` are reported when present, never inferred. Entries are the direct children of `/Library/Profiles`: `steel:profile:designation`, `steel:profile:family` (`rectangle`, one of the nine families, `custom`), one `steel:profile:<parameter>Mm` per parameter (rectangle: `h` is the height, `b` the width), optional `standard`, `areaMm2`, `massPerMeterKg`, `surfacePerMeterM2`, and for `custom` `outerPointsMm`, `cavityPointsMm`, `cavityVertexCounts`. Each entry is admitted by the same rules as a hand-published definition. |
 | Failure policy | A duplicate designation refuses the whole library (`INVALID_ARGUMENT`); more than 4,096 entries, more than 8 MiB or a stage over the budgets is `LIMIT_EXCEEDED`; unreadable USD, other units, a missing `bim:library:id` is `INVALID_ARGUMENT` (`UNSUPPORTED_PROPERTY` for an encoding the static read profile cannot decode, `PERMISSION_DENIED` for a network path or an uncontained sublayer name); a bad entry is reported in `rejected` (prim, designation, code) and the others load. A designation whose entry was refused reports that entry's code, never `NOT_FOUND` and never another entry. |
 | Lookup | Exact, case-sensitive designation. An unknown designation is `NOT_FOUND`; nothing is substituted or matched by prefix. |
-| `define-profile --library` | The definition takes every value from the entry and stores them itself (designation, standard, declared numbers, display name = designation unless `--name`), so it never depends on the library file later: the tests delete the library before placing a member. The library provenance (id, version, licence) is reported by `library-list` and `library-show` but is **not** stored in the definition (the design note of section 2 foresaw provenance labels; they would be new definition fields and a new digest input, and are left to a later slice). `library-show` prints the digest that `define-profile --library` would pin. Combining `--library` with explicit dimensions, `--family`, `--standard` or declared numbers is `INVALID_ARGUMENT`. |
-| Display names | `Definition::{Material, RectangleProfile, SectionProfile}` carry an optional readable name, written as USD `displayName` metadata on the definition prim. `define-material` and `define-profile` take `--name TEXT`; the default is the designation, else a generated name: `S355 7850 kg/m3` (grade and density, only what is declared; `Material (density unknown)` otherwise), `RECT 200x300`, `I 200x100`, `RHS 100x60x4`, `CHS 114x5`, `Custom 8 points`. `definitions` lists `display_name`; `plate-inspect` lists `profile_name` and `material_name` of each element (null for a definition without a name). JSON objects are printed with sorted keys by the shared encoder, so "name first" is not a property of the text; the name is the first thing a person looks for, not the first key. |
+| `define-profile --library` | The definition takes every value from the entry and stores them itself (designation, standard, declared numbers, display name = designation unless `--name`), so it never depends on the library file later: the tests delete the library before placing a member. The library provenance (id, version, licence) is reported by `list-library` and `show-library` but is **not** stored in the definition (the design note of section 2 foresaw provenance labels; they would be new definition fields and a new digest input, and are left to a later slice). `show-library` prints the digest that `define-profile --library` would pin. Combining `--library` with explicit dimensions, `--family`, `--standard` or declared numbers is `INVALID_ARGUMENT`. |
+| Display names | `Definition::{Material, RectangleProfile, SectionProfile}` carry an optional readable name, written as USD `displayName` metadata on the definition prim. `define-material` and `define-profile` take `--name TEXT`; the default is the designation, else a generated name: `S355 7850 kg/m3` (grade and density, only what is declared; `Material (density unknown)` otherwise), `RECT 200x300`, `I 200x100`, `RHS 100x60x4`, `CHS 114x5`, `Custom 8 points`. `definitions` lists `display_name`; `inspect-elements` lists `profile_name` and `material_name` of each element (null for a definition without a name). JSON objects are printed with sorted keys by the shared encoder, so "name first" is not a property of the text; the name is the first thing a person looks for, not the first key. |
 | Selection by name | `create-member --profile NAME`, `create-member|create-plate --material NAME` resolve against the **head's** definitions (verified and re-admitted like every read) by display name or by designation (profiles) or grade (materials); profiles and materials are separate namespaces. No match is `NOT_FOUND`; more than one distinct definition is `INVALID_ARGUMENT` with the candidates (digest, kind, display name, names; the first 16 and the total, see the review follow-up) in `diagnostics` and nothing published or guessed; a name and its digest option together are `INVALID_ARGUMENT`. The digest stays the identity: the command pins the resolved digest. |
-| Declared area (D3) | Owner decision of 2026-10-18: **a warning, never a refusal**; the reason is that catalogue values are not mathematically derived and rounded radii differ legitimately. `engine::member::declared_section_area_warning` compares a declared area with the **exact** area of the section (`SectionShape::exact_area_mm2`, closed form with true arcs; since P-Mass, no longer the polygon the kernel extrudes); a relative gap above 1 percent (`model::limits::DECLARED_SECTION_AREA_TOLERANCE`) gives a `DeclaredAreaWarning` and the definition is created with its declared value. The CLI reports `declared_area_warning` (`declared_mm2`, `kernel_mm2` and its alias `exact_mm2` (both the exact area), `relative_difference`, `threshold`, `threshold_percent`; null when it agrees or no area is declared) in the `definition` of `define-profile`, in each entry of `library-list` and `library-show`, and in `definitions` (computed when listed, so stores need no change). A library entry with such an area still loads. Malformed values (non-finite, not above zero, above the cap) are still refused by the F04 rules. The rectangle keeps its refusing 0.1 percent P02.2 check (not widened). Mass uses the declared area when present (P-Mass); the declared mass per metre is still not read. |
+| Declared area (D3) | Owner decision of 2026-10-18: **a warning, never a refusal**; the reason is that catalogue values are not mathematically derived and rounded radii differ legitimately. `engine::member::declared_section_area_warning` compares a declared area with the **exact** area of the section (`SectionShape::exact_area_mm2`, closed form with true arcs; since P-Mass, no longer the polygon the kernel extrudes); a relative gap above 1 percent (`model::limits::DECLARED_SECTION_AREA_TOLERANCE`) gives a `DeclaredAreaWarning` and the definition is created with its declared value. The CLI reports `declared_area_warning` (`declared_mm2`, `kernel_mm2` and its alias `exact_mm2` (both the exact area), `relative_difference`, `threshold`, `threshold_percent`; null when it agrees or no area is declared) in the `definition` of `define-profile`, in each entry of `list-library` and `show-library`, and in `definitions` (computed when listed, so stores need no change). A library entry with such an area still loads. Malformed values (non-finite, not above zero, above the cap) are still refused by the F04 rules. The rectangle keeps its refusing 0.1 percent P02.2 check (not widened). Mass uses the declared area when present (P-Mass); the declared mass per metre is still not read. |
 
 ### Digest and schema effect (honest record)
 
@@ -342,7 +342,7 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
   Tests that compared a CLI-published digest with a hand-built `Resource` (`tests/definitions.rs`: the
   material and the rectangle) now build the `Resource` with the default display name, which is the
   explanation of the changed expected digest; every other digest check compares the CLI with the
-  CLI or with `library-show`. `Definition::Material` gained a field, so the layer-engine and CLI
+  CLI or with `show-library`. `Definition::Material` gained a field, so the layer-engine and CLI
   fixtures that build it gained `display_name: None`.
 * The U02 descriptor is shared with the layer-engine work of other branches; the change is one
   line in `SCHEMA_DESCRIPTOR`, one constant and one branch in `pin_accepted`, so a later rebase has one
@@ -357,7 +357,7 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
   follow-up.
 * **(Superseded by A07.3, section 11.)** **One library file only.** `--library FILE` names it explicitly; the project, user and
   environment lookup order, `--environment`, environment layers (sublayers of libraries) and shadow
-  reports of section 6 are **design only**. A07.3 (user library, `library-add`) is not started.
+  reports of section 6 are **design only**. A07.3 (user library, `add-library`) is not started.
   A library is read only; this slice writes no library (the shipped one is hand-authored text).
 * The prim name of an entry is not required to match the designation (the designation attribute is
   the identity); an inactive entry is reported as rejected.
@@ -385,9 +385,9 @@ as part of the digest, ambiguous names with candidates, name and digest together
 * **Default names stay valid labels.** A generated material name that would exceed the 256-byte label
   limit (a 256-byte grade plus the density suffix) falls back to the grade alone, then the density
   alone; the grade and density themselves are stored unchanged.
-* **Listings are paged.** `library-list` and `definitions` take `--offset` (default 0) and `--limit`
+* **Listings are paged.** `list-library` and `definitions` take `--offset` (default 0) and `--limit`
   (default 64, 1 to 256) and report `entry_count`/`definition_count` (all matches), `rejected_count`,
-  `offset`, `page_size` and `next_offset` (null on the last page). `library-list` pages one position space:
+  `offset`, `page_size` and `next_offset` (null on the last page). `list-library` pages one position space:
   the matching entries, then the refused ones. Each page is also checked against the real encoder
   (1 MiB of text, the parser's token scratch): the page is halved until it encodes, so a page may be
   shorter than `--limit` (never empty while items remain), and one entry that alone is too large is
@@ -409,10 +409,10 @@ as part of the digest, ambiguous names with candidates, name and digest together
 Branch `claude/determined-keller-3r153u`, based on `origin/master` `fd6fde9`.
 
 ```text
-beamcraft library-list   (--library FILE | --environment FILE) [--user-library FILE] [--family F] [--filter TEXT] [--offset N] [--limit N]
-beamcraft library-show   (--library FILE | --environment FILE) [--user-library FILE] --designation NAME
+beamcraft list-library   (--library FILE | --environment FILE) [--user-library FILE] [--family F] [--filter TEXT] [--offset N] [--limit N]
+beamcraft show-library   (--library FILE | --environment FILE) [--user-library FILE] --designation NAME
 beamcraft define-profile --store ROOT (--library FILE | --environment FILE) [--user-library FILE] --designation NAME [--name TEXT]
-beamcraft library-add    --library FILE [--library-id ID [--title TEXT]] --designation NAME
+beamcraft add-library    --library FILE [--library-id ID [--title TEXT]] --designation NAME
                          (--width MM --height MM | --family F --h .. | --family custom --outer .. [--cavity ..])
                          [--standard TEXT] [--area-mm2 F] [--mass-per-meter-kg F] [--surface-per-meter-m2 F]
 ```
@@ -420,10 +420,10 @@ beamcraft library-add    --library FILE [--library-id ID [--title TEXT]] --desig
 | Area | What exists |
 |---|---|
 | Environment file | A USD layer in millimetres, Z up, read by the same bounded loader as a library (one self-contained layer, 1 MiB at most). `customLayerData` carries `bim:environment:id`, an optional `bim:environment:title` and `bim:environment:libraries`: a `string[]` of 1 to 32 relative paths, **strongest first**, resolved against the directory of the environment file. A path that is absolute, has a drive or scheme (`:`), a backslash, an empty, `.` or `..` segment or a control character is `PERMISSION_DENIED` (lexical containment, as for R01 sublayer names); more than 32 is `LIMIT_EXCEEDED`; an empty list, a non-string item or a repeated path is `INVALID_ARGUMENT`. |
-| Lookup | `beamcraft_cli::library::Lookup` holds the libraries in order: the optional `--user-library`, then the environment's libraries (or the single `--library`). The first library that declares a designation answers it. A **refused** entry of a stronger library answers with its refusal; a weaker library is never consulted for that designation, so a corrupted override cannot silently turn into another section. `library-list` lists the effective entries (one per designation, designation order, each with its `library_id`), the refused entries of every library, `libraries` (path, id, counts) and `shadowed` (designation, used and shadowed library id). The shadow records are paged on their own with `--shadow-offset` and `--limit`, and the reply carries `shadowed_count` and `shadowed_next_offset` (null on the last page), because a few overlapping libraries of thousands of entries make tens of thousands of records that must not decide whether the entries fit the 1 MiB output budget. `library-show` names the library and path that answer and reports only the shadow records of the designation it shows. |
+| Lookup | `beamcraft_cli::library::Lookup` holds the libraries in order: the optional `--user-library`, then the environment's libraries (or the single `--library`). The first library that declares a designation answers it. A **refused** entry of a stronger library answers with its refusal; a weaker library is never consulted for that designation, so a corrupted override cannot silently turn into another section. `list-library` lists the effective entries (one per designation, designation order, each with its `library_id`), the refused entries of every library, `libraries` (path, id, counts) and `shadowed` (designation, used and shadowed library id). The shadow records are paged on their own with `--shadow-offset` and `--limit`, and the reply carries `shadowed_count` and `shadowed_next_offset` (null on the last page), because a few overlapping libraries of thousands of entries make tens of thousands of records that must not decide whether the entries fit the 1 MiB output budget. `show-library` names the library and path that answer and reports only the shadow records of the designation it shows. |
 | Whole-library failures | A listed library that cannot be loaded (missing file, duplicate designation, over a budget, wrong units) refuses the whole environment with that library's code, because a silently missing library would change which section a designation selects. Two libraries of one lookup with the same `bim:library:id` (inside an environment, or the user library against a single `--library` or an environment library) are `INVALID_ARGUMENT`, so the library id of an entry and of a shadow record is never ambiguous. `--library` and `--environment` are alternatives; `--user-library` needs one of them; with none the command is `INVALID_ARGUMENT`. |
 | `define-profile` | `--environment` (and `--user-library`) take the place of `--library`; the definition takes every value from the answering entry and stores them itself, exactly as in A07.2, so the model never depends on any library file. Explicit dimensions do not combine with them. |
-| `library-add` | Adds one profile entry (rectangle, any of the nine families, or a custom outline with cavities) to the library file named by `--library`, through the same option parsing and the same F04 admission as `define-profile` (`profile_record`). A missing file is created only when `--library-id` is given (`--title` optional); an identity for a file that exists, a duplicate designation, a library that holds refused entries (a rewrite would lose them), an invalid section, a material, or more than 4096 entries is refused. The designation and the display name of the entry are the one given designation. The prim name is the designation with every character outside `[A-Za-z0-9_]` replaced by `_` (prefixed `E_` when it would start with a digit or be empty) and made unique with a numeric suffix; existing prim names are kept. |
+| `add-library` | Adds one profile entry (rectangle, any of the nine families, or a custom outline with cavities) to the library file named by `--library`, through the same option parsing and the same F04 admission as `define-profile` (`profile_record`). A missing file is created only when `--library-id` is given (`--title` optional); an identity for a file that exists, a duplicate designation, a library that holds refused entries (a rewrite would lose them), an invalid section, a material, or more than 4096 entries is refused. The designation and the display name of the entry are the one given designation. The prim name is the designation with every character outside `[A-Za-z0-9_]` replaced by `_` (prefixed `E_` when it would start with a digit or be empty) and made unique with a numeric suffix; existing prim names are kept. |
 | Writer | The whole library is rendered again, entries in designation order, from what the loader understood. The text is read back with the loader before anything is written, and the identity, the optional metadata and every entry must come back equal (`INTEGRITY_ERROR` otherwise, nothing written). A `.usdc` destination, and an existing library whose content is binary USD, are refused (`INVALID_ARGUMENT`): the writer produces USDA text only, and the read-back check cannot see the encoding of the destination. The file is written to a temporary file beside it, synced and installed atomically, and a replacement keeps the permissions of the file it replaces (a private `0600` library stays private): a new file is hard-linked into place (it never replaces a file that appeared meanwhile) and an existing one is renamed over. Numbers are written in Rust's shortest round-trip form, so values read back bit for bit. |
 
 ### Deviations and limits, recorded rather than hidden
@@ -438,7 +438,7 @@ beamcraft library-add    --library FILE [--library-id ID [--title TEXT]] --desig
 * **No hidden global, no settings yet.** The active environment and the user library are command
   line options. An application data directory, the "active environment" setting and the lookup of
   a project-level library are V06 work; the UI picker (V05) will call the same functions.
-* **`library-add` rewrites the file.** Comments, `doc` text and attributes the loader does not
+* **`add-library` rewrites the file.** Comments, `doc` text and attributes the loader does not
   read are not kept, and two writers of one file at once are not supported (the last rename
   wins). Refusing a library with refused entries and the read-back check keep it from losing or
   changing anything the loader understood; an edited-by-hand library with extra content should be
@@ -454,11 +454,11 @@ beamcraft library-add    --library FILE [--library-id ID [--title TEXT]] --desig
   environment is bounded by the budgets, not isolated.
 
 Evidence: `cargo test -p beamcraft-cli --test environments` (real binary: ordered lookup and shadow
-report, the digest predicted by `library-show` equals the pinned one, user library first, a refused
+report, the digest predicted by `show-library` equals the pinned one, user library first, a refused
 stronger entry not replaced by a weaker one, hostile environments (escaping, absolute, drive,
 scheme, backslash, empty and repeated paths, 33 libraries, no libraries, numbers, missing file,
 duplicate library ids, sublayers, other units, directory, URL, a library used as an environment),
-`library-add` creating a library and adding every family, a rectangle, custom outlines with a
+`add-library` creating a library and adding every family, a rectangle, custom outlines with a
 cavity and awkward characters in the designation, the digest equal to an explicit definition with
 the same name, a member placed with the library deleted, and every refusal leaving the file byte
 for byte unchanged with no temporary file left), and `cargo test -p beamcraft-cli --lib library`

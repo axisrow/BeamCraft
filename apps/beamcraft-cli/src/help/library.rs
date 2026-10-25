@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: MPL-2.0
+// SPDX-FileCopyrightText: 2026 Apibim
+
+//! Help owned by the library command family.
+
+pub(super) const COMMANDS: &[&str] = &["list-library", "show-library", "add-library"];
+
+pub(super) const HELP: &str = concat!(
+    "Names and libraries (A07.2, experimental): every definition carries a readable display ",
+    "name that is part of its content (so another name is another digest): --name TEXT on ",
+    "define-material and define-profile, else the designation, else a generated one (S355 ",
+    "7850 kg/m3, I 200x100, RECT 200x300); definitions and inspect-elements list it ",
+    "(display_name, profile_name, material_name). create-member --profile NAME and ",
+    "create-member/create-plate --material NAME select a definition of the head by display ",
+    "name or designation/grade (exact; no match is NOT_FOUND; several matches are ",
+    "INVALID_ARGUMENT with every candidate in diagnostics, never a guess; not combined with ",
+    "the matching --...-digest). Library: a USD layer of named section entries (one file, 8 ",
+    "MiB at most, 4096 entries, no sublayers): list-library --library FILE [--family F] ",
+    "[--filter TEXT] [--offset N] [--limit 1..256] (paged, default 64; next_offset continues; ",
+    "entries then refused entries); definitions --store ROOT [--name TEXT] [--offset N] ",
+    "[--limit 1..256] lists the definitions a name selects, paged; an ambiguous name lists ",
+    "its first 16 candidates in diagnostics with the total; show-library --library FILE ",
+    "--designation NAME; define-profile --store ROOT --library FILE --designation NAME ",
+    "[--name TEXT] builds the definition from the entry with every value stored in it (an ",
+    "unknown designation is NOT_FOUND, never substituted; a duplicate designation refuses the ",
+    "library; a declared area that differs from the outline area by more than 1 percent is ",
+    "reported as declared_area_warning and never refuses). Environments (A07.3): ",
+    "--environment FILE replaces --library on list-library, show-library and define-profile: ",
+    "a USD layer whose customLayerData has bim:environment:id and bim:environment:libraries ",
+    "(string[], contained relative paths next to the file, strongest first, 1 to 32, no ..); ",
+    "the first library that declares a designation answers it, a refused entry is never ",
+    "replaced by a weaker library, and list-library reports the shadowed designations, paged ",
+    "on their own with --shadow-offset N (--limit of them; shadowed_count and ",
+    "shadowed_next_offset), while show-library reports the shadows of its designation only; ",
+    "--user-library FILE is consulted before every other library (its bim:library:id must ",
+    "differ from every other library of the lookup); a library that cannot be loaded refuses ",
+    "the environment. add-library --library FILE [--library-id ID [--title TEXT]] ",
+    "--designation NAME (--width MM --height MM | --family F --h .. | --family custom --outer ",
+    "..) [--standard TEXT] [--area-mm2 F] [--mass-per-meter-kg F] [--surface-per-meter-m2 F] ",
+    "writes one admitted entry into the library file (--library-id creates a missing file; a ",
+    ".usdc destination or a binary USD library is refused, USDA text only; a replaced file ",
+    "keeps its permissions; a duplicate designation, a library with refused entries or a file ",
+    "that does not read back as intended is refused and nothing is written; the file is ",
+    "rendered again, so comments and unread attributes are not kept).",
+);

@@ -11,11 +11,11 @@ interruption at any step leaves the old or the new state, never a mix.
 ## What is implemented
 
 ```text
-beamcraft history-stats   --store ROOT [--workspaces-root DIR]... [--workspace-dir DIR]...
-beamcraft history-compact --store ROOT (--keep-head | --keep N) --dry-run
+beamcraft inspect-history   --store ROOT [--workspaces-root DIR]... [--workspace-dir DIR]...
+beamcraft compact-history --store ROOT (--keep-head | --keep N) --dry-run
                           [--workspaces-root DIR]... [--workspace-dir DIR]...
                           [--ledger-tail N] [--orphan-grace-secs N]
-beamcraft history-compact --store ROOT (--keep-head | --keep N) --yes
+beamcraft compact-history --store ROOT (--keep-head | --keep N) --yes
                           (--backup DIR | --no-backup)
                           (--workspaces-root DIR | --workspace-dir DIR | --no-workspaces)
                           [--ledger-tail N] [--orphan-grace-secs N]
@@ -43,7 +43,7 @@ floor's missing base is accepted. Without a marker every U06 rule applies unchan
 does not know the marker refuses the log (`TORN_ROOT`), so an old binary can never misread a
 compacted store. A removed revision reads as `RevisionError::Compacted` (`NOT_FOUND`).
 
-### What `history-compact` does
+### What `compact-history` does
 
 - Keeps `--keep-head` (the head) or `--keep N` (the newest N, `1..=100000`; more than the log holds
   keeps all of it; `0` and absurd counts are `INVALID_ARGUMENT`). The floor never moves down.
@@ -85,8 +85,8 @@ compacted store. A removed revision reads as `RevisionError::Compacted` (`NOT_FO
 
 | Situation | How it is found | Code |
 |---|---|---|
-| Unresolved intent in the ledger | U07 ledger scan: open intents. Run `revision-recover` first. | `DEPENDENCY_CONFLICT` |
-| Active coordinator, a running commit, a recovery or another compaction | The exclusive store lease is not granted. `coordinator-serve` holds the shared lease for as long as it serves; it refuses to start while a compaction runs. | `BACKEND_UNAVAILABLE` |
+| Unresolved intent in the ledger | U07 ledger scan: open intents. Run `recover-revision` first. | `DEPENDENCY_CONFLICT` |
+| Active coordinator, a running commit, a recovery or another compaction | The exclusive store lease is not granted. `serve-coordinator` holds the shared lease for as long as it serves; it refuses to start while a compaction runs. | `BACKEND_UNAVAILABLE` |
 | A live workspace is based on a revision that would be removed | `workspace.json` of the declared workspaces: the base revision's log sequence is below the new floor. | `DEPENDENCY_CONFLICT` |
 | A workspace is declared but unreadable | It cannot be protected. | `BACKEND_UNAVAILABLE` |
 | `--store` is a workspace's draft store | `workspace.json` in the store root; the draft's undo history lives there. | `INVALID_ARGUMENT` |
@@ -105,7 +105,7 @@ After it the store is the new one: records below the floor are ignored by reader
 below the floor is a tombstone, a blob nobody references is harmless. So an interruption at any
 step leaves a store whose head opens and whose retained revisions are complete, and running the
 same command again finishes the work and then reports nothing to do. A repeated run changes no byte.
-Abandoned `.tmp-*` files are removed by `revision-recover`.
+Abandoned `.tmp-*` files are removed by `recover-revision`.
 
 ## Evidence
 
@@ -124,11 +124,11 @@ Abandoned `.tmp-*` files are removed by `revision-recover`.
 - `apps/beamcraft-cli/tests/history_compact.rs` (8 end-to-end tests, one process per call, real
   plates and a real foreign reference): statistics against the files on disk; the dry run is
   byte-identical and lists the lost undo points; every refusal leaves the store byte-identical; a
-  real compaction with a verified backup keeps `revision-open`, `plate-inspect` (meshes and
-  quantities) and `reference-inspect` equal and the foreign blob unchanged, then accepts a new
+  real compaction with a verified backup keeps `open-revision`, `inspect-elements` (meshes and
+  quantities) and `inspect-reference` equal and the foreign blob unchanged, then accepts a new
   plate and a repeated run changes nothing; a live workspace pins its base; an unfinished intent
-  (made by killing the real commit hook) blocks until `revision-recover`; a running
-  `coordinator-serve` process blocks and then releases; a damaged retained blob refuses.
+  (made by killing the real commit hook) blocks until `recover-revision`; a running
+  `serve-coordinator` process blocks and then releases; a damaged retained blob refuses.
 - The existing host and CLI suites pass unchanged, except for the documented change that an
   operation absent from a compacted ledger is "not found" (U07 semantics are identical for a store
   that was never compacted).
@@ -149,11 +149,11 @@ no network access, no Tekla/Trimble material, no third-party code.
 - Directory-entry crash durability (as in U06/U07): a power loss can lose a rename.
 - The lock is advisory and local: a process that ignores it (a raw file copy, an older build that
   does not take the shared lease) is not stopped, and a network share may not honour it.
-- A blob stored by `blob-put` and not yet committed is only protected by the grace period.
+- A blob stored by `put-blob` and not yet committed is only protected by the grace period.
 - Workspaces are found only where the operator says (`--workspaces-root`, `--workspace-dir`); there
   is no registry in the store. A compaction does not touch a workspace's own draft store.
 - Commands that read an earlier revision of a published store by sequence (for example the replay
-  check of `create-level` or `create-weld` at the floor revision, `changeset-apply` replays of
+  check of `create-level` or `create-weld` at the floor revision, `apply-changeset` replays of
   compacted operations) report `NOT_FOUND` for a removed one; this slice does not change them.
 - The OpenUSD reference reader (`pxr`) is not installed here. The layers are never rewritten, so
   their bytes are those that were read before; the optional `pxr` oracle tests were not run.

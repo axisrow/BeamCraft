@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! C01 headless commands: `changeset-create`, `changeset-inspect` and `changeset-apply`. They call
+//! C01 headless commands: `create-changeset`, `inspect-changeset` and `apply-changeset`. They call
 //! `beamcraft_cli::changeset` and print one JSON object with the same error shape and exit codes
 //! as the plate commands.
 
@@ -59,15 +59,15 @@ fn run(args: &[OsString]) -> Run<Json> {
         .split_first()
         .ok_or_else(|| invalid("missing command"))?;
     let allowed: &[&str] = match *command {
-        "changeset-create" => &[
+        "create-changeset" => &[
             "--store",
             "--workspace-dir",
             "--changeset-id",
             "--revision-id",
             "--actor-id",
         ],
-        "changeset-inspect" => &["--workspace-dir", "--changeset"],
-        "changeset-apply" => &["--store", "--workspace-dir", "--changeset", "--actor-id"],
+        "inspect-changeset" => &["--workspace-dir", "--changeset"],
+        "apply-changeset" => &["--store", "--workspace-dir", "--changeset", "--actor-id"],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 20 {
@@ -90,7 +90,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             .parse()
             .map_err(|_| invalid("a digest is not 64 lower-case hexadecimal characters"))
     };
-    if *command == "changeset-inspect" {
+    if *command == "inspect-changeset" {
         let stored = read_changeset(&workspace, &digest()?)?;
         return Ok(Json::object([
             ("outcome", Json::text("changeset")),
@@ -109,7 +109,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let actor = given("--actor-id")
         .map(|t| ActorId::parse(t).map_err(id_error))
         .transpose()?;
-    if *command == "changeset-create" {
+    if *command == "create-changeset" {
         let mut source = IdSource::system();
         let mut fresh = || {
             source.next_id().map_err(|_| PlateError {

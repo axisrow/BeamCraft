@@ -74,7 +74,7 @@ fn the_reader_composes_the_reference_and_places_the_foreign_points_as_the_engine
     let store_arg = store.to_str().unwrap();
 
     let attached = run_binary(&[
-        "reference-attach",
+        "attach-reference",
         "--store",
         store_arg,
         "--source",
@@ -86,7 +86,7 @@ fn the_reader_composes_the_reference_and_places_the_foreign_points_as_the_engine
     // The source declares metres and Y up. The owner states exactly that, then places the wrapper
     // by a quarter turn about Z and a translation.
     run_binary(&[
-        "reference-correct-units",
+        "correct-reference-units",
         "--store",
         store_arg,
         "--id",
@@ -97,7 +97,7 @@ fn the_reader_composes_the_reference_and_places_the_foreign_points_as_the_engine
         "Y",
     ]);
     run_binary(&[
-        "reference-move",
+        "move-reference",
         "--store",
         store_arg,
         "--id",
@@ -107,7 +107,7 @@ fn the_reader_composes_the_reference_and_places_the_foreign_points_as_the_engine
         "--rotation-z-deg",
         "90",
     ]);
-    let inspected = run_binary(&["reference-inspect", "--store", store_arg]);
+    let inspected = run_binary(&["inspect-reference", "--store", store_arg]);
     let manifest = inspected
         .get("revision")
         .unwrap()

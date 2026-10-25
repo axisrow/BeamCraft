@@ -10,8 +10,8 @@
 //! The start page lists the recently opened projects, the projects of a folder, and creates a new
 //! project from a template. Shared (cloud) projects are not available yet; the tab says so.
 //!
-//! Everything here runs the same CLI commands a user types (`settings-show`, `settings-set`,
-//! `environment-list`, `recent-list`, `recent-add`, `project-list`, `project-create`), each in a
+//! Everything here runs the same CLI commands a user types (`show-settings`, `set-settings`,
+//! `list-environment`, `list-recent`, `add-recent`, `list-project`, `create-project`), each in a
 //! separate process on a worker thread; replies are read with `crate::tools::rejection` so a
 //! refusal is shown with the CLI's code and message. Nothing here reads a store directly.
 
@@ -41,7 +41,7 @@ pub struct Profile {
     pub email: String,
 }
 
-/// The user's settings as `settings-show` reports them.
+/// The user's settings as `show-settings` reports them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SettingsView {
     /// The configuration directory the CLI used.
@@ -56,7 +56,7 @@ pub struct SettingsView {
     pub models_dir: Option<String>,
 }
 
-/// One environment as `environment-list` reports it.
+/// One environment as `list-environment` reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentView {
     /// Its id, `None` when it does not read.
@@ -86,7 +86,7 @@ impl EnvironmentView {
     }
 }
 
-/// One project folder as `project-list`, `recent-list` or `project-create` report it.
+/// One project folder as `list-project`, `list-recent` or `create-project` report it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectView {
     /// The folder name.
@@ -142,7 +142,7 @@ fn optional_uint(json: &Json, key: &str) -> Option<u64> {
     json.get(key).ok().and_then(|v| v.unsigned().ok())
 }
 
-/// Reads the reply of `settings-show` or `settings-set`.
+/// Reads the reply of `show-settings` or `set-settings`.
 pub fn parse_settings(exit_code: Option<i32>, stdout: &[u8]) -> Result<SettingsView, ToolError> {
     let reply = match reply(exit_code, stdout, "settings") {
         Err(e) if e.code == "UNREADABLE_REPLY" => reply(exit_code, stdout, "settings_saved")?,
@@ -169,7 +169,7 @@ pub fn parse_settings(exit_code: Option<i32>, stdout: &[u8]) -> Result<SettingsV
     })
 }
 
-/// Reads the reply of `environment-list`.
+/// Reads the reply of `list-environment`.
 pub fn parse_environments(
     exit_code: Option<i32>,
     stdout: &[u8],
@@ -216,7 +216,7 @@ fn project_of(json: &Json) -> Result<ProjectView, ToolError> {
     })
 }
 
-/// Reads the reply of `project-list`.
+/// Reads the reply of `list-project`.
 pub fn parse_projects(
     exit_code: Option<i32>,
     stdout: &[u8],
@@ -231,7 +231,7 @@ pub fn parse_projects(
         .collect()
 }
 
-/// Reads the reply of `recent-list`.
+/// Reads the reply of `list-recent`.
 pub fn parse_recent(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<ProjectView>, ToolError> {
     let reply = reply(exit_code, stdout, "recent")?;
     reply
@@ -243,7 +243,7 @@ pub fn parse_recent(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Project
         .collect()
 }
 
-/// Reads the reply of `project-create` or `recent-add`: the project.
+/// Reads the reply of `create-project` or `add-recent`: the project.
 pub fn parse_project(
     exit_code: Option<i32>,
     stdout: &[u8],
@@ -261,7 +261,7 @@ fn with_config(mut args: Vec<String>, config_dir: Option<&Path>) -> Vec<String> 
     args
 }
 
-/// The `settings-set` arguments that save the start window's choices.
+/// The `set-settings` arguments that save the start window's choices.
 pub fn settings_set_args(
     config_dir: Option<&Path>,
     name: &str,
@@ -270,7 +270,7 @@ pub fn settings_set_args(
     skip_launcher: bool,
 ) -> Vec<String> {
     let args = vec![
-        "settings-set".to_owned(),
+        "set-settings".to_owned(),
         "--name".into(),
         name.to_owned(),
         "--email".into(),
@@ -283,7 +283,7 @@ pub fn settings_set_args(
     with_config(args, config_dir)
 }
 
-/// The `project-create` arguments of the Create tab.
+/// The `create-project` arguments of the Create tab.
 pub fn project_create_args(
     config_dir: Option<&Path>,
     parent: &str,
@@ -291,7 +291,7 @@ pub fn project_create_args(
     actor_id: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
-        "project-create".to_owned(),
+        "create-project".to_owned(),
         "--parent".into(),
         parent.to_owned(),
         "--name".into(),
@@ -453,11 +453,11 @@ impl StartPage {
                 command::run(cli, &with_config(args, config.as_deref()), DEADLINE, stats)
             };
             let loaded = (|| {
-                let out = run(vec!["settings-show".into()])?;
+                let out = run(vec!["show-settings".into()])?;
                 let settings = parse_settings(out.code, &out.stdout)?;
-                let out = run(vec!["environment-list".into()])?;
+                let out = run(vec!["list-environment".into()])?;
                 let environments = parse_environments(out.code, &out.stdout)?;
-                let out = run(vec!["recent-list".into()])?;
+                let out = run(vec!["list-recent".into()])?;
                 let recent = parse_recent(out.code, &out.stdout)?;
                 Ok((settings, environments, recent))
             })();
@@ -484,7 +484,7 @@ impl StartPage {
                 let settings = parse_settings(out.code, &out.stdout)?;
                 let out = command::run(
                     cli,
-                    &with_config(vec!["recent-list".into()], config.as_deref()),
+                    &with_config(vec!["list-recent".into()], config.as_deref()),
                     DEADLINE,
                     stats,
                 )?;
@@ -502,12 +502,12 @@ impl StartPage {
         }
         // The folder is remembered for the next start; the list does not wait for that.
         let remember = with_config(
-            vec!["settings-set".into(), "--models-dir".into(), folder.clone()],
+            vec!["set-settings".into(), "--models-dir".into(), folder.clone()],
             self.config_dir.as_deref(),
         );
         self.spawn(move |cli, stats| {
             let _ = command::run(cli, &remember, DEADLINE, stats);
-            let args = vec!["project-list".to_owned(), "--dir".into(), folder];
+            let args = vec!["list-project".to_owned(), "--dir".into(), folder];
             Reply::Listed(
                 command::run(cli, &args, DEADLINE, stats)
                     .and_then(|out| parse_projects(out.code, &out.stdout)),
@@ -517,7 +517,7 @@ impl StartPage {
 
     fn open_project(&mut self, path: String) {
         let args = with_config(
-            vec!["recent-add".into(), "--store".into(), path],
+            vec!["add-recent".into(), "--store".into(), path],
             self.config_dir.as_deref(),
         );
         self.spawn(move |cli, stats| {
@@ -1465,7 +1465,7 @@ mod tests {
         assert_eq!(
             args,
             [
-                "project-create",
+                "create-project",
                 "--parent",
                 "/m",
                 "--name",

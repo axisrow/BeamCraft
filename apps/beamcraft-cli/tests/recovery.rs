@@ -5,7 +5,7 @@
 
 //! U07 end to end: an interrupted commit is produced through the real host commit path and its
 //! hook (the commit "dies" at a chosen point, so nothing after it runs), then the real `beamcraft`
-//! binary answers `revision-outcome`, runs `revision-recover` and a retry of `revision-commit`
+//! binary answers `inspect-revision-outcome`, runs `recover-revision` and a retry of `commit-revision`
 //! in fresh processes. The root always opens as one complete revision.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -76,7 +76,7 @@ impl Fixture {
     }
     fn outcome(&self, op: &str) -> (i32, Json) {
         self.run(&[
-            "revision-outcome",
+            "inspect-revision-outcome",
             "--store",
             &self.store_arg(),
             "--op-id",
@@ -85,7 +85,7 @@ impl Fixture {
     }
     fn recover(&self, min_age: &str) -> (i32, Json) {
         self.run(&[
-            "revision-recover",
+            "recover-revision",
             "--store",
             &self.store_arg(),
             "--min-age-secs",
@@ -135,13 +135,13 @@ fn layer_set(n: u32) -> Vec<(&'static str, LayerRole, Vec<u8>)> {
     .collect()
 }
 
-/// Stores the layers with the real `blob-put` command.
+/// Stores the layers with the real `put-blob` command.
 fn blob_put(fx: &Fixture, n: u32) {
     for (name, _, bytes) in layer_set(n) {
         let file = fx.0.join("files").join(format!("{name}.{n}"));
         fs::write(&file, bytes).unwrap();
         let (exit, _) = fx.run(&[
-            "blob-put",
+            "put-blob",
             "--store",
             &fx.store_arg(),
             "--file",
@@ -165,11 +165,11 @@ fn layers_arg(n: u32) -> String {
         .join(",")
 }
 
-/// `revision-commit` through the real binary.
+/// `commit-revision` through the real binary.
 fn commit(fx: &Fixture, n: u32, revision: &str, op: &str, base: &str) -> (i32, Json) {
     let generation = (40 + n).to_string();
     fx.run(&[
-        "revision-commit",
+        "commit-revision",
         "--store",
         &fx.store_arg(),
         "--project-id",
@@ -271,24 +271,30 @@ fn a_cli_commit_writes_the_ledger_and_revision_outcome_answers_from_it() {
 
     // Bad input is rejected with the existing exit code and no hidden default.
     for args in [
-        vec!["revision-outcome", "--store", &store],
-        vec!["revision-outcome", "--store", &store, "--op-id", "1"],
-        vec!["revision-recover", "--store", &store],
+        vec!["inspect-revision-outcome", "--store", &store],
         vec![
-            "revision-recover",
+            "inspect-revision-outcome",
+            "--store",
+            &store,
+            "--op-id",
+            "1",
+        ],
+        vec!["recover-revision", "--store", &store],
+        vec![
+            "recover-revision",
             "--store",
             &store,
             "--min-age-secs",
             "01",
         ],
         vec![
-            "revision-recover",
+            "recover-revision",
             "--store",
             &store,
             "--min-age-secs",
             "-1",
         ],
-        vec!["revision-recover", "--store", &store, "--min-age-secs", ""],
+        vec!["recover-revision", "--store", &store, "--min-age-secs", ""],
     ] {
         let (exit, body) = fx.run(&args);
         assert_eq!(exit, 2, "{args:?}");
@@ -319,7 +325,7 @@ fn an_interrupted_commit_is_resolved_by_the_binary_at_every_crash_point() {
         let head = if switched { "2" } else { "1" };
 
         // A fresh process sees one complete revision, whatever the crash point was.
-        let (exit, opened) = fx.run(&["revision-open", "--store", &store]);
+        let (exit, opened) = fx.run(&["open-revision", "--store", &store]);
         assert_eq!(exit, 0, "{label}: {opened:?}");
         assert_eq!(text(&opened, "sequence"), head, "{label}");
 
@@ -397,7 +403,7 @@ fn an_interrupted_commit_is_resolved_by_the_binary_at_every_crash_point() {
             (text(&retry, "sequence"), text(&retry, "revision_id")),
             ("2".into(), REV2.into())
         );
-        let (exit, now) = fx.run(&["revision-open", "--store", &store]);
+        let (exit, now) = fx.run(&["open-revision", "--store", &store]);
         assert_eq!((exit, text(&now, "sequence").as_str()), (0, "2"));
         assert_eq!(text(&fx.outcome(OP2).1, "source"), "ledger");
     }
@@ -487,6 +493,6 @@ fn a_ledger_that_contradicts_the_root_is_an_integrity_error_not_an_acceptance() 
     assert_eq!(ids(&report, "disagreements"), vec![OTHER]);
     // The honest operation and the root are unaffected.
     assert_eq!(fx.outcome(OP1).0, 0);
-    let (exit, opened) = fx.run(&["revision-open", "--store", &fx.store_arg()]);
+    let (exit, opened) = fx.run(&["open-revision", "--store", &fx.store_arg()]);
     assert_eq!((exit, text(&opened, "sequence").as_str()), (0, "1"));
 }

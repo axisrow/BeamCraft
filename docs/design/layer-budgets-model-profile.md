@@ -51,7 +51,7 @@ members** (A07.1 probe), and a circular hollow section above about 110 mm exceed
 | 40 | | 0.96 s |
 | 60 | 509,650 bytes (8.5 KB per member) | 1.48 s |
 
-On the 60-member store: `revision-open` 10 ms, `plate-inspect` 0.60 s, `view-export` 0.63 s.
+On the 60-member store: `open-revision` 10 ms, `inspect-elements` 0.60 s, `export-view` 0.63 s.
 One `kernel::section::section_member` build of that section (64 vertices, 124 triangles, G06
 certification included) takes 8.8 ms.
 
@@ -62,7 +62,7 @@ rectangle members need less.
 element of the model with the kernel (about 25 ms per detailed member per edit, measured above),
 so an edit on a 2,000-member model would take about 50 s, close to the CLI's 60 s request
 deadline. That cost is the publish-time verifier and the committed-state evaluation, not USD
-parsing (`revision-open` is 10 ms). The fix is a separate task: verify only the elements whose
+parsing (`open-revision` is 10 ms). The fix is a separate task: verify only the elements whose
 inputs changed since the already verified base revision, and make G06 certification cheaper.
 Storing meshes as blobs outside the derived layer text would further raise the byte bound.
 

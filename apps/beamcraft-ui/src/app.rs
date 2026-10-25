@@ -1238,7 +1238,7 @@ impl App {
         }
     }
 
-    /// Runs the confirmed `workspace-publish` on a worker.
+    /// Runs the confirmed `publish-workspace` on a worker.
     fn start_publish(&mut self) {
         if self.other_command_running() {
             self.publisher.cancel();

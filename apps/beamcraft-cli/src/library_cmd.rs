@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! A07.2 and A07.3 headless commands: `library-list`, `library-show` and `library-add`. They read
+//! A07.2 and A07.3 headless commands: `list-library`, `show-library` and `add-library`. They read
 //! the files named on the command line (one `--library`, or an `--environment` with its
 //! libraries, and an optional `--user-library` that comes first; never a hidden global), never a
 //! store, and print one JSON object with the error shape and exit codes of the plate commands.
-//! Only `library-add` writes, and only the one library file it names.
+//! Only `add-library` writes, and only the one library file it names.
 
 use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record};
 use crate::report::report;
@@ -19,7 +19,7 @@ use std::ffi::OsString;
 
 /// Whether `command` is one of the library commands.
 pub fn handles(command: &OsString) -> bool {
-    command == "library-list" || command == "library-show" || command == "library-add"
+    command == "list-library" || command == "show-library" || command == "add-library"
 }
 
 /// Runs one library command and returns the JSON result and the process exit code.
@@ -154,7 +154,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         .ok_or_else(|| invalid("missing command"))?;
     let lookup_options = ["--library", "--environment", "--user-library"];
     let allowed: Vec<&str> = match *command {
-        "library-list" => [
+        "list-library" => [
             &lookup_options[..],
             &[
                 "--family",
@@ -165,8 +165,8 @@ fn run(args: &[OsString]) -> Run<Json> {
             ],
         ]
         .concat(),
-        "library-show" => [&lookup_options[..], &["--designation"]].concat(),
-        "library-add" => [
+        "show-library" => [&lookup_options[..], &["--designation"]].concat(),
+        "add-library" => [
             &["--library", "--library-id", "--title"][..],
             PROFILE_OPTIONS,
         ]
@@ -183,7 +183,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             return Err(invalid("unknown or repeated option"));
         }
     }
-    if *command == "library-add" {
+    if *command == "add-library" {
         return add(&options);
     }
     let (lookup, environment) = open_lookup(
@@ -191,7 +191,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         options.get("--environment").copied(),
         options.get("--user-library").copied(),
     )?;
-    if *command == "library-show" {
+    if *command == "show-library" {
         let designation = options
             .get("--designation")
             .ok_or_else(|| invalid("--designation is required"))?;
@@ -314,7 +314,7 @@ fn list(
     })
 }
 
-/// `library-add`: one profile entry into the library file named by `--library`, creating the file
+/// `add-library`: one profile entry into the library file named by `--library`, creating the file
 /// when `--library-id` is given.
 fn add(options: &BTreeMap<&str, &str>) -> Run<Json> {
     let path = options

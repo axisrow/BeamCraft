@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! A01 headless commands: `create-assembly`, `assembly-attach`, `assembly-detach` and
+//! A01 headless commands: `create-assembly`, `attach-to-assembly`, `detach-from-assembly` and
 //! `assemblies`. They call the engine API through `beamcraft_cli::assembly` and print one JSON
 //! object with the same error shape and exit codes as the plate commands.
 
@@ -51,8 +51,8 @@ fn run(args: &[OsString]) -> Run<Json> {
         .ok_or_else(|| invalid("missing command"))?;
     let own: &[&str] = match *command {
         "create-assembly" => &["--store", "--name", "--new-id"],
-        "assembly-attach" => &["--store", "--id", "--assembly-id"],
-        "assembly-detach" => &["--store", "--id"],
+        "attach-to-assembly" => &["--store", "--id", "--assembly-id"],
+        "detach-from-assembly" => &["--store", "--id"],
         "assemblies" => &["--store"],
         _ => return Err(invalid("unknown command")),
     };
@@ -117,7 +117,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             let change = create_assembly(&store, &context, &command, &mut NoFault)?;
             ("assembly_created", new_id, change)
         }
-        "assembly-attach" => {
+        "attach-to-assembly" => {
             let command = AttachToAssembly {
                 part_id: element("--id", "--id is required")?,
                 assembly_id: element("--assembly-id", "--assembly-id is required")?,

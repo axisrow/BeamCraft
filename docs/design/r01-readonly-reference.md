@@ -16,7 +16,7 @@ R03; neither is here.
 ## What is implemented
 
 ```text
-beamcraft reference-attach --store ROOT --source FILE [--name T] [--translation X,Y,Z] [--rotation-z-deg D]
+beamcraft attach-reference --store ROOT --source FILE [--name T] [--translation X,Y,Z] [--rotation-z-deg D]
   path text --model::check_source_path (no I/O)--> bounded read of FILE (read only)
   --layer engine inspect_foreign_layer--> SourcePin: SHA-256, size, format, defaultPrim, declared units
   --engine::reference::attach--> admission + footprint
@@ -24,10 +24,10 @@ beamcraft reference-attach --store ROOT --source FILE [--name T] [--translation 
       non-owned layer of the stage, returned as Prepared.retained
   --host (U06/U07)--> blobs, verifier (U02 structure, no owned opinion on foreign content, U03 index,
       kernel re-evaluation of plates and members), root switch; the source is an `external` entry
-beamcraft reference-move          --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg D]
-beamcraft reference-correct-units --store ROOT --id UUID (--meters-per-unit F --up-axis Y|Z | --clear true)
-beamcraft reference-write         --store ROOT --id UUID (--target source | --prim /Default/Path [--attribute N])
-beamcraft reference-inspect       --store ROOT
+beamcraft move-reference          --store ROOT --id UUID [--translation X,Y,Z] [--rotation-z-deg D]
+beamcraft correct-reference-units --store ROOT --id UUID (--meters-per-unit F --up-axis Y|Z | --clear true)
+beamcraft write-reference         --store ROOT --id UUID (--target source | --prim /Default/Path [--attribute N])
+beamcraft inspect-reference       --store ROOT
 ```
 
 | Area | What exists |
@@ -35,7 +35,7 @@ beamcraft reference-inspect       --store ROOT
 | `beamcraft_model::reference` | `check_source_path` (URL schemes and network or device paths are `PERMISSION_DENIED` on the text alone), `SourcePin` (digest, size, format, default prim, version, label, declared units), `UnitsInterpretation` (metres per unit, `UpAxis` Y or Z), commands `AttachReference`, `MoveReference`, `CorrectReferenceUnits`, `WriteForeign` with admission, caps and fingerprints. |
 | `beamcraft_engine::reference` | `attach`, `move_reference`, `correct_units` (admission, footprints, fingerprints), `write_foreign` whose success type is `Infallible`, `ReferenceRecord::units_status` and `source_point_to_world` (the transform R02 must use), `Footprint::for_attach`. |
 | `beamcraft_layer_engine` | `Change::AttachReference`, `Change::ReferenceUnits`; `Prepared.retained` (foreign layers, byte for byte); `authored::read_references`; `inspect_foreign_layer`; `Reader::refuse_layer_write`; the wrapper validator, including a spec-level scan of every owned layer; the index treats the wrapper as owned although its `Source` descendant is foreign; the schema descriptor lists the wrapper. |
-| `beamcraft_cli` | `reference` (wiring), `reference_cmd` (the five commands), `source_file` (the bounded file read of `blob-put`, now shared), host ownership by manifest role in `plate::open_request`, retained foreign layers in `publish_revision`. |
+| `beamcraft_cli` | `reference` (wiring), `reference_cmd` (the five commands), `source_file` (the bounded file read of `put-blob`, now shared), host ownership by manifest role in `plate::open_request`, retained foreign layers in `publish_revision`. |
 
 ## The shape of a wrapper
 
@@ -70,7 +70,7 @@ rewrites.
   `INTEGRITY_ERROR`.
 - **Explicit units correction.** The source declares what it declares and the pin records that;
   absence is recorded as absence (USD's fallback of 0.01 m, Y up is not the project's). Reading it
-  as something else is `reference-correct-units`, stored on the wrapper's `Correction` prim as the
+  as something else is `correct-reference-units`, stored on the wrapper's `Correction` prim as the
   statement (metres per unit, up axis), the digest of the source it was made for, and the
   operations it implies: `xformOp:scale:bimUnits` = metres per unit x 1000 (omitted when 1) and
   `xformOp:rotateX:bimUpAxis` = +90 degrees for Y up. A hand-edited scale without the statement is
@@ -99,7 +99,7 @@ rewrites.
 
 ## Translation-only viewport path (issue #137)
 
-`view-export` now includes supported foreign surfaces in the ordinary engine view bundle. The
+`export-view` now includes supported foreign surfaces in the ordinary engine view bundle. The
 adapter reads the already verified composed prims (no second file open or resolver); the engine's
 `scene::reference_element` combines a wrapper's visible surfaces into one `reference` element and
 a bounded BCMESH01 display mesh. The existing UI instancing/upload path draws it in both full and
@@ -179,7 +179,7 @@ generated-fixture entry in `ATTRIBUTION.md` covers the test sources.
   the file's bytes under its SHA-256, the path of the original is stored nowhere, later saves of
   other commands carry the layer unchanged, a workspace forks, publishes and undoes with it, a
   revision whose authored layer was edited as plain text (a type, a child or a property on the
-  foreign root) is `FOREIGN_READ_ONLY` for `reference-inspect` and for the next `create-plate`,
+  foreign root) is `FOREIGN_READ_ONLY` for `inspect-reference` and for the next `create-plate`,
   and a sixth distinct source exceeds the eight-layer stage budget (`LIMIT_EXCEEDED`, nothing
   stored).
 * `apps/beamcraft-cli/tests/reference_pxr.rs` (opt-in, local): `pxr` 0.25.11 composes the model

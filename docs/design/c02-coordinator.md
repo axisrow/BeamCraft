@@ -10,23 +10,23 @@ without a token; a parallel commit never overwrites the accepted head.
 ## What is implemented
 
 ```text
-beamcraft coordinator-serve --store PUBLISHED --workspaces-root DIR --client ACTOR_UUID:TOKEN_FILE [--client ...]
+beamcraft serve-coordinator --store PUBLISHED --workspaces-root DIR --client ACTOR_UUID:TOKEN_FILE [--client ...]
                             [--port N] [--max-requests N]
-beamcraft coordinator-publish --address 127.0.0.1:PORT --token-file FILE --workspace NAME --changeset SHA256
+beamcraft publish-changeset --address 127.0.0.1:PORT --token-file FILE --workspace NAME --changeset SHA256
                               --expected-head REVISION_UUID
-beamcraft coordinator-head --address 127.0.0.1:PORT --token-file FILE
+beamcraft inspect-coordinator-head --address 127.0.0.1:PORT --token-file FILE
 ```
 
 | Area | What exists |
 |---|---|
 | `beamcraft_host::coordinator` | `Token` (32 to 256 printable bytes from a file; on Unix the file must not be group/world accessible; never printed; constant-time comparison), `Client` (actor and token), `Coordinator::bind` (127.0.0.1 only, 1 to 16 clients with distinct tokens and actors) and `serve` (bounded frames, deadlines, at most 16 connections, a queue of at most 64 requests, one handler thread), `Handler`, `Request` (the authenticated actor, the op and the remaining fields), `call` (loopback addresses only). |
 | `beamcraft_cli::coordinator` | `PublishHandler`: `head`, and `publish` (named workspace inside the root, expected head equal to the changeset's base, C01 receipt with the authenticated actor as the trusted caller, `BASE_REVISION_MISMATCH` with the current head). |
-| CLI | `coordinator-serve` prints a `listening` line with the address, serves, and prints a final `stopped` object; `coordinator-publish` and `coordinator-head` print the coordinator's answer with matching exit codes. |
+| CLI | `serve-coordinator` prints a `listening` line with the address, serves, and prints a final `stopped` object; `publish-changeset` and `inspect-coordinator-head` print the coordinator's answer with matching exit codes. |
 
 ## Decisions
 
 - **Off by default, explicit and loopback.** Nothing starts a coordinator except
-  `coordinator-serve`. It binds `127.0.0.1` (port 0 picks a free one), closes any connection whose
+  `serve-coordinator`. It binds `127.0.0.1` (port 0 picks a free one), closes any connection whose
   peer is not loopback, and its clients refuse a non-loopback address before any I/O.
 - **No token, no coordinator.** At least one client is required to start. Tokens come from files,
   never from the command line (where other local users could read them). The coordinator never
@@ -36,7 +36,7 @@ beamcraft coordinator-head --address 127.0.0.1:PORT --token-file FILE
 - **The token is the actor.** C01 took the trusted caller from `--actor-id`. Through the
   coordinator the authenticated client's actor is the trusted caller and a request cannot name
   one, so a token publishes only changesets authored by its own actor (`PERMISSION_DENIED`
-  otherwise). Direct `changeset-apply` on a store the user can write still trusts `--actor-id`.
+  otherwise). Direct `apply-changeset` on a store the user can write still trusts `--actor-id`.
 - **One queue.** Every authenticated request goes through one bounded FIFO queue to one handler
   thread, so publications of one coordinator are strictly sequential. Reading and authenticating
   a request happen before it joins the queue, under one absolute deadline for the whole frame

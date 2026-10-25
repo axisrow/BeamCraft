@@ -68,7 +68,7 @@ impl Fixture {
         text(&body, "code")
     }
     fn plates(&self) -> Vec<Json> {
-        let inspected = self.ok("plate-inspect", &[]);
+        let inspected = self.ok("inspect-elements", &[]);
         at(&inspected, &["plates"]).array().unwrap().to_vec()
     }
 }
@@ -119,7 +119,7 @@ fn a_valid_near_planar_plate_is_saved_without_partial_geometry_and_replays() {
             "unsupported"
         );
     }
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["plate_count"]), 1.);
     assert_eq!(text(at(&inspected, &["snapshot"]), "pin_generation"), "1");
     let reopened = &at(&inspected, &["plates"]).array().unwrap()[0];
@@ -141,21 +141,21 @@ fn a_valid_near_planar_plate_is_saved_without_partial_geometry_and_replays() {
     let entries = at(&inspected, &["snapshot", "elements"]).array().unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].get("mesh_digest").unwrap(), &Json::Null);
-    let before = f.ok("revision-open", &[]);
+    let before = f.ok("open-revision", &[]);
     let replay = f.ok("create-plate", &args);
     assert_eq!(text(&replay, "outcome"), "plate_replayed");
-    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(f.ok("open-revision", &[]), before);
     assert_eq!(
-        f.rejected("view-export", &["--out", &f.path("unsupported.bundle")]),
+        f.rejected("export-view", &["--out", &f.path("unsupported.bundle")]),
         "DEPENDENCY_UNAVAILABLE"
     );
     assert!(!Path::new(&f.path("unsupported.bundle")).exists());
     assert_eq!(
-        f.rejected("numbering-preview", &[]),
+        f.rejected("preview-numbering", &[]),
         "DEPENDENCY_UNAVAILABLE"
     );
     assert_eq!(
-        f.rejected("bom-export", &["--out", &f.path("unsupported.csv")]),
+        f.rejected("export-bom", &["--out", &f.path("unsupported.csv")]),
         "DEPENDENCY_UNAVAILABLE"
     );
     assert!(!Path::new(&f.path("unsupported.csv")).exists());
@@ -168,7 +168,7 @@ fn a_valid_near_planar_plate_is_saved_without_partial_geometry_and_replays() {
         "create-plate",
         &["--width", "1000", "--length", "500", "--thickness", "10"],
     );
-    let mixed = f.ok("plate-inspect", &[]);
+    let mixed = f.ok("inspect-elements", &[]);
     assert_eq!(num(&mixed, &["plate_count"]), 2.);
     assert_eq!(
         at(&mixed, &["snapshot", "meshes"]).array().unwrap().len(),
@@ -207,7 +207,7 @@ fn a_rectangle_in_its_3d_body_frame_is_saved_and_reopened() {
         text(&reopened[0], "mesh_digest"),
         text(plate, "mesh_digest")
     );
-    let before = f.ok("revision-open", &[]);
+    let before = f.ok("open-revision", &[]);
     assert_eq!(
         f.rejected(
             "create-plate",
@@ -220,7 +220,7 @@ fn a_rectangle_in_its_3d_body_frame_is_saved_and_reopened() {
         ),
         "INVALID_ARGUMENT"
     );
-    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(f.ok("open-revision", &[]), before);
     assert_eq!(
         f.rejected(
             "create-plate",
@@ -233,7 +233,7 @@ fn a_rectangle_in_its_3d_body_frame_is_saved_and_reopened() {
         ),
         "INVALID_ARGUMENT"
     );
-    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(f.ok("open-revision", &[]), before);
     assert_eq!(
         f.rejected(
             "create-plate",
@@ -248,7 +248,7 @@ fn a_rectangle_in_its_3d_body_frame_is_saved_and_reopened() {
         ),
         "UNSUPPORTED_GEOMETRY"
     );
-    assert_eq!(f.ok("revision-open", &[]), before);
+    assert_eq!(f.ok("open-revision", &[]), before);
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn an_l_shaped_plate_is_saved_reopened_and_measured_by_closed_forms() {
     // 6 contour points are 12 vertices; 4 triangles per cap and 12 on the sides.
     assert_eq!(num(reopened, &["vertices"]), 12.0);
     assert_eq!(num(reopened, &["triangles"]), 20.0);
-    f.ok("revision-open", &[]);
+    f.ok("open-revision", &[]);
 }
 
 #[test]
@@ -423,7 +423,7 @@ fn contour_plates_are_numbered_by_outline_and_exported_to_ifc() {
         &["--width", "1000", "--length", "600", "--thickness", "10"],
     );
     // Same bounding box everywhere, three outlines: two identical Ls share a number.
-    let preview = f.ok("numbering-preview", &[]);
+    let preview = f.ok("preview-numbering", &[]);
     let groups = at(&preview, &["groups"]).array().unwrap();
     let mut sizes: Vec<f64> = groups.iter().map(|g| num(g, &["count"])).collect();
     sizes.sort_by(f64::total_cmp);
@@ -499,7 +499,7 @@ fn a_wrong_contour_is_refused_and_nothing_is_authored() {
         "INVALID_ARGUMENT"
     );
     // Nothing was committed by any of the refusals.
-    let (code, body) = f.raw("plate-inspect", &[]);
+    let (code, body) = f.raw("inspect-elements", &[]);
     assert!(
         code == 0 || text(&body, "outcome") == "rejected",
         "{body:?}"
@@ -539,7 +539,7 @@ fn holes_are_compared_relative_to_the_contour_not_to_the_element_frame() {
             &hole_at("100"),
         ],
     );
-    let preview = f.ok("numbering-preview", &[]);
+    let preview = f.ok("preview-numbering", &[]);
     assert_eq!(at(&preview, &["groups"]).array().unwrap().len(), 2);
     // Plate 3: the hole moved by the same 50 mm, so it sits like the hole of plate 1. One group
     // with plate 1, and plate 2 stays alone.
@@ -554,7 +554,7 @@ fn holes_are_compared_relative_to_the_contour_not_to_the_element_frame() {
             &hole_at("150"),
         ],
     );
-    let preview = f.ok("numbering-preview", &[]);
+    let preview = f.ok("preview-numbering", &[]);
     let groups = at(&preview, &["groups"]).array().unwrap();
     let mut sizes: Vec<f64> = groups.iter().map(|g| num(g, &["count"])).collect();
     sizes.sort_by(f64::total_cmp);

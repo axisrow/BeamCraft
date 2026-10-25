@@ -5,15 +5,15 @@ Branch `feat/v06-1-properties-ui`, based on `origin/master` `e2d5df2`.
 
 Goal: the window shows the selected plate or straight member's properties, edits the ones the
 engine supports through the same command the CLI runs (`update-element`), says whether what it
-shows is current, stale or unknown, and publishes a personal workspace through `workspace-publish`.
+shows is current, stale or unknown, and publishes a personal workspace through `publish-workspace`.
 The UI stays a thin client: no engineering value is computed here.
 
 ## What is implemented
 
 | Area | What exists |
 |---|---|
-| `beamcraft_ui::props` (pure) | `Details` and `parse_details` (one element of the `plate-inspect` reply, with the revision it was read from); `State` (`Current`, `Stale`, `Unknown`); `Properties` (the reading, the form and the preview, commit and cancel state machine); `PropertyEdit` (the one `update-element` argument list). No window, GPU or process |
-| `beamcraft_ui::publish` (pure) | `publish_args` / `parse_published` (`workspace-publish`), `status_args` / `parse_status` (`workspace-status`), `Publisher` (request, confirm, run, result; a refusal is only recorded) |
+| `beamcraft_ui::props` (pure) | `Details` and `parse_details` (one element of the `inspect-elements` reply, with the revision it was read from); `State` (`Current`, `Stale`, `Unknown`); `Properties` (the reading, the form and the preview, commit and cancel state machine); `PropertyEdit` (the one `update-element` argument list). No window, GPU or process |
+| `beamcraft_ui::publish` (pure) | `publish_args` / `parse_published` (`publish-workspace`), `status_args` / `parse_status` (`inspect-workspace`), `Publisher` (request, confirm, run, result; a refusal is only recorded) |
 | `beamcraft_ui::command` | `element_details`, `commit_property`, `publish`, `workspace_status`; `Selected` now carries the details read with the pick |
 | `beamcraft_ui::tools` | `Definitions::head`: the head revision named by the `definitions` reply that every reload already runs, which is how the window learns the head's sequence and digest |
 | `beamcraft_ui::app` | A Properties panel (read-only rows, editable fields, Preview, Commit, Cancel, Re-read) and a Publish panel with a confirm dialog |
@@ -22,12 +22,12 @@ The UI stays a thin client: no engineering value is computed here.
 Commands used, exactly as a user types them:
 
 ```text
-beamcraft plate-inspect     --store ROOT                                   (the properties of the selection)
+beamcraft inspect-elements     --store ROOT                                   (the properties of the selection)
 beamcraft definitions       --store ROOT                                   (materials; the head revision)
 beamcraft update-element    --store ROOT --id UUID [--name N] [--material-digest D|none]
                             [--thickness MM] [--translation X,Y,Z]         (only the changed fields)
-beamcraft workspace-status  --store PUBLISHED --workspace-dir DIR
-beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR
+beamcraft inspect-workspace  --store PUBLISHED --workspace-dir DIR
+beamcraft publish-workspace --store PUBLISHED --workspace-dir DIR
 ```
 
 ## Editable properties
@@ -67,11 +67,11 @@ axis points, the level, volume, mass and density.
    model crate's own constants, not copies. Everything else (an unknown material, a patch the
    engine refuses) is the engine's refusal, shown with its code and message, and publishes
    nothing.
-6. **Publish is `workspace-publish`.** The dialog names the command and states that the engine
+6. **Publish is `publish-workspace`.** The dialog names the command and states that the engine
    refuses a moved published head or an unchanged draft and that there is no merge. Only Publish
    in the dialog runs anything; Esc or Cancel closes it. The result or the refusal
    (`BASE_REVISION_MISMATCH`, `INVALID_ARGUMENT`, ...) is displayed and nothing else happens: no
-   conflict resolution (C03 to C06 are deferred). The panel also shows `workspace-status` as the
+   conflict resolution (C03 to C06 are deferred). The panel also shows `inspect-workspace` as the
    engine reports it.
 7. **One writer at a time.** Create, edit, property, undo and redo and Publish never run
    concurrently; each refuses while another command is in flight.
@@ -90,7 +90,7 @@ axis points, the level, volume, mass and density.
   shown as `unlisted definition`.
 * A stale reading is detected when the window next reloads (an edit made by this window, `R`, or
   Re-read); it does not poll the store.
-* The properties are read from `plate-inspect` of the whole revision, whose reply is bounded by
+* The properties are read from `inspect-elements` of the whole revision, whose reply is bounded by
   the control-message limits; for a very large model the reading is unknown (decision 2).
 * The click path (mouse, panel buttons, the dialog) was not exercised by an automated GUI test;
   the logic under it is the tested `props`, `publish` and `command` modules and the panel only

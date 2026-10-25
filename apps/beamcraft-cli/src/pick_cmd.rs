@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Headless queries: `pick`, `feature-list`, `feature-lookup` and `snap` against the verified head's pinned
+//! Headless queries: `pick`, `list-feature`, `lookup-feature` and `snap` against the verified head's pinned
 //! view snapshot. They call the engine queries (`beamcraft_engine::query::{pick, feature}`) and
 //! add no computation: the CLI parses the options, the engine decides and measures.
 //!
@@ -65,8 +65,8 @@ fn invalid(message: &'static str) -> Failure {
 /// Whether `command` is one of the V04 queries.
 pub fn handles(command: &OsString) -> bool {
     command == "pick"
-        || command == "feature-lookup"
-        || command == "feature-list"
+        || command == "lookup-feature"
+        || command == "list-feature"
         || command == "snap"
 }
 
@@ -115,8 +115,8 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--radius",
             "--max-hits",
         ],
-        "feature-lookup" => &["--store", "--feature-id"],
-        "feature-list" => &["--store", "--id"],
+        "lookup-feature" => &["--store", "--feature-id"],
+        "list-feature" => &["--store", "--id"],
         "snap" => &["--store", "--point", "--radius", "--kinds", "--max-hits"],
         _ => return Err(invalid("unknown command")),
     };
@@ -201,12 +201,12 @@ fn run(args: &[OsString]) -> Run<Json> {
                 _ => return Err(invalid("give either --origin and --direction, or --point")),
             }
         }
-        "feature-lookup" => Request::Lookup(
+        "lookup-feature" => Request::Lookup(
             given("--feature-id")
                 .ok_or_else(|| invalid("--feature-id is required"))?
                 .to_owned(),
         ),
-        "feature-list" => Request::List(
+        "list-feature" => Request::List(
             beamcraft_model::id::ElementId::parse(
                 given("--id").ok_or_else(|| invalid("--id is required"))?,
             )

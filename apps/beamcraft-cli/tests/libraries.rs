@@ -139,7 +139,7 @@ fn library_text(entries: &[(&str, &str, &str)]) -> String {
 #[test]
 fn a_library_is_listed_and_an_entry_becomes_a_self_contained_definition() {
     let f = Fixture::new();
-    let listed = f.raw(&["library-list", "--library", SHIPPED]);
+    let listed = f.raw(&["list-library", "--library", SHIPPED]);
     assert_eq!(listed.0, 0, "{:?}", listed.1);
     let listed = listed.1;
     assert_eq!(text(&listed, "outcome"), "library");
@@ -147,12 +147,12 @@ fn a_library_is_listed_and_an_entry_becomes_a_self_contained_definition() {
     assert_eq!(text(at(&listed, &["library"]), "licence"), "MPL-2.0");
     assert_eq!(num(&listed, &["entry_count"]), 9.0);
     assert!(at(&listed, &["rejected"]).array().unwrap().is_empty());
-    let channels = f.raw(&["library-list", "--library", SHIPPED, "--family", "channel"]);
+    let channels = f.raw(&["list-library", "--library", SHIPPED, "--family", "channel"]);
     assert_eq!(num(&channels.1, &["entry_count"]), 1.0);
-    let found = f.raw(&["library-list", "--library", SHIPPED, "--filter", "i-300"]);
+    let found = f.raw(&["list-library", "--library", SHIPPED, "--filter", "i-300"]);
     assert_eq!(num(&found.1, &["entry_count"]), 1.0);
     let shown = f.raw(&[
-        "library-show",
+        "show-library",
         "--library",
         SHIPPED,
         "--designation",
@@ -169,7 +169,7 @@ fn a_library_is_listed_and_an_entry_becomes_a_self_contained_definition() {
     );
     assert_eq!(text(&created, "outcome"), "definition_created");
     let digest = digest_of(&created);
-    assert_eq!(digest, predicted, "library-show predicts the pinned digest");
+    assert_eq!(digest, predicted, "show-library predicts the pinned digest");
     let definition = at(&created, &["definition"]);
     assert_eq!(text(definition, "kind"), "i_shape");
     assert_eq!(text(definition, "display_name"), "SYN-I-300x150");
@@ -209,7 +209,7 @@ fn a_library_is_listed_and_an_entry_becomes_a_self_contained_definition() {
     );
     assert_eq!(text(at(&member, &["member"]), "profile_digest"), digest);
     assert_eq!(num(&member, &["member", "section_mm", "width"]), 150.0);
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let listed_member = at(&inspected, &["members"]).array().unwrap()[0].clone();
     assert_eq!(text(&listed_member, "profile_name"), "SYN-I-300x150");
     let definitions = f.ok("definitions", &[]);
@@ -219,7 +219,7 @@ fn a_library_is_listed_and_an_entry_becomes_a_self_contained_definition() {
 #[test]
 fn every_family_of_the_shipped_library_builds_a_member() {
     let f = Fixture::new();
-    let listed = f.raw(&["library-list", "--library", SHIPPED]).1;
+    let listed = f.raw(&["list-library", "--library", SHIPPED]).1;
     for entry in at(&listed, &["entries"]).array().unwrap() {
         let designation = text(entry, "designation");
         let created = f.ok(
@@ -259,7 +259,7 @@ fn an_unknown_designation_is_not_found_and_never_substituted() {
         );
         assert_eq!(text(&body, "code"), "NOT_FOUND", "{wrong:?}");
         let shown = f.library_rejected(
-            "library-show",
+            "show-library",
             &["--library", SHIPPED, "--designation", wrong],
         );
         assert_eq!(shown, "NOT_FOUND", "{wrong:?}");
@@ -290,7 +290,7 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
         library_text(&[("A", "T-1", I_BODY), ("B", "T-1", I_BODY)]).as_bytes(),
     );
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &duplicate]),
+        f.library_rejected("list-library", &["--library", &duplicate]),
         "INVALID_ARGUMENT"
     );
     let body = f.rejected(
@@ -301,12 +301,12 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
 
     let huge = f.file("huge.usda", &vec![b'a'; 8 * 1024 * 1024 + 1]);
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &huge]),
+        f.library_rejected("list-library", &["--library", &huge]),
         "LIMIT_EXCEEDED"
     );
     let garbage = f.file("garbage.usda", b"this is not a usd layer \x00\xff\xfe");
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &garbage]),
+        f.library_rejected("list-library", &["--library", &garbage]),
         "INVALID_ARGUMENT"
     );
     // A binary layer the static read profile cannot decode is an unsupported encoding.
@@ -315,7 +315,7 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
         b"PXR-USDC\x00\x01\x02\x03 truncated crate file",
     );
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &binary]),
+        f.library_rejected("list-library", &["--library", &binary]),
         "UNSUPPORTED_PROPERTY"
     );
     // A sublayer would name another file: it is refused whatever the spelling, never opened.
@@ -326,7 +326,7 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
                 .replace(")\n", &format!("    subLayers = [@{target}@]\n)\n"))
                 .as_bytes(),
         );
-        let code = f.library_rejected("library-list", &["--library", &layered]);
+        let code = f.library_rejected("list-library", &["--library", &layered]);
         assert!(
             code == "INVALID_ARGUMENT" || code == "PERMISSION_DENIED",
             "{target}: {code}"
@@ -334,7 +334,7 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
     }
     let metres = f.file("metres.usda", HEADER.replace("0.001", "1").as_bytes());
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &metres]),
+        f.library_rejected("list-library", &["--library", &metres]),
         "INVALID_ARGUMENT"
     );
     let anonymous = f.file(
@@ -342,17 +342,17 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
         b"#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n",
     );
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &anonymous]),
+        f.library_rejected("list-library", &["--library", &anonymous]),
         "INVALID_ARGUMENT"
     );
     let directory = f.root.to_str().unwrap().to_owned();
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &directory]),
+        f.library_rejected("list-library", &["--library", &directory]),
         "INVALID_ARGUMENT"
     );
     let missing = f.root.join("missing.usda").to_str().unwrap().to_owned();
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &missing]),
+        f.library_rejected("list-library", &["--library", &missing]),
         "NOT_FOUND"
     );
     for url in [
@@ -360,7 +360,7 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
         "\\\\server\\share\\lib.usda",
     ] {
         assert_eq!(
-            f.library_rejected("library-list", &["--library", url]),
+            f.library_rejected("list-library", &["--library", url]),
             "PERMISSION_DENIED",
             "{url}"
         );
@@ -388,7 +388,7 @@ fn a_bad_entry_is_reported_and_the_other_entries_still_load() {
         ])
         .as_bytes(),
     );
-    let listed = f.raw(&["library-list", "--library", &library]);
+    let listed = f.raw(&["list-library", "--library", &library]);
     assert_eq!(listed.0, 0, "{:?}", listed.1);
     assert_eq!(num(&listed.1, &["entry_count"]), 2.0);
     let rejected = at(&listed.1, &["rejected"]).array().unwrap();
@@ -575,7 +575,7 @@ fn a_large_library_is_listed_in_bounded_pages_that_add_up_to_the_whole() {
         pages = 0;
         loop {
             let (code, body) = f.raw(&[
-                "library-list",
+                "list-library",
                 "--library",
                 &path,
                 "--offset",
@@ -610,13 +610,13 @@ fn a_large_library_is_listed_in_bounded_pages_that_add_up_to_the_whole() {
     }
     assert!(pages >= 16 && offset > 0);
     // The default page is bounded too, and the limits are checked.
-    let (code, body) = f.raw(&["library-list", "--library", &path]);
+    let (code, body) = f.raw(&["list-library", "--library", &path]);
     assert_eq!(code, 0);
     assert_eq!(num(&body, &["page_size"]), 64.0);
     assert_eq!(num(&body, &["next_offset"]), 64.0);
     for limit in ["0", "257", "x"] {
         assert_eq!(
-            f.library_rejected("library-list", &["--library", &path, "--limit", limit]),
+            f.library_rejected("list-library", &["--library", &path, "--limit", limit]),
             "INVALID_ARGUMENT"
         );
     }
@@ -807,12 +807,12 @@ fn the_entry_count_of_a_library_is_bounded() {
         library_text(&entries)
     };
     let full = f.file("full.usda", many(4096).as_bytes());
-    let (code, body) = f.raw(&["library-list", "--library", &full, "--filter", "T-4095"]);
+    let (code, body) = f.raw(&["list-library", "--library", &full, "--filter", "T-4095"]);
     assert_eq!(code, 0, "{body:?}");
     assert_eq!(num(&body, &["entry_count"]), 1.0);
     let over = f.file("over.usda", many(4097).as_bytes());
     assert_eq!(
-        f.library_rejected("library-list", &["--library", &over]),
+        f.library_rejected("list-library", &["--library", &over]),
         "LIMIT_EXCEEDED"
     );
 }
@@ -924,7 +924,7 @@ fn members_and_plates_select_definitions_by_name_and_refuse_an_ambiguous_name() 
     assert_eq!(text(at(&plate, &["plate"]), "material_digest"), steel);
     // 0.005 m3 * 7850 kg/m3.
     assert_eq!(num(&plate, &["plate", "quantities", "mass", "kg"]), 39.25);
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let listed_plate = at(&inspected, &["plates"]).array().unwrap()[0].clone();
     assert_eq!(text(&listed_plate, "material_name"), "S355 7850 kg/m3");
 

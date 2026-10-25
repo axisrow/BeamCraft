@@ -85,10 +85,10 @@ fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
 #[test]
 fn the_profile_keeps_its_author_identity() {
     let f = Fixture::new();
-    let empty = f.ok(&["settings-show"]);
+    let empty = f.ok(&["show-settings"]);
     assert_eq!(at(&empty, &["settings", "profile"]), &Json::Null);
     let saved = f.ok(&[
-        "settings-set",
+        "set-settings",
         "--name",
         "Юрий",
         "--email",
@@ -99,19 +99,19 @@ fn the_profile_keeps_its_author_identity() {
         "true",
     ]);
     let actor = text(at(&saved, &["settings", "profile"]), "actor_id");
-    let changed = f.ok(&["settings-set", "--name", "Yuri", "--email", "y@example.com"]);
+    let changed = f.ok(&["set-settings", "--name", "Yuri", "--email", "y@example.com"]);
     let profile = at(&changed, &["settings", "profile"]);
     assert_eq!(text(profile, "actor_id"), actor);
     assert_eq!(text(profile, "email"), "y@example.com");
     assert_eq!(text(at(&changed, &["settings"]), "environment"), "blank");
     assert_eq!(
-        f.code(&["settings-set", "--name", "A", "--email", "not-an-address"]),
+        f.code(&["set-settings", "--name", "A", "--email", "not-an-address"]),
         "INVALID_ARGUMENT"
     );
-    assert_eq!(f.code(&["settings-set", "--name", "A"]), "INVALID_ARGUMENT");
+    assert_eq!(f.code(&["set-settings", "--name", "A"]), "INVALID_ARGUMENT");
     // A damaged settings file is refused, never replaced silently.
     fs::write(f.root.join("config/settings.json"), b"{").unwrap();
-    assert_eq!(f.code(&["settings-show"]), "INTEGRITY_ERROR");
+    assert_eq!(f.code(&["show-settings"]), "INTEGRITY_ERROR");
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn the_blank_environment_is_built_in_and_a_user_one_is_listed_after_it() {
     fs::write(user.join("mine/environment.usda"), env("mine")).unwrap();
     fs::write(user.join("again/environment.usda"), env("blank")).unwrap();
     fs::write(user.join("broken/environment.usda"), "#usda 1.0\n").unwrap();
-    let listed = f.ok(&["environment-list"]);
+    let listed = f.ok(&["list-environment"]);
     let entries = at(&listed, &["environments"]).array().unwrap();
     let first = &entries[0];
     assert_eq!(
@@ -154,21 +154,21 @@ fn the_blank_environment_is_built_in_and_a_user_one_is_listed_after_it() {
     );
     // The built-in environment is an ordinary A07.3 environment.
     let blank = text(first, "path");
-    let library = f.raw(&["library-list", "--environment", &blank]);
+    let library = f.raw(&["list-library", "--environment", &blank]);
     assert_eq!(library.0, 0, "{:?}", library.1);
 }
 
 #[test]
 fn a_created_project_opens_lists_and_is_remembered() {
     let f = Fixture::new();
-    f.ok(&["settings-set", "--name", "Ana", "--email", "ana@example.cl"]);
+    f.ok(&["set-settings", "--name", "Ana", "--email", "ana@example.cl"]);
     let author = text(
-        at(&f.ok(&["settings-show"]), &["settings", "profile"]),
+        at(&f.ok(&["show-settings"]), &["settings", "profile"]),
         "actor_id",
     );
     let models = f.path("models");
     let created = f.ok(&[
-        "project-create",
+        "create-project",
         "--parent",
         &models,
         "--name",
@@ -185,7 +185,7 @@ fn a_created_project_opens_lists_and_is_remembered() {
     assert!(store.ends_with("Каркас A-F 1-14"));
 
     // The model commands open the new, empty project and record its id.
-    let inspected = f.raw(&["plate-inspect", "--store", &store]);
+    let inspected = f.raw(&["inspect-elements", "--store", &store]);
     assert_eq!(inspected.0, 0, "{:?}", inspected.1);
     assert_eq!(text(&inspected.1, "project_id_record"), PROJECT);
     let plate = f.raw(&[
@@ -206,7 +206,7 @@ fn a_created_project_opens_lists_and_is_remembered() {
     // A second project of the same name, a reserved name and a missing parent are refused, and
     // a refused creation leaves no folder behind.
     let args = |name: &'static str, parent: &str| {
-        f.code(&["project-create", "--parent", parent, "--name", name])
+        f.code(&["create-project", "--parent", parent, "--name", name])
     };
     assert_eq!(args("Каркас A-F 1-14", &models), "DUPLICATE_ID");
     assert_eq!(args("CON", &models), "INVALID_ARGUMENT");
@@ -214,7 +214,7 @@ fn a_created_project_opens_lists_and_is_remembered() {
     assert_eq!(args("x", &f.path("nowhere")), "NOT_FOUND");
     fs::create_dir(f.root.join("models/plain folder")).unwrap();
 
-    let listed = f.raw(&["project-list", "--dir", &models]).1;
+    let listed = f.raw(&["list-project", "--dir", &models]).1;
     let projects = at(&listed, &["projects"]).array().unwrap();
     assert_eq!(
         projects.len(),
@@ -225,16 +225,16 @@ fn a_created_project_opens_lists_and_is_remembered() {
     let created_ms = at(&projects[0], &["created_ms"]).unsigned().unwrap();
     assert!(modified >= created_ms);
 
-    let recent = f.ok(&["recent-list"]);
+    let recent = f.ok(&["list-recent"]);
     let recent = at(&recent, &["recent"]).array().unwrap();
     assert_eq!(recent.len(), 1);
     assert_eq!(text(at(&recent[0], &["project"]), "path"), store);
     assert_eq!(
-        f.code(&["recent-add", "--store", &f.path("models/plain folder")]),
+        f.code(&["add-recent", "--store", &f.path("models/plain folder")]),
         "NOT_FOUND"
     );
     assert_eq!(
-        text(&f.ok(&["recent-add", "--store", &store]), "outcome"),
+        text(&f.ok(&["add-recent", "--store", &store]), "outcome"),
         "recent_added"
     );
 }

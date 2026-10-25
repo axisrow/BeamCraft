@@ -12,7 +12,7 @@
 //! overlap of series and an empty model; this adapter only reads the facts, authors the marks,
 //! checks the layer engine's write set against the declared footprint and commits through the
 //! same verified path as every other command. The revision is an undo unit like any other
-//! (`workspace-undo` restores the earlier marks with the rest of the state).
+//! (`undo-workspace` restores the earlier marks with the rest of the state).
 //!
 //! Approving what is already approved writes nothing: when every mark and every approval record
 //! stored in the head equals what the approval would write, the result is `unchanged` and no

@@ -57,7 +57,7 @@ beamcraft welds --store ROOT
   `0.1.0`, `parametric` elements, as the structural validator does; a newer-schema or foreign
   `connection` stays inert and is never decoded as a weld.
 - **Stored bytes are verified, not interpreted.** `welds` and `create-weld` run the structural
-  validator first, so a damaged `connects` record committed through `revision-commit` is refused
+  validator first, so a damaged `connects` record committed through `commit-revision` is refused
   rather than reported or replayed.
 - `copy-element` used to answer `NOT_FOUND` for any source that is not a plate or member; for a
   weld it now answers `DEPENDENCY_CONFLICT` as the vocabulary requires.
@@ -98,7 +98,7 @@ used.
 ## Not done
 
 - No command renames, edits, moves or deletes a weld other than `delete-element`; no weld in an
-  assembly (`part-of` from a connection is in the vocabulary but not in `assembly-attach` yet).
+  assembly (`part-of` from a connection is in the vocabulary but not in `attach-to-assembly` yet).
 - No weld geometry, length or quantity; nothing is exported to IFC or a BOM (E02/E03).
 - `bim:discipline` is still not authored (no first-slice element writes it).
 - Domain vocabulary 0.1.0 lists `connection` as reserved (`DV-KIND-004`); implementing it needs

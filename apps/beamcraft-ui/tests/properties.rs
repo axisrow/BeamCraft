@@ -6,7 +6,7 @@
 //! reply parsing, run against the real `beamcraft` binary, saves exactly what the same
 //! `update-element` typed by hand saves; a stale reading is detected against the head the
 //! window reads and is never edited; an engine refusal reaches the panel with the CLI's code and
-//! publishes nothing; Publish is the CLI's `workspace-publish`, and its refusals are shown.
+//! publishes nothing; Publish is the CLI's `publish-workspace`, and its refusals are shown.
 //! Without the CLI binary next to this package's binary the tests are skipped and say so
 //! (`cargo test --workspace` builds it).
 
@@ -202,9 +202,9 @@ fn fixture(cli: &Path, store: &Path) -> Fixture {
     Fixture { steel, heavy }
 }
 
-/// One element as `plate-inspect` reports it: every property, quantity and digest of it.
+/// One element as `inspect-elements` reports it: every property, quantity and digest of it.
 fn element(cli: &Path, store: &Path, id: &str) -> String {
-    let reply = ok(cli, &["plate-inspect", "--store", s(store)]);
+    let reply = ok(cli, &["inspect-elements", "--store", s(store)]);
     for key in ["plates", "members"] {
         for e in at(&reply, &[key]).array().unwrap() {
             if text(e, &["element_id"]) == id {
@@ -217,7 +217,7 @@ fn element(cli: &Path, store: &Path, id: &str) -> String {
 
 fn head(cli: &Path, store: &Path) -> String {
     text(
-        &ok(cli, &["revision-open", "--store", s(store)]),
+        &ok(cli, &["open-revision", "--store", s(store)]),
         &["revision_id"],
     )
 }
@@ -259,8 +259,8 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
     fixture(&cli, &store);
     // A pick through the plate's centre from above hits it; a ray into the sky does not. The
     // window's own path is `select`: the engine's pick on the snapshot it shows, then one
-    // `plate-inspect --element` for the editor's light report and the panel's full properties.
-    let reply = ok(&cli, &["plate-inspect", "--store", s(&store)]);
+    // `inspect-elements --element` for the editor's light report and the panel's full properties.
+    let reply = ok(&cli, &["inspect-elements", "--store", s(&store)]);
     let element = &at(&reply, &["snapshot", "elements"]).array().unwrap()[0];
     let corner = |json: &Json| -> [f64; 3] {
         let axis = json.array().unwrap();
@@ -510,7 +510,7 @@ fn publish_is_workspace_publish_and_its_refusals_are_shown() {
     ok(
         &cli,
         &[
-            "workspace-create",
+            "create-workspace",
             "--store",
             s(&published),
             "--workspace-dir",
@@ -557,7 +557,7 @@ fn publish_is_workspace_publish_and_its_refusals_are_shown() {
         element(&cli, &workspace, PLATE),
         "the published element is the workspace's"
     );
-    let published_head = ok(&cli, &["revision-open", "--store", s(&published)]);
+    let published_head = ok(&cli, &["open-revision", "--store", s(&published)]);
     assert_eq!(
         text(&published_head, &["revision_id"]),
         done.revision.revision_id

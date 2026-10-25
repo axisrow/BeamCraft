@@ -14,7 +14,7 @@ beamcraft update-element --store ROOT --id UUID --op-id UUID
   [--name TEXT] [--material-digest HEX|none] [--thickness MM]
   model::UpdateElement { target_id, ElementPatch } --> engine::update decides which groups change
   (authored attributes, derived mesh, stored quantities) --> footprint check --> U06/U07 commit
-beamcraft plate-inspect --store ROOT   (plates and members now carry stored_quantities)
+beamcraft inspect-elements --store ROOT   (plates and members now carry stored_quantities)
 ```
 
 | Area | What exists |
@@ -24,7 +24,7 @@ beamcraft plate-inspect --store ROOT   (plates and members now carry stored_quan
 | `beamcraft_engine::update` | `effect`, `patch_plate`, `patch_member`; thickness on a member is UNSUPPORTED_PROPERTY. |
 | `beamcraft_layer_engine::authored` | Optional mesh attributes `bim:volumeMm3`, `bim:volumeStatus`, `bim:massKg`, `bim:massStatus`, `bim:shapeSignature`, `bim:massSignature`, `bim:quantityAlgorithm`; mesh writes replace the whole prim, so no stale attribute survives. |
 | `beamcraft_cli::edit` | `update_element`: only changed groups are written; replay by `op_id`; a no-op patch is INVALID_ARGUMENT. |
-| `beamcraft_cli::plate` | The publish-time verifier is strict: a stored record that disagrees with the re-evaluated one fails with INTEGRITY_ERROR. `plate-inspect` is not strict and reports freshness. |
+| `beamcraft_cli::plate` | The publish-time verifier is strict: a stored record that disagrees with the re-evaluated one fails with INTEGRITY_ERROR. `inspect-elements` is not strict and reports freshness. |
 
 ## Decisions
 

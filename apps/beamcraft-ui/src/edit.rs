@@ -4,7 +4,7 @@
 //! V05.2 edit tools, as pure logic: selecting by a mouse click, moving, copying and deleting the
 //! selected element, and undo and redo. Every action is the argument list of the same CLI command
 //! a user types (`pick`, `update-element --translation`, `copy-element --offset`,
-//! `delete-element`, `workspace-undo`, `workspace-redo`); the reply is read back into a result or
+//! `delete-element`, `undo-workspace`, `redo-workspace`); the reply is read back into a result or
 //! the CLI's own refusal. Nothing here touches a window, a GPU or a process.
 //!
 //! The UI computes no engineering result. The one piece of arithmetic is the display ray through a
@@ -175,7 +175,7 @@ pub fn ground_point(ray: &Ray) -> Option<[f64; 3]> {
     .then_some(point)
 }
 
-/// What the panel shows about the selected element, as `plate-inspect` reports it.
+/// What the panel shows about the selected element, as `inspect-elements` reports it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElementInfo {
     /// The element's id.
@@ -189,11 +189,11 @@ pub struct ElementInfo {
 }
 
 /// The arguments of the CLI command that reports one element of the accepted revision with its
-/// placement and properties (`plate-inspect --element ID`: a reply of one element, whatever the
+/// placement and properties (`inspect-elements --element ID`: a reply of one element, whatever the
 /// size of the model).
 pub fn inspect_element_args(store: &Path, id: &str) -> Vec<String> {
     vec![
-        "plate-inspect".into(),
+        "inspect-elements".into(),
         "--store".into(),
         store.to_string_lossy().into_owned(),
         "--element".into(),
@@ -201,7 +201,7 @@ pub fn inspect_element_args(store: &Path, id: &str) -> Vec<String> {
     ]
 }
 
-/// Reads the reply of `plate-inspect` for one element. An id the revision does not hold is
+/// Reads the reply of `inspect-elements` for one element. An id the revision does not hold is
 /// `NOT_FOUND`.
 pub fn parse_element_info(
     id: &str,
@@ -256,9 +256,9 @@ pub enum EditKind {
     Copy,
     /// `delete-element`.
     Delete,
-    /// `workspace-undo`.
+    /// `undo-workspace`.
     Undo,
-    /// `workspace-redo`.
+    /// `redo-workspace`.
     Redo,
 }
 
@@ -269,8 +269,8 @@ impl EditKind {
             Self::Move => "update-element",
             Self::Copy => "copy-element",
             Self::Delete => "delete-element",
-            Self::Undo => "workspace-undo",
-            Self::Redo => "workspace-redo",
+            Self::Undo => "undo-workspace",
+            Self::Redo => "redo-workspace",
         }
     }
 
@@ -485,7 +485,7 @@ impl Editor {
             EditKind::Undo | EditKind::Redo => {
                 let workspace = target.workspace.ok_or_else(|| FormError {
                     field: "Workspace",
-                    message: "undo and redo need a personal workspace: open the window with --workspace DIR (beamcraft workspace-create makes one)".into(),
+                    message: "undo and redo need a personal workspace: open the window with --workspace DIR (beamcraft create-workspace makes one)".into(),
                 })?;
                 vec![
                     kind.command().to_owned(),
@@ -860,11 +860,11 @@ mod tests {
         );
         assert_eq!(
             editor.prepare(EditKind::Undo, workspace()).unwrap().args,
-            ["workspace-undo", "--workspace-dir", "W"]
+            ["undo-workspace", "--workspace-dir", "W"]
         );
         assert_eq!(
             editor.prepare(EditKind::Redo, workspace()).unwrap().args,
-            ["workspace-redo", "--workspace-dir", "W"]
+            ["redo-workspace", "--workspace-dir", "W"]
         );
     }
 

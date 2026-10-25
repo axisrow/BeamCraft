@@ -73,7 +73,7 @@ elements are not exported; every other kind is an `IfcBuildingElementProxy`.
 8. **`--strict` and `--overwrite` take an optional `true` or `false`**; a bare flag means true.
    `--project-id` does not exist and is `INVALID_ARGUMENT` (`IFCX-REQ-002`).
 9. **`ifc-guid` is implemented** (section 15.4); the proposed `ifc_global_id` field of
-   `plate-inspect` is not.
+   `inspect-elements` is not.
 10. **Unreachable branches are unit-tested, not end to end.** The structural validator refuses a
     transform that is not the translate-and-orient pose, and the revision reader refuses a
     plate, beam or column the kernel cannot evaluate, so `IFC_PLACEMENT_ABSENT` and
@@ -126,7 +126,7 @@ full text in `Label`; the report equals the `--report` file and is bounded by no
   of contract section 19.3 (c).
 * Cross-platform byte identity was not run (Linux only). Members with a roll depend on `sin` and
   `cos` (`IFCX-DET-007`); `export-ifc` has not been exercised with a nonzero roll.
-* No `ifc_global_id` field in `plate-inspect`; no export by selection (contract 17.3); no
+* No `ifc_global_id` field in `inspect-elements`; no export by selection (contract 17.3); no
   `IfcElementAssembly`, weld, bolt or hole entities.
 * The cases of the contract's case file are not mapped one by one; the ones above are covered by
   the tests, and the rest (limits at their real sizes, a 300-proxy store, cancellation) are not.

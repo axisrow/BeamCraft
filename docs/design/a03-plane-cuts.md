@@ -25,7 +25,7 @@ beamcraft create-member ... --cut-point X,Y,Z --cut-normal X,Y,Z
 | `beamcraft_model::command` | `PlaneCut { point_mm, normal }`: element-local millimetres, finite, coordinate cap, non-zero normal; `CreatePlate.cut` and `CreateStraightMember.cut`, part of the content fingerprint (fingerprint versions v4/v2, so other cuts under one `op_id` are `OP_ID_REUSE`). |
 | `beamcraft_engine` | `apply_cut` (one kernel plane cut, kept half-space opposite the normal, cap face `cut:f.p0`), applied last — after any holes; volume algorithm `kernel-a03-plane-cut-volume/1;tolerance-policy-3`; the cut enters both P04 shape signatures. |
 | `beamcraft_layer_engine::authored` | `Shape::{Plate,Member}.cut`, schema descriptor amended (new schema digest; the previous A07.2 and D1/D2 pins stay accepted, stores written before this change are not readable by the new schema); two optional element attributes, a flat `double3` point and `double3` normal, both or neither; validation of both on write and on every load. |
-| `beamcraft_cli` | `--cut-point` and `--cut-normal` on `create-plate` and `create-member` (both or neither); the element decoder reads the attributes (inconsistent ones are `INTEGRITY_ERROR`); `plate-inspect` reports `cut` (`null` without one); `copy-element` copies the cut. |
+| `beamcraft_cli` | `--cut-point` and `--cut-normal` on `create-plate` and `create-member` (both or neither); the element decoder reads the attributes (inconsistent ones are `INTEGRITY_ERROR`); `inspect-elements` reports `cut` (`null` without one); `copy-element` copies the cut. |
 
 ## Decisions (owner review needed)
 

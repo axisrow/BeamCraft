@@ -6,7 +6,7 @@
 
 //! P03 end to end through the real `beamcraft` binary: `create-member` publishes a beam or a
 //! column that pins its profile (and optionally a material) from earlier definitions, and fresh
-//! processes reopen it with `plate-inspect`.
+//! processes reopen it with `inspect-elements`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -143,7 +143,7 @@ fn a_beam_pins_its_profile_and_material_and_reopens_in_a_fresh_process() {
     let writes = at(&created, &["footprint", "writes"]).array().unwrap();
     assert!(writes.iter().all(|e| text(e, "target_kind") == "element"));
 
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["plate_count"]), 0.0);
     assert_eq!(num(&inspected, &["member_count"]), 1.0);
     let reopened = &at(&inspected, &["members"]).array().unwrap()[0];
@@ -250,7 +250,7 @@ fn spatial_beams_reopen_with_their_axis_volume_and_world_bounds() {
         }
         let created = f.ok("create-member", &args);
         let member = at(&created, &["member"]);
-        let inspected = f.ok("plate-inspect", &[]);
+        let inspected = f.ok("inspect-elements", &[]);
         let reopened = &at(&inspected, &["members"]).array().unwrap()[0];
         assert_eq!(text(reopened, "kind"), "beam");
         assert_eq!(text(reopened, "element_id"), text(member, "element_id"));
@@ -319,7 +319,7 @@ fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
     let digest = text(member, "mesh_digest");
 
     // A fresh CLI process reads the committed USD and rebuilds the view placement.
-    let reopened = f.ok("plate-inspect", &[]);
+    let reopened = f.ok("inspect-elements", &[]);
     let member = &at(&reopened, &["members"]).array().unwrap()[0];
     assert_eq!(text(member, "mesh_digest"), digest);
     assert_eq!(num(member, &["quantities", "volume", "mm3"]), 240_000_000.0);
@@ -341,7 +341,7 @@ fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
 
     let member_id = text(member, "element_id");
     let feature_id = format!("fid1:{member_id}:member:v.x1.y0.z0");
-    let feature = f.ok("feature-lookup", &["--feature-id", &feature_id]);
+    let feature = f.ok("lookup-feature", &["--feature-id", &feature_id]);
     assert_eq!(text(&feature, "feature_kind"), "vertex");
     let vector = |space| {
         at(&feature, &[space, "position"])
@@ -424,7 +424,7 @@ fn a_column_a_roll_and_a_plate_live_in_one_revision() {
         "create-plate",
         &["--width", "1000", "--length", "500", "--thickness", "10"],
     );
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["plate_count"]), 1.0);
     assert_eq!(num(&inspected, &["member_count"]), 1.0);
     let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
@@ -542,7 +542,7 @@ fn rejections_use_the_f04_codes_and_publish_nothing() {
         ),
         "LIMIT_EXCEEDED"
     );
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["member_count"]), 0.0);
     // Two definitions only: nothing was created by any rejection.
     assert_eq!(
@@ -634,7 +634,7 @@ fn hostile_orientation_input_is_refused_and_publishes_nothing() {
         "INVALID_ARGUMENT"
     );
     assert_eq!(create("0,NaN,0,1"), "NON_FINITE_NUMBER");
-    assert_eq!(num(&f.ok("plate-inspect", &[]), &["member_count"]), 0.0);
+    assert_eq!(num(&f.ok("inspect-elements", &[]), &["member_count"]), 0.0);
 
     // The same input on update-element, against a member that exists: the head stays where it
     // was and the stored orientation is untouched.
@@ -652,7 +652,7 @@ fn hostile_orientation_input_is_refused_and_publishes_nothing() {
         ],
     );
     let member_id = text(at(&created, &["member"]), "element_id");
-    let before = f.ok("plate-inspect", &[]);
+    let before = f.ok("inspect-elements", &[]);
     let head = text(at(&before, &["revision"]), "revision_id");
     let update = |orientation: &str| {
         f.rejected(
@@ -672,7 +672,7 @@ fn hostile_orientation_input_is_refused_and_publishes_nothing() {
         "INVALID_ARGUMENT"
     );
     assert_eq!(update("NaN,0,0,1"), "NON_FINITE_NUMBER");
-    let after = f.ok("plate-inspect", &[]);
+    let after = f.ok("inspect-elements", &[]);
     assert_eq!(
         text(at(&after, &["revision"]), "revision_id"),
         head,
@@ -730,7 +730,7 @@ fn an_orientation_update_sets_clears_and_replays() {
     assert_eq!(text(&turned, "outcome"), "element_updated");
     assert_eq!(at(&turned, &["effect", "orientation"]), &Json::Bool(true));
     assert_eq!(at(&turned, &["effect", "placement"]), &Json::Bool(false));
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let member = &at(&inspected, &["members"]).array().unwrap()[0];
     let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
         .array()
@@ -819,7 +819,7 @@ fn a_rotated_member_replays_identically_on_the_same_op_id() {
         text(at(&first, &["member"]), "element_id")
     );
     // The rotated state is what a fresh process reports for the stored orientation.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let member = &at(&inspected, &["members"]).array().unwrap()[0];
     let quaternion: Vec<f64> = at(member, &["placement", "orientation_xyzw"])
         .array()
@@ -884,7 +884,7 @@ fn a_member_above_one_cubic_metre_is_within_the_stage_budget() {
         1_200_000_000.0
     );
     // A fresh process reopens the revision and keeps the quantity current.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let members = inspected.get("members").unwrap().array().unwrap();
     assert_eq!(members.len(), 1);
 }

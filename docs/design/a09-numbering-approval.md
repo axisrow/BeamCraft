@@ -12,12 +12,12 @@ from any commercial product.
 ## What is implemented
 
 ```text
-beamcraft numbering-approve --store ROOT --preview-token TOKEN
+beamcraft approve-numbering --store ROOT --preview-token TOKEN
         [--plate-series PREFIX:START] [--beam-series PREFIX:START] [--column-series PREFIX:START]
         [--assembly-series PREFIX:START] [--tolerance MM] [--compare-name true|false]
         [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-beamcraft numbering-status  --store ROOT [--offset N] [--limit 1..256]
-beamcraft numbering-preview ...   (A08; now also reports the stored approval and, per group, "stored")
+beamcraft inspect-numbering  --store ROOT [--offset N] [--limit 1..256]
+beamcraft preview-numbering ...   (A08; now also reports the stored approval and, per group, "stored")
 ```
 
 | Piece | Where | What |
@@ -29,7 +29,7 @@ beamcraft numbering-preview ...   (A08; now also reports the stored approval and
 
 ### Approval
 
-`numbering-approve` takes the settings and the `preview_token` of a `numbering-preview` run (the
+`approve-numbering` takes the settings and the `preview_token` of a `preview-numbering` run (the
 "pinned inputs"). It then, on the head it opens and verifies:
 
 1. decides replay of the `op_id` from the host ledger (below);
@@ -39,7 +39,7 @@ beamcraft numbering-preview ...   (A08; now also reports the stored approval and
    nothing written;
 4. writes the mark of every part and every assembly in **one** revision through the normal path
    (U02 authoring, footprint check, U06/U07 commit with the strict verifier). The revision is an
-   ordinary undo unit: `workspace-undo` restores the earlier marks byte for byte, `workspace-redo`
+   ordinary undo unit: `undo-workspace` restores the earlier marks byte for byte, `redo-workspace`
    brings them back (tested).
 
 Equivalent parts get the same mark because they are in one A08 group; non-equivalent parts get
@@ -70,8 +70,8 @@ Three optional properties on a plate, beam, column or assembly prim, in the auth
 
 All three or none; never on a weld (`connection`), a `level` or a `reference` wrapper. A partial or
 mistyped record, a number outside the range, a prefix outside the character set and an oversize
-record are refused when authored and when loaded (the structural validator, `plate-inspect`,
-`numbering-status`, `numbering-preview` and `numbering-approve` all refuse them; never read as
+record are refused when authored and when loaded (the structural validator, `inspect-elements`,
+`inspect-numbering`, `preview-numbering` and `approve-numbering` all refuse them; never read as
 "unnumbered"). The record is the **approval basis**: the settings (the four series, the tolerance
 as exact bits, whether names are compared) and the preview token, e.g.
 `BCA1 plate=PL:1 beam=B:1 column=C:1 assembly=A:1 tol=3f50624dd2f1a9fc name=0 token=<sha256>`; it is
@@ -97,7 +97,7 @@ do not both change the digest without ordering.
 
 ### Invalidation and the status query
 
-`numbering-status` (and the `approval` object of `numbering-preview`) answers `not_approved`,
+`inspect-numbering` (and the `approval` object of `preview-numbering`) answers `not_approved`,
 `current` or `stale`. `assess` recomputes the preview **with the settings stored in the basis** and
 compares its token with the stored one:
 
@@ -113,7 +113,7 @@ compares its token with the stored one:
   or a stored mark differs from the approved numbering (a record edited outside BeamCraft). A damaged
   *structure* is an error, not a stale report.
 
-`numbering-preview` adds, per group, `stored`: `none`, `same`, `different` or `mixed`, comparing
+`preview-numbering` adds, per group, `stored`: `none`, `same`, `different` or `mixed`, comparing
 the marks stored on its members with the proposed position. The proposal itself is still a
 function of the revision's facts and never of stored numbers (A08 decision 2 stands).
 
@@ -156,8 +156,8 @@ Tests (all through real code, the CLI tests through the binary):
   earlier pin is still accepted.
 * CLI end to end, 7 tests in `apps/beamcraft-cli/tests/numbering_approval.rs`: approval stores the
   marks (10 marks, 7 groups, authored layer only, derived layer and mesh digests unchanged, the
-  properties in the authored layer text, `plate-inspect` unchanged), read back through
-  `numbering-status` and `numbering-preview` and through the OpenUSD reference reader `pxr` when
+  properties in the authored layer text, `inspect-elements` unchanged), read back through
+  `inspect-numbering` and `preview-numbering` and through the OpenUSD reference reader `pxr` when
   installed locally (the test prints SKIP otherwise; CI has no `pxr`); stale token, overlap, empty
   model and a store without a revision refused with the layers unchanged; approving twice
   (`unchanged`), same `op_id` replay and reuse; move, rename and reads keep it `current` while
@@ -173,8 +173,8 @@ Tests (all through real code, the CLI tests through the binary):
 * Numbering of welds, bolts and standard parts; family and control numbers; design groups.
 * Deactivated elements are not skipped (as in A08; lifecycle is read by the E02 adapter).
 * No UI, no viewport selection sync, no multi-user coordinator (C05).
-* `plate-inspect` does not list the mark (its source is outside this task's paths); the marks are
-  read with `numbering-status`.
+* `inspect-elements` does not list the mark (its source is outside this task's paths); the marks are
+  read with `inspect-numbering`.
 * One approval writes at most about 1,360 marks: the declared footprint of F04 section 8 is bounded
   at 4096 entries and one numbered element costs three. A larger model is refused with
   `LIMIT_EXCEEDED` and nothing is written. Raising it needs a footprint constructor for a whole-model
@@ -184,8 +184,8 @@ Tests (all through real code, the CLI tests through the binary):
 
 ## Contract amendments proposed (not edited, F04 is frozen 0.1.0)
 
-* `docs/contracts/f08-module-boundaries-v0.1.md` row "Numbering preview": add the `numbering-approve`
-  and `numbering-status` commands, `beamcraft_engine::numbering_approval` and
+* `docs/contracts/f08-module-boundaries-v0.1.md` row "Numbering preview": add the `approve-numbering`
+  and `inspect-numbering` commands, `beamcraft_engine::numbering_approval` and
   `beamcraft_cli::numbering_approval`, and replace "no stored numbers" by "approved marks stored as
   `steel:numbering:*` properties (A09, experimental)".
 * `docs/contracts/f04-model-and-commands-v0.1.md` section 9 names approved-number invalidation as open:

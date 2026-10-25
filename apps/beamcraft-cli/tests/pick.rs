@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, members and a foreign USDA source, MPL-2.0.
 
-//! V04 end to end: `pick`, `feature-lookup` and `snap` through the real CLI binary against
+//! V04 end to end: `pick`, `lookup-feature` and `snap` through the real CLI binary against
 //! committed revisions. Every expected position is derived here from the command inputs and the
 //! F06 frame rules, never read back from the engine. FeatureIds survive a move and differ on a
 //! copy; no answer contains an index and an index is refused as an address; the queries write
@@ -84,7 +84,7 @@ impl Fixture {
         (text(&body, "code"), reason)
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     /// A 1000 x 500 x 10 plate at (100, 200, 300) and a 3000 mm beam along +X with a 100 x 50
     /// profile, its axis from (0, 2000, 0) to (3000, 2000, 0).
@@ -172,7 +172,7 @@ fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_an
     let f = Fixture::new();
     f.model();
     let head = f.head();
-    let listed = f.ok("feature-list", &["--id", MEMBER]);
+    let listed = f.ok("list-feature", &["--id", MEMBER]);
     assert_eq!(text(&listed, "outcome"), "features_listed");
     assert_eq!(text(&listed, "revision_id"), head);
     assert_eq!(text(&listed, "element_id"), MEMBER);
@@ -198,14 +198,14 @@ fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_an
     assert!(ids.contains(&near) && ids.contains(&far));
     assert_eq!(
         triple(at(
-            &f.ok("feature-lookup", &["--feature-id", &near]),
+            &f.ok("lookup-feature", &["--feature-id", &near]),
             &["world", "position"]
         )),
         [0.0, 1950.0, -25.0]
     );
     assert_eq!(
         triple(at(
-            &f.ok("feature-lookup", &["--feature-id", &far]),
+            &f.ok("lookup-feature", &["--feature-id", &far]),
             &["world", "position"]
         )),
         [3000.0, 1950.0, -25.0]
@@ -226,7 +226,7 @@ fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_an
         "update-element",
         &["--id", MEMBER, "--translation", "10,20,30"],
     );
-    let moved = f.ok("feature-list", &["--id", MEMBER]);
+    let moved = f.ok("list-feature", &["--id", MEMBER]);
     assert_eq!(list(&moved, "features"), features);
     assert_ne!(
         text(&moved, "model_manifest"),
@@ -238,7 +238,7 @@ fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_an
     );
     assert_eq!(
         triple(at(
-            &f.ok("feature-lookup", &["--feature-id", &near]),
+            &f.ok("lookup-feature", &["--feature-id", &near]),
             &["world", "position"]
         )),
         [10.0, -30.0, 5.0]
@@ -247,7 +247,7 @@ fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_an
         "copy-element",
         &["--id", MEMBER, "--new-id", COPY, "--offset", "0,0,100"],
     );
-    let copied = f.ok("feature-list", &["--id", COPY]);
+    let copied = f.ok("list-feature", &["--id", COPY]);
     let copied_ids: Vec<_> = list(&copied, "features")
         .iter()
         .map(|v| text(v, "feature_id"))
@@ -261,11 +261,11 @@ fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_an
     assert!(ids.iter().all(|id| !copied_ids.contains(id)));
     f.ok("delete-element", &["--id", MEMBER]);
     assert_eq!(
-        f.refused("feature-list", &["--id", MEMBER]),
+        f.refused("list-feature", &["--id", MEMBER]),
         ("NOT_FOUND".into(), Some("GEO_FEATURE_NOT_FOUND".into()))
     );
     assert_eq!(
-        list(&f.ok("feature-list", &["--id", COPY]), "features").len(),
+        list(&f.ok("list-feature", &["--id", COPY]), "features").len(),
         26
     );
 }
@@ -318,15 +318,15 @@ fn feature_listing_refuses_non_box_geometry_and_numeric_addresses() {
     let head = f.head();
     for id in [HOLED, IBEAM, "019a7bf0-0000-7000-8000-000000700099"] {
         assert_eq!(
-            f.refused("feature-list", &["--id", id]),
+            f.refused("list-feature", &["--id", id]),
             ("NOT_FOUND".into(), Some("GEO_FEATURE_NOT_FOUND".into()))
         );
     }
     for option in ["--triangle", "--vertex-index", "--instance"] {
-        let (_, reason) = f.refused("feature-list", &["--id", MEMBER, option, "0"]);
+        let (_, reason) = f.refused("list-feature", &["--id", MEMBER, option, "0"]);
         assert_eq!(reason.as_deref(), Some("GEO_TRIANGLE_ADDRESS_FORBIDDEN"));
     }
-    assert_eq!(f.refused("feature-list", &["--id", "0"]).0, "INVALID_ID");
+    assert_eq!(f.refused("list-feature", &["--id", "0"]).0, "INVALID_ID");
     assert_eq!(f.head(), head);
 }
 /// Every key anywhere in a JSON value.
@@ -395,7 +395,7 @@ fn faces_vertices_and_axes_are_found_at_independent_positions() {
 
     // The plate's far top corner: local (1000, 500, 10), world plus the translation.
     let corner = fid(PLATE, "plate:v.x1.y1.z1");
-    let found = f.ok("feature-lookup", &["--feature-id", &corner]);
+    let found = f.ok("lookup-feature", &["--feature-id", &corner]);
     assert_eq!(text(&found, "feature_kind"), "vertex");
     assert_eq!(text(&found, "local_id"), "plate:v.x1.y1.z1");
     assert_eq!(
@@ -487,7 +487,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
     let corner = fid(PLATE, "plate:v.x1.y1.z1");
     // A move keeps the name and moves the feature (F06 section 5 rule 4).
     f.ok("update-element", &["--id", PLATE, "--translation", "0,0,0"]);
-    let found = f.ok("feature-lookup", &["--feature-id", &corner]);
+    let found = f.ok("lookup-feature", &["--feature-id", &corner]);
     assert_eq!(
         triple(at(&found, &["world", "position"])),
         [1000.0, 500.0, 10.0]
@@ -498,7 +498,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
         &["--id", PLATE, "--new-id", COPY, "--offset", "0,0,100"],
     );
     let copied = f.ok(
-        "feature-lookup",
+        "lookup-feature",
         &["--feature-id", &fid(COPY, "plate:v.x1.y1.z1")],
     );
     assert_eq!(
@@ -510,7 +510,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
     // Indices are never addresses (rule 8); dangling and malformed ids are told apart.
     let forbidden = Some("GEO_TRIANGLE_ADDRESS_FORBIDDEN".to_owned());
     assert_eq!(
-        f.refused("feature-lookup", &["--feature-id", &fid(PLATE, "plate:7")]),
+        f.refused("lookup-feature", &["--feature-id", &fid(PLATE, "plate:7")]),
         ("UNSUPPORTED_PROPERTY".to_owned(), forbidden.clone())
     );
     assert_eq!(
@@ -522,7 +522,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
     );
     assert_eq!(
         f.refused(
-            "feature-lookup",
+            "lookup-feature",
             &[
                 "--feature-id",
                 &fid("019a7bf0-0000-7000-8000-0000007000ff", "plate:f.z1")
@@ -535,14 +535,14 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
     );
     assert_eq!(
         f.refused(
-            "feature-lookup",
+            "lookup-feature",
             &["--feature-id", &fid(MEMBER, "plate:f.z1")]
         )
         .1,
         Some("GEO_FEATURE_NOT_FOUND".to_owned())
     );
     assert_eq!(
-        f.refused("feature-lookup", &["--feature-id", "fid1:nope"]),
+        f.refused("lookup-feature", &["--feature-id", "fid1:nope"]),
         (
             "INVALID_ARGUMENT".to_owned(),
             Some("GEO_FEATURE_ID_INVALID".to_owned())
@@ -604,7 +604,7 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
     let source = f.root.join("site.usda");
     fs::write(&source, SITE).unwrap();
     f.ok(
-        "reference-attach",
+        "attach-reference",
         &[
             "--source",
             source.to_str().unwrap(),
@@ -702,7 +702,7 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
     assert_eq!(skipped, [HOLED, IBEAM, REFERENCE]);
     assert_eq!(
         f.refused(
-            "feature-lookup",
+            "lookup-feature",
             &["--feature-id", &fid(HOLED, "plate:f.z1")]
         )
         .1,
@@ -810,7 +810,7 @@ fn a_small_member_far_from_the_origin_keeps_its_features() {
     // Local geometry is exact, not world minus translation: for an axis along (0.6, 0.8, 0),
     // X_m = (-0.8, 0.6, 0) and Y_m = +Z (F06 P-2), so v.x0.y0.z0 = (0.4, -0.3, -0.5).
     let found = f.ok(
-        "feature-lookup",
+        "lookup-feature",
         &["--feature-id", &fid(MEMBER, "member:v.x0.y0.z0")],
     );
     let local = triple(at(&found, &["local", "position"]));

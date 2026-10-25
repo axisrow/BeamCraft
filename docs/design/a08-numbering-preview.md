@@ -1,7 +1,7 @@
 # A08: numbering preview
 
 Date: 2026-10-19. Status: **experimental vertical slice; A08 acceptance is limited as listed
-below.** Branch `feat/a08-numbering-preview`, based on `origin/master` `11a2139`.
+below.** Branch `feat/a08-preview-numbering`, based on `origin/master` `11a2139`.
 
 Plan row: A08, depends on A01 (assemblies), P04 (quantities and update) and P05 (copy). Result:
 a read-only preview that groups equivalent parts, proposes number series and shows overlaps.
@@ -10,7 +10,7 @@ a read-only preview that groups equivalent parts, proposes number series and sho
 ## What is implemented
 
 ```text
-beamcraft numbering-preview --store ROOT [--plate-series PREFIX:START] [--beam-series PREFIX:START]
+beamcraft preview-numbering --store ROOT [--plate-series PREFIX:START] [--beam-series PREFIX:START]
         [--column-series PREFIX:START] [--assembly-series PREFIX:START] [--tolerance MM]
         [--compare-name true|false] [--previous TOKEN] [--offset N] [--limit 1..256]
 ```
@@ -19,7 +19,7 @@ beamcraft numbering-preview --store ROOT [--plate-series PREFIX:START] [--beam-s
 |---|---|---|
 | Rules | `beamcraft_engine::numbering` | `preview(parts, assemblies, settings)`: pure, bounded, deterministic. Part facts and assembly facts in, groups, positions, statuses and a token out |
 | Adapter | `beamcraft_cli::numbering` | reads plates, members and assemblies of the verified head (`plate::inspect`, `assembly::assemblies`) into facts; the two readers are checked to describe the same revision (read again up to three times if the head moved) |
-| Command | `numbering-preview` | parsing and JSON only; groups are paged (`--offset`, `--limit`, default 64, at most 256; at most 32 members listed per group) |
+| Command | `preview-numbering` | parsing and JSON only; groups are paged (`--offset`, `--limit`, default 64, at most 256; at most 32 members listed per group) |
 
 Rules (own wording, from the owner's local numbering notes `24-numbering.md` and
 `08-numbering-assemblies.md`, which stay outside the repository):

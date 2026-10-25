@@ -102,7 +102,7 @@ impl Fixture {
         self.ok("create-plate", &args)
     }
     fn plates(&self) -> Vec<Json> {
-        at(&self.ok("plate-inspect", &[]), &["plates"])
+        at(&self.ok("inspect-elements", &[]), &["plates"])
             .array()
             .unwrap()
             .to_vec()
@@ -263,7 +263,7 @@ fn a_member_copy_keeps_the_pinned_profile_and_material() {
             .iter()
             .all(|e| text(e, "target") != profile)
     );
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(at(&inspected, &["members"]).array().unwrap().len(), 2);
 }
 

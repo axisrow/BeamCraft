@@ -84,7 +84,7 @@ slice). Not implemented: member operations. A03 does not exist, so a member's
 signature are ready: `quantity::member_net_signature(gross, &[operation digests])` takes the list
 of operations (each by the digest of its own authored content); it is empty today.
 
-## Quantities JSON (`create-member`, `create-plate`, `plate-inspect`, `copy`, `update-element`, ...)
+## Quantities JSON (`create-member`, `create-plate`, `inspect-elements`, `copy`, `update-element`, ...)
 
 `quantities` keeps `volume.{mm3,m3,status,algorithm}` and `mass.{kg,density_kg_m3,status}`. **These
 old keys are aliases of the NET values**, so existing consumers keep working (for a member without
@@ -97,7 +97,7 @@ operations net equals gross; for a plate with holes they are the values they alw
 | `mass.kg_display`, `mass_gross_kg_display`, `mass_net_kg_display` | rounded to 0.1 kg for display only |
 | `section_area_mm2`, `area_source` | members: the effective area and `catalogue` or `computed`; null for a plate |
 
-Stored values are never rounded. `plate-inspect` adds `expected_gross_signature`,
+Stored values are never rounded. `inspect-elements` adds `expected_gross_signature`,
 `stored_algorithm` and `superseded_algorithm` to `stored_quantities`.
 
 ## Signatures and freshness (P04 rules)

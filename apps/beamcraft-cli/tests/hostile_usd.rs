@@ -3,10 +3,10 @@
 // Contributor-original synthetic inputs, MPL-2.0. No third-party layer or asset is used.
 
 //! U17: USD is read in the CLI process by the layer engine, so a hostile layer in the project's
-//! own store must end as a stable F04 code, never a panic or a hang. `revision-commit` verifies
+//! own store must end as a stable F04 code, never a panic or a hang. `commit-revision` verifies
 //! blob digests but not USD content, so it can commit layers that no BeamCraft command would
 //! author; every reading command must then refuse them the same way. Hostile foreign files are
-//! covered by `reference.rs` (`reference-attach` refuses them before anything is stored).
+//! covered by `reference.rs` (`attach-reference` refuses them before anything is stored).
 
 #![allow(
     clippy::unwrap_used,
@@ -86,7 +86,7 @@ impl Fixture {
             let file = self.0.join(name);
             fs::write(&file, bytes).unwrap();
             let (code, body, _) = self.run(&[
-                "blob-put",
+                "put-blob",
                 "--store",
                 &store,
                 "--file",
@@ -101,7 +101,7 @@ impl Fixture {
             digests[0], digests[1]
         );
         let (code, body, _) = self.run(&[
-            "revision-commit",
+            "commit-revision",
             "--store",
             &store,
             "--project-id",
@@ -163,7 +163,7 @@ fn unsupported_authored_plates_refuse_even_malformed_partial_derived_opinions() 
         "10",
     ]);
     assert_eq!(code, 0);
-    let (_, inspected, _) = source.run(&["plate-inspect", "--store", &source.store()]);
+    let (_, inspected, _) = source.run(&["inspect-elements", "--store", &source.store()]);
     let layer = inspected
         .get("revision")
         .unwrap()
@@ -188,7 +188,7 @@ fn unsupported_authored_plates_refuse_even_malformed_partial_derived_opinions() 
     baseline.commit(&bytes);
     assert_eq!(
         baseline
-            .run(&["plate-inspect", "--store", &baseline.store()])
+            .run(&["inspect-elements", "--store", &baseline.store()])
             .0,
         0
     );
@@ -201,7 +201,7 @@ fn unsupported_authored_plates_refuse_even_malformed_partial_derived_opinions() 
         let mut layer = String::from_utf8(bytes.clone()).unwrap();
         layer.push_str(&format!("\nover \"World\" {{ over \"Steel\" {{ over \"Parts\" {{ over \"PRT_{}\" {{ {opinion}\n }} }} }} }}\n",id.replace('-', "")));
         target.commit(layer.as_bytes());
-        let (code, body, _) = target.run(&["plate-inspect", "--store", &target.store()]);
+        let (code, body, _) = target.run(&["inspect-elements", "--store", &target.store()]);
         assert_eq!(code, 2, "{opinion}: {body:?}");
         let code = body.get("code").unwrap().string().unwrap();
         assert!(
@@ -239,19 +239,19 @@ fn hostile_own_store_layers_give_stable_codes_in_process() {
         let csv = f.0.join("bom.csv");
         let ifc = f.0.join("model.ifc");
         for args in [
-            vec!["plate-inspect", "--store", &store],
+            vec!["inspect-elements", "--store", &store],
             vec!["definitions", "--store", &store],
-            vec!["reference-inspect", "--store", &store],
-            vec!["numbering-preview", "--store", &store],
+            vec!["inspect-reference", "--store", &store],
+            vec!["preview-numbering", "--store", &store],
             vec![
-                "view-export",
+                "export-view",
                 "--store",
                 &store,
                 "--out",
                 out.to_str().unwrap(),
             ],
             vec![
-                "bom-export",
+                "export-bom",
                 "--store",
                 &store,
                 "--out",

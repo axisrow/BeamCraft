@@ -540,7 +540,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
             let file = fx.0.join("files").join(&a.name);
             fs::write(&file, &a.bytes).unwrap();
             let (exit, body) = run(&[
-                "blob-put",
+                "put-blob",
                 "--store",
                 store_s,
                 "--file",
@@ -560,7 +560,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
     let schema = schema_identity().unwrap().digest.to_string();
     let commit_args = |assets: &[Asset], revision: &str, op: &str, base: &str, generation: u64| {
         vec![
-            "revision-commit".to_owned(),
+            "commit-revision".to_owned(),
             "--store".into(),
             store_s.to_owned(),
             "--project-id".into(),
@@ -586,7 +586,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
     let run_owned = |args: Vec<String>| run(&args.iter().map(String::as_str).collect::<Vec<_>>());
 
     // Nothing is published yet; a layer that was never stored cannot be committed.
-    let (exit, body) = run(&["revision-open", "--store", store_s]);
+    let (exit, body) = run(&["open-revision", "--store", store_s]);
     assert_eq!((exit, text(&body, "code").as_str()), (2, "NOT_FOUND"));
     let (exit, body) = run_owned(commit_args(&assets, REV1, COMMIT1, "none", generation));
     assert_eq!((exit, text(&body, "code").as_str()), (2, "NOT_FOUND"));
@@ -624,7 +624,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
     );
 
     // A fresh process opens and verifies the root.
-    let (exit, opened_json) = run(&["revision-open", "--store", store_s]);
+    let (exit, opened_json) = run(&["open-revision", "--store", store_s]);
     assert_eq!(exit, 0, "{opened_json:?}");
     assert_eq!(text(&opened_json, "outcome"), "revision_verified");
     assert_eq!(text(&opened_json, "manifest_digest"), manifest1);
@@ -645,7 +645,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
     let manifest2 = text(&second, "manifest_digest");
 
     // Fresh process and fresh in-process reader both see revision 2 as complete.
-    let (exit, now) = run(&["revision-open", "--store", store_s]);
+    let (exit, now) = run(&["open-revision", "--store", store_s]);
     assert_eq!(
         (exit, text(&now, "manifest_digest")),
         (0, manifest2.clone())
@@ -665,7 +665,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
     // Hostile state is refused by a fresh process with an integrity code, not a partial read.
     let weak = assets2[3].digest.to_string();
     fs::remove_file(store_arg.join("blobs").join(&weak[..2]).join(&weak)).unwrap();
-    let (exit, body) = run(&["revision-open", "--store", store_s]);
+    let (exit, body) = run(&["open-revision", "--store", store_s]);
     assert_eq!((exit, text(&body, "code").as_str()), (2, "INTEGRITY_ERROR"));
     // CLI argument rules: unknown role, missing option, bad base.
     let mut bad = commit_args(&assets2, REV2, COMMIT2, REV1, generation2);

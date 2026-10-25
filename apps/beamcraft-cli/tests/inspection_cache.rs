@@ -306,7 +306,7 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
             .unwrap()
     };
     assert_eq!(cold, refused);
-    let (code, body) = f.run("plate-inspect", &[]);
+    let (code, body) = f.run("inspect-elements", &[]);
     assert_eq!(code, 2);
     assert_eq!(
         body.get("code").unwrap().string().unwrap(),

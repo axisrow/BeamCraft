@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, workspaces and tokens, MPL-2.0.
 
-//! C02 end to end: a real `coordinator-serve` process and `coordinator-publish` /
-//! `coordinator-head` clients. The coordinator does not start without a token; a wrong token is
+//! C02 end to end: a real `serve-coordinator` process and `publish-changeset` /
+//! `inspect-coordinator-head` clients. The coordinator does not start without a token; a wrong token is
 //! refused; the token decides the actor; two concurrent publications from one base accept exactly
 //! one and the accepted head is never overwritten; the same payload replays; workspace names stay
 //! inside the workspaces root.
@@ -77,7 +77,7 @@ impl Fixture {
     fn head(&self) -> String {
         let store = self.path("published");
         text(
-            &self.ok(&["revision-open", "--store", &store]),
+            &self.ok(&["open-revision", "--store", &store]),
             "revision_id",
         )
     }
@@ -85,7 +85,7 @@ impl Fixture {
     /// its stored changeset: (digest, base revision).
     fn draft(&self, name: &str, label: &str) -> (String, String) {
         let store = self.path("published");
-        if self.run(&["revision-open", "--store", &store]).0 != 0 {
+        if self.run(&["open-revision", "--store", &store]).0 != 0 {
             self.ok(&[
                 "create-plate",
                 "--store",
@@ -102,7 +102,7 @@ impl Fixture {
         }
         let dir = self.path(&format!("workspaces/{name}"));
         self.ok(&[
-            "workspace-create",
+            "create-workspace",
             "--store",
             &store,
             "--workspace-dir",
@@ -121,7 +121,7 @@ impl Fixture {
         ]);
         let changeset = at(
             &self.ok(&[
-                "changeset-create",
+                "create-changeset",
                 "--store",
                 &store,
                 "--workspace-dir",
@@ -139,7 +139,7 @@ impl Fixture {
         let (store, root) = (self.path("published"), self.path("workspaces"));
         let max = max_requests.to_string();
         let mut args = vec![
-            "coordinator-serve".to_owned(),
+            "serve-coordinator".to_owned(),
             "--store".into(),
             store,
             "--workspaces-root".into(),
@@ -223,7 +223,7 @@ fn publish(
     cs: &(String, String),
 ) -> (i32, Json) {
     f.run(&[
-        "coordinator-publish",
+        "publish-changeset",
         "--address",
         server,
         "--token-file",
@@ -243,7 +243,7 @@ fn a_coordinator_needs_a_token_and_refuses_strangers() {
     let (store, root) = (f.path("published"), f.path("workspaces"));
     let serve = |extra: &[&str]| {
         let mut args = vec![
-            "coordinator-serve",
+            "serve-coordinator",
             "--store",
             &store,
             "--workspaces-root",
@@ -286,7 +286,7 @@ fn a_coordinator_needs_a_token_and_refuses_strangers() {
     );
     // A wrong token is refused and not handled.
     let (code, body) = f.run(&[
-        "coordinator-head",
+        "inspect-coordinator-head",
         "--address",
         &server.address,
         "--token-file",
@@ -298,7 +298,7 @@ fn a_coordinator_needs_a_token_and_refuses_strangers() {
     );
     // A non-loopback address is never contacted.
     let (code, body) = f.run(&[
-        "coordinator-head",
+        "inspect-coordinator-head",
         "--address",
         "192.0.2.1:9",
         "--token-file",
@@ -309,7 +309,7 @@ fn a_coordinator_needs_a_token_and_refuses_strangers() {
         (2, "PERMISSION_DENIED")
     );
     let head = f.ok(&[
-        "coordinator-head",
+        "inspect-coordinator-head",
         "--address",
         &server.address,
         "--token-file",
@@ -399,7 +399,7 @@ fn concurrent_publications_accept_one_and_never_overwrite_the_head() {
         (2, "INVALID_ARGUMENT")
     );
     let head = f.ok(&[
-        "coordinator-head",
+        "inspect-coordinator-head",
         "--address",
         &address,
         "--token-file",

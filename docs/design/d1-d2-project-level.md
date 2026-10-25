@@ -18,15 +18,15 @@ column can be assigned to one.
 beamcraft create-level --store ROOT --name TEXT --elevation MM [--new-id UUID] [--op-id UUID ...]
 beamcraft levels --store ROOT
 beamcraft update-element --store ROOT --id UUID --level UUID|none [...]
-beamcraft plate-inspect --store ROOT      (now: project_id_record, levels, "level" per element)
+beamcraft inspect-elements --store ROOT      (now: project_id_record, levels, "level" per element)
 beamcraft delete-element --store ROOT --id LEVEL_UUID   (refused while elements use it)
 ```
 
 | Area | What exists |
 |---|---|
 | D1 root record | The first revision of a project writes the ProjectId into the `customLayerData` of the root layer as `bimProjectId` (a UUIDv7 text), next to `bimSchemaDigest`. `plate::load_base` creates that root for a store without a revision; every later revision starts from the head's root, and the layer engine rewrites the root with the other dictionary entries preserved, so the record is carried unchanged (the test checks that the root layer digest does not change across revisions). |
-| D1 reading | `beamcraft_layer_engine::authored::project_record` reads it from the opened metadata: absent is `None`, a value that is not a full UUIDv7 text is `INVALID_ID`. The structural validator (`validate::snapshot`) applies the same rule, so an invalid record is refused on every open, authoring candidate and `validate_layers`. `plate-inspect` reports `project_id_record` (a string or `null`). |
-| D1 agreement | The commit verifier (`PlateVerifier`) and `inspect` require a recorded ProjectId to equal the project of the manifest (`INTEGRITY_ERROR`). With the host's existing check that a revision names the head's project (`ProjectMismatch`), every revision of one store reports the same record. A fork (`workspace-create`) copies the layers and therefore the record. |
+| D1 reading | `beamcraft_layer_engine::authored::project_record` reads it from the opened metadata: absent is `None`, a value that is not a full UUIDv7 text is `INVALID_ID`. The structural validator (`validate::snapshot`) applies the same rule, so an invalid record is refused on every open, authoring candidate and `validate_layers`. `inspect-elements` reports `project_id_record` (a string or `null`). |
+| D1 agreement | The commit verifier (`PlateVerifier`) and `inspect` require a recorded ProjectId to equal the project of the manifest (`INTEGRITY_ERROR`). With the host's existing check that a revision names the head's project (`ProjectMismatch`), every revision of one store reports the same record. A fork (`create-workspace`) copies the layers and therefore the record. |
 | D1 mismatch | `plate::ensure_project` and `--project-id`: a store with a head refuses an explicit, different project id with `INVALID_ARGUMENT` and writes nothing. Before this task the id was silently ignored once the store had a revision. It runs in every command that writes a revision (`create-plate`, `create-member`, `define-*`, `update-element`, `delete-element`, `copy-element`, `create-assembly`, `assembly-*`, `create-weld`, `create-level`, `reference-*`). A command that gives no id takes the store's. |
 | D2 model | `beamcraft_model::command::CreateLevel { new_id, name, elevation_mm }` (label rule; finite; absolute value at most 1,000,000,000 mm, the coordinate cap; fingerprint `BeamCraft/D2/CreateLevel/v1`). `ElementPatch.level: Option<Option<ElementId>>` (`None` no change, `Some(None)` remove, `Some(Some(id))` assign), part of the validity rule and, when present, of the `UpdateElement` fingerprint (earlier patches keep theirs). |
 | D2 engine | `beamcraft_engine::level::Levels` decides `CreateLevel` (`DUPLICATE_ID`, argument rules) and an assignment: unknown element `NOT_FOUND`, an element that is not a plate, beam or column `UNSUPPORTED_PROPERTY`, an unknown level `DANGLING_RELATIONSHIP`, a target that is not a level `INVALID_ARGUMENT`. `Footprint::for_level` reads the element's lifecycle and relationships and the level's lifecycle and writes only the element's relationship group; `Footprint::union` combines it with an update's other groups. `UpdateEffect.level` says that a patch changes the level. |
@@ -86,7 +86,7 @@ beamcraft delete-element --store ROOT --id LEVEL_UUID   (refused while elements 
     `op_id` is `OP_ID_REUSE` whatever the head holds.
 11. **Readers apply the ownership, schema and mode guard.** Foreign, newer-schema and
     unsupported-mode elements are inert identities (`Levels::insert_other`), so they neither fail
-    the level reader nor can be listed or assigned. `plate-inspect` runs the structural validator
+    the level reader nor can be listed or assigned. `inspect-elements` runs the structural validator
     before decoding. An element that exists but cannot hold a level (a level, assembly, weld or
     reference) is `UNSUPPORTED_PROPERTY` for `update-element --level`, not `NOT_FOUND`. An owned,
     current-schema reference wrapper with a nonempty `bim:level` is refused by the structural
@@ -148,7 +148,7 @@ not written by this task.
 * No assignment at creation (`create-plate --level`), no assignment of assemblies, welds or
   references, no levels in the viewport.
 * No reviewed command that assigns a ProjectId to a store that has none, and no migration.
-* The raw `revision-commit` path does not require a store that had a record to keep it: the verifier
+* The raw `commit-revision` path does not require a store that had a record to keep it: the verifier
   checks that a recorded id equals the manifest's project, not that a record present in the base
   is still there. Removing it outside BeamCraft makes the store a "store without a record".
 * The explicit project claim is a thread-local guard, not a field of the request types (decision 9).

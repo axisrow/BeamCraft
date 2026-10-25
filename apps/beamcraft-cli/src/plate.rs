@@ -1300,7 +1300,7 @@ pub(crate) fn prior_op_with(
         Outcome::Aborted { .. } | Outcome::NotFound => Ok((PriorOp::Unseen, None)),
         Outcome::Unknown => Err(PlateError::new(
             ErrorCode::OutcomeUnknown,
-            "the operation id may or may not have been committed; run revision-recover",
+            "the operation id may or may not have been committed; run recover-revision",
         )),
     }
 }
@@ -1333,7 +1333,7 @@ pub fn accepted_binding(
         Outcome::Unknown => {
             return Err(PlateError::new(
                 ErrorCode::OutcomeUnknown,
-                "the operation id may or may not have been committed; run revision-recover",
+                "the operation id may or may not have been committed; run recover-revision",
             ));
         }
     }

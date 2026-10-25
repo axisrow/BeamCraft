@@ -69,7 +69,7 @@ Some direct edges to `model` and `geom` are left out for readability; the exact 
 ## What happens on a command
 
 Every editing command (`create-plate`, `create-member`, `update-element`, `copy-element`,
-`delete-element`, `create-bolt`, `numbering-approve`, ...) follows the same path:
+`delete-element`, `create-bolt`, `approve-numbering`, ...) follows the same path:
 
 1. **Parse and validate.** The CLI turns arguments into a typed `model` command. Bad numbers,
    limits, identities and references are refused here with an error code; nothing is read yet.
@@ -89,20 +89,20 @@ Every editing command (`create-plate`, `create-member`, `update-element`, `copy-
 7. **Verify.** The new revision is read back; the kernel re-evaluates every element and compares
    the stored meshes. A revision that does not verify is never the head.
 
-A crash at any step leaves either the old or the new complete revision; `revision-recover` closes
-an interrupted commit. Read commands (`plate-inspect`, `definitions`, `numbering-preview`,
-`export-ifc`, `bom-export`, `pick`, `view-export`, ...) do steps 1–2 only.
+A crash at any step leaves either the old or the new complete revision; `recover-revision` closes
+an interrupted commit. Read commands (`inspect-elements`, `definitions`, `preview-numbering`,
+`export-ifc`, `export-bom`, `pick`, `export-view`, ...) do steps 1–2 only.
 
 ## The window
 
-`beamcraft-ui` does not open USD. It starts `beamcraft view-export` as a separate process, receives
+`beamcraft-ui` does not open USD. It starts `beamcraft export-view` as a separate process, receives
 a bundle (element-local meshes, placements, bounds, ids), re-validates it, and draws each distinct
 mesh once with one instance per element. Since the issue 26 follow-up one refresh is one process
 and one verified inspection: `--with-definitions true` frames the store's definitions of that
 inspection before the bundle, the window keeps the scene's summary instead of its expanded display
 buffers and reuses the meshes the device already holds, and a click runs the engine's pick in this
 process on the snapshot on screen, reading the element's details from one
-`plate-inspect --element ID` ([issue 26
+`inspect-elements --element ID` ([issue 26
 follow-up](design/issue-26-viewport-performance.md)). Create, move, copy, delete, property edits,
 undo and publish run the same CLI commands a user would type; the window shows the result or the
 engine's refusal as it is.
@@ -157,11 +157,11 @@ layer authored root.usda     f8c94cec... 320
 ```
 
 Copying the three named blobs out under their names gives an ordinary USD project that any USD
-program opens. Old revisions stay in the store for undo and history until `history-compact`
+program opens. Old revisions stay in the store for undo and history until `compact-history`
 removes them; identical files are stored once.
 
 A **workspace** (personal draft) is a store of its own, forked from a published revision, with a
-`workspace.json` naming its base. Edits go to the workspace; `workspace-publish` moves them to the
+`workspace.json` naming its base. Edits go to the workspace; `publish-workspace` moves them to the
 published store. Undo and redo add new revisions that restore earlier layers. How drafts of several
 people come together is Part 4.
 
@@ -415,7 +415,7 @@ All values are explicit attributes, readable without registering a schema.
 
 **Relationships on a part:** `bim:partOf` → its assembly, `bim:level` → its level.
 
-**Numbering** (after `numbering-approve`): `steel:numbering:series`, `steel:numbering:number`,
+**Numbering** (after `approve-numbering`): `steel:numbering:series`, `steel:numbering:number`,
 `steel:numbering:basis` on each part and assembly.
 
 **Definitions** (`MAT_<sha256>`, `PRF_<sha256>`): `bim:definitionKind` (`material`, `i_shape`,
@@ -479,7 +479,7 @@ gitGraph
    element; A deleted a part B welded to; A approved numbering and B then changed a profile. Both
    versions are kept and the engineer decides. There is never a silent "last writer wins".
 
-One local coordinator (`coordinator-serve`, loopback only, token per person) holds the single
+One local coordinator (`serve-coordinator`, loopback only, token per person) holds the single
 publish queue, so two publications can never overwrite each other.
 
 ## Why not a USD layer per person

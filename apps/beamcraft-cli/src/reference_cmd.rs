@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! R01 headless commands: `reference-attach`, `reference-move`, `reference-correct-units`,
-//! `reference-write` and `reference-inspect`. They call the engine API through the adapter of
+//! R01 headless commands: `attach-reference`, `move-reference`, `correct-reference-units`,
+//! `write-reference` and `inspect-reference`. They call the engine API through the adapter of
 //! `beamcraft_cli::reference` and print one JSON object (the same error shape and exit codes as
 //! the other store commands: 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 //!
-//! `reference-write` has no success path. It exists so that a write to the source file or to a
+//! `write-reference` has no success path. It exists so that a write to the source file or to a
 //! foreign prim is an observable, scriptable refusal (`FOREIGN_READ_ONLY`, exit 2) and not only a
 //! missing feature.
 
@@ -40,11 +40,11 @@ pub fn handles(command: &std::ffi::OsStr) -> bool {
     command.to_str().is_some_and(|c| {
         matches!(
             c,
-            "reference-attach"
-                | "reference-move"
-                | "reference-correct-units"
-                | "reference-write"
-                | "reference-inspect"
+            "attach-reference"
+                | "move-reference"
+                | "correct-reference-units"
+                | "write-reference"
+                | "inspect-reference"
         )
     })
 }
@@ -64,24 +64,24 @@ const IDS: [&str; 5] = [
 
 fn options_of(command: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match command {
-        "reference-attach" => &[
+        "attach-reference" => &[
             "--source",
             "--name",
             "--translation",
             "--rotation-z-deg",
             "--new-id",
         ],
-        "reference-move" => &["--id", "--translation", "--rotation-z-deg"],
-        "reference-correct-units" => &["--id", "--meters-per-unit", "--up-axis", "--clear"],
-        "reference-write" => &["--id", "--target", "--prim", "--attribute"],
-        "reference-inspect" => &[],
+        "move-reference" => &["--id", "--translation", "--rotation-z-deg"],
+        "correct-reference-units" => &["--id", "--meters-per-unit", "--up-axis", "--clear"],
+        "write-reference" => &["--id", "--target", "--prim", "--attribute"],
+        "inspect-reference" => &[],
         _ => return None,
     };
     let mut all = vec!["--store"];
     all.extend_from_slice(own);
     if matches!(
         command,
-        "reference-attach" | "reference-move" | "reference-correct-units"
+        "attach-reference" | "move-reference" | "correct-reference-units"
     ) {
         all.extend_from_slice(&IDS);
     }
@@ -111,7 +111,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             return Err(invalid("unknown or repeated option"));
         }
     }
-    if *command == "reference-attach" {
+    if *command == "attach-reference" {
         // Before the store, the file system or a resolver is touched: a URL or a network path
         // is refused on its text alone.
         let source = options
@@ -129,10 +129,10 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store = RevisionStore::new(blobs);
     let _claim = crate::plate_cmd::check_project_option(&store, &options)?;
     match *command {
-        "reference-attach" => attach_command(&store, &options),
-        "reference-move" => move_command(&store, &options),
-        "reference-correct-units" => correct_command(&store, &options),
-        "reference-write" => write_command(&store, &options),
+        "attach-reference" => attach_command(&store, &options),
+        "move-reference" => move_command(&store, &options),
+        "correct-reference-units" => correct_command(&store, &options),
+        "write-reference" => write_command(&store, &options),
         _ => Ok(inspection_json(&inspect_references(&store)?)?),
     }
 }
@@ -337,7 +337,7 @@ fn edited_json(edited: &Edited, op_id: OpId, done: &'static str) -> Run<Json> {
     ]))
 }
 
-/// `reference-write`: always a rejection. `--target source` addresses the stored source layer;
+/// `write-reference`: always a rejection. `--target source` addresses the stored source layer;
 /// `--prim /DefaultPrim/Path` (optionally with `--attribute`) a prim in the source's namespace.
 fn write_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
     let target = match (

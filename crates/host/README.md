@@ -41,7 +41,7 @@ vectors test it independently. The older fixture-tool hasher remains separate an
 ## U06 revision commit
 
 `beamcraft_host::revision` commits and reads one complete revision; see the
-[design record](../../docs/design/u06-revision-commit.md). A revision is a canonical
+[design record](../../docs/design/u06-commit-revision.md). A revision is a canonical
 `Manifest` blob (identities, base, schema digest, optional verified U03 index record, sorted
 layer entries with full digests and sizes) stored through `BlobStore`. The root is an
 append-only head log `revisions/<20-digit sequence>`: each record is a complete synced file
@@ -60,7 +60,7 @@ the compare-and-swap for the expected base.
   marks `Checked`, `IntentRecorded`, `BlobsVerified`, `ManifestStored`, `RecordStaged`,
   `Switched`, `Recorded`: abort before `Switched` leaves the root unchanged, a failure at
   `Switched` is `OutcomeUnknown`; a hook that unwinds simulates a crash (U07 fault injection).
-- `beamcraft revision-commit` / `revision-open` are the headless commands.
+- `beamcraft commit-revision` / `open-revision` are the headless commands.
 
 `RevisionStore::commit_with_evidence` additionally pins one opaque operation-evidence blob by
 full SHA-256 and byte size (at most 1 MiB). A pin uses canonical manifest version 2; commits
@@ -89,7 +89,7 @@ record after it.
 - `RevisionStore::recover(RecoveryPolicy)` closes unresolved intents from the root (the root is the
   authority), removes abandoned `.tmp-*`/`.publish-*` files and reports unreferenced blobs
   without deleting any. Idempotent; no lock file. `open_recovered` recovers and then opens.
-- `beamcraft revision-recover --min-age-secs N` and `revision-outcome --op-id UUID` are the
+- `beamcraft recover-revision --min-age-secs N` and `inspect-revision-outcome --op-id UUID` are the
   headless commands.
 
 Not promised: directory-entry crash durability (files are synced, directories are not),

@@ -342,7 +342,7 @@ fn every_modeling_publication_path_records_its_own_operation() {
         &["--name", "Assembly", "--new-id", &element(5).to_string()],
     );
     f.recorded(
-        "assembly-attach",
+        "attach-to-assembly",
         &[
             "--id",
             &element(1).to_string(),
@@ -350,7 +350,7 @@ fn every_modeling_publication_path_records_its_own_operation() {
             &element(5).to_string(),
         ],
     );
-    f.recorded("assembly-detach", &["--id", &element(1).to_string()]);
+    f.recorded("detach-from-assembly", &["--id", &element(1).to_string()]);
     f.recorded(
         "create-weld",
         &[
@@ -389,15 +389,15 @@ fn every_modeling_publication_path_records_its_own_operation() {
             "16",
         ],
     );
-    let preview = f.ok("numbering-preview", &[]);
+    let preview = f.ok("preview-numbering", &[]);
     f.recorded(
-        "numbering-approve",
+        "approve-numbering",
         &["--preview-token", text(&preview, "preview_token")],
     );
     let source = f.0.join("foreign.usda");
     fs::write(&source, "#usda 1.0\n(\n defaultPrim = \"Site\"\n metersPerUnit = 1.0\n upAxis = \"Y\"\n)\ndef Xform \"Site\" {}\n").unwrap();
     f.recorded(
-        "reference-attach",
+        "attach-reference",
         &[
             "--source",
             source.to_str().unwrap(),
@@ -406,11 +406,11 @@ fn every_modeling_publication_path_records_its_own_operation() {
         ],
     );
     f.recorded(
-        "reference-move",
+        "move-reference",
         &["--id", &element(6).to_string(), "--translation", "100,0,0"],
     );
     f.recorded(
-        "reference-correct-units",
+        "correct-reference-units",
         &[
             "--id",
             &element(6).to_string(),

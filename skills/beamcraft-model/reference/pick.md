@@ -28,7 +28,7 @@ cargo build --offline -p beamcraft-cli --bins
 ## 1. Enumerate an element's features
 
 ```sh
-beamcraft feature-list --store STORE --id ELEMENT_UUID
+beamcraft list-feature --store STORE --id ELEMENT_UUID
 ```
 
 Captured output (trimmed; a canonical box has 6 faces, 12 edges, 8 vertices):
@@ -42,7 +42,7 @@ Captured output (trimmed; a canonical box has 6 faces, 12 edges, 8 vertices):
 ## 2. Look a feature up
 
 ```sh
-beamcraft feature-lookup --store STORE --feature-id FID1_ADDRESS
+beamcraft lookup-feature --store STORE --feature-id FID1_ADDRESS
 ```
 
 Captured run of the far top vertex of an unplaced member (axis (0,0,0) to (3000,0,0), identity
@@ -89,12 +89,12 @@ axis end cap is `f.z1`. Reproduce the letter-to-normal map with three lookups - 
 to normal `[0,0,1]`, `f.z1` to normal `[1,0,0]`, `f.x1` to normal `[0,1,0]`:
 
 ```sh
-beamcraft feature-lookup --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.y1"
-beamcraft feature-lookup --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.z1"
-beamcraft feature-lookup --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.x1"
+beamcraft lookup-feature --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.y1"
+beamcraft lookup-feature --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.z1"
+beamcraft lookup-feature --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.x1"
 ```
 
-Resolve a hit's id with `feature-lookup` instead of reading geometry out of the letter; the
+Resolve a hit's id with `lookup-feature` instead of reading geometry out of the letter; the
 frame still needs documenting in the CLI (follow-up issue #147).
 
 The captured letter-to-normal map, quoted from real runs against the member above (all four
@@ -172,7 +172,7 @@ Pass `--radius` explicitly: with the default the same point 14 mm away found not
 Resolve the coordinate or element as described in the request.
 
 1. Build the `beamcraft` binary if it is not built (the command is above).
-2. Use `feature-list`/`feature-lookup` for semantic feature addresses, `pick` for a ray or a
+2. Use `list-feature`/`lookup-feature` for semantic feature addresses, `pick` for a ray or a
    point, `snap` for the nearest vertex, axis end or axis point (pass `--radius`).
 3. Quote only captured JSON as evidence; an empty hit list is a normal result, and feature ids
    exist for canonical box bodies only.

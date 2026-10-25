@@ -17,8 +17,8 @@ API. IFC export (E02) is a separate task; plain-text and HTML reports stay open.
   when the element pins a material whose definition declares a density, and is `unknown`
   otherwise. Density is never guessed, and a designation never selects a number (A07.2).
 * Marks (A08/A09): a plate, beam or column may carry an approved mark, stored by
-  `numbering-approve` as `steel:numbering:series`, `steel:numbering:number` and
-  `steel:numbering:basis`; equivalent parts share a mark, and `numbering-status` lists them.
+  `approve-numbering` as `steel:numbering:series`, `steel:numbering:number` and
+  `steel:numbering:basis`; equivalent parts share a mark, and `inspect-numbering` lists them.
   Not every element is numbered, and every element has its full UUIDv7 and an optional user
   label (`bim:name`).
 * A member pins a profile definition (rectangle, an A07.1 family or a custom outline) that may
@@ -34,7 +34,7 @@ API. IFC export (E02) is a separate task; plain-text and HTML reports stay open.
 beamcraft_engine::bom      pure computation: rows in, sorted element table and grouped
                            summary out; CSV rendering of both (strings, no I/O)
 beamcraft_cli::bom         maps an Inspection to engine rows (labels, derived areas)
-beamcraft bom-export       CLI command: verified head -> rows -> CSV files
+beamcraft export-bom       CLI command: verified head -> rows -> CSV files
 ```
 
 The engine module knows nothing about USD, stores or definitions. Its input is one neutral row
@@ -50,7 +50,7 @@ The report reads the engine's re-evaluated quantities, not the stored ones. A st
 an output of a previous evaluation; the verifier of `inspect` has already checked every mesh
 against the kernel, and the quantities the engine computes at read time *are* the `current`
 values by construction. The `current`-only rule of the issue therefore holds without a second
-code path: no stale or missing stored value can enter the report, and `plate-inspect` remains
+code path: no stale or missing stored value can enter the report, and `inspect-elements` remains
 the command that reports stored-quantity freshness.
 
 * `volume_mm3` — always current. Reported as stored, in mm3, and as m3.
@@ -123,12 +123,12 @@ kind,profile,material,count,total_length_mm,total_area_m2,total_volume_m3,total_
 ### 2.8 Command
 
 ```text
-beamcraft bom-export --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
+beamcraft export-bom --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
 ```
 
-* Reads and verifies the head exactly like `plate-inspect`; a store without a revision is
+* Reads and verifies the head exactly like `inspect-elements`; a store without a revision is
   refused. The JSON result names the revision, the row and group counts and the files.
-* Files are created new (`create_new`), never overwritten, synced, as `view-export` does;
+* Files are created new (`create_new`), never overwritten, synced, as `export-view` does;
   `BackendUnavailable` when writing fails. Both files are reserved before any bytes are
   written, so a refusal on either path — an existing or uncreatable summary included, and the
   same path given twice — leaves nothing on disk; the files reserved so far are removed again.
@@ -146,7 +146,7 @@ beamcraft bom-export --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
 `cargo test -p beamcraft-engine bom` (sort order, grouping, unknown mass, derived areas, CSV
 quoting), `cargo test -p beamcraft-cli --test bom` (real binary: a store with a material, an
 I-section with designation, plates and members exports both files; the rows match
-`plate-inspect`; the mass of an element without a material is an empty cell, counted in
-`mass_unknown`, and excluded from totals; a beam numbered by `numbering-approve` reports its mark,
+`inspect-elements`; the mass of an element without a material is an empty cell, counted in
+`mass_unknown`, and excluded from totals; a beam numbered by `approve-numbering` reports its mark,
 an unnumbered column falls back to `mark` equal to `element_id`; refusals: no revision,
 existing output file, unknown option, a colliding or identical summary path).

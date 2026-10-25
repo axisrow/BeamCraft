@@ -3,7 +3,7 @@
 // Contributor-original synthetic plates, MPL-2.0. Expected values are closed forms.
 
 //! P06 end to end: a user workspace is a separate draft store forked from the published head.
-//! Edits land in the draft only; the published head moves only on a fast-forward `workspace-publish`.
+//! Edits land in the draft only; the published head moves only on a fast-forward `publish-workspace`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -75,7 +75,7 @@ impl Fixture {
         text(at(&created, &["plate"]), "element_id")
     }
     fn names(&self, store: &str) -> Vec<String> {
-        let mut names: Vec<String> = at(&self.ok_in(store, "plate-inspect", &[]), &["plates"])
+        let mut names: Vec<String> = at(&self.ok_in(store, "inspect-elements", &[]), &["plates"])
             .array()
             .unwrap()
             .iter()
@@ -85,14 +85,14 @@ impl Fixture {
         names
     }
     fn pin(&self, store: &str) -> String {
-        let inspected = self.ok_in(store, "plate-inspect", &[]);
+        let inspected = self.ok_in(store, "inspect-elements", &[]);
         text(at(&inspected, &["snapshot"]), "pin_revision")
     }
     fn fork(&self, name: &str, user: &str) -> (String, Json) {
         let dir = self.dir(name);
         let created = self.ok_in(
             &self.published(),
-            "workspace-create",
+            "create-workspace",
             &["--workspace-dir", &dir, "--user-id", user],
         );
         (dir, created)
@@ -146,24 +146,24 @@ fn a_workspace_edits_a_draft_and_publishes_by_fast_forward() {
     assert_eq!(f.names(&published), ["Base plate"]);
     assert_eq!(f.pin(&published), published_before);
 
-    let status = f.ok_in(&published, "workspace-status", &["--workspace-dir", &dir]);
+    let status = f.ok_in(&published, "inspect-workspace", &["--workspace-dir", &dir]);
     assert_eq!(text(at(&status, &["workspace"]), "unsent_revisions"), "2");
     assert_eq!(
         at(&status, &["workspace", "base_is_current"]),
         &Json::Bool(true)
     );
 
-    let sent = f.ok_in(&published, "workspace-publish", &["--workspace-dir", &dir]);
+    let sent = f.ok_in(&published, "publish-workspace", &["--workspace-dir", &dir]);
     assert_eq!(text(&sent, "outcome"), "workspace_published");
     assert_eq!(f.names(&published), ["Copy", "Draft name"]);
     assert_ne!(f.pin(&published), published_before);
-    let status = f.ok_in(&published, "workspace-status", &["--workspace-dir", &dir]);
+    let status = f.ok_in(&published, "inspect-workspace", &["--workspace-dir", &dir]);
     assert_eq!(text(at(&status, &["workspace"]), "unsent_revisions"), "0");
     assert_eq!(head(&status, "published_head"), f.pin(&published));
 
     // Publishing again is an idempotent replay and moves nothing.
     let pinned = f.pin(&published);
-    let replay = f.ok_in(&published, "workspace-publish", &["--workspace-dir", &dir]);
+    let replay = f.ok_in(&published, "publish-workspace", &["--workspace-dir", &dir]);
     assert_eq!(text(&replay, "outcome"), "workspace_publish_replayed");
     assert_eq!(f.pin(&published), pinned);
 
@@ -172,7 +172,7 @@ fn a_workspace_edits_a_draft_and_publishes_by_fast_forward() {
     assert_eq!(
         f.code_in(
             &published,
-            "workspace-publish",
+            "publish-workspace",
             &["--workspace-dir", &fresh]
         ),
         "INVALID_ARGUMENT"
@@ -191,18 +191,18 @@ fn two_workspaces_of_one_user_are_independent_and_the_second_publisher_conflicts
     assert_eq!(f.names(&one), ["From one"]);
     assert_eq!(f.names(&two), ["From two"]);
 
-    f.ok_in(&published, "workspace-publish", &["--workspace-dir", &one]);
+    f.ok_in(&published, "publish-workspace", &["--workspace-dir", &one]);
     assert_eq!(f.names(&published), ["From one"]);
     let pinned = f.pin(&published);
 
     // The published head moved, so the other draft cannot fast-forward; it is left untouched.
     assert_eq!(
-        f.code_in(&published, "workspace-publish", &["--workspace-dir", &two]),
+        f.code_in(&published, "publish-workspace", &["--workspace-dir", &two]),
         "BASE_REVISION_MISMATCH"
     );
     assert_eq!(f.pin(&published), pinned);
     assert_eq!(f.names(&two), ["From two"]);
-    let status = f.ok_in(&published, "workspace-status", &["--workspace-dir", &two]);
+    let status = f.ok_in(&published, "inspect-workspace", &["--workspace-dir", &two]);
     assert_eq!(
         at(&status, &["workspace", "base_is_current"]),
         &Json::Bool(false)
@@ -222,7 +222,7 @@ fn unsent_work_survives_a_restart_and_a_repeated_create_resumes() {
     // A fresh process sees the same draft; repeating the create with the same identity resumes.
     let again = f.ok_in(
         &published,
-        "workspace-create",
+        "create-workspace",
         &[
             "--workspace-dir",
             &dir,
@@ -239,7 +239,7 @@ fn unsent_work_survives_a_restart_and_a_repeated_create_resumes() {
     assert_eq!(
         f.code_in(
             &published,
-            "workspace-create",
+            "create-workspace",
             &["--workspace-dir", &dir, "--user-id", USER_B]
         ),
         "DUPLICATE_ID"
@@ -255,21 +255,21 @@ fn bad_workspaces_are_rejected_without_writing() {
     assert_eq!(
         f.code_in(
             &published,
-            "workspace-create",
+            "create-workspace",
             &["--workspace-dir", &dir, "--user-id", USER_A]
         ),
         "NOT_FOUND"
     );
     f.plate(&published, "Base plate");
     assert_eq!(
-        f.code_in(&published, "workspace-status", &[]),
+        f.code_in(&published, "inspect-workspace", &[]),
         "INVALID_ARGUMENT"
     );
     // The published store is never a workspace.
     assert_eq!(
         f.code_in(
             &published,
-            "workspace-create",
+            "create-workspace",
             &["--workspace-dir", &published, "--user-id", USER_A]
         ),
         "INVALID_ARGUMENT"
@@ -277,7 +277,7 @@ fn bad_workspaces_are_rejected_without_writing() {
     assert_eq!(
         f.code_in(
             &published,
-            "workspace-create",
+            "create-workspace",
             &["--workspace-dir", &dir, "--user-id", "not-a-uuid"]
         ),
         "INVALID_ID"
@@ -297,20 +297,20 @@ fn publish_takes_its_id_from_the_draft_and_aliases_of_the_published_store_are_re
     assert_eq!(
         f.code_in(
             &published,
-            "workspace-publish",
+            "publish-workspace",
             &["--workspace-dir", &dir, "--revision-id", USER_B]
         ),
         "INVALID_ARGUMENT"
     );
     let draft_head = text(
         at(
-            &f.ok_in(&published, "workspace-status", &["--workspace-dir", &dir]),
+            &f.ok_in(&published, "inspect-workspace", &["--workspace-dir", &dir]),
             &["workspace", "draft_head"],
         ),
         "revision_id",
     );
-    f.ok_in(&published, "workspace-publish", &["--workspace-dir", &dir]);
-    let inspected = f.ok_in(&published, "plate-inspect", &[]);
+    f.ok_in(&published, "publish-workspace", &["--workspace-dir", &dir]);
+    let inspected = f.ok_in(&published, "inspect-elements", &[]);
     assert_eq!(
         text(at(&inspected, &["revision"]), "revision_id"),
         draft_head
@@ -321,7 +321,7 @@ fn publish_takes_its_id_from_the_draft_and_aliases_of_the_published_store_are_re
     assert_eq!(
         f.code_in(
             &published,
-            "workspace-create",
+            "create-workspace",
             &["--workspace-dir", &alias, "--user-id", USER_A]
         ),
         "INVALID_ARGUMENT"

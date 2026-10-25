@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! Loading the accepted snapshot: the headless CLI exports it in a separate process
-//! (`beamcraft view-export --store ROOT --out -`) and the engine rebuilds and re-validates it.
+//! (`beamcraft export-view --store ROOT --out -`) and the engine rebuilds and re-validates it.
 //! The viewport never opens USD itself and never trusts the bytes it receives.
 //!
 //! A window refresh asks for the snapshot, the store's definitions and the selected element's
@@ -67,7 +67,7 @@ pub fn default_workspace_at(
     let published = root.join("published");
     let workspace = root.join("workspace");
     // A fork generates fresh identifiers, so an existing workspace is what says "already
-    // forked": a second `workspace-create` would only be refused as a duplicate.
+    // forked": a second `create-workspace` would only be refused as a duplicate.
     if !workspace.exists() {
         // The store commands open an existing root (they never create one): the published
         // store is a plain directory the CLI fills in.
@@ -82,7 +82,7 @@ pub fn default_workspace_at(
         ];
         bootstrapped(cli, &material, stats, &[])?;
         let fork = [
-            "workspace-create".to_owned(),
+            "create-workspace".to_owned(),
             "--store".into(),
             store,
             "--workspace-dir".into(),
@@ -133,7 +133,7 @@ pub fn load_within(
     let limits = Limits::default();
     let cap = max_bundle_bytes(&limits);
     let args = [
-        "view-export".to_owned(),
+        "export-view".to_owned(),
         "--store".into(),
         store.to_string_lossy().into_owned(),
         "--out".into(),
@@ -160,18 +160,18 @@ fn rejected(stdout: &[u8]) -> Error {
         // from the matcher that treats it as normal.
         return Error::NoRevision;
     }
-    Error::Cli(format!("view-export rejected: {code}"))
+    Error::Cli(format!("export-view rejected: {code}"))
 }
 
-/// The first bytes of a framed `view-export` reply (the CLI defines the frame).
+/// The first bytes of a framed `export-view` reply (the CLI defines the frame).
 pub const FRAME_MAGIC: &[u8; 8] = b"BCVXFRM1";
 
-/// The parts of a framed `view-export` reply, split but not yet read.
+/// The parts of a framed `export-view` reply, split but not yet read.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Frame<'a> {
     /// The `definitions` reply; empty when it was not asked for.
     pub definitions: &'a [u8],
-    /// The `plate-inspect --element ID` reply; empty when it was not asked for.
+    /// The `inspect-elements --element ID` reply; empty when it was not asked for.
     pub element: &'a [u8],
     /// The engine bundle.
     pub bundle: &'a [u8],
@@ -189,7 +189,7 @@ pub fn split_frame(bytes: &[u8]) -> Result<Frame<'_>, Error> {
         }
         rest.split_at_checked(length)
     }
-    let bad = || Error::Cli("view-export returned an unreadable frame".into());
+    let bad = || Error::Cli("export-view returned an unreadable frame".into());
     let rest = bytes.strip_prefix(FRAME_MAGIC.as_slice()).ok_or_else(bad)?;
     let (definitions, rest) = section(rest).ok_or_else(bad)?;
     let (element, bundle) = section(rest).ok_or_else(bad)?;
@@ -200,7 +200,7 @@ pub fn split_frame(bytes: &[u8]) -> Result<Frame<'_>, Error> {
     })
 }
 
-/// Runs one framed `view-export`: the bundle, the definitions and, for `selected`, that
+/// Runs one framed `export-view`: the bundle, the definitions and, for `selected`, that
 /// element's report.
 fn export_framed(
     cli: &Path,
@@ -214,7 +214,7 @@ fn export_framed(
         .saturating_add(2 * (4 + command::MAX_OUTPUT))
         .saturating_add(max_bundle_bytes(&Limits::default()));
     let mut args = vec![
-        "view-export".to_owned(),
+        "export-view".to_owned(),
         "--store".into(),
         store.to_string_lossy().into_owned(),
         "--out".into(),
@@ -277,12 +277,12 @@ fn frame_parts(frame: &Frame<'_>, known: &Known) -> Parts {
 fn export_error(e: ToolError) -> Error {
     match e.code.as_str() {
         "OUTCOME_UNKNOWN" => {
-            Error::Cli("view-export did not finish in time and was stopped".into())
+            Error::Cli("export-view did not finish in time and was stopped".into())
         }
         "CLI_FAILED" if e.message.contains("size limit") => {
             Error::Cli("view bundle exceeds the snapshot limits".into())
         }
-        code => Error::Cli(format!("view-export failed: {code}")),
+        code => Error::Cli(format!("export-view failed: {code}")),
     }
 }
 
@@ -305,7 +305,7 @@ pub struct Reloaded {
 }
 
 /// Runs the CLI queries of one refresh (blocking; call it off the UI thread). The model is read
-/// by one framed `view-export`, so the snapshot and the definitions come from one verified
+/// by one framed `export-view`, so the snapshot and the definitions come from one verified
 /// inspection of one revision; only when that export fails is the definitions listing asked on
 /// its own, so a failing snapshot never hides it (issue 26, finding 2). `known` is what the
 /// window already shows: the same snapshot again is reported as [`Refreshed::Unchanged`].

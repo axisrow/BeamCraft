@@ -53,7 +53,7 @@ impl Fixture {
             ]);
         }
         f.ok(&[
-            "workspace-create",
+            "create-workspace",
             "--store",
             &f.path("published"),
             "--workspace-dir",
@@ -115,7 +115,7 @@ impl Fixture {
     }
     fn create_args(&self) -> Vec<String> {
         vec![
-            "changeset-create".into(),
+            "create-changeset".into(),
             "--store".into(),
             self.path("published"),
             "--workspace-dir".into(),
@@ -134,7 +134,7 @@ impl Fixture {
         (digest, changeset)
     }
     fn names(&self, store: &str) -> Vec<String> {
-        let json = self.ok(&["plate-inspect", "--store", &self.path(store)]);
+        let json = self.ok(&["inspect-elements", "--store", &self.path(store)]);
         let mut names: Vec<_> = json
             .get("plates")
             .unwrap()
@@ -201,7 +201,7 @@ fn a_new_accepted_base_does_not_mark_unsent_operations_published_or_use_old_laye
         );
     }
     f.ok(&[
-        "changeset-apply",
+        "apply-changeset",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -237,7 +237,7 @@ fn a_stale_workspace_packages_the_pinned_historical_base_instead_of_the_current_
         );
     }
     let (code, json) = f.run(&[
-        "changeset-apply",
+        "apply-changeset",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -271,7 +271,7 @@ fn a_changeset_cannot_end_before_the_recorded_rebase_boundary() {
         .unwrap();
     let published = f.head("published");
     let (code, json) = f.run(&[
-        "changeset-apply",
+        "apply-changeset",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -286,7 +286,7 @@ fn a_changeset_cannot_end_before_the_recorded_rebase_boundary() {
     assert_eq!(f.head("published"), published);
     assert_eq!(read_meta(&dir).unwrap(), rebased);
     let status = f.ok(&[
-        "workspace-status",
+        "inspect-workspace",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -298,7 +298,7 @@ fn a_changeset_cannot_end_before_the_recorded_rebase_boundary() {
     );
     let (digest, _) = f.create();
     f.ok(&[
-        "changeset-apply",
+        "apply-changeset",
         "--store",
         &f.path("published"),
         "--workspace-dir",
@@ -322,7 +322,7 @@ fn a_changeset_cannot_end_before_the_recorded_rebase_boundary() {
         .unwrap();
     let published = f.head("published");
     let draft = f.head("draft");
-    for command in ["workspace-status", "workspace-publish", "changeset-create"] {
+    for command in ["inspect-workspace", "publish-workspace", "create-changeset"] {
         let (code, json) = f.run(&[
             command,
             "--store",
@@ -406,7 +406,7 @@ fn a_valid_pin_from_another_project_cannot_relabel_the_drafts_project() {
     let published = other.head("published");
     let draft = f.head("draft");
     let (code, json) = f.run(&[
-        "changeset-create",
+        "create-changeset",
         "--store",
         &other.path("published"),
         "--workspace-dir",

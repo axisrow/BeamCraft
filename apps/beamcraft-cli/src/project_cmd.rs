@@ -6,7 +6,7 @@
 //! object with the same error shape and exit codes as the plate commands.
 //!
 //! The settings live in the user's configuration directory unless `--config-dir` names another.
-//! `project-create` takes its author from the settings profile unless `--actor-id` names one, and
+//! `create-project` takes its author from the settings profile unless `--actor-id` names one, and
 //! records the new project as recently opened; a project is created even when that record cannot
 //! be written (`recent_recorded` is then false).
 
@@ -47,13 +47,13 @@ fn settings_error(error: SettingsError) -> PlateError {
 /// Whether `command` is one of the start commands.
 pub fn handles(command: &OsString) -> bool {
     [
-        "settings-show",
-        "settings-set",
-        "environment-list",
-        "project-create",
-        "project-list",
-        "recent-list",
-        "recent-add",
+        "show-settings",
+        "set-settings",
+        "list-environment",
+        "create-project",
+        "list-project",
+        "list-recent",
+        "add-recent",
     ]
     .iter()
     .any(|c| command == c)
@@ -77,8 +77,8 @@ fn run(args: &[OsString]) -> Run<Json> {
         .split_first()
         .ok_or_else(|| invalid("missing command"))?;
     let own: &[&str] = match *command {
-        "settings-show" | "environment-list" | "recent-list" => &["--config-dir"],
-        "settings-set" => &[
+        "show-settings" | "list-environment" | "list-recent" => &["--config-dir"],
+        "set-settings" => &[
             "--config-dir",
             "--name",
             "--email",
@@ -86,7 +86,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--skip-launcher",
             "--models-dir",
         ],
-        "project-create" => &[
+        "create-project" => &[
             "--config-dir",
             "--parent",
             "--name",
@@ -96,8 +96,8 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--project-id",
             "--workspace-id",
         ],
-        "project-list" => &["--dir"],
-        "recent-add" => &["--config-dir", "--store"],
+        "list-project" => &["--dir"],
+        "add-recent" => &["--config-dir", "--store"],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 32 {
@@ -121,12 +121,12 @@ fn run(args: &[OsString]) -> Run<Json> {
         }
     };
     match *command {
-        "settings-show" => {
+        "show-settings" => {
             let dir = config_dir()?;
             let settings = Settings::load(&dir).map_err(settings_error)?;
             settings_json("settings", &dir, &settings)
         }
-        "settings-set" => {
+        "set-settings" => {
             let dir = config_dir()?;
             let mut settings = Settings::load(&dir).map_err(settings_error)?;
             match (given("--name"), given("--email")) {
@@ -153,7 +153,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             settings.save(&dir).map_err(settings_error)?;
             settings_json("settings_saved", &dir, &settings)
         }
-        "environment-list" => {
+        "list-environment" => {
             let mut folders: Vec<(PathBuf, &'static str)> = builtin_environment_dirs()
                 .into_iter()
                 .map(|d| (d, "builtin"))
@@ -178,7 +178,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ),
             ]))
         }
-        "project-create" => {
+        "create-project" => {
             let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
             let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
             // The settings are read only when they are needed: for the author, and to remember
@@ -222,7 +222,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ("recent_recorded", Json::Bool(recorded)),
             ]))
         }
-        "project-list" => {
+        "list-project" => {
             let dir = given("--dir").ok_or_else(|| invalid("--dir is required"))?;
             let (projects, truncated) = list_projects(Path::new(dir))?;
             Ok(Json::object([
@@ -238,7 +238,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ),
             ]))
         }
-        "recent-list" => {
+        "list-recent" => {
             let settings = Settings::load(&config_dir()?).map_err(settings_error)?;
             let mut recent = Vec::with_capacity(settings.recent.len());
             for r in &settings.recent {
@@ -253,7 +253,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ("recent", Json::Array(recent)),
             ]))
         }
-        "recent-add" => {
+        "add-recent" => {
             let store = given("--store").ok_or_else(|| invalid("--store is required"))?;
             let info = project_info(Path::new(store))?;
             if !matches!(info.state, ProjectState::Ready { .. }) {

@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, beams and materials, MPL-2.0.
 
-//! E03 end to end: `bom-export` through the real CLI binary against a verified store. The
-//! exported per-element and summary CSVs match `plate-inspect`, the mark is the element id
+//! E03 end to end: `export-bom` through the real CLI binary against a verified store. The
+//! exported per-element and summary CSVs match `inspect-elements`, the mark is the element id
 //! (the fallback until numbering exists), a mass without a density is an empty cell excluded
 //! from the totals and counted in `mass_unknown`, and the files are created new, never
 //! overwritten.
@@ -64,7 +64,7 @@ impl Fixture {
         text(&body, "code")
     }
     fn head(&self) -> String {
-        text(&self.ok("revision-open", &[]), "revision_id")
+        text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn read(&self, name: &str) -> String {
         fs::read_to_string(self.root.join(name)).unwrap()
@@ -192,11 +192,11 @@ impl Fixture {
         // The numbering-approval path: approve only the beam series (B), so the beam carries
         // the stored mark B1 and every other element stays unnumbered.
         let token = text(
-            &self.ok("numbering-preview", &["--beam-series", "B:1"]),
+            &self.ok("preview-numbering", &["--beam-series", "B:1"]),
             "preview_token",
         );
         self.ok(
-            "numbering-approve",
+            "approve-numbering",
             &["--preview-token", &token, "--beam-series", "B:1"],
         );
         (plate, bare_plate, beam, column)
@@ -241,7 +241,7 @@ fn the_exported_tables_match_the_verified_revision() {
     );
 
     // The quantities the CSV must repeat come from the verified read of the same head.
-    let inspected = f.ok("plate-inspect", &[]);
+    let inspected = f.ok("inspect-elements", &[]);
     let masses: Vec<(String, f64)> = list(&inspected, "plates")
         .iter()
         .chain(list(&inspected, "members").iter())
@@ -265,7 +265,7 @@ fn the_exported_tables_match_the_verified_revision() {
     let elements_path = f.out("elements.csv");
     let summary_path = f.out("summary.csv");
     let exported = f.ok(
-        "bom-export",
+        "export-bom",
         &["--out", &elements_path, "--summary", &summary_path],
     );
     assert_eq!(text(&exported, "outcome"), "bom_exported");
@@ -367,7 +367,7 @@ fn refusals_write_nothing() {
     // A store without a revision has nothing to report.
     assert_eq!(
         f.rejected_empty(
-            "bom-export",
+            "export-bom",
             &[
                 "--out",
                 &f.out("elements.csv"),
@@ -381,34 +381,34 @@ fn refusals_write_nothing() {
 
     f.build_model();
     let elements_path = f.out("elements.csv");
-    let exported = f.ok("bom-export", &["--out", &elements_path]);
+    let exported = f.ok("export-bom", &["--out", &elements_path]);
     assert_eq!(text(&exported, "outcome"), "bom_exported");
     // Files are created new, never overwritten.
     assert_eq!(
-        f.rejected("bom-export", &["--out", &elements_path]),
+        f.rejected("export-bom", &["--out", &elements_path]),
         "INVALID_ARGUMENT"
     );
     let other = f.out("other.csv");
     assert_eq!(
-        f.rejected("bom-export", &["--out", &other, "--bogus", "x"]),
+        f.rejected("export-bom", &["--out", &other, "--bogus", "x"]),
         "INVALID_ARGUMENT"
     );
     assert!(!f.root.join("other.csv").exists());
     // At least one output file is required.
-    assert_eq!(f.rejected("bom-export", &[]), "INVALID_ARGUMENT");
+    assert_eq!(f.rejected("export-bom", &[]), "INVALID_ARGUMENT");
     // A refusal on either path leaves nothing, not even the file of the other output: both
     // files are reserved before any bytes are written.
     let fresh = f.out("fresh.csv");
     let taken = f.out("taken.csv");
     fs::write(&taken, "occupied").unwrap();
     assert_eq!(
-        f.rejected("bom-export", &["--out", &fresh, "--summary", &taken]),
+        f.rejected("export-bom", &["--out", &fresh, "--summary", &taken]),
         "INVALID_ARGUMENT"
     );
     assert!(!f.root.join("fresh.csv").exists());
     let same = f.out("same.csv");
     assert_eq!(
-        f.rejected("bom-export", &["--out", &same, "--summary", &same]),
+        f.rejected("export-bom", &["--out", &same, "--summary", &same]),
         "INVALID_ARGUMENT"
     );
     assert!(!f.root.join("same.csv").exists());

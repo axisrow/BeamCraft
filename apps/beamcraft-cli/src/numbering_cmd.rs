@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! A08 headless command `numbering-preview` (groups equivalent parts, proposes number series and
-//! shows overlaps; read-only) and the A09 commands `numbering-approve` (stores the approved marks
-//! as authored data in the next revision) and `numbering-status` (reads the approval back and
+//! A08 headless command `preview-numbering` (groups equivalent parts, proposes number series and
+//! shows overlaps; read-only) and the A09 commands `approve-numbering` (stores the approved marks
+//! as authored data in the next revision) and `inspect-numbering` (reads the approval back and
 //! says whether the model still matches it).
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
@@ -42,9 +42,9 @@ fn invalid(message: &'static str) -> PlateError {
 
 /// Whether `command` is one of the numbering commands.
 pub fn handles(command: &OsString) -> bool {
-    command == "numbering-preview"
-        || command == "numbering-approve"
-        || command == "numbering-status"
+    command == "preview-numbering"
+        || command == "approve-numbering"
+        || command == "inspect-numbering"
 }
 
 /// Runs the command and returns the JSON result and the process exit code.
@@ -147,19 +147,19 @@ fn run(args: &[OsString]) -> Run<Json> {
         .split_first()
         .ok_or_else(|| invalid("missing command"))?;
     let own: Vec<&str> = match *command {
-        "numbering-preview" => [
+        "preview-numbering" => [
             &SETTINGS_OPTIONS[..],
             &PAGING_OPTIONS,
             &["--store", "--previous"],
         ]
         .concat(),
-        "numbering-approve" => [
+        "approve-numbering" => [
             &SETTINGS_OPTIONS[..],
             &CONTEXT_OPTIONS,
             &["--store", "--preview-token"],
         ]
         .concat(),
-        "numbering-status" => [&PAGING_OPTIONS[..], &["--store"]].concat(),
+        "inspect-numbering" => [&PAGING_OPTIONS[..], &["--store"]].concat(),
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 40 {
@@ -176,7 +176,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
     match *command {
-        "numbering-approve" => {
+        "approve-numbering" => {
             let settings = settings_of(&options)?;
             let preview_token = token_option(
                 &options,
@@ -195,7 +195,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 },
             )
         }
-        "numbering-status" => {
+        "inspect-numbering" => {
             let (offset, limit) = paging(&options)?;
             let store = open_store(store_root)?;
             Ok(status_json(&numbering_status(&store)?, offset, limit))

@@ -9,13 +9,13 @@
 //!
 //! V06.1 adds a properties panel for the selected plate or straight member (what the engine
 //! reports, labelled current, stale or unknown; edits are the CLI's `update-element`) and a
-//! Publish action (`workspace-publish`); see [`props`] and [`publish`].
+//! Publish action (`publish-workspace`); see [`props`] and [`publish`].
 //!
 //! A launch without arguments opens a per-user default workspace created on demand
 //! ([`source::default_workspace_at`]), so a double-clicked app bundle launches.
 //!
 //! The viewport shows the accepted (published) revision of a store. Its input is the engine's
-//! pinned view snapshot, produced by the headless CLI (`beamcraft view-export --out -`) in a
+//! pinned view snapshot, produced by the headless CLI (`beamcraft export-view --out -`) in a
 //! separate process and rebuilt here with [`beamcraft_engine::ViewSnapshot::from_bundle`], which
 //! re-validates every blob, digest and the token. The renderer computes no engineering geometry:
 //! it decodes the engine's element-local meshes, derives display-only flat normals, and draws

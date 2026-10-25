@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! E03 headless command `bom-export`: the verified head revision's bill of materials as CSV
+//! E03 headless command `export-bom`: the verified head revision's bill of materials as CSV
 //! files. It calls the engine's pure tables through `beamcraft_cli::bom` and prints one JSON
 //! object with the same error shape and exit codes as the other commands.
 
@@ -26,12 +26,12 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Whether `command` is `bom-export`.
+/// Whether `command` is `export-bom`.
 pub fn handles(command: &OsString) -> bool {
-    command == "bom-export"
+    command == "export-bom"
 }
 
-/// Runs `bom-export` and returns the JSON result and the process exit code.
+/// Runs `export-bom` and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))
 }

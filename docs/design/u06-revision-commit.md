@@ -2,7 +2,7 @@
 
 Date: 2026-10-16. Status: **experimental engine API plus headless commands; the byte, manifest
 and root layer of U06 is implemented, content verification is injected (not wired into the CLI)
-and U07 recovery was added on top (see [U07](u07-journal-recovery.md)).** Branch `feat/u06-revision-commit`, stacked on
+and U07 recovery was added on top (see [U07](u07-journal-recovery.md)).** Branch `feat/u06-commit-revision`, stacked on
 `feat/u03-uuid-relationship-index` (PR #53); retarget to `master` after #53 merges.
 
 Plan row: U06 / M, owner Storage, depends on U02, U03, U05. Result: immutable generations of
@@ -26,8 +26,8 @@ generations; the expected base is verified; there is no partial Save of a set of
 | `CommitHook` | `Checked`, `IntentRecorded` (U07), `BlobsVerified`, `ManifestStored`, `RecordStaged` (abort leaves the root unchanged: `Aborted`, F04 `CANCELLED`), `Switched` (failure there is `OUTCOME_UNKNOWN`, never success or rollback) and `Recorded` (U07, observational). U07 uses the points for the intent record and fault injection. |
 | `ContentVerifier` | Injected content gate. It receives a `VerifyRequest`: the verified layer bytes **and the draft's composition root, schema identity, project, workspace, generation and base pin**, and returns U03 evidence or a `ContentRejection` carrying the layer engine's own F04 code (`DUPLICATE_ID`, `INVALID_ID`, `DANGLING_RELATIONSHIP`, `FOREIGN_READ_ONLY`, ...). The evidence must repeat the root and schema it was built for. The host checks that it names the draft's project, workspace, generation, base, root and schema (`STALE_WORKSPACE` otherwise) and is complete (`DEPENDENCY_UNAVAILABLE`), then records it in the manifest. |
 
-CLI (`beamcraft`): `revision-commit` and `revision-open`, machine-readable JSON, exit codes of the
-existing table. `revision-commit` takes already stored blobs (`blob-put`) and does not parse USD.
+CLI (`beamcraft`): `commit-revision` and `open-revision`, machine-readable JSON, exit codes of the
+existing table. `commit-revision` takes already stored blobs (`put-blob`) and does not parse USD.
 
 ## Decisions to review
 

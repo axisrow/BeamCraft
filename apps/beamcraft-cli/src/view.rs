@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Headless view-snapshot commands (V02). They call the engine API and add no computation.
+//! Headless snapshot-view commands (V02). They call the engine API and add no computation.
 //!
 //! P01 does not exist, so the scene is a synthetic kernel plate scene: every fifth element is
 //! labelled `support` and, with `--stand-in-simplified true`, every third element carries a
@@ -58,7 +58,7 @@ fn run(args: &[OsString]) -> View<Json> {
         .collect::<View<_>>()?;
     let (command, tail) = args.split_first().ok_or_else(invalid)?;
     let allowed: &[&str] = match *command {
-        "view-snapshot" => &[
+        "snapshot-view" => &[
             "--plates",
             "--hide",
             "--representation",
@@ -67,7 +67,7 @@ fn run(args: &[OsString]) -> View<Json> {
             "--revision",
             "--generation",
         ],
-        "view-changes" => &[
+        "inspect-view-changes" => &[
             "--plates",
             "--edit",
             "--since",
@@ -110,7 +110,7 @@ fn run(args: &[OsString]) -> View<Json> {
     };
     let pin = ViewPin::new(revision, generation);
     let scene = plate_scene(plates, stand_in)?;
-    if *command == "view-snapshot" {
+    if *command == "snapshot-view" {
         let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())?;
         let settings = ViewSettings {
             hidden_kinds: options

@@ -56,7 +56,7 @@ fn a_pinned_publication_refuses_cli_writes_keeps_local_edits_and_retries_after_r
         id,
     ]);
     ok(&[
-        "workspace-create",
+        "create-workspace",
         "--store",
         pub_path,
         "--workspace-dir",
@@ -119,7 +119,7 @@ fn a_pinned_publication_refuses_cli_writes_keeps_local_edits_and_retries_after_r
     let edited = draft_store.head().unwrap().unwrap();
     assert_ne!(edited, old_draft);
     let publish = [
-        "workspace-publish",
+        "publish-workspace",
         "--store",
         pub_path,
         "--workspace-dir",
@@ -136,7 +136,7 @@ fn a_pinned_publication_refuses_cli_writes_keeps_local_edits_and_retries_after_r
     drop(guard);
     ok(&publish);
     ok(&create);
-    let inspected = ok(&["plate-inspect", "--store", pub_path]);
+    let inspected = ok(&["inspect-elements", "--store", pub_path]);
     let mut names: Vec<_> = inspected
         .get("plates")
         .unwrap()

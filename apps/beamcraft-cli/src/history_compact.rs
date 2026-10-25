@@ -259,7 +259,7 @@ fn copy_and_verify(store: &Path, destination: &Path) -> Result<(), CompactionErr
     Ok(())
 }
 
-/// The lease a running `coordinator-serve` holds on its store for as long as it serves, so that a
+/// The lease a running `serve-coordinator` holds on its store for as long as it serves, so that a
 /// compaction cannot start under it. `Ok(None)` for every other command, and when the `--store`
 /// value is missing or unusable (the command then reports its own error).
 pub fn hold_coordinator_lease(
@@ -267,7 +267,7 @@ pub fn hold_coordinator_lease(
 ) -> Result<Option<StoreLease>, PlateError> {
     if args
         .first()
-        .is_none_or(|command| command != "coordinator-serve")
+        .is_none_or(|command| command != "serve-coordinator")
     {
         return Ok(None);
     }
