@@ -1831,19 +1831,11 @@ impl App {
         origin_mm: [f64; 3],
     ) -> Option<GhostMesh> {
         let rect = self.profile_rect()?;
-        // The form's orientation text, as the placement quaternion; a field that does not
-        // parse draws no ghost, and a well-formed one the engine refuses (a non-normalized
-        // quaternion, say) is refused here the same way.
-        let orientation = self
-            .tools
-            .member
-            .orientation
-            .trim()
-            .split(',')
-            .map(|part| part.trim().parse::<f64>().ok())
-            .collect::<Option<Vec<f64>>>()?
-            .try_into()
-            .ok()?;
+        // The form's orientation text as the placement quaternion: empty is the identity the
+        // commit runs, and a field that does not parse draws no ghost. A well-formed
+        // quaternion the engine refuses (a non-normalized one, say) is refused below the same
+        // way, so the preview never disagrees with what Commit would build.
+        let orientation = crate::tools::orientation_or_identity(&self.tools.member.orientation)?;
         let authored = AuthoredMember {
             id: ElementId::parse("01990000-0000-7000-8000-00000000e347").ok()?,
             kind: match self.tools.member.kind {

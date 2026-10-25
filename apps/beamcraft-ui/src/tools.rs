@@ -132,6 +132,21 @@ impl Default for MemberForm {
     }
 }
 
+/// The placement quaternion a member form's orientation text stands for: an empty field is the
+/// identity the commit runs (prepare omits the flag), and `None` is text that would not even
+/// reach the engine's validation — the ghost preview draws nothing then.
+pub fn orientation_or_identity(text: &str) -> Option<[f64; 4]> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some([0.0, 0.0, 0.0, 1.0]);
+    }
+    text.split(',')
+        .map(|part| part.trim().parse::<f64>().ok())
+        .collect::<Option<Vec<f64>>>()?
+        .try_into()
+        .ok()
+}
+
 /// One command, ready to run: the arguments after the binary name and a display summary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prepared {
@@ -793,6 +808,21 @@ mod tests {
         form.profile = None;
         let error = form.prepare(store()).unwrap_err();
         assert_eq!(error.field, "Profile");
+    }
+
+    #[test]
+    fn the_ghost_orientation_is_identity_for_an_empty_field_and_none_for_garbage() {
+        // Empty is the identity the commit runs: prepare omits the flag then.
+        assert_eq!(orientation_or_identity("  "), Some([0.0, 0.0, 0.0, 1.0]));
+        // The decimal text parses to the nearest f64, which is the constant itself.
+        let half = core::f64::consts::FRAC_1_SQRT_2;
+        assert_eq!(
+            orientation_or_identity("0,0,0.7071067811865476,0.7071067811865476"),
+            Some([0.0, 0.0, half, half])
+        );
+        for bad in ["0,0,1", "0,0,1,2,3", "0,0,x,1", ",,,", "0, 0, 0"] {
+            assert_eq!(orientation_or_identity(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
