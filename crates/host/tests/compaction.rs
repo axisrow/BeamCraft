@@ -43,7 +43,9 @@ impl Fixture {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = base.join(format!("test-{time}-{id}"));
+        // The process id keeps nextest's process-per-test runs from colliding when two test
+        // processes start within the same nanosecond (the counter is per process).
+        let root = base.join(format!("test-{time}-{}-{id}", std::process::id()));
         fs::create_dir(&root).unwrap();
         Self(root)
     }
