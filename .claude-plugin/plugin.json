@@ -1,7 +1,7 @@
 {
   "name": "beamcraft",
   "version": "0.1.0",
-  "description": "Drive BeamCraft structural steel detailing through the beamcraft-cli: create, update and inspect members and plates, open and verify a store, snapshot and export views, pick features. No MCP server and no background process: the CLI is the only contract.",
+  "description": "Drive BeamCraft structural steel detailing through the beamcraft-cli: create, update and inspect members and plates, open and verify a store, snapshot and export views, pick features, and open the model in the native viewport app. No MCP server and no background process: every modelling step goes through the CLI.",
   "author": {
     "name": "Apibim"
   },

@@ -1,6 +1,6 @@
 ---
 name: beamcraft-view
-description: Snapshot and export a BeamCraft view through the beamcraft-cli (view-snapshot, view-export). Use when the user asks for a view snapshot of a scene or store, or for a view-export bundle for the native BeamCraft viewport.
+description: Snapshot and export a BeamCraft view through the beamcraft-cli (view-snapshot, view-export), and open the model in the native viewport app. Use when the user asks for a view snapshot of a scene or store, for a view-export bundle for the native BeamCraft viewport, or to open the model in the viewport.
 ---
 
 # Snapshot and export views with the BeamCraft CLI
@@ -77,7 +77,24 @@ The destination is never overwritten: an existing `--out FILE` is a refusal, and
 installed only after a complete write. `--with-definitions true` and `--with-element UUID` frame
 definition and element replies into the bundle, but only together with `--out -`.
 
-## 3. Prove a workflow with evidence
+## 3. Open the native viewport
+
+The desktop app shows the accepted head of a store in a real 3D window. Build the CLI and the
+app from the same checkout - the app finds the CLI next to its own executable unless `--cli`
+names it - and launch the app in the background with a log file:
+
+```sh
+cd <beamcraft-checkout>
+cargo build --offline -p beamcraft-cli -p beamcraft-ui --bins
+target/debug/beamcraft-ui --store ROOT > /tmp/bc-ui.log 2>&1 &
+```
+
+Prove the launch by the living process and a clean log. In the window, `R` reloads the store's
+head, `F` fits the view, a click selects.
+What the picture shows is accepted by the person looking at it: launch evidence is not visual
+acceptance.
+
+## 4. Prove a workflow with evidence
 
 - snapshot: `outcome` is `view_snapshot` with the element count you asked for;
 - export: `outcome` is `view_exported`, and the file exists with the reported `bytes`.
