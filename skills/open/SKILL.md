@@ -10,8 +10,8 @@ argument-hint: [store path]
 Open the BeamCraft store named in the request. A store path is normally passed as the command
 argument; if it is missing, ask for one before running anything.
 
-1. Build the app if it is not built - the `view` skill, §3, shows the command; the CLI is
-   built alongside, because the app finds it next to its own executable.
+1. Build the app if it is not built - the `model` skill's `reference/view.md` §3 shows the
+   command; the CLI is built alongside, because the app finds it next to its own executable.
 2. Launch the app in the background against the store exactly as §3 shows, with a log file.
 3. Prove the launch with the real process: it is alive and the log is clean; quote what you
    captured. Refreshing the store's head inside the window is `R`.

@@ -1,9 +1,3 @@
----
-name: pick
-description: Pick and resolve coordinates in a BeamCraft store through the beamcraft-cli (pick, feature-list, feature-lookup, snap). Use when the user asks what is at a coordinate, to snap to a point or member axis, or to resolve a semantic feature address.
-argument-hint: [coordinate or element to resolve]
----
-
 # Pick and resolve features with the BeamCraft CLI
 
 All four commands are read-only engine queries over the verified head's view snapshot. There is
