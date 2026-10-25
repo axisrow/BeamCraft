@@ -6,11 +6,33 @@ Requires stable Rust 1.96 or newer (`rustup update stable`).
 
 ```sh
 cargo build --workspace
-cargo test --workspace
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p beamcraft-cli -- --version
 ```
+
+[cargo nextest](https://nexte.st) is the local test runner — the same runner and version CI
+uses — for its parallel scheduling and per-test timings. Install it once with
+`cargo install cargo-nextest --locked`.
+
+```sh
+# Inner loop: workspace libs and the quick CLI suites (~1 min warm on the reference Apple M5).
+cargo nextest run --profile fast
+
+# Full pre-merge gate: every test (~2.6 min warm) plus the doctests, which nextest never runs.
+cargo nextest run --workspace
+cargo test --workspace --doc
+```
+
+`cargo test --workspace` runs the same full set including doctests in one command. The `fast`
+profile (`.config/nextest.toml`) skips only the integration suites that each measure at least
+~40 s of serial time on the reference Apple M5 (baseline 2026-10-25, fork issue #139): in
+`beamcraft-cli` `export_ifc`, `numbering_approval`, `numbering`, `libraries`, `environments`
+and `pick`; in `beamcraft-host` `recovery`, `revision` and `compaction`; in `beamcraft-kernel`
+`g09_budget_fuzz` and `g05_profile_extrusion`. The render/viewport suites in `beamcraft-ui`
+measured fast enough to stay in the inner loop. Nothing is removed or permanently skipped: the
+unfiltered `default` profile and CI always run everything, and an explicit command-line filter
+overrides the profile's `default-filter`.
 
 ## Optimized local builds and cold timings
 
@@ -93,7 +115,8 @@ and Linux. To run the same checks locally:
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo nextest run --workspace
+cargo test --workspace --doc
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo run -p beamcraft-boundaries -- check
 cargo check --target wasm32-unknown-unknown $(cargo run -q -p beamcraft-boundaries -- portable)
