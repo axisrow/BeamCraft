@@ -7,11 +7,11 @@ use crate::plate_cmd::{id_error, revision_json};
 use beamcraft_cli::{
     plate::PlateError,
     workspace::{
+        conflicts::conflict_json,
         read_meta,
         rebase::{RebaseRequest, RebaseResult, rebase_workspace},
     },
 };
-use beamcraft_engine::footprint::Target;
 use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
@@ -139,26 +139,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
                 ),
                 (
                     "diagnostics",
-                    Json::Array(
-                        conflicts
-                            .into_iter()
-                            .map(|conflict| {
-                                let (kind, target) = match conflict.entry.target {
-                                    Target::Element(id) => ("element", id.to_string()),
-                                    Target::Definition(digest) => {
-                                        ("definition", digest.to_string())
-                                    }
-                                };
-                                Json::object([
-                                    ("draft_op", Json::text(conflict.draft.to_string())),
-                                    ("accepted_op", Json::text(conflict.accepted.to_string())),
-                                    ("target_kind", Json::text(kind)),
-                                    ("target", Json::text(target)),
-                                    ("group", Json::text(conflict.entry.group.as_str())),
-                                ])
-                            })
-                            .collect(),
-                    ),
+                    Json::Array(conflicts.iter().map(conflict_json).collect()),
                 ),
             ]),
             2,

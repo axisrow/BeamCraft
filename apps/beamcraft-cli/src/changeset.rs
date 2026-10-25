@@ -394,6 +394,10 @@ pub fn create_changeset(
             message: "the workspace has nothing to send",
         });
     }
+    // C04: an unresolved semantic conflict refuses packaging until the draft is resolved.
+    if !crate::workspace::conflicts::active(workspace, dir, meta)?.is_empty() {
+        return Err(crate::workspace::conflicts::refusal());
+    }
     let unsent = head_sequence - meta.synced_sequence;
     if usize::try_from(unsent).map_or(true, |n| n > MAX_OPERATIONS) {
         return Err(PlateError {
