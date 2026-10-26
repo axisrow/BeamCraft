@@ -609,7 +609,7 @@ fn lifecycle_is_indexed_deactivated_targets_are_reported_and_reactivation_keeps_
     let fixture = |state: &str| {
         built(world(
             &(el(&a, &link("bim:test:to", &b))
-                + &el(&b, &format!("custom token bim:lifecycle = \"{state}\""))
+                + &el(&b, &format!("custom bool bim:isDeactivated = {state}"))
                 + &format!(
                     "def Xform \"PRT_{}\" (active = false) {{ custom string bim:id = \"{c}\" }}",
                     hex(&c)
@@ -619,14 +619,14 @@ fn lifecycle_is_indexed_deactivated_targets_are_reported_and_reactivation_keeps_
         ))
         .unwrap()
     };
-    let off = fixture("deactivated");
+    let off = fixture("true");
     assert_eq!(off.lookup(&b).unwrap().lifecycle, Lifecycle::Deactivated);
     assert_eq!(off.lookup(&a).unwrap().lifecycle, Lifecycle::Active);
     assert!(!off.lookup(&c).unwrap().usd_active);
     // The link stays valid and is reported; the element and its incoming link are retained.
     assert_eq!(off.deactivated_targets().unwrap().len(), 1);
     assert_eq!(off.incoming(&eid(&b)).unwrap().len(), 1);
-    let on = fixture("active");
+    let on = fixture("false");
     assert!(on.deactivated_targets().unwrap().is_empty());
     assert_eq!(on.lookup(&b).unwrap().lifecycle, Lifecycle::Active);
     let ids = |i: &ElementIndex| {
@@ -639,7 +639,7 @@ fn lifecycle_is_indexed_deactivated_targets_are_reported_and_reactivation_keeps_
     assert_ne!(off.structure_digest(), on.structure_digest());
     for bad in ["archived", "Active", ""] {
         let result = built(world(
-            &el(&a, &format!("custom token bim:lifecycle = \"{bad}\"")),
+            &el(&a, &format!("custom token bim:isDeactivated = \"{bad}\"")),
             "",
             "",
         ));
@@ -647,7 +647,7 @@ fn lifecycle_is_indexed_deactivated_targets_are_reported_and_reactivation_keeps_
     }
     assert_eq!(
         code(built(world(
-            &el(&a, "custom token bim:lifecycle = None"),
+            &el(&a, "custom token bim:isDeactivated = None"),
             "",
             ""
         ))),
@@ -1422,10 +1422,10 @@ fn deactivated_and_reactivated_authored_elements_keep_identity_through_reopen() 
     let weak = |state: &str| {
         over(
             MEMBER,
-            &format!("custom token bim:lifecycle = \"{state}\"\n"),
+            &format!("custom bool bim:isDeactivated = {state}\n"),
         ) + &over(PLATE, &link("bim:test:supports", MEMBER))
     };
-    let (a1, o1) = relayer(&a, &o.context, &weak("deactivated"));
+    let (a1, o1) = relayer(&a, &o.context, &weak("true"));
     let off = a1.element_index(&o1.context, &control()).unwrap();
     assert_eq!(
         off.lookup(MEMBER).unwrap().lifecycle,
@@ -1437,7 +1437,7 @@ fn deactivated_and_reactivated_authored_elements_keep_identity_through_reopen() 
         code(a1.check_delete(&off, &eid(MEMBER), &control())),
         ErrorCode::DependencyConflict
     );
-    let (a2, o2) = relayer(&a1, &o1.context, &weak("active"));
+    let (a2, o2) = relayer(&a1, &o1.context, &weak("false"));
     let on = a2.element_index(&o2.context, &control()).unwrap();
     assert_eq!(on.lookup(MEMBER).unwrap().lifecycle, Lifecycle::Active);
     assert!(on.deactivated_targets().unwrap().is_empty());
@@ -1655,11 +1655,13 @@ fn labels_that_authoring_accepts_are_always_indexable() {
 fn every_present_lifecycle_declaration_is_validated() {
     let id = seq(0xf1);
     for declaration in [
-        "custom token bim:lifecycle",
-        "custom string bim:lifecycle",
-        "custom int bim:lifecycle",
-        "custom int bim:lifecycle = 3",
-        "custom string bim:lifecycle = \"\"",
+        "custom bool bim:isDeactivated",
+        "custom bool bim:isDeactivated = None",
+        "custom token bim:isDeactivated",
+        "custom string bim:isDeactivated",
+        "custom int bim:isDeactivated",
+        "custom int bim:isDeactivated = 3",
+        "custom string bim:isDeactivated = \"\"",
     ] {
         assert_eq!(
             code(built(world(&el(&id, declaration), "", ""))),
@@ -1669,7 +1671,7 @@ fn every_present_lifecycle_declaration_is_validated() {
     }
     assert!(
         built(world(
-            &el(&id, "custom token bim:lifecycle = \"active\""),
+            &el(&id, "custom bool bim:isDeactivated = false"),
             "",
             ""
         ))

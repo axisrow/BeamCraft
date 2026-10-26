@@ -9,9 +9,8 @@
 //! Because the body is element-local, the copy's body and mesh are the source's, byte for byte;
 //! only a later edit of the copy that changes its shape produces different geometry.
 //!
-//! Relationships between elements are not authored yet. When they are, the layer engine's
-//! `ElementIndex::copy_plan` remaps self links and refuses everything else; this module only
-//! covers the inputs that exist today (material and profile definition links).
+//! Relationship authoring belongs to the adapter and layer engine: a duplicate keeps its
+//! level and immutable definitions, but joins no assembly and takes no connections (DV-REL-011).
 
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;

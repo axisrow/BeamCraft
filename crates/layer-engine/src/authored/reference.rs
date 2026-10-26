@@ -61,10 +61,11 @@ pub struct Reference {
 }
 
 fn refused(error: beamcraft_model::command::CommandError) -> Diagnostic {
-    fail(
-        error.code,
-        "reference value refused by the R01 admission rules",
-    )
+    Diagnostic {
+        code: error.code,
+        message: "reference value refused by the R01 admission rules",
+        rule_id: error.rule_id,
+    }
 }
 
 fn foreign_write() -> Diagnostic {

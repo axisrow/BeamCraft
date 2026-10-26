@@ -112,10 +112,10 @@ pub(crate) fn footprint_element(identity: &str) -> Result<Option<ElementId>, Dia
     }
 }
 
-/// `bim:lifecycle` state (`DV-BASE-004`). A deactivated element keeps its identity and links.
+/// `bim:isDeactivated` state (`DV-BASE-004`). A deactivated element keeps its identity and links.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lifecycle {
-    /// In play. Also the state of an element that authors no `bim:lifecycle`.
+    /// In play. Also the state of an element that authors no `bim:isDeactivated`.
     Active,
     /// Retained but out of play; links to it stay valid and are reported.
     Deactivated,
@@ -415,13 +415,21 @@ impl ElementIndex {
             .iter()
             .filter(|l| l.owner.as_ref() == Some(source))
         {
+            // DV-REL-011: a duplicate is a loose part, with no copied connections.
+            if matches!(entry.kind.as_deref(), Some("plate" | "beam" | "column"))
+                && link.source_path == entry.path
+                && matches!(link.name.as_str(), "bim:partOf" | "bim:connects")
+            {
+                continue;
+            }
             let target = match &link.target {
                 // Links carried by a descendant prim cannot be represented by the plan yet.
                 _ if link.source_path != entry.path => {
                     return Err(fail(
                         ErrorCode::DependencyConflict,
                         "descendant relationship is outside the supported copy set",
-                    ));
+                    )
+                    .with_rule("DV-REL-011"));
                 }
                 // Self links are internal state of the element and follow the copy.
                 LinkTarget::Element(t) if t == source => LinkTarget::Element(*fresh),
@@ -433,7 +441,8 @@ impl ElementIndex {
                     return Err(fail(
                         ErrorCode::DependencyConflict,
                         "relationship is outside the supported copy set",
-                    ));
+                    )
+                    .with_rule("DV-REL-011"));
                 }
             };
             links.push(PlannedLink {
@@ -597,7 +606,7 @@ impl IndexBuilder {
             "bim:name",
             "bim:elementKind",
             "bim:geometryMode",
-            "bim:lifecycle",
+            "bim:isDeactivated",
             "bim:contentDigest",
             "bim:definitionKind",
         ];
@@ -628,11 +637,12 @@ impl IndexBuilder {
             if long(&p.name) || long(&p.type_name) {
                 return Err(limit());
             }
-            // The index reads only text and the block/absent distinction; anything else becomes
+            // The index reads text, boolean and the block/absent distinction; anything else becomes
             // an inert placeholder that no rule accepts.
             let value = match &p.value {
                 None => None,
                 Some(Value::Block) => Some(Value::Block),
+                Some(Value::Bool(value)) => Some(Value::Bool(*value)),
                 Some(Value::Text(s)) if !long(s) => Some(Value::Text(s.clone())),
                 Some(_) => Some(Value::Dictionary(BTreeMap::new())),
             };
@@ -763,7 +773,8 @@ impl IndexBuilder {
                 return Err(fail(
                     ErrorCode::DuplicateId,
                     "two elements carry the same identity",
-                ));
+                )
+                .with_rule("DV-BASE-002"));
             }
         }
         for (prim, id) in self.prims.iter().zip(&ids) {
@@ -969,22 +980,16 @@ fn element_entry(
             Some(s) if !owned || label_ok(s) => Some(s.to_owned()),
             // A foreign label is inert display data; an owned one must satisfy DV-BASE-003.
             _ if !owned => None,
-            _ => return Err(fail(ErrorCode::InvalidArgument, "invalid element label")),
-        },
-    };
-    // Only an absent property defaults to active; every present declaration must be valid.
-    let lifecycle = match property(prim, "bim:lifecycle") {
-        None => Lifecycle::Active,
-        Some(p) => match (p.type_name.as_str(), text(p)) {
-            ("token" | "string", Some("active")) => Lifecycle::Active,
-            ("token" | "string", Some("deactivated")) => Lifecycle::Deactivated,
             _ => {
-                return Err(fail(
-                    ErrorCode::InvalidArgument,
-                    "bim:lifecycle is neither active nor deactivated",
-                ));
+                return Err(fail(ErrorCode::InvalidArgument, "invalid element label")
+                    .with_rule("DV-BASE-003"));
             }
         },
+    };
+    let lifecycle = if crate::is_deactivated(prim)? {
+        Lifecycle::Deactivated
+    } else {
+        Lifecycle::Active
     };
     Ok(ElementEntry {
         id,
@@ -1073,6 +1078,7 @@ impl Lookup<'_> {
                 ErrorCode::DanglingRelationship,
                 "relationship target does not resolve",
             )
+            .with_rule("DV-REL-001")
         };
         if let Some(category) = category_of_path(target)
             && !target

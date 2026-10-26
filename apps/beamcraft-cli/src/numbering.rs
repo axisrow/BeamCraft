@@ -43,7 +43,7 @@ pub struct NumberingView {
 }
 
 fn error(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 /// The minimum corner of the bounding box of a plate's contour. The outline and the holes of a

@@ -48,7 +48,7 @@ pub const ENVIRONMENT_FILE: &str = "environment.usda";
 pub const ENVIRONMENTS_DIR: &str = "environments";
 
 const fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 const fn invalid(message: &'static str) -> PlateError {

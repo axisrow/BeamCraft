@@ -148,14 +148,15 @@ is the full 128-bit UUIDv7 (`ElementId`); same-millisecond IDs are never shorten
 prefix, upper-case, unhyphenated, wrong-version/variant text is `INVALID_ID`. Element prims must
 follow the category folders and three-letter prefixes of the [prim naming rule](../../docs/architecture.md#prim-hierarchy-and-naming-rule), with the full 32-digit UUIDv7 with agreeing snapshot identity and `bim:id`; duplicates are
 `DUPLICATE_ID`. Labels are never identity: rename keeps ID, path and the label-free
-`structure_digest`. Entries carry lifecycle (`bim:lifecycle`, absent means active), the USD
+`structure_digest`. Entries carry lifecycle (`bim:isDeactivated`, absent means false), the USD
 `active` flag, composition provenance and an ownership verdict that includes foreign ancestors
 and descendants. Every relationship target is resolved to an element, an immutable definition, a
 plain prim or (foreign sources and partial indexes only) an `Unresolved` entry; an owned dangling
 target is `DANGLING_RELATIONSHIP`, a short/malformed element or definition target `INVALID_ID`.
 Outgoing and incoming queries, `delete_blockers`, `dependents`, deactivated-target reporting and
-`copy_plan` (fresh ID, self-link remap, shared definitions, refusal of everything else including
-descendant-carried links) are pure reads of the index. Links to a descendant prim count as
+`copy_plan` (fresh ID, self-link remap, shared definitions and level, dropped assembly membership
+and connections for copied parts, refusal of other unsupported or descendant-carried links) are
+pure reads of the index. Links to a descendant prim count as
 dependencies of the containing element.
 
 The index is not authority. A partial index answers `DEPENDENCY_UNAVAILABLE` for every
@@ -173,3 +174,19 @@ U16 makes an intentional pre-alpha compatibility break: no old-layout store or s
 accepted or migrated. Definitions live under `Definitions/Materials/MAT_<sha256>` or
 `Definitions/Profiles/PRF_<sha256>`; levels and reference wrappers live outside `/World/Steel`.
 See the [U16 design note](../../docs/design/u16-prim-naming.md).
+
+
+## F10 vocabulary alignment (#148)
+
+Deactivation is `bool bim:isDeactivated` (absent means false); a present declaration must have
+an actual boolean value. USD `active` remains separate. Connections author the required token
+`steel:connection:type` (`weld` or `bolt_group`); conflicting property families are rejected.
+The schema digest includes these changes. Earlier schema pins are refused, with no implicit migration.
+Domain diagnostics retain their `DV-*` rule IDs through CLI error responses; transport and
+geometry failures retain their own error namespaces.
+
+The executable logical-case subset is `DVC-BASE-004-P/N` and `DVC-REL-011-P/N` in
+`apps/beamcraft-cli/tests/f10_vocabulary.rs`. These cases drive the real USD reader, index and copy planner and compare exact
+rule IDs and F04 codes. The remaining logical cases are not claimed as executable F10 acceptance
+by this suite. Additional authoring and CLI tests cover connection types, assembly-free copies,
+level retention, unchanged source relationships and undo/redo.

@@ -22,6 +22,7 @@ use std::{collections::BTreeMap, ffi::OsString, path::Path};
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -81,6 +82,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
         BlobStore::new(path)
             .map(RevisionStore::new)
             .map_err(|error| PlateError {
+                rule_id: None,
                 code: error.code(),
                 message: "rebase store is not usable",
             })

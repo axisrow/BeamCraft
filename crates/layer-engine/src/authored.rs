@@ -34,7 +34,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "assembly=/World/Steel/Assemblies/ASM_<uuid7-32>;connection=/World/Steel/Connections/CON_<uuid7-32>;",
     "level=/World/Levels/LVL_<uuid7-32>;reference=/World/References/REF_<uuid7-32>;type=Xform\n",
     "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
-    "bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
+    "bim:isDeactivated=bool(optional,default=false);bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "steel:cut:pointMm=double3(optional);steel:cut:normal=double3(optional,nonzero,both or neither)\n",
@@ -42,7 +42,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
     "connection=element;bim:elementKind=connection;kind=component;a weld (A06) or bolt group (A05);no material or Geometry;placement=identity\n",
-    "steel:weld:type=token(fillet);steel:weld:sizeMm=double(>0,<=1000);steel:weld:location=token(workshop|site);",
+    "steel:connection:type=token(weld|bolt_group);steel:weld:type=token(fillet);steel:weld:sizeMm=double(>0,<=1000);steel:weld:location=token(workshop|site);",
     "steel:weld:side=token(arrow|other|both)\n",
     "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
     "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
@@ -980,6 +980,11 @@ mod pin_tests {
     #[test]
     fn only_the_current_mapping_is_accepted() {
         assert!(pin_accepted(&schema_identity().unwrap().digest.to_string()).unwrap());
+        let before_f10 = SCHEMA_DESCRIPTOR
+            .replace("bim:isDeactivated=bool(optional,default=false);", "")
+            .replace("steel:connection:type=token(weld|bolt_group);", "");
+        let old_pin = Sha256::digest(before_f10.as_bytes()).unwrap();
+        assert!(!pin_accepted(&old_pin.to_string()).unwrap());
         for pin in [
             "f351bf3e2d6f52dc65605dd48c44dae4fbee940b3c69ffcf8e558792b2a7ce37",
             "0311df71b2f7a4bd7b19e87ca7daef1884e989bd099bca24ee165de8e6bc310c",

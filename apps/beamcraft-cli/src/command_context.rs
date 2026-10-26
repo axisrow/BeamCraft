@@ -110,6 +110,7 @@ mod tests {
     #[test]
     fn source_failure_keeps_the_original_code_and_message() {
         let expected = PlateError {
+            rule_id: None,
             code: beamcraft_model::error::ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         };

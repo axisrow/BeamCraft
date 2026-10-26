@@ -111,7 +111,7 @@ fn damaged() -> PlateError {
 }
 
 fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 /// The marks stored on the supported parts and assemblies of one pinned stage, in element-id

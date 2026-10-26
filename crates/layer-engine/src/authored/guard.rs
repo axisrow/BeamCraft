@@ -73,7 +73,8 @@ impl Author {
             Err(fail(
                 ErrorCode::DependencyConflict,
                 "element has incoming relationships",
-            ))
+            )
+            .with_rule("DV-REL-009"))
         }
     }
     /// Certifies that lifecycle writes (delete, deactivate, create) do not collide with reads of

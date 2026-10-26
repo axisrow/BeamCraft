@@ -17,7 +17,7 @@ acceptance remains open** (no CLI/host command, see below). Evidence is Windows 
 | Rename keeps ID | Label excluded from `structure_digest`; ID, path and provenance layer unchanged | `rename_preserves_id_path_and_structure_and_invalidates_the_previous_index` |
 | Rebuild after save/reopen | Real USDA files written by the U02 authoring layer, read back from disk, rebuilt by a fresh `Reader` and a fresh `Author`; indexes compare equal | `index_rebuilds_identically_from_saved_usda_and_usdc_files_and_fresh_readers` |
 | Copy with fresh IDs | `copy_plan` remaps self links, shares definitions, refuses other links (`DEPENDENCY_CONFLICT`), foreign sources, reused IDs; source unchanged; plan applied through `Author` | `copy_gets_a_fresh_id_remaps_owned_links_and_leaves_the_source_unchanged`, `foreign_sources_cannot_be_copied` |
-| Deactivate / reactivate | `bim:lifecycle`; deactivated targets reported, links and identity retained | `lifecycle_is_indexed_...`, `deactivated_and_reactivated_authored_elements_keep_identity_through_reopen` |
+| Deactivate / reactivate | `bim:isDeactivated` (boolean, default false); deactivated targets reported, links and identity retained | `lifecycle_is_indexed_...`, `deactivated_and_reactivated_authored_elements_keep_identity_through_reopen` |
 | Delete / dependent-read collisions | `check_delete`, `certify_dependent_reads` (lifecycle write vs read of the element or its dependents; direction matters) | `delete_and_dependent_reads_collide_and_missing_link_evidence_is_unavailable` |
 | Missing evidence | Partial/gapped/short delivery, missing provenance: `DEPENDENCY_UNAVAILABLE` | `partial_gapped_replayed_and_mixed_context_deliveries_are_never_complete` |
 | Stale/partial/forged cannot authorize | `verify_index`: live context, complete, equal to fresh rebuild | `authorized_writes_need_a_live_complete_owned_untampered_index`, `rename_...`, `delete_and_dependent_...` |
@@ -36,9 +36,9 @@ Error mapping: `INVALID_ID` (DV-BASE-001), `DUPLICATE_ID` (DV-BASE-002), `INVALI
   (section 5) defines typed element-to-element records but no USD mapping, so the index treats
   every composed relationship generically, including unknown names, and applies no endpoint-kind,
   cardinality, cycle or role rules (DV-REL-002..007, 013). Those stay with F10/the owning modules.
-- `bim:lifecycle` absent means `active`; any present declaration (including one without a value
-  or of another type) that is not `active`/`deactivated` is an error for every element, owned or
-  foreign (identity-level fail-closed). Owned labels use the one shared character rule of the
+- `bim:isDeactivated` absent or `false` means in play; `true` deactivates the element; any
+  present non-boolean value is an error for every element, owned or foreign (identity-level
+  fail-closed). Owned labels use the one shared character rule of the
   authoring validator (DV-BASE-003: 1 to 256 bytes, no U+0000-001F or U+007F; U+0080-009F are
   allowed), so any label authoring accepts is indexable; foreign labels are inert.
 - Ownership of an element includes every contributing site, its ancestors and its descendants.

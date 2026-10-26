@@ -35,6 +35,7 @@ const MAX_MEMBERS: usize = 32;
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -213,6 +214,7 @@ fn run(args: &[OsString]) -> Run<Json> {
 
 fn open_store(root: &str) -> Run<RevisionStore> {
     let blobs = BlobStore::new(root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
@@ -223,6 +225,7 @@ fn context_of(options: &BTreeMap<&str, &str>) -> Run<ApprovalContext> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })

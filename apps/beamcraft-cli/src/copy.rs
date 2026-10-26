@@ -13,7 +13,8 @@
 //! model (the copy is a replay when the head already holds the copy of the source's current
 //! state), as in `edit`. The layer engine's `copy_plan` remaps nothing beyond the definition links
 //! the copy keeps and the level assignment (D2), which the copy shares: it stays on the level of
-//! its source. Any other element link (a `part-of` or `connects` record) refuses the copy.
+//! its source. The duplicate joins no assembly and takes no connections (DV-REL-011).
+//! Other unsupported relationships still refuse the copy.
 
 use crate::definition::material_lookup;
 use crate::plate::{
@@ -161,6 +162,7 @@ pub fn copy_element(
             "source_id",
             "a weld has element links that a copy does not carry over",
         )
+        .with_rule("DV-REL-011")
         .into());
     } else if crate::bolt::is_bolt(&base_request, &command.source_id, &control)? {
         // Same for a bolt group: its `connects` record is not carried over by a copy.
@@ -169,6 +171,7 @@ pub fn copy_element(
             "source_id",
             "a bolt group has element links that a copy does not carry over",
         )
+        .with_rule("DV-REL-011")
         .into());
     } else if crate::level::is_level(&base_request, &command.source_id, &control)? {
         return Err(CommandError::new(
@@ -260,7 +263,8 @@ pub fn copy_element(
         &control,
     )?;
     // Links the adapter does not carry over must not be dropped silently: the layer engine plans
-    // the copy and anything beyond the pinned definitions and the level assignment refuses it.
+    // the copy, dropping assembly membership and connections as required by DV-REL-011.
+    // Other unsupported links refuse the operation.
     let index = author.element_index(&opened.context, &control)?;
     let plan = index.copy_plan(
         &LayerElementId::parse(&command.source_id.to_string())?,
@@ -279,6 +283,7 @@ pub fn copy_element(
             "source_id",
             "the source has element links that a copy does not carry over yet",
         )
+        .with_rule("DV-REL-011")
         .into());
     }
     let planned_level = plan

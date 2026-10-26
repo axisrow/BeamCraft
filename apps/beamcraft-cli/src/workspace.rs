@@ -45,6 +45,7 @@ const META_CAP: u64 = 4096;
 
 pub(crate) fn unusable() -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::BackendUnavailable,
         message: "workspace metadata is not usable",
     }
@@ -236,6 +237,7 @@ pub fn create_workspace(
         Ok(revision) => revision,
         Err(RevisionError::NoRevision) => {
             return Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::NotFound,
                 message: "there is no published revision to fork",
             });
@@ -248,6 +250,7 @@ pub fn create_workspace(
         let existing = read_meta(dir)?;
         if existing.workspace_id != request.workspace_id || existing.user_id != request.user_id {
             return Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::DuplicateId,
                 message: "the directory is already another workspace",
             });
@@ -256,6 +259,7 @@ pub fn create_workspace(
     } else {
         if head_of(workspace)?.is_some() {
             return Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::DuplicateId,
                 message: "the directory already holds revisions",
             });
@@ -276,6 +280,7 @@ pub fn create_workspace(
         for entry in content.entries() {
             let bytes = revision.layer_bytes(entry.name())?;
             workspace.blobs().publish(&bytes).map_err(|e| PlateError {
+                rule_id: None,
                 code: e.code(),
                 message: "layer blob could not be stored",
             })?;
@@ -388,6 +393,7 @@ pub fn publish_workspace(
     }
     if draft_sequence <= meta.synced_sequence {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the workspace has nothing to publish",
         });
@@ -398,6 +404,7 @@ pub fn publish_workspace(
     }
     if head.info().revision() != &meta.base_revision {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head moved since the workspace was forked",
         });
@@ -418,6 +425,7 @@ pub fn publish_workspace(
         .is_some_and(|work| work.reads().is_empty() && work.writes().is_empty())
     {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the unsent work was renounced; there is nothing to publish",
         });
@@ -428,6 +436,7 @@ pub fn publish_workspace(
     for entry in content.entries() {
         let bytes = draft.layer_bytes(entry.name())?;
         published.blobs().publish(&bytes).map_err(|e| PlateError {
+            rule_id: None,
             code: e.code(),
             message: "layer blob could not be stored",
         })?;
@@ -437,6 +446,7 @@ pub fn publish_workspace(
         .workspace_generation()
         .checked_add(1)
         .ok_or(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "generation exhausted",
         })?;

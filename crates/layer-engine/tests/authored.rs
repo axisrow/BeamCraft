@@ -3361,3 +3361,60 @@ fn a_store_pinned_to_the_pre_a09_mapping_is_refused() {
         Some(ErrorCode::UnsupportedVersion)
     );
 }
+
+#[test]
+fn connection_discriminator_roundtrips_and_rejects_missing_unknown_or_conflicting_values() {
+    for (id, change, expected) in [
+        (WELD, create_weld(WELD, weld(PLATE, MEMBER)), "weld"),
+        (BOLT, create_bolt(BOLT, bolt(PLATE, MEMBER)), "bolt_group"),
+    ] {
+        let (mut author, opened) = populated();
+        let (prepared, opened) = installed(&mut author, &opened, vec![change]);
+        assert!(
+            prepared
+                .opinions
+                .iter()
+                .any(|v| v.attribute == "steel:connection:type")
+        );
+        let prims = snapshot(&author, &opened.context);
+        assert_eq!(
+            value(&prims, id, "steel:connection:type"),
+            Some(&Value::Text(expected.into()))
+        );
+        let old = format!("custom token steel:connection:type = \"{expected}\"");
+        for (replacement, rule) in [
+            (String::new(), "DV-ATTR-001"),
+            (
+                "custom token steel:connection:type = \"unknown\"".into(),
+                "DV-ATTR-002",
+            ),
+            (
+                format!(
+                    "custom token steel:connection:type = \"{}\"",
+                    if expected == "weld" {
+                        "bolt_group"
+                    } else {
+                        "weld"
+                    }
+                ),
+                "DV-ATTR-002",
+            ),
+            (
+                "custom string steel:connection:type = \"weld\"".into(),
+                "DV-ATTR-002",
+            ),
+        ] {
+            let request = tampered(
+                &author,
+                &opened.context,
+                "authored.usda",
+                &old,
+                &replacement,
+            );
+            let error =
+                validate_layers(request, schema_identity().unwrap(), &control()).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidArgument);
+            assert_eq!(error.rule_id, Some(rule));
+        }
+    }
+}

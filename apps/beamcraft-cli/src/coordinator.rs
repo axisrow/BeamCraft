@@ -47,7 +47,7 @@ pub struct PublishHandler {
 }
 
 fn refused(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 impl PublishHandler {
@@ -165,6 +165,7 @@ impl PublishHandler {
             .map_err(|_| refused(ErrorCode::InvalidArgument, "changeset is not a SHA-256"))?;
         let expected = text("expected_head")?;
         let blobs = BlobStore::new(&dir).map_err(|e| PlateError {
+            rule_id: None,
             code: e.code(),
             message: "workspace store is not usable",
         })?;

@@ -26,6 +26,7 @@ type Run<T> = Result<T, PlateError>;
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -226,6 +227,7 @@ fn export(options: &BTreeMap<&str, &str>) -> Run<Json> {
     };
     validate_request(&request)?;
     let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
@@ -248,6 +250,7 @@ fn export(options: &BTreeMap<&str, &str>) -> Run<Json> {
                     })
             })
             .map_err(|e| PlateError {
+                rule_id: None,
                 code: e.code,
                 message: e.message,
             })
@@ -259,6 +262,7 @@ fn export(options: &BTreeMap<&str, &str>) -> Run<Json> {
     {
         installed.undo();
         return Err(PlateError {
+            rule_id: None,
             code: e.code,
             message: e.message,
         });

@@ -15,6 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 fn invalid() -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message: "invalid foreign display geometry",
     }
@@ -22,6 +23,7 @@ fn invalid() -> PlateError {
 
 fn unsupported() -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::UnsupportedGeometry,
         message: "reference view supports translated Cube and triangle/convex-quad Mesh cages only",
     }
@@ -31,6 +33,7 @@ fn array<'a>(p: &'a Prim, name: &str, cap: usize) -> Result<&'a [Value], PlateEr
     match property(p, name) {
         Some(Value::Array(values)) if values.len() <= cap => Ok(values),
         Some(Value::Array(_)) => Err(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "foreign display geometry exceeds the view budget",
         }),
@@ -187,6 +190,7 @@ fn wrapper_meshes(
         let offset = [px + x, py + y, pz + z];
         if offset.iter().any(|v| !v.is_finite()) {
             return Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::NonFiniteNumber,
                 message: "foreign translation overflows",
             });

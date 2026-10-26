@@ -53,6 +53,7 @@ pub(crate) type Run<T> = Result<T, PlateError>;
 
 pub(crate) fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -261,6 +262,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
     let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
@@ -317,6 +319,7 @@ pub(crate) fn quaternion(text: &str) -> Run<[f64; 4]> {
 
 pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
     PlateError {
+        rule_id: Some("DV-BASE-001"),
         code: error.code(),
         message: "identity is not a full canonical UUIDv7",
     }
@@ -413,6 +416,7 @@ fn selected(
             match resolve_name(&definitions, name, profiles) {
                 NameResolution::Found(digest) => Ok(Some(digest)),
                 NameResolution::NotFound => Err(PlateError {
+                    rule_id: None,
                     code: ErrorCode::NotFound,
                     message: if profiles {
                         "no profile definition in the head has this name"
@@ -526,6 +530,7 @@ fn section_shape(family: &str, options: &BTreeMap<&str, &str>) -> Run<SectionSha
 fn contour_points(text: &str) -> Run<Vec<[f64; 3]>> {
     if text.split(';').count() > 1024 {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "more than 1024 contour points",
         });
@@ -594,6 +599,7 @@ fn define_command(
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -694,6 +700,7 @@ fn create(
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -879,6 +886,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -983,6 +991,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -1059,6 +1068,7 @@ fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -1174,6 +1184,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
             .ok_or_else(|| invalid("--workspace-dir is required"))?,
     );
     let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "workspace directory is not usable",
     })?;
@@ -1204,6 +1215,7 @@ fn history_command(command: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
             None => source
                 .next_id()
                 .map_err(|_| PlateError {
+                    rule_id: None,
                     code: ErrorCode::BackendUnavailable,
                     message: "no identity could be generated",
                 })
@@ -1262,6 +1274,7 @@ fn workspace_command(
             .next_id()
             .map(|id| id.to_string())
             .map_err(|_| PlateError {
+                rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",
             })
@@ -1277,6 +1290,7 @@ fn workspace_command(
     }
     if command == "create-workspace" && !dir.exists() {
         std::fs::create_dir(dir).map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "workspace directory could not be created",
         })?;
@@ -1288,6 +1302,7 @@ fn workspace_command(
         return Err(invalid("the workspace directory is the published store"));
     }
     let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "workspace directory is not usable",
     })?;
@@ -1362,6 +1377,7 @@ fn create_member_command(
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })
@@ -1543,6 +1559,7 @@ fn cut_json(cut: Option<&PlaneCut>) -> Run<Json> {
 
 pub(crate) fn num(value: f64) -> Run<Json> {
     Json::number(value).map_err(|_| PlateError {
+        rule_id: None,
         code: ErrorCode::NonFiniteNumber,
         message: "a result is not finite",
     })
@@ -1770,6 +1787,7 @@ pub(crate) fn fit_page(
         }
         if count <= 1 {
             return Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::LimitExceeded,
                 message: "one listing entry exceeds the output budget",
             });
@@ -2380,6 +2398,22 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
         fields.insert("element_filter".into(), Json::text(id.to_string()));
     }
     Ok(reply)
+}
+
+/// Domain failures retain the exact F10 rule through CLI adapters.
+pub(crate) fn domain_diagnostics(error: &PlateError) -> Vec<Json> {
+    error
+        .rule_id
+        .into_iter()
+        .map(|rule| {
+            Json::object([
+                ("rule_id", Json::text(rule)),
+                ("severity", Json::text("error")),
+                ("code", Json::text(error.code.as_str())),
+                ("message", Json::text(error.message)),
+            ])
+        })
+        .collect()
 }
 
 #[cfg(test)]

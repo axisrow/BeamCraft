@@ -22,6 +22,7 @@ use beamcraft_host::{
 };
 use beamcraft_json::Json;
 use std::fs;
+use std::process::Command;
 
 const PROJECT: &str = "019a7bf0-0000-7000-8000-00000000d001";
 const OTHER_PROJECT: &str = "019a7bf0-0000-7000-8000-00000000d002";
@@ -787,4 +788,130 @@ fn a_foreign_or_newer_schema_level_stays_inert_instead_of_blocking_readers() {
         f.rejected("update-element", &["--id", STOREY, "--level", ROOF]),
         "UNSUPPORTED_PROPERTY"
     );
+}
+
+#[test]
+fn copying_connected_assembly_parts_keeps_only_the_level_replays_and_supports_undo_redo() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    f.level(STOREY, "Level 1", "3000");
+    f.ok(
+        "create-assembly",
+        &["--name", "Frame", "--new-id", ASSEMBLY],
+    );
+    for source in [&plate, &beam] {
+        f.assign(source, STOREY);
+        f.ok(
+            "attach-to-assembly",
+            &["--id", source, "--assembly-id", ASSEMBLY],
+        );
+    }
+    f.ok(
+        "create-weld",
+        &[
+            "--name",
+            "Synthetic weld",
+            "--main",
+            &plate,
+            "--secondary",
+            &beam,
+            "--size",
+            "6",
+            "--location",
+            "workshop",
+            "--side",
+            "both",
+        ],
+    );
+    let before_assembly = f.ok("assemblies", &[]);
+    let before_welds = f.ok("welds", &[]);
+    let before = f.inspect();
+    let draft = f
+        .shared
+        .root
+        .join("copy-draft")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    f.ok("create-workspace", &["--workspace-dir", &draft]);
+    let run = |command: &str, args: &[&str]| {
+        let (code, json) = if matches!(command, "undo-workspace" | "redo-workspace") {
+            let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+                .arg(command)
+                .args(args)
+                .output()
+                .unwrap();
+            (
+                output.status.code().unwrap(),
+                beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap(),
+            )
+        } else {
+            f.run_in(&draft, command, args)
+        };
+        assert_eq!(code, 0, "{command}: {json:?}");
+        json
+    };
+    for (source, key, copy_id, op) in [
+        (
+            &plate,
+            "plates",
+            "019a7bf0-0000-7000-8000-000000300071",
+            "019a7bf0-0000-7000-8000-000000300081",
+        ),
+        (
+            &beam,
+            "members",
+            "019a7bf0-0000-7000-8000-000000300072",
+            "019a7bf0-0000-7000-8000-000000300082",
+        ),
+    ] {
+        let args = ["--id", source, "--new-id", copy_id, "--op-id", op];
+        run("copy-element", &args);
+        let inspected = run("inspect-elements", &[]);
+        assert_eq!(level_of(&inspected, key, copy_id).as_deref(), Some(STOREY));
+        assert_eq!(
+            element(&inspected, key, source),
+            element(&before, key, source)
+        );
+        assert_eq!(
+            text(element(&inspected, key, copy_id), "mesh_digest"),
+            text(element(&before, key, source), "mesh_digest")
+        );
+        assert_eq!(run("assemblies", &[]), before_assembly);
+        assert_eq!(run("welds", &[]), before_welds);
+        assert_eq!(
+            text(&run("copy-element", &args), "outcome"),
+            "element_copy_replayed"
+        );
+        run("undo-workspace", &["--workspace-dir", &draft]);
+        let undone = run("inspect-elements", &[]);
+        assert!(
+            !list(&undone, key)
+                .iter()
+                .any(|e| text(e, "element_id") == copy_id)
+        );
+        assert_eq!(run("assemblies", &[]), before_assembly);
+        run("redo-workspace", &["--workspace-dir", &draft]);
+        let redone = run("inspect-elements", &[]);
+        assert_eq!(list(&redone, key), list(&inspected, key));
+    }
+}
+
+#[test]
+fn invalid_deactivation_reaches_cli_as_a_domain_finding_without_writing() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    f.tamper(|name, layer| {
+        if name == "authored.usda" {
+            layer.replacen("custom token bim:geometryMode", "custom string bim:isDeactivated = \"hidden\"\n            custom token bim:geometryMode", 1)
+        } else { layer }
+    });
+    let before = f.head();
+    let (code, reply) = f.run("copy-element", &["--id", &plate]);
+    assert_eq!(code, 2);
+    assert_eq!(text(&reply, "code"), "INVALID_ARGUMENT");
+    let finding = &list(&reply, "diagnostics")[0];
+    assert_eq!(text(finding, "rule_id"), "DV-BASE-004");
+    assert_eq!(f.head(), before);
 }

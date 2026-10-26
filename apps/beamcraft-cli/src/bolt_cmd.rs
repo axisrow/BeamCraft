@@ -25,6 +25,7 @@ type Run<T> = Result<T, PlateError>;
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -53,6 +54,7 @@ fn vec3(text: &str) -> Run<[f64; 3]> {
         .map_err(|_| invalid("the vector is three comma-separated numbers"))?;
     if v.iter().any(|n| !n.is_finite()) {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::NonFiniteNumber,
             message: "the vector is three comma-separated numbers",
         });
@@ -103,6 +105,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
     let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
@@ -157,6 +160,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
         })

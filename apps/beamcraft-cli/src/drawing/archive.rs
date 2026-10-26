@@ -32,6 +32,7 @@ pub struct SourceArchive {
 
 fn limit() -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::LimitExceeded,
         message: "source archive exceeds existing model budgets",
     }
@@ -66,10 +67,12 @@ impl SourceArchive {
     /// all capture handles/leases are dropped before returning independent immutable byte resources.
     pub fn capture(root: &Path) -> Result<Self, PlateError> {
         let blobs = BlobStore::new(root).map_err(|e| PlateError {
+            rule_id: None,
             code: e.code(),
             message: "source store is not usable",
         })?;
         let _guard = StoreLease::shared(&blobs).map_err(|e| PlateError {
+            rule_id: None,
             code: e.code(),
             message: "source maintenance guard is unavailable",
         })?;

@@ -16,31 +16,35 @@ pub(crate) fn report(result: Run<Json>) -> (Json, u8) {
 }
 
 /// [`report`] with the `diagnostics` array of a rejection filled in (the candidates of an
-/// ambiguous name).
-pub(crate) fn report_with(result: Run<Json>, diagnostics: Vec<Json>) -> (Json, u8) {
+/// ambiguous name, or the F10 domain finding of a ruled rejection).
+pub(crate) fn report_with(result: Run<Json>, mut diagnostics: Vec<Json>) -> (Json, u8) {
     match result {
         Ok(json) => (json, 0),
-        Err(e) => (
-            Json::object([
-                (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message)),
-                ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(diagnostics)),
-            ]),
-            match e.code {
-                ErrorCode::OutcomeUnknown => 4,
-                ErrorCode::BackendUnavailable => 3,
-                _ => 2,
-            },
-        ),
+        Err(e) => {
+            // A rejection carrying an F10 rule id reaches the client as a domain finding.
+            diagnostics.extend(crate::plate_cmd::domain_diagnostics(&e));
+            (
+                Json::object([
+                    (
+                        "outcome",
+                        Json::text(if e.code == ErrorCode::OutcomeUnknown {
+                            "outcome_unknown"
+                        } else {
+                            "rejected"
+                        }),
+                    ),
+                    ("code", Json::text(e.code.as_str())),
+                    ("message", Json::text(e.message)),
+                    ("observed_context", Json::Null),
+                    ("diagnostics", Json::Array(diagnostics)),
+                ]),
+                match e.code {
+                    ErrorCode::OutcomeUnknown => 4,
+                    ErrorCode::BackendUnavailable => 3,
+                    _ => 2,
+                },
+            )
+        }
     }
 }
 
@@ -52,6 +56,7 @@ mod tests {
     fn every_error_code_keeps_its_outcome_and_process_status() {
         for code in ErrorCode::ALL {
             let (json, exit) = report(Err(PlateError {
+                rule_id: None,
                 code,
                 message: "command-specific message",
             }));
@@ -77,6 +82,7 @@ mod tests {
         let diagnostics = vec![Json::object([("candidate", Json::text("original value"))])];
         let (json, exit) = report_with(
             Err(PlateError {
+                rule_id: None,
                 code: ErrorCode::InvalidArgument,
                 message: "ambiguous name",
             }),

@@ -96,6 +96,8 @@ fn empty_root(project: &ProjectId) -> String {
 /// A typed failure: a stable F04 code and a fixed safe message. No paths, no OS text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlateError {
+    /// F10 rule for a domain validation finding, absent for other failures.
+    pub rule_id: Option<&'static str>,
     /// Stable F04 code.
     pub code: ErrorCode,
     /// Fixed ASCII explanation.
@@ -104,19 +106,31 @@ pub struct PlateError {
 
 impl PlateError {
     pub(crate) const fn new(code: ErrorCode, message: &'static str) -> Self {
-        Self { code, message }
+        Self {
+            code,
+            message,
+            rule_id: None,
+        }
     }
 }
 
 impl From<CommandError> for PlateError {
     fn from(error: CommandError) -> Self {
-        Self::new(error.code, error.message)
+        Self {
+            code: error.code,
+            message: error.message,
+            rule_id: error.rule_id,
+        }
     }
 }
 
 impl From<Diagnostic> for PlateError {
     fn from(error: Diagnostic) -> Self {
-        Self::new(error.code, error.message)
+        Self {
+            code: error.code,
+            message: error.message,
+            rule_id: error.rule_id,
+        }
     }
 }
 
@@ -297,7 +311,7 @@ pub struct ElementMeta {
     pub schema_version: Option<String>,
     /// `bim:geometryMode`, when authored.
     pub geometry_mode: Option<String>,
-    /// Whether `bim:lifecycle` is `deactivated` or the prim is inactive.
+    /// Whether `bim:isDeactivated` is true or the prim is inactive.
     pub deactivated: bool,
     /// The authored placement.
     pub placement: PlacementRead,
@@ -359,7 +373,7 @@ fn element_meta(
             .and_then(text)
             .map(str::to_owned),
         deactivated: !prim.active
-            || property(prim, "bim:lifecycle").and_then(text) == Some("deactivated"),
+            || property(prim, "bim:isDeactivated") == Some(&Value::Bool(true)),
         placement: placement_read(prim),
         part_of,
         mesh,

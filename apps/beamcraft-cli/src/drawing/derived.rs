@@ -30,6 +30,7 @@ pub fn schema_identity() -> Result<ContentDigest, PlateError> {
 fn asset(name: &str, text: String) -> Result<Asset, PlateError> {
     if text.len() > MAX_DERIVED_BYTES {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "derived drawing byte cap exceeded",
         });
@@ -98,6 +99,7 @@ pub fn encode(drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<Asset, Plate
 pub fn verify(saved: &Asset, drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<(), PlateError> {
     if saved.bytes.len() > MAX_DERIVED_BYTES {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "derived drawing byte cap exceeded",
         });

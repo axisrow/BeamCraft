@@ -24,6 +24,7 @@ use std::path::Path;
 
 /// A refusal: an F04 code and a fixed message.
 struct Failure {
+    rule_id: Option<&'static str>,
     code: ErrorCode,
     message: &'static str,
 }
@@ -31,6 +32,7 @@ struct Failure {
 impl From<PlateError> for Failure {
     fn from(e: PlateError) -> Self {
         Self {
+            rule_id: e.rule_id,
             code: e.code,
             message: e.message,
         }
@@ -40,6 +42,7 @@ impl From<PlateError> for Failure {
 impl From<CoordinatorError> for Failure {
     fn from(e: CoordinatorError) -> Self {
         Self {
+            rule_id: None,
             code: e.code,
             message: e.message,
         }
@@ -50,6 +53,7 @@ type Run<T> = Result<T, Failure>;
 
 fn invalid(message: &'static str) -> Failure {
     Failure {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -85,6 +89,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
             (json, exit)
         }
         Err(e) => crate::report::report(Err(beamcraft_cli::plate::PlateError {
+            rule_id: e.rule_id,
             code: e.code,
             message: e.message,
         })),
@@ -148,6 +153,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                     .split_once(':')
                     .ok_or_else(|| invalid("--client is ACTOR_UUID:TOKEN_FILE"))?;
                 let actor = ActorId::parse(actor).map_err(|e| Failure {
+                    rule_id: None,
                     code: e.code(),
                     message: "client actor is not a full canonical UUIDv7",
                 })?;
@@ -169,6 +175,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             .transpose()?;
         let store_root = required("--store", "--store is required")?;
         let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+            rule_id: None,
             code: e.code(),
             message: "store root is not usable",
         })?;
@@ -233,6 +240,7 @@ fn announce(json: &Json) -> Run<()> {
         .and_then(|()| out.write_all(b"\n"))
         .and_then(|()| out.flush())
         .map_err(|_| Failure {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "standard output is not writable",
         })

@@ -28,7 +28,7 @@ const MAX_BACKUP_ENTRIES: usize = 2_000_000;
 const MAX_DEPTH: usize = 4;
 
 fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 fn invalid(message: &'static str) -> PlateError {

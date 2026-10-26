@@ -69,6 +69,7 @@ impl From<CompactionError> for Failure {
         };
         Self {
             error: PlateError {
+                rule_id: None,
                 code: error.code(),
                 message: error.message(),
             },
@@ -79,6 +80,7 @@ impl From<CompactionError> for Failure {
 
 fn invalid(message: &'static str) -> Failure {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -207,6 +209,7 @@ fn open_store(parsed: &Parsed<'_>) -> Run<(PathBuf, RevisionStore)> {
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
     let blobs = BlobStore::new(root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;

@@ -59,6 +59,7 @@ fn printed(result: Result<Json, PlateError>) -> Vec<u8> {
 fn section(head: &mut Vec<u8>, reply: Option<&[u8]>) -> Result<(), PlateError> {
     let reply = reply.unwrap_or_default();
     let length = u32::try_from(reply.len()).map_err(|_| PlateError {
+        rule_id: None,
         code: ErrorCode::LimitExceeded,
         message: "a framed reply is too large",
     })?;
@@ -69,6 +70,7 @@ fn section(head: &mut Vec<u8>, reply: Option<&[u8]>) -> Result<(), PlateError> {
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -84,7 +86,10 @@ pub fn execute(args: &[OsString]) -> Output {
                 ("code", Json::text(e.code.as_str())),
                 ("message", Json::text(e.message)),
                 ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
+                (
+                    "diagnostics",
+                    Json::Array(crate::plate_cmd::domain_diagnostics(&e)),
+                ),
             ]),
             match e.code {
                 ErrorCode::BackendUnavailable => 3,
@@ -139,6 +144,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         return Err(invalid("a framed reply needs --out -"));
     }
     let blobs = BlobStore::new(store).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;
@@ -149,6 +155,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
     }
     let snapshot = &inspection.snapshot;
     let bundle = snapshot.to_bundle().map_err(|e| PlateError {
+        rule_id: None,
         code: e.f04_code(),
         message: "the view snapshot could not be bundled",
     })?;
@@ -169,12 +176,14 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         .create_new(true)
         .open(out)
         .map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the output file exists or cannot be created",
         })?;
     file.write_all(&bundle)
         .and_then(|()| file.sync_all())
         .map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "the bundle could not be written",
         })?;

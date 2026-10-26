@@ -812,7 +812,7 @@ fn a_deactivated_element_is_not_exported_and_is_listed() {
         if name == "authored.usda" {
             layer.replacen(
                 "custom token bim:geometryMode = \"parametric\"",
-                "custom token bim:lifecycle = \"deactivated\"\n            custom token bim:geometryMode = \"parametric\"",
+                "custom bool bim:isDeactivated = true\n            custom token bim:geometryMode = \"parametric\"",
                 1,
             )
         } else {

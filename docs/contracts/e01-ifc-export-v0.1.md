@@ -289,7 +289,7 @@ export, the others only degrade the element and are listed.
 
 | Order | Check | Outcome |
 |-------|-------|---------|
-| 1 | `bim:lifecycle` is `active` | otherwise not exported, listed as info |
+| 1 | `bim:isDeactivated` is `false` | otherwise not exported, listed as info |
 | 2 | `bim:id` is a valid ElementId, unique in the revision | otherwise **request refused**: `INVALID_ID` or `DUPLICATE_ID` |
 | 3 | Level, profile and material references resolve | otherwise **request refused**: `DANGLING_RELATIONSHIP` or `NOT_FOUND` |
 | 4 | Kind is `plate`, `beam` or `column` | otherwise the element is an `IfcBuildingElementProxy`, listed (warning) |

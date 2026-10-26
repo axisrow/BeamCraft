@@ -91,7 +91,8 @@ membership decisions and `for_part_of`.
 - Replay is decided from the revision of the accepted operation, as for bolts, levels and welds:
   the requested state must hold there and not in the revision before, otherwise `OP_ID_REUSE`. A
   revision at or below the compaction floor cannot be checked and answers `NOT_FOUND`.
-- `bim:discipline` and `bim:lifecycle` are still not authored (no first-slice element writes them).
+- `bim:discipline` is still not authored (no first-slice element writes it); the lifecycle
+  attribute is now the boolean `bim:isDeactivated`.
 - Domain vocabulary 0.1.0 lists `assembly` as reserved (`DV-KIND-004`); implementing it needs the
   owner to admit the kind in the next vocabulary version. This PR implements the reserved rules as
   specified and records that decision as open.

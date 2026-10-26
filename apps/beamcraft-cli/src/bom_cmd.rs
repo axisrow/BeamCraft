@@ -21,6 +21,7 @@ type Run<T> = Result<T, PlateError>;
 
 fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -50,6 +51,7 @@ fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
     file.write_all(bytes.as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|_| PlateError {
+            rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "the report could not be written",
         })
@@ -103,6 +105,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         .get("--out")
         .ok_or_else(|| invalid("--out is required"))?;
     let blobs = BlobStore::new(store).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;

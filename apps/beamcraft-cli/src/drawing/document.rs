@@ -89,6 +89,7 @@ pub fn encode(metadata: Metadata) -> Result<Asset, PlateError> {
             .is_some_and(|version| Some(version) != metadata.latest_published)
     {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "published drawing version metadata is inconsistent",
         });
@@ -111,6 +112,7 @@ pub fn encode(metadata: Metadata) -> Result<Asset, PlateError> {
     bytes.extend_from_slice(insertion.as_bytes());
     if bytes.len() > MAX_DOCUMENT_ROOT_BYTES {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "document root byte cap exceeded",
         });

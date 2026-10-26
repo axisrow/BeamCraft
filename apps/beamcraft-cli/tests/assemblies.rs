@@ -315,11 +315,11 @@ fn replay_reuse_delete_and_copy_follow_the_part_of_records() {
         f.rejected("delete-element", &["--id", FRAME]),
         "DEPENDENCY_CONFLICT"
     );
-    // DV-REL-011: a part with a record is not copied incompletely.
-    assert_eq!(
-        f.rejected("copy-element", &["--id", &plate]),
-        "DEPENDENCY_CONFLICT"
-    );
+    // DV-REL-011: the copy is loose; the source remains in the assembly.
+    let copied = f.ok("copy-element", &["--id", &plate]);
+    let copied_id = text(at(&copied, &["element"]), "element_id");
+    assert_ne!(copied_id, plate);
+    assert_eq!(strings(&f.assemblies()[0], "parts"), vec![plate.clone()]);
     // Deleting the part removes its record with it; then the empty assembly can go.
     f.ok("delete-element", &["--id", &plate]);
     assert!(strings(&f.assemblies()[0], "parts").is_empty());

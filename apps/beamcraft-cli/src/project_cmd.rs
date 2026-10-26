@@ -32,6 +32,7 @@ type Run<T> = Result<T, PlateError>;
 
 const fn invalid(message: &'static str) -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
@@ -39,6 +40,7 @@ const fn invalid(message: &'static str) -> PlateError {
 
 fn settings_error(error: SettingsError) -> PlateError {
     PlateError {
+        rule_id: None,
         code: error.code,
         message: error.message,
     }
@@ -115,6 +117,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         match given("--config-dir") {
             Some(dir) => Ok(PathBuf::from(dir)),
             None => default_dir().ok_or(PlateError {
+                rule_id: None,
                 code: ErrorCode::NotFound,
                 message: "no configuration directory is known; name one with --config-dir",
             }),
@@ -258,6 +261,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             let info = project_info(Path::new(store))?;
             if !matches!(info.state, ProjectState::Ready { .. }) {
                 return Err(PlateError {
+                    rule_id: None,
                     code: ErrorCode::NotFound,
                     message: "the folder holds no readable project",
                 });
@@ -275,6 +279,7 @@ fn run(args: &[OsString]) -> Run<Json> {
 
 fn fresh_id() -> Run<beamcraft_model::id::Uuid7> {
     IdSource::system().next_id().map_err(|_| PlateError {
+        rule_id: None,
         code: ErrorCode::BackendUnavailable,
         message: "no identity could be generated",
     })

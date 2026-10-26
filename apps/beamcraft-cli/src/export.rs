@@ -43,7 +43,7 @@ pub const MAX_LISTED_FINDINGS: usize = 256;
 const MAX_COUNTED_FINDINGS: usize = 1_000_000;
 
 fn error(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 /// The options of one export (E01 section 15.3).

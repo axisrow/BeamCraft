@@ -65,25 +65,24 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
 }
 pub(super) fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| !n.is_finite()) {
-        return Err(fail(
-            ErrorCode::NonFiniteNumber,
-            "non-finite authored value",
-        ));
+        return Err(
+            fail(ErrorCode::NonFiniteNumber, "non-finite authored value").with_rule("DV-ATTR-003"),
+        );
     }
     Ok(())
 }
 pub(super) fn cap(values: impl IntoIterator<Item = f64>, max: f64) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| n.abs() > max) {
-        return Err(limit());
+        return Err(limit().with_rule("DV-LIM-001"));
     }
     Ok(())
 }
 pub(super) fn label(s: &str) -> Result<(), Diagnostic> {
     if s.len() > 256 {
-        return Err(limit());
+        return Err(limit().with_rule("DV-BASE-003"));
     }
     if s.is_empty() || s.chars().any(label_char_forbidden) {
-        return Err(invalid());
+        return Err(invalid().with_rule("DV-BASE-003"));
     }
     Ok(())
 }
@@ -293,17 +292,23 @@ pub(super) fn owned(prims: &[Prim], path: &str, descendants: bool) -> Result<(),
     Ok(())
 }
 pub(super) fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagnostic> {
-    prim.properties
+    let p = prim
+        .properties
         .iter()
-        .find(|p| p.name == name && p.type_name == ty)
-        .and_then(|p| p.value.as_ref())
+        .find(|p| p.name == name)
+        .ok_or_else(|| invalid().with_rule("DV-ATTR-001"))?;
+    if p.type_name != ty {
+        return Err(invalid().with_rule("DV-ATTR-002"));
+    }
+    p.value
+        .as_ref()
         .filter(|v| !matches!(v, Value::Block))
-        .ok_or_else(invalid)
+        .ok_or_else(|| invalid().with_rule("DV-ATTR-001"))
 }
 pub(super) fn text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Diagnostic> {
     match required(prim, name, ty)? {
         Value::Text(s) => Ok(s),
-        _ => Err(invalid()),
+        _ => Err(invalid().with_rule("DV-ATTR-002")),
     }
 }
 pub(super) fn number(prim: &Prim, name: &str) -> Result<f64, Diagnostic> {
@@ -623,6 +628,7 @@ pub(super) fn snapshot(
         if text(p, "bim:schemaVersion", "string")? != "0.1.0" {
             continue;
         }
+        crate::is_deactivated(p)?;
         if text(p, "bim:geometryMode", "token")? == "reference" {
             if text(p, "bim:elementKind", "token")? != "reference" {
                 return Err(unsupported());
@@ -632,7 +638,8 @@ pub(super) fn snapshot(
                 return Err(fail(
                     ErrorCode::InvalidArgument,
                     "only a plate, beam or column is assigned to a level",
-                ));
+                )
+                .with_rule("DV-REL-003"));
             }
             reference::element(p, prims)?;
             continue;
@@ -731,21 +738,13 @@ pub(super) fn snapshot(
                     return Err(invalid());
                 }
                 if kind == "connection" {
-                    // Exactly one property set, decided by the whole prefix: any steel:weld:*
-                    // attribute marks a weld, any steel:bolt:* marks a bolt group. Content
-                    // with neither, or with both, is not something this version reads —
-                    // refused, never guessed.
-                    match (
-                        p.properties
-                            .iter()
-                            .any(|v| v.name.starts_with("steel:weld:")),
-                        p.properties
-                            .iter()
-                            .any(|v| v.name.starts_with("steel:bolt:")),
-                    ) {
-                        (true, false) => weld_properties(p)?,
-                        (false, true) => bolt_properties(p)?,
-                        _ => return Err(invalid()),
+                    let connection_type = text(p, "steel:connection:type", "token")?;
+                    let has =
+                        |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
+                    match connection_type {
+                        "weld" if !has("steel:bolt:") => weld_properties(p)?,
+                        "bolt_group" if !has("steel:weld:") => bolt_properties(p)?,
+                        _ => return Err(invalid().with_rule("DV-ATTR-002")),
                     }
                 }
                 if kind == "level" {
@@ -1014,7 +1013,8 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "only a plate, beam or column is assigned to a level",
-            ));
+            )
+            .with_rule("DV-REL-003"));
         }
         match elements.get(target) {
             Some((t, "level")) if t.active => {}
@@ -1040,10 +1040,10 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                 ));
             }
             None => {
-                return Err(fail(
-                    ErrorCode::DanglingRelationship,
-                    "level target unavailable",
-                ));
+                return Err(
+                    fail(ErrorCode::DanglingRelationship, "level target unavailable")
+                        .with_rule("DV-REL-001"),
+                );
             }
         }
     }
@@ -1141,7 +1141,8 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::DependencyConflict,
                     "a connection connects exactly two parts",
-                ));
+                )
+                .with_rule("DV-REL-004"));
             }
             continue;
         };
@@ -1149,19 +1150,22 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "only a connection carries a connects record",
-            ));
+            )
+            .with_rule("DV-REL-003"));
         }
         let [first, second] = r.targets.as_slice() else {
             return Err(fail(
                 ErrorCode::DependencyConflict,
                 "a connection connects exactly two parts",
-            ));
+            )
+            .with_rule("DV-REL-004"));
         };
         if first == second {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "a connection connects two distinct parts",
-            ));
+            )
+            .with_rule("DV-REL-007"));
         }
         for target in [first, second] {
             if target == path {
@@ -1175,7 +1179,8 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
                     return Err(fail(
                         ErrorCode::DanglingRelationship,
                         "connects target is not active",
-                    ));
+                    )
+                    .with_rule("DV-REL-001"));
                 }
                 Some((_, "plate" | "beam" | "column")) => {}
                 Some((_, "assembly")) => return Err(unsupported()),
@@ -1192,13 +1197,15 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
                     return Err(fail(
                         ErrorCode::InvalidArgument,
                         "connects target is not a supported owned part",
-                    ));
+                    )
+                    .with_rule("DV-REL-003"));
                 }
                 None => {
                     return Err(fail(
                         ErrorCode::DanglingRelationship,
                         "connects target unavailable",
-                    ));
+                    )
+                    .with_rule("DV-REL-001"));
                 }
             }
         }
@@ -1227,14 +1234,16 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::DependencyConflict,
                     "an element is a part of at most one assembly",
-                ));
+                )
+                .with_rule("DV-REL-004"));
             }
         };
         if target == path {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "an element cannot be a part of itself",
-            ));
+            )
+            .with_rule("DV-REL-006"));
         }
         match elements.get(target) {
             Some((t, "assembly")) if t.active => {}
@@ -1242,13 +1251,15 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::DanglingRelationship,
                     "part-of target is not active",
-                ));
+                )
+                .with_rule("DV-REL-001"));
             }
             Some(_) => {
                 return Err(fail(
                     ErrorCode::InvalidArgument,
                     "part-of target is not an assembly",
-                ));
+                )
+                .with_rule("DV-REL-003"));
             }
             None if prims
                 .iter()
@@ -1257,13 +1268,15 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::InvalidArgument,
                     "part-of target is not a supported owned assembly",
-                ));
+                )
+                .with_rule("DV-REL-003"));
             }
             None => {
                 return Err(fail(
                     ErrorCode::DanglingRelationship,
                     "part-of target unavailable",
-                ));
+                )
+                .with_rule("DV-REL-001"));
             }
         }
         parent.insert(path, target);
@@ -1280,7 +1293,8 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
                     return Err(fail(
                         ErrorCode::DependencyConflict,
                         "part-of records form a cycle",
-                    ));
+                    )
+                    .with_rule("DV-REL-005"));
                 }
                 _ => {
                     state.insert(node, 1);

@@ -145,11 +145,13 @@ impl Library {
             .find(|r| r.designation.as_deref() == Some(designation))
         {
             return Err(PlateError {
+                rule_id: None,
                 code: refused.code,
                 message: refused.message,
             });
         }
         Err(PlateError {
+            rule_id: None,
             code: ErrorCode::NotFound,
             message: "the designation is not in the library",
         })
@@ -157,7 +159,7 @@ impl Library {
 }
 
 fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 fn invalid(message: &'static str) -> PlateError {

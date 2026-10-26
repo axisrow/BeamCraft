@@ -17,7 +17,7 @@
 //! that revision and did not hold in the one before. The head is not consulted, so a later
 //! operation does not break a replay. A revision at or below the compaction floor of a compacted
 //! history cannot be checked this way and answers `NOT_FOUND`, not a replay. Copying a part
-//! that has a `part-of` record is refused by `copy-element` (`DV-REL-011`); a multi-element copy
+//! that has a `part-of` record creates a loose duplicate (`DV-REL-011`); a multi-element copy
 //! is not implemented. Deleting an assembly that still has parts is `DEPENDENCY_CONFLICT`; there
 //! is no cascade. An assembly cannot be renamed or moved yet.
 

@@ -34,6 +34,7 @@ pub fn schema_identity() -> Result<ContentDigest, PlateError> {
 
 fn limit() -> PlateError {
     PlateError {
+        rule_id: None,
         code: ErrorCode::LimitExceeded,
         message: "drawing intent byte cap exceeded",
     }
@@ -186,6 +187,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
         || text(root, "drawing:schema", "string")? != schema_identity()?.to_string()
     {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::UnsupportedVersion,
             message: "unsupported drawing schema or contract",
         });

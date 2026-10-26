@@ -46,6 +46,8 @@ pub const BACKEND: BackendIdentity = BackendIdentity {
 /// Bounded safe diagnostic; never contains upstream error text or caller data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Diagnostic {
+    /// F10 rule responsible for a domain validation finding, if applicable.
+    pub rule_id: Option<&'static str>,
     /// Stable F04 code.
     pub code: ErrorCode,
     /// Fixed ASCII explanation.
@@ -53,7 +55,11 @@ pub struct Diagnostic {
 }
 
 pub(crate) fn fail(code: ErrorCode, message: &'static str) -> Diagnostic {
-    Diagnostic { code, message }
+    Diagnostic {
+        code,
+        message,
+        rule_id: None,
+    }
 }
 pub(crate) fn limit() -> Diagnostic {
     fail(ErrorCode::LimitExceeded, "stage budget exceeded")
@@ -66,6 +72,14 @@ pub(crate) fn unsupported() -> Diagnostic {
         ErrorCode::UnsupportedProperty,
         "encoding or composition outside static read profile",
     )
+}
+
+impl Diagnostic {
+    /// Attaches the precise F10 rule at the validation site.
+    pub const fn with_rule(mut self, rule_id: &'static str) -> Self {
+        self.rule_id = Some(rule_id);
+        self
+    }
 }
 
 impl std::fmt::Display for Diagnostic {
@@ -647,6 +661,25 @@ pub(crate) fn uuid7(s: &str) -> bool {
             19 => matches!(b, b'8'..=b'9' | b'a'..=b'b'),
             _ => b.is_ascii_digit() || (b'a'..=b'f').contains(&b),
         })
+}
+
+/// Reads the F10 deactivation attribute; absence alone defaults to false (DV-BASE-004).
+pub fn is_deactivated(prim: &Prim) -> Result<bool, Diagnostic> {
+    match prim
+        .properties
+        .iter()
+        .find(|p| p.name == "bim:isDeactivated")
+    {
+        None => Ok(false),
+        Some(p) => match (p.type_name.as_str(), p.value.as_ref()) {
+            ("bool", Some(Value::Bool(value))) => Ok(*value),
+            _ => Err(fail(
+                ErrorCode::InvalidArgument,
+                "bim:isDeactivated must be a boolean",
+            )
+            .with_rule("DV-BASE-004")),
+        },
+    }
 }
 
 #[cfg(test)]

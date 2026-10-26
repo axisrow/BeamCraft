@@ -27,6 +27,7 @@ use std::ffi::OsString;
 
 /// A failure of a query: an F04 code, the F06 token when the engine produced it, and a message.
 struct Failure {
+    rule_id: Option<&'static str>,
     code: ErrorCode,
     reason: Option<&'static str>,
     message: &'static str,
@@ -35,6 +36,7 @@ struct Failure {
 impl From<PlateError> for Failure {
     fn from(e: PlateError) -> Self {
         Self {
+            rule_id: e.rule_id,
             code: e.code,
             reason: None,
             message: e.message,
@@ -45,6 +47,7 @@ impl From<PlateError> for Failure {
 impl From<ViewError> for Failure {
     fn from(e: ViewError) -> Self {
         Self {
+            rule_id: None,
             code: e.f04_code(),
             reason: Some(e.code().as_str()),
             message: "the query was refused",
@@ -56,6 +59,7 @@ type Run<T> = Result<T, Failure>;
 
 fn invalid(message: &'static str) -> Failure {
     Failure {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         reason: None,
         message,
@@ -81,7 +85,14 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                 ("reason", e.reason.map_or(Json::Null, Json::text)),
                 ("message", Json::text(e.message)),
                 ("observed_context", Json::Null),
-                ("diagnostics", Json::Array(vec![])),
+                (
+                    "diagnostics",
+                    Json::Array(crate::plate_cmd::domain_diagnostics(&PlateError {
+                        rule_id: e.rule_id,
+                        code: e.code,
+                        message: e.message,
+                    })),
+                ),
             ]),
             match e.code {
                 ErrorCode::BackendUnavailable => 3,
@@ -211,6 +222,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 given("--id").ok_or_else(|| invalid("--id is required"))?,
             )
             .map_err(|_| Failure {
+                rule_id: None,
                 code: ErrorCode::InvalidId,
                 reason: None,
                 message: "--id must be a full canonical UUIDv7",
@@ -231,6 +243,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         }),
     };
     let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        rule_id: None,
         code: e.code(),
         message: "store root is not usable",
     })?;

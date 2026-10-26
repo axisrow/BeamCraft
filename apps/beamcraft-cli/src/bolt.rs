@@ -239,12 +239,6 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
         bolts: Vec::new(),
         bounds: BTreeMap::new(),
     };
-    // Same prefix marker as the structural validator: any steel:weld:* attribute is a weld.
-    let is_weld = |prim: &beamcraft_layer_engine::Prim| {
-        prim.properties
-            .iter()
-            .any(|v| v.name.starts_with("steel:weld:"))
-    };
     for prim in &prims {
         let Some(id) = by_path.get(prim.path.as_str()).copied() else {
             continue;
@@ -261,7 +255,11 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
         {
             Some("plate" | "beam" | "column") => PartKind::Part,
             Some("assembly") => PartKind::Assembly,
-            Some("connection") if is_weld(prim) => PartKind::Other,
+            Some("connection")
+                if property(prim, "steel:connection:type").and_then(text) != Some("bolt_group") =>
+            {
+                PartKind::Other
+            }
             Some("connection") => {
                 model.bolts.push(bolt_of(prim, id, &by_path)?);
                 PartKind::Other

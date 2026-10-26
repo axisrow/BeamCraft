@@ -28,6 +28,8 @@ pub const CONTRACT_VERSION: &str = "0.1.0";
 /// carries caller text, paths or credentials.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandError {
+    /// F10 rule for domain admission failures, absent for other errors.
+    pub rule_id: Option<&'static str>,
     /// Stable F04 code.
     pub code: ErrorCode,
     /// Fixed schema token of the offending field, for example `contour_points_mm`.
@@ -43,7 +45,13 @@ impl CommandError {
             code,
             field,
             message,
+            rule_id: None,
         }
+    }
+    /// Retains the exact F10 rule through engine and CLI admission.
+    pub const fn with_rule(mut self, rule_id: &'static str) -> Self {
+        self.rule_id = Some(rule_id);
+        self
     }
 }
 
@@ -83,11 +91,10 @@ impl Placement {
             if values.iter().all(|v| v.is_finite()) {
                 Ok(())
             } else {
-                Err(CommandError::new(
-                    ErrorCode::NonFiniteNumber,
-                    field,
-                    "value is not finite",
-                ))
+                Err(
+                    CommandError::new(ErrorCode::NonFiniteNumber, field, "value is not finite")
+                        .with_rule("DV-ATTR-003"),
+                )
             }
         };
         finite(&self.translation_mm, "placement.translation_mm")?;
@@ -101,7 +108,8 @@ impl Placement {
                 ErrorCode::LimitExceeded,
                 "placement.translation_mm",
                 "translation component exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         Self::validate_orientation(self.orientation_xyzw)
     }
@@ -121,7 +129,8 @@ impl Placement {
                 ErrorCode::InvalidArgument,
                 "placement.orientation_xyzw",
                 "quaternion component is outside [-1, 1]",
-            ));
+            )
+            .with_rule("DV-LIM-003"));
         }
         let [x, y, z, w] = xyzw;
         let squared = ((x * x + y * y) + z * z) + w * w;
@@ -130,7 +139,8 @@ impl Placement {
                 ErrorCode::InvalidArgument,
                 "placement.orientation_xyzw",
                 "quaternion squared norm is not within 1e-6 of one",
-            ));
+            )
+            .with_rule("DV-LIM-003"));
         }
         Ok(())
     }
@@ -175,7 +185,8 @@ impl PlaneCut {
                 ErrorCode::NonFiniteNumber,
                 "cut",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self
             .point_mm
@@ -187,7 +198,8 @@ impl PlaneCut {
                 ErrorCode::LimitExceeded,
                 "cut",
                 "coordinate exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if self.normal.iter().all(|v| *v == 0.0) {
             return Err(CommandError::new(
@@ -284,7 +296,8 @@ impl CreateStraightMember {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         let roll = self.roll_rad.unwrap_or(0.0);
         if !roll.is_finite() || self.axis_points_mm.iter().flatten().any(|v| !v.is_finite()) {
@@ -292,7 +305,8 @@ impl CreateStraightMember {
                 ErrorCode::NonFiniteNumber,
                 "axis_points_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self
             .axis_points_mm
@@ -304,14 +318,16 @@ impl CreateStraightMember {
                 ErrorCode::LimitExceeded,
                 "axis_points_mm",
                 "coordinate exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if roll.abs() > ROLL_CAP_RAD {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "roll_rad",
                 "roll exceeds 2 pi",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if let Some(cut) = &self.cut {
             cut.validate()?;
@@ -330,6 +346,7 @@ impl CreateStraightMember {
                 "axis_points_mm",
                 "value cannot be encoded",
             )
+            .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(256);
         bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v2\0");
@@ -378,6 +395,7 @@ impl CreateStraightMember {
         })?;
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -396,7 +414,8 @@ impl CreatePlate {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         let count = self.contour_points_mm.len();
         if count > CONTOUR_POINT_CAP {
@@ -404,7 +423,8 @@ impl CreatePlate {
                 ErrorCode::LimitExceeded,
                 "contour_points_mm",
                 "contour has more than 1024 points",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if count < MIN_CONTOUR_POINTS {
             return Err(CommandError::new(
@@ -424,7 +444,8 @@ impl CreatePlate {
                 ErrorCode::NonFiniteNumber,
                 "contour_points_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self
             .contour_points_mm
@@ -436,14 +457,16 @@ impl CreatePlate {
                 ErrorCode::LimitExceeded,
                 "contour_points_mm",
                 "coordinate exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if self.thickness_mm > DIMENSION_CAP_MM {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "thickness_mm",
                 "thickness exceeds the dimension cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         self.placement.validate()?;
         self.validate_holes()?;
@@ -459,14 +482,16 @@ impl CreatePlate {
                 ErrorCode::LimitExceeded,
                 "holes_mm",
                 "more than 64 holes",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if self.holes_mm.iter().any(|h| h.len() > HOLE_POINT_CAP) {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "holes_mm",
                 "a hole has more than 1024 points",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if self.holes_mm.iter().any(|h| h.len() < MIN_CONTOUR_POINTS) {
             return Err(CommandError::new(
@@ -481,14 +506,16 @@ impl CreatePlate {
                 ErrorCode::NonFiniteNumber,
                 "holes_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if coordinates().any(|v| v.abs() > COORDINATE_CAP_MM) {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "holes_mm",
                 "coordinate exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         Ok(())
     }
@@ -507,6 +534,7 @@ impl CreatePlate {
                 "contour_points_mm",
                 "value cannot be encoded",
             )
+            .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
         bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v4\0");
@@ -552,6 +580,7 @@ impl CreatePlate {
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -618,14 +647,16 @@ impl UpdateElement {
                     ErrorCode::NonFiniteNumber,
                     "translation_mm",
                     "value is not finite",
-                ));
+                )
+                .with_rule("DV-ATTR-003"));
             }
             if translation.iter().any(|v| v.abs() > COORDINATE_CAP_MM) {
                 return Err(CommandError::new(
                     ErrorCode::LimitExceeded,
                     "translation_mm",
                     "translation component exceeds the coordinate cap",
-                ));
+                )
+                .with_rule("DV-LIM-001"));
             }
         }
         if let Some(xyzw) = patch.orientation_xyzw {
@@ -636,7 +667,8 @@ impl UpdateElement {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if let Some(t) = patch.thickness_mm {
             if !t.is_finite() {
@@ -644,14 +676,16 @@ impl UpdateElement {
                     ErrorCode::NonFiniteNumber,
                     "thickness_mm",
                     "value is not finite",
-                ));
+                )
+                .with_rule("DV-ATTR-003"));
             }
             if t > DIMENSION_CAP_MM {
                 return Err(CommandError::new(
                     ErrorCode::LimitExceeded,
                     "thickness_mm",
                     "thickness exceeds the dimension cap",
-                ));
+                )
+                .with_rule("DV-LIM-001"));
             }
         }
         Ok(())
@@ -688,6 +722,7 @@ impl UpdateElement {
                         "thickness_mm",
                         "value cannot be encoded",
                     )
+                    .with_rule("DV-ATTR-003")
                 })?);
             }
             None => bytes.push(0),
@@ -702,6 +737,7 @@ impl UpdateElement {
                         "translation_mm",
                         "value cannot be encoded",
                     )
+                    .with_rule("DV-ATTR-003")
                 })?);
             }
         }
@@ -729,6 +765,7 @@ impl UpdateElement {
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -750,6 +787,7 @@ impl DeleteElement {
         bytes.extend_from_slice(self.target_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -779,28 +817,32 @@ impl CopyElement {
                 ErrorCode::DuplicateId,
                 "new_id",
                 "the copy identity equals the source",
-            ));
+            )
+            .with_rule("DV-BASE-002"));
         }
         if self.name.as_deref().is_some_and(|n| !label_is_valid(n)) {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if self.offset_mm.iter().any(|v| !v.is_finite()) {
             return Err(CommandError::new(
                 ErrorCode::NonFiniteNumber,
                 "offset_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self.offset_mm.iter().any(|v| v.abs() > COORDINATE_CAP_MM) {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "offset_mm",
                 "offset component exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         Ok(())
     }
@@ -827,10 +869,12 @@ impl CopyElement {
                     "offset_mm",
                     "value cannot be encoded",
                 )
+                .with_rule("DV-ATTR-003")
             })?);
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -855,7 +899,8 @@ impl CreateAssembly {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         Ok(())
     }
@@ -870,6 +915,7 @@ impl CreateAssembly {
         bytes.extend_from_slice(self.name.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -908,6 +954,7 @@ impl AttachToAssembly {
         bytes.extend_from_slice(self.assembly_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -929,6 +976,7 @@ impl DetachFromAssembly {
         bytes.extend_from_slice(self.part_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -957,21 +1005,24 @@ impl CreateLevel {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if !self.elevation_mm.is_finite() {
             return Err(CommandError::new(
                 ErrorCode::NonFiniteNumber,
                 "elevation_mm",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self.elevation_mm.abs() > COORDINATE_CAP_MM {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "elevation_mm",
                 "elevation exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         Ok(())
     }
@@ -990,9 +1041,11 @@ impl CreateLevel {
                 "elevation_mm",
                 "value cannot be encoded",
             )
+            .with_rule("DV-ATTR-003")
         })?);
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -1119,21 +1172,24 @@ impl CreateWeld {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if self.main_id == self.secondary_id {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "secondary_id",
                 "a weld connects two distinct parts",
-            ));
+            )
+            .with_rule("DV-REL-007"));
         }
         if self.new_id == self.main_id || self.new_id == self.secondary_id {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "new_id",
                 "a weld cannot connect itself",
-            ));
+            )
+            .with_rule("DV-REL-006"));
         }
         let size = self.weld.size_mm;
         if !size.is_finite() {
@@ -1141,7 +1197,8 @@ impl CreateWeld {
                 ErrorCode::NonFiniteNumber,
                 "size_mm",
                 "weld size must be finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if size <= 0.0 || size > WELD_SIZE_CAP_MM {
             return Err(CommandError::new(
@@ -1178,10 +1235,12 @@ impl CreateWeld {
                 "size_mm",
                 "weld size must be finite",
             )
+            .with_rule("DV-ATTR-003")
         })?;
         bytes.extend_from_slice(&size);
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -1238,21 +1297,24 @@ impl CreateBolt {
                 ErrorCode::InvalidArgument,
                 "name",
                 "label must be 1 to 256 bytes without control characters",
-            ));
+            )
+            .with_rule("DV-BASE-003"));
         }
         if self.main_id == self.secondary_id {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "secondary_id",
                 "a bolt group connects two distinct parts",
-            ));
+            )
+            .with_rule("DV-REL-007"));
         }
         if self.new_id == self.main_id || self.new_id == self.secondary_id {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "new_id",
                 "a bolt group cannot connect itself",
-            ));
+            )
+            .with_rule("DV-REL-006"));
         }
         let bolt = &self.bolt;
         let scalars = [bolt.diameter_mm, bolt.pitch_mm];
@@ -1261,14 +1323,16 @@ impl CreateBolt {
                 ErrorCode::NonFiniteNumber,
                 "bolt",
                 "bolt diameter, pitch or origin is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if bolt.direction_mm.iter().any(|v| !v.is_finite()) {
             return Err(CommandError::new(
                 ErrorCode::NonFiniteNumber,
                 "direction_mm",
                 "direction is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if bolt.diameter_mm <= 0.0 || bolt.diameter_mm > BOLT_DIAMETER_CAP_MM {
             return Err(CommandError::new(
@@ -1289,7 +1353,8 @@ impl CreateBolt {
                 ErrorCode::LimitExceeded,
                 "count",
                 "a bolt group has more than 512 bolts",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         if bolt.pitch_mm <= 0.0 || bolt.pitch_mm > DIMENSION_CAP_MM {
             return Err(CommandError::new(
@@ -1303,7 +1368,8 @@ impl CreateBolt {
                 ErrorCode::LimitExceeded,
                 "origin_mm",
                 "origin component exceeds the coordinate cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         let squared = bolt.direction_mm.iter().map(|v| v * v).sum::<f64>();
         if (squared - 1.0).abs() > ORIENTATION_NORM_TOLERANCE {
@@ -1325,6 +1391,7 @@ impl CreateBolt {
                 "bolt",
                 "a bolt property cannot be encoded",
             )
+            .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(160 + self.name.len());
         bytes.extend_from_slice(b"BeamCraft/A05/CreateBolt/v1\0");
@@ -1348,6 +1415,7 @@ impl CreateBolt {
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }
@@ -1368,6 +1436,7 @@ impl ApproveMark {
         bytes.extend_from_slice(self.target_id.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
         })
     }
 }

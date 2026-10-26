@@ -639,6 +639,13 @@ fn create(
         }
         Shape::Assembly => (),
         Shape::Weld(w) => {
+            attr(
+                data,
+                &p,
+                "steel:connection:type",
+                "token",
+                sdf::Value::Token("weld".into()),
+            )?;
             for (name, value) in [
                 ("steel:weld:type", &w.weld_type),
                 ("steel:weld:location", &w.location),
@@ -661,6 +668,13 @@ fn create(
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
         Shape::Bolt(b) => {
+            attr(
+                data,
+                &p,
+                "steel:connection:type",
+                "token",
+                sdf::Value::Token("bolt_group".into()),
+            )?;
             attr(
                 data,
                 &p,
@@ -1168,6 +1182,7 @@ fn capture(
         ("xformOpOrder", "token[]"),
     ];
     const WELD: &[(&str, &str)] = &[
+        ("steel:connection:type", "token"),
         ("steel:weld:type", "token"),
         ("steel:weld:sizeMm", "double"),
         ("steel:weld:location", "token"),
@@ -1175,6 +1190,7 @@ fn capture(
         ("bim:connects", "rel"),
     ];
     const BOLT: &[(&str, &str)] = &[
+        ("steel:connection:type", "token"),
         ("steel:bolt:diameterMm", "double"),
         ("steel:bolt:count", "int"),
         ("steel:bolt:pitchMm", "double"),

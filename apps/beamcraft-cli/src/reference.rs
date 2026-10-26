@@ -150,7 +150,7 @@ fn io_error(code: ErrorCode) -> PlateError {
         ErrorCode::LimitExceeded => "the source file is larger than 65536 bytes",
         _ => "the source path is not a readable regular local file",
     };
-    PlateError { code, message }
+    PlateError::new(code, message)
 }
 
 fn read_all_prims(
@@ -245,6 +245,7 @@ fn pin_source(
     control: &beamcraft_layer_engine::Control,
 ) -> Result<(SourcePin, Vec<u8>), PlateError> {
     let label = layer_name_of(path).ok_or(PlateError {
+        rule_id: None,
         code: ErrorCode::InvalidArgument,
         message: "the source path has no file name",
     })?;
@@ -252,12 +253,14 @@ fn pin_source(
     let bytes = read_file(path, cap).map_err(io_error)?;
     let info = inspect_foreign_layer(&bytes, Budgets::FIRST_SLICE, control)?;
     let default_prim = info.default_prim.ok_or(PlateError {
+        rule_id: None,
         code: ErrorCode::UnsupportedProperty,
         message: "the source declares no defaultPrim; a root prim is never guessed",
     })?;
     let declared_up_axis = match info.up_axis.as_deref() {
         None => None,
         Some(text) => Some(UpAxis::parse(text).ok_or(PlateError {
+            rule_id: None,
             code: ErrorCode::UnsupportedProperty,
             message: "the source declares an up axis other than Y or Z",
         })?),
