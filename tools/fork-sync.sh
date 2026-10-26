@@ -3,8 +3,11 @@
 # Sync the fork with upstream: merge upstream/master into the local fork master,
 # gate the result on the local fmt/clippy/test triple, then push origin/master.
 # The fork inherits upstream 1:1 (issue #141): a merge conflict resolves
-# automatically in favor of upstream, and fork-only paths stay on master,
-# reported as mirror-PR candidates for tools/upstream-mirror.sh. See
+# automatically — the upstream side wins, a FORK_ONLY path (the list in
+# tools/upstream-mirror.sh, the source of truth) keeps the fork side — and a
+# conflict no rule covers stops the run with exit 2 and the file list. After a
+# green sync the fork-only commits upstream does not have yet are listed with
+# the exact upstream-PR commands; the script never opens a PR itself. See
 # CONTRIBUTING.md, "Keep the fork aligned".
 set -euo pipefail
 
@@ -18,6 +21,9 @@ Modes:
            master, run the local triple (fmt --check, clippy -D warnings,
            test --workspace) BEFORE committing, push origin/master, then delete
            merged sync/* branches. No PR: master is the integration branch.
+           A merge conflict auto-resolves: the upstream side wins, FORK_ONLY
+           paths (the list in tools/upstream-mirror.sh) keep the fork side,
+           and a conflict no rule covers stops the run with exit 2.
   status   read-only: divergence counts, pending upstream commits, tree
            cleanliness, best-effort conflict prediction.
 
@@ -25,8 +31,8 @@ Options:
   --dry-run  guards, fetch and conflict prediction only; touches no branch.
   --yes      skip the confirmation prompt (for unattended runs).
 
-Exit codes: 0 ok or nothing to sync, 1 environment,
-3 gate failure, 4 push or other git failure.
+Exit codes: 0 ok or nothing to sync, 1 environment, 2 a conflict no rule
+covers, 3 gate failure, 4 push or other git failure.
 
 The gate is the local triple only. Fork CI does not gate a sync: it has no
 macOS lane and its Windows runners queue for hours.
@@ -35,6 +41,7 @@ EOF
 
 EXIT_OK=0
 EXIT_ENV=1
+EXIT_CONFLICT=2
 EXIT_GATE=3
 EXIT_PUSH=4
 
@@ -77,6 +84,28 @@ resolve_cargo() {
     command -v cargo >/dev/null 2>&1 || die "cargo not found in PATH or ~/.cargo/bin" $EXIT_ENV
 }
 
+# The fork-only paths are owned by tools/upstream-mirror.sh: this script reads
+# the list from there instead of keeping a second copy in sync.
+read_fork_only_list() {
+    git cat-file -e HEAD:tools/upstream-mirror.sh 2>/dev/null ||
+        die "tools/upstream-mirror.sh is missing from HEAD; no FORK_ONLY list to read" $EXIT_ENV
+    local list
+    list="$(git show HEAD:tools/upstream-mirror.sh | sed -n 's/^FORK_ONLY="\([^"]*\)"$/\1/p')"
+    if [ -z "$list" ]; then
+        die "tools/upstream-mirror.sh has no FORK_ONLY= line" $EXIT_ENV
+    fi
+    printf '%s\n' "$list"
+}
+
+is_fork_only() {
+    local known
+    # shellcheck disable=SC2086  # the FORK_ONLY list is space-separated paths
+    for known in $FORK_ONLY; do
+        [ "$1" = "$known" ] && return 0
+    done
+    return 1
+}
+
 # Best-effort conflict prediction; prints the conflicting paths, one per line.
 # merge-tree prints the merged tree OID on line 1, conflicted paths after it.
 predict_conflicts() {
@@ -115,20 +144,46 @@ align_master() {
     fi
 }
 
-# Every conflicted path takes the upstream version; a path upstream deleted is
-# removed. Fork-only paths are never conflicted this way: one-sided additions
-# merge cleanly and stay, reported as mirror-PR candidates after the push.
-resolve_upstream_wins() {
-    local path
+# Merge-conflict policy (issue #141): a conflicted path takes the upstream
+# version (a path upstream deleted is removed); a conflicted FORK_ONLY path
+# keeps the fork side (a path the fork deleted stays deleted); a path a rule
+# cannot clear, plus anything still unmerged after the pass, stops the run
+# with exit 2 and its file list, because the sync never invents a resolution
+# it cannot name.
+resolve_one() {
+    local path=$1
+    if is_fork_only "$path"; then
+        if git cat-file -e "HEAD:$path" 2>/dev/null; then
+            git checkout HEAD -- "$path" || return 1
+        else
+            git rm -f --quiet -- "$path" || return 1
+        fi
+        echo "fork-sync: fork-only path keeps the fork side: $path"
+    elif git cat-file -e "upstream/master:$path" 2>/dev/null; then
+        git checkout upstream/master -- "$path" || return 1
+        echo "fork-sync: upstream wins: $path"
+    else
+        git rm -f --quiet -- "$path" || return 1
+        echo "fork-sync: upstream wins (deleted): $path"
+    fi
+}
+
+resolve_conflicts() {
+    local path left=""
     while read -r path; do
         [ -n "$path" ] || continue
-        if git cat-file -e "upstream/master:$path" 2>/dev/null; then
-            git checkout upstream/master -- "$path"
-        else
-            git rm -f --quiet -- "$path"
-        fi
-        echo "fork-sync: upstream wins: $path"
+        resolve_one "$path" || { left="$left  $path"$'\n'; continue; }
     done < <(git diff --name-only --diff-filter=U)
+    if [ -z "$left" ]; then
+        # Belt for a resolution that claimed success but left a stage behind.
+        left="$(git diff --name-only --diff-filter=U)"
+        [ -z "$left" ] || left="$(printf '  %s\n' "$left")"
+    fi
+    if [ -n "$left" ]; then
+        echo "fork-sync: conflicts no rule covers; resolve by hand, then rerun the sync:" >&2
+        printf '%s' "$left" >&2
+        exit $EXIT_CONFLICT
+    fi
 }
 
 run_triple() {
@@ -165,6 +220,7 @@ merge_message() {
 do_sync() {
     local dry_run=$1
     need_master_worktree
+    FORK_ONLY="$(read_fork_only_list)"
 
     echo "fork-sync: fetching upstream and origin"
     git fetch upstream master
@@ -189,6 +245,7 @@ do_sync() {
         if [ -n "$conflicts" ]; then
             echo "fork-sync: dry-run predicts conflicts in:"
             echo "  ${conflicts//$'\n'/$'\n'  }"
+            echo "fork-sync: a sync auto-resolves these: upstream wins, FORK_ONLY paths keep the fork side"
         else
             echo "fork-sync: dry-run predicts a clean merge"
         fi
@@ -211,8 +268,8 @@ do_sync() {
     resolve_cargo
 
     if ! git merge --no-commit --no-ff upstream/master; then
-        echo "fork-sync: merge conflicts; resolving in favor of upstream"
-        resolve_upstream_wins
+        echo "fork-sync: merge conflicts; applying the rules (upstream wins, FORK_ONLY keeps the fork side)"
+        resolve_conflicts
     fi
 
     if ! run_triple; then
@@ -229,16 +286,52 @@ do_sync() {
     fi
     echo "fork-sync: origin/master updated"
 
-    # Fork-only content survives the merge untouched; name it so it has a
-    # route upstream instead of silently piling up on master.
-    local fork_only
-    fork_only="$(git diff --name-only --diff-filter=A upstream/master HEAD)"
-    if [ -n "$fork_only" ]; then
-        echo "fork-sync: fork-only paths kept on master (mirror-PR candidates, tools/upstream-mirror.sh):"
-        echo "  ${fork_only//$'\n'/$'\n'  }"
-    fi
+    # Fork-only content is never dropped (issue #141): name the commits the
+    # fork carries that upstream does not have yet and hand over the exact
+    # commands for their upstream PR.
+    report_unmirrored
 
     cleanup_branches
+}
+
+# A commit whose every path is fork-only has no upstream form; anything else
+# the fork carries that upstream lacks is named with the commands for its
+# upstream PR, which this script never opens itself. Equivalence is patch-id
+# based, computed by hand: after a sync merge upstream/master is an ancestor
+# of master, so the symmetric difference has an empty upstream side and git
+# cherry cannot see equivalence at all. The scan is O(upstream history),
+# which is fine for a fork at this size; batch it if that ever stops holding.
+report_unmirrored() {
+    local sha path mirrorable id candidates="" upstream_ids
+    upstream_ids="$(git log -p --no-merges upstream/master |
+        git patch-id --stable | cut -d' ' -f1)"
+    while read -r sha; do
+        [ -n "$sha" ] || continue
+        mirrorable=false
+        while read -r path; do
+            if ! is_fork_only "$path"; then
+                mirrorable=true
+                break
+            fi
+        done < <(git diff-tree --no-commit-id --name-only -r --root "$sha")
+        if [ "$mirrorable" = false ]; then
+            continue
+        fi
+        id="$(git show "$sha" --format= | git patch-id --stable | cut -d' ' -f1)"
+        if [ -n "$id" ] && printf '%s\n' "$upstream_ids" | grep -qxF "$id"; then
+            continue
+        fi
+        candidates="$candidates $sha"
+    done < <(git rev-list --no-merges master ^upstream/master)
+    if [ -z "$candidates" ]; then
+        return
+    fi
+    echo "fork-sync: fork-only commits not yet mirrored upstream:"
+    # shellcheck disable=SC2086  # whitespace-separated SHAs, list only
+    git show -s --format='  %h %s' $candidates
+    echo "fork-sync: open the upstream PR by hand (this script never opens one):"
+    echo "  git push origin master:refs/heads/upstream-sync/from-master"
+    echo "  gh pr create --repo Apibim-com/BeamCraft --base master --head axisrow:upstream-sync/from-master"
 }
 
 do_status() {
