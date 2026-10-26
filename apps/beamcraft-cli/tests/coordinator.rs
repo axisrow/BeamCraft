@@ -453,3 +453,166 @@ fn the_token_decides_the_actor_and_workspaces_stay_inside_the_root() {
     let (code, _) = server.finish();
     assert_eq!(code, 0);
 }
+
+/// C04-05 through the coordinator: a draft whose rebase recorded semantic conflicts cannot ship
+/// on the wire either. Its already-packaged changeset is refused on the moved head, and only the
+/// explicit resolution, the rebase onto the new head and a fresh re-edited changeset publish.
+/// A's accepted edit is applied first and never rolled back.
+#[test]
+fn a_conflicted_draft_refuses_its_stale_changeset_until_resolved() {
+    let f = Fixture::new();
+    let published = f.path("published");
+    let (cs, base) = f.draft("b", "local name");
+    // A conflicting accepted edit moves the published head before B ships anything.
+    let other = f.path("workspaces/a");
+    f.ok(&[
+        "create-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &other,
+        "--user-id",
+        USER,
+    ]);
+    f.ok(&[
+        "update-element",
+        "--store",
+        &other,
+        "--id",
+        PLATE,
+        "--name",
+        "remote name",
+    ]);
+    f.ok(&[
+        "publish-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &other,
+    ]);
+    let moved = f.head();
+    // A's value is the accepted one; B's rename stays a draft.
+    assert_eq!(plate_name(&published, PLATE), "remote name");
+
+    let dir = f.path("workspaces/b");
+    let draft_head = text(&f.ok(&["open-revision", "--store", &dir]), "revision_id");
+    let (code, result) = f.run(&[
+        "rebase-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &dir,
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000d501",
+        "--expected-head",
+        &moved,
+        "--expected-draft",
+        &draft_head,
+    ]);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    let status = f.ok(&[
+        "inspect-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &dir,
+    ]);
+    let pending = at(&status, &["workspace", "pending_conflicts"])
+        .array()
+        .unwrap();
+    let discarded = text(&pending[0], "draft_op").to_owned();
+
+    // The stale changeset cannot ship on the moved head while the conflict stands.
+    let token = f.token("token", TOKEN);
+    let server = f.serve(&[(USER, &token)], 2);
+    let address = server.address.clone();
+    let (code, body) = publish(&f, &address, &token, "b", &(cs, base));
+    assert_eq!(code, 2, "{body:?}");
+    assert_eq!(text(&body, "outcome"), "rejected");
+    assert_eq!(text(&body, "code"), "BASE_REVISION_MISMATCH");
+    assert_eq!(f.head(), moved);
+
+    // Resolution renounces B's edit, the rebase lands the accepted state, and a re-edited
+    // changeset ships through the ordinary wire path.
+    f.ok(&[
+        "resolve-workspace",
+        "--workspace-dir",
+        &dir,
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000d502",
+        "--discard",
+        &discarded,
+        "--expected-draft",
+        &draft_head,
+    ]);
+    f.ok(&[
+        "rebase-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &dir,
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000d503",
+        "--expected-head",
+        &moved,
+        "--expected-draft",
+        &text(&f.ok(&["open-revision", "--store", &dir]), "revision_id"),
+    ]);
+    f.ok(&[
+        "update-element",
+        "--store",
+        &dir,
+        "--id",
+        PLATE,
+        "--translation",
+        "10,0,0",
+    ]);
+    let packaged_json = f.ok(&[
+        "create-changeset",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &dir,
+    ]);
+    let packaged = at(&packaged_json, &["changeset"]);
+    let fresh = (text(packaged, "digest"), text(packaged, "base_revision"));
+    let (code, body) = publish(&f, &address, &token, "b", &fresh);
+    assert_eq!(
+        (code, text(&body, "outcome").as_str()),
+        (0, "changeset_applied")
+    );
+    let new_head = text(&body, "revision_id");
+    let (code, stopped) = server.finish();
+    assert_eq!(code, 0);
+    assert_eq!(text(&stopped, "outcome"), "stopped");
+
+    // The accepted order is A's rename then B's move; no value was lost or rolled back.
+    assert_eq!(f.head(), new_head);
+    assert_eq!(plate_name(&published, PLATE), "remote name");
+    let report = beamcraft_cli::plate::inspect(&beamcraft_host::revision::RevisionStore::new(
+        beamcraft_host::storage::BlobStore::new(std::path::Path::new(&published)).unwrap(),
+    ))
+    .unwrap();
+    let plate = report
+        .plates
+        .iter()
+        .find(|p| p.authored.id == beamcraft_model::id::ElementId::parse(PLATE).unwrap())
+        .unwrap();
+    assert_eq!(plate.authored.name, "remote name");
+    assert_eq!(plate.authored.placement.translation_mm, [10.0, 0.0, 0.0]);
+}
+
+fn plate_name(path: &str, id: &str) -> String {
+    beamcraft_cli::plate::inspect(&beamcraft_host::revision::RevisionStore::new(
+        beamcraft_host::storage::BlobStore::new(std::path::Path::new(path)).unwrap(),
+    ))
+    .unwrap()
+    .plates
+    .iter()
+    .find(|p| p.authored.id == beamcraft_model::id::ElementId::parse(id).unwrap())
+    .unwrap()
+    .authored
+    .name
+    .clone()
+}
