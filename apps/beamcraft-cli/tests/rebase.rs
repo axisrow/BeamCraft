@@ -422,3 +422,262 @@ fn accepted_head_is_pinned_while_a_concurrent_local_edit_wins_the_draft_cas() {
         "concurrent local"
     );
 }
+
+fn name_of(report: &beamcraft_cli::plate::Inspection, n: usize) -> String {
+    report
+        .plates
+        .iter()
+        .find(|p| p.authored.id == ElementId::parse(&id(n)).unwrap())
+        .unwrap()
+        .authored
+        .name
+        .clone()
+}
+
+fn status_of(f: &Fixture) -> Json {
+    f.ok(&[
+        "inspect-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ])
+}
+
+fn pending(status: &Json) -> Vec<Json> {
+    status
+        .get("workspace")
+        .unwrap()
+        .get("pending_conflicts")
+        .unwrap()
+        .array()
+        .unwrap()
+        .to_vec()
+}
+
+#[test]
+fn a_conflicted_rebase_is_recorded_deterministically_and_blocks_publication_until_resolved() {
+    let f = Fixture::new(false);
+    f.update("a", 10, &["--name", "remote name"]);
+    f.update("b", 10, &["--name", "local name"]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let metadata = fs::read(f.path("b").join("workspace.json")).unwrap();
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    let draft_op = store(&f.path("b"))
+        .head()
+        .unwrap()
+        .unwrap()
+        .manifest()
+        .content()
+        .op()
+        .to_string();
+    assert_eq!(text(&diagnostics[0], "draft_op"), draft_op);
+    assert_eq!(
+        text(&diagnostics[0], "accepted_op"),
+        accepted.manifest().content().op().to_string()
+    );
+    assert_eq!(text(&diagnostics[0], "target"), id(10));
+    assert_eq!(text(&diagnostics[0], "group"), "label");
+    assert_eq!(text(&diagnostics[0], "kind"), "write_write");
+
+    // Crash window: every fresh process with the same identity reports byte-stably and
+    // rewrites the same record; another payload under the identity is refused.
+    let record = fs::read(f.path("b").join("conflicts.pending")).unwrap();
+    let (code, replay) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{replay:?}");
+    assert_eq!(replay, result);
+    assert_eq!(
+        fs::read(f.path("b").join("conflicts.pending")).unwrap(),
+        record
+    );
+    let (code, reused) = f.run(&[
+        "rebase-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+        "--op-id",
+        &id(500),
+        "--expected-head",
+        accepted.revision().as_str(),
+        "--expected-draft",
+        &id(999),
+    ]);
+    assert_eq!(code, 2);
+    assert_eq!(text(&reused, "code"), "OP_ID_REUSE");
+
+    // Status names every pending conflict; publication and packaging refuse identically.
+    assert_eq!(pending(&status_of(&f)), diagnostics);
+    let publish = [
+        "publish-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ];
+    let (code, refused) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(text(&refused, "code"), "DEPENDENCY_CONFLICT");
+    assert_eq!(
+        refused.get("diagnostics").unwrap().array().unwrap(),
+        diagnostics
+    );
+    let (code, again) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(again, refused);
+    let packaging = [
+        "create-changeset",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ];
+    let (code, packaged) = f.run(&packaging);
+    assert_eq!(code, 2);
+    assert_eq!(text(&packaged, "code"), "DEPENDENCY_CONFLICT");
+    assert_eq!(
+        packaged.get("diagnostics").unwrap().array().unwrap(),
+        diagnostics
+    );
+
+    // No lost writes: neither head moved and both values survive on their own side.
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        accepted.manifest_digest()
+    );
+    assert_eq!(
+        fs::read(f.path("b").join("workspace.json")).unwrap(),
+        metadata
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        "local name"
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("published"))).unwrap(), 10),
+        "remote name"
+    );
+
+    // Explicit resolution by undo lifts the gate, and redo cannot silently reopen a gated
+    // publication: the base check still refuses until a fresh rebase re-plans the draft.
+    f.ok(&["undo-workspace", "--workspace-dir", f.s("b")]);
+    assert!(pending(&status_of(&f)).is_empty());
+    assert!(!f.path("b").join("conflicts.pending").exists());
+    let (code, lifted) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(text(&lifted, "code"), "BASE_REVISION_MISMATCH");
+    f.ok(&["redo-workspace", "--workspace-dir", f.s("b")]);
+    assert!(pending(&status_of(&f)).is_empty());
+    let (code, blocked) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(text(&blocked, "code"), "BASE_REVISION_MISMATCH");
+}
+
+#[test]
+fn interleaved_publication_accumulates_conflicts_and_loses_no_write() {
+    let f = Fixture::new(false);
+    f.update("b", 10, &["--name", "local name"]);
+    f.update("a", 10, &["--name", "remote one"]);
+    f.publish("a");
+    let first = f.head("published");
+    let draft = f.head("b");
+    let (code, result) = f.rebase(500, &first, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(result.get("diagnostics").unwrap().array().unwrap().len(), 1);
+    f.update("a", 10, &["--name", "remote two"]);
+    f.publish("a");
+    let second = f.head("published");
+    let (code, result) = f.rebase(501, &second, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|d| text(d, "accepted_op"))
+            .collect::<Vec<_>>(),
+        vec![
+            first.manifest().content().op().to_string(),
+            second.manifest().content().op().to_string()
+        ]
+    );
+    assert!(diagnostics.iter().all(|d| text(d, "kind") == "write_write"));
+    // No lost writes across the interleaving: both accepted revisions exist and the draft
+    // keeps its own value untouched.
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("published"))).unwrap(), 10),
+        "remote two"
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        "local name"
+    );
+}
+
+#[test]
+fn reported_kinds_cover_lifecycle_and_read_write_dependencies() {
+    let f = Fixture::new(false);
+    f.ok(&[
+        "create-weld",
+        "--store",
+        f.s("b"),
+        "--name",
+        "weld",
+        "--main",
+        &id(10),
+        "--secondary",
+        &id(11),
+        "--size",
+        "5",
+        "--location",
+        "workshop",
+        "--side",
+        "arrow",
+    ]);
+    f.ok(&["delete-element", "--store", f.s("a"), "--id", &id(11)]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(text(&diagnostics[0], "kind"), "lifecycle");
+    assert_eq!(text(&diagnostics[0], "target"), id(11));
+    assert_eq!(text(&diagnostics[0], "group"), "lifecycle");
+    assert_eq!(
+        pending(&status_of(&f)),
+        diagnostics,
+        "the recorded report matches the rebase answer"
+    );
+
+    let g = Fixture::new(false);
+    g.ok(&[
+        "copy-element",
+        "--store",
+        g.s("b"),
+        "--id",
+        &id(10),
+        "--new-id",
+        &id(12),
+    ]);
+    g.update("a", 10, &["--name", "renamed source"]);
+    g.publish("a");
+    let accepted = g.head("published");
+    let draft = g.head("b");
+    let (code, result) = g.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(text(&diagnostics[0], "kind"), "read_write");
+    assert_eq!(text(&diagnostics[0], "target"), id(10));
+    assert_eq!(text(&diagnostics[0], "group"), "label");
+}

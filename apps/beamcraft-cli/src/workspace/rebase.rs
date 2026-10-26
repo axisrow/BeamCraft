@@ -258,6 +258,18 @@ pub fn rebase_workspace(
         return Err(mismatch());
     }
     if let Decision::Conflicted { conflicts } = plan(&source.commands, &remote.commands)? {
+        // A conflicted rebase writes this record and nothing else; the same inputs reproduce
+        // the same bytes, so a retry after any interruption reports identically.
+        super::conflicts::store(
+            dir,
+            &super::conflicts::PendingConflicts {
+                base_revision: meta.base_revision.clone(),
+                base_manifest: meta.base_manifest,
+                draft_head: draft_pin.revision,
+                draft_manifest: draft_pin.manifest,
+                conflicts: conflicts.clone(),
+            },
+        )?;
         return Ok(RebaseResult::Conflicted(conflicts));
     }
     let candidate = materializer::prepare(

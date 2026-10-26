@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 
 mod state;
 pub use state::WorkspaceState;
+pub mod conflicts;
 mod pending;
 pub mod rebase;
 pub mod rebase_receipt;
@@ -181,6 +182,9 @@ pub struct WorkspaceStatus {
     pub published_head: RevisionSummary,
     /// Whether the published head is still the base (`false`: another change was published).
     pub base_is_current: bool,
+    /// Unresolved semantic conflicts between the unsent work and accepted history (C04);
+    /// empty when none stand. Publication and packaging refuse while this is nonempty.
+    pub pending_conflicts: Vec<beamcraft_engine::rebase::Conflict>,
 }
 
 fn head_of(
@@ -305,6 +309,7 @@ pub fn status(
             "workspace rebase boundary is beyond its draft head",
         ));
     }
+    let pending_conflicts = conflicts::active(workspace, dir, &meta)?;
     let head =
         head_of(published)?.ok_or_else(|| integrity("the published store has no revision"))?;
     Ok(WorkspaceStatus {
@@ -312,8 +317,18 @@ pub fn status(
         base_is_current: head.revision() == &meta.base_revision,
         draft_head: summarize(&draft),
         published_head: summarize(&head),
+        pending_conflicts,
         meta,
     })
+}
+
+/// The still-unresolved semantic conflicts (C04) that gate publication and packaging.
+pub fn pending_conflicts(
+    workspace: &RevisionStore,
+    dir: &Path,
+) -> Result<Vec<beamcraft_engine::rebase::Conflict>, PlateError> {
+    let meta = read_meta(dir)?;
+    conflicts::active(workspace, dir, &meta)
 }
 
 /// Result of `publish`.
@@ -375,6 +390,10 @@ pub fn publish_workspace(
             code: ErrorCode::InvalidArgument,
             message: "the workspace has nothing to publish",
         });
+    }
+    // C04: a recorded semantic conflict refuses every publication until the draft is resolved.
+    if !conflicts::active(workspace, dir, &meta)?.is_empty() {
+        return Err(conflicts::refusal());
     }
     if head.info().revision() != &meta.base_revision {
         return Err(PlateError {

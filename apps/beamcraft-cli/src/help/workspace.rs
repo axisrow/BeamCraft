@@ -17,10 +17,11 @@ pub(super) const HELP: &str = concat!(
     "commands and --store DIR): create-workspace --store PUBLISHED --workspace-dir DIR ",
     "[--workspace-id UUID] [--user-id UUID] [--revision-id UUID] [--op-id UUID] (forks the ",
     "published head); inspect-workspace --store PUBLISHED --workspace-dir DIR (base, unsent ",
-    "revisions, whether the published head moved); publish-workspace --store PUBLISHED ",
-    "--workspace-dir DIR (the published revision id is the draft head's id, so a retry is the ",
-    "same request; fast-forward only: BASE_REVISION_MISMATCH when the published head moved, ",
-    "no merge)",
+    "revisions, whether the published head moved, and pending_conflicts); publish-workspace ",
+    "--store PUBLISHED --workspace-dir DIR (the published revision id is the draft head's id, ",
+    "so a retry is the same request; fast-forward only: BASE_REVISION_MISMATCH when the ",
+    "published head moved, no merge; DEPENDENCY_CONFLICT while unresolved semantic conflicts ",
+    "stand, naming them in diagnostics)",
 );
 
 pub(super) const UNDO: &str = concat!(

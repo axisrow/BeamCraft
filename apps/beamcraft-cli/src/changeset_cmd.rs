@@ -35,7 +35,8 @@ fn invalid(message: &'static str) -> PlateError {
 
 /// Runs one changeset command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
-    crate::report::report(run(args))
+    let mut candidates = Vec::new();
+    crate::report::report_with(run(args, &mut candidates), candidates)
 }
 
 fn store_at(path: &Path, message: &'static str) -> Run<RevisionStore> {
@@ -46,7 +47,7 @@ fn store_at(path: &Path, message: &'static str) -> Run<RevisionStore> {
     Ok(RevisionStore::new(blobs))
 }
 
-fn run(args: &[OsString]) -> Run<Json> {
+fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
         .map(|a| {
@@ -125,7 +126,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             Some(text) => RevisionId::parse(text).map_err(id_error)?,
             None => RevisionId::from_uuid(fresh()?),
         };
-        let stored = create_changeset(
+        let stored = match create_changeset(
             &published,
             &workspace,
             dir,
@@ -134,7 +135,19 @@ fn run(args: &[OsString]) -> Run<Json> {
                 revision_id,
                 actor,
             },
-        )?;
+        ) {
+            Ok(stored) => stored,
+            Err(error) if error.code == ErrorCode::DependencyConflict => {
+                // C04: the refusal names every pending conflict in its diagnostics.
+                candidates.extend(
+                    beamcraft_cli::workspace::pending_conflicts(&workspace, dir)?
+                        .iter()
+                        .map(beamcraft_cli::workspace::conflicts::conflict_json),
+                );
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
         return Ok(Json::object([
             ("outcome", Json::text("changeset_created")),
             ("changeset", changeset_json(&stored)),

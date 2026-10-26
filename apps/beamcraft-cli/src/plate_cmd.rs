@@ -273,7 +273,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options),
         "create-workspace" | "inspect-workspace" | "publish-workspace" => {
-            workspace_command(&store, command, &options)
+            workspace_command(&store, command, &options, candidates)
         }
         "define-material" | "define-profile" => define_command(&store, command, &options),
         "definitions" => definitions_json(&inspect(&store)?, &options),
@@ -1154,6 +1154,16 @@ fn workspace_json(status: &WorkspaceStatus) -> Json {
         ),
         ("draft_head", revision_json(&status.draft_head)),
         ("published_head", revision_json(&status.published_head)),
+        (
+            "pending_conflicts",
+            Json::Array(
+                status
+                    .pending_conflicts
+                    .iter()
+                    .map(beamcraft_cli::workspace::conflicts::conflict_json)
+                    .collect(),
+            ),
+        ),
     ])
 }
 
@@ -1244,6 +1254,7 @@ fn workspace_command(
     store: &RevisionStore,
     command: &str,
     options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || -> Run<String> {
@@ -1314,7 +1325,19 @@ fn workspace_command(
             ),
         ])),
         _ => {
-            let published = publish_workspace(store, &workspace, dir, &mut NoFault)?;
+            let published = match publish_workspace(store, &workspace, dir, &mut NoFault) {
+                Ok(published) => published,
+                Err(error) if error.code == ErrorCode::DependencyConflict => {
+                    // C04: the refusal names every pending conflict in its diagnostics.
+                    candidates.extend(
+                        beamcraft_cli::workspace::pending_conflicts(&workspace, dir)?
+                            .iter()
+                            .map(beamcraft_cli::workspace::conflicts::conflict_json),
+                    );
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
             Ok(Json::object([
                 (
                     "outcome",

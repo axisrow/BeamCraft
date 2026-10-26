@@ -8,7 +8,7 @@
 //! a state diff or a caller's narrower claim cannot substitute for those footprints. Missing
 //! evidence must retain a conservative footprint or be refused by the application adapter.
 
-use crate::footprint::{Entry, Footprint};
+use crate::footprint::{Entry, Footprint, Group};
 use beamcraft_model::changeset::MAX_OPERATIONS;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -28,6 +28,30 @@ pub struct Operation {
     pub footprint: Footprint,
 }
 
+/// Why one draft/accepted pair conflicts on one entry (C04 report field). Declared in
+/// increasing severity: a report keeps the strongest kind per pair and entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ConflictKind {
+    /// One operation wrote the entry the other read as a dependency.
+    ReadWrite,
+    /// Both operations wrote the entry: neither value can be chosen automatically.
+    WriteWrite,
+    /// The entry is the lifecycle group: an existence or identity dependency such as a
+    /// delete against a copy, weld or link that reads the element.
+    Lifecycle,
+}
+
+impl ConflictKind {
+    /// The stable report token of the kind.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WriteWrite => "write_write",
+            Self::ReadWrite => "read_write",
+            Self::Lifecycle => "lifecycle",
+        }
+    }
+}
+
 /// One conflicting semantic entry between a draft and an intervening accepted command.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Conflict {
@@ -37,6 +61,8 @@ pub struct Conflict {
     pub accepted: OpId,
     /// Complete target and atomic semantic group.
     pub entry: Entry,
+    /// Why the pair conflicts on this entry.
+    pub kind: ConflictKind,
 }
 
 /// Pure independence decision. Neither variant changes a model or chooses a conflict winner.
@@ -112,16 +138,43 @@ pub fn plan(draft: &[Operation], accepted: &[Operation]) -> Result<Decision, Com
             writers.entry(entry).or_default().insert(op.id);
         }
     }
-    let mut conflicts = BTreeSet::new();
+    let mut conflicts: BTreeMap<(OpId, OpId, Entry), ConflictKind> = BTreeMap::new();
     for op in draft {
         for &entry in op.footprint.reads() {
-            record(&mut conflicts, op.id, entry, writers.get(&entry))?;
+            record(
+                &mut conflicts,
+                op.id,
+                entry,
+                kind(entry, false),
+                writers.get(&entry),
+            )?;
         }
         for &entry in op.footprint.writes() {
-            record(&mut conflicts, op.id, entry, readers.get(&entry))?;
-            record(&mut conflicts, op.id, entry, writers.get(&entry))?;
+            record(
+                &mut conflicts,
+                op.id,
+                entry,
+                kind(entry, false),
+                readers.get(&entry),
+            )?;
+            record(
+                &mut conflicts,
+                op.id,
+                entry,
+                kind(entry, true),
+                writers.get(&entry),
+            )?;
         }
     }
+    let conflicts: Vec<Conflict> = conflicts
+        .into_iter()
+        .map(|((draft, accepted, entry), kind)| Conflict {
+            draft,
+            accepted,
+            entry,
+            kind,
+        })
+        .collect();
     if conflicts.is_empty() {
         Ok(Decision::Independent {
             operations: draft.iter().map(|op| op.id).collect(),
@@ -133,23 +186,39 @@ pub fn plan(draft: &[Operation], accepted: &[Operation]) -> Result<Decision, Com
     }
 }
 
+fn kind(entry: Entry, both_wrote: bool) -> ConflictKind {
+    if entry.group == Group::Lifecycle {
+        ConflictKind::Lifecycle
+    } else if both_wrote {
+        ConflictKind::WriteWrite
+    } else {
+        ConflictKind::ReadWrite
+    }
+}
+
+/// One row per draft/accepted/entry pair, keeping the strongest kind seen for it.
 fn record(
-    conflicts: &mut BTreeSet<Conflict>,
+    conflicts: &mut BTreeMap<(OpId, OpId, Entry), ConflictKind>,
     draft: OpId,
     entry: Entry,
+    kind: ConflictKind,
     accepted: Option<&BTreeSet<OpId>>,
 ) -> Result<(), CommandError> {
     if let Some(accepted) = accepted {
         for &accepted in accepted {
-            let conflict = Conflict {
-                draft,
-                accepted,
-                entry,
-            };
-            if conflicts.len() == MAX_REBASE_CONFLICTS && !conflicts.contains(&conflict) {
+            if conflicts.len() == MAX_REBASE_CONFLICTS
+                && !conflicts.contains_key(&(draft, accepted, entry))
+            {
                 return Err(limit());
             }
-            conflicts.insert(conflict);
+            conflicts
+                .entry((draft, accepted, entry))
+                .and_modify(|current| {
+                    if *current < kind {
+                        *current = kind;
+                    }
+                })
+                .or_insert(kind);
         }
     }
     Ok(())
@@ -235,7 +304,8 @@ mod tests {
                 entry: Entry {
                     target: Target::Element(element(1)),
                     group: Group::Label
-                }
+                },
+                kind: ConflictKind::WriteWrite
             }]
         );
     }
@@ -271,19 +341,49 @@ mod tests {
             Footprint::for_copy(element(1), element(2), None, None).unwrap(),
         )];
         let accepted = [operation(2, rename(1))];
+        let found = conflicts(plan(&draft, &accepted).unwrap());
         assert!(
-            conflicts(plan(&draft, &accepted).unwrap())
+            found
                 .iter()
                 .any(|c| c.entry.target == Target::Element(element(1))
-                    && c.entry.group == Group::Label)
+                    && c.entry.group == Group::Label
+                    && c.kind == ConflictKind::ReadWrite)
         );
         let weld = [operation(
             3,
             Footprint::for_weld(element(3), [element(1), element(2)]).unwrap(),
         )];
         let delete = [operation(4, Footprint::for_delete(element(1)).unwrap())];
-        assert_eq!(conflicts(plan(&weld, &delete).unwrap()).len(), 1);
-        assert_eq!(conflicts(plan(&delete, &weld).unwrap()).len(), 1);
+        let linked = conflicts(plan(&weld, &delete).unwrap());
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].kind, ConflictKind::Lifecycle);
+        assert_eq!(
+            linked[0].entry,
+            Entry {
+                target: Target::Element(element(1)),
+                group: Group::Lifecycle
+            }
+        );
+        let reversed = conflicts(plan(&delete, &weld).unwrap());
+        assert_eq!(reversed.len(), 1);
+        assert_eq!(reversed[0].entry, linked[0].entry);
+        assert_eq!(reversed[0].kind, linked[0].kind);
+    }
+
+    #[test]
+    fn identical_shape_writes_are_write_write_and_reverted_ones_keep_their_kind() {
+        let shape = Footprint::for_update(element(1), false, false, true, false, None).unwrap();
+        let draft = [operation(1, shape.clone())];
+        let accepted = [operation(2, shape)];
+        let found = conflicts(plan(&draft, &accepted).unwrap());
+        assert!(found.iter().all(|c| c.kind == ConflictKind::WriteWrite));
+        // A delete against an edit of the same element conflicts through the lifecycle read.
+        let delete = [operation(3, Footprint::for_delete(element(1)).unwrap())];
+        assert!(
+            conflicts(plan(&draft, &delete).unwrap())
+                .iter()
+                .any(|c| c.kind == ConflictKind::Lifecycle)
+        );
     }
 
     #[test]
