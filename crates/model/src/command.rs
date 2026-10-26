@@ -222,7 +222,8 @@ impl CutRecord {
                 ErrorCode::NonFiniteNumber,
                 "cut",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if self
             .point_mm
