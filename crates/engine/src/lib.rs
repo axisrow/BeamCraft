@@ -21,6 +21,7 @@ pub mod error;
 pub mod footprint;
 pub mod level;
 pub mod limits;
+pub mod measure;
 pub mod member;
 pub mod numbering;
 pub mod numbering_approval;

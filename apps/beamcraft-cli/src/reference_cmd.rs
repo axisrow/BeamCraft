@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! R01 headless commands: `attach-reference`, `move-reference`, `correct-reference-units`,
-//! `write-reference` and `inspect-reference`. They call the engine API through the adapter of
-//! `beamcraft_cli::reference` and print one JSON object (the same error shape and exit codes as
-//! the other store commands: 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
+//! `write-reference`, `inspect-reference` and `measure-reference`. They call the engine API
+//! through the adapter of `beamcraft_cli::reference` and print one JSON object (the same error
+//! shape and exit codes as the other store commands: 0 success, 2 rejection, 3 backend
+//! unavailable, 4 outcome unknown).
 //!
 //! `write-reference` has no success path. It exists so that a write to the source file or to a
 //! foreign prim is an observable, scriptable refusal (`FOREIGN_READ_ONLY`, exit 2) and not only a
@@ -16,9 +17,11 @@ use crate::plate_cmd::{
 use crate::report::report;
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::reference::{
-    AttachRequest, Attached, Edited, Ids, ReferenceInspection, Wrapper, attach_reference,
-    correct_wrapper_units, inspect_references, move_wrapper, refuse_foreign_write,
+    AttachRequest, Attached, Edited, Ids, MeasuredReference, ReferenceInspection, Wrapper,
+    attach_reference, correct_wrapper_units, inspect_references, measure_references, move_wrapper,
+    refuse_foreign_write,
 };
+use beamcraft_engine::measure::{MeshReading, ReferenceMeasurement};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore, Uuid7},
@@ -45,6 +48,7 @@ pub fn handles(command: &std::ffi::OsStr) -> bool {
                 | "correct-reference-units"
                 | "write-reference"
                 | "inspect-reference"
+                | "measure-reference"
         )
     })
 }
@@ -75,6 +79,7 @@ fn options_of(command: &str) -> Option<Vec<&'static str>> {
         "correct-reference-units" => &["--id", "--meters-per-unit", "--up-axis", "--clear"],
         "write-reference" => &["--id", "--target", "--prim", "--attribute"],
         "inspect-reference" => &[],
+        "measure-reference" => &["--id"],
         _ => return None,
     };
     let mut all = vec!["--store"];
@@ -133,6 +138,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "move-reference" => move_command(&store, &options),
         "correct-reference-units" => correct_command(&store, &options),
         "write-reference" => write_command(&store, &options),
+        "measure-reference" => measure_command(&store, &options),
         _ => Ok(inspection_json(&inspect_references(&store)?)?),
     }
 }
@@ -447,6 +453,126 @@ fn wrapper_json(wrapper: &Wrapper) -> Run<Json> {
                     })
                     .collect(),
             ),
+        ),
+    ]))
+}
+
+/// `measure-reference`: the kernel measurement of every wrapper's composed foreign surface, or
+/// of `--id` alone. Read-only: no revision, no identity, no write; the same head answers with
+/// the same numbers.
+fn measure_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let id = match options.get("--id") {
+        Some(text) => Some(ElementId::parse(text).map_err(id_error)?),
+        None => None,
+    };
+    let report = measure_references(store, id)?;
+    Ok(Json::object([
+        ("outcome", Json::text("reference_measurements")),
+        ("revision", revision_json(&report.revision)),
+        (
+            "measurement_count",
+            Json::uint(report.measurements.len() as u64),
+        ),
+        (
+            "measurements",
+            Json::Array(
+                report
+                    .measurements
+                    .iter()
+                    .map(measured_json)
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+    ]))
+}
+
+fn measured_json(measured: &MeasuredReference) -> Run<Json> {
+    Ok(Json::object([
+        ("id", Json::text(measured.id.to_string())),
+        ("path", Json::text(measured.path.clone())),
+        ("name", Json::text(measured.name.clone())),
+        ("measurement", measurement_json(&measured.measurement)?),
+    ]))
+}
+
+fn measurement_json(measurement: &ReferenceMeasurement) -> Run<Json> {
+    let mesh = match &measurement.mesh {
+        None => Json::Null,
+        Some(reading) => mesh_reading_json(reading)?,
+    };
+    Ok(Json::object([
+        (
+            "reference_id",
+            Json::text(measurement.reference.to_string()),
+        ),
+        (
+            "source_digest",
+            Json::text(measurement.source_digest.to_string()),
+        ),
+        (
+            "source_version",
+            Json::uint(u64::from(measurement.source_version)),
+        ),
+        ("mesh", mesh),
+    ]))
+}
+
+fn mesh_reading_json(reading: &MeshReading) -> Run<Json> {
+    let centroid = match reading.centroid_mm {
+        None => Json::Null,
+        Some([x, y, z]) => Json::object([
+            ("lo", triple([x.lo, y.lo, z.lo])?),
+            ("hi", triple([x.hi, y.hi, z.hi])?),
+            ("mid", triple([x.midpoint(), y.midpoint(), z.midpoint()])?),
+        ]),
+    };
+    let enclosure = |value: Option<(f64, f64, f64)>| -> Run<Json> {
+        match value {
+            None => Ok(Json::Null),
+            Some((lo, hi, mid)) => Ok(Json::object([
+                ("lo", num(lo)?),
+                ("hi", num(hi)?),
+                ("mid", num(mid)?),
+            ])),
+        }
+    };
+    Ok(Json::object([
+        ("status", Json::text(reading.status.as_str())),
+        ("mesh_digest", Json::text(reading.mesh_digest.to_string())),
+        (
+            "bounds_mm",
+            Json::object([
+                ("min", triple(reading.bounds_mm.min)?),
+                ("max", triple(reading.bounds_mm.max)?),
+            ]),
+        ),
+        (
+            "volume_mm3",
+            match reading.volume_mm3 {
+                Some(e) => enclosure(Some((e.lo, e.hi, e.midpoint())))?,
+                None => Json::Null,
+            },
+        ),
+        (
+            "area_mm2",
+            match reading.area_mm2 {
+                Some(e) => enclosure(Some((e.lo, e.hi, e.midpoint())))?,
+                None => Json::Null,
+            },
+        ),
+        ("centroid_mm", centroid),
+        (
+            "mass",
+            Json::object([
+                ("status", Json::text(reading.mass.status.as_str())),
+                (
+                    "kg",
+                    match reading.mass.kg {
+                        Some(kg) => num(kg)?,
+                        None => Json::Null,
+                    },
+                ),
+            ]),
         ),
     ]))
 }

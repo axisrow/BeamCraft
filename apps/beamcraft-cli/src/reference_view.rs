@@ -8,7 +8,7 @@ use crate::reference::wrapper_of;
 use beamcraft_engine::SceneElement;
 use beamcraft_engine::limits::{MAX_BLOB_TRIANGLES, MAX_BLOB_VERTICES};
 use beamcraft_engine::scene::{ReferenceGeometry, reference_element};
-use beamcraft_layer_engine::authored::read_references;
+use beamcraft_layer_engine::authored::{ReferenceView, read_references};
 use beamcraft_layer_engine::{Prim, Value};
 use beamcraft_model::error::ErrorCode;
 use std::collections::{BTreeMap, BTreeSet};
@@ -136,55 +136,74 @@ fn geometry(p: &Prim, translation: [f64; 3]) -> Result<Option<ReferenceGeometry>
     Ok(Some(mesh))
 }
 
+/// The composed display geometry of every wrapper, in wrapper id order: the validated views and,
+/// for each, the foreign surfaces the view and the R02 measurement both consume.
+pub(crate) fn reference_surfaces(
+    prims: &[Prim],
+) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, PlateError> {
+    let by_path: BTreeMap<_, _> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
+    read_references(prims)?
+        .iter()
+        .map(|view| Ok((view.clone(), wrapper_meshes(view, &by_path)?)))
+        .collect()
+}
+
+/// The foreign surfaces of one wrapper: a bounded walk of the composed prims below its arc
+/// holder, accumulating translations, honouring activity and visibility, with the same
+/// unsupported-representation refusals the view path has always made.
+fn wrapper_meshes(
+    view: &ReferenceView,
+    by_path: &BTreeMap<&str, &Prim>,
+) -> Result<Vec<ReferenceGeometry>, PlateError> {
+    let prefix = format!("{}/", view.source_root);
+    let mut ancestors = BTreeMap::new();
+    let mut meshes = Vec::new();
+    for (path, p) in by_path
+        .range(view.source_root.as_str()..)
+        .take_while(|(path, _)| **path == view.source_root || path.starts_with(&prefix))
+    {
+        let (parent, hidden) = if *path == view.source_root {
+            ([0.0; 3], false)
+        } else {
+            let (parent, _) = path.rsplit_once('/').ok_or_else(invalid)?;
+            *ancestors.get(parent).ok_or_else(invalid)?
+        };
+        let invisible = match property(p, "visibility") {
+            None => false,
+            Some(Value::Text(t)) if t == "inherited" => false,
+            Some(Value::Text(t)) if t == "invisible" => true,
+            _ => return Err(invalid()),
+        };
+        let hidden = hidden || !p.active || invisible;
+        if hidden {
+            ancestors.insert(*path, (parent, true));
+            continue;
+        }
+        if property(p, "purpose").is_some_and(|v| !matches!(text(v), Some("default" | "render"))) {
+            return Err(unsupported());
+        }
+        let [x, y, z] = translation(p)?;
+        let [px, py, pz] = parent;
+        let offset = [px + x, py + y, pz + z];
+        if offset.iter().any(|v| !v.is_finite()) {
+            return Err(PlateError {
+                code: ErrorCode::NonFiniteNumber,
+                message: "foreign translation overflows",
+            });
+        }
+        ancestors.insert(*path, (offset, false));
+        if let Some(mesh) = geometry(p, offset)? {
+            meshes.push(mesh);
+        }
+    }
+    Ok(meshes)
+}
+
 /// Converts a complete, validated composed snapshot; it does not reopen or write a source file.
 pub(crate) fn scene_elements(prims: &[Prim]) -> Result<Vec<SceneElement>, PlateError> {
     let mut elements = Vec::new();
-    let by_path: BTreeMap<_, _> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
-    for view in read_references(prims)? {
+    for (view, meshes) in reference_surfaces(prims)? {
         let wrapper = wrapper_of(&view)?;
-        let prefix = format!("{}/", view.source_root);
-        let mut ancestors = BTreeMap::new();
-        let mut meshes = Vec::new();
-        for (path, p) in by_path
-            .range(view.source_root.as_str()..)
-            .take_while(|(path, _)| **path == view.source_root || path.starts_with(&prefix))
-        {
-            let (parent, hidden) = if *path == view.source_root {
-                ([0.0; 3], false)
-            } else {
-                let (parent, _) = path.rsplit_once('/').ok_or_else(invalid)?;
-                *ancestors.get(parent).ok_or_else(invalid)?
-            };
-            let invisible = match property(p, "visibility") {
-                None => false,
-                Some(Value::Text(t)) if t == "inherited" => false,
-                Some(Value::Text(t)) if t == "invisible" => true,
-                _ => return Err(invalid()),
-            };
-            let hidden = hidden || !p.active || invisible;
-            if hidden {
-                ancestors.insert(*path, (parent, true));
-                continue;
-            }
-            if property(p, "purpose")
-                .is_some_and(|v| !matches!(text(v), Some("default" | "render")))
-            {
-                return Err(unsupported());
-            }
-            let [x, y, z] = translation(p)?;
-            let [px, py, pz] = parent;
-            let offset = [px + x, py + y, pz + z];
-            if offset.iter().any(|v| !v.is_finite()) {
-                return Err(PlateError {
-                    code: ErrorCode::NonFiniteNumber,
-                    message: "foreign translation overflows",
-                });
-            }
-            ancestors.insert(*path, (offset, false));
-            if let Some(mesh) = geometry(p, offset)? {
-                meshes.push(mesh);
-            }
-        }
         if let Some(element) = reference_element(&wrapper.record, &meshes)? {
             elements.push(element);
         }

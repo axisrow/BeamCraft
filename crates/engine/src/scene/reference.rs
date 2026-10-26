@@ -83,24 +83,30 @@ fn convex_quad([a, b, c, d]: [[f64; 3]; 4]) -> bool {
             .all(|[p, q, r]| dot(n, cross(sub(q, p), sub(r, q))) > 0.0)
 }
 
-/// Combines a wrapper's visible foreign surfaces into one reference-kind scene element.
+/// The world-space vertices and triangle corners of one wrapper's composed foreign surface.
+pub(crate) type ForeignSurface = (Vec<[f64; 3]>, Vec<[u32; 3]>);
+
+/// The world-space vertices and triangle corners of the composed foreign surfaces, mapped
+/// through `record` (explicit units correction, then placement) with the supported profile's
+/// caps, face rules and coordinate bounds. Both the display element and the R02 measurement
+/// build on it; a caller adds what it alone needs (the rotation guard and the translation
+/// instance for the view, kernel certification for the measurement).
 ///
-/// The wrapper placement remains a translation instance. Explicit R01 units/up-axis correction
-/// is baked into its local display vertices, never into the foreign content. Declared source
-/// units alone change nothing. A rotated wrapper is `UNSUPPORTED_GEOMETRY`, not drawn unrotated.
-/// An empty group has no display representation. Foreign surfaces are not engineering solids;
-/// picking/measurement support is not added by this conversion.
-pub fn reference_element(
+/// `record` is the mapping (the display path passes a placement-identity copy so only the
+/// correction reaches the vertices); `bound_translation` is the second bound of the coordinate
+/// check `v` and `v + t`. A caller whose mapping already includes the placement translation
+/// (the measurement) passes `[0.0; 3]`, because its vertices are world coordinates and only
+/// `|v|` is real; the view passes its translation so the composed position is bounded before
+/// the translation instance is applied.
+pub(crate) fn foreign_surface(
     record: &ReferenceRecord,
+    bound_translation: [f64; 3],
     geometry: &[ReferenceGeometry],
-) -> Result<Option<SceneElement>, CommandError> {
+) -> Result<ForeignSurface, CommandError> {
     record.placement.validate()?;
     record.source.validate()?;
     if let Some(units) = record.units {
         units.validate()?;
-    }
-    if !record.placement.is_identity_rotation() {
-        return Err(error(ErrorCode::UnsupportedGeometry));
     }
     if geometry.len() > MAX_VERTICES {
         return Err(error(ErrorCode::LimitExceeded));
@@ -127,12 +133,8 @@ pub fn reference_element(
         return Err(error(ErrorCode::LimitExceeded));
     }
     if geometry.is_empty() {
-        return Ok(None);
+        return Ok((Vec::new(), Vec::new()));
     }
-    let local = ReferenceRecord {
-        placement: Placement::IDENTITY,
-        ..record.clone()
-    };
     let mut points = Vec::with_capacity(count);
     let mut indices = Vec::with_capacity(triangles);
     for g in geometry {
@@ -141,12 +143,12 @@ pub fn reference_element(
         }
         let base = u32::try_from(points.len()).map_err(|_| error(ErrorCode::LimitExceeded))?;
         for p in &g.points {
-            let p = local.source_point_to_world([
+            let p = record.source_point_to_world([
                 p[0] + g.translation[0],
                 p[1] + g.translation[1],
                 p[2] + g.translation[2],
             ])?;
-            if p.iter().zip(record.placement.translation_mm).any(|(v, t)| {
+            if p.iter().zip(bound_translation).any(|(v, t)| {
                 v.abs() > beamcraft_kernel::trimesh::MAX_COORDINATE_MM
                     || (v + t).abs() > beamcraft_kernel::trimesh::MAX_COORDINATE_MM
             }) {
@@ -201,6 +203,36 @@ pub fn reference_element(
         if !remaining.is_empty() {
             return Err(error(ErrorCode::InvalidArgument));
         }
+    }
+    Ok((points, indices))
+}
+
+/// Combines a wrapper's visible foreign surfaces into one reference-kind scene element.
+///
+/// The wrapper placement remains a translation instance. Explicit R01 units/up-axis correction
+/// is baked into its local display vertices, never into the foreign content. Declared source
+/// units alone change nothing. A rotated wrapper is `UNSUPPORTED_GEOMETRY`, not drawn unrotated.
+/// An empty group has no display representation. Foreign surfaces are not engineering solids;
+/// picking/measurement support is not added by this conversion.
+pub fn reference_element(
+    record: &ReferenceRecord,
+    geometry: &[ReferenceGeometry],
+) -> Result<Option<SceneElement>, CommandError> {
+    record.placement.validate()?;
+    record.source.validate()?;
+    if let Some(units) = record.units {
+        units.validate()?;
+    }
+    if !record.placement.is_identity_rotation() {
+        return Err(error(ErrorCode::UnsupportedGeometry));
+    }
+    let local = ReferenceRecord {
+        placement: Placement::IDENTITY,
+        ..record.clone()
+    };
+    let (points, indices) = foreign_surface(&local, record.placement.translation_mm, geometry)?;
+    if points.is_empty() {
+        return Ok(None);
     }
     let mesh = TriMesh::from_buffers(&points, &indices).map_err(|e| error(e.code.f04_code()))?;
     let blob = mesh.to_blob();
