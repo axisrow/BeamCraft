@@ -21,8 +21,11 @@ Thanks for helping. Humans and AI agents follow the same rules.
 6. Keep the fork aligned with upstream: `bash tools/fork-sync.sh status` inspects the
    divergence, `bash tools/fork-sync.sh sync` merges `upstream/master`, gates it on the local
    triple and pushes `master`. The fork inherits upstream 1:1, so `sync` auto-resolves a
-   merge conflict in favor of upstream and reports fork-only paths as mirror-PR candidates
-   for [`tools/upstream-mirror.sh`](tools/upstream-mirror.sh). The script doubles as the
+   merge conflict — the upstream side wins, the `FORK_ONLY` paths listed in
+   [`tools/upstream-mirror.sh`](tools/upstream-mirror.sh) keep the fork side — and exits 2
+   with the file list when a conflict fits neither rule; after a green sync it lists the
+   fork-only commits upstream does not have yet, with the exact commands for their upstream
+   PR. The script doubles as the
    reference example for the small, single-purpose shell tools that live in [`tools/`](tools/).
 7. Mirror a merged fork PR to upstream: `bash tools/upstream-mirror.sh mirror <pr-number>`
    replays the PR's reviewed commits (the merge commit's second parent) on a fresh
