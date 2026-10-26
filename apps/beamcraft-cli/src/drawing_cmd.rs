@@ -12,7 +12,8 @@ use beamcraft_engine::drawing::projection::{
     self, BodyProjection, DimensionProjection, Projection,
 };
 use beamcraft_engine::drawing::{
-    DEFAULT_SCALE_DENOMINATOR, DimensionSpec, Drawing, DrawingSpec, Plane, SourceModelPin, ViewSpec,
+    DEFAULT_SCALE_DENOMINATOR, DimensionSpec, Drawing, DrawingSpec, Plane, SourceModelPin,
+    ViewSpec, svg,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_host::revision::{ExpectedBase, RevisionStore};
@@ -46,6 +47,7 @@ pub fn handles(command: &OsString) -> bool {
                 | "publish-drawing"
                 | "inspect-drawing"
                 | "inspect-drawing-versions"
+                | "export-drawing"
         )
     )
 }
@@ -165,6 +167,7 @@ fn document_options(args: &[OsString]) -> Run<BTreeMap<&str, &str>> {
                 | "--actor-id"
                 | "--version-id"
                 | "--model-store"
+                | "--out"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated drawing document option"));
@@ -394,6 +397,63 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 },
             )?;
             Ok(document_json(&published))
+        }
+        "export-drawing" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let version = DocumentVersionId::parse(required("--version-id")?)
+                .map_err(|_| invalid("document version id must be UUIDv7"))?;
+            let destination = required("--out")?;
+            // One exact published version, reopened from its own immutable archived source.
+            // The live model is never read and never changes; the document head is only read.
+            let published = documents
+                .history()?
+                .into_iter()
+                .find(|revision| {
+                    revision.state == State::Published && revision.version == Some(version)
+                })
+                .ok_or(PlateError {
+                    code: ErrorCode::NotFound,
+                    message: "no published document version carries this id",
+                })?;
+            let snapshot = published.source.inspect()?.snapshot;
+            let projection = projection::resolve(&published.drawing, &snapshot)?;
+            let bytes = svg::export(&published.drawing, version, &projection)?;
+            // Reserve the destination only after the exact version verified and rendered; an
+            // existing file is never opened for writing or removed.
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(destination)
+                .map_err(|_| invalid("drawing export destination exists or cannot be created"))?;
+            if file
+                .write_all(&bytes)
+                .and_then(|()| file.sync_all())
+                .is_err()
+            {
+                drop(file);
+                let _ = std::fs::remove_file(destination);
+                return Err(PlateError {
+                    code: ErrorCode::BackendUnavailable,
+                    message: "drawing export could not be written",
+                });
+            }
+            Ok(Json::object([
+                ("outcome", Json::text("drawing_export")),
+                (
+                    "drawing_id",
+                    Json::text(published.drawing.spec().id.to_string()),
+                ),
+                ("version_id", Json::text(version.to_string())),
+                (
+                    "source_revision_id",
+                    Json::text(published.source.pin().revision.to_string()),
+                ),
+                (
+                    "source_manifest",
+                    Json::text(published.source.pin().manifest.to_string()),
+                ),
+                ("bytes", num(bytes.len() as f64)?),
+            ]))
         }
         "inspect-drawing" => {
             let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
