@@ -4,7 +4,7 @@
 //! Fixed F06 section 6 plate layout, with bounded self-checks and encoding.
 
 use crate::diagnostic::{Code, Failure, Field, Stage};
-use crate::feature_id::PLATE_FACES;
+
 use beamcraft_geom::{Point3, Vec3};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 
@@ -30,6 +30,7 @@ pub const PLATE_TRIANGLE_FACES: [u16; 12] = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlateMesh {
     pub(crate) vertices: [Point3; 8],
+    pub(crate) face_ids: &'static [&'static str; 6],
     pub(crate) normals: [Vec3; 6],
     pub(crate) blob: [u8; 392],
     pub(crate) digest: ContentDigest,
@@ -50,7 +51,7 @@ impl PlateMesh {
     }
     /// Six stable local face ids in canonical order.
     pub const fn face_table(&self) -> &[&'static str; 6] {
-        &PLATE_FACES
+        self.face_ids
     }
     /// Six outward unit normals in face-table order, separate from the blob.
     pub const fn face_normals(&self) -> &[Vec3; 6] {

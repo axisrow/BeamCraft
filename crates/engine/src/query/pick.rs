@@ -29,6 +29,7 @@
 
 use crate::element::{ElementId, ElementKind};
 use crate::error::{ViewCode, ViewError};
+use crate::query::feature::NamedFeatures;
 use crate::query::feature::{
     BodyKind, BoxFeatures, FeatureId, FeatureKind, V3, add, cross, dot, finite, norm, scale, sub,
 };
@@ -485,6 +486,165 @@ fn hits_of(features: &BoxFeatures, query: &PickQuery, dir: V3) -> Result<Vec<Hit
     Ok(out)
 }
 
+fn nearest_triangle(p: V3, [a, b, c]: [V3; 3]) -> V3 {
+    let (u, v, r) = (sub(b, a), sub(c, a), sub(p, a));
+    let (uu, uv, vv) = (dot(u, u), dot(u, v), dot(v, v));
+    let det = uu * vv - uv * uv;
+    if det > 0.0 {
+        let s = (vv * dot(r, u) - uv * dot(r, v)) / det;
+        let t = (uu * dot(r, v) - uv * dot(r, u)) / det;
+        if s >= 0.0 && t >= 0.0 && s + t <= 1.0 {
+            return add(a, add(scale(u, s), scale(v, t)));
+        }
+    }
+    let mut best = a;
+    let mut distance = norm(sub(p, a));
+    for (start, end) in [(a, b), (b, c), (c, a)] {
+        let (q, _) = closest_on_segment(p, start, end);
+        let d = norm(sub(p, q));
+        if d < distance {
+            distance = d;
+            best = q;
+        }
+    }
+    best
+}
+
+fn named_hits(
+    features: &NamedFeatures,
+    query: &PickQuery,
+    dir: V3,
+    max: usize,
+) -> Result<(Vec<Hit>, bool), ViewError> {
+    let mut hits = Vec::new();
+    let mut truncated = false;
+    let (targets, radius) = match query {
+        PickQuery::Ray(q) => (&q.targets, q.radius_mm),
+        PickQuery::Point(q) => (&q.targets, q.radius_mm),
+    };
+    if wanted(targets, FeatureKind::Face) {
+        for face in &features.faces {
+            let mut best: Option<Hit> = None;
+            for triangle in &face.triangles {
+                let [a, b, c] = *triangle;
+                let n = cross(sub(b, a), sub(c, a));
+                let length = norm(n);
+                if !(length > 0.0 && length.is_finite()) {
+                    continue;
+                }
+                let n = scale(n, 1.0 / length);
+                let (point, t, distance, back) = match query {
+                    PickQuery::Ray(q) => {
+                        let un = dot(dir, n);
+                        if un.abs() < PARALLEL || (un > 0.0 && !q.include_backfaces) {
+                            continue;
+                        }
+                        let t = canonical(dot(sub(a, q.origin_mm), n) / un);
+                        if !(0.0..=q.t_max_mm).contains(&t) {
+                            continue;
+                        }
+                        let p = add(q.origin_mm, scale(dir, t));
+                        if norm(sub(p, nearest_triangle(p, *triangle))) > EPS_PICK_MM {
+                            continue;
+                        }
+                        (p, Some(t), 0.0, un > 0.0)
+                    }
+                    PickQuery::Point(q) => {
+                        let point = nearest_triangle(q.point_mm, *triangle);
+                        let distance = norm(sub(q.point_mm, point));
+                        if distance > radius + EPS_PICK_MM {
+                            continue;
+                        }
+                        (point, None, distance, dot(sub(q.point_mm, point), n) < 0.0)
+                    }
+                };
+                if !finite(point) || !distance.is_finite() {
+                    return Err(uncertain());
+                }
+                let hit = Hit {
+                    element_id: features.element,
+                    feature_id: Some(face.id.clone()),
+                    feature_kind: FeatureKind::Face,
+                    t_mm: t,
+                    distance_mm: distance,
+                    point_world_mm: point,
+                    normal_world: Some(n),
+                    back_facing: back,
+                    boundary: false,
+                };
+                if best.as_ref().is_none_or(|old| order(&hit, old).is_lt()) {
+                    best = Some(hit);
+                }
+            }
+            if let Some(mut hit) = best {
+                hit.boundary = face.boundary.iter().any(|[a, b]| {
+                    norm(sub(
+                        hit.point_world_mm,
+                        closest_on_segment(hit.point_world_mm, *a, *b).0,
+                    )) <= EPS_PICK_MM
+                });
+                hits.push(hit);
+            }
+            if hits.len() > KEEP {
+                truncated |= keep_best(&mut hits, max, order);
+            }
+        }
+    }
+    let candidates = features
+        .edges
+        .iter()
+        .filter(|_| wanted(targets, FeatureKind::Edge))
+        .map(|e| (&e.id, e.ends, FeatureKind::Edge))
+        .chain(
+            features
+                .vertices
+                .iter()
+                .filter(|_| wanted(targets, FeatureKind::Vertex))
+                .map(|(id, v)| (id, [*v, *v], FeatureKind::Vertex)),
+        );
+    for (id, [a, b], kind) in candidates {
+        let (point, t, distance) = match query {
+            PickQuery::Ray(q) if kind == FeatureKind::Edge => {
+                let (s, point, distance) =
+                    segment_segment(q.origin_mm, scale(dir, q.t_max_mm), a, b);
+                (point, Some(canonical(s * q.t_max_mm)), distance)
+            }
+            PickQuery::Ray(q) => {
+                let t = canonical(dot(sub(a, q.origin_mm), dir).clamp(0.0, q.t_max_mm));
+                (a, Some(t), norm(sub(a, add(q.origin_mm, scale(dir, t)))))
+            }
+            PickQuery::Point(q) => {
+                let point = if kind == FeatureKind::Vertex {
+                    a
+                } else {
+                    closest_on_segment(q.point_mm, a, b).0
+                };
+                (point, None, norm(sub(point, q.point_mm)))
+            }
+        };
+        if !finite(point) || !distance.is_finite() {
+            return Err(uncertain());
+        }
+        if distance <= radius + EPS_PICK_MM {
+            hits.push(Hit {
+                element_id: features.element,
+                feature_id: Some(id.clone()),
+                feature_kind: kind,
+                t_mm: t,
+                distance_mm: distance,
+                point_world_mm: point,
+                normal_world: None,
+                back_facing: false,
+                boundary: false,
+            });
+        }
+        if hits.len() > KEEP {
+            truncated |= keep_best(&mut hits, max, order);
+        }
+    }
+    Ok((hits, truncated))
+}
+
 fn word(bytes: &[u8], at: usize) -> Option<f64> {
     Some(f64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
 }
@@ -693,14 +853,22 @@ pub fn pick(snapshot: &ViewSnapshot, query: &PickQuery) -> Result<PickResult, Vi
         }
         match BoxFeatures::world(snapshot, entry) {
             Some(features) => hits.extend(hits_of(&features, query, dir)?),
-            None => match query {
-                PickQuery::Ray(ray) if wanted(&ray.targets, FeatureKind::Face) => {
-                    if let Some(hit) = mesh_hit(snapshot, entry, ray, dir)? {
-                        hits.push(hit);
+            None => {
+                if let Some(features) = NamedFeatures::world(snapshot, entry) {
+                    let (extra, cut) = named_hits(&features, query, dir, max)?;
+                    hits.extend(extra);
+                    truncated |= cut;
+                } else {
+                    match query {
+                        PickQuery::Ray(ray) if wanted(&ray.targets, FeatureKind::Face) => {
+                            if let Some(hit) = mesh_hit(snapshot, entry, ray, dir)? {
+                                hits.push(hit);
+                            }
+                        }
+                        _ => skipped.push(entry.id),
                     }
                 }
-                _ => skipped.push(entry.id),
-            },
+            }
         }
         if hits.len() > KEEP {
             truncated |= keep_best(&mut hits, max, order);
@@ -835,6 +1003,30 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
     let mut truncated = false;
     let mut skipped = Vec::new();
     for entry in snapshot.elements() {
+        if let Some(features) = NamedFeatures::world(snapshot, entry) {
+            if query.kinds.contains(&SnapKind::Vertex) {
+                for (id, point) in features.vertices {
+                    let distance = norm(sub(p, point));
+                    if !distance.is_finite() {
+                        return Err(uncertain());
+                    }
+                    if distance <= band {
+                        candidates.push(SnapCandidate {
+                            element_id: entry.id,
+                            kind: SnapKind::Vertex,
+                            feature_id: Some(id),
+                            axis_parameter: None,
+                            point_world_mm: point,
+                            distance_mm: distance,
+                        });
+                        if candidates.len() > KEEP {
+                            truncated |= keep_best(&mut candidates, max, snap_order);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         let Some(features) = BoxFeatures::world(snapshot, entry) else {
             skipped.push(entry.id);
             continue;

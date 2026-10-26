@@ -274,7 +274,7 @@ fn listed_member_features_are_complete_pinned_read_only_and_stable_after_move_an
 }
 
 #[test]
-fn feature_listing_refuses_non_box_geometry_and_numeric_addresses() {
+fn feature_listing_supports_named_non_box_geometry_and_refuses_numeric_addresses() {
     let f = Fixture::new();
     f.model();
     f.ok(
@@ -319,12 +319,16 @@ fn feature_listing_refuses_non_box_geometry_and_numeric_addresses() {
         ],
     );
     let head = f.head();
-    for id in [HOLED, IBEAM, "019a7bf0-0000-7000-8000-000000700099"] {
-        assert_eq!(
-            f.refused("list-feature", &["--id", id]),
-            ("NOT_FOUND".into(), Some("GEO_FEATURE_NOT_FOUND".into()))
-        );
+    for id in [HOLED, IBEAM] {
+        assert!(!list(&f.ok("list-feature", &["--id", id]), "features").is_empty());
     }
+    assert_eq!(
+        f.refused(
+            "list-feature",
+            &["--id", "019a7bf0-0000-7000-8000-000000700099"]
+        ),
+        ("NOT_FOUND".into(), Some("GEO_FEATURE_NOT_FOUND".into()))
+    );
     for option in ["--triangle", "--vertex-index", "--instance"] {
         let (_, reason) = f.refused("list-feature", &["--id", MEMBER, option, "0"]);
         assert_eq!(reason.as_deref(), Some("GEO_TRIANGLE_ADDRESS_FORBIDDEN"));
@@ -554,7 +558,7 @@ fn feature_ids_survive_a_move_differ_on_a_copy_and_indices_are_refused() {
 }
 
 #[test]
-fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
+fn foreign_references_are_skipped_and_non_box_bodies_have_resolvable_features() {
     let f = Fixture::new();
     f.model();
     f.ok(
@@ -619,7 +623,7 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
     );
     let head = f.head();
     // Solid material of the holed plate (world x 5200) and of the I-beam's top flange are
-    // hits at element level: no FeatureId, but selectable.
+    // hits resolve to semantic FeatureIds through the CLI.
     for (element, origin, point) in [
         (HOLED, "5200,200,100", [5200.0, 200.0, 10.0]),
         (IBEAM, "1500,400,1000", [1500.0, 400.0, 100.0]),
@@ -640,7 +644,9 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
         let hits = list(&picked, "hits");
         assert_eq!(hits.len(), 1, "{origin}");
         assert_eq!(text(&hits[0], "element_id"), element);
-        assert!(matches!(at(&hits[0], &["feature_id"]), Json::Null));
+        let feature_id = text(&hits[0], "feature_id");
+        assert!(feature_id.starts_with(if element == IBEAM { "fid2:" } else { "fid1:" }));
+        f.ok("lookup-feature", &["--feature-id", &feature_id]);
         assert_eq!(text(&hits[0], "feature_kind"), "face");
         assert_eq!(triple(at(&hits[0], &["point_world_mm"])), point);
         // The read-only reference is never considered by engineering picking, so every pick
@@ -685,13 +691,12 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
         ],
     );
     assert!(list(&picked, "hits").is_empty(), "{picked:?}");
-    // The point form measures to features, which a mesh body has none of: they stay skipped,
-    // and the read-only reference is never considered at all.
+    // Named bodies participate in point queries; the foreign reference remains skipped.
     let picked = f.ok(
         "pick",
         &[
             "--point",
-            "5200,200,5",
+            "5200,200,10",
             "--radius",
             "2",
             "--targets",
@@ -702,14 +707,26 @@ fn foreign_references_are_never_hit_and_mesh_bodies_pick_at_element_level() {
         .iter()
         .map(|s| s.string().unwrap().to_owned())
         .collect();
-    assert_eq!(skipped, [HOLED, IBEAM, REFERENCE]);
-    assert_eq!(
-        f.refused(
-            "lookup-feature",
-            &["--feature-id", &fid(HOLED, "plate:f.z1")]
-        )
-        .1,
-        Some("GEO_FEATURE_NOT_FOUND".to_owned())
+    assert_eq!(skipped, [REFERENCE]);
+    assert_eq!(list(&picked, "hits").len(), 1);
+    let feature_id = text(&list(&picked, "hits")[0], "feature_id");
+    f.ok("lookup-feature", &["--feature-id", &feature_id]);
+    let snapped = f.ok(
+        "snap",
+        &[
+            "--point",
+            "5000,0,10",
+            "--radius",
+            "0.01",
+            "--kinds",
+            "vertex",
+        ],
+    );
+    assert!(!list(&snapped, "candidates").is_empty());
+
+    f.ok(
+        "lookup-feature",
+        &["--feature-id", &fid(HOLED, "plate:f.z1")],
     );
     assert_eq!(f.head(), head);
 }

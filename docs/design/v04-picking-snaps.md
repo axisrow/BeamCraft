@@ -1,5 +1,11 @@
 # V04 picking and snaps
 
+Issue #190 extends this original box-only design. See
+[non-box semantic features](non-box-feature-transport.md) for `fid1` extrusion/cut roles,
+F06 0.2 profile roles, surface lookup, point/ray picking, snaps and bundle transport.
+The historical interim mesh-only path below now applies only to unnamed bodies.
+
+
 Date: 2026-10-18. Status: **experimental vertical slice; V04 acceptance is limited as listed below.**
 Branch `feat/v04-picking-snaps`, based on `origin/master` `7b1f2bf`.
 
@@ -99,10 +105,5 @@ used.
 
 - No cancellation token or request deadline polling inside a pick (the engine's query API has none
   yet); the scan is bounded by the element and feature caps instead.
-- No features (FeatureIds) for non-box bodies (holed plates, future contours): A02 defines their
-  topology; they are picked at element level by the amendment above, not named.
 - No local-space pick, no pick against a simplified representation, no paging of pick results.
 - The V03 viewport does not call these queries yet (V05 adds tools).
-- Kernel naming finding: `beamcraft_kernel::feature_id` exposes only `plate:` tokens and the member
-  builder reuses them; F06 names member features `member:`. The engine is correct, but the kernel
-  constants should gain member tokens (separate kernel change).

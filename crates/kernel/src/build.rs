@@ -121,6 +121,7 @@ pub fn rectangular_plate_with_cancel(
     }
     Ok(PlateResult {
         mesh: PlateMesh {
+            face_ids: &crate::feature_id::PLATE_FACES,
             vertices,
             normals,
             blob,

@@ -397,6 +397,38 @@ fn geometry_json(g: &FeatureGeometry) -> Result<Json, PlateError> {
                 ),
             ),
         ]),
+        FeatureGeometry::Surface {
+            normal,
+            triangles,
+            vertex_ids,
+        } => Json::object([
+            ("normal", normal.map_or(Ok(Json::Null), triple)?),
+            (
+                "triangles",
+                Json::Array(
+                    triangles
+                        .iter()
+                        .map(|triangle| {
+                            Ok(Json::Array(
+                                triangle
+                                    .iter()
+                                    .map(|p| triple(*p))
+                                    .collect::<Result<_, PlateError>>()?,
+                            ))
+                        })
+                        .collect::<Result<_, PlateError>>()?,
+                ),
+            ),
+            (
+                "vertex_ids",
+                Json::Array(
+                    vertex_ids
+                        .iter()
+                        .map(|id| Json::text(id.to_string()))
+                        .collect(),
+                ),
+            ),
+        ]),
         FeatureGeometry::Edge { ends, vertex_ids } => Json::object([
             (
                 "ends",

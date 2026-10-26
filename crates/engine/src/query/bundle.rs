@@ -11,24 +11,25 @@
 //! limits), and the rebuilt token must equal the bundled one. A bundle therefore cannot carry a
 //! geometry, a placement or an identity the engine would not produce from the same inputs.
 //!
-//! Layout (little endian): `BCVIEW02`, revision digest (32), generation (u64), token digest
+//! Layout (little endian): `BCVIEW03`, revision digest (32), generation (u64), token digest
 //! (32), element count (u32), mesh count (u32); per mesh its byte length (u32) and bytes; per
 //! element its id (16), kind (u8, registry order), translation (3 x f64), orientation (4 x f64),
-//! full slot (u32) and simplified slot (u32). Nothing may follow.
+//! full slot (u32), simplified slot (u32), then each representation's face table (u32 count,
+//! followed by u32 byte length and UTF-8 bytes per role). Nothing may follow.
 
 use crate::element::{ElementId, ElementKind};
 use crate::error::{ViewCode, ViewError};
 use crate::limits::{Limits, MAX_MESH_BLOB_BYTES};
 use crate::query::mesh::MeshEntry;
 use crate::query::snapshot::{ViewPin, ViewSnapshot};
-use crate::scene::{SceneElement, SceneMesh};
+use crate::scene::{MAX_FACE_ROLE_BYTES, SceneElement, SceneMesh};
 use beamcraft_geom::{Point3, Translation3};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::Uuid7;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-const MAGIC: &[u8; 8] = b"BCVIEW02";
+const MAGIC: &[u8; 8] = b"BCVIEW03";
 
 fn invalid() -> ViewError {
     ViewError::new(ViewCode::ArgumentInvalid)
@@ -43,12 +44,13 @@ fn push_u32(out: &mut Vec<u8>, n: usize) -> Result<(), ViewError> {
 /// The largest bundle a snapshot under `limits` can produce: header, every mesh at the total
 /// mesh-byte cap with its length, and every element record.
 pub fn max_bundle_bytes(limits: &Limits) -> usize {
-    const ELEMENT: usize = 16 + 1 + 24 + 32 + 4 + 4;
+    const ELEMENT: usize = 16 + 1 + 24 + 32 + 4 + 4 + 4 + 4;
     let meshes = limits
         .max_total_mesh_bytes()
         .saturating_add(limits.max_elements().saturating_mul(2).saturating_mul(4));
     (8usize + 32 + 8 + 32 + 4 + 4)
         .saturating_add(meshes)
+        .saturating_add(limits.max_total_mesh_bytes())
         .saturating_add(limits.max_elements().saturating_mul(ELEMENT))
 }
 
@@ -99,12 +101,27 @@ impl Reader<'_> {
     fn f64(&mut self) -> Result<f64, ViewError> {
         Ok(f64::from_le_bytes(self.array::<8>()?))
     }
+    fn face_table(&mut self) -> Result<Vec<String>, ViewError> {
+        let count = self.usize()?;
+        if count > 65_535 {
+            return Err(invalid());
+        }
+        (0..count)
+            .map(|_| {
+                let len = self.usize()?;
+                if len > MAX_FACE_ROLE_BYTES {
+                    return Err(invalid());
+                }
+                String::from_utf8(self.take(len)?.to_vec()).map_err(|_| invalid())
+            })
+            .collect()
+    }
 }
 
 impl ViewSnapshot {
     /// The bundle of this snapshot.
     pub fn to_bundle(&self) -> Result<Vec<u8>, ViewError> {
-        const ELEMENT: usize = 16 + 1 + 24 + 4 + 4;
+        const ELEMENT: usize = 16 + 1 + 24 + 32 + 4 + 4 + 4 + 4;
         // The exact size; the snapshot's own limits bound it (see `max_bundle_bytes`).
         let size = self
             .meshes()
@@ -112,7 +129,15 @@ impl ViewSnapshot {
             .fold(8usize + 32 + 8 + 32 + 4 + 4, |n, m| {
                 n.saturating_add(4).saturating_add(m.bytes().len())
             })
-            .saturating_add(self.len().saturating_mul(ELEMENT));
+            .saturating_add(self.len().saturating_mul(ELEMENT))
+            .saturating_add(
+                self.elements()
+                    .iter()
+                    .flat_map(|e| [&e.full_face_table, &e.simplified_face_table])
+                    .flat_map(|table| table.iter())
+                    .map(|role| 4 + role.len())
+                    .sum::<usize>(),
+            );
         let mut out = Vec::with_capacity(size.min(max_bundle_bytes(&self.limits())));
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(self.pin().revision().as_bytes());
@@ -146,6 +171,13 @@ impl ViewSnapshot {
             }
             out.extend_from_slice(&e.full.mesh_slot.to_le_bytes());
             out.extend_from_slice(&e.simplified.mesh_slot.to_le_bytes());
+            for table in [&e.full_face_table, &e.simplified_face_table] {
+                push_u32(&mut out, table.len())?;
+                for role in table {
+                    push_u32(&mut out, role.len())?;
+                    out.extend_from_slice(role.as_bytes());
+                }
+            }
         }
         Ok(out)
     }
@@ -207,6 +239,10 @@ impl ViewSnapshot {
             let orientation_xyzw = [r.f64()?, r.f64()?, r.f64()?, r.f64()?];
             let full = meshes.get(r.usize()?).ok_or_else(invalid)?.clone();
             let simplified = meshes.get(r.usize()?).ok_or_else(invalid)?.clone();
+            let full_face_table = r.face_table()?;
+            let simplified_face_table = r.face_table()?;
+            let full = full.with_face_table(full_face_table);
+            let simplified = simplified.with_face_table(simplified_face_table);
             let element = SceneElement::new(id, kind, placement, full.clone())
                 .with_orientation(orientation_xyzw);
             elements.push(if simplified == full {
@@ -249,6 +285,34 @@ mod tests {
         .unwrap()
     }
 
+    fn element_offset(snapshot: &ViewSnapshot, index: usize) -> usize {
+        let blobs = snapshot
+            .meshes()
+            .iter()
+            .map(|mesh| 4 + mesh.bytes().len())
+            .sum::<usize>();
+        let elements = snapshot
+            .elements()
+            .iter()
+            .take(index)
+            .map(|e| {
+                16 + 1
+                    + 24
+                    + 32
+                    + 4
+                    + 4
+                    + 4
+                    + 4
+                    + [&e.full_face_table, &e.simplified_face_table]
+                        .into_iter()
+                        .flat_map(|table| table.iter())
+                        .map(|role| 4 + role.len())
+                        .sum::<usize>()
+            })
+            .sum::<usize>();
+        8 + 32 + 8 + 32 + 4 + 4 + blobs + elements
+    }
+
     #[test]
     fn a_bundle_rebuilds_the_identical_snapshot() {
         for simplified in [false, true] {
@@ -268,7 +332,7 @@ mod tests {
         let pin = ViewPin::new(Sha256::digest(b"rotated revision").unwrap(), 7);
         let snapshot = ViewSnapshot::build(pin, vec![element], &Limits::default()).unwrap();
         let bytes = snapshot.to_bundle().unwrap();
-        assert_eq!(bytes.get(..8), Some(b"BCVIEW02".as_slice()));
+        assert_eq!(bytes.get(..8), Some(b"BCVIEW03".as_slice()));
         let reopened = ViewSnapshot::from_bundle(&bytes, &Limits::default()).unwrap();
         assert_eq!(reopened, snapshot);
         assert_eq!(
@@ -290,7 +354,7 @@ mod tests {
         assert!(ViewSnapshot::from_bundle(&longer, &limits).is_err());
         // A moved placement changes the token: the rebuilt snapshot disagrees.
         let mut moved = bytes.clone();
-        let last_x = bytes.len() - 8 - 24;
+        let last_x = element_offset(&s, s.len() - 1) + 16 + 1;
         moved[last_x] ^= 0x01;
         assert!(ViewSnapshot::from_bundle(&moved, &limits).is_err());
         // Every single flipped byte is either refused or yields the same token.
@@ -326,10 +390,10 @@ mod tests {
         );
         // The same copy used by the second element instead of its own blob: one blob too many.
         let mut used = unused.clone();
-        let simplified_slot = used.len() - 4;
-        let full_slot = used.len() - 8;
+        let full_slot = element_offset(&s, 1) + bytes[first.clone()].len() + 16 + 1 + 24 + 32;
+        let simplified_slot = full_slot + 4;
         used[full_slot..simplified_slot].copy_from_slice(&2u32.to_le_bytes());
-        used[simplified_slot..].copy_from_slice(&2u32.to_le_bytes());
+        used[simplified_slot..simplified_slot + 4].copy_from_slice(&2u32.to_le_bytes());
         assert!(ViewSnapshot::from_bundle(&used, &limits).is_err());
     }
 
@@ -349,5 +413,69 @@ mod tests {
         let back = ViewSnapshot::from_bundle(&s.to_bundle().unwrap(), &Limits::default()).unwrap();
         assert_eq!(back, s);
         assert_eq!(back.meshes().len(), 1);
+    }
+
+    #[test]
+    fn semantic_tables_belong_to_elements_even_when_mesh_bytes_are_shared() {
+        let mut elements = plate_scene(2, false).unwrap();
+        let mesh = elements[0].full.clone();
+        let original = mesh.face_table.to_vec();
+        assert_eq!(original.len(), 6);
+        let mut reordered = original.clone();
+        reordered.swap(0, 1);
+        elements[0].full = mesh.clone();
+        elements[1].full = mesh.with_face_table(reordered.clone());
+        let pin = ViewPin::new(Sha256::digest(b"semantic tables").unwrap(), 1);
+        let snapshot = ViewSnapshot::build(pin, elements.clone(), &Limits::default()).unwrap();
+        assert_eq!(snapshot.meshes().len(), 1);
+        let bytes = snapshot.to_bundle().unwrap();
+        let back = ViewSnapshot::from_bundle(&bytes, &Limits::default()).unwrap();
+        assert_eq!(back, snapshot);
+        assert_eq!(back.elements()[0].full_face_table, original);
+        assert_eq!(back.elements()[1].full_face_table, reordered);
+        elements[1].full = elements[0].full.clone();
+        let changed = ViewSnapshot::build(pin, elements, &Limits::default()).unwrap();
+        assert_ne!(snapshot.token(), changed.token());
+        assert_eq!(snapshot.meshes(), changed.meshes());
+    }
+
+    #[test]
+    fn malformed_semantic_tables_are_refused_before_publication() {
+        let element = plate_scene(1, false).unwrap().remove(0);
+        let pin = ViewPin::new(Sha256::digest(b"invalid tables").unwrap(), 1);
+        for roles in [
+            vec!["plate:f.x0".to_owned()],
+            vec!["plate:f.x0".to_owned(); 6],
+            vec!["".to_owned(); 6],
+            vec!["INVALID".to_owned(); 6],
+            vec!["a".repeat(MAX_FACE_ROLE_BYTES + 1); 6],
+        ] {
+            let mut invalid = element.clone();
+            invalid.full = invalid.full.with_face_table(roles);
+            assert_eq!(
+                ViewSnapshot::build(pin, vec![invalid], &Limits::default())
+                    .unwrap_err()
+                    .code(),
+                ViewCode::BlobInvalid
+            );
+        }
+    }
+
+    #[test]
+    fn semantic_metadata_has_a_separate_bounded_transport_budget() {
+        let mut elements = plate_scene(3, false).unwrap();
+        let mesh = elements[0].full.clone();
+        for element in &mut elements {
+            element.full = mesh.clone();
+        }
+        let limits = Limits::new(3, mesh.blob.len(), 100, 3);
+        // One shared geometry blob fits; repeated per-element metadata exhausts its budget.
+        let pin = ViewPin::new(Sha256::digest(b"bounded tables").unwrap(), 1);
+        assert_eq!(
+            ViewSnapshot::build(pin, elements, &limits)
+                .unwrap_err()
+                .code(),
+            ViewCode::BufferLimit
+        );
     }
 }

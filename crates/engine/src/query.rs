@@ -5,9 +5,8 @@
 //!
 //! Implemented: `ListElements`, `GetMeshSnapshot` (blobs by digest), `QueryBounds` (element and
 //! all, world space), `GetChanges`, the selection API, and (V04) FeatureIds, `LookupFeature`,
-//! `Pick` and snaps for box bodies. Not implemented: local-space bounds and keys, which need the
-//! dependency keys (planned), and features of non-box bodies (A02). Nothing here is a mock of
-//! those. [`committed`] (P01) turns the
+//! `Pick` and snaps for boxes and semantically named contour, operation and profile bodies.
+//! Local-space bounds and dependency keys are separate work. [`committed`] (P01) turns the
 //! authored plates of a committed revision into the snapshot builder's input.
 
 pub mod bounds;

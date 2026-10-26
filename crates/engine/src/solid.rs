@@ -22,6 +22,7 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 pub struct SolidMesh {
     vertices: Vec<[f64; 3]>,
     triangles: Vec<[u32; 3]>,
+    face_table: Vec<String>,
     blob: Vec<u8>,
     digest: ContentDigest,
     volume_mm3: f64,
@@ -34,6 +35,11 @@ impl SolidMesh {
         Self {
             vertices: mesh.vertices().iter().map(|p| [p.x, p.y, p.z]).collect(),
             triangles: mesh.triangles().to_vec(),
+            face_table: mesh
+                .face_table()
+                .iter()
+                .map(|id| (*id).to_owned())
+                .collect(),
             blob: mesh.blob().to_vec(),
             digest: mesh.mesh_digest(),
             volume_mm3: result.volume_mm3(),
@@ -47,6 +53,7 @@ impl SolidMesh {
         Self {
             vertices: mesh.vertices().to_vec(),
             triangles: mesh.triangles().to_vec(),
+            face_table: result.body().face_table().to_vec(),
             blob: result.blob().to_vec(),
             digest: result.mesh_digest(),
             volume_mm3: result.volume_mm3().midpoint(),
@@ -60,6 +67,7 @@ impl SolidMesh {
         Some(Self {
             vertices: mesh.vertices().iter().map(|p| [p.x, p.y, p.z]).collect(),
             triangles: mesh.triangles().to_vec(),
+            face_table: mesh.face_table().to_vec(),
             blob: mesh.blob().to_vec(),
             digest: Sha256::digest(mesh.blob()).ok()?,
             volume_mm3: extrusion.volume_mm3(),
@@ -73,6 +81,7 @@ impl SolidMesh {
         Self {
             vertices: mesh.vertices().to_vec(),
             triangles: mesh.triangles().to_vec(),
+            face_table: result.body().face_table().to_vec(),
             blob: result.blob().to_vec(),
             digest: result.mesh_digest(),
             volume_mm3: result.volume_mm3(),
@@ -106,6 +115,7 @@ impl SolidMesh {
         Some(Self {
             vertices: mesh.vertices().to_vec(),
             triangles: self.triangles,
+            face_table: self.face_table,
             digest: Sha256::digest(&blob).ok()?,
             blob,
             volume_mm3: self.volume_mm3,
@@ -147,6 +157,7 @@ impl SolidMesh {
                 .map(|[x, y, z]| Point3::new(*x, *y, *z))
                 .collect(),
         )
+        .with_face_table(self.face_table.clone())
     }
 }
 
@@ -168,4 +179,50 @@ pub(crate) fn rotate_vector(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
             + 2.0 * (y * z + x * w) * vy
             + (1.0 - 2.0 * (x * x + y * y)) * vz,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beamcraft_kernel::ops::{Body, HoleCutter, through_hole};
+    use beamcraft_kernel::profile::{Cavity, Point2, extrude};
+
+    #[test]
+    fn contour_and_operation_roles_survive_scene_conversion_and_rotation() {
+        let outer = [
+            Point2 { x: 0.0, y: 0.0 },
+            Point2 { x: 200.0, y: 0.0 },
+            Point2 { x: 0.0, y: 200.0 },
+        ];
+        let extrusion = extrude(&outer, &[], 10.0).unwrap();
+        let solid = SolidMesh::from_extrusion(&extrusion).unwrap();
+        assert_eq!(
+            solid.scene_mesh().face_table.as_ref(),
+            extrusion.mesh().face_table()
+        );
+        assert!(
+            solid
+                .scene_mesh()
+                .face_table
+                .iter()
+                .any(|id| id == "extrusion:f.o0")
+        );
+        let cavity = Cavity::polygon(vec![
+            Point2 { x: 20.0, y: 20.0 },
+            Point2 { x: 20.0, y: 40.0 },
+            Point2 { x: 40.0, y: 20.0 },
+        ]);
+        let result = through_hole(
+            &Body::from_extrusion(&extrusion).unwrap(),
+            &HoleCutter::new(cavity, -10.0, 20.0, 7),
+        )
+        .unwrap();
+        let solid = SolidMesh::from_operation(&result);
+        let expected = result.body().face_table();
+        assert_eq!(solid.scene_mesh().face_table.as_ref(), expected);
+        assert!(expected.iter().any(|id| id == "cut:f.h7.s0"));
+        let half = core::f64::consts::FRAC_1_SQRT_2;
+        let rotated = solid.rotated_by([0.0, 0.0, half, half]).unwrap();
+        assert_eq!(rotated.scene_mesh().face_table.as_ref(), expected);
+    }
 }

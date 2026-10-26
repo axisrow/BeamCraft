@@ -15,7 +15,7 @@ use crate::limits::{Limits, MAX_PAGE_SIZE};
 use crate::presentation::Representation;
 use crate::query::bounds::Aabb;
 use crate::query::mesh::MeshEntry;
-use crate::scene::{SceneElement, SceneMesh};
+use crate::scene::{MAX_FACE_ROLE_BYTES, SceneElement, SceneMesh};
 use beamcraft_geom::{Point3, Translation3, canonical_f64_bytes};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use std::collections::BTreeMap;
@@ -117,6 +117,10 @@ pub struct ElementEntry {
     pub full: RepresentationRef,
     /// The simplified representation; the same mesh as `full` when there are no operations.
     pub simplified: RepresentationRef,
+    /// Stable semantic face roles for the full evaluated body.
+    pub full_face_table: Vec<String>,
+    /// Stable semantic face roles for the simplified body.
+    pub simplified_face_table: Vec<String>,
 }
 
 impl ElementEntry {
@@ -196,6 +200,58 @@ struct Pending {
     orientation_xyzw: [f64; 4],
     full: (ContentDigest, Aabb),
     simplified: (ContentDigest, Aabb),
+    full_face_table: Vec<String>,
+    simplified_face_table: Vec<String>,
+}
+
+fn admit_face_table(
+    mesh: &SceneMesh,
+    kind: ElementKind,
+    remaining: &mut usize,
+) -> Result<(), ViewError> {
+    let invalid = || ViewError::new(ViewCode::BlobInvalid);
+    if !mesh.face_table.is_empty() {
+        let count = mesh
+            .blob
+            .get(20..24)
+            .and_then(|b| <[u8; 4]>::try_from(b).ok())
+            .map(u32::from_le_bytes)
+            .ok_or_else(invalid)?;
+        if usize::try_from(count).ok() != Some(mesh.face_table.len()) {
+            return Err(invalid());
+        }
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for role in mesh.face_table.iter() {
+        if role.is_empty()
+            || role.len() > MAX_FACE_ROLE_BYTES
+            || !role
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b":.-".contains(&b))
+            || !seen.insert(role.as_str())
+        {
+            return Err(invalid());
+        }
+        let role_length = if matches!(kind, ElementKind::Beam | ElementKind::Column)
+            && role.starts_with("extrusion:")
+        {
+            role.len().saturating_sub(2)
+        } else {
+            role.len()
+        };
+        let vertex_length = role
+            .find(":f.c")
+            .and_then(|at| role.get(at + 4..))
+            .and_then(|s| s.split_once(".s"))
+            .map(|_| role_length + 2);
+        if role_length + 42 > 64 || vertex_length.is_some_and(|len| len + 42 > 64) {
+            return Err(ViewError::new(ViewCode::TopologyLimit));
+        }
+        *remaining = remaining
+            .checked_sub(4 + role.len())
+            .ok_or(ViewError::new(ViewCode::BufferLimit))?;
+    }
+    Ok(())
 }
 
 /// Mesh-local bounds, computed once per distinct mesh: the placement is applied to the result,
@@ -295,8 +351,15 @@ impl ViewSnapshot {
         };
         let mut pending = Vec::with_capacity(elements.len());
         let mut local: BTreeMap<ContentDigest, Aabb> = BTreeMap::new();
+        let mut metadata_remaining = limits.max_total_mesh_bytes();
         for element in &elements {
             let full_digest = registry.add(&element.full)?;
+            admit_face_table(&element.full, element.kind, &mut metadata_remaining)?;
+            admit_face_table(
+                element.simplified.as_ref().unwrap_or(&element.full),
+                element.kind,
+                &mut metadata_remaining,
+            )?;
             // The registry verified this mesh's bytes against its digest, so its local bounds
             // are trusted for every element that shares the digest.
             let full_local = match local.get(&full_digest) {
@@ -334,6 +397,11 @@ impl ViewSnapshot {
                 orientation_xyzw: element.orientation_xyzw,
                 full: (full_digest, full_bounds),
                 simplified,
+                full_face_table: element.full.face_table.iter().cloned().collect(),
+                simplified_face_table: element.simplified.as_ref().map_or_else(
+                    || element.full.face_table.iter().cloned().collect(),
+                    |mesh| mesh.face_table.iter().cloned().collect(),
+                ),
             });
         }
         let meshes: Vec<MeshEntry> = registry.map.into_values().collect();
@@ -363,6 +431,8 @@ impl ViewSnapshot {
                 orientation_xyzw: p.orientation_xyzw,
                 full,
                 simplified,
+                full_face_table: p.full_face_table.clone(),
+                simplified_face_table: p.simplified_face_table.clone(),
             });
         }
         let token = SnapshotToken::from_digest(content_digest(pin, &entries)?);
@@ -506,6 +576,17 @@ fn content_digest(pin: ViewPin, entries: &[ElementEntry]) -> Result<ContentDiges
         }
         put(e.full.mesh_digest.as_bytes())?;
         put(e.simplified.mesh_digest.as_bytes())?;
+        for table in [&e.full_face_table, &e.simplified_face_table] {
+            put(&u64::try_from(table.len())
+                .map_err(|_| limit())?
+                .to_be_bytes())?;
+            for role in table {
+                put(&u64::try_from(role.len())
+                    .map_err(|_| limit())?
+                    .to_be_bytes())?;
+                put(role.as_bytes())?;
+            }
+        }
     }
     Ok(h.finalize())
 }

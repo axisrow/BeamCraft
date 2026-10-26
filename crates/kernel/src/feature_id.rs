@@ -56,3 +56,41 @@ pub const PLATE_EDGE_VERTICES: [[u32; 2]; 12] = [
     [2, 3],
     [6, 7],
 ];
+
+/// Member faces in the same body-role order as their plate counterparts.
+pub const MEMBER_FACES: [&str; 6] = [
+    "member:f.x0",
+    "member:f.x1",
+    "member:f.y0",
+    "member:f.y1",
+    "member:f.z0",
+    "member:f.z1",
+];
+
+/// Member edges in the same body-role order as their plate counterparts.
+pub const MEMBER_EDGES: [&str; 12] = [
+    "member:e.x0.y0",
+    "member:e.x0.y1",
+    "member:e.x1.y0",
+    "member:e.x1.y1",
+    "member:e.x0.z0",
+    "member:e.x0.z1",
+    "member:e.x1.z0",
+    "member:e.x1.z1",
+    "member:e.y0.z0",
+    "member:e.y0.z1",
+    "member:e.y1.z0",
+    "member:e.y1.z1",
+];
+
+/// Member vertices in the same body-role order as their plate counterparts.
+pub const MEMBER_VERTICES: [&str; 8] = [
+    "member:v.x0.y0.z0",
+    "member:v.x1.y0.z0",
+    "member:v.x0.y1.z0",
+    "member:v.x1.y1.z0",
+    "member:v.x0.y0.z1",
+    "member:v.x1.y0.z1",
+    "member:v.x0.y1.z1",
+    "member:v.x1.y1.z1",
+];

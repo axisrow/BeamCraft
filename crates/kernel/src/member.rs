@@ -137,6 +137,7 @@ pub fn straight_member(input: StraightMember) -> Result<PlateResult, Failure> {
     }
     Ok(PlateResult {
         mesh: PlateMesh {
+            face_ids: &crate::feature_id::MEMBER_FACES,
             vertices,
             normals,
             blob,

@@ -14,6 +14,9 @@ use beamcraft_kernel::PlateResult;
 use beamcraft_model::digest::ContentDigest;
 use std::sync::Arc;
 
+/// Transport bound for a single kernel-authored local face role.
+pub(crate) const MAX_FACE_ROLE_BYTES: usize = 1024;
+
 /// The mesh of one representation: the exact BCMESH01 blob, its digest and the vertex positions
 /// (element-local millimetres) the bounds are computed from. Any sealed kernel body can be
 /// offered, as can a display-only foreign reference mesh. The bytes and vertices are
@@ -23,6 +26,8 @@ pub struct SceneMesh {
     pub(crate) blob: Arc<[u8]>,
     pub(crate) digest: ContentDigest,
     pub(crate) vertices: Arc<[Point3]>,
+    /// Stable local face roles kept beside the index-based BCMESH01 face table.
+    pub(crate) face_table: Arc<[String]>,
 }
 
 impl SceneMesh {
@@ -39,7 +44,15 @@ impl SceneMesh {
             blob,
             digest,
             vertices: vertices.into(),
+            face_table: Arc::from([]),
         }
+    }
+
+    /// Keeps kernel-authored semantic face roles beside the mesh buffer.
+    #[must_use]
+    pub(crate) fn with_face_table(mut self, face_table: Vec<String>) -> Self {
+        self.face_table = face_table.into();
+        self
     }
 }
 
@@ -50,6 +63,12 @@ impl From<&PlateResult> for SceneMesh {
             blob: Arc::from(mesh.blob().as_slice()),
             digest: mesh.mesh_digest(),
             vertices: Arc::from(mesh.vertices().as_slice()),
+            face_table: Arc::from(
+                mesh.face_table()
+                    .iter()
+                    .map(|id| (*id).to_owned())
+                    .collect::<Vec<_>>(),
+            ),
         }
     }
 }

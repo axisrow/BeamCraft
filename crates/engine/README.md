@@ -10,6 +10,11 @@ digest, instance and triangle tables, ids and bounds, and computes no engineerin
 
 ## What is implemented
 
+Kernel semantic face tables survive solid evaluation, scene conversion and the `BCVIEW03`
+snapshot bundle. They belong to each element representation, independently of mesh deduplication,
+and participate in the snapshot token. See the [transport note](../../docs/design/non-box-feature-transport.md)
+for bounds, named non-box lookup/pick/snap support and explicit limitations.
+
 K1 authored-only plate admission is exposed by `plate_draft::{create_plate_draft,
 admit_create_plate_draft, evaluate_committed_drafts}`. Its typed unsupported state retains valid
 inputs without a body or quantity values. The existing `command::create_plate` API remains an

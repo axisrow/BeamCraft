@@ -282,6 +282,7 @@ pub fn rectangular_body(points: &[[f64; 3]], thickness: f64) -> Result<PlateResu
     let (blob, digest) = encode(&vertices).map_err(|_| uncertain())?;
     Ok(PlateResult {
         mesh: PlateMesh {
+            face_ids: &crate::feature_id::PLATE_FACES,
             vertices,
             normals,
             blob,

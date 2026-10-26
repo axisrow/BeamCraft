@@ -597,7 +597,12 @@ pub fn section_member(input: &SectionMember) -> Result<SectionResult, SectionFai
         .collect::<Result<Vec<_>, _>>()?;
     let body = Body::from_mesh(
         placed,
-        extrusion.mesh().face_table().to_vec(),
+        extrusion
+            .mesh()
+            .face_table()
+            .iter()
+            .map(|id| id.replacen("extrusion:", "profile:", 1))
+            .collect(),
         normals,
         Some(frame.scale().tolerance()),
     )

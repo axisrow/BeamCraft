@@ -3,25 +3,20 @@
 
 //! V04 FeatureIds and `LookupFeature` (F06 sections 5 and 9) over a pinned view snapshot.
 //!
-//! A FeatureId is `fid1:` + ElementId + `:` + local id, the local id being `plate:` or `member:`
-//! and a face (`f.x0`), edge (`e.x0.y1`) or vertex (`v.x0.y1.z1`) role. It is built from the rule
-//! version, the identity, the body kind and the role tokens only, never from a triangle, vertex
-//! or buffer index, so it survives every edit that keeps the topology (dimensions, placement,
-//! rename) and a copy gets new ones.
-//!
-//! The roles exist only for a first-scope box body. The engine re-reads each element's mesh blob
-//! and grants the 26 roles only when the blob has exactly the canonical box layout of F06
-//! section 6 (8 vertices, the 12 canonical triangles with their face indices, 6 faces) and every
-//! face is a rectangle. Any other body (a plate with through holes, for example) has no
-//! FeatureIds: F06 rule 9 forbids inventing box roles for it. Feature geometry comes from the
-//! blob's element-local positions plus the snapshot's translation, nothing else.
+//! Box roles keep their frozen `fid1` names. Kernel-authored extrusion and operation face
+//! tables provide non-box features; profile members use F06 0.2 `fid2:...:profile:*` roles.
+//! Topological incidence resolves authored contour points without exposing mesh addresses.
+//! Unnamed foreign/display geometry never acquires engineering feature names.
+
+mod topology;
+pub(crate) use topology::NamedFeatures;
 
 use crate::element::{ElementId, ElementKind};
 use crate::error::{ViewCode, ViewError};
 use crate::query::mesh::MeshEntry;
 use crate::query::snapshot::{ElementEntry, ViewSnapshot, rotate_vector};
 
-/// The rule version of every FeatureId produced here.
+/// The original rule version; profile-member ids use `fid2`.
 pub const FEATURE_RULE: &str = "fid1";
 
 /// Longest qualified FeatureId (F06 section 5).
@@ -89,7 +84,7 @@ const RECTANGLE_TOLERANCE: f64 = 1e-9;
 /// The kind of a feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FeatureKind {
-    /// A planar face.
+    /// A face, planar or a grouped approximated wall.
     Face,
     /// A straight edge.
     Edge,
@@ -134,6 +129,12 @@ pub enum BodyKind {
     Plate,
     /// A straight member (beam or column).
     Member,
+    /// A contour extrusion.
+    Extrusion,
+    /// An operation-created face.
+    Cut,
+    /// A non-box member under F06 0.2.
+    Profile,
 }
 
 impl BodyKind {
@@ -142,6 +143,9 @@ impl BodyKind {
         match self {
             Self::Plate => "plate",
             Self::Member => "member",
+            Self::Extrusion => "extrusion",
+            Self::Cut => "cut",
+            Self::Profile => "profile",
         }
     }
 
@@ -162,7 +166,7 @@ pub struct FeatureId {
     body: BodyKindToken,
     kind: FeatureKind,
     /// Position of the role in its table (faces, edges or vertices).
-    role: u8,
+    role: String,
 }
 
 /// Ordered stand-in for [`BodyKind`] inside the derived `Ord`.
@@ -170,6 +174,12 @@ pub struct FeatureId {
 enum BodyKindToken {
     Plate,
     Member,
+    /// A contour extrusion.
+    Extrusion,
+    /// An operation-created face.
+    Cut,
+    /// A non-box member under F06 0.2.
+    Profile,
 }
 
 impl From<BodyKind> for BodyKindToken {
@@ -177,6 +187,9 @@ impl From<BodyKind> for BodyKindToken {
         match kind {
             BodyKind::Plate => Self::Plate,
             BodyKind::Member => Self::Member,
+            BodyKind::Extrusion => Self::Extrusion,
+            BodyKind::Cut => Self::Cut,
+            BodyKind::Profile => Self::Profile,
         }
     }
 }
@@ -196,7 +209,7 @@ impl FeatureId {
             element,
             body: body.into(),
             kind,
-            role: u8::try_from(role).ok()?,
+            role: role_table(kind).get(role)?.to_string(),
         })
     }
 
@@ -210,10 +223,10 @@ impl FeatureId {
         if text.len() > MAX_FEATURE_ID_BYTES || !text.is_ascii() {
             return Err(invalid());
         }
-        let rest = text
-            .strip_prefix(FEATURE_RULE)
-            .and_then(|r| r.strip_prefix(':'))
-            .ok_or_else(invalid)?;
+        let (rule, rest) = text.split_once(':').ok_or_else(invalid)?;
+        if !matches!(rule, "fid1" | "fid2") {
+            return Err(invalid());
+        }
         let (element, local) = rest.split_once(':').ok_or_else(invalid)?;
         let (body, token) = local.split_once(':').unwrap_or(("", local));
         if !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit()) {
@@ -227,8 +240,26 @@ impl FeatureId {
         let body = match body {
             "plate" => BodyKind::Plate,
             "member" => BodyKind::Member,
+            "extrusion" => BodyKind::Extrusion,
+            "cut" => BodyKind::Cut,
+            "profile" => BodyKind::Profile,
             _ => return Err(invalid()),
         };
+        if (body == BodyKind::Profile) != (rule == "fid2") {
+            return Err(invalid());
+        }
+        if matches!(
+            body,
+            BodyKind::Extrusion | BodyKind::Cut | BodyKind::Profile
+        ) {
+            let kind = topology::parse_role(body, token).ok_or_else(invalid)?;
+            return Ok(Self {
+                element,
+                body: body.into(),
+                kind,
+                role: token.to_owned(),
+            });
+        }
         for kind in [FeatureKind::Face, FeatureKind::Edge, FeatureKind::Vertex] {
             if let Some(role) = role_table(kind).iter().position(|r| *r == token) {
                 return Self::new(element, body, kind, role).ok_or_else(invalid);
@@ -252,15 +283,24 @@ impl FeatureId {
         match self.body {
             BodyKindToken::Plate => BodyKind::Plate,
             BodyKindToken::Member => BodyKind::Member,
+            BodyKindToken::Extrusion => BodyKind::Extrusion,
+            BodyKindToken::Cut => BodyKind::Cut,
+            BodyKindToken::Profile => BodyKind::Profile,
         }
     }
 
     /// The role token, for example `f.x0`.
-    pub fn role(&self) -> &'static str {
-        role_table(self.kind)
-            .get(usize::from(self.role))
-            .copied()
-            .unwrap_or_default()
+    pub fn role(&self) -> &str {
+        &self.role
+    }
+
+    pub(crate) fn from_local(element: ElementId, local: &str) -> Result<Self, ViewError> {
+        let rule = if local.starts_with("profile:") {
+            "fid2"
+        } else {
+            FEATURE_RULE
+        };
+        Self::parse(&format!("{rule}:{element}:{local}"))
     }
 
     /// The local id: body kind and role, for example `plate:f.x0`.
@@ -271,7 +311,12 @@ impl FeatureId {
 
 impl core::fmt::Display for FeatureId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{FEATURE_RULE}:{}:{}", self.element, self.local_id())
+        let rule = if self.body() == BodyKind::Profile {
+            "fid2"
+        } else {
+            FEATURE_RULE
+        };
+        write!(f, "{rule}:{}:{}", self.element, self.local_id())
     }
 }
 
@@ -409,6 +454,16 @@ impl BoxFeatures {
 
     fn placed(snapshot: &ViewSnapshot, entry: &ElementEntry, world: bool) -> Option<Self> {
         let body = BodyKind::of(entry.kind)?;
+        if !entry.full_face_table.is_empty()
+            && !entry.full_face_table.iter().enumerate().all(|(i, id)| {
+                id.split_once(':').is_some_and(|(family, role)| {
+                    (family == body.as_str() || (body == BodyKind::Member && family == "plate"))
+                        && FACE_ROLES.get(i).is_some_and(|expected| *expected == role)
+                })
+            })
+        {
+            return None;
+        }
         let mesh = snapshot.mesh_at(entry.full.mesh_slot)?;
         let local = box_vertices(mesh)?;
         // The rectangle check and the normals use element-local positions: a translation far
@@ -474,6 +529,15 @@ pub enum FeatureGeometry {
         /// Vertex FeatureIds of the corners.
         vertex_ids: [FeatureId; 4],
     },
+    /// An evaluated surface, including holes or grouped nonplanar walls.
+    Surface {
+        /// Outward unit normal when planar; absent for a nonplanar wall.
+        normal: Option<[f64; 3]>,
+        /// Oriented triangles in millimetres; no mesh indices are exposed.
+        triangles: Vec<[[f64; 3]; 3]>,
+        /// Addressable boundary vertices; operation-created vertices have no names.
+        vertex_ids: Vec<FeatureId>,
+    },
     /// An edge: its two end vertices.
     Edge {
         /// End positions in millimetres.
@@ -500,7 +564,9 @@ pub struct FeatureLookup {
 }
 
 fn geometry(features: &BoxFeatures, id: &FeatureId) -> Option<FeatureGeometry> {
-    let role = usize::from(id.role);
+    let role = role_table(id.kind)
+        .iter()
+        .position(|role| *role == id.role())?;
     let vertex = |i: usize| features.id(FeatureKind::Vertex, i);
     Some(match id.kind {
         FeatureKind::Face => {
@@ -530,11 +596,23 @@ fn geometry(features: &BoxFeatures, id: &FeatureId) -> Option<FeatureGeometry> {
 /// A malformed id is `GEO_FEATURE_ID_INVALID`; an index used as an address is
 /// `GEO_TRIANGLE_ADDRESS_FORBIDDEN`. A well-formed id is `GEO_FEATURE_NOT_FOUND` when its element
 /// is not in the snapshot, its body kind disagrees with the element's kind, or the element's body
-/// has no FeatureIds (not a box): a dangling reference is reported, never repaired by index.
+/// has no supported semantic metadata: dangling references are never repaired by index.
 pub fn lookup_feature(snapshot: &ViewSnapshot, text: &str) -> Result<FeatureLookup, ViewError> {
     let id = FeatureId::parse(text)?;
     let not_found = || ViewError::new(ViewCode::FeatureNotFound);
     let entry = snapshot.element(&id.element).ok_or_else(not_found)?;
+    if let Some(local) = NamedFeatures::local(snapshot, entry)
+        && let Some(local_geometry) = local.geometry(&id)
+    {
+        let world = NamedFeatures::world(snapshot, entry)
+            .and_then(|f| f.geometry(&id))
+            .ok_or_else(not_found)?;
+        return Ok(FeatureLookup {
+            id,
+            local: local_geometry,
+            world,
+        });
+    }
     if BodyKind::of(entry.kind) != Some(id.body()) {
         return Err(not_found());
     }
@@ -547,17 +625,20 @@ pub fn lookup_feature(snapshot: &ViewSnapshot, text: &str) -> Result<FeatureLook
     Ok(FeatureLookup { id, local, world })
 }
 
-/// Lists the 26 semantic addresses of one canonical box at this exact snapshot pin.
+/// Lists the supported semantic addresses of one evaluated body at this snapshot pin.
 ///
 /// The order is faces, edges, then vertices, using each frozen F06 role table's order. No mesh
-/// index is exposed as an address. A missing element or unsupported/non-box body is explicitly
-/// `GEO_FEATURE_NOT_FOUND`, rather than an empty successful list or fabricated bounding box.
+/// index is exposed as an address. Missing elements and bodies without supported metadata
+/// return `GEO_FEATURE_NOT_FOUND`.
 pub fn list_features(
     snapshot: &ViewSnapshot,
     element: &ElementId,
 ) -> Result<Vec<FeatureId>, ViewError> {
     let missing = || ViewError::new(ViewCode::FeatureNotFound);
     let entry = snapshot.element(element).ok_or_else(missing)?;
+    if let Some(features) = NamedFeatures::world(snapshot, entry) {
+        return Ok(features.ids());
+    }
     let features = BoxFeatures::world(snapshot, entry).ok_or_else(missing)?;
     let mut result = Vec::with_capacity(26);
     for kind in [FeatureKind::Face, FeatureKind::Edge, FeatureKind::Vertex] {
@@ -568,12 +649,11 @@ pub fn list_features(
     Ok(result)
 }
 
-/// Whether the element's body has FeatureIds (a canonical box of a plate, beam or column).
+/// Whether the element has supported semantic engineering features.
 pub fn has_features(snapshot: &ViewSnapshot, id: &ElementId) -> bool {
-    snapshot
-        .element(id)
-        .and_then(|e| BoxFeatures::world(snapshot, e))
-        .is_some()
+    snapshot.element(id).is_some_and(|e| {
+        BoxFeatures::world(snapshot, e).is_some() || NamedFeatures::world(snapshot, e).is_some()
+    })
 }
 
 #[cfg(test)]
