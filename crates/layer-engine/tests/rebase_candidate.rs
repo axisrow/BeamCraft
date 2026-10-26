@@ -89,7 +89,7 @@ fn create(n: usize) -> Change {
             ],
             thickness_mm: 10.0,
             holes: Vec::new(),
-            cut: None,
+            cuts: Vec::new(),
         },
         placement: Placement {
             translation_mm: [0.0; 3],

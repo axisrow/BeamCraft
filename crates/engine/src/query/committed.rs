@@ -18,7 +18,7 @@ use crate::member::{
 use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
 use beamcraft_geom::Translation3;
-use beamcraft_model::command::{CommandError, MemberKind, PlaneCut, label_is_valid};
+use beamcraft_model::command::{CommandError, CutRecord, KeepSide, MemberKind, label_is_valid};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::section::{CustomSection, SectionShape};
@@ -192,15 +192,17 @@ fn push_points<const N: usize>(key: &mut Vec<u8>, points: &[[f64; N]]) {
     }
 }
 
-fn push_cut(key: &mut Vec<u8>, cut: Option<&PlaneCut>) {
-    match cut {
-        Some(PlaneCut { point_mm, normal }) => {
-            key.push(1);
-            for value in point_mm.iter().chain(normal) {
-                push_f64(key, *value);
-            }
+fn push_cut(key: &mut Vec<u8>, cuts: &[CutRecord]) {
+    push_len(key, cuts.len());
+    for cut in cuts {
+        push_f64(key, f64::from(cut.ordinal));
+        key.push(match cut.keep {
+            KeepSide::Positive => 1,
+            KeepSide::Negative => 0,
+        });
+        for value in cut.point_mm.iter().chain(cut.normal.iter()) {
+            push_f64(key, *value);
         }
-        None => key.push(0),
     }
 }
 
@@ -215,17 +217,17 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         placement: _,
         material: _,
         holes_mm,
-        cut,
+        cuts,
     } = plate;
     let mut key = Vec::with_capacity(160);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v1\0");
+    key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v2\0");
     push_points(&mut key, contour_points_mm);
     push_f64(&mut key, *thickness_mm);
     push_len(&mut key, holes_mm.len());
     for hole in holes_mm {
         push_points(&mut key, hole);
     }
-    push_cut(&mut key, cut.as_ref());
+    push_cut(&mut key, cuts);
     key
 }
 
@@ -243,13 +245,13 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         roll_rad,
         placement,
         material: _,
-        cut,
+        cuts,
     } = member;
     let mut key = Vec::with_capacity(192);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v1\0");
+    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v2\0");
     push_points(&mut key, axis_points_mm);
     push_option(&mut key, *roll_rad);
-    push_cut(&mut key, cut.as_ref());
+    push_cut(&mut key, cuts);
     let [qx, qy, qz, qw] = placement.orientation_xyzw;
     push_f64(&mut key, qx);
     push_f64(&mut key, qy);
@@ -504,6 +506,7 @@ mod tests {
     use crate::command::{MaterialInfo, no_materials};
     use beamcraft_model::command::Placement;
     use beamcraft_model::digest::{ContentDigest, Sha256};
+    use beamcraft_model::id::OpId;
 
     // Shadows the glob import: these tests have no material definitions unless they say so.
     fn evaluate_committed(plates: &[AuthoredPlate]) -> Result<Vec<PlateRecord>, CommandError> {
@@ -527,7 +530,7 @@ mod tests {
             },
             material: None,
             holes_mm: Vec::new(),
-            cut: None,
+            cuts: Vec::new(),
         }
     }
 
@@ -555,7 +558,7 @@ mod tests {
             roll_rad: None,
             placement: Placement::IDENTITY,
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         let members = super::evaluate_committed_members(
             &[member(8, MemberKind::Column), member(3, MemberKind::Beam)],
@@ -612,7 +615,7 @@ mod tests {
                 orientation_xyzw: [0.0, 0.0, half, half],
             },
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         let records =
             super::evaluate_committed_members(&[member.clone()], &profiles, &no_materials).unwrap();
@@ -703,11 +706,14 @@ mod tests {
         ]
     }
 
-    fn end_cut() -> Option<PlaneCut> {
-        Some(PlaneCut {
+    fn end_cut() -> Vec<CutRecord> {
+        vec![CutRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            ordinal: 0,
             point_mm: [250.0, 0.0, 0.0],
             normal: [1.0, 0.0, 0.0],
-        })
+            keep: KeepSide::Negative,
+        }]
     }
 
     #[test]
@@ -715,7 +721,7 @@ mod tests {
         let mut holed = plate(1, 1000.0, 0.0);
         holed.holes_mm = vec![square_hole()];
         let mut cut = plate(2, 1000.0, 0.0);
-        cut.cut = end_cut();
+        cut.cuts = end_cut();
         let mut holed_contour = l_shape(3);
         holed_contour.holes_mm = vec![square_hole()];
         let plates = [plate(4, 1000.0, 0.0), holed, cut, l_shape(5), holed_contour];
@@ -758,12 +764,9 @@ mod tests {
         moved_hole.holes_mm[0][0][0] = 101.0;
         moved_hole.holes_mm[0][1][0] = 101.0;
         let mut cut = base.clone();
-        cut.cut = end_cut();
+        cut.cuts = end_cut();
         let mut tilted = cut.clone();
-        tilted.cut = Some(PlaneCut {
-            point_mm: [250.0, 0.0, 0.0],
-            normal: [1.0, 0.1, 0.0],
-        });
+        tilted.cuts[0].normal = [1.0, 0.1, 0.0];
         for changed in [thicker, wider, holed, moved_hole, cut, tilted] {
             let misses = cache.misses();
             assert_eq!(
@@ -856,7 +859,7 @@ mod tests {
             roll_rad: None,
             placement: Placement::IDENTITY,
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         let beam = member(1, MemberKind::Beam);
         let mut other = member(2, MemberKind::Column);
@@ -880,10 +883,7 @@ mod tests {
         let mut longer = beam.clone();
         longer.axis_points_mm[1][0] = 3001.0;
         let mut cut = beam.clone();
-        cut.cut = Some(PlaneCut {
-            point_mm: [1500.0, 0.0, 0.0],
-            normal: [1.0, 0.0, 0.0],
-        });
+        cut.cuts = end_cut();
         let declared = ProfileInfo::Rectangle {
             width_mm: 200.0,
             height_mm: 300.0,

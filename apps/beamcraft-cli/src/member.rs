@@ -164,7 +164,7 @@ pub fn create_member(
                         axis_mm: [p1, p2],
                         profile: outcome.authored.profile,
                         roll_rad: outcome.authored.roll_rad,
-                        cut: outcome.authored.cut,
+                        cuts: Vec::new(),
                     },
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,

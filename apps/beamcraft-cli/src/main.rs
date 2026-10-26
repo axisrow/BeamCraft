@@ -145,6 +145,7 @@ fn main() -> std::process::ExitCode {
             || c == "update-element"
             || c == "delete-element"
             || c == "copy-element"
+            || c == "cut-by-plane"
             || c == "create-workspace"
             || c == "inspect-workspace"
             || c == "publish-workspace"

@@ -181,19 +181,35 @@ fn a_warm_cache_returns_what_a_cold_evaluation_returns() {
     ];
     f.ok("create-plate", &contour);
     f.ok("copy-element", &["--id", gusset, "--offset", "0,2000,0"]);
-    let cut = [
-        "--width",
-        "1000",
-        "--length",
-        "500",
-        "--thickness",
-        "10",
-        "--cut-point",
-        "250,0,0",
-        "--cut-normal",
-        "1,0,0",
-    ];
-    f.ok("create-plate", &cut);
+    let cut = "019a7bf0-0000-7000-8000-000000000025";
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--new-id",
+            cut,
+        ],
+    );
+    f.ok(
+        "cut-by-plane",
+        &[
+            "--id",
+            cut,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-000000000026",
+            "--point",
+            "250,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
     let beam = "019a7bf0-0000-7000-8000-000000000030";
     let section = [
         "--start",

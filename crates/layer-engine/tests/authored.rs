@@ -126,7 +126,7 @@ fn elements() -> Vec<Change> {
                 ],
                 thickness_mm: 10.123456789012345,
                 holes: Vec::new(),
-                cut: None,
+                cuts: Vec::new(),
             },
             placement: pose(),
             material: Some(r[1].digest),
@@ -139,7 +139,7 @@ fn elements() -> Vec<Change> {
                 axis_mm: [[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
                 profile: r[0].digest,
                 roll_rad: Some(0.125),
-                cut: None,
+                cuts: Vec::new(),
             },
             placement: pose(),
             material: None,
@@ -1187,7 +1187,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
             ],
             thickness_mm: 10.0,
             holes,
-            cut: None,
+            cuts: Vec::new(),
         },
         placement: pose(),
         material: None,
@@ -1304,13 +1304,33 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 }
 
 #[test]
-fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
-    let cut = |point: [f64; 3], normal: [f64; 3]| {
-        Some(PlaneCut {
-            point_mm: point,
-            normal,
-        })
+fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
+    use beamcraft_model::command::KeepSide;
+    use beamcraft_model::id::OpId;
+    let record = |ordinal: u16, point: [f64; 3], normal: [f64; 3], keep: KeepSide| CutRecord {
+        operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+        ordinal,
+        point_mm: point,
+        normal,
+        keep,
     };
+    let cuts = |records: Vec<CutRecord>| Shape::Plate {
+        contour_mm: vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 500.0, 0.0],
+            [0.0, 500.0, 0.0],
+        ],
+        thickness_mm: 10.0,
+        holes: Vec::new(),
+        cuts: records,
+    };
+    let one = vec![record(
+        0,
+        [250.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        KeepSide::Negative,
+    )];
     let (mut a, o) = open(initial());
     let p = a
         .prepare(
@@ -1319,17 +1339,7 @@ fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
                 vec![Change::Create(Element {
                     id: PLATE.into(),
                     name: "Cut".into(),
-                    shape: Shape::Plate {
-                        contour_mm: vec![
-                            [0.0, 0.0, 0.0],
-                            [1000.0, 0.0, 0.0],
-                            [1000.0, 500.0, 0.0],
-                            [0.0, 500.0, 0.0],
-                        ],
-                        thickness_mm: 10.0,
-                        holes: Vec::new(),
-                        cut: cut([250.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
-                    },
+                    shape: cuts(one.clone()),
                     placement: pose(),
                     material: None,
                 })],
@@ -1348,20 +1358,18 @@ fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
         .unwrap();
     let prims = snapshot(&a, &o.context);
     assert_eq!(
-        value(&prims, PLATE, "steel:cut:pointMm"),
-        Some(&Value::Array(vec![
-            Value::Number(250.0),
-            Value::Number(0.0),
-            Value::Number(0.0)
-        ]))
+        value(&prims, PLATE, "steel:cut:operationId"),
+        Some(&Value::Array(vec![Value::Text(
+            "019a7bf0-0000-7000-8000-0000000000c7".into()
+        )]))
     );
     assert_eq!(
-        value(&prims, PLATE, "steel:cut:normal"),
-        Some(&Value::Array(vec![
-            Value::Number(1.0),
-            Value::Number(0.0),
-            Value::Number(0.0)
-        ]))
+        value(&prims, PLATE, "steel:cut:ordinal"),
+        Some(&Value::Array(vec![Value::Int(0)]))
+    );
+    assert_eq!(
+        value(&prims, PLATE, "steel:cut:keep"),
+        Some(&Value::Array(vec![Value::Text("negative".into())]))
     );
     // The exported layers pass the structural validator, so a reader can rely on the shape.
     let layers = a.export(&o.context, &control()).unwrap();
@@ -1382,7 +1390,12 @@ fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
                 axis_mm: [[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
                 profile: resources()[0].digest,
                 roll_rad: None,
-                cut: cut([3000.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+                cuts: vec![record(
+                    0,
+                    [3000.0, 0.0, 0.0],
+                    [1.0, 0.0, 0.0],
+                    KeepSide::Negative,
+                )],
             },
             placement: pose(),
             material: None,
@@ -1423,38 +1436,64 @@ fn the_plane_cut_is_authored_as_point_and_normal_and_validated() {
         .unwrap_err()
         .code
     };
-    let base = |cut: Option<PlaneCut>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        holes: Vec::new(),
-        cut,
-    };
-    // A zero normal is not a plane.
+    // A zero normal is not a plane; finiteness and the coordinate cap come first.
     assert_eq!(
-        refuse(base(cut([0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))),
+        refuse(cuts(vec![record(
+            0,
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            KeepSide::Negative
+        )])),
         ErrorCode::InvalidArgument
     );
     assert_eq!(
-        refuse(base(cut([f64::NAN, 0.0, 0.0], [1.0, 0.0, 0.0]))),
+        refuse(cuts(vec![record(
+            0,
+            [f64::NAN, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            KeepSide::Negative
+        )])),
         ErrorCode::NonFiniteNumber
     );
     assert_eq!(
-        refuse(base(cut([2e9, 0.0, 0.0], [1.0, 0.0, 0.0]))),
+        refuse(cuts(vec![record(
+            0,
+            [2e9, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            KeepSide::Negative
+        )])),
         ErrorCode::LimitExceeded
     );
-    // Only the point attribute is a damaged record, not "no cut".
+    // Ordinals are strictly ascending and bounded by the kernel's naming capacity.
+    assert_eq!(
+        refuse(cuts(vec![
+            record(0, [250.0, 0.0, 0.0], [1.0, 0.0, 0.0], KeepSide::Negative),
+            record(0, [150.0, 0.0, 0.0], [1.0, 0.0, 0.0], KeepSide::Positive),
+        ])),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(
+        refuse(cuts(vec![record(
+            1000,
+            [250.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            KeepSide::Negative
+        )])),
+        ErrorCode::LimitExceeded
+    );
+    // A zero normal never reaches the layer engine either.
     assert_eq!(
         refuse(Shape::Member {
             kind: MemberKind::Beam,
             axis_mm: [[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
             profile: resources()[0].digest,
             roll_rad: None,
-            cut: cut([3000.0, 0.0, 0.0], [0.0, 0.0, 0.0]),
+            cuts: vec![record(
+                0,
+                [3000.0, 0.0, 0.0],
+                [0.0, 0.0, 0.0],
+                KeepSide::Negative
+            )],
         }),
         ErrorCode::InvalidArgument
     );

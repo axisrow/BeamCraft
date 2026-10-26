@@ -19,7 +19,7 @@ pub use reference::{
 };
 
 use crate::*;
-pub use beamcraft_model::command::PlaneCut;
+pub use beamcraft_model::command::{CutRecord, KeepSide};
 pub use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 pub use beamcraft_model::section::SectionShape;
@@ -38,7 +38,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:isDeactivated=bool(optional,default=false);bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
-    "steel:cut:pointMm=double3(optional);steel:cut:normal=double3(optional,nonzero,both or neither)\n",
+    "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
+    "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
+    "steel:cut:keep=token[](optional,positive|negative);all five or none,equal lengths,ascending ordinals\n",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
@@ -206,8 +208,9 @@ pub enum Shape {
         /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
         /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
         holes: Vec<Vec<[f64; 3]>>,
-        /// Optional single plane cut (A03, experimental), stored as its point and normal.
-        cut: Option<PlaneCut>,
+        /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
+        /// order, stored as five parallel attributes. Empty means an uncut plate.
+        cuts: Vec<CutRecord>,
     },
     /// Straight member, with a required pinned rectangular profile.
     Member {
@@ -219,8 +222,9 @@ pub enum Shape {
         profile: ContentDigest,
         /// Missing roll has no authored default; engineering default is zero.
         roll_rad: Option<f64>,
-        /// Optional single plane cut (A03, experimental), stored as its point and normal.
-        cut: Option<PlaneCut>,
+        /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
+        /// order. Empty means an uncut member.
+        cuts: Vec<CutRecord>,
     },
     /// A01 assembly: a grouping target of `bim:partOf` with no shape inputs, no material and no
     /// derived body. Its placement must be the identity in this slice.
@@ -245,12 +249,12 @@ pub enum Shape {
 }
 
 impl Shape {
-    /// The optional single plane cut of a plate, beam or column (A03); other kinds have none.
-    pub(crate) fn cut(&self) -> Option<&PlaneCut> {
+    /// The owned `plane_cut` records of a plate, beam or column (A03); other kinds have none.
+    pub(crate) fn cuts(&self) -> &[CutRecord] {
         match self {
-            Self::Plate { cut, .. } | Self::Member { cut, .. } => cut.as_ref(),
+            Self::Plate { cuts, .. } | Self::Member { cuts, .. } => cuts,
             Self::Assembly | Self::Weld(_) | Self::Bolt(_) | Self::Grid(_) | Self::Level { .. } => {
-                None
+                &[]
             }
         }
     }
@@ -446,6 +450,15 @@ pub enum Change {
         /// New thickness.
         mm: f64,
     },
+    /// Replace the owned plane-cut records of a plate, beam or column (A03, amendment A-2) as a
+    /// whole: five parallel attributes, or their removal for an empty list. Engineering validity
+    /// is a host prerequisite; the candidate re-validates the stored form.
+    Cuts {
+        /// Full target UUIDv7.
+        id: String,
+        /// The records in ascending ordinal order.
+        cuts: Vec<CutRecord>,
+    },
     /// Replace both member axis points.
     Axis {
         /// Full target UUIDv7.
@@ -537,6 +550,7 @@ impl Change {
             Self::Grid { id, .. } => (id, "bim:grid"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
+            Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
             Self::Roll { id, .. } => (id, "steel:member:rollRad"),
             Self::Profile { id, .. } => (id, "bim:profile"),

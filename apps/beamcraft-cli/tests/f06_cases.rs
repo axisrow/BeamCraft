@@ -100,7 +100,6 @@ fn command(input: &Json) -> CreatePlate {
         },
         material_digest: None,
         holes_mm: Vec::new(),
-        cut: None,
     }
 }
 

@@ -141,7 +141,7 @@ pub fn create_plate_draft(
                     contour_mm: authored.contour_points_mm.clone(),
                     thickness_mm: authored.thickness_mm,
                     holes: Vec::new(),
-                    cut: None,
+                    cuts: Vec::new(),
                 },
                 placement: Placement {
                     translation_mm: authored.placement.translation_mm,

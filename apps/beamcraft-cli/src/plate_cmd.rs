@@ -7,6 +7,7 @@
 
 use crate::report::report_with;
 use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element};
+use beamcraft_cli::cut::{CutElement, CutRequest, cut_by_plane_record};
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
     head_definitions, resolve_name,
@@ -38,8 +39,8 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    CopyElement, CreatePlate, CreateStraightMember, DeleteElement, ElementPatch, MAX_HOLES,
-    MemberKind, Placement, PlaneCut, UpdateElement,
+    CopyElement, CreatePlate, CreateStraightMember, CutByPlane, CutRecord, DeleteElement,
+    ElementPatch, KeepSide, MAX_HOLES, MemberKind, Placement, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -79,8 +80,6 @@ const CREATE_OPTIONS: &[&str] = &[
     "--hole-rect",
     "--hole-round",
     "--hole-segments",
-    "--cut-point",
-    "--cut-normal",
     "--new-id",
     "--op-id",
     "--revision-id",
@@ -154,8 +153,6 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--orientation-xyzw",
     "--material-digest",
     "--material",
-    "--cut-point",
-    "--cut-normal",
     "--new-id",
     "--op-id",
     "--revision-id",
@@ -167,6 +164,20 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--offset",
     "--start-at-grid",
     "--end-at-grid",
+];
+
+const CUT_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--operation-id",
+    "--point",
+    "--normal",
+    "--keep",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
 ];
 
 const UPDATE_OPTIONS: &[&str] = &[
@@ -238,6 +249,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" => COPY_OPTIONS,
+        "cut-by-plane" => CUT_OPTIONS,
         "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
         "inspect-workspace-history" => &["--workspace-dir"],
@@ -284,6 +296,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options),
+        "cut-by-plane" => cut_command(&store, &options),
         "create-workspace" | "inspect-workspace" | "publish-workspace" => {
             workspace_command(&store, command, &options, candidates)
         }
@@ -787,7 +800,6 @@ fn create(
             candidates,
         )?,
         holes_mm: holes(options)?,
-        cut: cut(options)?,
     };
     let created = create_plate_draft(
         store,
@@ -886,20 +898,14 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     Ok(result)
 }
 
-/// The optional single plane cut of `create-plate` and `create-member` (A03, experimental):
-/// `--cut-point X,Y,Z --cut-normal X,Y,Z`, both or neither, element-local millimetres. The kept
-/// half-space is the one the normal points *away from*, so the normal points into the trimmed-off
-/// material; whether the plane crosses the element is the kernel's decision, and a scaled normal
-/// describes the same plane.
-fn cut(options: &BTreeMap<&str, &str>) -> Run<Option<PlaneCut>> {
-    match (options.get("--cut-point"), options.get("--cut-normal")) {
-        (None, None) => Ok(None),
-        (Some(point), Some(normal)) => Ok(Some(PlaneCut {
-            point_mm: translation(point)?,
-            normal: translation(normal)?,
-        })),
-        _ => Err(invalid("--cut-point and --cut-normal are given together")),
-    }
+/// The cutting plane of `cut-by-plane`: `--point X,Y,Z --normal X,Y,Z --keep positive|negative`,
+/// element-local millimetres; whether the plane crosses the element is the kernel's decision, and
+/// a scaled normal describes the same plane.
+fn keep_side(options: &BTreeMap<&str, &str>) -> Run<KeepSide> {
+    options
+        .get("--keep")
+        .and_then(|token| KeepSide::parse(token))
+        .ok_or_else(|| invalid("--keep is positive or negative"))
 }
 
 fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
@@ -1004,6 +1010,89 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         ("element", element),
         ("revision", revision_json(&updated.revision)),
         ("footprint", footprint_json(updated.footprint.as_ref())),
+    ]))
+}
+
+/// The engine's `CutByPlane` (A03, amendment A-2) through the real adapter: appends one
+/// `plane_cut` record, rebuilds the mesh and the quantities, and publishes the revision.
+fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let operation_id =
+        OpId::parse(given("--operation-id").ok_or_else(|| invalid("--operation-id is required"))?)
+            .map_err(id_error)?;
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let command = CutByPlane {
+        target_id,
+        operation_id,
+        point_mm: translation(given("--point").ok_or_else(|| invalid("--point is required"))?)?,
+        normal: translation(given("--normal").ok_or_else(|| invalid("--normal is required"))?)?,
+        keep: keep_side(options)?,
+    };
+    let cut = cut_by_plane_record(
+        store,
+        &CutRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command,
+        },
+        &mut NoFault,
+    )?;
+    let element = match &cut.element {
+        CutElement::Plate(record) => plate_json(record)?,
+        CutElement::Member(record) => member_json(record)?,
+    };
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if cut.replayed {
+                "cut_replayed"
+            } else {
+                "cut_applied"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        (
+            "record",
+            Json::object([
+                ("operation_id", Json::text(operation_id.to_string())),
+                ("ordinal", Json::uint(u64::from(cut.ordinal))),
+            ]),
+        ),
+        ("element", element),
+        ("revision", revision_json(&cut.revision)),
+        ("footprint", footprint_json(cut.footprint.as_ref())),
     ]))
 }
 
@@ -1519,7 +1608,6 @@ fn create_member_command(
             })
             .transpose()?,
         material_digest,
-        cut: cut(options)?,
     };
     let created = create_member(
         store,
@@ -1633,19 +1721,25 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ("mesh_digest", Json::text(mesh.digest().to_string())),
         ("vertices", Json::uint(mesh.vertices().len() as u64)),
         ("triangles", Json::uint(mesh.triangles().len() as u64)),
-        ("cut", cut_json(record.authored.cut.as_ref())?),
+        ("cuts", cuts_json(&record.authored.cuts)?),
     ]))
 }
 
-/// The optional plane cut of an element as JSON, `null` without one.
-fn cut_json(cut: Option<&PlaneCut>) -> Run<Json> {
-    Ok(match cut {
-        None => Json::Null,
-        Some(cut) => Json::object([
-            ("point_mm", triple(cut.point_mm)?),
-            ("normal", triple(cut.normal)?),
-        ]),
-    })
+/// The owned plane-cut records of an element as JSON; empty means an uncut element.
+fn cuts_json(cuts: &[CutRecord]) -> Run<Json> {
+    let records = cuts
+        .iter()
+        .map(|cut| {
+            Ok(Json::object([
+                ("operation_id", Json::text(cut.operation_id.to_string())),
+                ("ordinal", Json::uint(u64::from(cut.ordinal))),
+                ("point_mm", triple(cut.point_mm)?),
+                ("normal", triple(cut.normal)?),
+                ("keep", Json::text(cut.keep.as_str())),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::Array(records))
 }
 
 pub(crate) fn num(value: f64) -> Run<Json> {
@@ -2103,7 +2197,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
             "hole_count",
             Json::uint(record.authored.holes_mm.len() as u64),
         ),
-        ("cut", cut_json(record.authored.cut.as_ref())?),
+        ("cuts", cuts_json(&record.authored.cuts)?),
         (
             "holes_mm",
             Json::Array(

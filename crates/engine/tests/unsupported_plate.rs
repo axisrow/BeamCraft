@@ -30,7 +30,6 @@ fn command(s: f64) -> CreatePlate {
         },
         material_digest: None,
         holes_mm: Vec::new(),
-        cut: None,
     }
 }
 

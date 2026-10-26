@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 use super::*;
+use beamcraft_model::id::OpId;
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
@@ -444,38 +445,97 @@ fn plate_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 3]>>, Diagnostic> {
 const MAX_HOLES: usize = 64;
 const MAX_HOLE_POINTS: usize = 1024;
 
-/// The optional single plane cut of a loaded plate, beam or column (A03): both attributes or
-/// neither, one `double3` each, finite, the point within the coordinate cap, the normal not the
-/// zero vector. The kept half-space (the side the normal points away from) and whether the plane
-/// crosses the element are the engine's decision on reload, never re-derived here.
-fn element_cut(prim: &Prim) -> Result<Option<PlaneCut>, Diagnostic> {
+/// The owned plane-cut records of a loaded plate, beam or column (A03, amendment A-2): five
+/// parallel attributes, all five or none, of one common length, in ascending ordinals at most
+/// 999; each point is finite and within the coordinate cap and each normal is not the zero
+/// vector. Whether a plane crosses its element is the engine's decision on replay, never
+/// re-derived here. A damaged or half-authored list is invalid, never a default.
+fn element_cut(prim: &Prim) -> Result<Vec<CutRecord>, Diagnostic> {
+    const FIELDS: [&str; 5] = [
+        "steel:cut:operationId",
+        "steel:cut:ordinal",
+        "steel:cut:pointMm",
+        "steel:cut:normal",
+        "steel:cut:keep",
+    ];
     let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
-    let (has_point, has_normal) = (present("steel:cut:pointMm"), present("steel:cut:normal"));
-    if !has_point && !has_normal {
-        return Ok(None);
+    let count = FIELDS.iter().filter(|name| present(name)).count();
+    if count == 0 {
+        return Ok(Vec::new());
     }
-    if has_point != has_normal {
+    if count != FIELDS.len() {
         return Err(invalid());
     }
-    let triple = |name: &str| -> Result<[f64; 3], Diagnostic> {
-        match required(prim, name, "double3")? {
-            Value::Array(v) => match v.as_slice() {
-                [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
+    let strings = |name: &str| -> Result<Vec<String>, Diagnostic> {
+        let Value::Array(values) = required(prim, name, "string[]")? else {
+            return Err(invalid());
+        };
+        values
+            .iter()
+            .map(|v| match v {
+                Value::Text(s) => Ok(s.clone()),
                 _ => Err(invalid()),
-            },
-            _ => Err(invalid()),
-        }
+            })
+            .collect()
     };
-    let point = triple("steel:cut:pointMm")?;
-    let normal = triple("steel:cut:normal")?;
-    if normal.iter().all(|v| *v == 0.0) {
+    let ids = strings(FIELDS[0])?;
+    let Value::Array(ordinal_values) = required(prim, FIELDS[1], "int[]")? else {
+        return Err(invalid());
+    };
+    let mut ordinals = Vec::with_capacity(ordinal_values.len());
+    for value in ordinal_values {
+        let Value::Int(n) = value else {
+            return Err(invalid());
+        };
+        let ordinal = u16::try_from(*n).map_err(|_| invalid())?;
+        if ordinal > 999 {
+            return Err(invalid());
+        }
+        if ordinals.last().is_some_and(|last: &u16| *last >= ordinal) {
+            return Err(invalid());
+        }
+        ordinals.push(ordinal);
+    }
+    let cut_points = points(prim, FIELDS[2])?;
+    let normals = points(prim, FIELDS[3])?;
+    let Value::Array(keeps) = required(prim, FIELDS[4], "token[]")? else {
+        return Err(invalid());
+    };
+    let keep = |value: &Value| match value {
+        Value::Text(s) => KeepSide::parse(s),
+        _ => None,
+    };
+    let keeps = keeps
+        .iter()
+        .map(|value| keep(value).ok_or_else(invalid))
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
+    if ids.len() != ordinals.len()
+        || cut_points.len() != ordinals.len()
+        || normals.len() != ordinals.len()
+        || keeps.len() != ordinals.len()
+    {
         return Err(invalid());
     }
-    cap(point.into_iter().chain(normal), 1e9)?;
-    Ok(Some(PlaneCut {
-        point_mm: point,
-        normal,
-    }))
+    let records = ids
+        .iter()
+        .zip(
+            ordinals
+                .iter()
+                .zip(cut_points.iter().zip(normals.iter().zip(keeps.iter()))),
+        )
+        .map(|(id, (ordinal, (point, (normal, keep))))| {
+            let record = CutRecord {
+                operation_id: OpId::parse(id).map_err(|_| invalid())?,
+                ordinal: *ordinal,
+                point_mm: *point,
+                normal: *normal,
+                keep: *keep,
+            };
+            record.validate().map_err(|_| invalid())?;
+            Ok(record)
+        })
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
+    Ok(records)
 }
 fn resource<'a>(
     prims: &'a [Prim],
@@ -1637,7 +1697,7 @@ pub(super) fn changes(
                         contour_mm,
                         thickness_mm,
                         holes,
-                        cut,
+                        cuts,
                     } => {
                         count_points(contour_mm, b)?;
                         cap(contour_mm.iter().flatten().copied(), 1e9)?;
@@ -1654,20 +1714,20 @@ pub(super) fn changes(
                             }
                             cap(hole.iter().flatten().copied(), 1e9)?;
                         }
-                        cut_values(cut)?;
+                        cut_values(cuts)?;
                     }
                     Shape::Member {
                         axis_mm,
                         roll_rad,
                         profile,
-                        cut,
+                        cuts,
                         ..
                     } => {
                         cap(axis_mm.iter().flatten().copied(), 1e9)?;
                         if let Some(n) = roll_rad {
                             cap([*n], std::f64::consts::TAU)?;
                         }
-                        cut_values(cut)?;
+                        cut_values(cuts)?;
                         reads.insert(Footprint {
                             identity: profile.to_string(),
                             group: Group::Relationship,
@@ -1816,6 +1876,7 @@ pub(super) fn changes(
                 cap(points_mm.iter().flatten().copied(), 1e9)?;
             }
             Change::Thickness { mm, .. } => cap([*mm], 1e6)?,
+            Change::Cuts { cuts, .. } => cut_values(cuts)?,
             Change::Axis { points_mm, .. } => cap(points_mm.iter().flatten().copied(), 1e9)?,
             Change::Roll {
                 opinion: Opinion::Value(n),
@@ -1860,19 +1921,28 @@ fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
-/// The authored plane cut of a created plate or member (A03): finite and within the coordinate
-/// cap, with a non-zero normal. Whether the plane crosses the element is the engine's gate.
-fn cut_values(cut: &Option<PlaneCut>) -> Result<(), Diagnostic> {
-    match cut {
-        None => Ok(()),
-        Some(cut) => {
-            finite(cut.point_mm.into_iter().chain(cut.normal))?;
-            if cut.normal.iter().all(|v| *v == 0.0) {
-                return Err(invalid());
-            }
-            cap(cut.point_mm.into_iter().chain(cut.normal), 1e9)
+/// The authored plane-cut records of a created plate or member (A03): finite and within the
+/// coordinate cap, with a non-zero normal, in ascending ordinals at most 999. Whether a plane
+/// crosses the element is the engine's gate.
+fn cut_values(cuts: &[CutRecord]) -> Result<(), Diagnostic> {
+    let mut last_ordinal = None;
+    for cut in cuts {
+        // The record admission keeps the model's codes: non-finite and a zero normal are
+        // invalid, the coordinate cap is a limit.
+        match cut.validate() {
+            Ok(()) => (),
+            Err(error) if error.code == ErrorCode::LimitExceeded => return Err(limit()),
+            Err(_) => return Err(invalid()),
         }
+        if cut.ordinal > 999 {
+            return Err(limit());
+        }
+        if last_ordinal.is_some_and(|last| last >= cut.ordinal) {
+            return Err(invalid());
+        }
+        last_ordinal = Some(cut.ordinal);
     }
+    Ok(())
 }
 fn finite_change(c: &Change) -> Result<(), Diagnostic> {
     match c {
@@ -1888,7 +1958,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     contour_mm,
                     thickness_mm,
                     holes,
-                    cut,
+                    cuts,
                 } => finite(
                     contour_mm
                         .iter()
@@ -1897,14 +1967,14 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(holes.iter().flatten().flatten().copied())
                         .chain([*thickness_mm])
                         .chain(
-                            cut.iter()
+                            cuts.iter()
                                 .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
                         ),
                 ),
                 Shape::Member {
                     axis_mm,
                     roll_rad,
-                    cut,
+                    cuts,
                     ..
                 } => finite(
                     axis_mm
@@ -1913,7 +1983,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .copied()
                         .chain(roll_rad.iter().copied())
                         .chain(
-                            cut.iter()
+                            cuts.iter()
                                 .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
                         ),
                 ),
@@ -1941,6 +2011,10 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
             finite(interpretation.iter().map(|i| i.meters_per_unit))
         }
         Change::Contour { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
+        Change::Cuts { cuts, .. } => finite(
+            cuts.iter()
+                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
+        ),
         Change::Axis { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
         Change::Thickness { mm, .. } => finite([*mm]),
         Change::Roll {

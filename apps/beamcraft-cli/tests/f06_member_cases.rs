@@ -113,7 +113,6 @@ fn member(
         placement,
         roll_rad: body.get("roll_rad").ok().map(number),
         material_digest: density.map(|_| Sha256::digest(b"F06 synthetic material").unwrap()),
-        cut: None,
     };
     let out = create_straight_member(&command, &|_| false, &|_| Ok(shape.clone()), &|_| {
         Ok(MaterialInfo {
@@ -304,7 +303,6 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
                     placement: Placement::IDENTITY,
                     material_digest: None,
                     holes_mm: Vec::new(),
-                    cut: None,
                 },
                 &|_| false,
                 &no_materials,

@@ -3,7 +3,7 @@
 
 //! Help owned by the edit command family.
 
-pub(super) const COMMANDS: &[&str] = &["update-element"];
+pub(super) const COMMANDS: &[&str] = &["update-element", "cut-by-plane"];
 
 pub(super) const HELP: &str = concat!(
     "Update (P04, P08): update-element --store ROOT --id UUID [--name TEXT] ",
@@ -15,5 +15,13 @@ pub(super) const HELP: &str = concat!(
     "placement without rebuilding the body; --orientation-xyzw replaces the stored placement ",
     "quaternion (absolute; none resets to the identity) and is validated like on ",
     "create-member, rebuilding a member's rotated body; inspect-elements reports stored ",
-    "quantities as current, stale or missing)",
+    "quantities as current, stale or missing)\n",
+    "Cut (A03, A-2 record): cut-by-plane --store ROOT --id UUID --operation-id UUID ",
+    "--point X,Y,Z --normal X,Y,Z --keep positive|negative [--op-id UUID] [--revision-id ",
+    "UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID] (appends one owned ",
+    "plane_cut operation record to a plate, beam or column; coordinates are element-local ",
+    "millimetres, the plane must strictly cross the element once, the kept half-space is ",
+    "--keep; the mesh, volume and mass are rebuilt in the same transaction, the cap face is ",
+    "cut:f.p<ordinal>, features the plane removes stop resolving, and one command is one ",
+    "undo unit)",
 );

@@ -759,7 +759,6 @@ fn request(op: &str, element: &str, revision: &str, thickness: f64) -> CreateReq
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
-            cut: None,
         },
     }
 }

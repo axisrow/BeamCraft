@@ -43,7 +43,7 @@ use beamcraft_kernel::ops::{
 use beamcraft_kernel::profile::diagnostic::{ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
-use beamcraft_model::command::{CommandError, CreatePlate, Placement, PlaneCut};
+use beamcraft_model::command::{CommandError, CreatePlate, CutRecord, Placement};
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -107,8 +107,9 @@ pub struct AuthoredPlate {
     pub material: Option<ContentDigest>,
     /// Through-hole polygons in the plate's local XY, as authored. Empty means a solid plate.
     pub holes_mm: Vec<Vec<[f64; 2]>>,
-    /// The authored plane cut (A03, experimental); `None` means no cut.
-    pub cut: Option<PlaneCut>,
+    /// The owned `plane_cut` operation records (A03, amendment A-2), replayed in ascending
+    /// ordinal order after every hole. Empty means an uncut element.
+    pub cuts: Vec<CutRecord>,
 }
 
 impl AuthoredPlate {
@@ -122,7 +123,7 @@ impl AuthoredPlate {
             placement: command.placement,
             material: command.material_digest,
             holes_mm: command.holes_mm.clone(),
-            cut: command.cut,
+            cuts: Vec::new(),
         }
     }
 
@@ -136,7 +137,6 @@ impl AuthoredPlate {
             placement: self.placement,
             material_digest: self.material,
             holes_mm: self.holes_mm.clone(),
-            cut: self.cut,
         }
     }
 }
@@ -477,7 +477,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 base,
                 authored.thickness_mm,
                 &authored.holes_mm,
-                authored.cut.as_ref(),
+                &authored.cuts,
             )?;
             Ok(PlateBody {
                 gross_volume_mm3: result.volume_mm3(),
@@ -487,7 +487,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 length_mm: length,
                 thickness_mm: authored.thickness_mm,
                 hole_count: authored.holes_mm.len(),
-                cut_applied: authored.cut.is_some(),
+                cut_applied: !authored.cuts.is_empty(),
             })
         }
         Contour::ClockwiseOriginRectangle => Err(CommandError::new(
@@ -520,7 +520,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 base,
                 authored.thickness_mm,
                 &[],
-                authored.cut.as_ref(),
+                &authored.cuts,
             )?;
             Ok(PlateBody {
                 gross_volume_mm3: result.volume_mm3(),
@@ -530,7 +530,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 length_mm: length,
                 thickness_mm: authored.thickness_mm,
                 hole_count: 0,
-                cut_applied: authored.cut.is_some(),
+                cut_applied: !authored.cuts.is_empty(),
             })
         }
         Contour::Other => evaluate_contour(authored),
@@ -587,7 +587,7 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
         base,
         authored.thickness_mm,
         &authored.holes_mm,
-        authored.cut.as_ref(),
+        &authored.cuts,
     )?;
     let extent = |axis: fn(&Point2) -> f64| {
         let low = outer.iter().map(axis).fold(f64::INFINITY, f64::min);
@@ -602,7 +602,7 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
         length_mm: extent(|p| p.y),
         thickness_mm: authored.thickness_mm,
         hole_count: authored.holes_mm.len(),
-        cut_applied: authored.cut.is_some(),
+        cut_applied: !authored.cuts.is_empty(),
     })
 }
 
@@ -632,11 +632,36 @@ pub(crate) fn map_cut(failure: &OpFailure) -> CommandError {
     CommandError::new(failure.code.f04_code(), "cut", message)
 }
 
-/// The certified result of one plane cut over `body`, keeping the half-space the normal points
-/// away from. The cap face takes the provisional local id `cut:f.p0`.
-pub(crate) fn apply_cut(body: &Body, cut: &PlaneCut) -> Result<OpResult, CommandError> {
+/// The certified result of one plane-cut record over `body`: it keeps the record's half-space and
+/// names the cap face `cut:f.p<ordinal>`.
+pub(crate) fn apply_cut(body: &Body, cut: &CutRecord) -> Result<OpResult, CommandError> {
     let plane = CutPlane::new(cut.point_mm, cut.normal);
-    plane_cut(body, &plane, Keep::Negative, 0).map_err(|f| map_cut(&f))
+    let keep = match cut.keep {
+        beamcraft_model::command::KeepSide::Positive => Keep::Positive,
+        beamcraft_model::command::KeepSide::Negative => Keep::Negative,
+    };
+    plane_cut(body, &plane, keep, cut.ordinal).map_err(|f| map_cut(&f))
+}
+
+/// The certified mesh of the cut records replayed in ascending order over `body`, each keeping
+/// its own half-space. An empty list leaves `base` untouched (a member path that has not decided
+/// between the plain and the cut body yet).
+pub(crate) fn replay_cuts(
+    body: &Body,
+    base: SolidMesh,
+    cuts: &[CutRecord],
+) -> Result<SolidMesh, CommandError> {
+    let mut body = body.clone();
+    let mut last = None;
+    for cut in cuts {
+        let applied = apply_cut(&body, cut)?;
+        body = applied.body().clone();
+        last = Some(applied);
+    }
+    match last {
+        Some(applied) => Ok(SolidMesh::from_operation(&applied)),
+        None => Ok(base),
+    }
 }
 
 /// The certified mesh of a plate with its through holes. Each hole is one kernel cutter, in
@@ -644,15 +669,15 @@ pub(crate) fn apply_cut(body: &Body, cut: &PlaneCut) -> Result<OpResult, Command
 ///
 /// The kernel decides, with exact predicates, whether a hole lies strictly inside the outline,
 /// is clear of the others and is a clockwise simple polygon; a refusal is `INVALID_ARGUMENT`
-/// for a bad polygon and the kernel's own code otherwise, and nothing is applied. The authored
-/// plane cut (A03), when present, applies after every hole and removes the half-space the plane
-/// normal points away from; a cut the kernel would not apply refuses the whole command.
+/// for a bad polygon and the kernel's own code otherwise, and nothing is applied. The plane-cut
+/// records (A03) then replay in ascending ordinal order, each keeping its own half-space; a cut
+/// the kernel would not apply refuses the whole command.
 fn apply_holes_and_cut(
     body: impl FnOnce() -> Result<Body, OpFailure>,
     base: SolidMesh,
     thickness_mm: f64,
     holes: &[Vec<[f64; 2]>],
-    cut: Option<&PlaneCut>,
+    cuts: &[CutRecord],
 ) -> Result<SolidMesh, CommandError> {
     let mut body = body().map_err(|f| map_operation(&f))?;
     let mut last = None;
@@ -671,19 +696,16 @@ fn apply_holes_and_cut(
         body = applied.body().clone();
         last = Some(applied);
     }
-    match (last, cut) {
-        // The cut applies after the holes, so the cap face ids follow the hole walls.
-        (Some(mut applied), Some(cut)) => {
-            applied = apply_cut(applied.body(), cut)?;
-            Ok(SolidMesh::from_operation(&applied))
-        }
-        (Some(applied), None) => Ok(SolidMesh::from_operation(&applied)),
-        // Holes are absent, so the cut alone runs on the plain certified body.
-        (None, Some(cut)) => {
-            let cut_result = apply_cut(&body, cut)?;
-            Ok(SolidMesh::from_operation(&cut_result))
-        }
-        (None, None) => Ok(base),
+    for cut in cuts {
+        // Each cut replays on the previous result, so the cap face ids follow the earlier
+        // operations and the ordinals name the caps in creation order.
+        let applied = apply_cut(&body, cut)?;
+        body = applied.body().clone();
+        last = Some(applied);
+    }
+    match last {
+        Some(applied) => Ok(SolidMesh::from_operation(&applied)),
+        None => Ok(base),
     }
 }
 
@@ -779,7 +801,6 @@ mod tests {
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
-            cut: None,
         }
     }
 
@@ -948,128 +969,127 @@ mod tests {
         assert_eq!(code(&command(wide, 10.0)), ErrorCode::LimitExceeded); // F04-NEG-35
     }
 
+    fn cut_record(ordinal: u16, point: [f64; 3], keep: KeepSide) -> CutRecord {
+        CutRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            ordinal,
+            point_mm: point,
+            normal: [1.0, 0.0, 0.0],
+            keep,
+        }
+    }
+
+    use beamcraft_model::command::KeepSide;
+    use beamcraft_model::id::OpId;
+
     #[test]
-    fn a_plane_cut_trims_the_plate_with_the_exact_volume_and_mass() {
-        let mut c = command(rect(1000.0, 500.0), 10.0);
-        c.cut = Some(PlaneCut {
-            point_mm: [250.0, 0.0, 0.0],
-            normal: [1.0, 0.0, 0.0],
-        });
-        let out = create_plate(&c, &none).unwrap();
-        // The kept half-space is x <= 250: 250 * 500 * 10 = 1,250,000 mm3 = 0.00125 m3; the
-        // net volume is the certified cut mesh itself (the gross stays the full outline).
+    fn cut_records_replay_in_ordinal_order_with_their_kept_side() {
+        // A plate cut to x <= 250 keeps 250 * 500 * 10 = 1,250,000 mm3; the net volume is the
+        // certified cut mesh itself (the gross stays the full outline).
+        let authored = AuthoredPlate {
+            id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
+            name: "Cut plate".into(),
+            contour_points_mm: rect(1000.0, 500.0),
+            thickness_mm: 10.0,
+            placement: Placement::IDENTITY,
+            material: None,
+            holes_mm: Vec::new(),
+            cuts: vec![cut_record(0, [250.0, 0.0, 0.0], KeepSide::Negative)],
+        };
+        let body = evaluate_plate(&authored).unwrap();
+        assert!((body.quantities().volume_mm3 - 1_250_000.0).abs() <= 1e-6);
+        assert_eq!(body.algorithm(), CUT_VOLUME_ALGORITHM);
+        assert!(body.cut_applied);
+        assert!(body.solid.triangles().len() > 12);
+        // Keeping the other side mirrors the volume.
+        let flipped = AuthoredPlate {
+            cuts: vec![cut_record(3, [250.0, 0.0, 0.0], KeepSide::Positive)],
+            ..authored.clone()
+        };
+        let body = evaluate_plate(&flipped).unwrap();
+        assert!((body.quantities().volume_mm3 - 3_750_000.0).abs() <= 1e-6);
+        // The cap face is named by the record's ordinal, so the same plane at a later ordinal
+        // gives the same body under a different name.
         assert!(
-            (out.quantities.volume_mm3 - 1_250_000.0).abs() <= 1e-6,
-            "{out:?}"
+            body.solid
+                .scene_mesh()
+                .face_table
+                .iter()
+                .any(|id| id == "cut:f.p3")
         );
-        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
-        assert!(out.body.cut_applied);
-        assert_eq!(out.authored.cut, c.cut);
-        assert_eq!(out.authored.to_command(), c);
-        // The cut result is a certified body; its mesh is bigger than the box and its volume
-        // agrees with the divergence theorem over the returned triangles.
-        assert!(out.body.solid.triangles().len() > 12);
-        let v = out.body.solid.vertices();
-        let signed: f64 = out
-            .body
-            .solid
-            .triangles()
-            .iter()
-            .map(|[a, b, c]| {
-                let (a, b, c) = (v[*a as usize], v[*b as usize], v[*c as usize]);
-                let cross = [
-                    b[1] * c[2] - b[2] * c[1],
-                    b[2] * c[0] - b[0] * c[2],
-                    b[0] * c[1] - b[1] * c[0],
-                ];
-                (a[0] * cross[0] + a[1] * cross[1] + a[2] * cross[2]) / 6.0
-            })
-            .sum();
-        assert!((signed - 1_250_000.0).abs() <= 1e-3, "{signed}");
-        // A cut after holes keeps both effects: the hole lies inside the kept part.
+        // Two records replay in order: x <= 250 then x >= 150 keeps the 100 mm middle strip.
+        let both = AuthoredPlate {
+            cuts: vec![
+                cut_record(0, [250.0, 0.0, 0.0], KeepSide::Negative),
+                cut_record(1, [150.0, 0.0, 0.0], KeepSide::Positive),
+            ],
+            ..authored.clone()
+        };
+        let body = evaluate_plate(&both).unwrap();
+        assert!((body.quantities().volume_mm3 - 500_000.0).abs() <= 1e-6);
+        // A cut after a hole keeps both effects: the hole lies inside the kept part.
         let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
-        let mut both = command(rect(1000.0, 500.0), 10.0);
-        both.holes_mm = vec![square(100.0, 100.0, 100.0)];
-        both.cut = c.cut;
-        let out = create_plate(&both, &none).unwrap();
-        assert!(
-            (out.quantities.volume_mm3 - 1_150_000.0).abs() <= 1e-6,
-            "{out:?}"
-        );
-        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
+        let both = AuthoredPlate {
+            holes_mm: vec![square(100.0, 100.0, 100.0)],
+            cuts: vec![cut_record(0, [250.0, 0.0, 0.0], KeepSide::Negative)],
+            ..authored.clone()
+        };
+        let body = evaluate_plate(&both).unwrap();
+        assert!((body.quantities().volume_mm3 - 1_150_000.0).abs() <= 1e-6);
         // A scaled normal describes the same plane and the same body.
-        let mut scaled = command(rect(1000.0, 500.0), 10.0);
-        scaled.cut = Some(PlaneCut {
-            point_mm: [250.0, 0.0, 0.0],
-            normal: [1000.0, 0.0, 0.0],
-        });
-        let out = create_plate(&scaled, &none).unwrap();
-        assert!((out.quantities.volume_mm3 - 1_250_000.0).abs() <= 1e-6);
-        // The same cut on a contour plate (A02) trims it the same way. The L outline is
-        // 205,000 mm2; the plane x = 500 (no outline edge lies in it) keeps 500 x 300 plus
-        // 250 x 100 = 175,000 mm2, times the 10 mm thickness.
-        let outline = vec![
-            [0.0, 0.0, 0.0],
-            [600.0, 0.0, 0.0],
-            [600.0, 300.0, 0.0],
-            [250.0, 300.0, 0.0],
-            [250.0, 400.0, 0.0],
-            [0.0, 400.0, 0.0],
-        ];
-        let plain = create_plate(&command(outline.clone(), 10.0), &none).unwrap();
-        let mut contour = command(outline, 10.0);
-        contour.cut = Some(PlaneCut {
-            point_mm: [500.0, 0.0, 0.0],
-            normal: [1.0, 0.0, 0.0],
-        });
-        let out = create_plate(&contour, &none).unwrap();
-        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
-        assert!(
-            (out.quantities.volume_mm3 - 1_750_000.0).abs() <= 1e-6,
-            "{out:?}"
-        );
-        // The plain contour plate's gross area is the 205,000 mm2 outline; the cut removed
-        // exactly the 30,000 mm2 strip.
-        assert!((plain.quantities.volume_mm3 - 2_050_000.0).abs() <= 1e-6);
-        assert!((out.quantities.volume_gross_mm3 - 2_050_000.0).abs() <= 1e-6);
+        let mut scaled = cut_record(0, [250.0, 0.0, 0.0], KeepSide::Negative);
+        scaled.normal = [1000.0, 0.0, 0.0];
+        let body = evaluate_plate(&AuthoredPlate {
+            cuts: vec![scaled],
+            ..authored.clone()
+        })
+        .unwrap();
+        assert!((body.quantities().volume_mm3 - 1_250_000.0).abs() <= 1e-6);
     }
 
     #[test]
     fn a_cut_the_kernel_refuses_applies_nothing() {
-        let code_of = |cut: PlaneCut| {
-            let mut c = command(rect(1000.0, 500.0), 10.0);
-            c.cut = Some(cut);
-            create_plate(&c, &none).unwrap_err().code
+        let authored = AuthoredPlate {
+            id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
+            name: "Cut plate".into(),
+            contour_points_mm: rect(1000.0, 500.0),
+            thickness_mm: 10.0,
+            placement: Placement::IDENTITY,
+            material: None,
+            holes_mm: Vec::new(),
+            cuts: Vec::new(),
+        };
+        let code_of = |cut: CutRecord| {
+            evaluate_plate(&AuthoredPlate {
+                cuts: vec![cut],
+                ..authored.clone()
+            })
+            .unwrap_err()
+            .code
         };
         // The plane misses the body entirely.
         assert_eq!(
-            code_of(PlaneCut {
-                point_mm: [2000.0, 0.0, 0.0],
-                normal: [1.0, 0.0, 0.0],
-            }),
+            code_of(cut_record(0, [2000.0, 0.0, 0.0], KeepSide::Negative)),
             ErrorCode::InvalidArgument
         );
         // The plane only touches the bottom face: a tangent cut, not a trim.
         assert_eq!(
-            code_of(PlaneCut {
-                point_mm: [0.0, 0.0, 0.0],
+            code_of(CutRecord {
                 normal: [0.0, 0.0, 1.0],
+                ..cut_record(0, [0.0, 0.0, 0.0], KeepSide::Negative)
             }),
             ErrorCode::UnsupportedGeometry
         );
         // Argument-level failures come first: a zero normal never reaches the kernel.
         assert_eq!(
-            code_of(PlaneCut {
-                point_mm: [0.0; 3],
+            code_of(CutRecord {
                 normal: [0.0; 3],
+                ..cut_record(0, [0.0, 0.0, 0.0], KeepSide::Negative)
             }),
             ErrorCode::InvalidArgument
         );
         assert_eq!(
-            code_of(PlaneCut {
-                point_mm: [f64::NAN, 0.0, 0.0],
-                normal: [1.0, 0.0, 0.0],
-            }),
+            code_of(cut_record(0, [f64::NAN, 0.0, 0.0], KeepSide::Negative)),
             ErrorCode::NonFiniteNumber
         );
     }
@@ -1404,7 +1424,7 @@ mod tests {
                 placement: Placement::IDENTITY,
                 material: None,
                 holes_mm: Vec::new(),
-                cut: None,
+                cuts: Vec::new(),
             };
             assert!(evaluate_plate(&authored).is_err());
         }
