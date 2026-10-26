@@ -143,8 +143,19 @@ pub fn copy_element(
     let materials = material_lookup(&definitions);
 
     let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
+        let mut authored = copy_plate(&source.authored, command)?;
+        // F04 section 7: a copy's records keep their ordinals and take fresh operation ids,
+        // so a record of the source and of the copy never share one identity.
+        let mut ids = beamcraft_host::ids::IdSource::system();
+        for record in &mut authored.hole_records {
+            record.operation_id = OpId::from_uuid(ids.next_id().map_err(|_| PlateError {
+                rule_id: None,
+                code: ErrorCode::BackendUnavailable,
+                message: "no identity could be generated",
+            })?);
+        }
         CopiedElement::Plate(Box::new(PlateRecord {
-            authored: copy_plate(&source.authored, command)?,
+            authored,
             body: source.body.clone(),
             quantities: source.quantities,
         }))
@@ -313,6 +324,7 @@ pub fn copy_element(
                             .iter()
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
+                        hole_records: a.hole_records.clone(),
                         cuts: a.cuts.clone(),
                     },
                     placement: LayerPlacement {

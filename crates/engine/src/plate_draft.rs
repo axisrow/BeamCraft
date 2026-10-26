@@ -174,7 +174,12 @@ pub fn evaluate_committed_drafts_cached(
         }
         if authored.contour_points_mm.len() > 1024
             || authored.holes_mm.len() > MAX_HOLES
-            || authored.holes_mm.iter().any(|h| h.len() > HOLE_POINT_CAP)
+            || authored.hole_records.len() > MAX_HOLES
+            || authored
+                .holes_mm
+                .iter()
+                .chain(authored.hole_records.iter().map(|r| &r.polygon_mm))
+                .any(|h| h.len() > HOLE_POINT_CAP)
         {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
@@ -249,6 +254,7 @@ mod tests {
             },
             material: None,
             holes_mm: Vec::new(),
+            hole_records: Vec::new(),
             cuts: Vec::new(),
         }
     }

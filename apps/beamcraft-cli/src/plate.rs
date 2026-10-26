@@ -67,7 +67,9 @@ use beamcraft_layer_engine::{
     Asset, BACKEND, Budgets, Cancellation, Control, Diagnostic, Identity, OpenRequest, Opened,
     Prim, Profile, Reader, Value,
 };
-use beamcraft_model::command::{CommandError, CreatePlate, CutRecord, KeepSide, MemberKind};
+use beamcraft_model::command::{
+    CommandError, CreatePlate, CutRecord, HoleRecord, KeepSide, MemberKind,
+};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -434,6 +436,76 @@ pub(crate) fn property<'a>(prim: &'a Prim, name: &str) -> Option<&'a Value> {
         .and_then(|p| p.value.as_ref())
 }
 
+/// The through-hole operation records of a committed plate (A04): all four attributes or
+/// neither, aligned with each other and cut by the vertex counts, every ordinal strictly
+/// increasing and every id a full UUIDv7. A damaged or half-authored record is an integrity
+/// error, never a default.
+fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
+    let bad = || integrity("committed plate has inconsistent hole record attributes");
+    let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let names = [
+        "steel:hole:pointsMm",
+        "steel:hole:vertexCounts",
+        "steel:hole:operationIds",
+        "steel:hole:ordinals",
+    ];
+    let declared: Vec<bool> = names.iter().map(|name| declared(name)).collect();
+    if declared.iter().all(|seen| !seen) {
+        return Ok(Vec::new());
+    }
+    if !declared.iter().all(|seen| *seen) {
+        return Err(bad());
+    }
+    let polygons = decode_polygons(
+        prim,
+        "steel:hole:pointsMm",
+        "steel:hole:vertexCounts",
+        beamcraft_model::command::MAX_HOLES,
+        "committed plate has inconsistent hole record attributes",
+    )?;
+    let ids = property(prim, "steel:hole:operationIds")
+        .and_then(|value| match value {
+            Value::Array(items) => items
+                .iter()
+                .map(|v| text(v).map(str::to_owned))
+                .collect::<Option<Vec<_>>>(),
+            _ => None,
+        })
+        .ok_or_else(bad)?;
+    let ordinals = property(prim, "steel:hole:ordinals")
+        .and_then(|value| match value {
+            Value::Array(items) => items
+                .iter()
+                .map(|v| integer(v).map(|n| usize::try_from(n).ok()))
+                .collect::<Option<Vec<_>>>(),
+            _ => None,
+        })
+        .ok_or_else(bad)?;
+    if polygons.len() != ids.len() || polygons.len() != ordinals.len() || polygons.is_empty() {
+        return Err(bad());
+    }
+    let records = polygons
+        .into_iter()
+        .zip(ids)
+        .zip(ordinals)
+        .map(|((polygon_mm, id), ordinal)| {
+            Ok(HoleRecord {
+                operation_id: OpId::parse(&id).map_err(|_| bad())?,
+                ordinal: ordinal.ok_or_else(bad)?,
+                polygon_mm,
+            })
+        })
+        .collect::<Result<Vec<_>, PlateError>>()?;
+    if records
+        .iter()
+        .zip(records.iter().skip(1))
+        .any(|(a, b)| a.ordinal >= b.ordinal)
+    {
+        return Err(bad());
+    }
+    Ok(records)
+}
+
 fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError> {
     let bad = || integrity("committed plate lacks a required authored input");
     let name = property(prim, "bim:name").and_then(text).ok_or_else(bad)?;
@@ -467,6 +539,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         material,
         holes_mm: decode_holes(prim)?,
         cuts: decode_cut(prim)?,
+        hole_records: decode_hole_records(prim)?,
     })
 }
 
@@ -1769,6 +1842,8 @@ pub fn create_plate(
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
                         cuts: Vec::new(),
+                        // A create carries no operation records (F04 section 4).
+                        hole_records: Vec::new(),
                     },
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,

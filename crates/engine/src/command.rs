@@ -43,11 +43,13 @@ use beamcraft_kernel::ops::{
 use beamcraft_kernel::profile::diagnostic::{ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
-use beamcraft_model::command::{CommandError, CreatePlate, CutRecord, Placement};
+use beamcraft_model::command::{
+    AddHole, CommandError, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, Placement,
+};
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::ElementId;
+use beamcraft_model::id::{ElementId, OpId};
 
 /// Version label of the volume algorithm in a [`Quantities`] record.
 pub const VOLUME_ALGORITHM: &str = "kernel-g02-rectangular-plate-volume/1;tolerance-policy-3";
@@ -107,6 +109,9 @@ pub struct AuthoredPlate {
     pub material: Option<ContentDigest>,
     /// Through-hole polygons in the plate's local XY, as authored. Empty means a solid plate.
     pub holes_mm: Vec<Vec<[f64; 2]>>,
+    /// Through-hole operation records (A04), ordered by ordinal. The pilot's create-authored
+    /// polygons above are deprecated attributes (A-2); every `AddHole` lands here.
+    pub hole_records: Vec<HoleRecord>,
     /// The owned `plane_cut` operation records (A03, amendment A-2), replayed in ascending
     /// ordinal order after every hole. Empty means an uncut element.
     pub cuts: Vec<CutRecord>,
@@ -123,11 +128,14 @@ impl AuthoredPlate {
             placement: command.placement,
             material: command.material_digest,
             holes_mm: command.holes_mm.clone(),
+            hole_records: Vec::new(),
             cuts: Vec::new(),
         }
     }
 
-    /// The `CreatePlate` that would author exactly this state; used to compare content.
+    /// The `CreatePlate` that would author exactly this state; used to compare content. A
+    /// drafted plate never carries operation records (they are refused on unsupported
+    /// geometry), so none are carried back.
     pub fn to_command(&self) -> CreatePlate {
         CreatePlate {
             new_id: self.id,
@@ -138,6 +146,15 @@ impl AuthoredPlate {
             material_digest: self.material,
             holes_mm: self.holes_mm.clone(),
         }
+    }
+
+    /// Every hole polygon in replay order: the create-authored polygons of the deprecated A04
+    /// pilot attributes first, then the operation records in ordinal order (F04 section 4).
+    /// The plane cut, when present, applies after all of them.
+    pub fn hole_polygons_in_replay_order(&self) -> Vec<Vec<[f64; 2]>> {
+        let mut holes = self.holes_mm.clone();
+        holes.extend(self.hole_records.iter().map(|r| r.polygon_mm.clone()));
+        holes
     }
 }
 
@@ -472,11 +489,12 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
             })
             .map_err(|f| map_kernel(&f))?;
             let base = SolidMesh::from_box(&result);
+            let holes = authored.hole_polygons_in_replay_order();
             let solid = apply_holes_and_cut(
                 || Body::from_plate(&result),
                 base,
                 authored.thickness_mm,
-                &authored.holes_mm,
+                &holes,
                 &authored.cuts,
             )?;
             Ok(PlateBody {
@@ -486,7 +504,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 width_mm: width,
                 length_mm: length,
                 thickness_mm: authored.thickness_mm,
-                hole_count: authored.holes_mm.len(),
+                hole_count: holes.len(),
                 cut_applied: !authored.cuts.is_empty(),
             })
         }
@@ -510,6 +528,13 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                     ErrorCode::UnsupportedGeometry,
                     "holes_mm",
                     "holes on a framed plate are not evaluated",
+                ));
+            }
+            if !authored.hole_records.is_empty() {
+                return Err(CommandError::new(
+                    ErrorCode::UnsupportedGeometry,
+                    "hole",
+                    "hole records on a framed plate are not evaluated",
                 ));
             }
             let result =
@@ -582,11 +607,12 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
             "the contour mesh could not be digested",
         )
     })?;
+    let holes = authored.hole_polygons_in_replay_order();
     let solid = apply_holes_and_cut(
         || Body::from_extrusion(&extrusion),
         base,
         authored.thickness_mm,
-        &authored.holes_mm,
+        &holes,
         &authored.cuts,
     )?;
     let extent = |axis: fn(&Point2) -> f64| {
@@ -601,7 +627,7 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
         width_mm: extent(|p| p.x),
         length_mm: extent(|p| p.y),
         thickness_mm: authored.thickness_mm,
-        hole_count: authored.holes_mm.len(),
+        hole_count: holes.len(),
         cut_applied: !authored.cuts.is_empty(),
     })
 }
@@ -788,9 +814,59 @@ pub fn create_plate(
     })
 }
 
+/// Applies `AddHole` to the head authored state of a plate: argument admission, an unused
+/// record id, the next per-element ordinal and the full replay of the base shape with every
+/// hole (F04 sections 4 and 7). Nothing is published; the caller commits the returned state,
+/// its body and the footprint of a shape edit as one atomic command.
+///
+/// `operation_id_used` reports whether the project already holds a record with the id on any
+/// element: a record id is unused in the project (`DUPLICATE_ID`), not only on the target. A
+/// hole the kernel refuses (winding, placement, clearance) refuses the whole command, and the
+/// head state is returned unchanged. The total polygon count of the plate stays within
+/// [`MAX_HOLES`], the present implementation admission, until G10 replaces it with measured
+/// kernel capacity.
+pub fn add_hole(
+    head: &AuthoredPlate,
+    command: &AddHole,
+    operation_id_used: &dyn Fn(OpId) -> bool,
+) -> Result<(AuthoredPlate, PlateBody), CommandError> {
+    command.validate_arguments()?;
+    if operation_id_used(command.operation_id) {
+        return Err(CommandError::new(
+            ErrorCode::DuplicateId,
+            "operation_id",
+            "operation id already names a record of the project",
+        ));
+    }
+    if head.hole_polygons_in_replay_order().len() >= MAX_HOLES {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "hole",
+            "more than 64 holes on one plate",
+        )
+        .with_rule("DV-LIM-001"));
+    }
+    let mut next = head.clone();
+    next.hole_records.push(HoleRecord {
+        operation_id: command.operation_id,
+        ordinal: next.hole_records.last().map_or(0, |r| r.ordinal + 1),
+        polygon_mm: command.polygon()?,
+    });
+    let body = evaluate_plate(&next).map_err(|error| {
+        // The target was valid, so a refusal names the new hole, not the plate's fields.
+        if error.field == "holes_mm" {
+            CommandError::new(error.code, "hole", error.message)
+        } else {
+            error
+        }
+    })?;
+    Ok((next, body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beamcraft_model::command::HoleSpec;
 
     fn command(contour: Vec<[f64; 3]>, thickness: f64) -> CreatePlate {
         CreatePlate {
@@ -994,6 +1070,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),
+            hole_records: Vec::new(),
             cuts: vec![cut_record(0, [250.0, 0.0, 0.0], KeepSide::Negative)],
         };
         let body = evaluate_plate(&authored).unwrap();
@@ -1057,6 +1134,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),
+            hole_records: Vec::new(),
             cuts: Vec::new(),
         };
         let code_of = |cut: CutRecord| {
@@ -1205,6 +1283,84 @@ mod tests {
             code_of(vec![vec![[1.0, 1.0], [2.0, 2.0]]]),
             ErrorCode::InvalidArgument
         );
+    }
+
+    #[test]
+    fn an_add_hole_record_replays_and_keeps_its_ordinal_and_volume() {
+        let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
+        let op =
+            |n: u8| OpId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap();
+        let head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        let record = |operation_id, polygon| AddHole {
+            target_id: head.id,
+            operation_id,
+            hole: HoleSpec::Polygon(polygon),
+        };
+        let unused = |_: OpId| false;
+        let (next, body) =
+            add_hole(&head, &record(op(6), square(100.0, 100.0, 100.0)), &unused).unwrap();
+        assert_eq!(next.hole_records.len(), 1);
+        assert_eq!(next.hole_records[0].ordinal, 0);
+        assert_eq!(next.hole_records[0].operation_id, op(6));
+        assert_eq!(body.hole_count, 1);
+        assert_eq!(body.quantities_for(None).unwrap().volume_mm3, 4_900_000.0);
+        // A second record appends with the next ordinal and is replayed after the first.
+        let (next, body) =
+            add_hole(&next, &record(op(7), square(400.0, 200.0, 50.0)), &unused).unwrap();
+        assert_eq!(next.hole_records[1].ordinal, 1);
+        assert_eq!(body.hole_count, 2);
+        assert_eq!(body.quantities_for(None).unwrap().volume_mm3, 4_875_000.0);
+        // A record id used anywhere in the project refuses the command.
+        let error = add_hole(&next, &record(op(6), square(700.0, 300.0, 50.0)), &|id| {
+            id == op(6)
+        })
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::DuplicateId);
+        assert_eq!(error.field, "operation_id");
+        // A hole the kernel refuses names the hole argument and applies nothing.
+        let mut ccw = square(100.0, 100.0, 100.0);
+        ccw.reverse();
+        let error = add_hole(&next, &record(op(8), ccw), &unused).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.field, "hole");
+        // The present implementation admission keeps the total polygon count within the
+        // create-plate cap until G10 replaces it with measured kernel capacity.
+        let mut full = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        full.holes_mm = vec![square(100.0, 100.0, 10.0); MAX_HOLES];
+        let error =
+            add_hole(&full, &record(op(9), square(300.0, 300.0, 10.0)), &unused).unwrap_err();
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+    }
+
+    #[test]
+    fn an_add_hole_record_follows_a_pilot_hole_and_is_refused_on_a_framed_plate() {
+        let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
+        let op = OpId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap();
+        let mut head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        head.holes_mm = vec![square(100.0, 100.0, 100.0)];
+        let record = AddHole {
+            target_id: head.id,
+            operation_id: op,
+            hole: HoleSpec::Polygon(square(400.0, 200.0, 50.0)),
+        };
+        let (next, body) = add_hole(&head, &record, &|_| false).unwrap();
+        assert_eq!(body.hole_count, 2);
+        assert_eq!(body.quantities_for(None).unwrap().volume_mm3, 4_875_000.0);
+        assert_eq!(next.hole_polygons_in_replay_order().len(), 2);
+        // A framed (out-of-plane) rectangle never takes holes, records included.
+        let mut framed = AuthoredPlate::from_command(&command(
+            vec![
+                [0.0, 0.0, 50.0],
+                [1000.0, 0.0, 50.0],
+                [1000.0, 500.0, 50.0],
+                [0.0, 500.0, 50.0],
+            ],
+            10.0,
+        ));
+        framed.hole_records = next.hole_records;
+        let error = evaluate_plate(&framed).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert_eq!(error.field, "hole");
     }
 
     #[test]
@@ -1424,6 +1580,7 @@ mod tests {
                 placement: Placement::IDENTITY,
                 material: None,
                 holes_mm: Vec::new(),
+                hole_records: Vec::new(),
                 cuts: Vec::new(),
             };
             assert!(evaluate_plate(&authored).is_err());

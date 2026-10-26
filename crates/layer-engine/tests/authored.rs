@@ -126,6 +126,7 @@ fn elements() -> Vec<Change> {
                 ],
                 thickness_mm: 10.123456789012345,
                 holes: Vec::new(),
+                hole_records: Vec::new(),
                 cuts: Vec::new(),
             },
             placement: pose(),
@@ -1187,6 +1188,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
             ],
             thickness_mm: 10.0,
             holes,
+            hole_records: Vec::new(),
             cuts: Vec::new(),
         },
         placement: pose(),
@@ -1323,6 +1325,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         ],
         thickness_mm: 10.0,
         holes: Vec::new(),
+        hole_records: Vec::new(),
         cuts: records,
     };
     let one = vec![record(

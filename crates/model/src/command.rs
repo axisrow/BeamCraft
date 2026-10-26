@@ -655,6 +655,329 @@ pub const MAX_HOLES: usize = 64;
 /// Most points of one hole polygon.
 pub const HOLE_POINT_CAP: usize = 1024;
 
+/// The hole of F04 section 7 `AddHole`: a clockwise polygon as submitted, or a generator whose
+/// parameters name the polygon the command authors. The stored polygon is always authoritative
+/// (F04 section 4); a generator is resolved at the input edge by [`HoleSpec::polygon`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum HoleSpec {
+    /// The clockwise polygon itself, 3 to 1024 points in plate-local XY, closure implicit.
+    /// Winding, self-intersection, placement inside the outline and clearance from the other
+    /// holes are the kernel's decision, with exact predicates.
+    Polygon(Vec<[f64; 2]>),
+    /// A round hole: the regular inscribed `N`-gon of F06 section 2 (A-2), with `N` decided
+    /// from the radius against the fixed threshold table of [`HoleSpec::polygon`].
+    Round {
+        /// Centre in plate-local XY, each coordinate within the coordinate cap.
+        centre_mm: [f64; 2],
+        /// Diameter in millimetres, finite and greater than zero.
+        diameter_mm: f64,
+    },
+    /// An axis-aligned rectangular hole from one corner, four clockwise points.
+    Rectangle {
+        /// The first corner in plate-local XY, each coordinate within the coordinate cap.
+        corner_mm: [f64; 2],
+        /// Extent along +X, finite and greater than zero.
+        width_mm: f64,
+        /// Extent along +Y, finite and greater than zero.
+        height_mm: f64,
+    },
+}
+
+/// The largest radius each permitted segment count serves (F06 section 2, A-2): the row at
+/// index `k` is the largest radius whose chord deviation `r * (1 - cos(pi / N))` stays within
+/// 0.05 mm for `N = 16 + 4k`, so the decision compares the radius with these fixed numbers and
+/// no platform `cos` result decides it. The values are `0.05 / (1 - cos(pi / N))`.
+const ROUND_HOLE_RADIUS_LIMITS: [f64; 61] = [
+    2.602_171_722_995_434,     // N=16
+    4.061_190_969_939_727_5,   // N=20
+    5.844_440_655_460_139,     // N=24
+    7.951_919_378_839_592,     // N=28
+    1.038_362_655_579_763_1e1, // N=32
+    1.313_956_190_743_764_2e1, // N=36
+    1.621_972_528_694_607e1,   // N=40
+    1.962_411_661_105_958e1,   // N=44
+    2.335_273_582_969_88e1,    // N=48
+    2.740_558_291_127_616_6e1, // N=52
+    3.178_265_783_506_647_3e1, // N=56
+    3.648_396_058_701_346e1,   // N=60
+    4.150_949_115_731_939_5e1, // N=64
+    4.685_924_953_897_042e1,   // N=68
+    5.253_323_572_685_768e1,   // N=72
+    5.853_144_971_716_463_4e1, // N=76
+    6.485_389_150_701_836e1,   // N=80
+    7.150_056_109_420_748e1,   // N=84
+    7.847_145_847_701_5e1,     // N=88
+    8.576_658_365_409_166e1,   // N=92
+    9.338_593_662_435_471e1,   // N=96
+    1.013_295_173_869_295_7e2, // N=100
+    1.095_973_259_411_158_3e2, // N=104
+    1.181_893_622_863_406_5e2, // N=108
+    1.271_056_264_221_183_9e2, // N=112
+    1.363_461_183_480_881e2,   // N=116
+    1.459_108_380_638_777_5e2, // N=120
+    1.557_997_855_692_493_7e2, // N=124
+    1.660_129_608_639_590_2e2, // N=128
+    1.765_503_639_477_979e2,   // N=132
+    1.874_119_948_205_258e2,   // N=136
+    1.985_978_534_820_98e2,    // N=140
+    2.101_079_399_324_427_5e2, // N=144
+    2.219_422_541_712_727_7e2, // N=148
+    2.341_007_961_985_759_2e2, // N=152
+    2.465_835_660_143_244_5e2, // N=156
+    2.593_905_636_183_075_7e2, // N=160
+    2.725_217_890_107_020_4e2, // N=164
+    2.859_772_421_911_766_3e2, // N=168
+    2.997_569_231_598_656e2,   // N=172
+    3.138_608_319_165_718e2,   // N=176
+    3.282_889_684_614_987_7e2, // N=180
+    3.430_413_327_942_437e2,   // N=184
+    3.581_179_249_152_984e2,   // N=188
+    3.735_187_448_240_587e2,   // N=192
+    3.892_437_925_207_74e2,    // N=196
+    4.052_930_680_054_579_4e2, // N=200
+    4.216_665_712_780_745e2,   // N=204
+    4.383_643_023_387_047e2,   // N=208
+    4.553_862_611_870_239e2,   // N=212
+    4.727_324_478_229_255_6e2, // N=216
+    4.904_028_622_470_072_5e2, // N=220
+    5.083_975_044_590_468_4e2, // N=224
+    5.267_163_744_590_734e2,   // N=228
+    5.453_594_722_465_092e2,   // N=232
+    5.643_267_978_213_062e2,   // N=236
+    5.836_183_511_843_763e2,   // N=240
+    6.032_341_323_355_112e2,   // N=244
+    6.231_741_412_739_907e2,   // N=248
+    6.434_383_780_007_807e2,   // N=252
+    6.640_268_425_141_733e2,   // N=256
+];
+
+/// The first non-finite hole coordinate refuses the command (`NON_FINITE_NUMBER`).
+fn hole_values_finite(mut values: impl Iterator<Item = f64>) -> Result<(), CommandError> {
+    values.all(|v| v.is_finite()).then_some(()).ok_or_else(|| {
+        CommandError::new(ErrorCode::NonFiniteNumber, "hole", "value is not finite")
+            .with_rule("DV-ATTR-003")
+    })
+}
+
+/// The first hole coordinate above the coordinate cap refuses the command (`LIMIT_EXCEEDED`).
+fn hole_values_in_cap(mut values: impl Iterator<Item = f64>) -> Result<(), CommandError> {
+    values
+        .all(|v| v.abs() <= COORDINATE_CAP_MM)
+        .then_some(())
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "hole",
+                "coordinate exceeds the coordinate cap",
+            )
+            .with_rule("DV-LIM-001")
+        })
+}
+
+impl HoleSpec {
+    /// Admits what does not depend on geometry: finiteness, positivity of generator sizes and
+    /// the polygon caps. A non-finite number is `NON_FINITE_NUMBER`; a cap or a non-positive
+    /// size is `LIMIT_EXCEEDED` or `INVALID_ARGUMENT` as for `CreatePlate.holes_mm`.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        match self {
+            Self::Polygon(points) => {
+                if points.len() > HOLE_POINT_CAP {
+                    return Err(CommandError::new(
+                        ErrorCode::LimitExceeded,
+                        "hole",
+                        "a hole has more than 1024 points",
+                    )
+                    .with_rule("DV-LIM-001"));
+                }
+                if points.len() < MIN_CONTOUR_POINTS {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "hole",
+                        "a hole needs at least 3 points",
+                    ));
+                }
+                hole_values_finite(points.iter().flatten().copied())?;
+                hole_values_in_cap(points.iter().flatten().copied())
+            }
+            Self::Round {
+                centre_mm,
+                diameter_mm,
+            } => {
+                hole_values_finite(centre_mm.iter().copied().chain([*diameter_mm]))?;
+                hole_values_in_cap(centre_mm.iter().copied())?;
+                if *diameter_mm <= 0.0 {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "hole",
+                        "a hole diameter must be positive",
+                    ));
+                }
+                Ok(())
+            }
+            Self::Rectangle {
+                corner_mm,
+                width_mm,
+                height_mm,
+            } => {
+                hole_values_finite(corner_mm.iter().copied().chain([*width_mm, *height_mm]))?;
+                hole_values_in_cap(corner_mm.iter().copied())?;
+                if *width_mm <= 0.0 || *height_mm <= 0.0 {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "hole",
+                        "a hole width and height must be positive",
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// The clockwise polygon this spec authors, at the input edge (the vertices use the
+    /// platform `sin` and `cos` and are the doubles they round to). A round hole of radius
+    /// `r` is the regular inscribed `N`-gon of F06 section 2: the smallest multiple of four,
+    /// at least 16 and at most 256, whose chord deviation stays within 0.05 mm. A radius
+    /// above the last threshold needs `N > 256` and is `UNSUPPORTED_GEOMETRY` (field
+    /// `hole.radius`), because no `Approximated` status exists in 0.1.x.
+    pub fn polygon(&self) -> Result<Vec<[f64; 2]>, CommandError> {
+        self.validate()?;
+        match self {
+            Self::Polygon(points) => Ok(points.clone()),
+            Self::Round {
+                centre_mm,
+                diameter_mm,
+            } => {
+                let radius = diameter_mm / 2.0;
+                let index = ROUND_HOLE_RADIUS_LIMITS
+                    .iter()
+                    .position(|limit| radius <= *limit)
+                    .ok_or_else(|| {
+                        CommandError::new(
+                            ErrorCode::UnsupportedGeometry,
+                            "hole.radius",
+                            "the radius needs more than 256 segments",
+                        )
+                    })?;
+                let segments = 16 + 4 * index;
+                Ok((0..segments)
+                    .map(|k| {
+                        let theta = -core::f64::consts::TAU * (k as f64) / (segments as f64);
+                        [
+                            centre_mm[0] + radius * theta.cos(),
+                            centre_mm[1] + radius * theta.sin(),
+                        ]
+                    })
+                    .collect())
+            }
+            Self::Rectangle {
+                corner_mm: [x, y],
+                width_mm,
+                height_mm,
+            } => Ok(vec![
+                [*x, *y],
+                [*x, y + height_mm],
+                [x + width_mm, y + height_mm],
+                [x + width_mm, *y],
+            ]),
+        }
+    }
+}
+
+/// One through-hole operation record of a plate (F04 section 4, A04): an owned record with an
+/// engine-assigned ordinal and the authoritative clockwise polygon. The records of one element
+/// are always replayed from the base shape in ordinal order, so no stored intermediate mesh can
+/// go stale. Ordinals are never reused or renumbered; `UpdateHole` and `RemoveHole`, later
+/// slices of A04, address a record by its `operation_id`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoleRecord {
+    /// Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`).
+    pub operation_id: OpId,
+    /// The per-element ordinal in creation order, starting at zero. It names the record's
+    /// FeatureIds (`cut:f.h<ordinal>...`).
+    pub ordinal: usize,
+    /// The authoritative clockwise polygon in plate-local XY, as generated at the input edge.
+    pub polygon_mm: Vec<[f64; 2]>,
+}
+
+/// F04 section 7 `AddHole`: one through-hole operation record on a valid plate (A04). The
+/// record's `operation_id` is also the logical command id: a retry with identical content
+/// replays the recorded result, different content under an accepted id is `OP_ID_REUSE`, and
+/// an id that already names a record of the project is `DUPLICATE_ID`. The engine assigns the
+/// ordinal from the plate's per-element counter; other hole types (member holes, slots, blind
+/// holes) are explicitly unsupported and refused as F06 section 2 failures.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AddHole {
+    /// The plate that will own the record; a member target is `UNSUPPORTED_GEOMETRY`.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the record, unused in the project.
+    pub operation_id: OpId,
+    /// The hole to author.
+    pub hole: HoleSpec,
+}
+
+impl AddHole {
+    /// Admits the arguments that do not depend on geometry or state.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.hole.validate()
+    }
+
+    /// The clockwise polygon this command authors; the stored polygon is authoritative.
+    pub fn polygon(&self) -> Result<Vec<[f64; 2]>, CommandError> {
+        self.hole.polygon()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
+    /// signed zero normalized, as for [`CreatePlate::content_fingerprint`]. It is *not* the F04
+    /// canonical form and must not be sent over a wire. Fails on arguments that do not
+    /// validate, so a fingerprint exists only for admissible content.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "hole",
+                "value cannot be encoded",
+            )
+            .with_rule("DV-ATTR-003")
+        };
+        let polygon = self.polygon()?;
+        let mut bytes = Vec::with_capacity(64 + polygon.len() * 16);
+        bytes.extend_from_slice(b"BeamCraft/A04/AddHole/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.operation_id.as_bytes());
+        match &self.hole {
+            HoleSpec::Polygon(_) => bytes.push(0),
+            HoleSpec::Round {
+                centre_mm,
+                diameter_mm,
+            } => {
+                bytes.push(1);
+                for v in centre_mm.iter().copied().chain([*diameter_mm]) {
+                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                }
+            }
+            HoleSpec::Rectangle {
+                corner_mm,
+                width_mm,
+                height_mm,
+            } => {
+                bytes.push(2);
+                for v in corner_mm.iter().copied().chain([*width_mm, *height_mm]) {
+                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                }
+            }
+        }
+        bytes.extend_from_slice(&(polygon.len() as u64).to_le_bytes());
+        for v in polygon.iter().flatten() {
+            bytes.extend_from_slice(&canonical_f64_bytes(*v).map_err(|_| bad())?);
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
 /// A typed patch of supported authored fields (F04 section 7 `UpdateElement`). A field that is
 /// `None` is left unchanged. `material` distinguishes no change (`None`), clearing the reference
 /// (`Some(None)`) and pinning a definition (`Some(Some(digest))`). There is no raw USD setter.
@@ -1590,6 +1913,18 @@ mod tests {
         ]
     }
 
+    fn add_hole() -> AddHole {
+        AddHole {
+            target_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap(),
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-000000000007").unwrap(),
+            hole: HoleSpec::Polygon(hole()),
+        }
+    }
+
+    fn hole_code(command: &AddHole) -> ErrorCode {
+        command.validate_arguments().unwrap_err().code
+    }
+
     #[test]
     fn holes_have_caps_codes_and_part_of_the_fingerprint() {
         let solid = plate().content_fingerprint().unwrap();
@@ -1616,6 +1951,92 @@ mod tests {
         assert_eq!(code(&bad), ErrorCode::LimitExceeded);
         bad.holes_mm = vec![hole(); MAX_HOLES];
         assert!(bad.validate_arguments().is_ok());
+    }
+
+    #[test]
+    fn an_add_hole_admits_generators_and_fingerprints_its_content() {
+        let command = add_hole();
+        assert!(command.validate_arguments().is_ok());
+        // The polygon is authoritative; the generator parameters are part of the content.
+        assert_eq!(command.polygon().unwrap(), hole());
+        let fingerprint = command.content_fingerprint().unwrap();
+        assert_eq!(command.content_fingerprint().unwrap(), fingerprint);
+        let mut moved = command.clone();
+        moved.hole = HoleSpec::Polygon(vec![
+            [100.0, 100.0],
+            [100.0, 201.0],
+            [200.0, 200.0],
+            [200.0, 100.0],
+        ]);
+        assert_ne!(moved.content_fingerprint().unwrap(), fingerprint);
+        // The same polygon from a generator is still a different command.
+        let mut from_generator = command.clone();
+        from_generator.hole = HoleSpec::Rectangle {
+            corner_mm: [100.0, 100.0],
+            width_mm: 100.0,
+            height_mm: 100.0,
+        };
+        assert_ne!(from_generator.content_fingerprint().unwrap(), fingerprint);
+        assert_eq!(from_generator.polygon().unwrap(), hole());
+    }
+
+    #[test]
+    fn a_round_hole_decides_n_from_the_fixed_threshold_table() {
+        let round = |diameter: f64| HoleSpec::Round {
+            centre_mm: [250.0, 250.0],
+            diameter_mm: diameter,
+        };
+        // The examples of F06 section 2: about 5.2 mm gives N = 16, 100 mm gives 72 and
+        // 500 mm gives 160.
+        assert_eq!(round(5.2).polygon().unwrap().len(), 16);
+        assert_eq!(round(100.0).polygon().unwrap().len(), 72);
+        assert_eq!(round(500.0).polygon().unwrap().len(), 160);
+        // A radius above a threshold needs the next multiple of four.
+        assert_eq!(round(5.3).polygon().unwrap().len(), 20);
+        // A radius above the last threshold needs more than 256 segments and is refused,
+        // because no Approximated status exists.
+        let error = round(1329.0).polygon().unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert_eq!(error.field, "hole.radius");
+        // Vertices start on +X of the centre and run clockwise (below it next).
+        let polygon = round(100.0).polygon().unwrap();
+        assert_eq!(polygon[0], [300.0, 250.0]);
+        assert!(polygon[1][1] < 250.0);
+    }
+
+    #[test]
+    fn an_add_hole_carries_the_caps_codes() {
+        let mut bad = add_hole();
+        bad.hole = HoleSpec::Polygon(vec![[1.0, 1.0], [2.0, 2.0]]);
+        assert_eq!(hole_code(&bad), ErrorCode::InvalidArgument);
+        bad.hole = HoleSpec::Polygon(vec![[f64::NAN, 1.0], [2.0, 2.0], [3.0, 1.0]]);
+        assert_eq!(hole_code(&bad), ErrorCode::NonFiniteNumber);
+        bad.hole = HoleSpec::Polygon(vec![[2e9, 1.0], [2.0, 2.0], [3.0, 1.0]]);
+        assert_eq!(hole_code(&bad), ErrorCode::LimitExceeded);
+        bad.hole = HoleSpec::Polygon(vec![[0.0, 0.0]; HOLE_POINT_CAP + 1]);
+        assert_eq!(hole_code(&bad), ErrorCode::LimitExceeded);
+        bad.hole = HoleSpec::Round {
+            centre_mm: [0.0, 0.0],
+            diameter_mm: 0.0,
+        };
+        assert_eq!(hole_code(&bad), ErrorCode::InvalidArgument);
+        bad.hole = HoleSpec::Round {
+            centre_mm: [0.0, 0.0],
+            diameter_mm: f64::NAN,
+        };
+        assert_eq!(hole_code(&bad), ErrorCode::NonFiniteNumber);
+        bad.hole = HoleSpec::Rectangle {
+            corner_mm: [0.0, 0.0],
+            width_mm: 0.0,
+            height_mm: 1.0,
+        };
+        assert_eq!(hole_code(&bad), ErrorCode::InvalidArgument);
+        bad.hole = HoleSpec::Rectangle {
+            corner_mm: [2e9, 0.0],
+            width_mm: 1.0,
+            height_mm: 1.0,
+        };
+        assert_eq!(hole_code(&bad), ErrorCode::LimitExceeded);
     }
 
     fn cut() -> CutByPlane {

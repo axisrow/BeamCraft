@@ -53,6 +53,28 @@ decision 3's enclosure midpoint is kept for certified shells, but polygonal hole
 polygon volume; a hole count above the kernel's capacity is a distinct kernel-capacity refusal, not
 `INVALID_ARGUMENT`. See [the A-2 notes](g08-f06-a2-notes.md).
 
+Update 2026-10-27 (A04 slice, `AddHole`): the through hole is now also an operation record. The
+`AddHole` command (model arguments, engine `add_hole`, CLI `add-hole`) appends one record — a full
+UUIDv7 `operation_id`, an engine-assigned ordinal (per-element counter, never reused) and the
+authoritative clockwise polygon — to a valid plate. The polygon comes from `--polygon` or the
+`round`/`rectangle` generators; a round hole is the F06 section 2 (A-2) N-gon, with `N` decided
+against a fixed radius threshold table (sagitta at most 0.05 mm, `N` 16 to 256, multiple of 4; a
+radius needing more than 256 is `UNSUPPORTED_GEOMETRY`, field `hole.radius`). The records replay
+from the base shape in ordinal order after the deprecated create-authored polygons, and the plane
+cut stays last; the mesh, the shape key, the volume and the reported `hole_count`/`holes_mm` cover
+all holes of the plate. The records are stored as four optional plate attributes
+(`steel:hole:pointsMm`, `steel:hole:vertexCounts`, `steel:hole:operationIds`,
+`steel:hole:ordinals`); the schema digest changed with them and pre-alpha stores are deliberately
+not migrated. The record id doubles as the logical command id: an identical retry is the recorded
+result, different content under an accepted id is `OP_ID_REUSE`, and the engine refuses an id that
+already names a record of the project (`DUPLICATE_ID`; with one durable ledger a committed id
+arrives as a replay or a reuse, so the duplicate check is the defensive project-wide rule).
+`CopyElement` copies records with fresh operation ids and the same ordinals; the undo of `add-hole`
+is the revision it created. Not in this slice: generator parameters stored beside the polygon (the
+polygon is authoritative), the pilot-attribute migration, `UpdateHole` and `RemoveHole`; member
+holes, slots and blind holes stay explicitly unsupported. The pilot's evidence ran unchanged in the
+full suite for the supported inputs.
+
 ## Verification evidence (2026-10-19, re-run on the integrated master)
 
 The behaviour above was verified end to end on the integrated master; the storage and the

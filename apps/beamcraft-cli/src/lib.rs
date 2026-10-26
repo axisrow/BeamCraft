@@ -21,6 +21,7 @@ pub mod export;
 pub mod grid;
 pub mod history;
 pub mod history_compact;
+pub mod hole;
 pub mod level;
 pub mod library;
 pub mod member;
