@@ -105,6 +105,12 @@ pub struct MemberForm {
     pub start: [String; 3],
     /// `--end X,Y,Z`.
     pub end: [String; 3],
+    /// Optional numeric expression overriding the Cartesian start fields.
+    pub start_input: String,
+    /// Optional numeric expression overriding the Cartesian end fields.
+    pub end_input: String,
+    /// Direction constraint through the start, shared with the engine and CLI.
+    pub axis_lock: beamcraft_engine::coordinate::AxisLock,
     /// `--profile-digest`: a profile definition of the store (required).
     pub profile: Option<String>,
     /// `--material-digest`, optional.
@@ -123,6 +129,9 @@ impl Default for MemberForm {
             kind: MemberKind::Beam,
             start: ["0".into(), "0".into(), "0".into()],
             end: ["1000".into(), "0".into(), "0".into()],
+            start_input: String::new(),
+            end_input: String::new(),
+            axis_lock: beamcraft_engine::coordinate::AxisLock::None,
             profile: None,
             material: None,
             name: String::new(),
@@ -276,8 +285,27 @@ impl PlateForm {
 impl MemberForm {
     /// The `create-member` command for this form on `store`.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
-        let start = point("Start", &self.start)?;
-        let end = point("End", &self.end)?;
+        let start = if self.start_input.trim().is_empty() {
+            point("Start", &self.start)?
+        } else {
+            self.start_input.trim().to_owned()
+        };
+        let end = if self.end_input.trim().is_empty() {
+            point("End", &self.end)?
+        } else {
+            self.end_input.trim().to_owned()
+        };
+        let reject = |e: beamcraft_model::command::CommandError| FormError {
+            field: "Coordinates",
+            message: e.to_string(),
+        };
+        let origin = beamcraft_engine::coordinate::resolve(
+            &start,
+            [0.0; 3],
+            beamcraft_engine::coordinate::AxisLock::None,
+        )
+        .map_err(reject)?;
+        beamcraft_engine::coordinate::resolve(&end, origin, self.axis_lock).map_err(reject)?;
         let profile = self.profile.as_ref().ok_or_else(|| FormError {
             field: "Profile",
             message: "choose a profile definition of the store".into(),
@@ -299,6 +327,9 @@ impl MemberForm {
         push_material(&mut args, self.material.as_ref());
         // An empty field keeps the flag absent, so the planar form builds exactly the command it
         // always did; the engine owns every rule about rolls and quaternions.
+        if self.axis_lock != beamcraft_engine::coordinate::AxisLock::None {
+            args.extend(["--axis-lock".into(), self.axis_lock.token().into()]);
+        }
         let roll = self.roll.trim();
         if !roll.is_empty() {
             args.extend(["--roll".into(), number("Roll", roll)?]);
@@ -323,6 +354,8 @@ impl MemberForm {
             let [x, y, z] = p.map(|v| format!("{v}"));
             [x, y, z]
         };
+        self.start_input.clear();
+        self.end_input.clear();
         self.start = text(start);
         self.end = text(end);
     }
@@ -744,6 +777,34 @@ mod tests {
     }
 
     const DIGEST: &str = "5d660dddce23e62c2544f796a80fd32de3725defa13dee514572833f0d886cb1";
+
+    #[test]
+    fn numeric_input_keeps_cli_expressions_and_uses_the_shared_engine_validation() {
+        use beamcraft_engine::coordinate::{AxisLock, resolve};
+        let mut form = MemberForm {
+            profile: Some("profile".into()),
+            start_input: "100,200,300".into(),
+            end_input: "@300,400,50".into(),
+            axis_lock: AxisLock::Y,
+            ..MemberForm::default()
+        };
+        let prepared = form.prepare(Path::new("S")).unwrap();
+        let option = |name| prepared.args.windows(2).find(|w| w[0] == name).unwrap()[1].clone();
+        let start = resolve(&option("--start"), [0.; 3], AxisLock::None).unwrap();
+        assert_eq!(
+            resolve(
+                &option("--end"),
+                start,
+                AxisLock::parse(&option("--axis-lock")).unwrap()
+            )
+            .unwrap(),
+            [100., 600., 300.]
+        );
+        form.end_input = "@5<NaN".into();
+        assert!(form.prepare(Path::new("S")).is_err());
+        form.set_endpoints([0.; 3], [0., 0., 500.]);
+        assert!(form.start_input.is_empty() && form.end_input.is_empty());
+    }
 
     #[test]
     fn a_plate_maps_to_the_cli_arguments() {

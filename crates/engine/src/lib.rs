@@ -14,6 +14,7 @@ pub mod assembly;
 pub mod bolt;
 pub mod bom;
 pub mod command;
+pub mod coordinate;
 pub mod copy;
 pub mod cut;
 pub mod drawing;

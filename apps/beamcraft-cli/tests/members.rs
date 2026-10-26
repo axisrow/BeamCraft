@@ -888,3 +888,69 @@ fn a_member_above_one_cubic_metre_is_within_the_stage_budget() {
     let members = inspected.get("members").unwrap().array().unwrap();
     assert_eq!(members.len(), 1);
 }
+
+#[test]
+fn t04_numeric_coordinates_and_axis_locks_persist_the_resolved_axis() {
+    let f = Fixture::new();
+    let profile = f.profile("20", "30");
+    for (end, lock, expected) in [
+        ("400,600,300", "none", [400., 600., 300.]),
+        ("@300,400,0", "none", [400., 600., 300.]),
+        ("@500<0", "none", [600., 200., 300.]),
+        ("@300,400,50", "x", [400., 200., 300.]),
+        ("@300,400,50", "y", [100., 600., 300.]),
+        ("@300,400,50", "z", [100., 200., 350.]),
+    ] {
+        let created = f.ok(
+            "create-member",
+            &[
+                "--start",
+                "100,200,300",
+                "--end",
+                end,
+                "--axis-lock",
+                lock,
+                "--profile-digest",
+                &profile,
+            ],
+        );
+        let id = text(at(&created, &["member"]), "element_id");
+        let inspected = f.ok("inspect-elements", &[]);
+        let record = at(&inspected, &["members"])
+            .array()
+            .unwrap()
+            .iter()
+            .find(|r| text(r, "element_id") == id)
+            .unwrap();
+        let axis = at(record, &["axis_points_mm"]).array().unwrap();
+        let saved: Vec<f64> = axis[1]
+            .array()
+            .unwrap()
+            .iter()
+            .map(|v| v.float().unwrap())
+            .collect();
+        assert_eq!(saved, expected, "{end} lock {lock}");
+    }
+    let before = f.ok("inspect-elements", &[]);
+    for end in ["@1,2", "@-1<0", "@1<0,1,2"] {
+        assert_eq!(
+            f.rejected(
+                "create-member",
+                &[
+                    "--start",
+                    "100,200,300",
+                    "--end",
+                    end,
+                    "--profile-digest",
+                    &profile,
+                ]
+            ),
+            "INVALID_ARGUMENT"
+        );
+    }
+    let after = f.ok("inspect-elements", &[]);
+    assert_eq!(
+        before, after,
+        "refused numeric input must not publish a revision"
+    );
+}
