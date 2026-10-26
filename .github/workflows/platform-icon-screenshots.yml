@@ -51,8 +51,6 @@ jobs:
           cp target/debug/beamcraft target/debug/beamcraft-ui screenshot-app/
           cp -R assets environments screenshot-app/
           cp packaging/install-linux.sh screenshot-app/
-          mkdir -p screenshot-app/assets/icons
-          cp assets/icons/beamcraft-linux-1024.png screenshot-app/assets/icons/beamcraft-icon.png
           bash screenshot-app/install-linux.sh
           desktop-file-validate "$HOME/.local/share/applications/com.apibim.BeamCraft.desktop"
           xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- bash -euo pipefail -c '
