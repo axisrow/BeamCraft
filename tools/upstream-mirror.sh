@@ -42,7 +42,7 @@ FORK_REPO="axisrow/BeamCraft"
 
 # Paths the fork keeps to itself: upstream has its own decision for each, and
 # a conflict touching only these resolves to the upstream side (checkout --ours).
-FORK_ONLY="tools/fork-sync.sh tools/upstream-mirror.sh .github/workflows/fork-sync.yml .github/workflows/upstream-mirror.yml .github/workflows/macos-icon-acceptance.yml"
+FORK_ONLY="tools/fork-sync.sh tools/upstream-mirror.sh .github/workflows/fork-sync.yml .github/workflows/upstream-mirror.yml .github/workflows/macos-icon-acceptance.yml .github/workflows/no-python.yml"
 
 die() {
     echo "upstream-mirror: $1" >&2

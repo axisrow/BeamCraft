@@ -1,0 +1,31 @@
+name: No Python
+
+# The project removed all Python tooling (fork #178, upstream PR #182) and the
+# last file went away in #167. New Python is an owner decision only, so this
+# gate keeps the tree free of tracked .py files: a red run here means Python
+# crept back in and has to be removed or explicitly allowed by the owner.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  no-python:
+    name: no tracked .py files
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Fail if any tracked .py file exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          hits="$(git ls-files '*.py')"
+          if [[ -n "$hits" ]]; then
+            echo "Tracked Python files found (no-Python project rule; #178, #167):" >&2
+            printf '%s\n' "$hits" >&2
+            exit 1
+          fi
