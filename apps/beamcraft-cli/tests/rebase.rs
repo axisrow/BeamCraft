@@ -681,3 +681,244 @@ fn reported_kinds_cover_lifecycle_and_read_write_dependencies() {
     assert_eq!(text(&diagnostics[0], "target"), id(10));
     assert_eq!(text(&diagnostics[0], "group"), "label");
 }
+
+fn thickness_of(report: &beamcraft_cli::plate::Inspection, n: usize) -> f64 {
+    report
+        .plates
+        .iter()
+        .find(|p| p.authored.id == ElementId::parse(&id(n)).unwrap())
+        .unwrap()
+        .authored
+        .thickness_mm
+}
+
+/// C04-02: the shape inputs are one atomic semantic group. A thickness conflict is a single
+/// report entry, and after the explicit resolution the shape stands whole on every side: the
+/// accepted thickness arrives in the draft through the ordinary rebase, and a fully renounced
+/// draft ships nothing instead of a half-applied or evidence-less revision.
+#[test]
+fn a_shape_conflict_is_one_atomic_entry_and_resolution_leaves_a_whole_shape() {
+    let f = Fixture::new(false);
+    f.update("b", 10, &["--thickness", "20"]);
+    f.update("a", 10, &["--thickness", "30"]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    // One conflicting pair, reported only on the atomic shape-input entry and its derived
+    // companion: never separately resolvable property conflicts.
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|d| text(d, "group"))
+            .collect::<Vec<_>>(),
+        vec!["shape_inputs", "derived"]
+    );
+    assert!(diagnostics.iter().all(|d| text(d, "kind") == "write_write"));
+    assert!(diagnostics.iter().all(|d| text(d, "target") == id(10)
+        && text(d, "draft_op") == draft.manifest().content().op().to_string()
+        && text(d, "accepted_op") == accepted.manifest().content().op().to_string()));
+    assert_eq!(pending(&status_of(&f)), diagnostics);
+
+    // Resolution by discard: the renounced-only draft packages and publishes nothing.
+    let draft_op = store(&f.path("b"))
+        .head()
+        .unwrap()
+        .unwrap()
+        .manifest()
+        .content()
+        .op()
+        .to_string();
+    f.ok(&[
+        "resolve-workspace",
+        "--workspace-dir",
+        f.s("b"),
+        "--op-id",
+        &id(600),
+        "--discard",
+        &draft_op,
+        "--expected-draft",
+        draft.revision().as_str(),
+    ]);
+    assert!(pending(&status_of(&f)).is_empty());
+    assert!(!f.path("b").join("conflicts.pending").exists());
+    // The renounced-only draft ships nothing: the stale base refuses publication before
+    // anything is written, and packaging a no-op changeset is refused for the same reason.
+    let publish = [
+        "publish-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ];
+    let (code, refused) = f.run(&publish);
+    assert_eq!(code, 2);
+    assert_eq!(text(&refused, "code"), "BASE_REVISION_MISMATCH");
+    let (code, packaged) = f.run(&[
+        "create-changeset",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+    ]);
+    assert_eq!(code, 2, "{packaged:?}");
+    assert_eq!(text(&packaged, "code"), "INVALID_ARGUMENT");
+
+    // The draft then reaches the accepted state through the ordinary rebase, whole: A's
+    // thickness with no remnant of B's renounced edit, and nothing published meanwhile.
+    let restored = f.head("b");
+    let (code, merged) = f.rebase(501, &accepted, &restored);
+    assert_eq!(code, 0, "{merged:?}");
+    assert_eq!(text(&merged, "outcome"), "workspace_rebased");
+    assert_eq!(
+        thickness_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        30.0
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        "Plate"
+    );
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        accepted.manifest_digest()
+    );
+    assert_eq!(
+        thickness_of(&plate::inspect(&store(&f.path("published"))).unwrap(), 10),
+        30.0
+    );
+}
+
+/// C04-07: the crash windows of a conflicted rebase. A kill before the planner writes nothing;
+/// a kill between the temporary record write and its rename leaves only a torn temporary that
+/// the next rebase replaces. Every fresh process reports byte-stably, and neither head nor the
+/// draft ever holds a half-applied plan.
+#[test]
+fn a_killed_conflict_rebase_leaves_no_half_state_and_replays_byte_stably() {
+    let f = Fixture::new(false);
+    f.update("b", 10, &["--name", "local name"]);
+    f.update("a", 10, &["--name", "remote name"]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let metadata = fs::read(f.path("b").join("workspace.json")).unwrap();
+    // A kill between the temporary write and the rename leaves torn bytes behind.
+    fs::write(
+        f.path("b").join("conflicts.pending.tmp"),
+        b"beamcraft-conflicts 1\nbase_revi",
+    )
+    .unwrap();
+
+    // A kill before the planner: the stale pin is refused and not even the temporary moves.
+    let (code, refused) = f.run(&[
+        "rebase-workspace",
+        "--store",
+        f.s("published"),
+        "--workspace-dir",
+        f.s("b"),
+        "--op-id",
+        &id(499),
+        "--expected-head",
+        accepted.revision().as_str(),
+        "--expected-draft",
+        &id(999),
+    ]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "BASE_REVISION_MISMATCH");
+    assert_eq!(
+        fs::read(f.path("b").join("conflicts.pending.tmp")).unwrap(),
+        b"beamcraft-conflicts 1\nbase_revi"
+    );
+
+    // The real rebase replaces the torn temporary with the canonical record.
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    assert!(!f.path("b").join("conflicts.pending.tmp").exists());
+    let record = fs::read(f.path("b").join("conflicts.pending")).unwrap();
+    assert!(record.starts_with(b"beamcraft-conflicts 1\n"));
+
+    // Every fresh process replays the same report and rewrites the same record bytes.
+    let (code, replay) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{replay:?}");
+    assert_eq!(replay, result);
+    assert_eq!(
+        fs::read(f.path("b").join("conflicts.pending")).unwrap(),
+        record
+    );
+    assert_eq!(
+        pending(&status_of(&f)),
+        result.get("diagnostics").unwrap().array().unwrap()
+    );
+
+    // Neither head moved, the metadata is untouched, and the draft holds its own whole state.
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        accepted.manifest_digest()
+    );
+    assert_eq!(
+        fs::read(f.path("b").join("workspace.json")).unwrap(),
+        metadata
+    );
+    assert_eq!(
+        name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10),
+        "local name"
+    );
+}
+
+/// C04-09: the report is complete at the 256-conflict cap and refused one pair above; a report
+/// is never silently truncated and an over-budget plan writes nothing.
+#[test]
+fn the_conflict_report_is_complete_at_the_cap_and_refused_one_above() {
+    let f = Fixture::new(false);
+    for i in 0..16 {
+        let label = format!("local-{i}");
+        f.update("b", 10, &["--name", &label]);
+    }
+    // One publication per accepted revision: sixteen intervening accepted operations.
+    for i in 0..16 {
+        let label = format!("remote-{i}");
+        f.update("a", 10, &["--name", &label]);
+        f.publish("a");
+    }
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    let (code, result) = f.rebase(500, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    // 16 draft operations against 16 accepted operations on one entry: the complete report.
+    let diagnostics = result.get("diagnostics").unwrap().array().unwrap();
+    assert_eq!(diagnostics.len(), 256);
+    let record = fs::read(f.path("b").join("conflicts.pending")).unwrap();
+    assert_eq!(
+        record
+            .split(|b| *b == b'\n')
+            .filter(|line| line.starts_with(b"conflict="))
+            .count(),
+        256
+    );
+    assert_eq!(pending(&status_of(&f)), diagnostics);
+
+    // One more accepted write puts the plan over the budget: a typed refusal, and the last
+    // complete report stands unchanged instead of a truncated one.
+    f.update("a", 10, &["--name", "remote-16"]);
+    f.publish("a");
+    let over = f.head("published");
+    let (code, over_budget) = f.rebase(501, &over, &draft);
+    assert_eq!(code, 2, "{over_budget:?}");
+    assert_eq!(text(&over_budget, "code"), "LIMIT_EXCEEDED");
+    assert_eq!(
+        fs::read(f.path("b").join("conflicts.pending")).unwrap(),
+        record
+    );
+    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(
+        f.head("published").manifest_digest(),
+        over.manifest_digest()
+    );
+    assert_eq!(pending(&status_of(&f)), diagnostics);
+}
