@@ -229,7 +229,13 @@ pub(crate) fn store(
 
 pub(crate) struct SourceInterval {
     pub(crate) head: RevisionInfo,
+    /// Union of the retained modelling dependencies: renounced work is excluded. This drives
+    /// planning, materialization and publication evidence.
     pub(crate) footprint: Option<Footprint>,
+    /// Union over the complete raw interval including renounced work. A rebase receipt
+    /// describes its whole source interval with this, so it stays nonempty even when every
+    /// command was renounced.
+    pub(crate) raw_footprint: Option<Footprint>,
     pub(crate) commands: Vec<beamcraft_engine::rebase::Operation>,
 }
 
@@ -249,6 +255,7 @@ pub(crate) fn aggregate(
     let mut previous = after;
     let mut head: Option<RevisionInfo> = None;
     let mut combined = Footprint::default();
+    let mut raw = Footprint::default();
     let mut complete = true;
     let mut raw_entries = 0usize;
     let mut commands = Vec::with_capacity(operations.len());
@@ -308,7 +315,7 @@ pub(crate) fn aggregate(
                         || receipt.old_meta.workspace_id != *content.workspace()
                         || receipt.project != *content.project()
                         || receipt.schema != content.schema()
-                        || receipt.footprint != combined
+                        || receipt.footprint != raw
                         || info.manifest().index().is_none()
                         || last_rebase.as_ref().is_some_and(|(boundary, accepted)| {
                             receipt.old_meta.rebase_sequence != *boundary
@@ -324,6 +331,44 @@ pub(crate) fn aggregate(
                     last_rebase = Some((next, receipt.accepted));
                     // An administrative receipt retains the earlier commands; it is not a second
                     // copy of their modelling work and consumes no additional footprint budget.
+                    previous = next;
+                    head = Some(info);
+                    continue;
+                }
+                if bytes.starts_with(b"beamcraft-workspace-discard ") {
+                    let receipt = crate::workspace::resolve::DiscardReceipt::decode(&bytes)
+                        .map_err(|_| integrity("discard receipt is malformed"))?;
+                    let original = head
+                        .as_ref()
+                        .ok_or_else(|| integrity("discard has no source operations"))?;
+                    if receipt.op_id != operation.op_id
+                        || receipt.head
+                            != crate::workspace::rebase_receipt::RevisionPin::from_info(original)
+                        || receipt.workspace != *content.workspace()
+                        || receipt.project != *content.project()
+                        || receipt.schema != content.schema()
+                    {
+                        return Err(integrity(
+                            "discard receipt disagrees with its verified source interval",
+                        ));
+                    }
+                    let kept = commands
+                        .iter()
+                        .rposition(|command: &beamcraft_engine::rebase::Operation| {
+                            command.id == receipt.discarded
+                        })
+                        .ok_or_else(|| {
+                            integrity("discard receipt names no retained source operation")
+                        })?;
+                    commands.truncate(kept);
+                    combined = commands
+                        .iter()
+                        .try_fold(Footprint::default(), |union, command| {
+                            union.union(command.footprint.clone())
+                        })?;
+                    // An administrative resolution is not a second modelling command: the
+                    // renounced operations leave the retained set and the receipt itself
+                    // carries no footprint.
                     previous = next;
                     head = Some(info);
                     continue;
@@ -345,7 +390,8 @@ pub(crate) fn aggregate(
                     id: captured.op_id,
                     footprint: captured.footprint.clone(),
                 });
-                combined = combined.union(captured.footprint)?;
+                combined = combined.union(captured.footprint.clone())?;
+                raw = raw.union(captured.footprint)?;
             }
         }
         previous = next;
@@ -354,6 +400,7 @@ pub(crate) fn aggregate(
     Ok(SourceInterval {
         head: head.ok_or_else(|| integrity("source interval has no head"))?,
         footprint: complete.then_some(combined),
+        raw_footprint: complete.then_some(raw),
         commands,
     })
 }

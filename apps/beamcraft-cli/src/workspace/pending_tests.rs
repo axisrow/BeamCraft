@@ -125,7 +125,7 @@ impl Fixture {
             evidence::interval(&self.draft, old_meta.synced_sequence, draft.sequence()).unwrap();
         let footprint = evidence::aggregate(&self.draft, old_meta.synced_sequence, &operations)
             .unwrap()
-            .footprint
+            .raw_footprint
             .unwrap();
         RebaseReceipt {
             op_id: OpId::parse(id(n).as_str()).unwrap(),

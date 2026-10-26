@@ -63,7 +63,7 @@ pub(super) fn verify_source(
         &receipt.operations,
     )?;
     if source.head.manifest_digest() != receipt.draft.manifest
-        || source.footprint.as_ref() != Some(&receipt.footprint)
+        || source.raw_footprint.as_ref() != Some(&receipt.footprint)
     {
         return Err(bad());
     }

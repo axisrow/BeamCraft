@@ -7,6 +7,7 @@ pub(super) const COMMANDS: &[&str] = &[
     "create-workspace",
     "inspect-workspace",
     "publish-workspace",
+    "resolve-workspace",
     "undo-workspace",
     "redo-workspace",
     "inspect-workspace-history",
@@ -21,7 +22,12 @@ pub(super) const HELP: &str = concat!(
     "--store PUBLISHED --workspace-dir DIR (the published revision id is the draft head's id, ",
     "so a retry is the same request; fast-forward only: BASE_REVISION_MISMATCH when the ",
     "published head moved, no merge; DEPENDENCY_CONFLICT while unresolved semantic conflicts ",
-    "stand, naming them in diagnostics)",
+    "stand, naming them in diagnostics); resolve-workspace --workspace-dir DIR --op-id UUID ",
+    "--discard UUID --expected-draft UUID (explicitly renounce one named own unsent operation ",
+    "and every unsent operation after it: the resolution restores the state before it and ",
+    "records a durable receipt with its own identity; later rebase and publication exclude the ",
+    "renounced work and keep the accepted side untouched; repeating the same identity replays ",
+    "the recorded outcome, another payload under it is OP_ID_REUSE)",
 );
 
 pub(super) const UNDO: &str = concat!(

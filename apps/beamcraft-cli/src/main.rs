@@ -32,6 +32,7 @@ mod plate_cmd;
 mod project_cmd;
 mod rebase_cmd;
 mod reference_cmd;
+mod resolve_cmd;
 mod view;
 mod view_export;
 mod weld_cmd;
@@ -105,6 +106,8 @@ fn main() -> std::process::ExitCode {
         assembly_cmd::execute(&args)
     } else if args.first().is_some_and(|c| c == "rebase-workspace") {
         rebase_cmd::execute(&args)
+    } else if args.first().is_some_and(|c| c == "resolve-workspace") {
+        resolve_cmd::execute(&args)
     } else if args.first().is_some_and(|c| {
         c == "create-changeset" || c == "inspect-changeset" || c == "apply-changeset"
     }) {

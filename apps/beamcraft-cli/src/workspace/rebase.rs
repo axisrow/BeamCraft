@@ -272,36 +272,58 @@ pub fn rebase_workspace(
         )?;
         return Ok(RebaseResult::Conflicted(conflicts));
     }
-    let candidate = materializer::prepare(
-        &opened(&base)?,
-        &opened(&draft)?,
-        &opened(&accepted)?,
-        &evidence::dependencies(&footprint),
-        &EditTargets {
-            authored: plate::AUTHORED_LAYER.into(),
-            derived: plate::DERIVED_LAYER.into(),
-        },
-        &plate::control(),
-    )?;
-    let mut reader = Reader::default();
-    let control = plate::control();
-    let (view, _) = reader.open_validated(candidate.clone(), schema_identity()?, &control)?;
-    let decoded = plate::decode(&reader, &view, &control)?;
-    let (plates, members) = plate::evaluate_decoded(&decoded)?;
-    plate::verify_derived(&plates, &members, &decoded, true)?;
-    let mut entries = Vec::with_capacity(candidate.assets.len());
-    for asset in candidate.assets {
-        workspace
-            .blobs()
-            .publish(&asset.bytes)
-            .map_err(|_| integrity("candidate blob could not be stored"))?;
-        let role = a
-            .entries()
-            .iter()
-            .find(|e| e.name() == asset.name)
-            .ok_or_else(|| integrity("candidate layer has no accepted role"))?
-            .role();
-        entries.push(LayerEntry::from_bytes(&asset.name, role, &asset.bytes)?);
+    // Every unsent modelling operation can be renounced through a recorded resolution; the
+    // draft delta over its base is then empty and the merged candidate is the accepted
+    // snapshot unchanged.
+    let candidate = if source.commands.is_empty() {
+        None
+    } else {
+        let candidate = materializer::prepare(
+            &opened(&base)?,
+            &opened(&draft)?,
+            &opened(&accepted)?,
+            &evidence::dependencies(&footprint),
+            &EditTargets {
+                authored: plate::AUTHORED_LAYER.into(),
+                derived: plate::DERIVED_LAYER.into(),
+            },
+            &plate::control(),
+        )?;
+        let mut reader = Reader::default();
+        let control = plate::control();
+        let (view, _) = reader.open_validated(candidate.clone(), schema_identity()?, &control)?;
+        let decoded = plate::decode(&reader, &view, &control)?;
+        let (plates, members) = plate::evaluate_decoded(&decoded)?;
+        plate::verify_derived(&plates, &members, &decoded, true)?;
+        Some(candidate)
+    };
+    let mut entries = Vec::new();
+    match candidate {
+        Some(candidate) => {
+            for asset in candidate.assets {
+                workspace
+                    .blobs()
+                    .publish(&asset.bytes)
+                    .map_err(|_| integrity("candidate blob could not be stored"))?;
+                let role = a
+                    .entries()
+                    .iter()
+                    .find(|e| e.name() == asset.name)
+                    .ok_or_else(|| integrity("candidate layer has no accepted role"))?
+                    .role();
+                entries.push(LayerEntry::from_bytes(&asset.name, role, &asset.bytes)?);
+            }
+        }
+        None => {
+            for entry in a.entries() {
+                let bytes = accepted.layer_bytes(entry.name())?;
+                workspace
+                    .blobs()
+                    .publish(&bytes)
+                    .map_err(|_| integrity("candidate blob could not be stored"))?;
+                entries.push(LayerEntry::from_bytes(entry.name(), entry.role(), &bytes)?);
+            }
+        }
     }
     let receipt = RebaseReceipt {
         op_id: request.op_id,
@@ -312,7 +334,14 @@ pub fn rebase_workspace(
         draft: draft_pin,
         accepted: accepted_pin,
         operations,
-        footprint,
+        // The receipt describes the whole source interval; renounced work is excluded from
+        // the planning and materialization footprint, not from the receipt.
+        footprint: source.raw_footprint.ok_or_else(|| {
+            PlateError::new(
+                ErrorCode::DependencyUnavailable,
+                "draft has no complete command evidence",
+            )
+        })?,
     };
     let next =
         RevisionDraft {
