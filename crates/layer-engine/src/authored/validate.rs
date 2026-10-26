@@ -597,6 +597,7 @@ pub(super) fn snapshot(
         ("/World/Steel/Assemblies", "group"),
         ("/World/Steel/Connections", "group"),
         ("/World/Levels", "group"),
+        ("/World/Grids", "group"),
         ("/World/References", "group"),
     ] {
         if let Some(p) = prims
@@ -649,7 +650,7 @@ pub(super) fn snapshot(
         }
         if !matches!(
             text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
+            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
         ) {
             continue;
         }
@@ -733,6 +734,12 @@ pub(super) fn snapshot(
             }
             // An assembly has no shape inputs and no material of its own; a connection is a weld
             // (A06) or a bolt group (A05) with its own properties and no material either.
+            "grid" => {
+                grid::read(p)?;
+                if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
+                    return Err(invalid());
+                }
+            }
             "assembly" | "connection" | "level" => {
                 if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
                     return Err(invalid());
@@ -772,6 +779,7 @@ pub(super) fn snapshot(
             return Err(unsupported());
         }
     }
+    grid::read_grids(prims)?;
     part_of(prims)?;
     connects(prims)?;
     level_links(prims)?;
@@ -793,7 +801,7 @@ pub(super) fn snapshot(
         // authored or loaded.
         if matches!(
             supported_kind(element),
-            Some("assembly" | "connection" | "level")
+            Some("assembly" | "connection" | "level" | "grid")
         ) {
             return Err(unsupported());
         }
@@ -888,6 +896,7 @@ pub(super) fn snapshot(
             "A06-V01:weld-properties-and-connects-two-distinct-parts",
             "A05-V01:bolt-properties-and-connects-two-distinct-parts",
             "D2-V01:level-elevation-and-level-kinds-cardinality-and-dangling",
+            "T01-V01:grid-arrays-expression-frame-and-project-axis-identities",
         ],
         prims: prims.len(),
     })
@@ -912,7 +921,7 @@ fn supported_kind(p: &Prim) -> Option<&str> {
     token("bim:elementKind").filter(|k| {
         matches!(
             *k,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
+            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
         )
     })
 }
@@ -1407,6 +1416,7 @@ pub(super) fn changes(
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
                     }
+                    Change::Grid { .. } => kind == "grid",
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
@@ -1428,7 +1438,13 @@ pub(super) fn changes(
                     Change::Delete { .. } => {
                         matches!(
                             kind,
-                            "plate" | "beam" | "column" | "assembly" | "connection" | "level"
+                            "plate"
+                                | "beam"
+                                | "column"
+                                | "assembly"
+                                | "connection"
+                                | "level"
+                                | "grid"
                         )
                     }
                     Change::PartOf { .. } => {
@@ -1471,6 +1487,10 @@ pub(super) fn changes(
             // mark of the element and with nothing derived.
             Change::Mark { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
             Change::Label { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
+            Change::Grid { .. } => (
+                &[Group::Lifecycle, Group::ShapeInputs, Group::Placement],
+                &[Group::ShapeInputs],
+            ),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
                 &[Group::Material, Group::Relationship, Group::Derived],
@@ -1738,6 +1758,16 @@ pub(super) fn changes(
                             });
                         }
                     }
+                    Shape::Grid(g) => {
+                        grid::validate_record(g)?;
+                        if e.id != g.id.to_string()
+                            || e.name != g.name
+                            || e.material.is_some()
+                            || e.placement != grid::placement(g)
+                        {
+                            return Err(invalid());
+                        }
+                    }
                     Shape::Level { elevation_mm } => {
                         if e.material.is_some()
                             || e.placement.translation_mm != [0.0; 3]
@@ -1753,6 +1783,26 @@ pub(super) fn changes(
                         identity: d.to_string(),
                         group: Group::Relationship,
                     });
+                }
+            }
+            Change::Grid { id, grid: g } => {
+                grid::validate_record(g)?;
+                let existing = prims
+                    .iter()
+                    .find(|p| p.element_id.as_deref() == Some(id))
+                    .ok_or_else(invalid)?;
+                let before = grid::read(existing)?;
+                let mode = |f: &beamcraft_model::grid::GridFamily| {
+                    matches!(f, beamcraft_model::grid::GridFamily::Regular(_))
+                };
+                if g.id != before.id
+                    || g.name != before.name
+                    || g.translation_mm != before.translation_mm
+                    || g.orientation_zw != before.orientation_zw
+                    || mode(&g.u) != mode(&before.u)
+                    || mode(&g.v) != mode(&before.v)
+                {
+                    return Err(unsupported());
                 }
             }
             Change::Label { name, .. } => label(name)?,
@@ -1875,8 +1925,10 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(b.direction_mm),
                 ),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
+                Shape::Grid(g) => grid::validate_record(g),
             }
         }
+        Change::Grid { grid: g, .. } => grid::validate_record(g),
         Change::AttachReference(r) => finite(
             r.placement
                 .translation_mm

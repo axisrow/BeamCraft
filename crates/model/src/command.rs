@@ -12,6 +12,7 @@
 
 use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
+pub use crate::grid::CreateGrid;
 use crate::id::ElementId;
 use crate::limits::{
     BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,

@@ -121,3 +121,7 @@ inputs cannot reach it through `ViewSnapshot::build`.
 inspection with every structural failure and cap) and `tests/view_snapshot.rs`, which uses the
 real kernel for determinism, bounds, deduplication, settings, tables, paging, deltas, staleness,
 selection and a negative test for each error and cap, including the 65,536-element hard cap.
+
+T01.1 project-grid admission is in `grid`: regular expressions and labels are model values;
+the engine checks project-wide identity absence and capacity before the revision adapter writes
+explicit USD grid records. See [T01.1](../../docs/design/t01-1-project-grids.md).

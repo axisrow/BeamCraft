@@ -552,6 +552,7 @@ fn create(
         Shape::Assembly => "assembly",
         Shape::Weld(_) | Shape::Bolt(_) => "connection",
         Shape::Level { .. } => "level",
+        Shape::Grid(_) => "grid",
         Shape::Plate { .. } => "plate",
         Shape::Member {
             kind: MemberKind::Beam,
@@ -720,6 +721,7 @@ fn create(
                 .collect::<Result<Vec<_>, _>>()?;
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
+        Shape::Grid(g) => grid::author(data, &p, g)?,
         Shape::Level { elevation_mm } => attr(
             data,
             &p,
@@ -973,6 +975,7 @@ pub(super) fn apply(
         let (id, _) = c.key();
         let p = change_path(id, input, prims)?;
         match c {
+            Change::Grid { grid: g, .. } => grid::author(&mut authored, &p, g)?,
             Change::Label { name, .. } => {
                 attr(
                     &mut authored,
@@ -1267,6 +1270,16 @@ fn capture(
                         }
                     }
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
+                    Shape::Grid(_) => {
+                        for &(name, ty) in grid::FIELDS {
+                            add(name, ty, 0);
+                        }
+                    }
+                }
+            }
+            Change::Grid { .. } => {
+                for &(name, ty) in grid::FIELDS {
+                    add(name, ty, 0);
                 }
             }
             Change::AttachReference(r) => {

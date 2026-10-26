@@ -50,11 +50,13 @@ pub enum ElementKind {
     Connection,
     /// Read-only reference to foreign content.
     Reference,
+    /// Shared plan grid with no engineering body.
+    Grid,
 }
 
 impl ElementKind {
     /// Every kind, in registry order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Plate,
         Self::Beam,
         Self::Column,
@@ -68,6 +70,7 @@ impl ElementKind {
         Self::Assembly,
         Self::Connection,
         Self::Reference,
+        Self::Grid,
     ];
 
     /// The lowercase registry token stored in `bim:elementKind`.
@@ -86,6 +89,7 @@ impl ElementKind {
             Self::Assembly => "assembly",
             Self::Connection => "connection",
             Self::Reference => "reference",
+            Self::Grid => "grid",
         }
     }
 

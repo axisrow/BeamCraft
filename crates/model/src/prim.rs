@@ -14,6 +14,8 @@ pub enum ElementCategory {
     Assembly,
     /// Weld or bolt group.
     Connection,
+    /// Shared grid.
+    Grid,
     /// Shared level.
     Level,
     /// Read-only foreign model wrapper.
@@ -22,11 +24,12 @@ pub enum ElementCategory {
 
 impl ElementCategory {
     /// Every supported element category.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Part,
         Self::Assembly,
         Self::Connection,
         Self::Level,
+        Self::Grid,
         Self::Reference,
     ];
 
@@ -37,6 +40,7 @@ impl ElementCategory {
             "assembly" => Some(Self::Assembly),
             "connection" => Some(Self::Connection),
             "level" => Some(Self::Level),
+            "grid" => Some(Self::Grid),
             "reference" => Some(Self::Reference),
             _ => None,
         }
@@ -49,6 +53,7 @@ impl ElementCategory {
             Self::Assembly => "/World/Steel/Assemblies/ASM_",
             Self::Connection => "/World/Steel/Connections/CON_",
             Self::Level => "/World/Levels/LVL_",
+            Self::Grid => "/World/Grids/GRD_",
             Self::Reference => "/World/References/REF_",
         }
     }

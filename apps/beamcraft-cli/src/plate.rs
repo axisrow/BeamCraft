@@ -388,6 +388,7 @@ pub(crate) struct Decoded {
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
+    pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
     /// Any geometry subtree or derived-value opinion, including malformed/non-mesh prims.
@@ -766,6 +767,7 @@ pub(crate) fn decode(
         other_elements: other,
         definitions,
         levels,
+        grids: beamcraft_layer_engine::authored::grid::read_grids(&prims)?,
         elements,
         derived_elements,
         reference_scene: crate::reference_view::scene_elements(&prims),
@@ -1773,6 +1775,8 @@ pub struct Inspection {
     pub project_record: Option<String>,
     /// D2: the levels of the revision and the level of every plate, beam and column.
     pub levels: Levels,
+    /// T01: validated project grids, without engineering bodies.
+    pub grids: Vec<beamcraft_model::grid::Grid>,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
 }
@@ -1899,6 +1903,7 @@ pub(crate) fn inspect_manifest_assets(
         reference_view_error,
         project_record: record,
         levels: decoded.levels,
+        grids: decoded.grids,
         elements: decoded.elements,
     })
 }

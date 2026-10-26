@@ -6,6 +6,7 @@
 
 mod derive;
 mod edit;
+pub mod grid;
 mod guard;
 pub mod rebase;
 mod reference;
@@ -47,6 +48,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
     "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
+    "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
     "numbering=approved mark of a plate|beam|column|assembly (A09);steel:numbering:series=string(<=16 of A-Z a-z 0-9 _ -);",
@@ -231,6 +233,8 @@ pub enum Shape {
     /// `bim:connects` record towards two distinct parts. Like a weld it has no material, no
     /// derived body and the identity placement in this slice.
     Bolt(Bolt),
+    /// T01 grid, with no authored engineering body.
+    Grid(beamcraft_model::grid::Grid),
     /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
     /// derived body. Plates, beams and columns are assigned to it by [`Change::Level`]. Its
     /// placement must be the identity: the elevation is a value, never a pose.
@@ -245,7 +249,9 @@ impl Shape {
     pub(crate) fn cut(&self) -> Option<&PlaneCut> {
         match self {
             Self::Plate { cut, .. } | Self::Member { cut, .. } => cut.as_ref(),
-            Self::Assembly | Self::Weld(_) | Self::Bolt(_) | Self::Level { .. } => None,
+            Self::Assembly | Self::Weld(_) | Self::Bolt(_) | Self::Grid(_) | Self::Level { .. } => {
+                None
+            }
         }
     }
 }
@@ -412,6 +418,13 @@ pub struct Mesh {
 pub enum Change {
     /// Author a new complete element.
     Create(Element),
+    /// Replace validated grid-family attributes without changing its frame or identity.
+    Grid {
+        /// Existing GridId.
+        id: String,
+        /// Complete replacement record from the grid engine.
+        grid: beamcraft_model::grid::Grid,
+    },
     /// Update only the user label.
     Label {
         /// Full target UUIDv7.
@@ -521,6 +534,7 @@ impl Change {
             Self::Create(e) => (&e.id, "lifecycle"),
             Self::Delete { id } => (id, "lifecycle"),
             Self::Label { id, .. } => (id, "bim:name"),
+            Self::Grid { id, .. } => (id, "bim:grid"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
@@ -925,6 +939,7 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Assembly => ElementCategory::Assembly,
         Shape::Weld(_) | Shape::Bolt(_) => ElementCategory::Connection,
         Shape::Level { .. } => ElementCategory::Level,
+        Shape::Grid(_) => ElementCategory::Grid,
         Shape::Plate { .. } | Shape::Member { .. } => ElementCategory::Part,
     }
 }

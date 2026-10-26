@@ -17,6 +17,7 @@ pub mod delete;
 pub mod drawing;
 pub mod edit;
 pub mod export;
+pub mod grid;
 pub mod history;
 pub mod history_compact;
 pub mod level;

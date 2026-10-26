@@ -187,6 +187,7 @@ const DELETE_OPTIONS: &[&str] = &[
 ];
 
 const COPY_OPTIONS: &[&str] = &[
+    "--new-axis-ids",
     "--store",
     "--id",
     "--name",
@@ -1052,6 +1053,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     DeletedKind::Weld => "weld",
                     DeletedKind::Bolt => "bolt",
                     DeletedKind::Level => "level",
+                    DeletedKind::Grid => "grid",
                 })
             }),
         ),
@@ -1065,6 +1067,20 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
 }
 
 fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let source_id = ElementId::parse(
+        options
+            .get("--id")
+            .ok_or_else(|| invalid("--id is required"))?,
+    )
+    .map_err(id_error)?;
+    if beamcraft_cli::grid::grids(store)?
+        .iter()
+        .any(|g| g.id == source_id)
+        || options.contains_key("--new-axis-ids")
+    {
+        return crate::grid_cmd::copy_command(store, options);
+    }
+
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
@@ -2359,6 +2375,17 @@ pub(crate) fn inspection_json(inspection: &Inspection, only: Option<ElementId>) 
             ),
         ),
         ("member_count", Json::uint(inspection.members.len() as u64)),
+        (
+            "grids",
+            crate::grid_cmd::views_json(
+                &inspection
+                    .grids
+                    .iter()
+                    .filter(|g| only.is_none_or(|id| id == g.id))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )?,
+        ),
         (
             "other_element_count",
             Json::uint(inspection.other_elements as u64),

@@ -15,6 +15,7 @@ mod delete;
 mod drawing;
 mod edit;
 mod export;
+mod grid;
 mod history;
 mod level;
 mod library;
@@ -50,6 +51,7 @@ const COMMAND_GROUPS: &[&[&str]] = &[
     weld::COMMANDS,
     bolt::COMMANDS,
     level::COMMANDS,
+    grid::COMMANDS,
     export::COMMANDS,
     numbering::COMMANDS,
     changeset::COMMANDS,
@@ -81,6 +83,8 @@ const SECTIONS: &[&str] = &[
     weld::HELP,
     bolt::HELP,
     level::HELP,
+    grid::HELP,
+    grid::LINES,
     export::HELP,
     numbering::PREVIEW,
     numbering::APPROVAL,
