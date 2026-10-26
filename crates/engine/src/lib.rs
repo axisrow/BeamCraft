@@ -13,6 +13,7 @@
 pub mod assembly;
 pub mod bolt;
 pub mod bom;
+pub mod class_palette;
 pub mod command;
 pub mod coordinate;
 pub mod copy;

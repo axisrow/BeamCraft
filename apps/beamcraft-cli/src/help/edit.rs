@@ -6,7 +6,7 @@
 pub(super) const COMMANDS: &[&str] = &["update-element", "cut-by-plane"];
 
 pub(super) const HELP: &str = concat!(
-    "Update (P04, P08): update-element --store ROOT --id UUID [--name TEXT] ",
+    "Update (P04, P08): update-element --store ROOT --id UUID [--name TEXT] [--class INT32] ",
     "[--material-digest SHA256|none] [--thickness MM] [--translation X,Y,Z] ",
     "[--orientation-xyzw X,Y,Z,W|none] [--level UUID|none] [--op-id UUID] [--revision-id ",
     "UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID] (typed patch; a rename ",

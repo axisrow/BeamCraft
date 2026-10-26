@@ -577,6 +577,9 @@ fn create(
     ] {
         attr(data, &p, name, ty, v)?;
     }
+    if matches!(e.shape, Shape::Plate { .. } | Shape::Member { .. }) {
+        attr(data, &p, "steel:class", "int", sdf::Value::Int(0))?;
+    }
     match &e.shape {
         Shape::Plate {
             contour_mm,
@@ -1062,6 +1065,13 @@ pub(super) fn apply(
         let p = change_path(id, input, prims)?;
         match c {
             Change::Grid { grid: g, .. } => grid::author(&mut authored, &p, g)?,
+            Change::PartClass { class, .. } => attr(
+                &mut authored,
+                &p,
+                "steel:class",
+                "int",
+                sdf::Value::Int(*class),
+            )?,
             Change::Label { name, .. } => {
                 attr(
                     &mut authored,
@@ -1371,6 +1381,7 @@ fn capture(
                 for (name, ty) in [
                     ("bim:id", "string"),
                     ("bim:name", "string"),
+                    ("steel:class", "int"),
                     ("bim:elementKind", "token"),
                     ("bim:geometryMode", "token"),
                     ("bim:schemaVersion", "string"),
@@ -1465,6 +1476,7 @@ fn capture(
                     add(name, ty, 2);
                 }
             }
+            Change::PartClass { .. } => add("steel:class", "int", 0),
             Change::Label { .. } => add("bim:name", "string", 0),
             Change::HoleRecords { .. } => {
                 add("steel:hole:pointsMm", "double3[]", 0);
@@ -1476,6 +1488,7 @@ fn capture(
                 for (name, ty) in [
                     ("bim:id", "string"),
                     ("bim:name", "string"),
+                    ("steel:class", "int"),
                     ("bim:elementKind", "token"),
                     ("bim:geometryMode", "token"),
                     ("bim:schemaVersion", "string"),

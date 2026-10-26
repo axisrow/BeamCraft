@@ -129,6 +129,7 @@ mod tests {
         AuthoredPlate {
             id: id(5),
             name: "Plate".into(),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],

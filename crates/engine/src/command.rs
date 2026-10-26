@@ -99,6 +99,8 @@ pub struct AuthoredPlate {
     pub id: ElementId,
     /// Label.
     pub name: String,
+    /// Authored integer part class (P15); zero is the default.
+    pub class: i32,
     /// Element-local contour as submitted, in millimetres.
     pub contour_points_mm: Vec<[f64; 3]>,
     /// Thickness in millimetres.
@@ -123,6 +125,7 @@ impl AuthoredPlate {
         Self {
             id: command.new_id,
             name: command.name.clone(),
+            class: command.class,
             contour_points_mm: command.contour_points_mm.clone(),
             thickness_mm: command.thickness_mm,
             placement: command.placement,
@@ -140,6 +143,7 @@ impl AuthoredPlate {
         CreatePlate {
             new_id: self.id,
             name: self.name.clone(),
+            class: self.class,
             contour_points_mm: self.contour_points_mm.clone(),
             thickness_mm: self.thickness_mm,
             placement: self.placement,
@@ -865,6 +869,7 @@ mod tests {
         CreatePlate {
             new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
             name: "Synthetic plate".into(),
+            class: 0,
             contour_points_mm: contour,
             thickness_mm: thickness,
             placement: Placement::IDENTITY,
@@ -1568,6 +1573,7 @@ mod tests {
             let authored = AuthoredPlate {
                 id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
                 name: "x".into(),
+                class: 0,
                 contour_points_mm: contour,
                 thickness_mm: 10.0,
                 placement: Placement::IDENTITY,

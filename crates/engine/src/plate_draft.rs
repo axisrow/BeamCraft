@@ -231,6 +231,7 @@ mod tests {
         AuthoredPlate {
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             name: format!("Plate {n}"),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],

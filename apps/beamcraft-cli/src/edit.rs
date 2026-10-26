@@ -267,7 +267,7 @@ pub fn update_element(
 
     let mut footprint = Footprint::for_update(
         command.target_id,
-        patch_effect.name,
+        patch_effect.name || patch_effect.class,
         patch_effect.material,
         patch_effect.shape,
         patch_effect.placement || patch_effect.orientation,
@@ -290,6 +290,12 @@ pub fn update_element(
     )?;
     let id_text = command.target_id.to_string();
     let mut changes = Vec::new();
+    if let Some(class) = command.patch.class {
+        changes.push(Change::PartClass {
+            id: id_text.clone(),
+            class,
+        });
+    }
     if let Some(name) = &command.patch.name {
         changes.push(Change::Label {
             id: id_text.clone(),

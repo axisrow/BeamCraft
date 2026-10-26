@@ -33,6 +33,8 @@ use beamcraft_model::error::ErrorCode;
 pub struct UpdateEffect {
     /// The label changes.
     pub name: bool,
+    /// The authored part class changes without changing engineering data.
+    pub class: bool,
     /// The material reference changes (including its removal).
     pub material: bool,
     /// A shape input changes, so the body is rebuilt.
@@ -50,6 +52,7 @@ pub struct UpdateEffect {
 pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
     UpdateEffect {
         name: patch.name.is_some(),
+        class: patch.class.is_some(),
         material: patch.material.is_some(),
         shape: patch.thickness_mm.is_some(),
         placement: patch.translation_mm.is_some(),
@@ -66,6 +69,9 @@ pub fn patch_plate(
     let mut next = plate.clone();
     if let Some(name) = &patch.name {
         next.name.clone_from(name);
+    }
+    if let Some(class) = patch.class {
+        next.class = class;
     }
     if let Some(material) = patch.material {
         next.material = material;
@@ -93,6 +99,9 @@ pub fn patch_member(
     let mut next = member.clone();
     if let Some(name) = &patch.name {
         next.name.clone_from(name);
+    }
+    if let Some(class) = patch.class {
+        next.class = class;
     }
     if let Some(material) = patch.material {
         next.material = material;
@@ -128,6 +137,7 @@ mod tests {
         AuthoredPlate {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
             name: "Plate".into(),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -152,6 +162,7 @@ mod tests {
         assert_eq!(
             effect(&rename),
             UpdateEffect {
+                class: false,
                 name: true,
                 material: false,
                 shape: false,
@@ -335,6 +346,7 @@ mod tests {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),
+            class: 0,
             axis_points_mm: [[0.0; 3], [1000.0, 0.0, 0.0]],
             profile: Sha256::digest(b"profile").unwrap(),
             roll_rad: None,
@@ -351,6 +363,7 @@ mod tests {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),
+            class: 0,
             axis_points_mm: [[0.0; 3], [1000.0, 0.0, 0.0]],
             profile,
             roll_rad: None,

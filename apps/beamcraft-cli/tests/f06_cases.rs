@@ -85,6 +85,7 @@ fn command(input: &Json) -> CreatePlate {
     CreatePlate {
         new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
         name: "F06 plate".into(),
+        class: 0,
         contour_points_mm: body
             .get("contour_points_mm")
             .unwrap()

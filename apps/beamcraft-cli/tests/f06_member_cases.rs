@@ -99,6 +99,7 @@ fn member(
         new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000001102").unwrap(),
         kind: MemberKind::Beam,
         name: "F06 K2 member".into(),
+        class: 0,
         axis_points_mm: body
             .get("axis_points_mm")
             .unwrap()
@@ -291,6 +292,7 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
                 &CreatePlate {
                     new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000001101").unwrap(),
                     name: "F06 thin plate".into(),
+                    class: 0,
                     contour_points_mm: plate
                         .get("contour_points_mm")
                         .unwrap()

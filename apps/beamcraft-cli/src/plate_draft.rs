@@ -134,23 +134,29 @@ pub fn create_plate_draft(
             actor: request.actor.to_string(),
             schema,
             resources: Vec::new(),
-            changes: vec![Change::Create(Element {
-                id: authored.id.to_string(),
-                name: authored.name.clone(),
-                shape: Shape::Plate {
-                    contour_mm: authored.contour_points_mm.clone(),
-                    thickness_mm: authored.thickness_mm,
-                    holes: Vec::new(),
-                    // An unsupported plate is never evaluated, so it holds no records.
-                    hole_records: Vec::new(),
-                    cuts: Vec::new(),
+            changes: vec![
+                Change::PartClass {
+                    id: authored.id.to_string(),
+                    class: authored.class,
                 },
-                placement: Placement {
-                    translation_mm: authored.placement.translation_mm,
-                    orientation_xyzw: authored.placement.orientation_xyzw,
-                },
-                material: authored.material,
-            })],
+                Change::Create(Element {
+                    id: authored.id.to_string(),
+                    name: authored.name.clone(),
+                    shape: Shape::Plate {
+                        contour_mm: authored.contour_points_mm.clone(),
+                        thickness_mm: authored.thickness_mm,
+                        holes: Vec::new(),
+                        // An unsupported plate is never evaluated, so it holds no records.
+                        hole_records: Vec::new(),
+                        cuts: Vec::new(),
+                    },
+                    placement: Placement {
+                        translation_mm: authored.placement.translation_mm,
+                        orientation_xyzw: authored.placement.orientation_xyzw,
+                    },
+                    material: authored.material,
+                }),
+            ],
         },
         &control,
     )?;

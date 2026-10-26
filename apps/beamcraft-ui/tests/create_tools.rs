@@ -127,6 +127,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
 
     let mut tools = Tools::default();
     tools.plate = PlateForm {
+        class: String::new(),
         width: "1000".into(),
         length: "500".into(),
         thickness: "10".into(),

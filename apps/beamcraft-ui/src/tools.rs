@@ -92,6 +92,8 @@ pub struct PlateForm {
     pub thickness: String,
     /// `--name`, optional.
     pub name: String,
+    /// Authored part class, empty means the default zero.
+    pub class: String,
     /// `--material-digest`, optional: a material definition of the store.
     pub material: Option<String>,
 }
@@ -117,6 +119,8 @@ pub struct MemberForm {
     pub material: Option<String>,
     /// `--name`, optional.
     pub name: String,
+    /// Authored part class, empty means the default zero.
+    pub class: String,
     /// `--roll RAD`, optional (radians; empty means the flag is absent).
     pub roll: String,
     /// `--orientation-xyzw X,Y,Z,W`, optional (empty means the flag is absent).
@@ -135,6 +139,7 @@ impl Default for MemberForm {
             profile: None,
             material: None,
             name: String::new(),
+            class: String::new(),
             roll: String::new(),
             orientation: String::new(),
         }
@@ -274,6 +279,13 @@ impl PlateForm {
             number("Thickness", &self.thickness)?,
         ];
         push_name(&mut args, &self.name)?;
+        if !self.class.trim().is_empty() {
+            let class = self.class.trim().parse::<i32>().map_err(|_| FormError {
+                field: "Class",
+                message: "enter an integer in the int32 range".into(),
+            })?;
+            args.extend(["--class".into(), class.to_string()]);
+        }
         push_material(&mut args, self.material.as_ref());
         Ok(Prepared {
             kind: ToolKind::Plate,
@@ -324,6 +336,13 @@ impl MemberForm {
             profile.clone(),
         ];
         push_name(&mut args, &self.name)?;
+        if !self.class.trim().is_empty() {
+            let class = self.class.trim().parse::<i32>().map_err(|_| FormError {
+                field: "Class",
+                message: "enter an integer in the int32 range".into(),
+            })?;
+            args.extend(["--class".into(), class.to_string()]);
+        }
         push_material(&mut args, self.material.as_ref());
         // An empty field keeps the flag absent, so the planar form builds exactly the command it
         // always did; the engine owns every rule about rolls and quaternions.

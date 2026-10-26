@@ -69,6 +69,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 const CREATE_OPTIONS: &[&str] = &[
+    "--class",
     "--store",
     "--width",
     "--length",
@@ -156,6 +157,7 @@ const SECTION_ONLY_OPTIONS: &[&str] = &[
 ];
 
 const CREATE_MEMBER_OPTIONS: &[&str] = &[
+    "--class",
     "--store",
     "--kind",
     "--start",
@@ -197,6 +199,7 @@ const CUT_OPTIONS: &[&str] = &[
 ];
 
 const UPDATE_OPTIONS: &[&str] = &[
+    "--class",
     "--store",
     "--id",
     "--name",
@@ -791,6 +794,13 @@ fn create(
     };
     let name = given("--name").unwrap_or("Plate").to_owned();
     let command = CreatePlate {
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?
+            .unwrap_or(0),
         new_id,
         name,
         contour_points_mm: contour,
@@ -945,6 +955,12 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let patch = ElementPatch {
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?,
         name: given("--name").map(str::to_owned),
         material: match given("--material-digest") {
             None => None,
@@ -1000,6 +1016,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
             "effect",
             Json::object([
                 ("name", Json::Bool(updated.effect.name)),
+                ("class", Json::Bool(updated.effect.class)),
                 ("material", Json::Bool(updated.effect.material)),
                 ("shape", Json::Bool(updated.effect.shape)),
                 ("placement", Json::Bool(updated.effect.placement)),
@@ -1734,6 +1751,13 @@ fn create_member_command(
         new_id,
         kind,
         name: given("--name").unwrap_or(kind.as_str()).to_owned(),
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?
+            .unwrap_or(0),
         axis_points_mm: [start, end],
         profile_digest,
         placement: Placement {
@@ -1821,6 +1845,7 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ),
         ("kind", Json::text(a.kind.as_str())),
         ("name", Json::text(a.name.clone())),
+        ("class", num(f64::from(a.class))?),
         ("profile_digest", Json::text(a.profile.to_string())),
         (
             "material_digest",
@@ -2274,6 +2299,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
         ),
         ("kind", Json::text("plate")),
         ("name", Json::text(record.authored.name.clone())),
+        ("class", num(f64::from(record.authored.class))?),
         (
             "material_digest",
             record

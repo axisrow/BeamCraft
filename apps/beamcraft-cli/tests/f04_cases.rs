@@ -171,6 +171,7 @@ fn command_of(arguments: &Json) -> Result<CreatePlate, ErrorCode> {
     Ok(CreatePlate {
         new_id,
         name: name.to_owned(),
+        class: 0,
         contour_points_mm: contour,
         thickness_mm: thickness,
         placement: Placement {

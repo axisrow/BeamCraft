@@ -7,7 +7,7 @@ pub(super) const COMMANDS: &[&str] = &["create-plate", "add-hole", "inspect-elem
 
 pub(super) const HELP: &str = concat!(
     "Plate (P01, committed USD revision): create-plate --store ROOT (--width MM --length MM | ",
-    "--contour X,Y[,Z];...) --thickness MM [--name TEXT] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] ",
+    "--contour X,Y[,Z];...) --thickness MM [--name TEXT] [--class INT32] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] ",
     "[--material-digest SHA256] [--hole-rect X,Y,W,H[;...]] [--hole-round X,Y,D[;...]] ",
     "[--hole-segments N] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id ",
     "UUID] [--project-id UUID] [--workspace-id UUID] (--width and --length make the origin ",
