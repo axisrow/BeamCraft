@@ -189,7 +189,7 @@ fn a_non_normalized_or_degenerate_quaternion_is_an_invalid_argument() {
 }
 
 #[test]
-fn a_plate_still_refuses_a_rotated_placement_with_a_kind_named_message() {
+fn a_plate_accepts_a_rigid_placement_without_changing_its_local_body() {
     let command = CreatePlate {
         new_id: ElementId::parse(PLATE_ID).unwrap(),
         name: "Rotated plate".into(),
@@ -199,8 +199,16 @@ fn a_plate_still_refuses_a_rotated_placement_with_a_kind_named_message() {
         material_digest: None,
         holes_mm: Vec::new(),
     };
-    let error = create_plate(&command, &|_| false, &no_materials).unwrap_err();
-    assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
-    assert_eq!(error.field, "placement.orientation_xyzw");
-    assert!(error.message.contains("plate"), "{}", error.message);
+    let placed = create_plate(&command, &|_| false, &no_materials).unwrap();
+    let unplaced = create_plate(
+        &CreatePlate {
+            placement: Placement::IDENTITY,
+            ..command
+        },
+        &|_| false,
+        &no_materials,
+    )
+    .unwrap();
+    assert_eq!(placed.body.solid, unplaced.body.solid);
+    assert_eq!(placed.quantities, unplaced.quantities);
 }

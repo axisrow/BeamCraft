@@ -83,14 +83,12 @@ fn invalid_inputs_and_identity_failures_never_become_unsupported_drafts() {
             .code,
         ErrorCode::InvalidArgument
     );
-    let mut wrong = command(0.75);
-    wrong.placement.orientation_xyzw = [0., 0., 1., 0.];
-    assert_eq!(
-        create_plate_draft(&wrong, &|_| false, &no_materials)
-            .unwrap_err()
-            .code,
-        ErrorCode::UnsupportedGeometry
-    );
+    let mut rotated = command(0.75);
+    rotated.placement.orientation_xyzw = [0., 0., 1., 0.];
+    assert!(matches!(
+        create_plate_draft(&rotated, &|_| false, &no_materials).unwrap(),
+        PlateDraft::Unsupported(_)
+    ));
 }
 
 #[test]
