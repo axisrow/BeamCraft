@@ -431,6 +431,7 @@ pub fn create_changeset(
         .is_some_and(|work| work.reads().is_empty() && work.writes().is_empty())
     {
         return Err(PlateError {
+            rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the unsent work was renounced; there is nothing to package",
         });

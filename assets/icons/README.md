@@ -33,6 +33,8 @@ modified.
 `packaging/package.sh` installs the ICNS for Finder/Spotlight and copies
 `beamcraft-icon-macos.png` into the bundle as `Contents/Resources/beamcraft-icon.png`, which the
 UI applies at run time to the Dock (eframe shows the process icon while the app runs).
+Source-tree macOS launches also select `beamcraft-icon-macos.png`, so the edge-to-edge
+Windows/Linux raster cannot override the macOS margin in development builds.
 On Windows the executable's icon resource serves Explorer and shortcuts, and the patched eframe
 (`Apibim-com/eframe`) sets it as the window icon too, so the title bar and the taskbar draw the
 exact ICO size; `beamcraft-icon.png` is only the fallback there. Windows and Linux archives carry

@@ -696,14 +696,16 @@ pub fn logo_rgba(side: usize) -> Option<Vec<u8>> {
     )
 }
 
-/// The application icon (the official logo on a rounded tile; edge to edge, or on Apple's grid
-/// inside the macOS bundle) as `side` x `side` RGBA pixels; `None` when the file is missing or
+/// The application icon (the official logo on a rounded tile; on Apple's grid on macOS,
+/// edge to edge elsewhere) as `side` x `side` RGBA pixels; `None` when the file is missing or
 /// does not decode.
 pub fn app_icon_rgba(side: usize) -> Option<Vec<u8>> {
-    png_rgba(
-        &asset_candidates("beamcraft-icon.png", "beamcraft-icon.png"),
-        side,
-    )
+    let file = if cfg!(target_os = "macos") {
+        "beamcraft-icon-macos.png"
+    } else {
+        "beamcraft-icon.png"
+    };
+    png_rgba(&asset_candidates(file, "beamcraft-icon.png"), side)
 }
 
 /// The first readable PNG of `candidates` as `side` x `side` RGBA pixels, averaged down.
@@ -833,10 +835,18 @@ mod tests {
         // The source tree holds the icon, so a development build always finds it.
         let rgba = app_icon_rgba(256).unwrap();
         assert_eq!(rgba.len(), 256 * 256 * 4);
-        // The tile fills the square edge to edge; only the rounded corners are transparent.
+        // macOS keeps the system-grid margin even when launched from the source tree.
         let alpha = |x: usize, y: usize| rgba[(y * 256 + x) * 4 + 3];
         assert_eq!(alpha(128, 128), 255);
-        assert_eq!(alpha(128, 0), 255);
+        if cfg!(target_os = "macos") {
+            assert_eq!(alpha(128, 0), 0);
+            assert_eq!(alpha(128, 24), 0);
+            assert_eq!(alpha(128, 26), 255);
+            assert_eq!(alpha(128, 229), 255);
+            assert_eq!(alpha(128, 231), 0);
+        } else {
+            assert_eq!(alpha(128, 0), 255);
+        }
         assert_eq!(alpha(1, 1), 0);
         assert!(app_icon_rgba(0).is_none());
     }
