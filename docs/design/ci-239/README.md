@@ -65,7 +65,9 @@ cannot establish the required week of sustained results after an optimization la
   `created_at` to `started_at`. p95 uses nearest rank, `ceil(0.95*n)`, without interpolation.
 - Successful runs only, as requested by #239; cancelled/failed runs are outside this sample.
 
-Run `python3 docs/design/ci-239/reproduce.py` from the repository root. It independently
-recomputes durations from timestamps, checks the run/job joins and matrix completeness,
-and prints the aggregate statistics. Collection used the connected GitHub API; the
-reproduction reads only these CSV exports and requires no credentials or network access.
+The two CSV exports carry every input the numbers derive from, and the repository carries no
+analysis script: recompute with any local tooling from the timestamps alone. Run wall joins each
+run to its latest job `completed_at`; job execution wall and waiting are the `started_at` and
+`created_at` differences listed above; medians and the nearest-rank p95 need only those per-run
+values. The recomputation reads only these CSV exports and requires no credentials or network
+access.
