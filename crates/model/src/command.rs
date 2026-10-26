@@ -17,7 +17,8 @@ pub use crate::grid_update::UpdateGrid;
 use crate::id::{ElementId, OpId};
 use crate::limits::{
     BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,
-    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES,
+    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_WELD_LENGTH_MM, MAX_WELD_PATH_POINTS,
+    MIN_CONTOUR_POINTS, MIN_LABEL_BYTES, MIN_WELD_PATH_POINTS, MIN_WELD_SEGMENT_MM,
     ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD, WELD_SIZE_CAP_MM,
 };
 use beamcraft_geom::canonical_f64_bytes;
@@ -1258,6 +1259,66 @@ pub struct WeldSpec {
     pub side: WeldSide,
 }
 
+/// The contour symbol of a weld (A15): the finish of its face as the drawing symbol shows it.
+/// `none` is an authored absence; there is no default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeldContour {
+    /// No contour symbol.
+    None,
+    /// Flush contour.
+    Flush,
+    /// Concave contour.
+    Concave,
+    /// Convex contour.
+    Convex,
+}
+
+impl WeldContour {
+    /// The stored token.
+    pub const fn as_token(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Flush => "flush",
+            Self::Concave => "concave",
+            Self::Convex => "convex",
+        }
+    }
+    /// Parses an exact token.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "none" => Some(Self::None),
+            "flush" => Some(Self::Flush),
+            "concave" => Some(Self::Concave),
+            "convex" => Some(Self::Convex),
+            _ => None,
+        }
+    }
+}
+
+/// The symbol data of one weld (A15): what the drawing symbol states besides the type and size.
+/// Everything is authored explicitly; the stored bytes keep exactly what was authored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WeldSymbol {
+    /// All-around symbol: the weld runs around the whole joint perimeter. Symbol data only; the
+    /// solid shape stays the authored path.
+    pub all_around: bool,
+    /// Contour symbol of the weld face.
+    pub contour: WeldContour,
+}
+
+/// The optional geometry of one weld (A15): the path it runs along and its symbol data. The path
+/// is a world-space polyline in millimetres; the type and size of the parent [`WeldSpec`] shape
+/// its solid. At least [`MIN_WELD_PATH_POINTS`] and at most [`MAX_WELD_PATH_POINTS`] points, each
+/// within the coordinate cap, consecutive points at least [`MIN_WELD_SEGMENT_MM`] apart and a
+/// total length of at most [`MAX_WELD_LENGTH_MM`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeldGeometry {
+    /// Ordered world points of the path in millimetres.
+    pub path_mm: Vec<[f64; 3]>,
+    /// The symbol data.
+    pub symbol: WeldSymbol,
+}
+
 /// A06 `CreateWeld`: a new `connection` element (domain vocabulary section 2.3) that is a weld. Its
 /// one `connects` record (section 5.1) names exactly two distinct parts in order, the main part
 /// first; the record lives with the weld, so the parts are only read. It carries the common base
@@ -1275,6 +1336,9 @@ pub struct CreateWeld {
     pub secondary_id: ElementId,
     /// The weld properties.
     pub weld: WeldSpec,
+    /// Optional geometry (A15): the path the weld runs along and its symbol data. `None` is an
+    /// A06 weld without a body; `Some` derives the solid and stores the symbol data.
+    pub geometry: Option<WeldGeometry>,
 }
 
 impl CreateWeld {
@@ -1322,6 +1386,71 @@ impl CreateWeld {
                 "weld size must be greater than 0 and at most 1000 mm",
             ));
         }
+        self.validate_geometry()
+    }
+
+    /// Admits the optional geometry (A15): a bounded path of finite world points within the
+    /// coordinate cap, consecutive points at least [`MIN_WELD_SEGMENT_MM`] apart and a total
+    /// length of at most [`MAX_WELD_LENGTH_MM`]. Absent geometry passes.
+    fn validate_geometry(&self) -> Result<(), CommandError> {
+        let Some(geometry) = &self.geometry else {
+            return Ok(());
+        };
+        if geometry.path_mm.len() < MIN_WELD_PATH_POINTS
+            || geometry.path_mm.len() > MAX_WELD_PATH_POINTS
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "path_mm",
+                "a weld path has 2 to 1024 points",
+            ));
+        }
+        let mut total = 0.0;
+        for (point, next) in geometry.path_mm.iter().zip(geometry.path_mm.iter().skip(1)) {
+            for coordinate in point.iter().chain(next.iter()) {
+                if !coordinate.is_finite() {
+                    return Err(CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "path_mm",
+                        "a weld path point must be finite",
+                    )
+                    .with_rule("DV-ATTR-003"));
+                }
+                if coordinate.abs() > COORDINATE_CAP_MM {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "path_mm",
+                        "a weld path point exceeds the coordinate cap",
+                    ));
+                }
+            }
+            let segment = (next[0] - point[0]).powi(2)
+                + (next[1] - point[1]).powi(2)
+                + (next[2] - point[2]).powi(2);
+            if !segment.is_finite() {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "path_mm",
+                    "a weld path segment must be finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if segment < MIN_WELD_SEGMENT_MM * MIN_WELD_SEGMENT_MM {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "path_mm",
+                    "consecutive weld path points must be at least 0.001 mm apart",
+                ));
+            }
+            total += segment.sqrt();
+        }
+        if total > MAX_WELD_LENGTH_MM {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "path_mm",
+                "the weld path is longer than 1000000 mm",
+            ));
+        }
         Ok(())
     }
 
@@ -1353,6 +1482,34 @@ impl CreateWeld {
             .with_rule("DV-ATTR-003")
         })?;
         bytes.extend_from_slice(&size);
+        if let Some(geometry) = &self.geometry {
+            // A second domain keeps every A06 request (geometry absent) at its exact v1 bytes.
+            bytes.extend_from_slice(b"BeamCraft/A15/CreateWeldGeometry/v1\0");
+            let count = u64::try_from(geometry.path_mm.len()).map_err(|_| {
+                CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "path_mm",
+                    "the weld path is too long",
+                )
+            })?;
+            bytes.extend_from_slice(&count.to_le_bytes());
+            for point in &geometry.path_mm {
+                for coordinate in point {
+                    bytes.extend_from_slice(&canonical_f64_bytes(*coordinate).map_err(|_| {
+                        CommandError::new(
+                            ErrorCode::NonFiniteNumber,
+                            "path_mm",
+                            "a weld path point must be finite",
+                        )
+                        .with_rule("DV-ATTR-003")
+                    })?);
+                }
+            }
+            bytes.extend_from_slice(&[u8::from(geometry.symbol.all_around)]);
+            let contour = geometry.symbol.contour.as_token();
+            bytes.extend_from_slice(&(contour.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(contour.as_bytes());
+        }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
                 .with_rule("DV-LIM-001")
@@ -2130,6 +2287,7 @@ mod tests {
                 location: WeldLocation::Workshop,
                 side: WeldSide::Arrow,
             },
+            geometry: None,
         };
         assert!(weld.validate_arguments().is_ok());
         let base = weld.content_fingerprint().unwrap();
@@ -2217,6 +2375,135 @@ mod tests {
             assert_eq!(back, Some(token));
         }
         assert!(WeldType::parse("butt").is_none() && WeldSide::parse("Arrow").is_none());
+    }
+
+    #[test]
+    fn weld_geometry_admits_a_bounded_path_and_symbols_are_exact_tokens() {
+        let id =
+            |n: u32| ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000003{n:05}")).unwrap();
+        let weld = CreateWeld {
+            new_id: id(1),
+            name: "W1".into(),
+            main_id: id(2),
+            secondary_id: id(3),
+            weld: WeldSpec {
+                weld_type: WeldType::Fillet,
+                size_mm: 6.0,
+                location: WeldLocation::Workshop,
+                side: WeldSide::Arrow,
+            },
+            geometry: Some(WeldGeometry {
+                path_mm: vec![[0.0; 3], [100.0, 0.0, 0.0]],
+                symbol: WeldSymbol {
+                    all_around: false,
+                    contour: WeldContour::None,
+                },
+            }),
+        };
+        assert!(weld.validate_arguments().is_ok());
+        let plain = CreateWeld {
+            geometry: None,
+            ..weld.clone()
+        };
+        // A06 requests keep their exact v1 fingerprint; geometry is a second domain.
+        assert_ne!(
+            weld.content_fingerprint().unwrap(),
+            plain.content_fingerprint().unwrap()
+        );
+        let same = CreateWeld {
+            geometry: Some(WeldGeometry {
+                path_mm: vec![[0.0; 3], [100.0, 0.0, 0.0]],
+                symbol: WeldSymbol {
+                    all_around: false,
+                    contour: WeldContour::None,
+                },
+            }),
+            ..weld.clone()
+        };
+        assert_eq!(
+            weld.content_fingerprint().unwrap(),
+            same.content_fingerprint().unwrap()
+        );
+        let variants = [
+            CreateWeld {
+                geometry: Some(WeldGeometry {
+                    path_mm: vec![[0.0; 3], [200.0, 0.0, 0.0]],
+                    ..weld.geometry.clone().unwrap()
+                }),
+                ..weld.clone()
+            },
+            CreateWeld {
+                geometry: Some(WeldGeometry {
+                    symbol: WeldSymbol {
+                        all_around: true,
+                        contour: WeldContour::None,
+                    },
+                    ..weld.geometry.clone().unwrap()
+                }),
+                ..weld.clone()
+            },
+            CreateWeld {
+                geometry: Some(WeldGeometry {
+                    symbol: WeldSymbol {
+                        all_around: false,
+                        contour: WeldContour::Concave,
+                    },
+                    ..weld.geometry.clone().unwrap()
+                }),
+                ..weld.clone()
+            },
+        ];
+        for v in &variants {
+            assert_ne!(
+                v.content_fingerprint().unwrap(),
+                weld.content_fingerprint().unwrap()
+            );
+        }
+        let code = |w: CreateWeld| w.validate_arguments().unwrap_err().code;
+        let with_path = |path: Vec<[f64; 3]>| CreateWeld {
+            geometry: Some(WeldGeometry {
+                path_mm: path,
+                symbol: WeldSymbol {
+                    all_around: false,
+                    contour: WeldContour::None,
+                },
+            }),
+            ..weld.clone()
+        };
+        for (path, expected) in [
+            (vec![], ErrorCode::InvalidArgument),
+            (vec![[0.0; 3]], ErrorCode::InvalidArgument),
+            (vec![[0.0; 3], [0.0, 0.0, 0.0]], ErrorCode::InvalidArgument),
+            (
+                vec![[0.0; 3], [0.0, 0.0005, 0.0]],
+                ErrorCode::InvalidArgument,
+            ),
+            (
+                vec![[0.0; 3], [f64::NAN, 0.0, 0.0]],
+                ErrorCode::NonFiniteNumber,
+            ),
+            (
+                vec![[0.0; 3], [f64::INFINITY, 0.0, 0.0]],
+                ErrorCode::NonFiniteNumber,
+            ),
+            (
+                vec![[2.0e10, 0.0, 0.0], [0.0; 3]],
+                ErrorCode::InvalidArgument,
+            ),
+            (
+                vec![[0.0; 3], [1.0e6, 0.0, 0.0], [2.0e6, 0.0, 0.0]],
+                ErrorCode::LimitExceeded,
+            ),
+        ] {
+            assert_eq!(code(with_path(path)), expected);
+        }
+        for token in ["none", "flush", "concave", "convex"] {
+            assert_eq!(
+                WeldContour::parse(token).map(WeldContour::as_token),
+                Some(token)
+            );
+        }
+        assert!(WeldContour::parse("round").is_none() && WeldContour::parse("None").is_none());
     }
 
     #[test]

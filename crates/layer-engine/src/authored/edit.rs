@@ -661,6 +661,29 @@ fn create(
                 "double",
                 sdf::Value::Double(w.size_mm),
             )?;
+            if let Some(geometry) = &w.geometry {
+                attr(
+                    data,
+                    &p,
+                    "steel:weld:pathMm",
+                    "double3[]",
+                    points(&geometry.points_mm),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:weld:allAround",
+                    "token",
+                    sdf::Value::token(if geometry.all_around { "true" } else { "false" }),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:weld:contour",
+                    "token",
+                    sdf::Value::token(geometry.contour.as_str()),
+                )?;
+            }
             let targets = w
                 .connects
                 .iter()
@@ -1309,9 +1332,14 @@ fn capture(
                         }
                     }
                     Shape::Assembly => (),
-                    Shape::Weld(_) => {
+                    Shape::Weld(ref w) => {
                         for &(name, ty) in WELD {
                             add(name, ty, 0);
+                        }
+                        if w.geometry.is_some() {
+                            add("steel:weld:pathMm", "double3[]", 0);
+                            add("steel:weld:allAround", "token", 0);
+                            add("steel:weld:contour", "token", 0);
                         }
                     }
                     Shape::Bolt(_) => {

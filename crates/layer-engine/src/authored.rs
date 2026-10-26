@@ -45,9 +45,12 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
     "bim:mainPart=rel(0..1 element target that is a direct part of the assembly;source assembly;one main per assembly)\n",
-    "connection=element;bim:elementKind=connection;kind=component;a weld (A06) or bolt group (A05);no material or Geometry;placement=identity\n",
+    "connection=element;bim:elementKind=connection;kind=component;a weld (A06) or bolt group (A05);no material;placement=identity;",
+    "no authored Geometry except a weld with steel:weld:pathMm\n",
     "steel:connection:type=token(weld|bolt_group);steel:weld:type=token(fillet);steel:weld:sizeMm=double(>0,<=1000);steel:weld:location=token(workshop|site);",
-    "steel:weld:side=token(arrow|other|both)\n",
+    "steel:weld:side=token(arrow|other|both);",
+    "steel:weld:pathMm=double3[](optional,2..=1024 world points);steel:weld:allAround=token(true|false,optional);",
+    "steel:weld:contour=token(none|flush|concave|convex,optional)\n",
     "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
     "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
@@ -275,6 +278,21 @@ pub struct Weld {
     pub location: String,
     /// `arrow`, `other` or `both`.
     pub side: String,
+    /// Optional geometry (A15): the path the weld runs along and its symbol data. `None` authors
+    /// an A06 weld without a body; `Some` also derives a solid under the connection.
+    pub geometry: Option<WeldPath>,
+}
+
+/// The authored geometry of one weld (A15). The path is an ordered world polyline in
+/// millimetres; the symbol tokens are the exact stored values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeldPath {
+    /// Ordered world points of the path, 2 to 1024, each within the coordinate cap.
+    pub points_mm: Vec<[f64; 3]>,
+    /// All-around symbol. Symbol data only.
+    pub all_around: bool,
+    /// `none`, `flush`, `concave` or `convex`.
+    pub contour: String,
 }
 
 /// The authored inputs of a bolt group (A05). The group is `count` bolts in a straight world line

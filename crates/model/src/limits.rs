@@ -48,6 +48,15 @@ pub const MAX_FOOTPRINT_ENTRIES: usize = 4096;
 pub const ORIENTATION_NORM_TOLERANCE: f64 = 1e-6;
 /// Largest weld size (A06): the nominal fillet size in millimetres.
 pub const WELD_SIZE_CAP_MM: f64 = 1_000.0;
+/// Fewest points of a weld path (A15): a straight edge.
+pub const MIN_WELD_PATH_POINTS: usize = 2;
+/// Most points of a weld path (A15).
+pub const MAX_WELD_PATH_POINTS: usize = 1024;
+/// Shortest weld path segment (A15), in millimetres: below it a prism segment would fall under
+/// the kernel's geometric tolerance.
+pub const MIN_WELD_SEGMENT_MM: f64 = 0.001;
+/// Largest total weld path length (A15), in millimetres.
+pub const MAX_WELD_LENGTH_MM: f64 = 1_000_000.0;
 /// Largest nominal bolt diameter (A05), in millimetres.
 pub const BOLT_DIAMETER_CAP_MM: f64 = 1_000.0;
 /// Most bolts of one bolt group (A05).

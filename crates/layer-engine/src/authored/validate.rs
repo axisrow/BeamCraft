@@ -3,6 +3,7 @@
 
 use super::*;
 use beamcraft_model::id::OpId;
+use beamcraft_model::limits::MIN_WELD_SEGMENT_MM;
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
@@ -858,12 +859,17 @@ pub(super) fn snapshot(
         else {
             continue;
         };
-        // An assembly, a weld or a level has no body: a Geometry mesh under one is refused,
-        // authored or loaded.
-        if matches!(
-            supported_kind(element),
-            Some("assembly" | "connection" | "level" | "grid")
-        ) {
+        // An assembly, a level, a grid or a weld without a path has no body: a Geometry mesh
+        // under one is refused, authored or loaded. Only the A15 weld with an authored path
+        // carries a derived solid.
+        let kind = supported_kind(element);
+        let bodyless = matches!(kind, Some("assembly" | "level" | "grid"))
+            || (kind == Some("connection")
+                && !element
+                    .properties
+                    .iter()
+                    .any(|v| v.name == "steel:weld:pathMm"));
+        if bodyless {
             return Err(unsupported());
         }
         let id = element.element_id.clone().ok_or_else(invalid)?;
@@ -1121,16 +1127,65 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// The A15 weld path rules shared by the loaded-content and candidate checks: 2 to 1024 points,
+/// finite and within the coordinate cap, consecutive points at least the minimum apart.
+fn weld_path_points(points: &[[f64; 3]]) -> Result<(), Diagnostic> {
+    if !(2..=1024).contains(&points.len()) {
+        return Err(invalid());
+    }
+    for point in points {
+        finite(*point)?;
+        cap(*point, 1e9)?;
+    }
+    for pair in points.windows(2) {
+        let [from, to] = pair else {
+            continue;
+        };
+        let [fx, fy, fz] = from;
+        let [tx, ty, tz] = to;
+        let (dx, dy, dz) = (tx - fx, ty - fy, tz - fz);
+        if (dx * dx + dy * dy + dz * dz) < MIN_WELD_SEGMENT_MM * MIN_WELD_SEGMENT_MM {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
 /// The weld properties of a loaded `connection` (A06): every one is authored, with a supported
 /// token, and the size is finite in `(0, 1000]`. A connection without them is not a weld this
-/// slice can read, so it is refused rather than guessed.
+/// slice can read, so it is refused rather than guessed. The optional geometry attributes (A15)
+/// are validated as a whole when the path is present and refused in part.
 fn weld_properties(p: &Prim) -> Result<(), Diagnostic> {
     weld_tokens(
         text(p, "steel:weld:type", "token")?,
         text(p, "steel:weld:location", "token")?,
         text(p, "steel:weld:side", "token")?,
     )?;
-    weld_size(number(p, "steel:weld:sizeMm")?)
+    weld_size(number(p, "steel:weld:sizeMm")?)?;
+    let path = p.properties.iter().any(|v| v.name == "steel:weld:pathMm");
+    let all_around = p
+        .properties
+        .iter()
+        .any(|v| v.name == "steel:weld:allAround");
+    let contour = p.properties.iter().any(|v| v.name == "steel:weld:contour");
+    if path {
+        weld_path_points(&points(p, "steel:weld:pathMm")?)?;
+        if all_around && !matches!(text(p, "steel:weld:allAround", "token")?, "true" | "false") {
+            return Err(invalid());
+        }
+        if contour
+            && !matches!(
+                text(p, "steel:weld:contour", "token")?,
+                "none" | "flush" | "concave" | "convex"
+            )
+        {
+            return Err(invalid());
+        }
+    } else if all_around || contour {
+        // Symbol data without the path it belongs to has no supported meaning.
+        return Err(invalid());
+    }
+    Ok(())
 }
 fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagnostic> {
     if weld_type != "fillet" {
@@ -1845,6 +1900,15 @@ pub(super) fn changes(
                         }
                         weld_tokens(&w.weld_type, &w.location, &w.side)?;
                         weld_size(w.size_mm)?;
+                        if let Some(geometry) = &w.geometry {
+                            weld_path_points(&geometry.points_mm)?;
+                            if !matches!(
+                                geometry.contour.as_str(),
+                                "none" | "flush" | "concave" | "convex"
+                            ) {
+                                return Err(invalid());
+                            }
+                        }
                         let [main, secondary] = &w.connects;
                         if !uuid7(main) || !uuid7(secondary) {
                             return Err(fail(
