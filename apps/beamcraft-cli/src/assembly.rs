@@ -37,7 +37,8 @@ use beamcraft_layer_engine::authored::{
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::command::{
-    AttachToAssembly, CommandError, CreateAssembly, DetachFromAssembly,
+    AttachToAssembly, CommandError, CreateAssembly, DetachFromAssembly, ExplodeAssembly,
+    SetAssemblyMainPart,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -70,6 +71,8 @@ pub struct AssemblyView {
     pub parent: Option<ElementId>,
     /// Direct parts, in identity order.
     pub parts: Vec<ElementId>,
+    /// The main part, when the assembly has named one (A16.1).
+    pub main: Option<ElementId>,
 }
 
 /// Result of one A01 command.
@@ -163,6 +166,19 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
                 _ => return Err(integrity("element has more than one part-of target")),
             }
         }
+        if let Some(r) = prim.relationships.iter().find(|r| r.name == "bim:mainPart") {
+            match r.targets.as_slice() {
+                [] => {}
+                [target] => {
+                    let part = by_path
+                        .get(target.as_str())
+                        .copied()
+                        .ok_or_else(|| integrity("main-part target is not an element"))?;
+                    model.membership.set_main_part(id, part);
+                }
+                _ => return Err(integrity("assembly has more than one main part")),
+            }
+        }
     }
     Ok(model)
 }
@@ -176,8 +192,23 @@ fn views(model: &Model) -> Vec<AssemblyView> {
             name: model.names.get(&id).cloned().unwrap_or_default(),
             parent: model.membership.parent(&id),
             parts: model.membership.parts(&id),
+            main: model.membership.main_part(&id),
         })
         .collect()
+}
+
+/// Whether the pinned model holds an element that is the main part of its assembly (for
+/// `delete-element`).
+pub(crate) fn is_main_part(
+    request: &OpenRequest,
+    id: &ElementId,
+    control: &Control,
+) -> Result<bool, PlateError> {
+    let model = model_of(request, control)?;
+    Ok(model
+        .membership
+        .assemblies()
+        .any(|a| model.membership.main_part(&a) == Some(*id)))
 }
 
 /// Whether the pinned model holds an assembly of this identity (for `delete-element`).
@@ -448,6 +479,72 @@ pub fn detach(
                     id: command.part_id.to_string(),
                     assembly: None,
                 }],
+                footprint: decision.footprint,
+            })
+        },
+        hook,
+    )
+}
+
+/// Names the main part of an assembly and publishes the next revision, or replays. The record
+/// lives on the assembly, so only the assembly is written.
+pub fn set_main_part(
+    store: &RevisionStore,
+    context: &AssemblyContext,
+    command: &SetAssemblyMainPart,
+    hook: &mut dyn CommitHook,
+) -> Result<AssemblyChange, PlateError> {
+    let fingerprint = command.content_fingerprint()?;
+    apply(
+        store,
+        context,
+        fingerprint,
+        true,
+        &|m| m.membership.main_part(&command.assembly_id) == Some(command.part_id),
+        &|m| {
+            let decision = m.membership.set_main(command)?;
+            Ok(Plan {
+                changes: vec![Change::MainPart {
+                    id: command.assembly_id.to_string(),
+                    part: command.part_id.to_string(),
+                }],
+                footprint: decision.footprint,
+            })
+        },
+        hook,
+    )
+}
+
+/// Dissolves one assembly level and publishes the next revision, or replays: the assembly is
+/// deleted, its direct parts become loose, and the parts themselves do not change.
+pub fn explode(
+    store: &RevisionStore,
+    context: &AssemblyContext,
+    command: &ExplodeAssembly,
+    hook: &mut dyn CommitHook,
+) -> Result<AssemblyChange, PlateError> {
+    let fingerprint = command.content_fingerprint()?;
+    apply(
+        store,
+        context,
+        fingerprint,
+        true,
+        &|m| !m.ids.contains(&command.assembly_id),
+        &|m| {
+            let decision = m.membership.explode(command)?;
+            let mut changes: Vec<Change> = decision
+                .parts
+                .iter()
+                .map(|p| Change::PartOf {
+                    id: p.to_string(),
+                    assembly: None,
+                })
+                .collect();
+            changes.push(Change::Delete {
+                id: command.assembly_id.to_string(),
+            });
+            Ok(Plan {
+                changes,
                 footprint: decision.footprint,
             })
         },

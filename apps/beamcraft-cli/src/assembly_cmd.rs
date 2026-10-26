@@ -9,6 +9,7 @@ use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{footprint_json, id_error, revision_json};
 use beamcraft_cli::assembly::{
     AssemblyChange, AssemblyContext, AssemblyView, assemblies, attach, create_assembly, detach,
+    explode, set_main_part,
 };
 use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
@@ -17,7 +18,9 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_json::Json;
-use beamcraft_model::command::{AttachToAssembly, CreateAssembly, DetachFromAssembly};
+use beamcraft_model::command::{
+    AttachToAssembly, CreateAssembly, DetachFromAssembly, ExplodeAssembly, SetAssemblyMainPart,
+};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use std::collections::BTreeMap;
@@ -54,6 +57,8 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-assembly" => &["--store", "--name", "--new-id"],
         "attach-to-assembly" => &["--store", "--id", "--assembly-id"],
         "detach-from-assembly" => &["--store", "--id"],
+        "set-main-part" => &["--store", "--id", "--assembly-id"],
+        "explode-assembly" => &["--store", "--id"],
         "assemblies" => &["--store"],
         _ => return Err(invalid("unknown command")),
     };
@@ -128,6 +133,21 @@ fn run(args: &[OsString]) -> Run<Json> {
             let change = attach(&store, &context, &command, &mut NoFault)?;
             ("part_attached", command.part_id, change)
         }
+        "set-main-part" => {
+            let command = SetAssemblyMainPart {
+                assembly_id: element("--assembly-id", "--assembly-id is required")?,
+                part_id: element("--id", "--id is required")?,
+            };
+            let change = set_main_part(&store, &context, &command, &mut NoFault)?;
+            ("main_part_set", command.assembly_id, change)
+        }
+        "explode-assembly" => {
+            let command = ExplodeAssembly {
+                assembly_id: element("--id", "--id is required")?,
+            };
+            let change = explode(&store, &context, &command, &mut NoFault)?;
+            ("assembly_exploded", command.assembly_id, change)
+        }
         _ => {
             let command = DetachFromAssembly {
                 part_id: element("--id", "--id is required")?,
@@ -154,6 +174,10 @@ fn views_json(views: &[AssemblyView]) -> Json {
                     (
                         "parts",
                         Json::Array(v.parts.iter().map(|p| Json::text(p.to_string())).collect()),
+                    ),
+                    (
+                        "main",
+                        v.main.map_or(Json::Null, |p| Json::text(p.to_string())),
                     ),
                 ])
             })

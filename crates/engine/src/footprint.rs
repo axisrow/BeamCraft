@@ -335,6 +335,46 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The footprint of `SetAssemblyMainPart` (A16.1): the record lives on the assembly, so only
+    /// the assembly's relationship group is written. It reads the assembly's lifecycle and
+    /// relationships (its existence and kind decide acceptance) and the part's lifecycle and
+    /// relationships: its existence and its membership decide whether it is a direct part of the
+    /// assembly, so a concurrent detach of the part must conflict.
+    pub fn for_main_part(assembly: ElementId, part: ElementId) -> Result<Self, CommandError> {
+        let mut reads = BTreeSet::new();
+        for id in [assembly, part] {
+            for group in [Group::Lifecycle, Group::Relationship] {
+                reads.insert(Entry {
+                    target: Target::Element(id),
+                    group,
+                });
+            }
+        }
+        let footprint = Self {
+            reads,
+            writes: BTreeSet::from([Entry {
+                target: Target::Element(assembly),
+                group: Group::Relationship,
+            }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of `ExplodeAssembly` (A16): the assembly element is deleted, so its whole
+    /// authored state is written ([`Self::for_delete`]), and every direct part's `part-of` record
+    /// is removed, so each part's relationship group is written and its lifecycle and
+    /// relationships are read: their existence and membership decide the parts of the assembly,
+    /// so a concurrent attach, detach or delete of any of them must conflict. A part that is a
+    /// nested assembly is only detached; its own parts are neither read nor written.
+    pub fn for_explode(assembly: ElementId, parts: &[ElementId]) -> Result<Self, CommandError> {
+        let mut footprint = Self::for_delete(assembly)?;
+        for part in parts {
+            footprint = footprint.union(Self::for_part_of(*part, &[])?)?;
+        }
+        Ok(footprint)
+    }
+
     /// The footprint of a level assignment or unassignment (D2): the `bim:level` record lives with
     /// its source, so only the element's relationship group is written. It reads the element's
     /// lifecycle and relationships and, for an assignment, the level's lifecycle: its existence and
@@ -595,6 +635,48 @@ mod tests {
         assert_eq!(Group::ShapeInputs.as_str(), "shape_inputs");
         assert_eq!(Group::MaterialRef.as_str(), "material_ref");
     }
+
+    #[test]
+    fn a_main_part_change_writes_the_assembly_and_reads_both_ends() {
+        let f = Footprint::for_main_part(id(5), id(6)).unwrap();
+        assert_eq!(
+            f.writes().iter().copied().collect::<Vec<_>>(),
+            vec![Entry {
+                target: Target::Element(id(5)),
+                group: Group::Relationship,
+            }]
+        );
+        assert_eq!(f.reads().len(), 4);
+        // A concurrent detach of the part conflicts; an unrelated assembly's main does not.
+        assert!(f.conflicts_with(&Footprint::for_part_of(id(6), &[]).unwrap()));
+        assert!(f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
+        assert!(!f.conflicts_with(&Footprint::for_main_part(id(7), id(8)).unwrap()));
+    }
+
+    #[test]
+    fn an_explode_writes_the_assembly_and_the_parts_relationships() {
+        let f = Footprint::for_explode(id(5), &[id(6), id(7)]).unwrap();
+        for (target, group) in [
+            (id(5), Group::Lifecycle),
+            (id(5), Group::Relationship),
+            (id(6), Group::Relationship),
+            (id(7), Group::Relationship),
+        ] {
+            assert!(
+                f.writes().contains(&Entry {
+                    target: Target::Element(target),
+                    group
+                }),
+                "{target:?} {group:?}"
+            );
+        }
+        // Every direct part conflicts: a concurrent attach or delete of one must lose.
+        assert!(f.conflicts_with(&Footprint::for_part_of(id(6), &[]).unwrap()));
+        assert!(f.conflicts_with(&Footprint::for_delete(id(6)).unwrap()));
+        // Parts of a nested sub-assembly are untouched by the explode of id(5).
+        assert!(!f.conflicts_with(&Footprint::for_part_of(id(8), &[]).unwrap()));
+    }
+
     #[test]
     fn a_part_of_change_writes_only_the_part_relationship_and_reads_the_chain() {
         let f = Footprint::for_part_of(id(5), &[id(6), id(7)]).unwrap();

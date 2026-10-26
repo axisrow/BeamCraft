@@ -102,6 +102,8 @@ fn main() -> std::process::ExitCode {
         c == "create-assembly"
             || c == "attach-to-assembly"
             || c == "detach-from-assembly"
+            || c == "set-main-part"
+            || c == "explode-assembly"
             || c == "assemblies"
     }) {
         assembly_cmd::execute(&args)
