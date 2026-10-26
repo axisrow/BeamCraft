@@ -20,10 +20,11 @@ Thanks for helping. Humans and AI agents follow the same rules.
 5. Open a PR with the template filled in. CI must be green.
 6. Keep the fork aligned with upstream: `bash tools/fork-sync.sh status` inspects the
    divergence, `bash tools/fork-sync.sh sync` merges `upstream/master`, gates it on the local
-   triple and pushes `master`. The fork inherits upstream 1:1, so `sync` auto-resolves a
-   merge conflict — the upstream side wins, the `FORK_ONLY` paths listed in
-   [`tools/upstream-mirror.sh`](tools/upstream-mirror.sh) keep the fork side — and exits 2
-   with the file list when a conflict fits neither rule; after a green sync it lists the
+   triple and pushes `master`. Conflicting files keep their entire fork version
+   (including fork deletions); other files merge normally. Skipped upstream changes need
+   manual integration in a separate branch: the merge records upstream commits as integrated,
+   so later syncs do not retry those skipped changes. If a conflict cannot be cleared, sync aborts
+   the merge and exits 2 with the file list; after a green sync it lists the
    fork-only commits upstream does not have yet, with the exact commands for their upstream
    PR. The script doubles as the
    reference example for the small, single-purpose shell tools that live in [`tools/`](tools/).

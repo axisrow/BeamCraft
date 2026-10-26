@@ -2,10 +2,8 @@
 # SPDX-License-Identifier: MPL-2.0
 # Sync the fork with upstream: merge upstream/master into the local fork master,
 # gate the result on the local fmt/clippy/test triple, then push origin/master.
-# The fork inherits upstream 1:1 (issue #141): a merge conflict resolves
-# automatically — the upstream side wins, a FORK_ONLY path (the list in
-# tools/upstream-mirror.sh, the source of truth) keeps the fork side — and a
-# conflict no rule covers stops the run with exit 2 and the file list. After a
+# Conflicting files keep their entire fork version (including fork deletions);
+# cleanly merged files take the normal Git merge result. After a
 # green sync the fork-only commits upstream does not have yet are listed with
 # the exact upstream-PR commands; the script never opens a PR itself. See
 # CONTRIBUTING.md, "Keep the fork aligned".
@@ -21,9 +19,9 @@ Modes:
            master, run the local triple (fmt --check, clippy -D warnings,
            test --workspace) BEFORE committing, push origin/master, then delete
            merged sync/* branches. No PR: master is the integration branch.
-           A merge conflict auto-resolves: the upstream side wins, FORK_ONLY
-           paths (the list in tools/upstream-mirror.sh) keep the fork side,
-           and a conflict no rule covers stops the run with exit 2.
+           Conflicting files keep their entire fork version; other files merge
+           normally. Skipped upstream changes require manual integration.
+           An unresolved conflict stops the run with exit 2.
   status   read-only: divergence counts, pending upstream commits, tree
            cleanliness, best-effort conflict prediction.
 
@@ -31,8 +29,8 @@ Options:
   --dry-run  guards, fetch and conflict prediction only; touches no branch.
   --yes      skip the confirmation prompt (for unattended runs).
 
-Exit codes: 0 ok or nothing to sync, 1 environment, 2 a conflict no rule
-covers, 3 gate failure, 4 push or other git failure.
+Exit codes: 0 ok or nothing to sync, 1 environment, 2 a conflict could not
+be cleared, 3 gate failure, 4 push or other git failure.
 
 The gate is the local triple only. Fork CI does not gate a sync: it has no
 macOS lane and its Windows runners queue for hours.
@@ -144,44 +142,32 @@ align_master() {
     fi
 }
 
-# Merge-conflict policy (issue #141): a conflicted path takes the upstream
-# version (a path upstream deleted is removed); a conflicted FORK_ONLY path
-# keeps the fork side (a path the fork deleted stays deleted); a path a rule
-# cannot clear, plus anything still unmerged after the pass, stops the run
-# with exit 2 and its file list, because the sync never invents a resolution
-# it cannot name.
+# Skip upstream changes to the entire conflicted path, including clean hunks.
+# HEAD is the pre-merge fork tree; absence there preserves a fork deletion.
 resolve_one() {
     local path=$1
-    if is_fork_only "$path"; then
-        if git cat-file -e "HEAD:$path" 2>/dev/null; then
-            git checkout HEAD -- "$path" || return 1
-        else
-            git rm -f --quiet -- "$path" || return 1
-        fi
-        echo "fork-sync: fork-only path keeps the fork side: $path"
-    elif git cat-file -e "upstream/master:$path" 2>/dev/null; then
-        git checkout upstream/master -- "$path" || return 1
-        echo "fork-sync: upstream wins: $path"
+    if git cat-file -e "HEAD:$path" 2>/dev/null; then
+        git checkout HEAD -- "$path" || return 1
     else
         git rm -f --quiet -- "$path" || return 1
-        echo "fork-sync: upstream wins (deleted): $path"
     fi
+    echo "fork-sync: skipped upstream changes to conflicted file (kept fork): $path"
 }
 
 resolve_conflicts() {
     local path left=""
-    while read -r path; do
-        [ -n "$path" ] || continue
+    while IFS= read -r -d '' path; do
         resolve_one "$path" || { left="$left  $path"$'\n'; continue; }
-    done < <(git diff --name-only --diff-filter=U)
+    done < <(git diff --name-only --diff-filter=U -z)
     if [ -z "$left" ]; then
         # Belt for a resolution that claimed success but left a stage behind.
         left="$(git diff --name-only --diff-filter=U)"
         [ -z "$left" ] || left="$(printf '  %s\n' "$left")"
     fi
     if [ -n "$left" ]; then
-        echo "fork-sync: conflicts no rule covers; resolve by hand, then rerun the sync:" >&2
+        echo "fork-sync: could not preserve conflicted files; integrate manually in a separate branch:" >&2
         printf '%s' "$left" >&2
+        git merge --abort || die "cannot abort failed merge" $EXIT_PUSH
         exit $EXIT_CONFLICT
     fi
 }
@@ -245,7 +231,7 @@ do_sync() {
         if [ -n "$conflicts" ]; then
             echo "fork-sync: dry-run predicts conflicts in:"
             echo "  ${conflicts//$'\n'/$'\n'  }"
-            echo "fork-sync: a sync auto-resolves these: upstream wins, FORK_ONLY paths keep the fork side"
+            echo "fork-sync: a sync skips upstream changes to these entire files and keeps the fork versions"
         else
             echo "fork-sync: dry-run predicts a clean merge"
         fi
@@ -268,7 +254,13 @@ do_sync() {
     resolve_cargo
 
     if ! git merge --no-commit --no-ff upstream/master; then
-        echo "fork-sync: merge conflicts; applying the rules (upstream wins, FORK_ONLY keeps the fork side)"
+        if [ -z "$(git diff --name-only --diff-filter=U)" ]; then
+            if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+                git merge --abort || die "cannot abort failed merge" $EXIT_PUSH
+            fi
+            die "merge failed without file conflicts" $EXIT_PUSH
+        fi
+        echo "fork-sync: skipping conflicted files; keeping their fork versions"
         resolve_conflicts
     fi
 
