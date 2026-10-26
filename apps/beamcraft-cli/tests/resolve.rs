@@ -467,10 +467,11 @@ fn mid_interval_renunciation_works_and_unsuitable_targets_are_refused() {
     let (code, rebased) = f.rebase("b", 610, &accepted, &restored);
     assert_eq!(code, 0, "{rebased:?}");
     let candidate_op = f.op_at("b", f.head("b").sequence());
+    let before = f.head("b").manifest_digest();
     let (code, refused) = f.resolve("b", 611, &candidate_op, &f.head("b"));
     assert_eq!(code, 2);
     assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
-    assert_eq!(f.head("b").manifest_digest(), f.head("b").manifest_digest());
+    assert_eq!(f.head("b").manifest_digest(), before);
 
     // An evidence-less undo revision cannot be renounced either.
     let g = Fixture::new();
