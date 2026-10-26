@@ -258,6 +258,9 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
     tools.member.kind = MemberKind::Column;
     tools.member.start = ["0".into(), "0".into(), "0".into()];
     tools.member.end = ["0".into(), "0".into(), "3000".into()];
+    // T04: the real UI command resolves relative polar input and constrains it to Z.
+    tools.member.end_input = "@500<0,3000".into();
+    tools.member.axis_lock = beamcraft_engine::coordinate::AxisLock::Z;
     tools.member.profile = Some(profile.clone());
     tools.member.material = Some(material.clone());
     tools.member.name = "C1".into();
