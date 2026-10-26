@@ -304,6 +304,16 @@ impl Membership {
                 ));
             }
         }
+        // The exploded assembly may itself be the main part of its parent: exploding it would
+        // leave the parent's record dangling, so it is refused exactly like a detach of the
+        // main part; the parent names another main part first.
+        if self.main.values().any(|v| *v == command.assembly_id) {
+            return Err(error(
+                ErrorCode::DependencyConflict,
+                "assembly_id",
+                "the assembly is the main part of its assembly; set another main part first",
+            ));
+        }
         let parts = self.parts(&command.assembly_id);
         Ok(Explode {
             assembly: command.assembly_id,
@@ -474,6 +484,15 @@ mod tests {
             .unwrap_err()
             .code,
             ErrorCode::NotFound
+        );
+        // An assembly that is the main part of its parent is refused like a detach of it.
+        m.set_parent(id(3), id(2));
+        m.set_main_part(id(2), id(3));
+        assert_eq!(
+            m.explode(&ExplodeAssembly { assembly_id: id(3) })
+                .unwrap_err()
+                .code,
+            ErrorCode::DependencyConflict
         );
     }
 }

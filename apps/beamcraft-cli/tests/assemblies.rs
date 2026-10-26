@@ -526,6 +526,18 @@ fn the_main_part_is_stored_on_the_assembly_and_guards_detach_and_delete() {
         f.rejected("delete-element", &["--id", FRAME]),
         "DEPENDENCY_CONFLICT"
     );
+    // Exploding the assembly that is the parent's main part is refused the same way, while
+    // exploding the parent is allowed: its record dies with it and the sub-assembly stays.
+    assert_eq!(
+        f.rejected("explode-assembly", &["--id", FRAME]),
+        "DEPENDENCY_CONFLICT"
+    );
+    f.ok("explode-assembly", &["--id", OUTER]);
+    let all = f.assemblies();
+    assert_eq!(all.len(), 1);
+    let frame = assembly(&all, FRAME);
+    assert_eq!(at(frame, &["part_of"]), &Json::Null);
+    assert_eq!(text(frame, "main"), beam);
 }
 
 /// A16: explode dissolves one level; the parts do not change and the undo brings the assembly
