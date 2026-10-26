@@ -423,6 +423,18 @@ pub fn create_changeset(
         crate::command_evidence::interval(workspace, meta.synced_sequence, head_sequence)?;
     let evidence =
         crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
+    // C04: a fully renounced draft carries no modelling work. Packaging it would ship an
+    // evidence-less no-op revision, so refuse for the same reason publication refuses.
+    if evidence
+        .footprint
+        .as_ref()
+        .is_some_and(|work| work.reads().is_empty() && work.writes().is_empty())
+    {
+        return Err(PlateError {
+            code: ErrorCode::InvalidArgument,
+            message: "the unsent work was renounced; there is nothing to package",
+        });
+    }
     let dependencies = match evidence.footprint.as_ref() {
         Some(footprint) => crate::command_evidence::dependencies(footprint),
         None => footprint(&prims_of(&base)?, &prims_of(&draft)?)?,
