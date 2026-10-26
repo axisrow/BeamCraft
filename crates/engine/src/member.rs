@@ -899,6 +899,7 @@ mod tests {
             roll_rad: None,
             placement: Placement::IDENTITY,
             material: None,
+            class: 0,
             cuts: vec![record([3000.0, 0.0, 0.0])],
         };
         let body = evaluate_member(&authored, profile.clone()).unwrap();

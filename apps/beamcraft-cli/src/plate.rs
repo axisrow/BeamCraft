@@ -544,6 +544,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
     })
 }
 
+/// The authored int32 part class; absence defaults to zero, malformed opinions are refused.
 pub(crate) fn decode_class(prim: &Prim) -> Result<i32, PlateError> {
     let Some(property) = prim.properties.iter().find(|p| p.name == "steel:class") else {
         return Ok(0);
