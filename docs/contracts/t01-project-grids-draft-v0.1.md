@@ -1,13 +1,9 @@
-# T01 contract draft: project grids (axes)
+# T01 contract v0.1: project grids (axes)
 
-Status: **draft for owner review (2026-10-23, revised after the owner's answers of the same day).**
-[F04](f04-model-and-commands-v0.1.md) 0.1.0 and the domain vocabulary stay unchanged until the owner
-accepts this text; on acceptance the new element kind, commands and limits are recorded as an F04
-amendment (name to be confirmed) and the sections they extend get a dated pointer. It is the
-contract for the slices T01.1 to T01.9 in [`tasks.md`](../plan/tasks.md) and answers
-[issue #192](https://github.com/Apibim-com/BeamCraft/issues/192). Development starts with grids
-([decisions](../plan/decisions.md)). Points the owner has not yet answered are open questions in
-section 12; the text says so where it depends on one. Nothing here is implemented.
+Status: **proposed additive amendment to the F04 0.1.0 model and F10 0.2.0 kind registry; revised 2026-10-26 after the user delegated remaining MVP defaults to project best practices and conventions.**
+[F04](f04-model-and-commands-v0.1.md) and the current [F10](f10-domain-vocabulary-v0.2.md) baseline remain unchanged. On acceptance, this versioned T01 contract adds the shared `grid` kind, its stored attributes, commands, limits and diagnostic reasons without changing existing element rules. Dated pointers to this extension are then added to F04 and F10. It extends the draft delivered for [issue #192](https://github.com/Apibim-com/BeamCraft/issues/192), and governs T01.1 to T01.7 in [`tasks.md`](../plan/tasks.md). Development starts with grids ([decisions](../plan/decisions.md)).
+
+The MVP defaults below settle O-G7 and O-G11 to O-G16. Magnetic mode (O-G5/T01.8) remains deferred behind its scope and ownership dependencies. Nothing here is implemented.
 
 Today the repository only says that the `Grids` layer holds "axes and levels"
 ([architecture](../architecture.md)), that levels are elements ([D2](../design/d1-d2-project-level.md))
@@ -27,11 +23,23 @@ F12 `PC-OWN-002`). This document says what a grid is, how it is stored, built, e
 | D7 | A section project may **use a grid of a pinned coordination project**, read-only, so a grid is not created again for each section | 9 |
 | D8 | There is a **magnetic mode**: elements placed on a grid may follow it. Details are open | 7.5, O-G5 |
 | D9 | The height of a placed element is taken **from a level plus an offset**, as is usual in BIM tools; there is no stored link between a grid and a level | 6, 7.2 |
-| D10 | Grids are **visible in 3D to other USD viewers**, as thin tubes of small diameter. Details are open | 12, O-G7 |
+| D10 | Grids are **visible in 3D to other USD viewers** as 50 mm diameter tubes at `z = 0`, in derived USD geometry with `purpose = guide`; labels remain native UI text | 11 |
 | D11 | Limits of 64 grids and 200 lines per family are accepted | 10 |
 | D12 | Labels are **not skipped** (no letters left out); default label schemes need no skip set | 3 |
 | D13 | Grid **names need not be unique** | 5.2, 10 |
 | D14 | Labels are a **list of words separated by spaces**: `А Б В Г Г-1 Г-2 Д`; the character `/` is allowed in a label | 3 |
+
+### MVP defaults selected under the user's delegation (2026-10-26)
+
+| # | Default | Rule |
+|---|---------|------|
+| M1 | Explicit labels and helpers | Any Unicode letters and digits allowed by section 3 may be entered explicitly, including Cyrillic. The only automatic schemes are `numeric` and Latin `alpha`; there is no Cyrillic auto-labeling scheme in the MVP. |
+| M2 | Regular-line drag | A drag rewrites the authoritative family expression. Labels match lines and preserve their AxisIds. A drag that breaks line order or the minimum spacing is refused without changing the grid. |
+| M3 | Family mode | `regular` or `drawn` is selected at grid creation and does not change in the MVP. A line cannot be drawn into a regular family; mode conversion is deferred. |
+| M4 | Orientation and span | `u` lines are parallel to local Y, `v` lines to local X, and the grid's Z rotation applies to the complete frame. A default span extends 2000 mm beyond the other family in the span direction; section 2 defines the projection rule for drawn lines. |
+| M5 | Intersections and placement height | The one-parameter syntax is `GRID:LABEL,LABEL`, with comma as the separator. Placement height is level elevation plus `--offset` (default zero), or explicit `--z`; a grid has no elevation. |
+| M6 | Viewer geometry | T01.7 uses 50 mm diameter tubes at `z = 0` in derived USD geometry with `purpose = guide`. Labels stay in BeamCraft's native UI; USD text labels are not authored. |
+| M7 | Later features | Radial grids remain post-MVP with curved lines (T01.9). Magnetic placement remains T01.8 and waits for its existing ownership/scope dependencies (O-G5). |
 
 ## 2. What a grid is
 
@@ -58,22 +66,25 @@ A grid needs at least one line in total. A family may be empty. A grid may mix a
 with a drawn `v` family. A rectangular grid is therefore two regular families; a free layout is two
 drawn ones.
 
-**Span of a regular family.** Stored explicitly as two numbers, the start and the end along the
-line direction, in local millimetres. Its default at creation is the range of the other family's
-positions extended by 2000 mm on each side (the other family empty or drawn: `-2000` to `+2000`
-about the origin). Changing the other family afterwards does not change the span; a later edit
-sets it. A regular line is therefore a segment `(position, span.start)` to `(position, span.end)`
-for `u`, and `(span.start, position)` to `(span.end, position)` for `v`. Individual lengths per line
-are drawn lines (below) or after the MVP (D6).
+**Span of a regular family.** Stored explicitly as two numbers, the start and end along the line
+direction, in local millimetres. At creation, its default is the minimum and maximum coordinates
+of the other family in that span direction, extended by 2000 mm on each side. For `u`, use the
+other family's local-Y coordinates: regular `v` positions, or the local-Y coordinates of all
+endpoints when `v` is drawn. For `v`, use local-X coordinates: regular `u` positions, or the
+local-X coordinates of all endpoints when `u` is drawn. If the other family is empty, use `-2000`
+to `+2000`. Changing the other family afterwards does not change the span; an edit sets it
+explicitly. A regular line is therefore `(position, span.start)` to `(position, span.end)` for `u`,
+and `(span.start, position)` to `(span.end, position)` for `v`. Individual lengths per line are
+drawn lines (below) or after the MVP (D6).
 
 ### 2.1 Drawing lines
 
 Drawing is a UI feature on engine commands (T01.2, T01.6): the user picks a family, clicks two
 points with the usual snaps (including those of other grids), and gives or accepts a label. The UI
-turns the clicks into the numbers of `GridLineDraw`; the engine never sees a mouse event. A drawn
+turns the clicks into the numbers of `DrawGridLine`; the engine never sees a mouse event. A drawn
 line can be reshaped (new end points), relabelled and removed. Drawing into a regular family is
-refused (`UNSUPPORTED_PROPERTY`): turn the family into a drawn one by editing it (O-G11), or draw
-into the other family. The kind of a family can be chosen when the grid is created.
+refused (`UNSUPPORTED_PROPERTY`); family mode is selected when the grid is created and cannot be
+converted in the MVP. The engine never changes a family mode implicitly.
 
 The following are not supported in this version (`UNSUPPORTED_GEOMETRY` unless noted): arcs,
 circles, rings, splines and any curved line, radial grids (they need rings, so they come with
@@ -98,7 +109,7 @@ helpers write the list for the user: `numeric` (`start` default 1, `step` defaul
 (the Latin letters A to Z, then AA, AB, ...; `start` default `A`), each with `order` `ascending`
 (the first label goes to the lowest position, default) or `descending` (the first goes to the
 highest). Nothing is skipped (D12). Helpers expand to the explicit list before the command is built,
-so a command always carries the list. A scheme for the Cyrillic alphabet is open (O-G12).
+so a command always carries the list. No Cyrillic helper is provided in the MVP; users supply Cyrillic labels in the explicit list.
 Defaults when the user says nothing: `u` numeric, `v` alpha.
 
 **Labels per view.** Which labels a view shows, at which end of a line and how large, and whether a
@@ -134,9 +145,11 @@ step is editing the text: `0 5*6000` to `0 5*6500` moves every line of the famil
 for the new line count (section 3). Lines are matched by **label**: a label that remains keeps its
 AxisId and takes its new position; a new label creates a line with a new AxisId; a label that
 disappears removes its line. Moving one line alone or inserting a bay is writing the equivalent
-expression; the UI does this when a line is dragged. Removing a line that a stored reference names
-is `DEPENDENCY_CONFLICT`. How a manual drag, an expression and a drawn line coexist in one family
-is open (O-G11).
+expression; the UI does this when a line is dragged. For a one-line drag, the UI rewrites the
+expression distances needed to place that line while retaining the family order. The engine matches
+by label, so the dragged line and every retained line keep its AxisId. If the resulting positions
+would reorder lines or violate the 1 mm spacing floor, the whole command is refused. Removing a
+line that a stored reference names is `DEPENDENCY_CONFLICT`.
 
 A drawn family has no expression.
 
@@ -164,7 +177,7 @@ pair `(GridId, AxisId)`: a relationship to the grid plus the AxisId (section 5.4
 | Layer | Today the authored model, as levels are. When U19 lands, grid **and** level elements move to the `Grids` layer (`<code>[_<zone>]_Grids.usda`) by task T01.5; paths and identities do not change, and no migration of earlier stores is promised while the project is pre-alpha |
 | Kind | `bim:elementKind = grid`. USD `kind = component`. No `Geometry` child in the authored layer, no material, no mass (viewer geometry is derived data, section 12) |
 | Placement | `xformOp:translate` = `(x, y, 0)` and `xformOp:orient` = a rotation about +Z only. `z != 0`, or an orientation with an X or Y component, is `UNSUPPORTED_GEOMETRY`, reason `GRID_PLACEMENT_UNSUPPORTED` |
-| Common | `bim:id`, `bim:name` (F04 label rule, 1 to 256 bytes; **not required to be unique**, D13), `bim:schemaVersion`, `bim:createdBy` |
+| Common | `bim:id`, `bim:name` (F04 label rule, 1 to 256 bytes; **not required to be unique**, D13), `bim:discipline` (the authoring module token; immutable), `bim:schemaVersion`, `bim:createdBy` |
 
 Attributes, for each family `<f>` = `u` or `v` (explicit, readable without a schema):
 
@@ -177,6 +190,11 @@ Attributes, for each family `<f>` = `u` or `v` (explicit, readable without a sch
 | `bim:grid:<f>:labels` | string array: the labels, same order |
 | `bim:grid:<f>:shapes` | token array: `line` (the only value in the MVP), same order |
 | `bim:grid:<f>:pointsMm` | double array, four numbers per line `(x1, y1, x2, y2)` in grid-local coordinates, same order |
+
+The proposed F10 registry extension adds `grid` beside `level` with owner `any` and family
+`project structure`. Under F10, `bim:discipline` records the authoring module and is not write
+authority; shared `Grids` scope under F10 0.2 `DV-SCOPE-004` authorizes grid writes. Grid-specific
+attributes use the `bim:grid:` namespace.
 
 The arrays of a family have lengths that agree (`pointsMm` has four times as many entries as
 `ids`). A stored grid that breaks this, a duplicate AxisId or label, a segment shorter than 1 mm, a
@@ -253,7 +271,8 @@ unknown label, a non-crossing pair or a grid that does not exist are refused (se
 
 A command that takes points accepts **one parameter** for it (D3): `GRID:LABEL,LABEL`, where `GRID`
 is a GridId or a grid name carried by exactly one live grid (`GRID_NAME_AMBIGUOUS` otherwise), for
-example `--start-at-grid 2401:Б,3`. The comma separator is proposed (O-G13). Height is given as
+example `--start-at-grid 2401:Б,3`. A name containing `:` must be addressed by GridId. Comma is
+the fixed label separator. Height is given as
 `--z MM`, or as **`--level LEVEL [--offset MM]`**, which takes `z = elevation of the level + offset`
 (offset default 0; D9). Without either the command is refused (`INVALID_ARGUMENT`). T01.4 adds the
 syntax to `create-member` (`--start-at-grid`, `--end-at-grid`) and to the placement origin of
@@ -289,24 +308,24 @@ and is not scheduled until O-G5 is answered. The non-magnetic mode never becomes
 ## 8. Commands (engine API first, then CLI)
 
 Each command is one atomic edit and one undo unit, takes `op_id`, validates before it writes and, on
-any refusal, changes nothing. CLI option names are indicative; T01.1 fixes them.
+any refusal, changes nothing. The CLI command and option names in this contract are the planned public interface.
 
 ### 8.1 Edits
 
 | Command (CLI) | Arguments | Behaviour |
 |---------------|-----------|-----------|
-| `CreateGrid` (`create-grid`) | `new_id`, `name`, `origin`, `rotation` (degrees at the CLI); per family `u`, `v`: either an `expression`, its `labels` list or helper, a `span` and `axis_ids`, or `drawn` (empty) | Validates, expands the expression and the labels, authors the grid |
+| `CreateGrid` (`create-grid`) | `new_id`, `name`, `origin`, `rotation` (degrees at the CLI); per family `u`, `v`: either an `expression`, its `labels` list or helper, a `span` and `axis_ids`, or `drawn` with an optional explicit `endpoints` list (empty by default) | Validates, expands the expression and the labels, authors the grid; a drawn family given at creation feeds its endpoint projections into the other family's default span (section 2) |
 | `UpdateGrid` (`update-grid`) | `target_id`; any of `name`, `origin`, `rotation`; per regular family a new `expression` with the full `labels` list and `axis_ids` for new labels, and `span` | Rewrites a regular family by section 4; moves or renames the grid; ids of kept lines unchanged |
-| `GridLineDraw` (`grid-line-draw`) | `target_id`, `family`, `new_axis_id`, `label`, `from`, `to` (world points) | Adds one straight line to a **drawn** family |
-| `GridLineReshape` (`grid-line-reshape`) | `target_id`, `axis_id`, `from`, `to` | New end points of a line of a drawn family; id and label kept |
-| `GridLineRemove` (`grid-line-remove`) | `target_id`, `axis_id` | Removes a line of a drawn family. The only line of a grid is refused (delete the grid) |
-| `GridRelabel` (`grid-relabel`) | `target_id`, `axis_id` + `label`, or `family` + the full `labels` list | Changes labels only; ids and geometry untouched |
+| `GridLineDraw` (`draw-grid-line`) | `target_id`, `family`, `new_axis_id`, `label`, `from`, `to` (world points) | Adds one straight line to a **drawn** family |
+| `GridLineReshape` (`reshape-grid-line`) | `target_id`, `axis_id`, `from`, `to` | New end points of a line of a drawn family; id and label kept |
+| `GridLineRemove` (`remove-grid-line`) | `target_id`, `axis_id` | Removes a line of a drawn family. The only line of a grid is refused (delete the grid) |
+| `GridRelabel` (`relabel-grid-line`) | `target_id`, `axis_id` + `label`, or `family` + the full `labels` list | Changes labels only; ids and geometry untouched |
 | `DeleteElement` | `target_id` | Deletes the grid with its lines; refused while a stored reference exists |
 | `CopyElement` | `source_id`, `new_id`, `name`, `new_axis_ids` | An independent copy (section 5.4) |
 
-**Queries** (read-only, no revision): `grids` (every grid with its frame and each line: id, label,
-and the world coordinates of its end points, and each family's expression), `grid-point` (section
-7.2), `grid-plane` (section 7.3) and `snap` with the new kinds. `inspect-elements` lists grids beside
+**Queries** (read-only, no revision): `list-grids` (every grid with its frame and each line: id, label,
+and world end points, and each family's expression), `resolve-grid-point` (section 7.2),
+`resolve-grid-plane` (section 7.3) and `snap` with the new kinds. `inspect-elements` lists grids beside
 levels.
 
 **Footprints.** Create: read the absence of the GridId and of every AxisId, write the new lifecycle
@@ -322,7 +341,7 @@ Grids and levels are **shared data** with their own shared scope (F12 `PC-OWN-00
 
 | Operation | Section user (ordinary edit) | Shared `Grids` scope |
 |-----------|------------------------------|----------------------|
-| Read grids and levels, `snap`, `grid-point`, `grid-plane`, `--start-at-grid` placement | allowed | allowed |
+| Read grids and levels, `snap`, `resolve-grid-point`, `resolve-grid-plane`, `--start-at-grid` placement | allowed | allowed |
 | Create, update, copy or delete a grid; draw, reshape, remove or relabel a line | `PERMISSION_DENIED` | allowed |
 | Create or change a level (D2) | `PERMISSION_DENIED` | allowed |
 | Ordinary `UpdateElement`, create or copy of a part | cannot touch a grid or a level: a part holds coordinates and a `bim:level` link | n/a |
@@ -382,22 +401,22 @@ Limits are original operating limits, checked before allocation and never widene
 * **DXF, DSTV, STEP, FBX, DWG:** not part of the MVP. A drawing view (D04) may draw the grid lines
   its view shows as view content; that is drawing data, not an exchange of grids.
 * **Other USD viewers:** the grid is an ordinary `Xform` with attributes, readable by any USD tool,
-  and carries thin tube geometry for 3D viewing (section 12, T01.7).
+  and carries one 50 mm diameter tube per line at `z = 0` in a derived layer with `purpose = guide`.
+  USD text labels are omitted; native BeamCraft UI renders the labels. Viewer geometry never enters
+  the authored model or engineering queries (T01.7).
 
-## 12. Open questions for the owner
+## 12. Deferred owner decision
 
-Answered ones are in section 1. The others are still open; the text that depends on one says so.
+The MVP rules and acceptance cases are settled in this contract. The only remaining question is
+magnetic placement, which is explicitly outside T01.1 to T01.7 and waits for T01.8.
 
 | # | Question | Blocks |
 |---|----------|--------|
-| O-G5 | **Magnetic mode.** (a) Where is the switch: per grid, per element, per placement, or a session setting? (b) What follows the grid: the ends of a member, the vertices of a plate, the points of a bolt group, a hole, all of them? (c) A shared grid is moved by the shared scope, but the followers belong to a section; a shared command must not rewrite section elements (`PC-OWN-001`). Should the followers be moved by the section's own edit when it next updates (marked "grid changed, check", as KM changes mark KMD), moved in the same transaction by an explicit authorized command, or should moving a grid be refused while followers exist? (d) What happens to followers when their line is deleted? (e) Does moving a follower by hand detach it? (f) Can an element follow a line of a pinned grid of another project? | T01.8 |
-| O-G7 | **Viewer geometry (D10).** What diameter for the thin tube (for example 50 mm)? At what height is it drawn: at `z = 0`, at the lowest level, once per level, or a vertical strip? Is it `render` or `guide` purpose, and is it drawn in the derived layer so it never enters the authored model? Do other viewers need the labels (USD has no text primitive)? | T01.7 |
-| O-G11 | **Expression and manual edits.** The draft makes the expression authoritative for a regular family and lines matched by label when it is edited (section 4). Is that right? How should a drag of one regular line behave: rewrite the expression (draft), or turn the family into a drawn one? Can a drawn family be turned into a regular one? | T01.3 |
-| O-G12 | Cyrillic: add a helper that writes the Russian alphabet (А Б В Г Д...), with or without the letters usually left out (Ё З Й О Х Ц Ч Щ Ъ Ы Ь), or is typing the list enough? Default `u` numeric and `v` alpha | T01.1 |
-| O-G13 | The one-parameter syntax of an intersection: `GRID:LABEL,LABEL` is proposed; `/` is allowed in labels so it cannot be the separator | T01.4 |
-| O-G14 | Radial grids need rings, so they leave the MVP with curves (T01.9). Is that the intention? | T01.9 |
-| O-G15 | Default span of a regular family (the other family's range plus 2000 mm) and the default `u`/`v` orientation of a regular family (`u` lines parallel to Y); right? | T01.1 |
-| O-G16 | The level-and-offset rule of section 7.2 (`z = elevation + offset`): confirm, or say how a level should act on a grid | T01.4 |
+| O-G5 | **Magnetic mode.** Decide where the switch lives, which placed parts follow a line, how shared-grid changes affect followers owned by a section, whether a line with followers may be deleted, whether hand edits detach a follower, and whether a pinned foreign grid may be followed. A shared-grid edit must never rewrite section elements outside their scope. | T01.8 |
+
+`T01.7` has exact tube geometry and purpose rules in section 11 and acceptance case GR-P16.
+Questions O-G7 and O-G11 to O-G16 from the original #192 draft are resolved by the defaults in
+section 1 and the rules below; they do not block the MVP.
 
 ## 13. Acceptance cases (to be bound to fixtures)
 
@@ -419,7 +438,10 @@ Positive:
 | GR-P10 | Create a grid in a project with a plate, a member and a level; export the BOM and run numbering | Element list, quantities and part numbers equal those without the grid; numbering is not stale; the grid is not in the IFC element list |
 | GR-P11 | A KMD edit (rename a part, move a plate) under the rules of T01.5 | Every grid and level is byte-equal before and after; with no `Grids` authority a grid command is `PERMISSION_DENIED` |
 | GR-P12 | A section project places a member at an intersection of a grid of the pinned coordination project | Coordinates as GR-P08; the grid is unchanged; a write to that grid is `FOREIGN_READ_ONLY` |
-| GR-P13 | `grid-plane` of line `3` of GR-P01 | A vertical plane through `(12000, y)` with normal `(±1, 0, 0)`; the same after reopening |
+| GR-P13 | `resolve-grid-plane` of line `3` of GR-P01 | A vertical plane through `(12000, y)` with normal `(±1, 0, 0)`; the same after reopening |
+| GR-P14 | Grid A has regular `u` at 0 and drawn `v` endpoints `(1000, 8000)` and `(5000, 12000)`; Grid B has regular `v` at 0 and drawn `u` endpoints `(1000, 3000)` and `(5000, 4000)` | Grid A's `u` segment runs `(0, 6000)` to `(0, 14000)`; Grid B's `v` segment runs `(-1000, 0)` to `(7000, 0)` |
+| GR-P15 | Drag regular line `2` of positions `[0, 6000, 12000]` to `6500` | Expression becomes `0 6500 5500`; all three labels and AxisIds remain; one undo restores the previous expression and positions |
+| GR-P16 | Open a derived USD grid in another viewer | One 50 mm diameter tube per line at `z = 0`, `purpose = guide`; no USD text labels and no grid geometry in the authored layer |
 
 Negative:
 
@@ -432,7 +454,7 @@ Negative:
 | GR-N05 | Two neighbouring lines 0.5 mm apart; a distance of 0 | `INVALID_ARGUMENT`, `GRID_SPACING_INVALID` |
 | GR-N06 | 201 lines in a family; the 65th grid; a distance of 1,000,001 mm; origin 1,000,000,001 mm | `LIMIT_EXCEEDED` |
 | GR-N07 | NaN or infinite number | `NON_FINITE_NUMBER` |
-| GR-N08 | `grid-point` with two labels of one family; an unknown label; two lines that do not cross (parallel lines, or crossing outside both segments) | `INVALID_ARGUMENT` (`GRID_INTERSECTION_UNDEFINED`) or `NOT_FOUND` (`GRID_AXIS_UNKNOWN`) |
+| GR-N08 | `resolve-grid-point` with two labels of one family; an unknown label; two lines that do not cross (parallel lines, or crossing outside both segments) | `INVALID_ARGUMENT` (`GRID_INTERSECTION_UNDEFINED`) or `NOT_FOUND` (`GRID_AXIS_UNKNOWN`) |
 | GR-N09 | Draw a line into a regular family; give an expression to a drawn family | `UNSUPPORTED_PROPERTY`, `GRID_FAMILY_MODE` |
 | GR-N10 | A drawn line of length 0.5 mm or with equal end points | `INVALID_ARGUMENT`, `GRID_LINE_DEGENERATE` |
 | GR-N11 | A shape `arc`; a placement rotated about X, or `z != 0` | `UNSUPPORTED_GEOMETRY` |
@@ -443,9 +465,9 @@ Negative:
 | GR-N16 | A write to a grid of a foreign reference or a pinned project | `FOREIGN_READ_ONLY` |
 | GR-N17 | `--start-at-grid` with neither `--z` nor `--level` | `INVALID_ARGUMENT` |
 | GR-N18 | A grid name carried by two grids used as a grid reference | `INVALID_ARGUMENT`, `GRID_NAME_AMBIGUOUS` |
+| GR-N19 | Drag a regular line past its neighbour or to less than 1 mm spacing | `INVALID_ARGUMENT`, `GRID_SPACING_INVALID`; the head, expression and AxisIds are unchanged |
 
-Cases for the viewer geometry (T01.7) and for the magnetic mode (T01.8) are written when O-G7 and
-O-G5 are answered.
+Viewer geometry is covered by GR-P16. Magnetic-mode cases are added only after O-G5 is resolved for T01.8.
 
 ## 14. Slices and dependencies
 

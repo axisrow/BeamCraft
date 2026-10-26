@@ -892,6 +892,12 @@ pub enum SnapKind {
     AxisEnd,
     /// The nearest point of a member's axis segment.
     Axis,
+    /// Intersection of a U and V grid segment.
+    GridIntersection,
+    /// Endpoint of a grid segment.
+    GridEnd,
+    /// Closest point of a grid segment.
+    GridLine,
 }
 
 impl SnapKind {
@@ -901,6 +907,9 @@ impl SnapKind {
             Self::Vertex => "vertex",
             Self::AxisEnd => "axis_end",
             Self::Axis => "axis",
+            Self::GridIntersection => "grid_intersection",
+            Self::GridEnd => "grid_end",
+            Self::GridLine => "grid_line",
         }
     }
 
@@ -910,6 +919,9 @@ impl SnapKind {
             "vertex" => Some(Self::Vertex),
             "axis_end" => Some(Self::AxisEnd),
             "axis" => Some(Self::Axis),
+            "grid_intersection" => Some(Self::GridIntersection),
+            "grid_end" => Some(Self::GridEnd),
+            "grid_line" => Some(Self::GridLine),
             _ => None,
         }
     }
@@ -919,6 +931,9 @@ impl SnapKind {
             Self::Vertex => 0,
             Self::AxisEnd => 1,
             Self::Axis => 2,
+            Self::GridIntersection => 3,
+            Self::GridEnd => 4,
+            Self::GridLine => 5,
         }
     }
 }
@@ -936,9 +951,24 @@ pub struct SnapQuery {
     pub max_hits: u32,
 }
 
+/// Persistent grid snap address, independent of mesh features.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridSnapIdentity {
+    /// First axis (U for intersections).
+    pub axis_id: ElementId,
+    /// Second, V axis for intersections.
+    pub other_axis_id: Option<ElementId>,
+    /// First axis label.
+    pub label: String,
+    /// Second axis label.
+    pub other_label: Option<String>,
+}
+
 /// One snap candidate.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SnapCandidate {
+    /// Grid line identities and labels; absent for engineering-body candidates.
+    pub grid: Option<GridSnapIdentity>,
     /// The owning element.
     pub element_id: ElementId,
     /// What it snaps to.
@@ -972,6 +1002,12 @@ fn snap_order(a: &SnapCandidate, b: &SnapCandidate) -> Ordering {
         .total_cmp(&quantum(b.distance_mm))
         .then_with(|| a.kind.rank().cmp(&b.kind.rank()))
         .then_with(|| a.element_id.to_string().cmp(&b.element_id.to_string()))
+        .then_with(|| {
+            a.grid
+                .as_ref()
+                .map(|g| (g.axis_id, g.other_axis_id))
+                .cmp(&b.grid.as_ref().map(|g| (g.axis_id, g.other_axis_id)))
+        })
         .then_with(|| local(a).cmp(&local(b)))
         .then_with(|| {
             canonical(a.axis_parameter.unwrap_or(0.0))
@@ -1012,6 +1048,7 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
                     }
                     if distance <= band {
                         candidates.push(SnapCandidate {
+                            grid: None,
                             element_id: entry.id,
                             kind: SnapKind::Vertex,
                             feature_id: Some(id),
@@ -1038,6 +1075,7 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
             }
             if distance <= band {
                 candidates.push(SnapCandidate {
+                    grid: None,
                     element_id: entry.id,
                     kind,
                     feature_id,
@@ -1080,6 +1118,86 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
         truncated,
         skipped,
     })
+}
+
+/// Snap against engineering bodies and a complete pinned grid set, with an optional visible-id filter.
+pub fn snap_with_grids(
+    snapshot: &ViewSnapshot,
+    query: &SnapQuery,
+    grids: &[beamcraft_model::grid::Grid],
+    visible: Option<&std::collections::BTreeSet<ElementId>>,
+) -> Result<SnapResult, ViewError> {
+    use crate::grid_query::{closest, intersection, local_to_world, segments};
+    crate::grid_query::validate(grids).map_err(|_| input())?;
+    if visible.is_some_and(|v| v.len() > 64) {
+        return Err(limit());
+    }
+    let mut result = snap(snapshot, query)?;
+    let max = usize::try_from(query.max_hits).map_err(|_| limit())?;
+    let band = query.radius_mm + EPS_PICK_MM;
+    let [px, py, pz] = query.point_mm;
+    for grid in grids {
+        if visible.is_some_and(|v| !v.contains(&grid.id)) {
+            continue;
+        }
+        let p = crate::grid_edit::world_to_local(grid, [px, py]);
+        let lines = segments(grid).map_err(|_| input())?;
+        let nearby = lines
+            .iter()
+            .filter(|l| {
+                let [x, y] = closest(l, p);
+                let [lx, ly] = p;
+                (x - lx).hypot(y - ly) <= band
+            })
+            .collect::<Vec<_>>();
+        let mut push = |kind,
+                        a: &crate::grid_query::GridSegment,
+                        b: Option<&crate::grid_query::GridSegment>,
+                        point| {
+            let [x, y] = local_to_world(grid, point);
+            let distance = (x - px).hypot(y - py);
+            if distance <= band {
+                result.candidates.push(SnapCandidate {
+                    element_id: grid.id,
+                    kind,
+                    feature_id: None,
+                    axis_parameter: None,
+                    point_world_mm: [x, y, pz],
+                    distance_mm: distance,
+                    grid: Some(GridSnapIdentity {
+                        axis_id: a.axis_id,
+                        other_axis_id: b.map(|l| l.axis_id),
+                        label: a.label.clone(),
+                        other_label: b.map(|l| l.label.clone()),
+                    }),
+                });
+                // Retain at most two result pages, never the full cross product.
+                if result.candidates.len() > max.saturating_mul(2) {
+                    result.truncated |= keep_best(&mut result.candidates, max, snap_order);
+                }
+            }
+        };
+        for line in &nearby {
+            if query.kinds.contains(&SnapKind::GridLine) {
+                push(SnapKind::GridLine, line, None, closest(line, p));
+            }
+            if query.kinds.contains(&SnapKind::GridEnd) {
+                push(SnapKind::GridEnd, line, None, line.start);
+                push(SnapKind::GridEnd, line, None, line.end);
+            }
+        }
+        if query.kinds.contains(&SnapKind::GridIntersection) {
+            for u in nearby.iter().filter(|l| l.family == 0) {
+                for v in nearby.iter().filter(|l| l.family == 1) {
+                    if let Some(point) = intersection(u, v) {
+                        push(SnapKind::GridIntersection, u, Some(v), point);
+                    }
+                }
+            }
+        }
+    }
+    result.truncated |= keep_best(&mut result.candidates, max, snap_order);
+    Ok(result)
 }
 
 #[cfg(test)]

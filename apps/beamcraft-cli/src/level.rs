@@ -148,7 +148,7 @@ pub(crate) fn levels_of(prims: &[Prim]) -> Result<Levels, PlateError> {
     Ok(levels)
 }
 
-fn model_of(request: &OpenRequest, control: &Control) -> Result<Levels, PlateError> {
+pub(crate) fn model_of(request: &OpenRequest, control: &Control) -> Result<Levels, PlateError> {
     // Stored bytes are verified, not interpreted: the structural rules (D2-V01 among them) run
     // before the levels are read, so a damaged graph is refused rather than reported or replayed.
     validate_layers(request.clone(), schema_identity()?, control)?;

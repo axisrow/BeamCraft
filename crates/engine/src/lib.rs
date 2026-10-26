@@ -21,6 +21,8 @@ pub mod error;
 pub mod footprint;
 pub mod grid;
 pub mod grid_edit;
+pub mod grid_query;
+pub mod grid_update;
 pub mod level;
 pub mod limits;
 pub mod measure;

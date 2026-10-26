@@ -87,6 +87,10 @@ const CREATE_OPTIONS: &[&str] = &[
     "--actor-id",
     "--project-id",
     "--workspace-id",
+    "--z",
+    "--level",
+    "--offset",
+    "--origin-at-grid",
 ];
 
 const DEFINE_MATERIAL_OPTIONS: &[&str] = &[
@@ -158,6 +162,11 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--actor-id",
     "--project-id",
     "--workspace-id",
+    "--z",
+    "--level",
+    "--offset",
+    "--start-at-grid",
+    "--end-at-grid",
 ];
 
 const UPDATE_OPTIONS: &[&str] = &[
@@ -756,7 +765,17 @@ fn create(
         contour_points_mm: contour,
         thickness_mm: thickness,
         placement: Placement {
-            translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
+            translation_mm: if options.contains_key("--origin-at-grid") {
+                grid_placement(store, options, &op_id, "--origin-at-grid")?
+            } else {
+                if ["--z", "--level", "--offset"]
+                    .iter()
+                    .any(|k| options.contains_key(k))
+                {
+                    return Err(invalid("height options require grid placement"));
+                }
+                given("--translation").map_or(Ok([0.0; 3]), translation)?
+            },
             ..Placement::IDENTITY
         },
         material_digest: selected(
@@ -1463,7 +1482,30 @@ fn create_member_command(
         new_id,
         kind,
         name: given("--name").unwrap_or(kind.as_str()).to_owned(),
-        axis_points_mm: [point("--start")?, point("--end")?],
+        axis_points_mm: {
+            let resolve = |direct, grid| {
+                if options.contains_key(grid) {
+                    if options.contains_key(direct) {
+                        return Err(invalid("point and grid address are mutually exclusive"));
+                    }
+                    grid_placement(store, options, &op_id, grid)
+                } else {
+                    point(direct)
+                }
+            };
+            if !options.contains_key("--start-at-grid")
+                && !options.contains_key("--end-at-grid")
+                && ["--z", "--level", "--offset"]
+                    .iter()
+                    .any(|k| options.contains_key(k))
+            {
+                return Err(invalid("height options require grid placement"));
+            }
+            [
+                resolve("--start", "--start-at-grid")?,
+                resolve("--end", "--end-at-grid")?,
+            ]
+        },
         profile_digest,
         placement: Placement {
             translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
@@ -1505,6 +1547,39 @@ fn create_member_command(
         ("revision", revision_json(&created.revision)),
         ("footprint", footprint_json(created.footprint.as_ref())),
     ]))
+}
+
+fn grid_placement(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    op: &OpId,
+    key: &str,
+) -> Run<[f64; 3]> {
+    let address = options
+        .get(key)
+        .ok_or_else(|| invalid("missing grid address"))?;
+    let z = options
+        .get("--z")
+        .map(|s| s.parse::<f64>().map_err(|_| invalid("invalid height")))
+        .transpose()?;
+    let level = options
+        .get("--level")
+        .map(|s| ElementId::parse(s).map_err(id_error))
+        .transpose()?;
+    let offset = options
+        .get("--offset")
+        .map(|s| s.parse::<f64>().map_err(|_| invalid("invalid offset")))
+        .transpose()?
+        .unwrap_or(0.0);
+    if options.contains_key("--translation")
+        || options.contains_key("--orientation-xyzw")
+        || (options.contains_key("--offset") && level.is_none())
+    {
+        return Err(invalid(
+            "grid placement conflicts with translation, orientation or an offset without level",
+        ));
+    }
+    beamcraft_cli::grid::resolve_placement(store, op, address, z, level, offset)
 }
 
 fn member_json(record: &MemberRecord) -> Run<Json> {

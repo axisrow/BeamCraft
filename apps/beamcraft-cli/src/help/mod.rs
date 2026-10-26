@@ -85,6 +85,8 @@ const SECTIONS: &[&str] = &[
     level::HELP,
     grid::HELP,
     grid::LINES,
+    grid::UPDATE,
+    grid::QUERIES,
     export::HELP,
     numbering::PREVIEW,
     numbering::APPROVAL,

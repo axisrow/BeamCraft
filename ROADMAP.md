@@ -78,11 +78,11 @@ until then everything stays MPL-2.0.
 In this order (milestones M0 to M5; M1 to M5 are those of the decision of 2026-10-21, and the owner
 put grids first on 2026-10-23); the task cards are in [`docs/plan/tasks.md`](docs/plan/tasks.md).
 
-0. **M0, grids:** the [grid contract](docs/contracts/t01-project-grids-draft-v0.1.md) (draft for
-   owner review), then T01.1 to T01.4 (model, layer, engine, CLI, drawn lines, snaps and
-   placement), T01.5 (rights, pinned grids, with U19), T01.6 (UI) and T01.7 (viewer geometry);
-   the magnetic mode (T01.8) waits for the owner's answers. Views by grid line (V12) and the grid
-   switch (V11) build on it.
+0. **M0, grids:** review the [T01/F04/F10 grid contract amendment](docs/contracts/t01-project-grids-draft-v0.1.md)
+   with its MVP defaults, then T01.1 to T01.4 (model, layer, engine, CLI, drawn lines, snaps and
+   placement), T01.5 (rights, pinned grids, with U19), T01.6 (UI) and T01.7 (50 mm derived USD
+   guide tubes). Magnetic mode (T01.8) waits on its ownership/scope decision; curved and radial grids
+   (T01.9) stay after the MVP. Views by grid line (V12) and the grid switch (V11) build on it.
 1. **M1, modelling and the UI shell:** A03/A04 to the operation records (A-2); kernel sweep and
    ruled surfaces (G12, G13); polybeams, curved beams, section placement, complex, bent and lofted
    plates (P12 to P14, A10 to A13); complete bolts, welds and nested assemblies (A14 to A16);

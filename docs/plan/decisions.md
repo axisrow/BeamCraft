@@ -4,6 +4,27 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-26
+
+- **T01 MVP defaults.** The user delegated the unanswered grid defaults to project best practices and
+  current conventions. The proposed contract amendment resolves the 2026-10-23 questions for
+  T01.1 to T01.7:
+  - Explicit label lists accept Cyrillic and other permitted Unicode labels; automatic schemes are
+    numeric and Latin alpha only.
+  - A regular-family line drag rewrites the expression and matches lines by label to retain
+    AxisIds. Family mode is selected at grid creation and cannot change in the MVP.
+  - U lines run parallel to local Y, V lines parallel to local X, and the Z rotation moves the full
+    grid frame. Default spans reach 2000 mm beyond the other family's coordinate range, including
+    endpoint projections for drawn lines.
+  - The intersection syntax is `GRID:LABEL,LABEL`; placement height is level elevation plus offset
+    or explicit `--z`.
+  - Other USD viewers receive 50 mm diameter guide tubes at `z = 0` in derived geometry. Labels
+    remain native UI text.
+  - Radial grids remain after the MVP with curves. Magnetic mode remains deferred until its
+    ownership and scope dependencies are resolved.
+  - Exact T01.1 to T01.7 acceptance is in the [T01 contract](../contracts/t01-project-grids-draft-v0.1.md);
+    magnetic mode and curved grids stay separate slices.
+
 ## 2026-10-24
 
 - **Gates K1 and K2 are passed.** Owner decision on [issue #125](https://github.com/Apibim-com/BeamCraft/issues/125):
@@ -36,7 +57,8 @@ Open questions are at the end.
   - Limits: 64 grids per project, 200 lines per family.
   - Grids are visible to other USD viewers as thin tubes (details open). A **magnetic** mode, in
     which placed elements follow a grid, is wanted (details open).
-  - Open questions are listed in section 12 of the contract (O-G5, O-G7, O-G11 to O-G16).
+  - Open questions at the time were listed in section 12 of the contract (O-G5, O-G7, O-G11 to
+    O-G16). The 2026-10-26 defaults below resolve the MVP questions except magnetic mode O-G5.
   - Grids and levels share one shared scope; an ordinary section edit changes neither. No export
     (IFC, BOM, numbering) carries grids in the MVP.
 

@@ -13,6 +13,7 @@
 use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
 pub use crate::grid::CreateGrid;
+pub use crate::grid_update::UpdateGrid;
 use crate::id::ElementId;
 use crate::limits::{
     BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,
@@ -123,7 +124,8 @@ impl Placement {
                 ErrorCode::NonFiniteNumber,
                 "placement.orientation_xyzw",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if xyzw.iter().any(|v| v.abs() > 1.0) {
             return Err(CommandError::new(
@@ -761,6 +763,7 @@ impl UpdateElement {
                         "placement.orientation_xyzw",
                         "value cannot be encoded",
                     )
+                    .with_rule("DV-ATTR-003")
                 })?);
             }
         }
@@ -1860,6 +1863,32 @@ mod tests {
             update(Some(negated)).content_fingerprint().unwrap(),
             update(Some(quarter)).content_fingerprint().unwrap()
         );
+    }
+
+    #[test]
+    fn non_finite_orientation_reports_the_domain_rule_in_validation_and_encoding() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for component in 0..4 {
+                let mut orientation = [0.0, 0.0, 0.0, 1.0];
+                orientation[component] = value;
+                let update = UpdateElement {
+                    target_id: id(5),
+                    patch: ElementPatch {
+                        orientation_xyzw: Some(orientation),
+                        ..ElementPatch::default()
+                    },
+                };
+                for error in [
+                    Placement::validate_orientation(orientation).unwrap_err(),
+                    update.validate_arguments().unwrap_err(),
+                    update.content_fingerprint().unwrap_err(),
+                ] {
+                    assert_eq!(error.code, ErrorCode::NonFiniteNumber);
+                    assert_eq!(error.field, "placement.orientation_xyzw");
+                    assert_eq!(error.rule_id, Some("DV-ATTR-003"));
+                }
+            }
+        }
     }
 
     #[test]

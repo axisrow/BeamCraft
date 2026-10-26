@@ -17,7 +17,8 @@ use beamcraft_engine::query::feature::{
     FeatureGeometry, FeatureKind, FeatureLookup, list_features, lookup_feature,
 };
 use beamcraft_engine::query::pick::{
-    DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SnapKind, SnapQuery, pick, snap,
+    DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SnapKind, SnapQuery, pick,
+    snap_with_grids,
 };
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
@@ -128,7 +129,14 @@ fn run(args: &[OsString]) -> Run<Json> {
         ],
         "lookup-feature" => &["--store", "--feature-id"],
         "list-feature" => &["--store", "--id"],
-        "snap" => &["--store", "--point", "--radius", "--kinds", "--max-hits"],
+        "snap" => &[
+            "--store",
+            "--point",
+            "--radius",
+            "--kinds",
+            "--max-hits",
+            "--grids",
+        ],
         _ => return Err(invalid("unknown command")),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 40 {
@@ -247,7 +255,8 @@ fn run(args: &[OsString]) -> Run<Json> {
         code: e.code(),
         message: "store root is not usable",
     })?;
-    let inspection = inspect(&RevisionStore::new(blobs))?;
+    let store = RevisionStore::new(blobs);
+    let inspection = inspect(&store)?;
     let snapshot = &inspection.snapshot;
     let revision = Json::text(inspection.revision.revision_id.clone());
     let header = |outcome: &str| {
@@ -307,7 +316,28 @@ fn run(args: &[OsString]) -> Run<Json> {
             fields
         }
         Request::Snap(query) => {
-            let result = snap(snapshot, &query)?;
+            let visible = given("--grids")
+                .map(|text| {
+                    if text.is_empty() {
+                        return Ok(std::collections::BTreeSet::new());
+                    }
+                    if text.split(',').count() > 64 {
+                        return Err(invalid("too many grid ids"));
+                    }
+                    text.split(',')
+                        .map(|id| {
+                            beamcraft_model::id::ElementId::parse(id)
+                                .map_err(|e| Failure::from(crate::plate_cmd::id_error(e)))
+                        })
+                        .collect::<Run<std::collections::BTreeSet<_>>>()
+                })
+                .transpose()?;
+            let result = snap_with_grids(
+                snapshot,
+                &query,
+                &beamcraft_cli::grid::grids_at(&store, inspection.revision.sequence)?,
+                visible.as_ref(),
+            )?;
             let mut fields = header("snapped");
             let candidates = result
                 .candidates
@@ -316,6 +346,25 @@ fn run(args: &[OsString]) -> Run<Json> {
                     Ok(Json::object([
                         ("element_id", Json::text(c.element_id.to_string())),
                         ("kind", Json::text(c.kind.as_str())),
+                        (
+                            "grid",
+                            c.grid.as_ref().map_or(Json::Null, |g| {
+                                Json::object([
+                                    ("grid_id", Json::text(c.element_id.to_string())),
+                                    ("axis_id", Json::text(g.axis_id.to_string())),
+                                    (
+                                        "other_axis_id",
+                                        g.other_axis_id
+                                            .map_or(Json::Null, |id| Json::text(id.to_string())),
+                                    ),
+                                    ("label", Json::text(&g.label)),
+                                    (
+                                        "other_label",
+                                        g.other_label.as_ref().map_or(Json::Null, Json::text),
+                                    ),
+                                ])
+                            }),
+                        ),
                         (
                             "feature_id",
                             c.feature_id

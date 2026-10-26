@@ -1421,7 +1421,7 @@ pub(super) fn changes(
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
                     Change::Placement { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "reference")
+                        matches!(kind, "plate" | "beam" | "column" | "reference" | "grid")
                     }
                     Change::Label { .. } => {
                         matches!(
@@ -1433,6 +1433,7 @@ pub(super) fn changes(
                                 | "assembly"
                                 | "connection"
                                 | "level"
+                                | "grid"
                         )
                     }
                     Change::Delete { .. } => {

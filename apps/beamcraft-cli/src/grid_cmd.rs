@@ -40,7 +40,10 @@ pub fn handles(c: &OsString) -> bool {
         c.to_str(),
         Some(
             "create-grid"
+                | "update-grid"
                 | "list-grids"
+                | "resolve-grid-point"
+                | "resolve-grid-plane"
                 | "draw-grid-line"
                 | "reshape-grid-line"
                 | "remove-grid-line"
@@ -66,6 +69,10 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
                     | "GRID_FAMILY_MODE"
                     | "GRID_AXIS_UNKNOWN"
                     | "GRID_IN_USE"
+                    | "GRID_AXIS_ID_COUNT"
+                    | "GRID_UNKNOWN"
+                    | "GRID_NAME_AMBIGUOUS"
+                    | "GRID_INTERSECTION_UNDEFINED"
             )
         })
         .map(|e| {
@@ -292,6 +299,23 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--v-axis-id",
         ],
         "list-grids" => &["--store"],
+        "resolve-grid-point" => &["--store", "--grid", "--labels"],
+        "resolve-grid-plane" => &["--store", "--grid", "--label"],
+        "update-grid" => &[
+            "--store",
+            "--id",
+            "--name",
+            "--origin",
+            "--rotation",
+            "--u-expression",
+            "--u-labels",
+            "--u-new-axis-ids",
+            "--u-span",
+            "--v-expression",
+            "--v-labels",
+            "--v-new-axis-ids",
+            "--v-span",
+        ],
         "draw-grid-line" => &[
             "--store",
             "--id",
@@ -337,6 +361,39 @@ fn run(args: &[OsString]) -> Run<Json> {
             ("grids", views_json(&grids(&store)?)?),
         ]));
     }
+    if matches!(*command, "resolve-grid-point" | "resolve-grid-plane") {
+        let model = grids(&store)?;
+        let required = |key| {
+            options
+                .get(key)
+                .copied()
+                .ok_or_else(|| invalid("missing grid query option"))
+        };
+        let grid = beamcraft_engine::grid_query::resolve_grid(&model, required("--grid")?)?;
+        if *command == "resolve-grid-point" {
+            let (a, b) = required("--labels")?
+                .split_once(',')
+                .filter(|(_, b)| !b.contains(','))
+                .ok_or_else(|| invalid("--labels needs two comma-separated labels"))?;
+            let [x, y] = beamcraft_engine::grid_query::grid_point(grid, a, b)?;
+            return Ok(Json::object([
+                ("outcome", Json::text("grid_point")),
+                ("grid_id", Json::text(grid.id.to_string())),
+                ("point_world_mm", Json::Array(vec![num(x)?, num(y)?])),
+            ]));
+        }
+        let p = beamcraft_engine::grid_query::grid_line_plane(grid, required("--label")?)?;
+        return Ok(Json::object([
+            ("outcome", Json::text("grid_plane")),
+            ("grid_id", Json::text(p.grid_id.to_string())),
+            ("axis_id", Json::text(p.axis_id.to_string())),
+            (
+                "point_world_mm",
+                crate::plate_cmd::triple(p.point_world_mm)?,
+            ),
+            ("normal_world", crate::plate_cmd::triple(p.normal_world)?),
+        ]));
+    }
     let _claim = check_project_option(&store, &options)?;
     let mut source = IdSource::system();
     let mut fresh = || {
@@ -355,6 +412,9 @@ fn run(args: &[OsString]) -> Run<Json> {
         project: common.project,
         workspace: common.workspace,
     };
+    if *command == "update-grid" {
+        return update_command(&store, &options, &context, &mut fresh);
+    }
     if *command != "create-grid" {
         return line_command(&store, &options, command, &context, &mut fresh);
     }
@@ -680,6 +740,155 @@ fn line_command(
                 format!("{outcome}_replayed")
             } else {
                 outcome.to_owned()
+            }),
+        ),
+        ("op_id", Json::text(context.op_id.to_string())),
+        ("element_id", Json::text(target_id.to_string())),
+        ("revision", revision_json(&change.revision)),
+        ("footprint", footprint_json(change.footprint.as_ref())),
+        ("grids", views_json(&change.grids)?),
+    ]))
+}
+
+fn regular_patch(
+    store: &RevisionStore,
+    target: ElementId,
+    options: &BTreeMap<&str, &str>,
+    u: bool,
+    fresh: &mut dyn FnMut() -> Run<Uuid7>,
+) -> Run<Option<beamcraft_model::grid_update::RegularGridPatch>> {
+    use beamcraft_model::grid_update::RegularGridPatch;
+    let prefix = if u { "--u" } else { "--v" };
+    let key = |suffix: &str| format!("{prefix}-{suffix}");
+    let get = |suffix: &str| options.get(key(suffix).as_str()).copied();
+    if ["expression", "labels", "new-axis-ids", "span"]
+        .iter()
+        .all(|s| get(s).is_none())
+    {
+        return Ok(None);
+    }
+    if get("expression").is_some() != get("labels").is_some() {
+        return Err(invalid("GRID_LABEL_COUNT"));
+    }
+    let parsed = get("expression")
+        .map(|text| {
+            parse_grid_expression(text).map_err(|e| {
+                error(
+                    match e {
+                        beamcraft_model::grid::GridExpressionError::Limit => {
+                            ErrorCode::LimitExceeded
+                        }
+                        beamcraft_model::grid::GridExpressionError::NonFinite => {
+                            ErrorCode::NonFiniteNumber
+                        }
+                        _ => ErrorCode::InvalidArgument,
+                    },
+                    match e {
+                        beamcraft_model::grid::GridExpressionError::Spacing => {
+                            "GRID_SPACING_INVALID"
+                        }
+                        _ => "GRID_EXPRESSION_INVALID",
+                    },
+                )
+            })
+        })
+        .transpose()?;
+    let expression = parsed.as_ref().map(|(normalized, _)| normalized.clone());
+    let labels = parsed
+        .map(|(_, positions)| {
+            parse_grid_labels(
+                get("labels").ok_or_else(|| invalid("GRID_LABEL_COUNT"))?,
+                positions.len(),
+            )
+            .map_err(|e| {
+                invalid(match e {
+                    beamcraft_model::grid::GridLabelError::Count => "GRID_LABEL_COUNT",
+                    beamcraft_model::grid::GridLabelError::Duplicate => "GRID_LABEL_DUPLICATE",
+                    _ => "GRID_LABEL_INVALID",
+                })
+            })
+        })
+        .transpose()?;
+    let new_axis_ids = match get("new-axis-ids") {
+        Some(s) => s
+            .split(|c: char| c.is_ascii_whitespace() || c == ',')
+            .filter(|s| !s.is_empty())
+            .map(|s| ElementId::parse(s).map_err(id_error))
+            .collect::<Run<Vec<_>>>()?,
+        None => {
+            if let Some(labels) = &labels {
+                let source = grids(store)?
+                    .into_iter()
+                    .find(|g| g.id == target)
+                    .ok_or_else(|| error(ErrorCode::NotFound, "grid not found"))?;
+                let family = if u { &source.u } else { &source.v };
+                let GridFamily::Regular(f) = family else {
+                    return Err(error(ErrorCode::UnsupportedProperty, "GRID_FAMILY_MODE"));
+                };
+                labels
+                    .iter()
+                    .filter(|label| !f.labels.contains(label))
+                    .map(|_| fresh().map(ElementId::from_uuid))
+                    .collect::<Run<Vec<_>>>()?
+            } else {
+                Vec::new()
+            }
+        }
+    };
+    Ok(Some(RegularGridPatch {
+        expression,
+        labels,
+        new_axis_ids,
+        span_mm: get("span").map(pair).transpose()?,
+    }))
+}
+fn update_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    context: &GridContext,
+    fresh: &mut dyn FnMut() -> Run<Uuid7>,
+) -> Run<Json> {
+    let target_id = ElementId::parse(
+        options
+            .get("--id")
+            .ok_or_else(|| invalid("--id is required"))?,
+    )
+    .map_err(id_error)?;
+    let orientation_zw = options
+        .get("--rotation")
+        .map(|s| {
+            let degrees = s
+                .parse::<f64>()
+                .map_err(|_| invalid("invalid grid rotation"))?;
+            if !degrees.is_finite() {
+                return Err(error(
+                    ErrorCode::NonFiniteNumber,
+                    "grid rotation is not finite",
+                ));
+            }
+            if degrees.abs() > 360.0 {
+                return Err(invalid("grid rotation exceeds 360 degrees"));
+            }
+            let (z, w) = (degrees.to_radians() / 2.0).sin_cos();
+            Ok([z, w])
+        })
+        .transpose()?;
+    let request = beamcraft_model::grid_update::UpdateGrid {
+        target_id,
+        name: options.get("--name").map(|s| s.to_string()),
+        origin_mm: options.get("--origin").map(|s| pair(s)).transpose()?,
+        orientation_zw,
+        u: regular_patch(store, target_id, options, true, fresh)?,
+        v: regular_patch(store, target_id, options, false, fresh)?,
+    };
+    let change = beamcraft_cli::grid::update_grid(store, context, &request, &mut NoFault)?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if change.replayed {
+                "grid_update_replayed"
+            } else {
+                "grid_updated"
             }),
         ),
         ("op_id", Json::text(context.op_id.to_string())),
