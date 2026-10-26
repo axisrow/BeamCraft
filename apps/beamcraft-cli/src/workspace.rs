@@ -36,6 +36,7 @@ pub mod conflicts;
 mod pending;
 pub mod rebase;
 pub mod rebase_receipt;
+pub mod resolve;
 
 const META_FILE: &str = "workspace.json";
 const META_MAGIC: &str = "beamcraft-workspace 1";
@@ -401,6 +402,26 @@ pub fn publish_workspace(
             message: "the published head moved since the workspace was forked",
         });
     }
+    let operations =
+        crate::command_evidence::interval(workspace, meta.synced_sequence, draft_sequence)?;
+    let source = crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
+    if source.head.manifest_digest() != draft.info().manifest_digest() {
+        return Err(integrity(
+            "publication source differs from the verified draft head",
+        ));
+    }
+    // A fully renounced draft carries no modelling work: its content equals its accepted base
+    // and a publication of it would ship nothing, so refuse before anything is written.
+    if source
+        .footprint
+        .as_ref()
+        .is_some_and(|work| work.reads().is_empty() && work.writes().is_empty())
+    {
+        return Err(PlateError {
+            code: ErrorCode::InvalidArgument,
+            message: "the unsent work was renounced; there is nothing to publish",
+        });
+    }
     let content = draft.manifest().content();
     let published_content = head.manifest().content();
     let mut entries = Vec::new();
@@ -429,14 +450,6 @@ pub fn publish_workspace(
         root_layer: content.root_layer().to_owned(),
         entries,
     };
-    let operations =
-        crate::command_evidence::interval(workspace, meta.synced_sequence, draft_sequence)?;
-    let source = crate::command_evidence::aggregate(workspace, meta.synced_sequence, &operations)?;
-    if source.head.manifest_digest() != draft.info().manifest_digest() {
-        return Err(integrity(
-            "publication source differs from the verified draft head",
-        ));
-    }
     let evidence = source
         .footprint
         .as_ref()
