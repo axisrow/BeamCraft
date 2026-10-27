@@ -592,6 +592,30 @@ fn a_split_makes_two_halves_and_undo_restores_one_element() {
     assert_eq!(text(&again, "outcome"), "a13_replayed");
     assert_eq!(f.volume_of(&again, "kept"), kept_volume);
     assert_eq!(f.volume_of(&again, "created"), created_volume);
+    // A retry that renames the created half is changed content under the accepted operation
+    // id: a reuse refusal, never a silent replay under the old label.
+    let kind = f.rejected(
+        "split-part",
+        &[
+            "--id",
+            &element,
+            "--new-id",
+            new_id,
+            "--new-name",
+            "Renamed half",
+            "--operation-id",
+            OP_A,
+            "--op-id",
+            OP_A,
+            "--point",
+            "250,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    assert_eq!(kind, "OP_ID_REUSE");
     // The undo removes the created half of the draft's own split and restores the two halves;
     // the draft splits the kept half again at a fresh plane with its own identities.
     let draft = f.draft();

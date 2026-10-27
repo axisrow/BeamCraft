@@ -722,12 +722,14 @@ pub fn a13_record(
         (Some(Probe::One(after)), _) => head_primary
             .as_ref()
             .is_some_and(|head| state_of(head) == *after),
-        (Some(Probe::Split(kept, _)), A13Command::Split(c)) => {
-            // A committed split holds both halves: the kept record AND the created element.
+        (Some(Probe::Split(kept, created)), A13Command::Split(c)) => {
+            // A committed split holds both halves, and both must match the probe: a changed
+            // new_name or a target that gained a further record changes the created copy and
+            // is a reuse refusal, as for any other changed content.
             head_primary
                 .as_ref()
                 .is_some_and(|head| state_of(head) == *kept)
-                && present(c.new_id)
+                && find(c.new_id).is_some_and(|existing| state_of(&existing) == *created)
         }
         _ => false,
     };
