@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// Original display-only perspective and Lambert lighting; no engineering computation.
-struct Camera { right: vec4f, up: vec4f, back: vec4f, eye: vec4f, params: vec4f }
+// Original display-only perspective and orthographic projection (V13) and Lambert lighting;
+// no engineering computation.
+struct Camera { right: vec4f, up: vec4f, back: vec4f, eye: vec4f, params: vec4f, mode: vec4f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 struct Out { @builtin(position) position: vec4f, @location(0) normal: vec3f }
 fn rotate(v: vec3f, q: vec4f) -> vec3f {
@@ -18,11 +19,16 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     let near = camera.params.z;
     let far = camera.params.w;
     var o: Out;
+    // Perspective keeps the view depth as w so the GPU divides, and its z term is clip space
+    // (NDC after that divide). Orthographic puts the lateral scale in params.xy (half-height,
+    // aspect), sets w to 1, and maps the depth linearly into NDC itself.
+    let persp = far / (far - near) * d - far * near / (far - near);
+    let ortho = (d - near) / (far - near);
     o.position = vec4f(
         dot(v, camera.right.xyz) / (camera.params.x * camera.params.y),
         dot(v, camera.up.xyz) / camera.params.x,
-        far / (far - near) * d - far * near / (far - near),
-        d,
+        mix(persp, ortho, camera.mode.x),
+        mix(d, 1.0, camera.mode.x),
     );
     o.normal = rotate(n, q);
     return o;

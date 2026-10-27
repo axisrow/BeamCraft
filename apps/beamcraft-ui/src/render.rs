@@ -107,7 +107,7 @@ struct GpuMesh {
 /// The scene on the device: per distinct mesh one vertex buffer and one instance buffer.
 pub struct Uploaded {
     meshes: Vec<GpuMesh>,
-    /// Exact vertex and instance bytes this upload sent (excludes the fixed 80-byte camera
+    /// Exact vertex and instance bytes this upload sent (excludes the fixed 96-byte camera
     /// uniform); vertex buffers reused from the previous scene are not sent again.
     pub bytes: u64,
     /// Buffer allocation and writes, and for [`Uploaded::new`] the flush to completion.
@@ -348,7 +348,7 @@ fn pipeline(
     let scopes = error_scopes(device);
     let camera = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("BeamCraft camera"),
-        size: 80,
+        size: 96,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });

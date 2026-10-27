@@ -433,6 +433,7 @@ impl App {
                 let mut mode_pick = None;
                 let mode = self.mode;
                 let shortcuts = self.shortcuts;
+                let mut projection: Option<bool> = None;
                 let (mut undo, mut redo) = (false, false);
                 ui.horizontal(|ui| {
                     if menu_toggle(ui, self.menu_open).clicked() {
@@ -568,6 +569,31 @@ impl App {
                                                 ));
                                             }
                                         });
+                                        group(ui, "PROJECTION", &mut |ui| {
+                                            let ortho = self.camera.is_orthographic();
+                                            if tool_button(
+                                                ui,
+                                                Icon::Block,
+                                                "Perspective",
+                                                !ortho,
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                projection = Some(false);
+                                            }
+                                            if tool_button(
+                                                ui,
+                                                Icon::Block,
+                                                "Orthographic",
+                                                ortho,
+                                                true,
+                                            )
+                                            .clicked()
+                                            {
+                                                projection = Some(true);
+                                            }
+                                        });
                                         group(ui, "VIEWS", &mut |ui| {
                                             for label in
                                                 ["Plan", "Elevation", "Section", "Saved views"]
@@ -642,6 +668,11 @@ impl App {
                 // A render-mode button: the same state a Ctrl+1 to Ctrl+5 key press sets.
                 if let Some(m) = mode_pick {
                     self.mode = m;
+                }
+                if let Some(orthographic) = projection {
+                    // V13: the switch keeps the target, direction and distance, so the model
+                    // stays framed while the projection flips.
+                    self.camera.set_projection(orthographic);
                 }
                 if undo {
                     self.start_edit(Some(EditKind::Undo));

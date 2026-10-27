@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-//! Orbit camera: spherical orbit, pan and zoom around a target, perspective projection,
-//! right-handed Z up, millimetres. Display only; derived from the V01 spike.
+//! Orbit camera: spherical orbit, pan and zoom around a target, a perspective or an
+//! orthographic projection (V13), right-handed Z up, millimetres. Display only; derived from
+//! the V01 spike.
 use crate::Error;
 /// Bounded orbit/pan/zoom state; fields private to preserve finiteness.
 #[derive(Debug, Clone, Copy)]
@@ -10,6 +11,7 @@ pub struct Camera {
     yaw: f32,
     pitch: f32,
     distance: f32,
+    orthographic: bool,
 }
 /// Validated camera basis; four-component vectors match WGSL uniform alignment.
 #[derive(Debug, Clone, Copy)]
@@ -22,8 +24,12 @@ pub struct View {
     pub back: [f32; 4],
     /// Eye position and padding.
     pub eye: [f32; 4],
-    /// tan(vertical FOV/2), aspect, near and far.
+    /// Perspective: tan(vertical FOV/2), aspect, near and far. Orthographic keeps the same
+    /// layout with the tan replaced by the half-height in millimetres, so one shader divides
+    /// by it in both.
     pub params: [f32; 4],
+    /// 1.0 orthographic, 0.0 perspective, then padding.
+    pub mode: [f32; 4],
 }
 fn dot([x, y, z]: [f32; 3], [a, b, c]: [f32; 3]) -> f32 {
     x * a + y * b + z * c
@@ -49,7 +55,19 @@ impl Camera {
             yaw: -0.8,
             pitch: 0.85,
             distance: (extent / 2.0 / half.sin() * 1.05).clamp(10.0, 2e7),
+            orthographic: false,
         })
+    }
+    /// Switches the projection without moving the view: the orthographic window keeps the
+    /// perspective image's half-height at the target (`distance * tan(half FOV)`), so the model
+    /// does not jump, and zoom, pan and the distance bounds mean the same in both because the
+    /// orthographic scale always follows the distance.
+    pub fn set_projection(&mut self, orthographic: bool) {
+        self.orthographic = orthographic;
+    }
+    /// True while the orthographic projection is shown.
+    pub fn is_orthographic(&self) -> bool {
+        self.orthographic
     }
     /// Orbit (radians), pan (screen-relative mm) and logarithmic zoom; reject hostile inputs.
     pub fn navigate(&mut self, orbit: [f32; 2], pan: [f32; 2], zoom: f32) -> Result<(), Error> {
@@ -104,11 +122,14 @@ impl Camera {
             || ndc[0].abs() > 1.0
             || ndc[1].abs() > 1.0
             || !zoom.is_finite()
+            || !aspect.is_finite()
+            || !(0.05..=20.0).contains(&aspect)
         {
             return Err(Error::Input("camera cursor zoom"));
         }
-        let view = self.view(aspect)?;
-        let [tan, aspect, _, _] = view.params;
+        // The vertical field angle, not `view.params[0]`: under the orthographic projection
+        // that slot carries a length in millimetres and the distance below would enter twice.
+        let tan = (std::f32::consts::PI / 8.0).tan();
         let d = self.distance;
         let reached = (d * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
         let s = reached / d;
@@ -121,7 +142,7 @@ impl Camera {
             ((1.0 - s) * d * ny * tan).clamp(-1e6, 1e6),
         ])
     }
-    /// Perspective basis with depth range `[0, 1]`, vertical FOV 45 degrees.
+    /// Perspective or orthographic basis with depth range `[0, 1]`, vertical FOV 45 degrees.
     pub fn view(&self, aspect: f32) -> Result<View, Error> {
         if !aspect.is_finite() || !(0.05..=20.0).contains(&aspect) {
             return Err(Error::Input("camera aspect"));
@@ -133,6 +154,7 @@ impl Camera {
         let up = [-cy * sp, -sy * sp, cp, 0.0];
         let [x, y, z] = self.target;
         let [bx, by, bz, _] = back;
+        let tan = (std::f32::consts::PI / 8.0).tan();
         // The near plane follows the camera distance. A fixed 1 mm near plane leaves a
         // `Depth32Float` buffer too little resolution over a long model (far is at least
         // 1e7 mm), so hidden parts showed through; one percent of the distance keeps
@@ -148,12 +170,19 @@ impl Camera {
                 z + bz * self.distance,
                 0.0,
             ],
+            // Orthographic replaces the field angle with the half-height of the image at the
+            // target plane, so the same `dot / scale` division draws both projections.
             params: [
-                (std::f32::consts::PI / 8.0).tan(),
+                if self.orthographic {
+                    self.distance * tan
+                } else {
+                    tan
+                },
                 aspect,
                 near,
                 self.distance * 5.0 + 1e7,
             ],
+            mode: [u8::from(self.orthographic) as f32, 0.0, 0.0, 0.0],
         })
     }
 }
@@ -165,13 +194,22 @@ impl View {
         let [rx, ry, rz, _] = self.right;
         let [ux, uy, uz, _] = self.up;
         let [bx, by, bz, _] = self.back;
-        let [tan, aspect, near, far] = self.params;
+        let [scale, aspect, near, far] = self.params;
         let depth = -dot(p, [bx, by, bz]);
-        [
-            dot(p, [rx, ry, rz]) / (depth * tan * aspect),
-            dot(p, [ux, uy, uz]) / (depth * tan),
-            far / (far - near) - far * near / ((far - near) * depth),
-        ]
+        // Perspective divides by the view depth; orthographic divides by the constant window
+        // the params carry (half-height, aspect), so nothing shrinks with distance. The depth
+        // matches the shader: clip z over w there, linear over the depth range here.
+        let [sx, sy] = if self.mode[0] > 0.5 {
+            [scale * aspect, scale]
+        } else {
+            [depth * scale * aspect, depth * scale]
+        };
+        let z = if self.mode[0] > 0.5 {
+            (depth - near) / (far - near)
+        } else {
+            far / (far - near) - far * near / ((far - near) * depth)
+        };
+        [dot(p, [rx, ry, rz]) / sx, dot(p, [ux, uy, uz]) / sy, z]
     }
     pub(crate) fn bytes(self) -> Vec<u8> {
         self.right
@@ -180,6 +218,7 @@ impl View {
             .chain(self.back)
             .chain(self.eye)
             .chain(self.params)
+            .chain(self.mode)
             .flat_map(f32::to_le_bytes)
             .collect()
     }
@@ -237,7 +276,7 @@ mod tests {
         for _ in 0..100 {
             c.navigate([100.0, 100.0], [1e6, -1e6], 100.0).unwrap();
         }
-        assert!(c.view(1.0).unwrap().bytes().len() == 80);
+        assert!(c.view(1.0).unwrap().bytes().len() == 96);
         assert!(c.distance().is_finite());
     }
     #[test]
@@ -319,5 +358,76 @@ mod tests {
         c.navigate([0.0, 0.0], [0.0; 2], 10.0).unwrap();
         let v = c.view(1.6).unwrap();
         assert!(v.params[2] > 0.0 && v.params[2] < v.params[3]);
+    }
+    #[test]
+    fn switching_to_orthographic_keeps_the_image_and_the_navigation_scale() {
+        // A point on the plane through the target, perpendicular to the view, lands on the same
+        // pixel when the projection flips: the orthographic window keeps the perspective
+        // half-height at the target (off that plane a perspective image scales by d/depth).
+        let aspect = 1.6;
+        let half = [2000.0f32, 1000.0, 100.0];
+        let extent = 2.0 * (half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt();
+        let mut c = Camera::new([0.0; 3], extent, aspect).unwrap();
+        c.navigate([0.7, -0.2], [0.0; 2], 0.0).unwrap();
+        let view = c.view(aspect).unwrap();
+        let [rx, ry, rz, _] = view.right;
+        let [ux, uy, uz, _] = view.up;
+        let world = [
+            rx * 1200.0 + ux * 600.0,
+            ry * 1200.0 + uy * 600.0,
+            rz * 1200.0 + uz * 600.0,
+        ];
+        let before = c.view(aspect).unwrap().project(world);
+        c.set_projection(true);
+        assert!(c.is_orthographic());
+        let ortho = c.view(aspect).unwrap();
+        let after = ortho.project(world);
+        assert!(
+            (before[0] - after[0]).abs() < 1e-3 && (before[1] - after[1]).abs() < 1e-3,
+            "perspective {before:?} -> orthographic {after:?}"
+        );
+        // The params now carry the half-height in millimetres, and the whole framed box stays
+        // inside the view with a depth inside [0, 1].
+        assert!((ortho.params[0] - c.distance() * (std::f32::consts::PI / 8.0).tan()).abs() < 1e-3);
+        for sx in [-1.0f32, 1.0] {
+            for sy in [-1.0f32, 1.0] {
+                for sz in [-1.0f32, 1.0] {
+                    let [x, y, z] = ortho.project([sx * half[0], sy * half[1], sz * half[2]]);
+                    assert!(
+                        x.abs() <= 1.0 && y.abs() <= 1.0 && (0.0..1.0).contains(&z),
+                        "corner {x} {y} {z}"
+                    );
+                }
+            }
+        }
+        // Navigation keeps working under the orthographic projection: zooming in (distance and
+        // window shrink together) makes the model fill more of the view, by the same
+        // exponential factor as in perspective.
+        let width = ortho.project([half[0], 0.0, 0.0])[0] - ortho.project([-half[0], 0.0, 0.0])[0];
+        c.navigate([0.0, 0.0], [0.0; 2], 1.0).unwrap();
+        let zoomed = c.view(aspect).unwrap();
+        let wider =
+            zoomed.project([half[0], 0.0, 0.0])[0] - zoomed.project([-half[0], 0.0, 0.0])[0];
+        assert!(wider > width * 2.0, "{width} -> {wider}");
+        c.set_projection(false);
+        assert!(!c.is_orthographic());
+    }
+    #[test]
+    fn orthographic_input_and_zoom_bounds_stay_bounded() {
+        let aspect = 1.6;
+        let mut c = Camera::new([0.0; 3], 1000.0, aspect).unwrap();
+        c.set_projection(true);
+        for _ in 0..100 {
+            c.navigate([100.0, 100.0], [1e6, -1e6], 100.0).unwrap();
+        }
+        let v = c.view(aspect).unwrap();
+        assert!(v.params.into_iter().all(|x| x.is_finite() && x > 0.0));
+        assert!(v.mode[0] > 0.5);
+        // The cursor anchor compensation uses the field angle in both projections: under the
+        // orthographic window (a length) the distance would enter twice and overflow.
+        let pan = c.cursor_zoom_pan([0.5, 0.3], aspect, 2.0).unwrap();
+        assert!(pan.into_iter().all(|x| x.is_finite()));
+        assert!(c.cursor_zoom_pan([2.0, 0.0], aspect, 1.0).is_err());
+        assert!(c.cursor_zoom_pan([0.0, 0.0], 0.0, 1.0).is_err());
     }
 }
