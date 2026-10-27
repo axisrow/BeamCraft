@@ -44,6 +44,7 @@ use beamcraft_model::definition::{
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
@@ -84,6 +85,11 @@ pub enum DefinitionRecord {
         /// Declared designation, standard and section numbers; absent values stay unknown.
         section: SectionProperties,
     },
+    /// An A14.1 fastener definition (bolt amendment section 2).
+    Fastener {
+        /// The complete fastener values.
+        spec: FastenerSpec,
+    },
 }
 
 impl DefinitionRecord {
@@ -93,6 +99,7 @@ impl DefinitionRecord {
             Self::Material { .. } => "material",
             Self::RectangleProfile { .. } => "rectangle",
             Self::SectionProfile { shape, .. } => shape.token(),
+            Self::Fastener { .. } => "fastener",
         }
     }
 
@@ -109,17 +116,19 @@ impl DefinitionRecord {
             Self::RectangleProfile { section, .. } | Self::SectionProfile { section, .. } => {
                 section.display_name.as_deref()
             }
+            Self::Fastener { spec } => spec.display_name.as_deref(),
         }
     }
 
     /// The names a user may select this definition by: its display name and its catalogue label
-    /// (the designation of a profile, the grade of a material). Exact, case-sensitive.
+    /// (the designation of a profile or fastener, the grade of a material). Exact, case-sensitive.
     pub fn selectable_names(&self) -> Vec<&str> {
         let label = match self {
             Self::Material { grade, .. } => grade.as_deref(),
             Self::RectangleProfile { section, .. } | Self::SectionProfile { section, .. } => {
                 section.designation.as_deref()
             }
+            Self::Fastener { spec } => spec.designation.as_deref(),
         };
         self.display_name().into_iter().chain(label).collect()
     }
@@ -154,6 +163,7 @@ impl DefinitionRecord {
                 section: section.clone(),
             }
             .validate(),
+            Self::Fastener { spec } => spec.validate(),
         }
     }
 
@@ -182,6 +192,7 @@ impl DefinitionRecord {
             Self::SectionProfile { shape, section } => {
                 Definition::SectionProfile { shape, section }
             }
+            Self::Fastener { spec } => Definition::Fastener { spec: spec.clone() },
         }
     }
 
@@ -209,10 +220,10 @@ impl DefinitionRecord {
 
 /// The USD path of the definition with this digest.
 pub fn definition_path(digest: &ContentDigest, kind: &str) -> String {
-    let category = if kind == "material" {
-        beamcraft_model::prim::DefinitionCategory::Material
-    } else {
-        beamcraft_model::prim::DefinitionCategory::Profile
+    let category = match kind {
+        "material" => beamcraft_model::prim::DefinitionCategory::Material,
+        "fastener" => beamcraft_model::prim::DefinitionCategory::Fastener,
+        _ => beamcraft_model::prim::DefinitionCategory::Profile,
     };
     category.path(*digest)
 }
@@ -254,7 +265,7 @@ fn decode_definition(
     let kind = text(kind).ok_or_else(bad)?;
     // A newer kind stays inert: it can be listed by an ordinary reader, never used here.
     let family = SectionFamily::from_token(kind);
-    if !matches!(kind, "rectangle" | "material" | "custom") && family.is_none() {
+    if !matches!(kind, "rectangle" | "material" | "custom" | "fastener") && family.is_none() {
         return Ok(None);
     }
     if !prim.active {
@@ -317,6 +328,10 @@ fn decode_definition(
             height_mm: double("steel:profile:heightMm")?,
             section: section()?,
         }
+    } else if kind == "fastener" {
+        DefinitionRecord::Fastener {
+            spec: decode_fastener(prim)?,
+        }
     } else {
         DefinitionRecord::Material {
             // Only an absent property means an unknown density.
@@ -334,6 +349,80 @@ fn decode_definition(
         return Err(integrity("definition content does not match its digest"));
     }
     Ok(Some(record))
+}
+
+/// The logical fastener definition of a committed fastener definition prim (A14.1). The writer
+/// never writes a partial washer, so a washer dimension without the other two is an integrity
+/// error; the result is re-admitted by the caller's `record.validate()`.
+fn decode_fastener(prim: &Prim) -> Result<FastenerSpec, PlateError> {
+    let bad = || integrity("committed fastener definition lacks a required value");
+    let double = |name: &str| -> Result<f64, PlateError> {
+        number(field(prim, name, "double")?.ok_or_else(bad)?).ok_or_else(bad)
+    };
+    let optional_double = |name: &str| -> Result<Option<f64>, PlateError> {
+        field(prim, name, "double")?
+            .map(|v| number(v).ok_or_else(bad))
+            .transpose()
+    };
+    let optional_text = |name: &str| -> Result<Option<String>, PlateError> {
+        field(prim, name, "string")?
+            .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
+            .transpose()
+    };
+    let token = |name: &str| -> Result<String, PlateError> {
+        text(field(prim, name, "token")?.ok_or_else(bad)?)
+            .map(str::to_owned)
+            .ok_or_else(|| integrity("committed fastener token is not text"))
+    };
+    let boolean = |name: &str| -> Result<bool, PlateError> {
+        match field(prim, name, "bool")? {
+            Some(Value::Bool(value)) => Ok(*value),
+            _ => Err(bad()),
+        }
+    };
+    let kind = FastenerKind::from_token(&token("steel:fastener:kind")?).ok_or_else(bad)?;
+    let head_kind = HeadKind::from_token(&token("steel:fastener:headKind")?).ok_or_else(bad)?;
+    let hole_mode = HoleMode::from_token(&token("steel:fastener:holeMode")?).ok_or_else(bad)?;
+    let washer = match (
+        optional_double("steel:fastener:washerOuterDiameterMm")?,
+        optional_double("steel:fastener:washerInnerDiameterMm")?,
+        optional_double("steel:fastener:washerThicknessMm")?,
+    ) {
+        (None, None, None) => None,
+        (outer, inner, thickness) => Some(WasherSpec {
+            outer_diameter_mm: outer.ok_or_else(bad)?,
+            inner_diameter_mm: inner.ok_or_else(bad)?,
+            thickness_mm: thickness.ok_or_else(bad)?,
+        }),
+    };
+    let lengths = match field(prim, "steel:fastener:lengthsMm", "double[]")? {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| number(v).ok_or_else(bad))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(bad()),
+    };
+    Ok(FastenerSpec {
+        designation: optional_text("steel:fastener:designation")?,
+        standard: optional_text("steel:fastener:standard")?,
+        grade: optional_text("steel:fastener:grade")?,
+        display_name: prim.display_name.clone(),
+        kind,
+        head_kind,
+        nominal_diameter_mm: double("steel:fastener:nominalDiameterMm")?,
+        head_across_flats_mm: double("steel:fastener:headAcrossFlatsMm")?,
+        head_height_mm: double("steel:fastener:headHeightMm")?,
+        nut_across_flats_mm: optional_double("steel:fastener:nutAcrossFlatsMm")?,
+        nut_height_mm: optional_double("steel:fastener:nutHeightMm")?,
+        washer,
+        hole_clearance_mm: double("steel:fastener:holeClearanceMm")?,
+        lengths_mm: lengths,
+        thread_protrusion_mm: double("steel:fastener:threadProtrusionMm")?,
+        mass_each_kg: optional_double("steel:fastener:massEachKg")?,
+        washer_under_head: boolean("steel:fastener:washerUnderHead")?,
+        washer_under_nut: boolean("steel:fastener:washerUnderNut")?,
+        hole_mode,
+    })
 }
 
 /// Every immutable definition of a pinned stage, by full digest. Values are re-admitted and the
@@ -372,6 +461,11 @@ pub(crate) fn material_lookup(
             "material_digest",
             "digest names a profile, not a material",
         )),
+        Some(DefinitionRecord::Fastener { .. }) => Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "material_digest",
+            "digest names a fastener, not a material",
+        )),
         None => Err(CommandError::new(
             ErrorCode::NotFound,
             "material_digest",
@@ -403,6 +497,11 @@ pub(crate) fn profile_lookup(
             ErrorCode::InvalidArgument,
             "profile_digest",
             "digest names a material, not a profile",
+        )),
+        Some(DefinitionRecord::Fastener { .. }) => Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "profile_digest",
+            "digest names a fastener, not a profile",
         )),
         None => Err(CommandError::new(
             ErrorCode::NotFound,
@@ -537,6 +636,10 @@ impl DefinitionRecord {
                     }
                 }
             }
+            Self::Fastener { spec } => spec
+                .designation
+                .clone()
+                .unwrap_or_else(|| format!("Fastener M{}", spec.nominal_diameter_mm)),
         }
     }
 
@@ -551,6 +654,7 @@ impl DefinitionRecord {
             Self::RectangleProfile { section, .. } | Self::SectionProfile { section, .. } => {
                 section.display_name = Some(chosen);
             }
+            Self::Fastener { spec } => spec.display_name = Some(chosen),
         }
         self
     }

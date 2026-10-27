@@ -145,6 +145,7 @@ fn main() -> std::process::ExitCode {
             || c == "inspect-elements"
             || c == "define-material"
             || c == "define-profile"
+            || c == "define-fastener"
             || c == "definitions"
             || c == "create-member"
             || c == "add-hole"

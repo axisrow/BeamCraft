@@ -462,11 +462,116 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
             optional_text(data, p, "bim:materialGrade", grade)?;
             optional_text(data, p, "bim:materialStandard", standard)?;
         }
+        Definition::Fastener { spec } => {
+            attr(
+                data,
+                p,
+                "bim:definitionKind",
+                "token",
+                sdf::Value::token("fastener"),
+            )?;
+            attr(
+                data,
+                p,
+                "steel:fastener:kind",
+                "token",
+                sdf::Value::token(spec.kind.token()),
+            )?;
+            attr(
+                data,
+                p,
+                "steel:fastener:headKind",
+                "token",
+                sdf::Value::token(spec.head_kind.token()),
+            )?;
+            for (name, value) in [
+                ("nominalDiameterMm", spec.nominal_diameter_mm),
+                ("headAcrossFlatsMm", spec.head_across_flats_mm),
+                ("headHeightMm", spec.head_height_mm),
+            ] {
+                attr(
+                    data,
+                    p,
+                    &format!("steel:fastener:{name}"),
+                    "double",
+                    sdf::Value::Double(value),
+                )?;
+            }
+            optional_number(
+                data,
+                p,
+                "steel:fastener:nutAcrossFlatsMm",
+                spec.nut_across_flats_mm,
+            )?;
+            optional_number(data, p, "steel:fastener:nutHeightMm", spec.nut_height_mm)?;
+            if let Some(washer) = &spec.washer {
+                for (name, value) in [
+                    ("washerOuterDiameterMm", washer.outer_diameter_mm),
+                    ("washerInnerDiameterMm", washer.inner_diameter_mm),
+                    ("washerThicknessMm", washer.thickness_mm),
+                ] {
+                    attr(
+                        data,
+                        p,
+                        &format!("steel:fastener:{name}"),
+                        "double",
+                        sdf::Value::Double(value),
+                    )?;
+                }
+            }
+            attr(
+                data,
+                p,
+                "steel:fastener:holeClearanceMm",
+                "double",
+                sdf::Value::Double(spec.hole_clearance_mm),
+            )?;
+            attr(
+                data,
+                p,
+                "steel:fastener:lengthsMm",
+                "double[]",
+                sdf::Value::DoubleVec(spec.lengths_mm.clone()),
+            )?;
+            attr(
+                data,
+                p,
+                "steel:fastener:threadProtrusionMm",
+                "double",
+                sdf::Value::Double(spec.thread_protrusion_mm),
+            )?;
+            optional_number(data, p, "steel:fastener:massEachKg", spec.mass_each_kg)?;
+            attr(
+                data,
+                p,
+                "steel:fastener:washerUnderHead",
+                "bool",
+                sdf::Value::Bool(spec.washer_under_head),
+            )?;
+            attr(
+                data,
+                p,
+                "steel:fastener:washerUnderNut",
+                "bool",
+                sdf::Value::Bool(spec.washer_under_nut),
+            )?;
+            attr(
+                data,
+                p,
+                "steel:fastener:holeMode",
+                "token",
+                sdf::Value::token(spec.hole_mode.token()),
+            )?;
+            optional_text(data, p, "steel:fastener:designation", &spec.designation)?;
+            optional_text(data, p, "steel:fastener:standard", &spec.standard)?;
+            optional_text(data, p, "steel:fastener:grade", &spec.grade)?;
+        }
     }
     let display_name = match value {
         Definition::RectangleProfile { section, .. }
         | Definition::SectionProfile { section, .. } => &section.display_name,
         Definition::Material { display_name, .. } => display_name,
+        Definition::Fastener { spec } => &spec.display_name,
     };
     if let Some(name) = display_name {
         field(data, p, "displayName", sdf::Value::String(name.clone()))?;

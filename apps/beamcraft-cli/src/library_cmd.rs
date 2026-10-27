@@ -11,7 +11,7 @@ use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile
 use crate::report::report;
 use beamcraft_cli::library::{
     EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed,
-    Source, add_entry, open_lookup,
+    Source, add_entry, load_fastener, open_lookup,
 };
 use beamcraft_json::Json;
 use std::collections::BTreeMap;
@@ -152,7 +152,12 @@ fn run(args: &[OsString]) -> Run<Json> {
     let (command, tail) = args
         .split_first()
         .ok_or_else(|| invalid("missing command"))?;
-    let lookup_options = ["--library", "--environment", "--user-library"];
+    let lookup_options = [
+        "--library",
+        "--environment",
+        "--user-library",
+        "--fastener-library",
+    ];
     let allowed: Vec<&str> = match *command {
         "list-library" => [
             &lookup_options[..],
@@ -186,11 +191,32 @@ fn run(args: &[OsString]) -> Run<Json> {
     if *command == "add-library" {
         return add(&options);
     }
-    let (lookup, environment) = open_lookup(
-        options.get("--library").copied(),
-        options.get("--environment").copied(),
-        options.get("--user-library").copied(),
-    )?;
+    // A14.1: a fastener library is a single file, no environment yet (O-B2); the same listing
+    // and lookup machinery answers it.
+    let (lookup, environment) = if let Some(path) = options.get("--fastener-library") {
+        if ["--library", "--environment", "--user-library"]
+            .iter()
+            .any(|used| options.contains_key(*used))
+        {
+            return Err(invalid(
+                "--fastener-library is an alternative to --library and --environment",
+            ));
+        }
+        let library = load_fastener(path)?;
+        (
+            Lookup::new(vec![Source {
+                path: (*path).to_owned(),
+                library,
+            }]),
+            None,
+        )
+    } else {
+        open_lookup(
+            options.get("--library").copied(),
+            options.get("--environment").copied(),
+            options.get("--user-library").copied(),
+        )?
+    };
     if *command == "show-library" {
         let designation = options
             .get("--designation")

@@ -1,0 +1,88 @@
+#usda 1.0
+(
+    doc = "BeamCraft European hex-bolt set: the dimensions of DIN EN ISO 4014 (hex head bolt), DIN EN ISO 4032 (nut) and DIN EN ISO 7089 (plain washer), re-entered by hand as our own data; standard hole clearances follow the EN 1090-2 standard hole series. No text or table is copied from a standard document. BeamCraft contributors, MPL-2.0. Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "beamcraft-din-fasteners"
+        string "bim:library:title" = "BeamCraft European hex bolt set (ISO 4014, ISO 4032, ISO 7089)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Public standards DIN EN ISO 4014/4032/7089 and EN 1090-2, re-entered as our own data; thread protrusion is a contributor default"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Fasteners"
+    {
+        def Scope "M12"
+        {
+            string steel:fastener:designation = "M12"
+            string steel:fastener:standard = "DIN EN ISO 4014"
+            string steel:fastener:grade = "8.8"
+            token steel:fastener:kind = "bolt"
+            token steel:fastener:headKind = "hex"
+            double steel:fastener:nominalDiameterMm = 12
+            double steel:fastener:headAcrossFlatsMm = 18
+            double steel:fastener:headHeightMm = 7.5
+            double steel:fastener:nutAcrossFlatsMm = 18
+            double steel:fastener:nutHeightMm = 10.8
+            double steel:fastener:washerOuterDiameterMm = 24
+            double steel:fastener:washerInnerDiameterMm = 13
+            double steel:fastener:washerThicknessMm = 2.5
+            double steel:fastener:holeClearanceMm = 1
+            double[] steel:fastener:lengthsMm = [35, 40, 45, 50, 55, 60, 70, 80, 90, 100, 110]
+            double steel:fastener:threadProtrusionMm = 4
+            bool steel:fastener:washerUnderHead = true
+            bool steel:fastener:washerUnderNut = true
+            token steel:fastener:holeMode = "generate"
+        }
+
+        def Scope "M16"
+        {
+            string steel:fastener:designation = "M16"
+            string steel:fastener:standard = "DIN EN ISO 4014"
+            string steel:fastener:grade = "8.8"
+            token steel:fastener:kind = "bolt"
+            token steel:fastener:headKind = "hex"
+            double steel:fastener:nominalDiameterMm = 16
+            double steel:fastener:headAcrossFlatsMm = 24
+            double steel:fastener:headHeightMm = 10
+            double steel:fastener:nutAcrossFlatsMm = 24
+            double steel:fastener:nutHeightMm = 14.8
+            double steel:fastener:washerOuterDiameterMm = 30
+            double steel:fastener:washerInnerDiameterMm = 17
+            double steel:fastener:washerThicknessMm = 3
+            double steel:fastener:holeClearanceMm = 2
+            double[] steel:fastener:lengthsMm = [45, 50, 55, 60, 70, 80, 90, 100, 110, 120, 130]
+            double steel:fastener:threadProtrusionMm = 5
+            bool steel:fastener:washerUnderHead = true
+            bool steel:fastener:washerUnderNut = true
+            token steel:fastener:holeMode = "generate"
+        }
+
+        def Scope "M20"
+        {
+            string steel:fastener:designation = "M20"
+            string steel:fastener:standard = "DIN EN ISO 4014"
+            string steel:fastener:grade = "8.8"
+            token steel:fastener:kind = "bolt"
+            token steel:fastener:headKind = "hex"
+            double steel:fastener:nominalDiameterMm = 20
+            double steel:fastener:headAcrossFlatsMm = 30
+            double steel:fastener:headHeightMm = 12.5
+            double steel:fastener:nutAcrossFlatsMm = 30
+            double steel:fastener:nutHeightMm = 18
+            double steel:fastener:washerOuterDiameterMm = 37
+            double steel:fastener:washerInnerDiameterMm = 21
+            double steel:fastener:washerThicknessMm = 3
+            double steel:fastener:holeClearanceMm = 2
+            double[] steel:fastener:lengthsMm = [55, 60, 65, 70, 80, 90, 100, 110, 120, 130, 140, 150]
+            double steel:fastener:threadProtrusionMm = 6
+            bool steel:fastener:washerUnderHead = true
+            bool steel:fastener:washerUnderNut = true
+            token steel:fastener:holeMode = "generate"
+        }
+    }
+}

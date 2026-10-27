@@ -2,8 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 use super::*;
+use beamcraft_model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
 use beamcraft_model::id::OpId;
-use beamcraft_model::limits::MIN_WELD_SEGMENT_MM;
+use beamcraft_model::limits::{MAX_FASTENER_LENGTHS, MIN_WELD_SEGMENT_MM};
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
@@ -138,6 +139,7 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
         }
         .validate()
         .map_err(refused),
+        Definition::Fastener { spec } => spec.validate().map_err(refused),
     }
 }
 /// An optional property of an exact USD type. A property declared with another type, blocked or
@@ -273,8 +275,74 @@ fn read_definition(p: &Prim, kind: &str) -> Result<Definition, Diagnostic> {
             standard: optional_text(p, "bim:materialStandard")?,
             display_name: p.display_name.clone(),
         }),
+        "fastener" => Ok(Definition::Fastener {
+            spec: read_fastener(p)?,
+        }),
         _ => Err(unsupported()),
     }
+}
+
+/// The logical fastener definition stored in a fastener definition prim (A14.1): every value
+/// re-read and re-admitted, because a committed layer is untrusted input.
+fn read_fastener(p: &Prim) -> Result<FastenerSpec, Diagnostic> {
+    let token = |name: &str| text(p, name, "token").map(str::to_owned);
+    let kind = FastenerKind::from_token(&token("steel:fastener:kind")?).ok_or_else(invalid)?;
+    let head_kind = HeadKind::from_token(&token("steel:fastener:headKind")?).ok_or_else(invalid)?;
+    let nut_across_flats_mm = optional_number(p, "steel:fastener:nutAcrossFlatsMm")?;
+    let nut_height_mm = optional_number(p, "steel:fastener:nutHeightMm")?;
+    let washer = match (
+        optional_number(p, "steel:fastener:washerOuterDiameterMm")?,
+        optional_number(p, "steel:fastener:washerInnerDiameterMm")?,
+        optional_number(p, "steel:fastener:washerThicknessMm")?,
+    ) {
+        (None, None, None) => None,
+        (outer, inner, thickness) => Some(WasherSpec {
+            outer_diameter_mm: outer.ok_or_else(invalid)?,
+            inner_diameter_mm: inner.ok_or_else(invalid)?,
+            thickness_mm: thickness.ok_or_else(invalid)?,
+        }),
+    };
+    let lengths = match required(p, "steel:fastener:lengthsMm", "double[]")? {
+        Value::Array(values) => values
+            .iter()
+            .map(|v| match v {
+                Value::Number(n) => Ok(*n),
+                _ => Err(invalid()),
+            })
+            .collect::<Result<Vec<_>, Diagnostic>>()?,
+        _ => return Err(invalid()),
+    };
+    if lengths.len() > MAX_FASTENER_LENGTHS {
+        return Err(limit());
+    }
+    let hole_mode = HoleMode::from_token(&token("steel:fastener:holeMode")?).ok_or_else(invalid)?;
+    Ok(FastenerSpec {
+        designation: optional_text(p, "steel:fastener:designation")?,
+        standard: optional_text(p, "steel:fastener:standard")?,
+        grade: optional_text(p, "steel:fastener:grade")?,
+        display_name: p.display_name.clone(),
+        kind,
+        head_kind,
+        nominal_diameter_mm: number(p, "steel:fastener:nominalDiameterMm")?,
+        head_across_flats_mm: number(p, "steel:fastener:headAcrossFlatsMm")?,
+        head_height_mm: number(p, "steel:fastener:headHeightMm")?,
+        nut_across_flats_mm,
+        nut_height_mm,
+        washer,
+        hole_clearance_mm: number(p, "steel:fastener:holeClearanceMm")?,
+        lengths_mm: lengths,
+        thread_protrusion_mm: number(p, "steel:fastener:threadProtrusionMm")?,
+        mass_each_kg: optional_number(p, "steel:fastener:massEachKg")?,
+        washer_under_head: match required(p, "steel:fastener:washerUnderHead", "bool")? {
+            Value::Bool(v) => *v,
+            _ => return Err(invalid()),
+        },
+        washer_under_nut: match required(p, "steel:fastener:washerUnderNut", "bool")? {
+            Value::Bool(v) => *v,
+            _ => return Err(invalid()),
+        },
+        hole_mode,
+    })
 }
 pub(super) fn owned(prims: &[Prim], path: &str, descendants: bool) -> Result<(), Diagnostic> {
     let prefix = format!("{path}/");
@@ -621,15 +689,9 @@ fn resource<'a>(
     prims: &'a [Prim],
     digest: ContentDigest,
     kinds: &[&str],
+    category: DefinitionCategory,
 ) -> Result<&'a Prim, Diagnostic> {
-    let path = definition_path(
-        digest,
-        if kinds == ["material"] {
-            DefinitionCategory::Material
-        } else {
-            DefinitionCategory::Profile
-        },
-    );
+    let path = definition_path(digest, category);
     let p = prims
         .iter()
         .find(|p| p.path == path && p.active)
@@ -679,7 +741,7 @@ fn link<'a>(
             {
                 return Err(invalid());
             }
-            Ok(Some(resource(prims, digest, kinds)?))
+            Ok(Some(resource(prims, digest, kinds, category)?))
         }
         _ => Err(fail(
             ErrorCode::DanglingRelationship,
@@ -863,7 +925,10 @@ pub(super) fn snapshot(
                             ..
                         } => (*width_mm, *height_mm),
                         Definition::SectionProfile { shape, .. } => shape.extent_mm(),
-                        Definition::Material { .. } => return Err(invalid()),
+                        // A member pins a section profile, never a material or a fastener.
+                        Definition::Material { .. } | Definition::Fastener { .. } => {
+                            return Err(invalid());
+                        }
                     };
                     let length = norm(difference(*b, *a));
                     let half_width = width / 2.0;
@@ -1926,12 +1991,15 @@ pub(super) fn changes(
         if prims.iter().any(|p| {
             p.path == definition_path(resource.digest, definition_category(&resource.definition))
         }) {
-            let kind = match &resource.definition {
-                Definition::RectangleProfile { .. } => "rectangle",
-                Definition::SectionProfile { shape, .. } => shape.token(),
-                Definition::Material { .. } => "material",
+            let (kind, category) = match &resource.definition {
+                Definition::RectangleProfile { .. } => ("rectangle", DefinitionCategory::Profile),
+                Definition::SectionProfile { shape, .. } => {
+                    (shape.token(), DefinitionCategory::Profile)
+                }
+                Definition::Material { .. } => ("material", DefinitionCategory::Material),
+                Definition::Fastener { .. } => ("fastener", DefinitionCategory::Fastener),
             };
-            self::resource(prims, resource.digest, &[kind])?;
+            self::resource(prims, resource.digest, &[kind], category)?;
         } else {
             writes.insert(Footprint {
                 identity: resource.digest.to_string(),
