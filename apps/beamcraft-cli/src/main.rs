@@ -150,6 +150,7 @@ fn main() -> std::process::ExitCode {
             || c == "create-member"
             || c == "create-polybeam"
             || c == "add-hole"
+            || c == "update-hole"
             || c == "update-element"
             || c == "delete-element"
             || c == "copy-element"

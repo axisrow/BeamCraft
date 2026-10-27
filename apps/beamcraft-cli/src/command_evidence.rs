@@ -187,6 +187,43 @@ pub fn read(revision: &Revision) -> Result<Option<CapturedFootprint>, PlateError
     )?))
 }
 
+/// Resolve a committed logical request from immutable history, including its exact manifest
+/// and operation identity. Legacy missing evidence refuses rather than guessing from live state.
+pub(crate) fn accepted(
+    store: &RevisionStore,
+    op: &Uuid7,
+) -> Result<Option<(CapturedFootprint, Revision)>, PlateError> {
+    match store.query_outcome(op)? {
+        beamcraft_host::ledger::Outcome::Committed {
+            sequence,
+            manifest,
+            revision,
+            ..
+        } => {
+            let opened = store.open_at(sequence)?;
+            let info = opened.info();
+            if info.manifest_digest() != manifest
+                || info.manifest().content().revision() != &revision
+                || info.manifest().content().op() != op
+            {
+                return Err(integrity("ledger request and accepted revision disagree"));
+            }
+            let evidence = read(&opened)?.ok_or_else(|| {
+                PlateError::new(
+                    ErrorCode::DependencyUnavailable,
+                    "accepted operation has no compatible request evidence",
+                )
+            })?;
+            Ok(Some((evidence, opened)))
+        }
+        beamcraft_host::ledger::Outcome::Unknown => Err(PlateError::new(
+            ErrorCode::OutcomeUnknown,
+            "operation outcome requires recovery",
+        )),
+        _ => Ok(None),
+    }
+}
+
 fn decode_for(bytes: &[u8], op: &Uuid7) -> Result<CapturedFootprint, PlateError> {
     let captured = if bytes.starts_with(b"beamcraft-workspace-rebase ") {
         let receipt = crate::workspace::rebase_receipt::RebaseReceipt::decode(bytes)
