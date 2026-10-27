@@ -15,7 +15,7 @@
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
 use beamcraft_geom::canonical_f64_bytes;
-use beamcraft_model::command::{CommandError, CopyElement, CutRecord, Placement};
+use beamcraft_model::command::{CommandError, CopyElement, CutRecord, HoleRecord, Placement};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, Uuid7};
@@ -65,6 +65,59 @@ fn copied_operation_id(
     })
 }
 
+/// Deterministic fresh identity of a duplicated A04 record. Instance copies retain the
+/// canonical record identity instead; an independent duplicate must own a distinct one.
+fn copied_hole(record: &HoleRecord, new_id: &ElementId) -> Result<HoleRecord, CommandError> {
+    if record.polygon_mm.len() > beamcraft_model::limits::CONTOUR_POINT_CAP {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "hole",
+            "copied hole exceeds the point cap",
+        ));
+    }
+    let mut seed = b"BeamCraft/A04/CopyHoleRecord/v1\0".to_vec();
+    seed.extend_from_slice(new_id.as_bytes());
+    seed.extend_from_slice(record.operation_id.as_bytes());
+    seed.extend_from_slice(&(record.ordinal as u64).to_le_bytes());
+    for v in record.polygon_mm.iter().flatten() {
+        seed.extend_from_slice(&canonical_f64_bytes(*v).map_err(|_| {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "hole",
+                "copied hole coordinates must be finite",
+            )
+        })?);
+    }
+    let digest = Sha256::digest(&seed).map_err(|_| {
+        CommandError::new(
+            ErrorCode::LimitExceeded,
+            "hole",
+            "copied hole identity exceeds the digest limit",
+        )
+    })?;
+    let mut bytes = [0u8; 16];
+    for (out, value) in bytes.iter_mut().zip(digest.as_bytes()) {
+        *out = *value;
+    }
+    if let Some(v) = bytes.get_mut(6) {
+        *v = (*v & 0x0f) | 0x70;
+    }
+    if let Some(v) = bytes.get_mut(8) {
+        *v = (*v & 0x3f) | 0x80;
+    }
+    let operation_id = Uuid7::from_bytes(bytes).map(OpId::from_uuid).map_err(|_| {
+        CommandError::new(
+            ErrorCode::InvalidId,
+            "hole",
+            "copied hole identity is invalid",
+        )
+    })?;
+    Ok(HoleRecord {
+        operation_id,
+        ..record.clone()
+    })
+}
+
 /// The copy's records: fresh operation ids, the same ordinals and the same plane parameters.
 fn copied_records(
     records: &[CutRecord],
@@ -89,8 +142,21 @@ pub fn copy_plate(
     command: &CopyElement,
 ) -> Result<AuthoredPlate, CommandError> {
     command.validate_arguments()?;
+    if source.hole_records.len() > beamcraft_model::command::MAX_HOLES {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "hole",
+            "copied plate exceeds the hole record cap",
+        ));
+    }
+    let hole_records = source
+        .hole_records
+        .iter()
+        .map(|r| copied_hole(r, &command.new_id))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut next = source.clone();
     next.id = command.new_id;
+    next.hole_records = hole_records;
     if let Some(name) = &command.name {
         next.name.clone_from(name);
     }

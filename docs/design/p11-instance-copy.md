@@ -5,12 +5,14 @@ Contributor-original BeamCraft code and documentation, MPL-2.0.
 P11 implements the instance semantics of F10 section 5.3 as a separate `CopyInstance` request
 and `copy-instance` CLI command. `CopyElement` / `copy-element` remains an independent duplicate.
 Both modes accept the same part identity, optional name, offset and command context fields.
+Duplicated hole record IDs are derived deterministically from the destination part and source
+record, so retries do not generate different hole identities.
 Their fingerprints have separate domains, so an operation ID cannot change copy mode on retry.
 
 ## Authoritative definition and instance state
 
 The canonical source part owns the shared definition: shape inputs, pinned profile and material,
-and owned plane-cut operation records. An instance authors `bim:instanceOf` towards that part.
+and owned plane-cut and through-hole operation records. An instance authors `bim:instanceOf` towards that part.
 Its own UUID, kind, label, placement, level and other relationships remain explicit USD fields.
 The canonical part also keeps its own identity, placement and relationships; its pose does not
 enter the shared definition. Creating an instance of an instance links directly to the canonical
@@ -42,10 +44,11 @@ owner. It updates the evaluated body/quantities of every group member in the sam
 revision. Name, placement and level changes in the same patch still apply only to the requested
 part. A member pose keeps its local body under the P10 instance representation.
 
-`cut-by-plane` appends one operation record to the canonical definition and rematerializes every
+`cut-by-plane` and `add-hole` append one operation record to the canonical definition and rematerializes every
 group member's derived mesh and quantities. Its plane is in the shared element-local frame,
 consistent with A03/P10. A cut on a rotated instance therefore follows that part's local axes;
-the same local cut appears under every other instance's own pose. No connection, assembly or
+the same local cut appears under every other instance's own pose. Hole polygons likewise stay
+in the shared plate-local frame. No connection, assembly or
 level relationship is remapped by a definition edit.
 
 One accepted command is one revision and one workspace undo unit, including the canonical edit

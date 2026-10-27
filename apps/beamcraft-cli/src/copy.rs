@@ -173,7 +173,11 @@ fn copy_with_mode(
     };
     let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Plate(Box::new(PlateRecord {
-            authored: if instance { beamcraft_engine::instance::copy_plate_instance(&source.authored, command)? } else {copy_plate(&source.authored, command)?},
+            authored: if instance {
+                beamcraft_engine::instance::copy_plate_instance(&source.authored, command)?
+            } else {
+                copy_plate(&source.authored, command)?
+            },
             body: source.body.clone(),
             quantities: source.quantities,
         }))
