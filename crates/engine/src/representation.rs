@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 /// Display RGB and transparency, unrelated to engineering materials.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Appearance {
-    /// Linear consumer-independent RGB channels in [0,1].
+    /// Linear consumer-independent RGB channels in `[0,1]`.
     pub color: [f64; 3],
     /// Zero is opaque, one fully transparent.
     pub transparency: f64,
@@ -27,7 +27,7 @@ impl Appearance {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "appearance",
-                "display channels must be finite in [0,1]",
+                "display channels must be finite in `[0,1]`",
             ));
         }
         Ok(())
