@@ -145,6 +145,7 @@ pub fn create_plate_draft(
                     shape: Shape::Plate {
                         contour_mm: authored.contour_points_mm.clone(),
                         thickness_mm: authored.thickness_mm,
+                        thickness_side: authored.thickness_side,
                         holes: Vec::new(),
                         // An unsupported plate is never evaluated, so it holds no records.
                         hole_records: Vec::new(),

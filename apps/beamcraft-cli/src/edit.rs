@@ -3,12 +3,12 @@
 
 //! P04 adapter: `UpdateElement` for a plate or a member, committed as the next revision.
 //!
-//! The patch is typed (label, material reference, a plate's thickness, the placement translation,
-//! the placement rotation, the D2 level assignment)
+//! The patch is typed (label, material reference, a plate's thickness, a plate's thickness side,
+//! the placement translation, the placement rotation, the D2 level assignment)
 //! and the adapter writes only what the patch changes: a rename touches the authored layer alone,
-//! a material change rewrites the quantity record next to an unchanged mesh, a thickness change
-//! rebuilds the mesh and the records, a move (P08) rewrites the placement alone: the
-//! element-local body, its mesh and its stored quantities are not copied or rebuilt. An
+//! a material change rewrites the quantity record next to an unchanged mesh, a thickness or
+//! thickness-side change rebuilds the mesh and the records, a move (P08) rewrites the placement
+//! alone: the element-local body, its mesh and its stored quantities are not copied or rebuilt. An
 //! orientation change rewrites the placement alone and keeps the local body. The engine
 //! decides which groups changed; the layer engine's write set is checked against its footprint.
 //!
@@ -271,6 +271,7 @@ pub fn update_element(
         let patch = beamcraft_model::command::ElementPatch {
             material: command.patch.material,
             thickness_mm: command.patch.thickness_mm,
+            thickness_side: command.patch.thickness_side,
             ..Default::default()
         };
         for id in instances.group(command.target_id)? {
@@ -367,6 +368,12 @@ pub fn update_element(
         changes.push(Change::Thickness {
             id: definition_text.clone(),
             mm,
+        });
+    }
+    if let Some(side) = command.patch.thickness_side {
+        changes.push(Change::ThicknessSide {
+            id: definition_text.clone(),
+            side,
         });
     }
     if patch_effect.placement || patch_effect.orientation {

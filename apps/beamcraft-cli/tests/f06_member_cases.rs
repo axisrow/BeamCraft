@@ -302,6 +302,7 @@ fn the_thirty_f06_member_and_mixed_cases_have_explicit_evidence() {
                         .map(vector)
                         .collect(),
                     thickness_mm: number(plate.get("thickness_mm").unwrap()),
+                    thickness_side: None,
                     placement: Placement::IDENTITY,
                     material_digest: None,
                     holes_mm: Vec::new(),

@@ -88,6 +88,7 @@ fn create(n: usize) -> Change {
                 [0.0, 100.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
             holes: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),

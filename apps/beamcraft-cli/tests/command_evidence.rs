@@ -219,6 +219,7 @@ fn the_real_cli_persists_exact_reads_writes_and_request_fingerprints() {
             [0., 500., 0.],
         ],
         thickness_mm: 10.,
+        thickness_side: None,
         placement: Placement::IDENTITY,
         material_digest: None,
         holes_mm: vec![],

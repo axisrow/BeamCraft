@@ -757,6 +757,7 @@ fn request(op: &str, element: &str, revision: &str, thickness: f64) -> CreateReq
                 [0.0, 200.0, 0.0],
             ],
             thickness_mm: thickness,
+            thickness_side: None,
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
@@ -993,4 +994,116 @@ fn a_plate_above_one_cubic_metre_is_within_the_stage_budget() {
         ),
         5_000.0 * 5_000.0 * 41.0
     ));
+}
+
+#[test]
+fn the_thickness_side_lays_the_body_off_the_plane_and_numbering_normalises_it_away() {
+    // A12.1: three plates of one outline and thickness, authored with the default (no flag),
+    // middle and bottom. Volumes do not depend on the side, the saved mesh does, a plate with
+    // no attribute in the authored layer reads as top, and numbering gives all three one
+    // number.
+    let fx = Fixture::new();
+    let dims = ["--width", "400", "--length", "300", "--thickness", "10"];
+    let args = |name: &'static str, side: Option<&'static str>| {
+        let mut all: Vec<&'static str> = vec!["--name", name];
+        all.extend_from_slice(&dims);
+        if let Some(side) = side {
+            all.extend_from_slice(&["--thickness-side", side]);
+        }
+        all
+    };
+    let (code, top) = fx.create(&args("Top plate", None));
+    assert_eq!(code, 0, "{top:?}");
+    let (code, middle) = fx.create(&args("Middle plate", Some("middle")));
+    assert_eq!(code, 0, "{middle:?}");
+    let (code, bottom) = fx.create(&args("Bottom plate", Some("bottom")));
+    assert_eq!(code, 0, "{bottom:?}");
+    let id = |reply: &Json| text(at(reply, &["plate"]), "element_id");
+    let (top_id, middle_id, bottom_id) = (id(&top), id(&middle), id(&bottom));
+
+    // A fresh process reads every side back; the default plate reads as top.
+    let (code, inspected) = fx.inspect();
+    assert_eq!(code, 0, "{inspected:?}");
+    let plates = inspected.get("plates").unwrap().array().unwrap();
+    let by_id = |id: &str| plates.iter().find(|p| text(p, "element_id") == id).unwrap();
+    assert_eq!(text(by_id(&top_id), "thickness_side"), "top");
+    assert_eq!(text(by_id(&middle_id), "thickness_side"), "middle");
+    assert_eq!(text(by_id(&bottom_id), "thickness_side"), "bottom");
+    let volume = 400.0 * 300.0 * 10.0;
+    for id in [&top_id, &middle_id, &bottom_id] {
+        assert!(close(
+            num(by_id(id), &["quantities", "volume", "mm3"]),
+            volume
+        ));
+    }
+
+    // The saved authored layer carries the token, except on the default plate; the saved
+    // derived meshes span their own z bands.
+    let stage = read_stage(&fx, &inspected);
+    let path = |id: &str| format!("/World/Steel/Parts/PRT_{}", id.replace('-', ""));
+    assert!(!stage.prims[&path(&top_id)].contains_key("steel:plate:thicknessSide"));
+    assert_eq!(
+        stage.prims[&path(&middle_id)]["steel:plate:thicknessSide"].as_str(),
+        "\"middle\""
+    );
+    assert_eq!(
+        stage.prims[&path(&bottom_id)]["steel:plate:thicknessSide"].as_str(),
+        "\"bottom\""
+    );
+    let z_range = |id: &str| {
+        let (lo, hi) = bounds(&mesh_of(&stage, &path(id)));
+        (lo[2], hi[2])
+    };
+    assert_eq!(z_range(&top_id), (0.0, 10.0));
+    assert_eq!(z_range(&middle_id), (-5.0, 5.0));
+    assert_eq!(z_range(&bottom_id), (-10.0, 0.0));
+
+    // An update re-lays the body off: the mesh, its z band and the stored quantities follow.
+    let (code, updated) = fx.run(&[
+        "update-element",
+        "--store",
+        &fx.store_arg(),
+        "--id",
+        &top_id,
+        "--thickness-side",
+        "bottom",
+    ]);
+    assert_eq!(code, 0, "{updated:?}");
+    let (code, reinspect) = fx.inspect();
+    assert_eq!(code, 0, "{reinspect:?}");
+    let plates = reinspect.get("plates").unwrap().array().unwrap();
+    let retop = plates
+        .iter()
+        .find(|p| text(p, "element_id") == top_id)
+        .unwrap();
+    assert_eq!(text(retop, "thickness_side"), "bottom");
+    assert!(close(num(retop, &["quantities", "volume", "mm3"]), volume));
+    let restage = read_stage(&fx, &reinspect);
+    assert_eq!(
+        restage.prims[&path(&top_id)]["steel:plate:thicknessSide"].as_str(),
+        "\"bottom\""
+    );
+    let (lo, hi) = bounds(&mesh_of(&restage, &path(&top_id)));
+    assert_eq!((lo[2], hi[2]), (-10.0, 0.0));
+
+    // The three plates differ only in the side (placement and label never matter), so one
+    // group holds all of them and one number is proposed.
+    let (code, preview) = fx.run(&["preview-numbering", "--store", &fx.store_arg()]);
+    assert_eq!(code, 0, "{preview:?}");
+    let groups = preview.get("groups").unwrap().array().unwrap();
+    assert_eq!(groups.len(), 1, "{preview:?}");
+    assert_eq!(text(&groups[0], "kind"), "plate");
+    assert_eq!(text(&groups[0], "position"), "PL1");
+    let members: Vec<_> = groups[0]
+        .get("members")
+        .unwrap()
+        .array()
+        .unwrap()
+        .iter()
+        .map(|m| m.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(
+        members,
+        [top_id.clone(), middle_id.clone(), bottom_id.clone()]
+    );
 }

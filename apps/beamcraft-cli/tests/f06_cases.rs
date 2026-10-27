@@ -95,6 +95,7 @@ fn command(input: &Json) -> CreatePlate {
             .map(vector)
             .collect(),
         thickness_mm: number(body.get("thickness_mm").unwrap()),
+        thickness_side: None,
         placement: Placement {
             translation_mm: vector(placement.get("translation_mm").unwrap()),
             orientation_xyzw: vector(placement.get("orientation_xyzw").unwrap()),

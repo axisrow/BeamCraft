@@ -57,6 +57,7 @@ fn property_group(name: &str) -> Option<G> {
         "bim:partOf" | "bim:level" | "bim:connects" | "bim:instanceOf" => G::Relationship,
         "steel:plate:contourPointsMm"
         | "steel:plate:thicknessMm"
+        | "steel:plate:thicknessSide"
         | "steel:plate:holePointsMm"
         | "steel:plate:holeVertexCounts"
         | "steel:cut:operationId"
