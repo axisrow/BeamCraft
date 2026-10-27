@@ -35,5 +35,6 @@ mod publication;
 pub mod reference;
 mod reference_view;
 pub mod source_file;
+pub mod transform;
 pub mod weld;
 pub mod workspace;
