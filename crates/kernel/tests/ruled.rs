@@ -203,6 +203,61 @@ fn a_tilted_loft_between_nonparallel_planes_stays_certified() {
 }
 
 #[test]
+fn a_skewed_loft_certifies_through_the_folded_wall_split() {
+    // A skewed five-point loft (from the seeded random scan over random contours and
+    // end frames): the correspondence stays continuous and the body seals, but the
+    // wall quads fold non-convex, so this fixture dies if the wall split ignores the
+    // interior-diagonal choice (verified by mutation: with the default split forced,
+    // the certification refuses this exact body). No translation is exact, so the
+    // analytic self-check does not apply.
+    let start = RuledContour::polygon(
+        p3(0.0, 0.0, 0.0),
+        ex(),
+        ey(),
+        vec![
+            common::p(66.69452022220796, 84.5902026130943),
+            common::p(-37.51708006062485, 25.60071804341901),
+            common::p(-88.47971438302095, 46.13612283203746),
+            common::p(-68.83937549157699, -50.48686668848098),
+            common::p(6.422995332023466, -38.8474963915148),
+        ],
+    )
+    .unwrap();
+    let end = RuledContour::polygon(
+        p3(0.0, 0.0, 133.34023772656656),
+        Vec3::new(0.389994497272547, 0.9208171871208385, 0.0).unwrap(),
+        Vec3::new(-0.8766308044392784, 0.3712802005139592, 0.3060546444909106).unwrap(),
+        vec![
+            common::p(98.0924390735619, 60.473163936761864),
+            common::p(13.844804786238598, 99.61760493394429),
+            common::p(-61.265442437330236, 27.39545257802057),
+            common::p(-6.3208615808396065, -80.6020821902689),
+            common::p(86.97231015761841, -36.89828644894497),
+        ],
+    )
+    .unwrap();
+    // Independent bounds: the volume stays under its bounding box, and the surface
+    // area covers at least the two cap areas (the shoelace areas of the contours).
+    let cap_area = common::shoelace(start.points()) + common::shoelace(end.points());
+    let r = run(start, end);
+    assert!(volume(&r) > 0.0);
+    let bounds = r.bounds();
+    let box_volume = (bounds.max[0] - bounds.min[0])
+        * (bounds.max[1] - bounds.min[1])
+        * (bounds.max[2] - bounds.min[2]);
+    assert!(volume(&r) < box_volume, "{} vs {box_volume}", volume(&r));
+    assert!(r.area_mm2().unwrap().midpoint() >= cap_area);
+    let blob = common::parse_blob(r.blob());
+    let topology = common::topology(&blob.triangles, blob.vertices.len());
+    assert!(topology.closed && topology.components == 1);
+    close(
+        common::mesh_volume(&blob.vertices, &blob.triangles),
+        volume(&r),
+        1e-12,
+    );
+}
+
+#[test]
 fn fold_lines_skip_straight_continuations() {
     // A five-point contour with one straight continuation (index 1): folds everywhere
     // except there; both contours fold at the same indices, so the union is the same.
