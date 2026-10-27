@@ -203,6 +203,7 @@ fn authored_batch() -> Vec<Change> {
                 axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
                 profile: r[0].digest,
                 roll_rad: Some(0.125),
+                placement: None,
                 cuts: Vec::new(),
             },
             placement: pose(),

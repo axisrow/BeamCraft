@@ -217,17 +217,18 @@ pub fn plate_gross_signature(plate: &AuthoredPlate) -> ContentDigest {
     digest(&bytes)
 }
 
-/// Signature of the GROSS inputs of a member: axis, roll, the resolved section values, the area
-/// source with the declared and the effective area, the algorithm and the tolerance policy.
-/// Changing the declared area (or removing it) changes this signature, so a stored quantity
-/// computed from another area is `stale`. The profile digest is not an input; its values are.
+/// Signature of the GROSS inputs of a member: axis, roll, section placement (P14), the resolved
+/// section values, the area source with the declared and the effective area, the algorithm and
+/// the tolerance policy. Changing the declared area (or removing it) changes this signature, so
+/// a stored quantity computed from another area is `stale`. The profile digest is not an input;
+/// its values are.
 pub fn member_gross_signature(
     member: &AuthoredMember,
     profile: &ProfileInfo,
     algorithm: &str,
 ) -> ContentDigest {
-    let mut bytes = Vec::with_capacity(192);
-    bytes.extend_from_slice(b"BeamCraft/PMass/MemberGross/v1\0");
+    let mut bytes = Vec::with_capacity(224);
+    bytes.extend_from_slice(b"BeamCraft/PMass/MemberGross/v2\0");
     bytes.extend_from_slice(&TOLERANCE_POLICY_VERSION.to_le_bytes());
     bytes.extend_from_slice(&(algorithm.len() as u64).to_le_bytes());
     bytes.extend_from_slice(algorithm.as_bytes());
@@ -240,6 +241,24 @@ pub fn member_gross_signature(
             float(&mut bytes, roll);
         }
         None => bytes.push(0),
+    }
+    match member.section_placement {
+        None => bytes.push(0),
+        Some(p) => {
+            bytes.push(1);
+            bytes.extend_from_slice(p.plane.as_str().as_bytes());
+            bytes.push(0);
+            bytes.extend_from_slice(p.depth.as_str().as_bytes());
+            bytes.push(0);
+            for v in [
+                p.plane_offset_mm,
+                p.depth_offset_mm,
+                p.start_offset_mm,
+                p.end_offset_mm,
+            ] {
+                float(&mut bytes, v);
+            }
+        }
     }
     push_cuts(&mut bytes, &member.cuts);
     match profile {
@@ -482,6 +501,7 @@ mod tests {
             axis_points_mm: vec![[0.0; 3], [6000.0, 0.0, 0.0]],
             profile: Sha256::digest(b"profile").unwrap(),
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
             cuts: Vec::new(),

@@ -234,6 +234,7 @@ fn beam(shape: SectionShape, representation: Representation) -> SectionMember {
         shape,
         representation,
         roll_rad: None,
+        placement: beamcraft_model::command::SectionPlacement::default(),
     }
 }
 

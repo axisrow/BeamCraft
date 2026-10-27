@@ -223,6 +223,7 @@ fn i_section_uses_versioned_profile_roles() {
         ),
         representation: Representation::Detailed,
         roll_rad: None,
+        placement: beamcraft_model::command::SectionPlacement::default(),
     })
     .unwrap();
     let s = snapshot(

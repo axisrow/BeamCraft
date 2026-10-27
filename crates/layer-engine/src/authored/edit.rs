@@ -779,6 +779,7 @@ fn create(
             axis_mm,
             profile,
             roll_rad,
+            placement,
             ..
         } => {
             attr(data, &p, "bim:axisPointsMm", "double3[]", points(axis_mm))?;
@@ -790,6 +791,50 @@ fn create(
                     "steel:member:rollRad",
                     "double",
                     sdf::Value::Double(*n),
+                )?;
+            }
+            if let Some(placement) = placement {
+                attr(
+                    data,
+                    &p,
+                    "steel:member:planePosition",
+                    "token",
+                    sdf::Value::token(placement.plane.as_str()),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:member:planeOffsetMm",
+                    "double",
+                    sdf::Value::Double(placement.plane_offset_mm),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:member:depthPosition",
+                    "token",
+                    sdf::Value::token(placement.depth.as_str()),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:member:depthOffsetMm",
+                    "double",
+                    sdf::Value::Double(placement.depth_offset_mm),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:member:startOffsetMm",
+                    "double",
+                    sdf::Value::Double(placement.start_offset_mm),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:member:endOffsetMm",
+                    "double",
+                    sdf::Value::Double(placement.end_offset_mm),
                 )?;
             }
         }
@@ -1494,6 +1539,15 @@ fn capture(
         ("steel:cut:normal", "double3[]"),
         ("steel:cut:keep", "token[]"),
     ];
+    /// The P14 section-placement attributes of a member, in storage order.
+    const MEMBER_PLACEMENT: &[(&str, &str)] = &[
+        ("steel:member:planePosition", "token"),
+        ("steel:member:planeOffsetMm", "double"),
+        ("steel:member:depthPosition", "token"),
+        ("steel:member:depthOffsetMm", "double"),
+        ("steel:member:startOffsetMm", "double"),
+        ("steel:member:endOffsetMm", "double"),
+    ];
     const MESH: &[(&str, &str)] = &[
         ("points", "point3f[]"),
         ("faceVertexCounts", "int[]"),
@@ -1553,9 +1607,18 @@ fn capture(
                             add("steel:hole:ordinals", "int[]", 0);
                         }
                     }
-                    Shape::Member { ref cuts, .. } => {
+                    Shape::Member {
+                        ref cuts,
+                        ref placement,
+                        ..
+                    } => {
                         add("bim:axisPointsMm", "double3[]", 0);
                         add("steel:member:rollRad", "double", 0);
+                        if placement.is_some() {
+                            for &(name, ty) in MEMBER_PLACEMENT {
+                                add(name, ty, 0);
+                            }
+                        }
                         add("bim:profile", "rel", 0);
                         if !cuts.is_empty() {
                             for &(name, ty) in CUT_FIELDS {
@@ -1645,6 +1708,12 @@ fn capture(
                     ("steel:hole:ordinals", "int[]"),
                     ("bim:axisPointsMm", "double3[]"),
                     ("steel:member:rollRad", "double"),
+                    ("steel:member:planePosition", "token"),
+                    ("steel:member:planeOffsetMm", "double"),
+                    ("steel:member:depthPosition", "token"),
+                    ("steel:member:depthOffsetMm", "double"),
+                    ("steel:member:startOffsetMm", "double"),
+                    ("steel:member:endOffsetMm", "double"),
                     ("bim:profile", "rel"),
                     ("bim:partOf", "rel"),
                     (instance::RELATIONSHIP, "rel"),

@@ -406,6 +406,138 @@ impl MemberKind {
     }
 }
 
+/// Where the section of a beam or column sits across the member width (P14), along the rolled
+/// local `X_m` of the F06 section 4 frame. The names are frame-relative, not world directions: a
+/// rotated placement turns them with the member. `left` puts the section's bounding box in the
+/// `-X_m` half of the frame, `right` in the `+X_m` half and `centre` straddles the axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SectionPlanePosition {
+    /// The bounding box straddles the axis, from `-w/2` to `+w/2`. The default, and what every
+    /// member authored before the field existed reads as.
+    #[default]
+    Centre,
+    /// The bounding box occupies `-X_m`: from `-w` to `0`.
+    Left,
+    /// The bounding box occupies `+X_m`: from `0` to `+w`.
+    Right,
+}
+
+impl SectionPlanePosition {
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Centre => "centre",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+
+    /// Parses the wire token.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "centre" => Some(Self::Centre),
+            "left" => Some(Self::Left),
+            "right" => Some(Self::Right),
+            _ => None,
+        }
+    }
+
+    /// Where the bounding-box centre moves along `X_m` for a section of the given width: `0`,
+    /// `-w/2` or `+w/2`. Halving a finite `f64` and negating it are exact.
+    pub const fn half_shift_mm(self, width_mm: f64) -> f64 {
+        match self {
+            Self::Centre => 0.0,
+            Self::Left => -width_mm / 2.0,
+            Self::Right => width_mm / 2.0,
+        }
+    }
+}
+
+/// Where the section of a beam or column sits along the member height (P14), along the rolled
+/// local `Y_m` of the F06 section 4 frame. The names are frame-relative, not world directions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SectionDepthPosition {
+    /// The bounding box straddles the axis, from `-h/2` to `+h/2`. The default.
+    #[default]
+    Centre,
+    /// The bounding box occupies `-Y_m`: from `-h` to `0`.
+    Front,
+    /// The bounding box occupies `+Y_m`: from `0` to `+h`.
+    Back,
+}
+
+impl SectionDepthPosition {
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Centre => "centre",
+            Self::Front => "front",
+            Self::Back => "back",
+        }
+    }
+
+    /// Parses the wire token.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "centre" => Some(Self::Centre),
+            "front" => Some(Self::Front),
+            "back" => Some(Self::Back),
+            _ => None,
+        }
+    }
+
+    /// Where the bounding-box centre moves along `Y_m` for a section of the given height: `0`,
+    /// `-h/2` or `+h/2`. Halving a finite `f64` and negating it are exact.
+    pub const fn half_shift_mm(self, height_mm: f64) -> f64 {
+        match self {
+            Self::Centre => 0.0,
+            Self::Front => -height_mm / 2.0,
+            Self::Back => height_mm / 2.0,
+        }
+    }
+}
+
+/// The authored position of the section about the member axis (P14): where the section's
+/// bounding-box centre sits in the rolled element-local section plane and where the solid
+/// physically starts and ends along the axis. The axis points stay the modelling line; the
+/// offsets move the material. All values are element-local and turn with the roll and the
+/// placement. The rotation about the axis is the existing `roll_rad`; it composes with this
+/// position the same way it composes with the frame. The default value is the centred, unshifted
+/// position: the body every member authored before the field existed reads as, bit for bit.
+///
+/// The shift of the bounding-box centre is `plane.half_shift_mm(w) + plane_offset_mm` along the
+/// rolled `X_m` and `depth.half_shift_mm(h) + depth_offset_mm` along the rolled `Y_m`. The solid
+/// spans `p1 + start_offset_mm * u .. p2 + end_offset_mm * u` along the unit axis `u`, so its
+/// length is the axis length moved by `end_offset_mm - start_offset_mm` and must stay positive.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct SectionPlacement {
+    /// Across-width position of the section.
+    pub plane: SectionPlanePosition,
+    /// Extra shift along `X_m` in millimetres, applied after [`SectionPlanePosition`].
+    pub plane_offset_mm: f64,
+    /// Along-height position of the section.
+    pub depth: SectionDepthPosition,
+    /// Extra shift along `Y_m` in millimetres, applied after [`SectionDepthPosition`].
+    pub depth_offset_mm: f64,
+    /// Offset of the solid's start face along `+u` in millimetres.
+    pub start_offset_mm: f64,
+    /// Offset of the solid's end face along `+u` in millimetres.
+    pub end_offset_mm: f64,
+}
+
+impl SectionPlacement {
+    /// True when nothing is displaced. A member with the default position evaluates exactly as
+    /// it did before the field existed: the same mesh bytes, quantities and signatures.
+    pub fn is_default(&self) -> bool {
+        self.plane == SectionPlanePosition::Centre
+            && self.depth == SectionDepthPosition::Centre
+            && self.plane_offset_mm == 0.0
+            && self.depth_offset_mm == 0.0
+            && self.start_offset_mm == 0.0
+            && self.end_offset_mm == 0.0
+    }
+}
+
 /// F04 section 7 `CreateStraightMember`: a straight member with a pinned profile (required) and
 /// an optional pinned material. Whether the digests resolve (`NOT_FOUND`) and the shape (axis
 /// length, supported section) are the engine's decisions, not argument checks.
@@ -427,6 +559,9 @@ pub struct CreateStraightMember {
     pub placement: Placement,
     /// Explicit roll about the member axis; `None` is zero.
     pub roll_rad: Option<f64>,
+    /// The authored position of the section about the axis (P14); absence is the centred
+    /// default and stores no attributes.
+    pub section_placement: Option<SectionPlacement>,
     /// Optional pinned material definition.
     pub material_digest: Option<ContentDigest>,
 }
@@ -474,6 +609,30 @@ impl CreateStraightMember {
             )
             .with_rule("DV-LIM-001"));
         }
+        if let Some(placement) = &self.section_placement {
+            let offsets = [
+                placement.plane_offset_mm,
+                placement.depth_offset_mm,
+                placement.start_offset_mm,
+                placement.end_offset_mm,
+            ];
+            if offsets.iter().any(|v| !v.is_finite()) {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "section_placement",
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if offsets.iter().any(|v| v.abs() > DIMENSION_CAP_MM) {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "section_placement",
+                    "offset exceeds the dimension cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
         self.placement.validate()
     }
 
@@ -491,7 +650,7 @@ impl CreateStraightMember {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(256);
-        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v4\0");
+        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v5\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         bytes.push(match self.kind {
             MemberKind::Beam => 0,
@@ -515,6 +674,30 @@ impl CreateStraightMember {
                 bytes.extend_from_slice(&canonical_f64_bytes(roll).map_err(|_| bad())?);
             }
             None => bytes.push(0),
+        }
+        match &self.section_placement {
+            None => bytes.push(0),
+            Some(p) => {
+                bytes.push(1);
+                bytes.push(match p.plane {
+                    SectionPlanePosition::Centre => 0,
+                    SectionPlanePosition::Left => 1,
+                    SectionPlanePosition::Right => 2,
+                });
+                bytes.push(match p.depth {
+                    SectionDepthPosition::Centre => 0,
+                    SectionDepthPosition::Front => 1,
+                    SectionDepthPosition::Back => 2,
+                });
+                for v in [
+                    p.plane_offset_mm,
+                    p.depth_offset_mm,
+                    p.start_offset_mm,
+                    p.end_offset_mm,
+                ] {
+                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                }
+            }
         }
         let mut scalars = self
             .axis_points_mm
@@ -2704,8 +2887,90 @@ mod tests {
             profile_digest: digest(b"profile"),
             placement: Placement::IDENTITY,
             roll_rad: None,
+            section_placement: None,
             material_digest: None,
         }
+    }
+
+    #[test]
+    fn the_section_placement_tokens_half_shifts_and_default_are_exact() {
+        use SectionDepthPosition as D;
+        use SectionPlanePosition as P;
+        for (token, plane) in [
+            ("centre", P::Centre),
+            ("left", P::Left),
+            ("right", P::Right),
+        ] {
+            assert_eq!(P::parse(token), Some(plane));
+            assert_eq!(plane.as_str(), token);
+        }
+        for (token, depth) in [
+            ("centre", D::Centre),
+            ("front", D::Front),
+            ("back", D::Back),
+        ] {
+            assert_eq!(D::parse(token), Some(depth));
+            assert_eq!(depth.as_str(), token);
+        }
+        assert_eq!(P::parse("above"), None);
+        assert_eq!(D::parse("top"), None);
+        // Left and front are the negative halves; half shifts are exact.
+        assert_eq!(P::Centre.half_shift_mm(200.0), 0.0);
+        assert_eq!(P::Left.half_shift_mm(200.0), -100.0);
+        assert_eq!(P::Right.half_shift_mm(200.0), 100.0);
+        assert_eq!(D::Front.half_shift_mm(300.0), -150.0);
+        assert_eq!(D::Back.half_shift_mm(300.0), 150.0);
+        assert!(SectionPlacement::default().is_default());
+        let neg_zero = SectionPlacement {
+            plane_offset_mm: -0.0,
+            ..SectionPlacement::default()
+        };
+        assert!(neg_zero.is_default(), "-0.0 is 0.0");
+        let shifted = SectionPlacement {
+            plane_offset_mm: 0.5,
+            ..SectionPlacement::default()
+        };
+        assert!(!shifted.is_default());
+    }
+
+    #[test]
+    fn a_member_section_placement_has_the_argument_rules_and_its_own_fingerprint() {
+        fn placed(mutate: impl FnOnce(&mut SectionPlacement)) -> SectionPlacement {
+            let mut p = SectionPlacement::default();
+            mutate(&mut p);
+            p
+        }
+        let base = member().content_fingerprint().unwrap();
+        let mut m = member();
+        m.section_placement = Some(placed(|p| p.plane = SectionPlanePosition::Left));
+        assert!(m.validate_arguments().is_ok());
+        assert_ne!(m.content_fingerprint().unwrap(), base);
+        let left = m.content_fingerprint().unwrap();
+        m.section_placement = Some(placed(|p| p.plane = SectionPlanePosition::Right));
+        assert_ne!(m.content_fingerprint().unwrap(), left);
+        for mutate in [
+            |p: &mut SectionPlacement| p.plane_offset_mm = f64::NAN,
+            |p: &mut SectionPlacement| p.start_offset_mm = f64::INFINITY,
+            |p: &mut SectionPlacement| p.end_offset_mm = f64::NAN,
+        ] {
+            let mut m = member();
+            m.section_placement = Some(placed(mutate));
+            assert_eq!(
+                m.validate_arguments().unwrap_err().code,
+                ErrorCode::NonFiniteNumber
+            );
+        }
+        let mut m = member();
+        m.section_placement = Some(placed(|p| p.plane_offset_mm = 1_000_000.5));
+        assert_eq!(
+            m.validate_arguments().unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+        // An explicit default placement is valid authored input of its own.
+        let mut m = member();
+        m.section_placement = Some(SectionPlacement::default());
+        assert!(m.validate_arguments().is_ok());
+        assert_ne!(m.content_fingerprint().unwrap(), base);
     }
 
     #[test]

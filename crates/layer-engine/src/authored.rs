@@ -20,7 +20,10 @@ pub use reference::{
 };
 
 use crate::*;
-pub use beamcraft_model::command::{CutRecord, HoleRecord, KeepSide, PlateSide};
+pub use beamcraft_model::command::{
+    CutRecord, HoleRecord, KeepSide, PlateSide, SectionDepthPosition, SectionPlacement,
+    SectionPlanePosition,
+};
 pub use beamcraft_model::definition::SectionProperties;
 pub use beamcraft_model::fastener::FastenerSpec;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
@@ -47,7 +50,11 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:hole:pointsMm=double3[](optional,z=0);steel:hole:vertexCounts=int[](optional,>=3 each);",
     "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
     "all four steel:hole attributes or none, ordinals are engine-assigned and never reused\n",
-    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
+    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional);\n",
+    "steel:member:planePosition=token(left|centre|right);steel:member:planeOffsetMm=double;\n",
+    "steel:member:depthPosition=token(front|centre|back);steel:member:depthOffsetMm=double;\n",
+    "steel:member:startOffsetMm=double;steel:member:endOffsetMm=double;",
+    "all six section-placement attributes or none;absent=centred,unshifted (P14)\n",
     "memberBody=element-local-v2;placement rotation excluded from shape and mass keys\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:instanceOf=rel(1 canonical owned plate|beam|column of same kind;source instance);shared shape/profile/material/operations;no chains or shadow fields\n",
@@ -253,6 +260,9 @@ pub enum Shape {
         /// Missing roll has no authored default; engineering default is zero. A polybeam has no
         /// authored roll.
         roll_rad: Option<f64>,
+        /// Position of the section about the axis (P14); `None` is the centred default and
+        /// stores no attributes.
+        placement: Option<SectionPlacement>,
         /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
         /// order. Empty means an uncut member.
         cuts: Vec<CutRecord>,

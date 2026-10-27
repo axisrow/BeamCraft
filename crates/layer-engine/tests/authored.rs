@@ -141,6 +141,7 @@ fn elements() -> Vec<Change> {
                 axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
                 profile: r[0].digest,
                 roll_rad: Some(0.125),
+                placement: None,
                 cuts: Vec::new(),
             },
             placement: pose(),
@@ -1396,6 +1397,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
                 axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
                 profile: resources()[0].digest,
                 roll_rad: None,
+                placement: None,
                 cuts: vec![record(
                     0,
                     [3000.0, 0.0, 0.0],
@@ -1494,6 +1496,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
             axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
             profile: resources()[0].digest,
             roll_rad: None,
+            placement: None,
             cuts: vec![record(
                 0,
                 [3000.0, 0.0, 0.0],

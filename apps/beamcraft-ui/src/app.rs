@@ -2101,6 +2101,7 @@ impl App {
             axis_points_mm: vec![start, end],
             profile: self.tools.member.profile.as_deref()?.parse().ok()?,
             roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
+            section_placement: None,
             placement: Placement {
                 translation_mm: [0.0; 3],
                 orientation_xyzw: orientation,

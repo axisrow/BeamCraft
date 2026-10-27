@@ -97,6 +97,8 @@ pub enum Field {
     Section,
     /// Member roll angle.
     Roll,
+    /// Member section placement offsets (P14).
+    SectionPlacement,
 }
 
 impl Field {
@@ -113,6 +115,7 @@ impl Field {
             Self::Axis => "axis_points_mm",
             Self::Section => "profile",
             Self::Roll => "roll_rad",
+            Self::SectionPlacement => "section_placement",
         }
     }
 }

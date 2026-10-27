@@ -69,6 +69,7 @@ use beamcraft_layer_engine::{
 };
 use beamcraft_model::command::{
     CommandError, CreatePlate, CutRecord, HoleRecord, KeepSide, MemberKind, PlateSide,
+    SectionDepthPosition, SectionPlacement, SectionPlanePosition,
 };
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
@@ -527,6 +528,70 @@ fn decode_thickness_side(prim: &Prim) -> Result<Option<PlateSide>, PlateError> {
             .ok_or_else(|| integrity("thickness side is not top, middle or bottom")),
         _ => Err(integrity("thickness side must be a token")),
     }
+}
+
+/// The P14 position of a member's section about the axis: all six attributes or none; absence is
+/// the centred default, so every member authored before the field existed reads as centred and
+/// unshifted. A partial set or a malformed opinion is an integrity error, never a default.
+fn decode_section_placement(prim: &Prim) -> Result<Option<SectionPlacement>, PlateError> {
+    let partial = || integrity("member section placement attributes are all six or none");
+    let typed = |name: &str, ty: &str| {
+        prim.properties
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| (p, ty == p.type_name))
+    };
+    let names = [
+        "steel:member:planePosition",
+        "steel:member:planeOffsetMm",
+        "steel:member:depthPosition",
+        "steel:member:depthOffsetMm",
+        "steel:member:startOffsetMm",
+        "steel:member:endOffsetMm",
+    ];
+    let present: Vec<_> = names.iter().filter(|n| typed(n, "").is_some()).collect();
+    if present.is_empty() {
+        return Ok(None);
+    }
+    if present.len() != names.len() {
+        return Err(partial());
+    }
+    let token_of = |name: &str| {
+        let (property, ok) = typed(name, "token").ok_or_else(partial)?;
+        if !ok {
+            return Err(integrity(
+                "member section position must have USD type token",
+            ));
+        }
+        property
+            .value
+            .as_ref()
+            .and_then(text)
+            .ok_or_else(|| integrity("member section position is not a token"))
+    };
+    let offset_of = |name: &str| {
+        let (property, ok) = typed(name, "double").ok_or_else(partial)?;
+        if !ok {
+            return Err(integrity("member section offset must have USD type double"));
+        }
+        property
+            .value
+            .as_ref()
+            .and_then(number)
+            .ok_or_else(|| integrity("member section offset is not a double"))
+    };
+    let plane = SectionPlanePosition::parse(token_of(names[0])?)
+        .ok_or_else(|| integrity("member plane position is not left, centre or right"))?;
+    let depth = SectionDepthPosition::parse(token_of(names[2])?)
+        .ok_or_else(|| integrity("member depth position is not front, centre or back"))?;
+    Ok(Some(SectionPlacement {
+        plane,
+        plane_offset_mm: offset_of(names[1])?,
+        depth,
+        depth_offset_mm: offset_of(names[3])?,
+        start_offset_mm: offset_of(names[4])?,
+        end_offset_mm: offset_of(names[5])?,
+    }))
 }
 
 fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError> {
@@ -995,6 +1060,7 @@ fn decode_member(
     let roll_rad = property(prim, "steel:member:rollRad")
         .map(|v| number(v).ok_or_else(bad))
         .transpose()?;
+    let section_placement = decode_section_placement(prim)?;
     let profile = match prim
         .relationships
         .iter()
@@ -1019,6 +1085,7 @@ fn decode_member(
         axis_points_mm: axis,
         profile,
         roll_rad,
+        section_placement,
         placement: beamcraft_model::command::Placement {
             translation_mm: translation,
             orientation_xyzw: [x, y, z, w],

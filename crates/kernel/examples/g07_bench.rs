@@ -196,6 +196,7 @@ fn main() -> ExitCode {
         width_mm: 100.0,
         height_mm: 300.0,
         roll_rad: None,
+        placement: beamcraft_model::command::SectionPlacement::default(),
     };
     let Ok(member) = straight_member(member_input) else {
         return fail("member builds");

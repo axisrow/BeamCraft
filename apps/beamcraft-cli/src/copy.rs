@@ -415,6 +415,7 @@ fn copy_with_mode(
                         axis_mm: a.axis_points_mm.clone(),
                         profile: a.profile,
                         roll_rad: a.roll_rad,
+                        placement: a.section_placement,
                         cuts: a.cuts.clone(),
                     },
                     placement: LayerPlacement {
