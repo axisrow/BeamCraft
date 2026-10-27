@@ -114,6 +114,7 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                         | "--work-area"
                         | "--depth"
                         | "--side"
+                        | "--filter"
                 )))
             || options.insert(*key, *value).is_some()
         {
@@ -301,6 +302,18 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             )?;
         }
 
+        if let Some(filter) = given("--filter") {
+            let filter = if filter == "none" {
+                None
+            } else {
+                Some(ElementId::parse(filter).map_err(crate::plate_cmd::id_error)?)
+            };
+            if let Some(id) = filter {
+                let model = beamcraft_cli::plane_views::current(dir)?;
+                beamcraft_cli::filters::matching(&views, id, &model.user_attributes)?;
+            }
+            beamcraft_cli::filters::bind(&mut views, id, filter)?;
+        }
         let version = saved_views::write(dir, &views)?;
         return Ok(Json::object([
             ("outcome", Json::text("view_saved")),
@@ -334,6 +347,10 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             .document
             .records
             .remove(&format!("clip_{}", id.to_string().replace('-', "")));
+        views.document.records.remove(&format!(
+            "filter_binding_{}",
+            id.to_string().replace('-', "")
+        ));
         let version = saved_views::write(dir, &views)?;
         return Ok(Json::object([
             ("outcome", Json::text("view_deleted")),
@@ -364,6 +381,11 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                 .map_or(Json::Null, |d| Json::text(d.to_string())),
         ),
         ("model_changed", Json::Bool(changed)),
+        (
+            "filter_id",
+            beamcraft_cli::filters::binding(&views, id)?
+                .map_or(Json::Null, |v| Json::text(v.to_string())),
+        ),
         (
             "status",
             Json::text(if unresolved { "unresolved" } else { "resolved" }),

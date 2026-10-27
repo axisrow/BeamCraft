@@ -1970,6 +1970,8 @@ pub struct Inspection {
     pub grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: construction geometry, excluded from engineering bodies and quantities.
     pub helpers: beamcraft_engine::helper::Helpers,
+    /// Typed user-property metadata from the same verified model revision (I04/V14).
+    pub user_attributes: crate::attributes::Attributes,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
 }
@@ -2084,7 +2086,10 @@ pub(crate) fn inspect_manifest_assets(
     };
     let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())
         .map_err(|e| PlateError::new(e.f04_code(), "view snapshot could not be built"))?;
+    let mut user_attributes = decoded.attributes;
+    user_attributes.revision = Some(summarize_manifest(manifest, digest));
     Ok(Inspection {
+        user_attributes,
         revision: summarize_manifest(manifest, digest),
         plates,
         unsupported_plates,

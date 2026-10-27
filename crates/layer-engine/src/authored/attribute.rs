@@ -154,7 +154,7 @@ pub(super) fn validate_snapshot(prims: &[Prim]) -> Result<(), Diagnostic> {
                     continue;
                 }
                 let v = scalar(field).ok_or_else(invalid)?;
-                def.admits(&v).map_err(|e| fail(e.code, e.message))?;
+                def.admits_value(&v).map_err(|e| fail(e.code, e.message))?;
             }
         }
     }
@@ -247,7 +247,7 @@ pub(super) fn validate_patch(
         if let Some(v) = value {
             defs.get(id)
                 .ok_or_else(|| fail(ErrorCode::NotFound, "attribute definition is absent"))?
-                .admits(v)
+                .admits_value(v)
                 .map_err(|e| fail(e.code, e.message))?;
         }
         dependencies.push((*id, value.is_some()));

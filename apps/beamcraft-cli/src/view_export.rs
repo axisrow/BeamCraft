@@ -282,9 +282,19 @@ fn presentation_json(
         });
     }
     let planes = beamcraft_cli::view_clipping::effective(&views, &restored.view)?;
-    let ids = beamcraft_engine::view_clipping::visible_elements(&inspection.snapshot, &planes)?;
+    let mut ids = beamcraft_engine::view_clipping::visible_elements(&inspection.snapshot, &planes)?;
+    let filter_id = beamcraft_cli::filters::binding(&views, id)?;
+    if let Some(filter) = filter_id {
+        let matching =
+            beamcraft_cli::filters::matching(&views, filter, &inspection.user_attributes)?;
+        ids.retain(|id| matching.binary_search(id).is_ok());
+    }
     Ok(Json::object([
         ("version", Json::uint(1)),
+        (
+            "filter_id",
+            filter_id.map_or(Json::Null, |id| Json::text(id.to_string())),
+        ),
         (
             "snapshot_token",
             Json::text(inspection.snapshot.token().as_str()),

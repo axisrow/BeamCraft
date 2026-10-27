@@ -50,3 +50,6 @@ pub mod view_clipping;
 
 /// Typed user attributes (I04).
 pub mod attributes;
+
+/// Shared rule parsing and saved personal filters (V14).
+pub mod filters;

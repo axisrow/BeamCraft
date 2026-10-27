@@ -25,6 +25,7 @@ mod command_context;
 mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
+mod filters_cmd;
 mod grid_cmd;
 mod helper_cmd;
 mod history_cmd;
@@ -142,6 +143,8 @@ fn main() -> std::process::ExitCode {
         project_cmd::execute(&args)
     } else if args.first().is_some_and(grid_cmd::handles) {
         grid_cmd::execute(&args)
+    } else if args.first().is_some_and(filters_cmd::handles) {
+        filters_cmd::execute(&args)
     } else if args.first().is_some_and(attributes_cmd::handles) {
         attributes_cmd::execute(&args)
     } else if args.first().is_some_and(clipping_cmd::handles) {
