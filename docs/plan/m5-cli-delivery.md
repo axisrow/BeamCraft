@@ -32,7 +32,7 @@ These are candidate slices, not acceptance of the complete M5 CLI gate.
 | #266 → #267 | A04 hole record update, removal and shared retirement history |
 | #268 | Original cut creation retries use immutable accepted evidence |
 | #270 | P13 circular member creation, quantities, persistence and point replacement; path-aware numbering remains |
-| #274 | Reuse the existing P14 section-placement candidate; do not duplicate |
+| Master #274 | Reuse merged P14 section placement; #270 integrates it with circular members |
 | #275 → #281 | Reuse A12.2; #281 adds complete corner-list replacement/clear, linked groups and undo |
 | #279 | Repair D07 drafting test compilation and the G13 Clippy admission guard; supersedes #280 |
 
@@ -42,7 +42,8 @@ placement #269 merged into prerequisite branches: check master ancestry before t
 these as master delivery. The separate native V16 #276 does not accept the headless M2 gate.
 
 A local alternate A12.2 implementation was retained only for comparison; it has no duplicate
-PR. Continue from #275. Vertex/edge contour editing and P-Degenerate creation/repair remain
+PR. Continue from #275. Master then advanced to `2023f6b`, integrating P14 and the combined CI repair #279.
+Vertex/edge contour editing and P-Degenerate creation/repair remain
 outstanding. #281 is a prerequisite and does not close A12.3. M2 integration, I05, remaining
 geometry/connection/drawing capabilities and Q01/Q02 acceptance remain as listed below.
 
