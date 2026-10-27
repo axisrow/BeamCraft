@@ -90,7 +90,6 @@ impl Fixture {
                     placement: Placement::IDENTITY,
                     material_digest: None,
                     holes_mm: Vec::new(),
-                    cut: None,
                 },
             },
             &mut NoFault,

@@ -19,6 +19,7 @@ use crate::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM
 use crate::member::{AuthoredMember, ProfileInfo};
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
+use beamcraft_model::command::{CutRecord, KeepSide};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::section::SectionShape;
 
@@ -151,8 +152,8 @@ fn float(bytes: &mut Vec<u8>, value: f64) {
     bytes.extend_from_slice(&canonical_f64_bytes(value).unwrap_or([0xff; 8]));
 }
 
-/// Signature of the shape inputs of a plate: outline, thickness and holes, with the algorithm
-/// and tolerance policy. Name, placement and material are not shape inputs.
+/// Signature of the shape inputs of a plate: outline, thickness, holes and cut records, with the
+/// algorithm and tolerance policy. Name, placement and material are not shape inputs.
 pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentDigest {
     let mut bytes = Vec::with_capacity(256);
     bytes.extend_from_slice(b"BeamCraft/P04/PlateShape/v1\0");
@@ -171,17 +172,24 @@ pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentD
             float(&mut bytes, *v);
         }
     }
-    match plate.cut {
-        Some(cut) => {
-            bytes.push(1);
-            cut.point_mm
-                .into_iter()
-                .chain(cut.normal)
-                .for_each(|v| float(&mut bytes, v));
-        }
-        None => bytes.push(0),
-    }
+    push_cuts(&mut bytes, &plate.cuts);
     digest(&bytes)
+}
+
+/// The cut records of a signature: each record's identity-free content in ordinal order. The
+/// operation id is not a shape input; the geometry and the kept side are.
+fn push_cuts(bytes: &mut Vec<u8>, cuts: &[CutRecord]) {
+    bytes.extend_from_slice(&(cuts.len() as u64).to_le_bytes());
+    for cut in cuts {
+        float(bytes, f64::from(cut.ordinal));
+        bytes.push(match cut.keep {
+            KeepSide::Positive => 1,
+            KeepSide::Negative => 0,
+        });
+        cut.point_mm.into_iter().chain(cut.normal).for_each(|v| {
+            float(bytes, v);
+        });
+    }
 }
 
 /// Signature of the GROSS inputs of a plate: the outline and thickness, with the gross algorithm
@@ -225,16 +233,7 @@ pub fn member_gross_signature(
         }
         None => bytes.push(0),
     }
-    match member.cut {
-        Some(cut) => {
-            bytes.push(1);
-            cut.point_mm
-                .into_iter()
-                .chain(cut.normal)
-                .for_each(|v| float(&mut bytes, v));
-        }
-        None => bytes.push(0),
-    }
+    push_cuts(&mut bytes, &member.cuts);
     match profile {
         ProfileInfo::Rectangle {
             width_mm,
@@ -393,7 +392,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),
-            cut: None,
+            cuts: Vec::new(),
         }
     }
 
@@ -473,7 +472,7 @@ mod tests {
             roll_rad: None,
             placement: Placement::IDENTITY,
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         }
     }
 

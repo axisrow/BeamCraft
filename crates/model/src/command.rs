@@ -14,7 +14,7 @@ use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
 pub use crate::grid::CreateGrid;
 pub use crate::grid_update::UpdateGrid;
-use crate::id::ElementId;
+use crate::id::{ElementId, OpId};
 use crate::limits::{
     BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,
     MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES,
@@ -156,23 +156,57 @@ impl Placement {
     }
 }
 
-/// One plane cut authored with an element (A03, experimental): a point of the plane and its
-/// normal, both in element-local millimetres as submitted. The plane itself is the exact set
-/// `normal . (p - point_mm) = 0` of the submitted binary64 numbers; a scaled normal describes
-/// the same plane. The kept half-space is the one the normal points *away from*
-/// (`normal . (p - point_mm) <= 0`), so the normal points into the trimmed-off material.
-///
-/// Whether the plane actually crosses the element (some vertex strictly on each side, no face
-/// in the plane) is the kernel's decision; a tangent or missing plane refuses the command.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PlaneCut {
-    /// A point of the cutting plane, element-local millimetres.
-    pub point_mm: [f64; 3],
-    /// A non-zero normal of the plane; the kept side is where it does not point.
-    pub normal: [f64; 3],
+/// Which closed half-space of the cutting plane survives (F04 section 7 `CutByPlane`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeepSide {
+    /// The side the plane normal points to (`normal . (p - point) >= 0`).
+    Positive,
+    /// The opposite side (`normal . (p - point) <= 0`).
+    Negative,
 }
 
-impl PlaneCut {
+impl KeepSide {
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Positive => "positive",
+            Self::Negative => "negative",
+        }
+    }
+
+    /// Parses the wire token; anything else is `None`.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "positive" => Some(Self::Positive),
+            "negative" => Some(Self::Negative),
+            _ => None,
+        }
+    }
+}
+
+/// One owned `plane_cut` operation record of an element (F04 section 4, amendment A-2): the
+/// plane parameters and the kept side, with the record identity the engine assigned it.
+///
+/// The plane is the exact set `normal . (p - point_mm) = 0` of the stored binary64 numbers; a
+/// scaled normal describes the same plane. Whether the plane actually crosses the element (some
+/// vertex strictly on each side, no face in the plane) is the kernel's decision at replay; a
+/// tangent or missing plane refuses the command that authors or replays it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CutRecord {
+    /// Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`).
+    pub operation_id: OpId,
+    /// The per-element ordinal the engine assigned in creation order; it names the cap face
+    /// `cut:f.p<ordinal>` and is never reused or renumbered.
+    pub ordinal: u16,
+    /// A point of the cutting plane, element-local millimetres.
+    pub point_mm: [f64; 3],
+    /// A non-zero normal of the plane.
+    pub normal: [f64; 3],
+    /// The kept half-space.
+    pub keep: KeepSide,
+}
+
+impl CutRecord {
     /// Admits what does not depend on geometry: finiteness, the coordinate cap for the point and
     /// every normal component, and a non-zero normal. A non-finite number is
     /// `NON_FINITE_NUMBER`; a coordinate above 1,000,000,000 mm is `LIMIT_EXCEEDED`; a zero
@@ -215,6 +249,62 @@ impl PlaneCut {
     }
 }
 
+/// F04 section 7 `CutByPlane`: adds one `plane_cut` record to a valid plate, beam or column and
+/// updates its derived data in one transaction. `operation_id` must be unused in the project;
+/// the engine assigns the next ordinal of the target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CutByPlane {
+    /// The element to cut.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the new record; unused in the project.
+    pub operation_id: OpId,
+    /// A point of the cutting plane, element-local millimetres.
+    pub point_mm: [f64; 3],
+    /// A non-zero normal of the plane.
+    pub normal: [f64; 3],
+    /// The kept half-space.
+    pub keep: KeepSide,
+}
+
+impl CutByPlane {
+    /// Admits what does not depend on geometry or model state: finiteness, the coordinate cap
+    /// and a non-zero normal, as [`CutRecord::validate`].
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        CutRecord {
+            operation_id: self.operation_id,
+            ordinal: 0,
+            point_mm: self.point_mm,
+            normal: self.normal,
+            keep: self.keep,
+        }
+        .validate()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
+    /// signed zero normalized; the same deterministic digest form as
+    /// [`CreatePlate::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad =
+            || CommandError::new(ErrorCode::NonFiniteNumber, "cut", "value cannot be encoded");
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/A03/CutByPlane/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.operation_id.as_bytes());
+        bytes.push(match self.keep {
+            KeepSide::Positive => 0,
+            KeepSide::Negative => 1,
+        });
+        for v in self.point_mm.into_iter().chain(self.normal) {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
 /// F04 section 7 `CreatePlate`. `material_digest` pins an existing immutable material definition;
 /// whether the digest resolves (`NOT_FOUND`) is the engine's decision, not an argument check.
 #[derive(Debug, Clone, PartialEq)]
@@ -235,8 +325,6 @@ pub struct CreatePlate {
     /// seen from +Z (the cutter convention of the kernel). Whether a hole is strictly inside the
     /// outline and clear of the others is the kernel's decision. Empty means a solid plate.
     pub holes_mm: Vec<Vec<[f64; 2]>>,
-    /// Optional single plane cut applied after every hole (A03, experimental).
-    pub cut: Option<PlaneCut>,
 }
 
 /// Whether `name` is a valid element label (F04 section 3, `DV-BASE-003`).
@@ -285,8 +373,6 @@ pub struct CreateStraightMember {
     pub roll_rad: Option<f64>,
     /// Optional pinned material definition.
     pub material_digest: Option<ContentDigest>,
-    /// Optional single plane cut applied to the member body (A03, experimental).
-    pub cut: Option<PlaneCut>,
 }
 
 impl CreateStraightMember {
@@ -332,9 +418,6 @@ impl CreateStraightMember {
             )
             .with_rule("DV-LIM-001"));
         }
-        if let Some(cut) = &self.cut {
-            cut.validate()?;
-        }
         self.placement.validate()
     }
 
@@ -352,7 +435,7 @@ impl CreateStraightMember {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(256);
-        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v2\0");
+        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v3\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         bytes.push(match self.kind {
             MemberKind::Beam => 0,
@@ -373,15 +456,6 @@ impl CreateStraightMember {
             Some(roll) => {
                 bytes.push(1);
                 bytes.extend_from_slice(&canonical_f64_bytes(roll).map_err(|_| bad())?);
-            }
-            None => bytes.push(0),
-        }
-        match &self.cut {
-            Some(cut) => {
-                bytes.push(1);
-                for v in cut.point_mm.into_iter().chain(cut.normal) {
-                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
-                }
             }
             None => bytes.push(0),
         }
@@ -473,9 +547,6 @@ impl CreatePlate {
         }
         self.placement.validate()?;
         self.validate_holes()?;
-        if let Some(cut) = &self.cut {
-            cut.validate()?;
-        }
         Ok(())
     }
 
@@ -540,7 +611,7 @@ impl CreatePlate {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
-        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v4\0");
+        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v5\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
@@ -571,15 +642,6 @@ impl CreatePlate {
             for v in hole.iter().flatten() {
                 bytes.extend_from_slice(&canonical_f64_bytes(*v).map_err(|_| bad())?);
             }
-        }
-        match &self.cut {
-            Some(cut) => {
-                bytes.push(1);
-                for v in cut.point_mm.into_iter().chain(cut.normal) {
-                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
-                }
-            }
-            None => bytes.push(0),
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
@@ -1463,7 +1525,6 @@ mod tests {
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
-            cut: None,
         }
     }
 
@@ -1508,63 +1569,55 @@ mod tests {
         assert!(bad.validate_arguments().is_ok());
     }
 
-    #[test]
-    fn a_cut_has_caps_codes_and_part_of_the_fingerprint() {
-        let solid = plate().content_fingerprint().unwrap();
-        let mut p = plate();
-        p.cut = Some(PlaneCut {
-            point_mm: [500.0, 0.0, 0.0],
+    fn cut() -> CutByPlane {
+        CutByPlane {
+            target_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            point_mm: [250.0, 0.0, 0.0],
             normal: [1.0, 0.0, 0.0],
-        });
-        assert!(p.validate_arguments().is_ok());
-        assert_ne!(p.content_fingerprint().unwrap(), solid);
-        let mut moved = p.clone();
-        moved.cut.as_mut().unwrap().point_mm[0] = 501.0;
-        assert_ne!(
-            moved.content_fingerprint().unwrap(),
-            p.content_fingerprint().unwrap()
-        );
-        let code_of = |cut: Option<PlaneCut>| {
-            let mut p = plate();
-            p.cut = cut;
-            code(&p)
-        };
+            keep: KeepSide::Negative,
+        }
+    }
+
+    #[test]
+    fn a_cut_command_has_caps_codes_and_a_content_fingerprint() {
+        let c = cut();
+        assert!(c.validate_arguments().is_ok());
+        let base = c.content_fingerprint().unwrap();
+        assert_eq!(base, c.content_fingerprint().unwrap());
+        let mut moved = c;
+        moved.point_mm[0] = 251.0;
+        assert_ne!(moved.content_fingerprint().unwrap(), base);
+        let mut flipped = c;
+        flipped.keep = KeepSide::Positive;
+        assert_ne!(flipped.content_fingerprint().unwrap(), base);
         // A zero normal is not a plane; finiteness and the coordinate cap come first.
+        let zero = CutByPlane {
+            normal: [0.0; 3],
+            ..cut()
+        };
         assert_eq!(
-            code_of(Some(PlaneCut {
-                point_mm: [0.0; 3],
-                normal: [0.0; 3],
-            })),
+            zero.validate_arguments().unwrap_err().code,
             ErrorCode::InvalidArgument
         );
+        let nan = CutByPlane {
+            point_mm: [f64::NAN, 0.0, 0.0],
+            ..cut()
+        };
         assert_eq!(
-            code_of(Some(PlaneCut {
-                point_mm: [f64::NAN, 0.0, 0.0],
-                normal: [1.0, 0.0, 0.0],
-            })),
+            nan.validate_arguments().unwrap_err().code,
             ErrorCode::NonFiniteNumber
         );
+        let wide = CutByPlane {
+            point_mm: [2e9, 0.0, 0.0],
+            ..cut()
+        };
         assert_eq!(
-            code_of(Some(PlaneCut {
-                point_mm: [2e9, 0.0, 0.0],
-                normal: [1.0, 0.0, 0.0],
-            })),
+            wide.validate_arguments().unwrap_err().code,
             ErrorCode::LimitExceeded
         );
-        // The member command takes the same cut with the same codes.
-        let mut m = member();
-        m.cut = Some(PlaneCut {
-            point_mm: [3000.0, 0.0, 0.0],
-            normal: [1.0, 0.0, 0.0],
-        });
-        assert!(m.validate_arguments().is_ok());
-        let uncut = member().content_fingerprint().unwrap();
-        assert_ne!(m.content_fingerprint().unwrap(), uncut);
-        m.cut.as_mut().unwrap().normal = [0.0; 3];
-        assert_eq!(
-            m.validate_arguments().unwrap_err().code,
-            ErrorCode::InvalidArgument
-        );
+        assert_eq!(KeepSide::parse("positive"), Some(KeepSide::Positive));
+        assert_eq!(KeepSide::parse("sideways"), None);
     }
 
     #[test]
@@ -1719,7 +1772,6 @@ mod tests {
             placement: Placement::IDENTITY,
             roll_rad: None,
             material_digest: None,
-            cut: None,
         }
     }
 

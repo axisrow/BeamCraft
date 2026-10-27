@@ -221,7 +221,6 @@ fn the_real_cli_persists_exact_reads_writes_and_request_fingerprints() {
         placement: Placement::IDENTITY,
         material_digest: None,
         holes_mm: vec![],
-        cut: None,
     };
     assert_eq!(created.fingerprint, command.content_fingerprint().unwrap());
     assert_eq!(

@@ -33,7 +33,6 @@ fn member_command(placement: Placement, roll_rad: Option<f64>) -> CreateStraight
         placement,
         roll_rad,
         material_digest: None,
-        cut: None,
     }
 }
 
@@ -199,7 +198,6 @@ fn a_plate_still_refuses_a_rotated_placement_with_a_kind_named_message() {
         placement: quarter_about_z(),
         material_digest: None,
         holes_mm: Vec::new(),
-        cut: None,
     };
     let error = create_plate(&command, &|_| false, &no_materials).unwrap_err();
     assert_eq!(error.code, ErrorCode::UnsupportedGeometry);

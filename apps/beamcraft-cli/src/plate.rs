@@ -67,7 +67,7 @@ use beamcraft_layer_engine::{
     Asset, BACKEND, Budgets, Cancellation, Control, Diagnostic, Identity, OpenRequest, Opened,
     Prim, Profile, Reader, Value,
 };
-use beamcraft_model::command::{CommandError, CreatePlate, MemberKind, PlaneCut};
+use beamcraft_model::command::{CommandError, CreatePlate, CutRecord, KeepSide, MemberKind};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -466,33 +466,95 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         },
         material,
         holes_mm: decode_holes(prim)?,
-        cut: decode_cut(prim)?,
+        cuts: decode_cut(prim)?,
     })
 }
 
-/// The optional single plane cut of a committed element (A03): both attributes or neither,
-/// exactly one point and one normal. A damaged or half-authored record is an integrity error,
-/// never a default.
-fn decode_cut(prim: &Prim) -> Result<Option<PlaneCut>, PlateError> {
+/// The owned plane-cut records of a committed element (A03, amendment A-2): five parallel
+/// attributes, all five or none, of one common length. A damaged or half-authored list is an
+/// integrity error, never a default; the engine re-admits every record on replay.
+fn decode_cut(prim: &Prim) -> Result<Vec<CutRecord>, PlateError> {
+    const FIELDS: [&str; 5] = [
+        "steel:cut:operationId",
+        "steel:cut:ordinal",
+        "steel:cut:pointMm",
+        "steel:cut:normal",
+        "steel:cut:keep",
+    ];
     let bad = || integrity("committed element has inconsistent cut attributes");
     let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
-    let (has_point, has_normal) = (declared("steel:cut:pointMm"), declared("steel:cut:normal"));
-    if !has_point && !has_normal {
-        return Ok(None);
+    let count = FIELDS.iter().filter(|name| declared(name)).count();
+    if count == 0 {
+        return Ok(Vec::new());
     }
-    if has_point != has_normal {
+    if count != FIELDS.len() {
         return Err(bad());
     }
-    let point = property(prim, "steel:cut:pointMm")
-        .and_then(numbers::<3>)
-        .ok_or_else(bad)?;
-    let normal = property(prim, "steel:cut:normal")
-        .and_then(numbers::<3>)
-        .ok_or_else(bad)?;
-    Ok(Some(PlaneCut {
-        point_mm: point,
-        normal,
-    }))
+    let strings = |name: &str| -> Result<Vec<String>, PlateError> {
+        match property(prim, name) {
+            Some(Value::Array(values)) => values
+                .iter()
+                .map(|v| text(v).map(|s| s.to_owned()).ok_or_else(bad))
+                .collect(),
+            _ => Err(bad()),
+        }
+    };
+    let ids = strings(FIELDS[0])?;
+    let ordinals: Vec<u16> = match property(prim, FIELDS[1]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| u16::try_from(integer(v).ok_or_else(bad)?).map_err(|_| bad()))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad()),
+    };
+    let mut points = Vec::new();
+    let mut normals = Vec::new();
+    match property(prim, FIELDS[2]) {
+        Some(Value::Array(values)) => {
+            for v in values {
+                points.push(numbers::<3>(v).ok_or_else(bad)?);
+            }
+        }
+        _ => return Err(bad()),
+    }
+    match property(prim, FIELDS[3]) {
+        Some(Value::Array(values)) => {
+            for v in values {
+                normals.push(numbers::<3>(v).ok_or_else(bad)?);
+            }
+        }
+        _ => return Err(bad()),
+    }
+    let keeps: Vec<KeepSide> = match property(prim, FIELDS[4]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| KeepSide::parse(text(v).ok_or_else(bad)?).ok_or_else(bad))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad()),
+    };
+    if ids.len() != ordinals.len()
+        || points.len() != ordinals.len()
+        || normals.len() != ordinals.len()
+        || keeps.len() != ordinals.len()
+    {
+        return Err(bad());
+    }
+    ids.iter()
+        .zip(
+            ordinals
+                .iter()
+                .zip(points.iter().zip(normals.iter().zip(keeps.iter()))),
+        )
+        .map(|(id, (ordinal, (point, (normal, keep))))| {
+            Ok(CutRecord {
+                operation_id: OpId::parse(id).map_err(|_| bad())?,
+                ordinal: *ordinal,
+                point_mm: *point,
+                normal: *normal,
+                keep: *keep,
+            })
+        })
+        .collect()
 }
 
 /// The through-hole polygons of a committed plate: the flat point array cut by the vertex counts.
@@ -823,7 +885,7 @@ fn decode_member(
             orientation_xyzw: [x, y, z, w],
         },
         material: decode_material(prim)?,
-        cut: decode_cut(prim)?,
+        cuts: decode_cut(prim)?,
     })
 }
 
@@ -1706,7 +1768,7 @@ pub fn create_plate(
                             .iter()
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
-                        cut: outcome.authored.cut,
+                        cuts: Vec::new(),
                     },
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,

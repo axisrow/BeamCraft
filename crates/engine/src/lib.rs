@@ -15,6 +15,7 @@ pub mod bolt;
 pub mod bom;
 pub mod command;
 pub mod copy;
+pub mod cut;
 pub mod drawing;
 pub mod element;
 pub mod error;

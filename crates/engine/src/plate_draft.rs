@@ -51,7 +51,6 @@ pub fn create_plate_draft(
         || error.field != "contour_points_mm"
         || !command.placement.is_identity_rotation()
         || !command.holes_mm.is_empty()
-        || command.cut.is_some()
     {
         return Err(error);
     }
@@ -250,7 +249,7 @@ mod tests {
             },
             material: None,
             holes_mm: Vec::new(),
-            cut: None,
+            cuts: Vec::new(),
         }
     }
 

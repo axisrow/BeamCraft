@@ -20,8 +20,8 @@
 //! slice.
 
 use crate::command::{
-    AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, apply_cut,
-    map_cut, quantities_with_material,
+    AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, map_cut,
+    quantities_with_material, replay_cuts,
 };
 use crate::footprint::Footprint;
 use crate::solid::SolidMesh;
@@ -32,7 +32,7 @@ use beamcraft_kernel::ops::{Body, OpFailure};
 use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, section_member};
 use beamcraft_kernel::{StraightMember, straight_member};
 use beamcraft_model::command::{
-    CommandError, CreateStraightMember, MemberKind, Placement, PlaneCut,
+    CommandError, CreateStraightMember, CutRecord, MemberKind, Placement,
 };
 use beamcraft_model::definition::{
     DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
@@ -163,8 +163,9 @@ pub struct AuthoredMember {
     pub placement: Placement,
     /// Pinned material definition, if any.
     pub material: Option<ContentDigest>,
-    /// The authored plane cut (A03, experimental); `None` means no cut.
-    pub cut: Option<PlaneCut>,
+    /// The owned `plane_cut` operation records (A03, amendment A-2), replayed in ascending
+    /// ordinal order. Empty means an uncut member.
+    pub cuts: Vec<CutRecord>,
 }
 
 impl AuthoredMember {
@@ -179,7 +180,7 @@ impl AuthoredMember {
             roll_rad: command.roll_rad,
             placement: command.placement,
             material: command.material_digest,
-            cut: command.cut,
+            cuts: Vec::new(),
         }
     }
 
@@ -194,7 +195,6 @@ impl AuthoredMember {
             placement: self.placement,
             roll_rad: self.roll_rad,
             material_digest: self.material,
-            cut: self.cut,
         }
     }
 }
@@ -340,18 +340,15 @@ pub fn evaluate_member(
                         "member frame could not be built",
                     )
                 })?;
-            // The cut replaces both the mesh and the analytic volume with the certified cut
+            // The cuts replace both the mesh and the analytic volume with the certified replay
             // result; without one the P-Mass `area x length` volume stands.
-            let (solid, cut_volume) = match authored.cut.as_ref() {
-                Some(cut) => {
-                    let body = Body::from_plate(&result).map_err(|f: OpFailure| map_cut(&f))?;
-                    let applied = apply_cut(&body, cut)?;
-                    (
-                        SolidMesh::from_operation(&applied),
-                        Some(applied.volume_mm3().midpoint()),
-                    )
-                }
-                None => (SolidMesh::from_box(&result), None),
+            let (solid, cut_volume) = if authored.cuts.is_empty() {
+                (SolidMesh::from_box(&result), None)
+            } else {
+                let body = Body::from_plate(&result).map_err(|f: OpFailure| map_cut(&f))?;
+                let solid = replay_cuts(&body, SolidMesh::from_box(&result), &authored.cuts)?;
+                let volume = solid.volume_mm3();
+                (solid, Some(volume))
             };
             (
                 solid,
@@ -374,22 +371,26 @@ pub fn evaluate_member(
                 roll_rad: authored.roll_rad,
             })
             .map_err(|failure| map_section(&failure))?;
-            match authored.cut.as_ref() {
-                Some(cut) => {
-                    let applied = apply_cut(result.body(), cut)?;
-                    (
-                        SolidMesh::from_operation(&applied),
-                        result.axis_length_mm(),
-                        CUT_VOLUME_ALGORITHM,
-                        Some(applied.volume_mm3().midpoint()),
-                    )
-                }
-                None => (
+            if authored.cuts.is_empty() {
+                (
                     SolidMesh::from_section(&result),
                     result.axis_length_mm(),
                     SECTION_VOLUME_ALGORITHM,
                     None,
-                ),
+                )
+            } else {
+                let solid = replay_cuts(
+                    result.body(),
+                    SolidMesh::from_section(&result),
+                    &authored.cuts,
+                )?;
+                let volume = solid.volume_mm3();
+                (
+                    solid,
+                    result.axis_length_mm(),
+                    CUT_VOLUME_ALGORITHM,
+                    Some(volume),
+                )
             }
         }
     };
@@ -573,7 +574,6 @@ mod tests {
             placement: Placement::IDENTITY,
             roll_rad: None,
             material_digest: None,
-            cut: None,
         }
     }
 
@@ -870,63 +870,79 @@ mod tests {
 
     #[test]
     fn a_plane_cut_trims_a_member_of_any_section() {
+        use beamcraft_model::command::KeepSide;
+        use beamcraft_model::id::OpId;
         use beamcraft_model::section::{ParametricSection, SectionFamily};
-        let profile = digest(b"rectangle 200x300");
-        let lookup = |d: &ContentDigest| rectangle(d, profile);
-        let mut c = command(profile);
-        c.cut = Some(PlaneCut {
-            point_mm: [3000.0, 0.0, 0.0],
+        let profile = ProfileInfo::Rectangle {
+            width_mm: 200.0,
+            height_mm: 300.0,
+            declared_area_mm2: None,
+        };
+        let record = |point: [f64; 3]| CutRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            ordinal: 0,
+            point_mm: point,
             normal: [1.0, 0.0, 0.0],
-        });
-        let out = create_straight_member(&c, &none, &lookup, &no_materials).unwrap();
+            keep: KeepSide::Negative,
+        };
+        let authored = AuthoredMember {
+            id: ElementId::parse("019a7bf0-0000-7000-8000-000000000007").unwrap(),
+            kind: MemberKind::Beam,
+            name: "Cut beam".into(),
+            axis_points_mm: [[0.0; 3], [6000.0, 0.0, 0.0]],
+            profile: digest(b"profile"),
+            roll_rad: None,
+            placement: Placement::IDENTITY,
+            material: None,
+            cuts: vec![record([3000.0, 0.0, 0.0])],
+        };
+        let body = evaluate_member(&authored, profile.clone()).unwrap();
         // The kept half is 3000 mm long: 3000 * 200 * 300 = 180,000,000 mm3 = 0.18 m3; the cut
         // result replaces the P-Mass `area x length` volume with the certified cut volume.
-        assert!(
-            (out.quantities.volume_mm3 - 180_000_000.0).abs() <= 1e-6,
-            "{out:?}"
-        );
-        assert_eq!(out.quantities.algorithm, CUT_VOLUME_ALGORITHM);
-        assert_eq!(out.authored.cut, c.cut);
-        assert_eq!(out.authored.to_command(), c);
+        let quantities = member_quantities(&body, None).unwrap();
+        assert!((quantities.volume_mm3 - 180_000_000.0).abs() <= 1e-6);
+        assert_eq!(quantities.algorithm, CUT_VOLUME_ALGORITHM);
         // A cut section member is the certified cut of the detailed outline, about half of it.
         let shape = SectionShape::Parametric(
             ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 10.0, 15.0])
                 .unwrap(),
         );
-        let section_lookup = |d: &ContentDigest| {
-            if *d == profile {
-                Ok(ProfileInfo::Section {
-                    shape: shape.clone(),
-                    declared_area_mm2: None,
-                })
-            } else {
-                no_profiles(d)
-            }
-        };
-        let uncut =
-            create_straight_member(&command(profile), &none, &section_lookup, &no_materials)
-                .unwrap();
-        let cut = create_straight_member(&c, &none, &section_lookup, &no_materials).unwrap();
-        assert_eq!(cut.quantities.algorithm, CUT_VOLUME_ALGORITHM);
+        let uncut = evaluate_member(
+            &AuthoredMember {
+                cuts: Vec::new(),
+                ..authored.clone()
+            },
+            ProfileInfo::Section {
+                shape: shape.clone(),
+                declared_area_mm2: None,
+            },
+        )
+        .unwrap();
+        let cut = evaluate_member(
+            &authored,
+            ProfileInfo::Section {
+                shape,
+                declared_area_mm2: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(cut.algorithm, CUT_VOLUME_ALGORITHM);
         // The uncut quantity is the P-Mass exact-area volume; the cut quantity is the certified
         // volume of the polygon mesh, whose arc approximation (sagitta at most max(0.25 mm,
         // 0.5% r)) moves the section area by tens of mm2 (~35 000 mm3 per half here).
         assert!(
-            (cut.quantities.volume_mm3 - uncut.quantities.volume_mm3 / 2.0).abs() <= 50_000.0,
+            (cut.volume_mm3 - uncut.volume_mm3 / 2.0).abs() <= 50_000.0,
             "cut {} vs uncut/2 {}",
-            cut.quantities.volume_mm3,
-            uncut.quantities.volume_mm3 / 2.0
+            cut.volume_mm3,
+            uncut.volume_mm3 / 2.0
         );
-        // A plane that misses the member entirely refuses the command.
-        let mut missing = command(profile);
-        missing.cut = Some(PlaneCut {
-            point_mm: [9000.0, 0.0, 0.0],
-            normal: [1.0, 0.0, 0.0],
-        });
+        // A plane that misses the member entirely refuses the evaluation.
+        let missing = AuthoredMember {
+            cuts: vec![record([9000.0, 0.0, 0.0])],
+            ..authored.clone()
+        };
         assert_eq!(
-            create_straight_member(&missing, &none, &lookup, &no_materials)
-                .unwrap_err()
-                .code,
+            evaluate_member(&missing, profile).unwrap_err().code,
             ErrorCode::InvalidArgument
         );
     }

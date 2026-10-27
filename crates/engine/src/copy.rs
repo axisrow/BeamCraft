@@ -14,7 +14,11 @@
 
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
-use beamcraft_model::command::{CommandError, CopyElement, Placement};
+use beamcraft_geom::canonical_f64_bytes;
+use beamcraft_model::command::{CommandError, CopyElement, CutRecord, Placement};
+use beamcraft_model::digest::{ContentDigest, Sha256};
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::{ElementId, OpId, Uuid7};
 
 fn copied_placement(source: &Placement, command: &CopyElement) -> Result<Placement, CommandError> {
     let [ox, oy, oz] = command.offset_mm;
@@ -25,6 +29,57 @@ fn copied_placement(source: &Placement, command: &CopyElement) -> Result<Placeme
     };
     moved.validate()?;
     Ok(moved)
+}
+
+/// The fresh operation id of one copied record (F04 section 7: fresh operation ids, the same
+/// ordinals). The derivation is deterministic — a UUIDv7 hashed from the copy's identity, the
+/// source record and the ordinal — so a retried copy reproduces the exact same state. The
+/// version and variant bits are forced before the check, so the refusal is unreachable and
+/// means only that a derived identity could not be formed.
+fn copied_operation_id(
+    record: &CutRecord,
+    ordinal: usize,
+    new_id: &ElementId,
+) -> Result<OpId, CommandError> {
+    let mut seed = Vec::with_capacity(96);
+    seed.extend_from_slice(b"BeamCraft/A03/CopyCutRecord\0");
+    seed.extend_from_slice(new_id.as_bytes());
+    seed.extend_from_slice(record.operation_id.as_bytes());
+    seed.extend_from_slice(&(ordinal as u64).to_le_bytes());
+    for value in record.point_mm.into_iter().chain(record.normal) {
+        seed.extend_from_slice(&canonical_f64_bytes(value).unwrap_or([0xff; 8]));
+    }
+    let digest = Sha256::digest(&seed).unwrap_or_else(|_| ContentDigest::from_bytes([0; 32]));
+    let mut bytes = [0u8; 16];
+    for (out, value) in bytes.iter_mut().zip(digest.as_bytes().iter()) {
+        *out = *value;
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x70;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Uuid7::from_bytes(bytes).map(OpId::from_uuid).map_err(|_| {
+        CommandError::new(
+            ErrorCode::LimitExceeded,
+            "new_id",
+            "the copy record identity could not be derived",
+        )
+    })
+}
+
+/// The copy's records: fresh operation ids, the same ordinals and the same plane parameters.
+fn copied_records(
+    records: &[CutRecord],
+    new_id: &ElementId,
+) -> Result<Vec<CutRecord>, CommandError> {
+    records
+        .iter()
+        .enumerate()
+        .map(|(ordinal, record)| {
+            Ok(CutRecord {
+                operation_id: copied_operation_id(record, ordinal, new_id)?,
+                ..*record
+            })
+        })
+        .collect()
 }
 
 /// The authored plate of the copy. Fails with `LIMIT_EXCEEDED` when the moved placement leaves
@@ -39,6 +94,7 @@ pub fn copy_plate(
     if let Some(name) = &command.name {
         next.name.clone_from(name);
     }
+    next.cuts = copied_records(&source.cuts, &command.new_id)?;
     next.placement = copied_placement(&source.placement, command)?;
     Ok(next)
 }
@@ -54,6 +110,7 @@ pub fn copy_member(
     if let Some(name) = &command.name {
         next.name.clone_from(name);
     }
+    next.cuts = copied_records(&source.cuts, &command.new_id)?;
     next.placement = copied_placement(&source.placement, command)?;
     Ok(next)
 }
@@ -85,7 +142,7 @@ mod tests {
             },
             material: None,
             holes_mm: Vec::new(),
-            cut: None,
+            cuts: Vec::new(),
         }
     }
 
@@ -135,5 +192,36 @@ mod tests {
             copy_plate(&plate(), &c).unwrap_err().code,
             ErrorCode::DuplicateId
         );
+    }
+
+    #[test]
+    fn a_copy_mints_fresh_record_ids_keeps_ordinals_and_is_deterministic() {
+        use beamcraft_model::command::KeepSide;
+        use beamcraft_model::id::OpId;
+        let record = |ordinal: u16, point: [f64; 3]| CutRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
+            ordinal,
+            point_mm: point,
+            normal: [1.0, 0.0, 0.0],
+            keep: KeepSide::Negative,
+        };
+        let mut source = plate();
+        source.cuts = vec![record(4, [250.0, 0.0, 0.0]), record(9, [150.0, 0.0, 0.0])];
+        let copy = copy_plate(&source, &command()).unwrap();
+        assert_eq!(copy.id, command().new_id);
+        assert_eq!(copy.cuts.len(), 2);
+        assert_eq!(copy.cuts[0].ordinal, 4);
+        assert_eq!(copy.cuts[1].ordinal, 9);
+        assert_eq!(copy.cuts[0].point_mm, [250.0, 0.0, 0.0]);
+        assert_ne!(copy.cuts[0].operation_id, source.cuts[0].operation_id);
+        assert_ne!(copy.cuts[1].operation_id, copy.cuts[0].operation_id);
+        // A retried copy reproduces the exact same ids.
+        let again = copy_plate(&source, &command()).unwrap();
+        assert_eq!(again.cuts, copy.cuts);
+        // A copy of another element mints other ids from the same source record.
+        let mut other = command();
+        other.new_id = ElementId::parse("019a7bf0-0000-7000-8000-0000000000ff").unwrap();
+        let elsewhere = copy_plate(&source, &other).unwrap();
+        assert_ne!(elsewhere.cuts[0].operation_id, copy.cuts[0].operation_id);
     }
 }

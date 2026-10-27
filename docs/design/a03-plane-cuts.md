@@ -62,22 +62,49 @@ deviation is replaced by the `plane_cut` operation record and the `CutByPlane` c
 only. The two `steel:cut:*` attributes are deprecated, and moving to the records belongs to the
 A03 acceptance task. Until then the code in this note is not the contract.
 
+## A03 acceptance slice: the owned `CutByPlane` operation record
+
+Status: **experimental; A03 acceptance is the owner's.** Branch `feat/a03-cut-operation-record`.
+The cut is no longer an element attribute authored at create: it is an owned operation record
+(F04 section 4, amendment A-2), added by the `CutByPlane` command (`cut-by-plane` on the CLI) to
+an already stored plate, beam or column.
+
+| Area | What changed |
+|---|---|
+| `beamcraft_model::command` | `CutByPlane { target_id, operation_id, point_mm, normal, keep }` with `KeepSide`; the stored record `CutRecord { operation_id, ordinal, point_mm, normal, keep }`; `create-plate`/`create-member` no longer take a cut (F04 section 4: the initial create has none). `CutByPlane` fingerprints as `BeamCraft/A03/CutByPlane/v1`; the create fingerprints moved to `CreatePlate/v5` and `CreateStraightMember/v3`. |
+| `beamcraft_engine` | `AuthoredPlate.cuts` / `AuthoredMember.cuts: Vec<CutRecord>`, replayed in ascending ordinal order after any holes, each keeping its own side (`cut.rs::replay_cuts`). `cut_by_plane` admits the command: target lifecycle (`NOT_FOUND`), record identity across the project (`DUPLICATE_ID`), the per-element ordinal counter (past the kernel's `cut:f.p<ordinal>` naming capacity of 999 it is `LIMIT_EXCEEDED`, field token `kernel_capacity`); the replay refusal of the whole command stays `INVALID_ARGUMENT`/`UNSUPPORTED_GEOMETRY`. Signatures and body-cache keys take the record list (identity-free content, in order). `CopyElement` mints fresh deterministic record ids (UUIDv7 hashed from the copy, the source record and the ordinal) and keeps the ordinals. |
+| `beamcraft_layer_engine` | `Shape::{Plate,Member}.cuts`; five parallel attributes replace the old two (`steel:cut:operationId=string[]`, `steel:cut:ordinal=int[]`, `steel:cut:pointMm=double3[]`, `steel:cut:normal=double3[]`, `steel:cut:keep=token[]`; all five or none, one length, ascending ordinals ≤ 999); `Change::Cuts` rewrites them as a whole for an existing element (empty removes them); new schema digest — stores written before this change are not readable, as with every earlier U02 pin. |
+| `beamcraft_cli` | `cut-by-plane --id --operation-id --point --normal --keep positive|negative` publishes the next revision: record + rebuilt mesh + rebuilt quantity records in one transaction, so the stored volume/mass are current the moment the command is accepted. `inspect-elements` reports `cuts` (empty array without records); `copy-element` copies the records with fresh ids. The create-time `--cut-point/--cut-normal` options are gone. |
+
+**Freshness.** One command is one revision and one undo unit (the P07 snapshot undo takes the cut
+back and `redo` reapplies it; quantities are rebuilt in the same transaction, never left stale).
+Feature stability is the kernel's: base-body faces keep their ids, the cap face is
+`cut:f.p<ordinal>`, and a feature the plane removes or splits no longer resolves — the explicit
+loss (`lookup-feature` answers `GEO_FEATURE_NOT_FOUND`).
+
+**Scope of the slice.** One element carries many cut records (no designed limit; the ordinal
+capacity is an implementation limit), but there is still no `UpdateCut`/`RemoveCut` (they follow
+`UpdateHole`/`RemoveHole`), no cut features beyond the cap face, and no UI authoring.
+
 ## Not done (not claimed)
 
-* No `UpdateElement`/remove-cut command, no operation records, no cut features in the
-  FeatureId table, no second cut per element.
+* No `UpdateElement`-level cut removal, no `UpdateCut`/`RemoveCut` command.
 * No UI authoring of cuts; the view snapshot shows the cut mesh like any other.
 
 ## Evidence
 
-* Engine tests: exact volume of a cut plate (`250 * 500 * 10 mm3`) and of a cut after a hole,
-  a scaled normal giving the same body, divergence-theorem volume of the returned mesh,
-  member rectangle and section cuts, every refusal (missing plane, tangent plane, zero normal,
-  non-finite).
-* Layer-engine test: the attributes are authored for a plate and a member, the exported layers
-  pass the structural validator, and invalid or half-authored cuts are refused before anything
-  is written.
+* Engine tests: exact replay volumes of a cut plate (`250 * 500 * 10 mm3`), a kept opposite
+  half-space, two records in ordinal order and a cut after a hole, the cap named by the
+  record's ordinal, every refusal (missing plane, tangent plane, zero normal, non-finite);
+  `cut_by_plane` admission (next ordinal, footprint, `NOT_FOUND`, `DUPLICATE_ID`,
+  `kernel_capacity`); a copy with fresh record ids, the same ordinals, deterministic.
+* Layer-engine test: the five parallel attributes are authored for a plate and a member, the
+  exported layers pass the structural validator, and invalid or half-authored records are
+  refused before anything is written.
 * `cargo test -p beamcraft-cli --test cuts` (real binary): a cut plate and a cut beam with
-  exact volume and mass, fresh-process reopen and re-verification, the saved layer text read by
-  plain string matching, every rejection code, replay and `OP_ID_REUSE`, and a copy carrying
-  the cut.
+  exact volume and mass, a second record taking the next ordinal, fresh-process reopen and
+  re-verification, the saved layer text read by plain string matching, every rejection code
+  (`INVALID_ARGUMENT`, `UNSUPPORTED_GEOMETRY`, `NON_FINITE_NUMBER`, `LIMIT_EXCEEDED`,
+  `NOT_FOUND`, `DUPLICATE_ID`, `OP_ID_REUSE`), a retry replaying, a copy carrying the records
+  with fresh ids, feature lookup resolving the cap and reporting the clipped corner, and the
+  workspace undo/redo taking the cut back and reapplying it.

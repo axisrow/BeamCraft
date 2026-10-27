@@ -1921,7 +1921,7 @@ impl App {
                 orientation_xyzw: orientation,
             },
             material: None,
-            cut: None,
+            cuts: Vec::new(),
         };
         let body = beamcraft_engine::member::evaluate_member(
             &authored,

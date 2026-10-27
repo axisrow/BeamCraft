@@ -12,6 +12,7 @@ pub mod changeset;
 pub mod command_evidence;
 pub mod coordinator;
 pub mod copy;
+pub mod cut;
 pub mod definition;
 pub mod delete;
 pub mod drawing;
