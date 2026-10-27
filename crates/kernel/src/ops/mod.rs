@@ -43,7 +43,7 @@ mod cut;
 mod diagnostic;
 mod hole;
 mod plane;
-mod seal;
+pub(crate) mod seal;
 mod section;
 
 pub use body::{Body, MAX_LOCAL_ID_BYTES, MAX_ORDINAL};

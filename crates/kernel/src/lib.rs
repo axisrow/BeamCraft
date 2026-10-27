@@ -19,6 +19,7 @@ pub mod plate_contour;
 pub mod profile;
 pub mod result;
 pub mod section;
+pub mod sweep;
 
 // G06: shell certification, exact predicates, measurements and a bounded box index.
 mod bigint;
