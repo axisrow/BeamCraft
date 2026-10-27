@@ -50,6 +50,10 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                 | "--width"
                 | "--aspect"
                 | "--expected-views"
+                | "--grid"
+                | "--axis"
+                | "--level"
+                | "--work-area"
         ) || options.insert(k, v).is_some()
         {
             return Err(invalid("unknown or repeated view option"));
@@ -77,12 +81,59 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
         .unwrap_or_default();
     let source = match need("--kind")? {
         "plane" => {
-            if given("--start").is_some() || given("--end").is_some() {
+            if ["--start", "--end", "--grid", "--axis", "--level"]
+                .iter()
+                .any(|k| given(k).is_some())
+            {
                 return Err(invalid("plane view does not take two-point options"));
             }
             PlaneSource::Plane(coordinate_plane)
         }
+        "3d" => {
+            if [
+                "--depth", "--side", "--grid", "--axis", "--level", "--start", "--end",
+            ]
+            .iter()
+            .any(|k| given(k).is_some())
+            {
+                return Err(invalid("3d view does not take plane-source options"));
+            }
+            PlaneSource::Plane(coordinate_plane)
+        }
+        "level" => {
+            if ["--grid", "--axis", "--plane", "--start", "--end"]
+                .iter()
+                .any(|k| given(k).is_some())
+            {
+                return Err(invalid("level view takes only its level source"));
+            }
+            PlaneSource::Level(
+                ElementId::parse(need("--level")?).map_err(crate::plate_cmd::id_error)?,
+            )
+        }
+        "grid-line" => {
+            if ["--level", "--plane", "--start", "--end"]
+                .iter()
+                .any(|k| given(k).is_some())
+            {
+                return Err(invalid(
+                    "grid-line view takes only its grid and axis source",
+                ));
+            }
+            let model = plane_views::current(dir)?;
+            let grid = beamcraft_engine::grid_query::resolve_grid(&model.grids, need("--grid")?)?;
+            PlaneSource::GridLine {
+                grid: grid.id,
+                axis: ElementId::parse(need("--axis")?).map_err(crate::plate_cmd::id_error)?,
+            }
+        }
         "two-points" => {
+            if ["--grid", "--axis", "--level"]
+                .iter()
+                .any(|k| given(k).is_some())
+            {
+                return Err(invalid("two-point view does not take model anchors"));
+            }
             let a = coordinate_plane.resolve_coordinate(
                 need("--start")?,
                 [0.; 3],
@@ -95,7 +146,11 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             )?;
             PlaneSource::TwoPoints(coordinate_plane.to_world(a)?, coordinate_plane.to_world(b)?)
         }
-        _ => return Err(invalid("view kind must be plane or two-points")),
+        _ => {
+            return Err(invalid(
+                "view kind must be 3d, plane, two-points, level or grid-line",
+            ));
+        }
     };
     let number = |k: &str, default: f64| {
         given(k).map_or(Ok(default), |s| {
@@ -122,14 +177,44 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                 .map_err(|_| invalid("view identity unavailable"))?,
         ),
     };
-    let view = plane_views::create(
-        dir,
-        &mut views,
-        id,
-        need("--name")?.to_owned(),
-        given("--comment").unwrap_or("").to_owned(),
-        p,
-    )?;
+    let is_3d = need("--kind")? == "3d";
+    let view = if is_3d {
+        if views.document.views.iter().any(|v| v.id == id) {
+            return Err(PlateError {
+                code: ErrorCode::DuplicateId,
+                message: "view identity already exists",
+                rule_id: None,
+            });
+        }
+        let camera = beamcraft_engine::plane_view::three_d(p.width_mm, p.aspect)?;
+        let view = saved_views::capture(
+            dir,
+            id,
+            need("--name")?.to_owned(),
+            camera,
+            [
+                coordinate_plane.origin(),
+                coordinate_plane.x(),
+                coordinate_plane.y(),
+            ],
+            given("--comment").unwrap_or("").to_owned(),
+        )?;
+        views.document.views.push(view.clone());
+        views.document.views.sort_by_key(|v| v.id);
+        view
+    } else {
+        plane_views::create(
+            dir,
+            &mut views,
+            id,
+            need("--name")?.to_owned(),
+            given("--comment").unwrap_or("").to_owned(),
+            p,
+        )?
+    };
+    if let Some(area) = given("--work-area") {
+        plane_views::set_work_area(&mut views, id, parse_area(area)?)?;
+    }
     let version = saved_views::write(dir, &views)?;
     Ok(Json::object([
         ("outcome", Json::text("view_created")),
@@ -137,11 +222,41 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
         ("view", crate::saved_views_cmd::view_json(&view)?),
         (
             "construction",
-            beamcraft_json::decode(
-                plane_views::encode(p)?.as_bytes(),
-                &beamcraft_json::Limits::DEFAULT,
-            )
-            .map_err(|_| invalid("construction encoding is invalid"))?,
+            if is_3d {
+                Json::Null
+            } else {
+                beamcraft_json::decode(
+                    plane_views::encode(p)?.as_bytes(),
+                    &beamcraft_json::Limits::DEFAULT,
+                )
+                .map_err(|_| invalid("construction encoding is invalid"))?
+            },
         ),
     ]))
+}
+
+/// Parse an explicit finite world box, or the clearing token.
+pub(crate) fn parse_area(
+    s: &str,
+) -> Result<Option<beamcraft_engine::plane_view::WorkArea>, PlateError> {
+    if s == "none" {
+        return Ok(None);
+    }
+    let values = s
+        .split(',')
+        .take(7)
+        .map(|v| {
+            v.parse::<f64>()
+                .map_err(|_| invalid("work area needs six numbers"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let [a, b, c, x, y, z] = values.as_slice() else {
+        return Err(invalid("work area needs six numbers"));
+    };
+    let area = beamcraft_engine::plane_view::WorkArea {
+        min: [*a, *b, *c],
+        max: [*x, *y, *z],
+    };
+    area.validate()?;
+    Ok(Some(area))
 }

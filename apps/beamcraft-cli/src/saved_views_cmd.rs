@@ -111,6 +111,9 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                         | "--fov"
                         | "--plane"
                         | "--comment"
+                        | "--work-area"
+                        | "--depth"
+                        | "--side"
                 )))
             || options.insert(*key, *value).is_some()
         {
@@ -227,7 +230,7 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
         let comment = given("--comment")
             .map(str::to_owned)
             .unwrap_or_else(|| old.as_ref().map_or_else(String::new, |v| v.comment.clone()));
-        let view = saved_views::capture(dir, id, name, camera, plane, comment)?;
+        let mut view = saved_views::capture(dir, id, name, camera, plane, comment)?;
         let record_key = beamcraft_cli::plane_views::key(id);
         if let Some(record) = views.document.records.get(&record_key).cloned() {
             if [
@@ -245,15 +248,59 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                 let mut construction = beamcraft_cli::plane_views::decode(&record)?;
                 construction.width_mm = view.camera.width_mm;
                 construction.aspect = view.camera.aspect;
+                if let Some(depth) = given("--depth") {
+                    construction.depth_mm = depth
+                        .parse()
+                        .map_err(|_| invalid("depth must be numeric"))?;
+                }
+                if let Some(side) = given("--side") {
+                    construction.negative_side = match side {
+                        "positive" => false,
+                        "negative" => true,
+                        _ => return Err(invalid("side must be positive or negative")),
+                    };
+                }
+                if ["--width", "--aspect", "--depth", "--side"]
+                    .iter()
+                    .any(|k| given(k).is_some())
+                {
+                    let model = beamcraft_cli::plane_views::current(dir)?;
+                    if view.source_manifest != model.revision.manifest_digest {
+                        return Err(PlateError {
+                            code: ErrorCode::StaleWorkspace,
+                            message: "model changed during view update",
+                            rule_id: None,
+                        });
+                    }
+                    let (camera, plane) = construction.resolve_with(&model.grids, &model.levels)?;
+                    view.camera = camera;
+                    view.work_plane = [plane.origin(), plane.x(), plane.y()];
+                }
                 views.document.records.insert(
                     record_key,
                     beamcraft_cli::plane_views::encode(construction)?,
                 );
             }
         }
+        if (given("--depth").is_some() || given("--side").is_some())
+            && !views
+                .document
+                .records
+                .contains_key(&beamcraft_cli::plane_views::key(id))
+        {
+            return Err(invalid("depth and side require a constructed view"));
+        }
         views.document.views.retain(|v| v.id != id);
         views.document.views.push(view.clone());
         views.document.views.sort_by_key(|v| v.id);
+        if let Some(area) = given("--work-area") {
+            beamcraft_cli::plane_views::set_work_area(
+                &mut views,
+                id,
+                crate::plane_view_cmd::parse_area(area)?,
+            )?;
+        }
+
         let version = saved_views::write(dir, &views)?;
         return Ok(Json::object([
             ("outcome", Json::text("view_saved")),
@@ -279,21 +326,28 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             .document
             .records
             .remove(&format!("view_{}", id.to_string().replace('-', "")));
+        views
+            .document
+            .records
+            .remove(&format!("area_{}", id.to_string().replace('-', "")));
         let version = saved_views::write(dir, &views)?;
         return Ok(Json::object([
             ("outcome", Json::text("view_deleted")),
             ("version", Json::text(version.to_string())),
         ]));
     }
-    let (view, changed) = if *command == "restore-view" {
-        saved_views::restore(dir, id)?
+    let (view, changed, unresolved) = if *command == "restore-view" {
+        let r = beamcraft_cli::plane_views::restore(dir, &views, &view)?;
+        (r.view, r.model_changed, r.unresolved)
     } else {
-        (view, false)
+        (view, false, false)
     };
     Ok(Json::object([
         (
             "outcome",
-            Json::text(if *command == "restore-view" {
+            Json::text(if unresolved {
+                "view_unresolved"
+            } else if *command == "restore-view" {
                 "view_restored"
             } else {
                 "view"
@@ -306,6 +360,36 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                 .map_or(Json::Null, |d| Json::text(d.to_string())),
         ),
         ("model_changed", Json::Bool(changed)),
+        (
+            "status",
+            Json::text(if unresolved { "unresolved" } else { "resolved" }),
+        ),
+        (
+            "work_area",
+            match beamcraft_cli::plane_views::work_area(&views, id)? {
+                Some(a) => Json::object([
+                    (
+                        "min",
+                        Json::Array(
+                            a.min
+                                .into_iter()
+                                .map(crate::plate_cmd::num)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ),
+                    ),
+                    (
+                        "max",
+                        Json::Array(
+                            a.max
+                                .into_iter()
+                                .map(crate::plate_cmd::num)
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ),
+                    ),
+                ]),
+                None => Json::Null,
+            },
+        ),
         (
             "construction",
             match views

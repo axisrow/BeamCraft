@@ -97,8 +97,8 @@ pub fn write(dir: &Path, views: &Views) -> Result<ContentDigest, PlateError> {
     layer::decode(&bytes, views.document.workspace, &plate::control())?;
     personal_views::compare_and_swap(dir, views.version, &bytes).map_err(host)
 }
-/// Restore camera state and report whether its source manifest differs from the current model.
-pub fn restore(dir: &Path, id: ElementId) -> Result<(SavedView, bool), PlateError> {
+/// Restore a camera with its current model anchors and explicit unresolved diagnostics.
+pub fn restore(dir: &Path, id: ElementId) -> Result<crate::plane_views::Restored, PlateError> {
     let views = read(dir)?;
     let view = views
         .document
@@ -106,14 +106,5 @@ pub fn restore(dir: &Path, id: ElementId) -> Result<(SavedView, bool), PlateErro
         .iter()
         .find(|v| v.id == id)
         .ok_or_else(|| PlateError::new(ErrorCode::NotFound, "saved view not found"))?;
-    let store = RevisionStore::new(
-        BlobStore::new(dir)
-            .map_err(|e| PlateError::new(e.code(), "workspace root is not usable"))?,
-    );
-    let head = store.open()?;
-    let resolved = crate::plane_views::resolve(&views, view)?;
-    Ok(beamcraft_engine::saved_view::restore(
-        &resolved,
-        plate::summarize(head.info()).manifest_digest,
-    )?)
+    crate::plane_views::restore(dir, &views, view)
 }
