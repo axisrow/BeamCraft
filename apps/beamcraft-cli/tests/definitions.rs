@@ -12,6 +12,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use beamcraft_layer_engine::authored::{Definition, Resource, SectionProperties};
 use std::fs;
@@ -90,12 +94,6 @@ impl Drop for Fixture {
     }
 }
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn num(json: &Json, path: &[&str]) -> f64 {
     at(json, path).float().unwrap()
 }

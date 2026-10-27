@@ -10,12 +10,10 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_json::Json;
+use support::text;
 const GRID: &str = "01990000-0000-7000-8000-000000000001";
 const OP: &str = "01990000-0000-7000-8000-000000000002";
 const AXES: &str = "01990000-0000-7000-8000-000000000010,01990000-0000-7000-8000-000000000011";
-fn text(j: &Json, key: &str) -> String {
-    j.get(key).unwrap().string().unwrap().to_owned()
-}
 fn list<'a>(j: &'a Json, key: &str) -> &'a [Json] {
     j.get(key).unwrap().array().unwrap()
 }

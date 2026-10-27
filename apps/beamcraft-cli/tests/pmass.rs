@@ -19,52 +19,32 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_json::{Json, Limits};
+use beamcraft_json::Json;
 use std::f64::consts::PI;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 const SHIPPED: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../assets/libraries/synthetic-sections.usda"
 );
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
+mod support;
+
+use support::{at, text};
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("pmass-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
-    }
-    fn store(&self) -> String {
-        self.root.join("store").to_str().unwrap().to_owned()
+        Self {
+            shared: support::StoreFixture::new("pmass-tests"),
+        }
     }
     fn revisions(&self) -> RevisionStore {
-        RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap())
+        RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap())
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.store();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
@@ -142,19 +122,7 @@ impl Fixture {
             .unwrap();
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn num(json: &Json, path: &[&str]) -> f64 {
     at(json, path).float().unwrap()
 }

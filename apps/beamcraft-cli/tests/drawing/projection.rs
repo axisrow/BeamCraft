@@ -301,7 +301,7 @@ fn real_cli_exports_reopenable_usd_intent_without_overwriting_or_modifying_the_m
     let head = f.head();
     let a = format!("fid1:{MEMBER}:member:v.x0.y0.z0");
     let b = format!("fid1:{MEMBER}:member:v.x0.y0.z1");
-    let output = f.root.join("intent.usda");
+    let output = f.shared.root.join("intent.usda");
     let mut options = args(MEMBER, &a, &b);
     options.extend(["--intent-out".into(), output.to_str().unwrap().into()]);
     let argv = options.iter().map(String::as_str).collect::<Vec<_>>();
@@ -346,7 +346,7 @@ fn real_cli_exports_reopenable_usd_intent_without_overwriting_or_modifying_the_m
     assert_eq!(f.refused("preview-drawing", &argv).0, "INVALID_ARGUMENT");
     assert_eq!(fs::read(&output).unwrap(), bytes);
     assert_eq!(f.head(), head);
-    let missing = f.root.join("not-created.usda");
+    let missing = f.shared.root.join("not-created.usda");
     let mut invalid = args(MEMBER, &a, &b);
     invalid.extend([
         "--intent-out".into(),

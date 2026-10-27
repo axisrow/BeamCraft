@@ -11,13 +11,13 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 const SHIPPED: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -25,26 +25,19 @@ const SHIPPED: &str = concat!(
 );
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a07-2-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("a07-2-tests"),
+        }
     }
     fn store(&self) -> String {
-        self.root.join("store").to_str().unwrap().to_owned()
+        self.shared.root.join("store").to_str().unwrap().to_owned()
     }
     fn file(&self, name: &str, bytes: &[u8]) -> String {
-        let path = self.root.join(name);
+        let path = self.shared.root.join(name);
         fs::write(&path, bytes).unwrap();
         path.to_str().unwrap().to_owned()
     }
@@ -57,10 +50,7 @@ impl Fixture {
         (output.status.code().unwrap(), body)
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.store();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        self.raw(&args)
+        self.shared.run(command, extra)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
@@ -90,6 +80,7 @@ impl Fixture {
             .unwrap();
         let digest = text(layer, "digest");
         let path = self
+            .shared
             .root
             .join("store")
             .join("blobs")
@@ -98,19 +89,7 @@ impl Fixture {
         String::from_utf8(fs::read(path).unwrap()).unwrap()
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn num(json: &Json, path: &[&str]) -> f64 {
     at(json, path).float().unwrap()
 }
@@ -345,12 +324,18 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
         f.library_rejected("list-library", &["--library", &anonymous]),
         "INVALID_ARGUMENT"
     );
-    let directory = f.root.to_str().unwrap().to_owned();
+    let directory = f.shared.root.to_str().unwrap().to_owned();
     assert_eq!(
         f.library_rejected("list-library", &["--library", &directory]),
         "INVALID_ARGUMENT"
     );
-    let missing = f.root.join("missing.usda").to_str().unwrap().to_owned();
+    let missing = f
+        .shared
+        .root
+        .join("missing.usda")
+        .to_str()
+        .unwrap()
+        .to_owned();
     assert_eq!(
         f.library_rejected("list-library", &["--library", &missing]),
         "NOT_FOUND"
@@ -366,7 +351,12 @@ fn hostile_and_damaged_libraries_are_refused_without_a_crash() {
         );
     }
     // None of the refusals touched the store.
-    assert!(fs::read_dir(f.root.join("store")).unwrap().next().is_none());
+    assert!(
+        fs::read_dir(f.shared.root.join("store"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
 }
 
 #[test]

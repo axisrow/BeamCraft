@@ -10,6 +10,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_host::{
     revision::{CommitPoint, ExpectedBase, Injected, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
@@ -21,35 +25,27 @@ use std::io::{BufRead, BufReader, Read};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 /// An invented foreign model: one scope, nothing from any product.
 const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 1.0\n    upAxis = \"Y\"\n)\ndef Xform \"Site\"\n{\n    def Scope \"Block\"\n    {\n    }\n}\n";
 const USER: &str = "019a7bf0-0000-7000-8000-00000000d201";
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("u14-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("published")).unwrap();
-        fs::create_dir(root.join("workspaces")).unwrap();
-        fs::create_dir(root.join("sources")).unwrap();
-        Self { root }
+        let fixture = Self {
+            shared: support::StoreFixture::new("u14-tests"),
+        };
+        fs::create_dir(fixture.shared.root.join("published")).unwrap();
+        fs::create_dir(fixture.shared.root.join("workspaces")).unwrap();
+        fs::create_dir(fixture.shared.root.join("sources")).unwrap();
+        fixture
     }
     fn path(&self, name: &str) -> String {
-        self.root.join(name).to_str().unwrap().to_owned()
+        self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     fn published(&self) -> String {
         self.path("published")
@@ -92,7 +88,7 @@ impl Fixture {
         ]);
     }
     fn attach_reference(&self) {
-        let source = self.root.join("sources").join("site.usda");
+        let source = self.shared.root.join("sources").join("site.usda");
         fs::write(&source, SITE).unwrap();
         self.ok(&[
             "attach-reference",
@@ -141,7 +137,7 @@ impl Fixture {
                 }
             }
         }
-        let root = self.root.join(name);
+        let root = self.shared.root.join(name);
         let mut out = BTreeMap::new();
         if root.exists() {
             walk(&root, &root, &mut out);
@@ -159,30 +155,18 @@ impl Fixture {
             .sum()
     }
     fn blob_path(&self, digest: &str) -> PathBuf {
-        self.root
+        self.shared
+            .root
             .join("published")
             .join("blobs")
             .join(&digest[..2])
             .join(digest)
     }
     fn store_handle(&self) -> RevisionStore {
-        RevisionStore::new(BlobStore::new(self.root.join("published")).unwrap())
+        RevisionStore::new(BlobStore::new(self.shared.root.join("published")).unwrap())
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn num(json: &Json, path: &[&str]) -> u64 {
     at(json, path).unsigned().unwrap()
 }
@@ -334,7 +318,7 @@ fn a_compaction_without_confirmation_or_a_backup_decision_is_refused() {
         assert_eq!(code, "INVALID_ARGUMENT", "dry-run --keep {keep}");
     }
     // The backup destination must be empty or absent, and outside the store.
-    let occupied = fx.root.join("occupied");
+    let occupied = fx.shared.root.join("occupied");
     fs::create_dir(&occupied).unwrap();
     fs::write(occupied.join("keep.txt"), b"mine").unwrap();
     let (_, code) = fx.refused(&[
@@ -349,7 +333,7 @@ fn a_compaction_without_confirmation_or_a_backup_decision_is_refused() {
     ]);
     assert_eq!(code, "INVALID_ARGUMENT");
     assert_eq!(fs::read(occupied.join("keep.txt")).unwrap(), b"mine");
-    let inside = fx.root.join("published").join("backup");
+    let inside = fx.shared.root.join("published").join("backup");
     let (_, code) = fx.refused(&[
         "compact-history",
         "--store",
@@ -588,7 +572,7 @@ fn a_live_workspace_pins_its_base_revision() {
     ]);
     assert_eq!(code, "INVALID_ARGUMENT");
     // An unusable workspace cannot be protected, so it refuses.
-    let broken = fx.root.join("workspaces").join("broken");
+    let broken = fx.shared.root.join("workspaces").join("broken");
     fs::create_dir(&broken).unwrap();
     fs::write(broken.join("workspace.json"), b"not a workspace").unwrap();
     let (_, code) = fx.refused(&[
@@ -676,7 +660,7 @@ fn an_unfinished_intent_blocks_the_compaction_until_recovery_runs() {
 fn a_running_coordinator_holds_the_store() {
     let fx = Fixture::new();
     fx.build();
-    let token = fx.root.join("token");
+    let token = fx.shared.root.join("token");
     fs::write(&token, "a-synthetic-token-of-more-than-32-characters").unwrap();
     #[cfg(unix)]
     {

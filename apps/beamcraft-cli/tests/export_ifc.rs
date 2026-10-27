@@ -17,6 +17,10 @@
     clippy::panic
 )]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
@@ -26,11 +30,8 @@ use beamcraft_ifc::verify::{self, StepFile, Value};
 use beamcraft_json::{Json, Limits};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 const PROJECT: &str = "019a7bf0-0000-7000-8000-00000000e001";
 const STOREY: &str = "019a7bf0-0000-7000-8000-000000400001";
@@ -39,7 +40,7 @@ const STOREY: &str = "019a7bf0-0000-7000-8000-000000400001";
 const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 1.0\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n}\n";
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 
 struct Scene {
@@ -54,22 +55,15 @@ struct Scene {
 
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("e02-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("e02-tests"),
+        }
     }
     fn store(&self) -> String {
-        self.root.join("store").to_str().unwrap().to_owned()
+        self.shared.root.join("store").to_str().unwrap().to_owned()
     }
     fn path(&self, name: &str) -> String {
-        self.root.join(name).to_str().unwrap().to_owned()
+        self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     fn run_args(&self, args: &[&str]) -> (i32, Json) {
         let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
@@ -270,12 +264,12 @@ impl Fixture {
         (code, code_text, body)
     }
     fn parsed(&self, name: &str) -> StepFile {
-        verify::parse(&fs::read(self.root.join(name)).unwrap()).unwrap()
+        verify::parse(&fs::read(self.shared.root.join(name)).unwrap()).unwrap()
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
     /// a layer edited outside BeamCraft would arrive through `commit-revision`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
-        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
         let content = head.manifest().content();
         let mut ids = IdSource::system();
@@ -309,13 +303,6 @@ impl Fixture {
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
 fn decode_large(bytes: &[u8]) -> Json {
     // The scenes are small, so the report fits the control-message bounds of the other commands.
     beamcraft_json::decode(bytes, &Limits::DEFAULT).unwrap_or_else(|_| {
@@ -326,14 +313,8 @@ fn decode_large(bytes: &[u8]) -> Json {
     })
 }
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
 fn opt_text(json: &Json, key: &str) -> Option<String> {
     json.get(key).unwrap().string().ok().map(str::to_owned)
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
 }
 fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     at(json, &[key]).array().unwrap()
@@ -629,7 +610,7 @@ fn export_changes_nothing_in_the_store() {
     let f = Fixture::new();
     f.scene();
     let (head, layers) = (f.head(), f.layer_digests());
-    let blobs = fs::read_dir(f.root.join("store").join("blobs"))
+    let blobs = fs::read_dir(f.shared.root.join("store").join("blobs"))
         .unwrap()
         .count();
     f.export(&f.path("a.ifc"), &[]);
@@ -637,14 +618,14 @@ fn export_changes_nothing_in_the_store() {
     assert_eq!(f.head(), head);
     assert_eq!(f.layer_digests(), layers);
     assert_eq!(
-        fs::read_dir(f.root.join("store").join("blobs"))
+        fs::read_dir(f.shared.root.join("store").join("blobs"))
             .unwrap()
             .count(),
         blobs
     );
     // The GlobalId is computed, never stored.
     for name in ["authored.usda", "derived.usda", "root.usda"] {
-        let store = RevisionStore::new(BlobStore::new(f.root.join("store")).unwrap());
+        let store = RevisionStore::new(BlobStore::new(f.shared.root.join("store")).unwrap());
         let layer = String::from_utf8(store.open().unwrap().layer_bytes(name).unwrap()).unwrap();
         assert!(!layer.contains("ifcGlobalId"), "{name}");
     }
@@ -1006,7 +987,7 @@ fn refusals_leave_no_file() {
     let (_, rejected, _) = f.export_rejected(&["--out", &nowhere]);
     assert_eq!(rejected, "INVALID_ARGUMENT");
     // Only temporary names of a successful export may exist, and none does after a refusal.
-    assert!(fs::read_dir(&f.root).unwrap().all(|e| {
+    assert!(fs::read_dir(&f.shared.root).unwrap().all(|e| {
         let name = e.unwrap().file_name().into_string().unwrap();
         !name.contains(".tmp-")
     }));
@@ -1037,7 +1018,7 @@ fn an_existing_output_is_kept_unless_overwrite_is_asked() {
 fn an_output_inside_the_source_store_is_refused() {
     let f = Fixture::new();
     f.scene();
-    let store = f.root.join("store");
+    let store = f.shared.root.join("store");
     let (head, layers) = (f.head(), f.layer_digests());
     for inside in [
         store.join("revisions").join("model.ifc"),
@@ -1105,7 +1086,7 @@ fn a_refused_report_leaves_the_ifc_destination_as_it_was() {
     assert_eq!(rejected, "INVALID_ARGUMENT");
     assert_eq!(fs::read_to_string(&out).unwrap(), "previous");
     // Nothing is left behind but the files the caller owns.
-    let mut names: Vec<String> = fs::read_dir(&f.root)
+    let mut names: Vec<String> = fs::read_dir(&f.shared.root)
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
         .collect();
@@ -1248,7 +1229,7 @@ fn the_report_file_equals_the_printed_report() {
         fs::read_to_string(&report_path).unwrap()
     );
     // The report holds no path, host name or time.
-    for forbidden in [f.root.to_str().unwrap(), "tmp", "T00:", "hostname"] {
+    for forbidden in [f.shared.root.to_str().unwrap(), "tmp", "T00:", "hostname"] {
         assert!(!printed.contains(forbidden), "{forbidden}");
     }
     // Keys are sorted: the first key is `contract_version`.

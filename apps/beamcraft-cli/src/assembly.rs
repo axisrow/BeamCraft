@@ -26,7 +26,7 @@ use crate::plate::{
     control, host_uuid, integrity, load_base, open_base, prior_op_with, property, replay_summary,
     summarize, text,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::assembly::{Membership, PartKind};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
@@ -352,12 +352,7 @@ fn apply(
         &control,
     )?;
     check_footprint(&prepared, &footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {

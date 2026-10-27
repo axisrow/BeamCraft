@@ -37,7 +37,7 @@ use crate::plate::{
     digest_of, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
     summarize,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use crate::source_file::read_file;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::measure::{ReferenceMeasurement, measure_reference};
@@ -520,12 +520,7 @@ fn edit(
         &control,
     )?;
     check_footprint(&prepared, &step.footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let foreign = prepared
         .retained
         .iter()

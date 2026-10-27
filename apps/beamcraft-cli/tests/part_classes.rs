@@ -5,15 +5,12 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod support;
 use beamcraft_json::Json;
-use support::StoreFixture;
+use support::{StoreFixture, text};
 
 fn ok(f: &StoreFixture, command: &str, options: &[&str]) -> Json {
     let (code, reply) = f.run(command, options);
     assert_eq!(code, 0, "{reply:?}");
     reply
-}
-fn text(j: &Json, key: &str) -> String {
-    j.get(key).unwrap().string().unwrap().into()
 }
 fn class(j: &Json) -> f64 {
     j.get("class").unwrap().float().unwrap()

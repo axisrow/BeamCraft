@@ -6,7 +6,7 @@
 mod support;
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
-use support::StoreFixture;
+use support::{StoreFixture, text};
 fn ok(f: &StoreFixture, cmd: &str, args: &[&str]) -> Json {
     let (status, reply) = f.run(cmd, args);
     assert_eq!(status, 0, "{cmd}: {reply:?}");
@@ -29,9 +29,6 @@ fn values(j: &Json) -> Vec<f64> {
         .iter()
         .map(|v| v.float().unwrap())
         .collect()
-}
-fn text(j: &Json, key: &str) -> String {
-    j.get(key).unwrap().string().unwrap().into()
 }
 #[test]
 fn construction_modes_are_read_only_and_generate_cli_plane_expressions() {

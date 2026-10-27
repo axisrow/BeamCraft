@@ -3,6 +3,8 @@
 
 //! Shared prepared-layer publication and verified revision commit boundary.
 
+use std::collections::BTreeMap;
+
 use crate::plate::{DERIVED_LAYER, PlateError, PlateVerifier, ROOT_LAYER, host_uuid};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{
@@ -17,6 +19,20 @@ fn role_of(name: &str) -> LayerRole {
     } else {
         LayerRole::Authored
     }
+}
+
+/// The names of prepared layers whose digest differs from the base revision, in prepared order:
+/// the `changed_layers` report shared by every copy/edit command.
+pub(crate) fn changed_layers(
+    prepared: &Prepared,
+    before: &BTreeMap<String, ContentDigest>,
+) -> Vec<String> {
+    prepared
+        .layers
+        .iter()
+        .filter(|l| before.get(&l.name) != Some(&l.digest))
+        .map(|l| l.name.clone())
+        .collect()
 }
 
 /// What `publish_revision` needs to turn a prepared candidate into a committed revision.

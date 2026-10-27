@@ -15,6 +15,10 @@
     clippy::panic
 )]
 
+mod support;
+
+use support::text;
+
 use beamcraft_json::{Json, Limits};
 use beamcraft_layer_engine::authored::schema_identity;
 use beamcraft_model::digest::Sha256;
@@ -132,10 +136,6 @@ impl Drop for Fixture {
         assert!(self.0.is_absolute() && self.0.file_name().is_some());
         let _ = fs::remove_dir_all(&self.0);
     }
-}
-
-fn text(body: &Json, key: &str) -> String {
-    body.get(key).unwrap().string().unwrap().to_owned()
 }
 
 fn nested(depth: usize) -> Vec<u8> {

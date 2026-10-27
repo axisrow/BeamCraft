@@ -16,6 +16,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_cli::plate::{CreateRequest, PlateError, create_plate, inspect};
 use beamcraft_host::{
     ids::IdSource,
@@ -86,12 +90,6 @@ fn run_binary(args: &[&str]) -> (i32, Json) {
     (output.status.code().unwrap(), body)
 }
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn num(json: &Json, path: &[&str]) -> f64 {
     at(json, path).float().unwrap()
 }

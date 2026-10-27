@@ -95,14 +95,20 @@ fn export(f: &Fixture, document_dir: &str, out: &std::path::Path) -> (i32, Json)
 }
 
 fn model_store(f: &Fixture) -> String {
-    f.root.join("store").to_str().unwrap().to_owned()
+    f.shared.root.join("store").to_str().unwrap().to_owned()
 }
 
 #[test]
 fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destructive() {
     let f = Fixture::new();
     f.model();
-    let document_dir = f.root.join("drawing-doc").to_str().unwrap().to_owned();
+    let document_dir = f
+        .shared
+        .root
+        .join("drawing-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
     let head = create(&f, &document_dir);
     let (code, published) = publish(&f, &document_dir, &head);
     assert_eq!(code, 0, "{published:?}");
@@ -112,7 +118,7 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
     // paper at 1:100 from (0, 2000, 0) to (3000, 2000, 0); the centred 50 mm section puts the
     // anchored height face at world z -25 -> paper y -0.25, and the +10 mm offset line at
     // paper y 9.75.
-    let out = f.root.join("version.svg");
+    let out = f.shared.root.join("version.svg");
     let (code, exported) = export(&f, &document_dir, &out);
     assert_eq!(code, 0, "{exported:?}");
     assert_eq!(text(&exported, "version_id"), VERSION);
@@ -137,7 +143,7 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
 
     // A fresh CLI process republishes the identical bytes for the identical version; each
     // successful export needs a fresh destination by the create-new rule.
-    let again = f.root.join("version-again.svg");
+    let again = f.shared.root.join("version-again.svg");
     let (code, exported) = export(&f, &document_dir, &again);
     assert_eq!(code, 0, "{exported:?}");
     assert_eq!(fs::read(&again).unwrap(), bytes);
@@ -148,7 +154,7 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
         "update-element",
         &["--id", MEMBER, "--translation", "500,2000,0"],
     );
-    let after_edit = f.root.join("version-after-edit.svg");
+    let after_edit = f.shared.root.join("version-after-edit.svg");
     let (code, exported) = export(&f, &document_dir, &after_edit);
     assert_eq!(code, 0, "{exported:?}");
     assert_eq!(fs::read(&after_edit).unwrap(), bytes);
@@ -166,7 +172,7 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
     // Refusals change nothing: an unknown version creates no file, an existing destination is
     // never opened, and the document head stays where it was.
     let before = f.ok("inspect-drawing", &["--document-dir", &document_dir]);
-    let missing = f.root.join("missing.svg");
+    let missing = f.shared.root.join("missing.svg");
     let (code, refusal) = f.run(
         "export-drawing",
         &argv(&[
@@ -195,12 +201,18 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
 fn export_pdf_prints_one_published_version_onto_a_deterministic_sheet() {
     let f = Fixture::new();
     f.model();
-    let document_dir = f.root.join("drawing-doc").to_str().unwrap().to_owned();
+    let document_dir = f
+        .shared
+        .root
+        .join("drawing-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
     let head = create(&f, &document_dir);
     let (code, published) = publish(&f, &document_dir, &head);
     assert_eq!(code, 0, "{published:?}");
 
-    let out = f.root.join("version.pdf");
+    let out = f.shared.root.join("version.pdf");
     let (code, exported) = f.run(
         "export-drawing",
         &argv(&[
@@ -229,7 +241,7 @@ fn export_pdf_prints_one_published_version_onto_a_deterministic_sheet() {
     assert!(pdf.contains(&format!("version={VERSION} sheet=a4")));
 
     // A fresh CLI process prints the identical bytes for the identical version.
-    let again = f.root.join("version-again.pdf");
+    let again = f.shared.root.join("version-again.pdf");
     let (code, exported) = f.run(
         "export-drawing",
         &argv(&[
@@ -257,7 +269,7 @@ fn export_pdf_prints_one_published_version_onto_a_deterministic_sheet() {
         ("refused-format", vec![("--format", "jpeg")]),
     ];
     for (name, pairs) in refusals {
-        let refused = f.root.join(name);
+        let refused = f.shared.root.join(name);
         let mut options = vec![
             "--document-dir".to_owned(),
             document_dir.clone(),
@@ -282,7 +294,13 @@ fn export_pdf_prints_one_published_version_onto_a_deterministic_sheet() {
 fn publication_refuses_an_unresolved_draft_and_keeps_the_document_head() {
     let f = Fixture::new();
     f.model();
-    let document_dir = f.root.join("drawing-doc").to_str().unwrap().to_owned();
+    let document_dir = f
+        .shared
+        .root
+        .join("drawing-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
     let head = create(&f, &document_dir);
 
     // The retained references never relink: after the deletion the draft resolves as
@@ -318,7 +336,7 @@ fn publication_refuses_an_unresolved_draft_and_keeps_the_document_head() {
     assert_eq!(list(&versions, "versions").len(), 0);
 
     // Nothing was published, so nothing exports under that version id.
-    let out = f.root.join("never.svg");
+    let out = f.shared.root.join("never.svg");
     let (code, refusal) = export(&f, &document_dir, &out);
     assert_eq!(code, 2, "{refusal:?}");
     assert_eq!(text(&refusal, "code"), "NOT_FOUND");

@@ -9,43 +9,25 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a04-add-hole-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
-    }
-    fn store(&self) -> String {
-        self.root.join("store").to_str().unwrap().to_owned()
+        Self {
+            shared: support::StoreFixture::new("a04-add-hole-tests"),
+        }
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.store();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
@@ -98,19 +80,6 @@ impl Fixture {
             .unwrap()
             .to_vec()
     }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
 }
 fn num(json: &Json, path: &[&str]) -> f64 {
     at(json, path).float().unwrap()
@@ -344,7 +313,7 @@ fn undo_removes_the_record_and_the_volume_returns() {
     let user = "019a7bf0-0000-7000-8000-0000000000e0";
     let created = f.plate(&[]);
     let id = text(at(&created, &["plate"]), "element_id");
-    let workspace = f.root.join("ws");
+    let workspace = f.shared.root.join("ws");
     fs::create_dir(&workspace).unwrap();
     let workspace = workspace.to_str().unwrap().to_owned();
     f.ok(

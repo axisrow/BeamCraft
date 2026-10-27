@@ -15,51 +15,32 @@ use beamcraft_host::{
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-use beamcraft_json::{Json, Limits};
-use beamcraft_model::{error::ErrorCode, id::ElementId, prim::ElementCategory};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+mod support;
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
+use beamcraft_json::Json;
+use beamcraft_model::{error::ErrorCode, id::ElementId, prim::ElementCategory};
 
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000000010";
 const PLATE_COPY: &str = "019a7bf0-0000-7000-8000-000000000011";
 const L_SHAPE: &str = "0,0;1000,0;1000,300;400,300;400,600;0,600";
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("issue26-cache");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("issue26-cache"),
+        }
     }
 
     fn store(&self) -> RevisionStore {
-        RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap())
+        RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap())
     }
 
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.root.join("store").to_str().unwrap().to_owned();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
 
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
@@ -114,13 +95,6 @@ impl Fixture {
                 &mut NoFault,
             )
             .unwrap();
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
     }
 }
 

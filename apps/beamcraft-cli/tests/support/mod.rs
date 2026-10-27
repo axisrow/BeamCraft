@@ -3,7 +3,8 @@
 
 //! Mechanical real-binary fixtures; domain expectations stay in each integration suite.
 
-#![allow(clippy::panic)]
+// Suites that share only the JSON accessors never touch the fixture.
+#![allow(dead_code, clippy::panic)]
 
 use beamcraft_json::{Json, Limits};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -64,4 +65,18 @@ impl Drop for StoreFixture {
         assert!(self.root.is_absolute() && self.root.file_name().is_some());
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// The string value at `key`, failing the test when the key is absent or not a string.
+pub(crate) fn text(json: &Json, key: &str) -> String {
+    json.get(key)
+        .unwrap_or_else(|_| panic!("{key} missing from {json:?}"))
+        .string()
+        .unwrap()
+        .to_owned()
+}
+
+/// The value at a `path` of nested keys, failing the test when a step is absent.
+pub(crate) fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
+    path.iter().fold(json, |j, k| j.get(k).unwrap())
 }

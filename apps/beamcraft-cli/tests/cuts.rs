@@ -16,43 +16,28 @@
     clippy::panic
 )]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a03-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("a03-tests"),
+        }
     }
     fn store(&self) -> String {
-        self.root.join("store").to_str().unwrap().to_owned()
+        self.shared.root.join("store").to_str().unwrap().to_owned()
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.store();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
     fn plate(&self, extra: &[&str]) -> (i32, Json) {
         let mut args = vec!["--width", "1000", "--length", "500", "--thickness", "10"];
@@ -104,6 +89,7 @@ impl Fixture {
             .unwrap();
         let digest = text(layer, "digest");
         let path = self
+            .shared
             .root
             .join("store")
             .join("blobs")
@@ -112,22 +98,7 @@ impl Fixture {
         String::from_utf8(fs::read(path).unwrap()).unwrap()
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
 
-fn text(json: &Json, key: &str) -> String {
-    let value = json
-        .get(key)
-        .unwrap_or_else(|_| panic!("{key} missing from {json:?}"));
-    value.string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn num(json: &Json, path: &[&str]) -> f64 {
     at(json, path).float().unwrap()
 }
@@ -426,7 +397,7 @@ fn undo_takes_the_cut_back_and_features_follow_the_plane() {
     let created = f.ok_plate(&[]);
     let element = text(at(&created, &["plate"]), "element_id");
     // A personal workspace holds the draft the undo rolls back.
-    let draft = f.root.join("draft");
+    let draft = f.shared.root.join("draft");
     fs::create_dir(&draft).unwrap();
     let draft = draft.to_str().unwrap().to_owned();
     let (code, _) = f.run("create-workspace", &["--workspace-dir", &draft]);

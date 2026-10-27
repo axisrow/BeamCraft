@@ -13,35 +13,30 @@
 use beamcraft_json::{Json, Limits};
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
-use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 const USER: &str = "019a7bf0-0000-7000-8000-00000000c201";
 const STRANGER: &str = "019a7bf0-0000-7000-8000-00000000c202";
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000000210";
 
+mod support;
+
+use support::{at, text};
+
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("c02-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("published")).unwrap();
-        fs::create_dir(root.join("workspaces")).unwrap();
-        Self { root }
+        let fixture = Self {
+            shared: support::StoreFixture::new("c02-tests"),
+        };
+        fs::create_dir(fixture.shared.root.join("published")).unwrap();
+        fs::create_dir(fixture.shared.root.join("workspaces")).unwrap();
+        fixture
     }
     fn path(&self, name: &str) -> String {
-        self.root.join(name).to_str().unwrap().to_owned()
+        self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     fn run(&self, args: &[&str]) -> (i32, Json) {
         let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
@@ -58,7 +53,7 @@ impl Fixture {
     }
     /// A token file readable by its owner only.
     fn token(&self, name: &str, text: &str) -> String {
-        let path = self.root.join(name);
+        let path = self.shared.root.join(name);
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -170,12 +165,6 @@ impl Fixture {
         }
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
 
 fn not_json(line: &str) -> Json {
     Json::object([("outcome", Json::text(line.to_owned()))])
@@ -203,13 +192,6 @@ impl Drop for Server {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
 }
 
 const TOKEN: &str = "c02-test-token-0123456789abcdefghijklmnop";
@@ -424,7 +406,7 @@ fn the_token_decides_the_actor_and_workspaces_stay_inside_the_root() {
     // The symbolic-link case runs on Unix only, so the request budget differs by platform.
     let requests = if cfg!(unix) { 4 } else { 3 };
     #[cfg(unix)]
-    std::os::unix::fs::symlink(&outside, f.root.join("workspaces/escape")).unwrap();
+    std::os::unix::fs::symlink(&outside, f.shared.root.join("workspaces/escape")).unwrap();
     let server = f.serve(&[(USER, &token), (STRANGER, &stranger)], requests);
     let address = server.address.clone();
     let before = f.head();

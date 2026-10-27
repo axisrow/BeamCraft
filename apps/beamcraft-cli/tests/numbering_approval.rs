@@ -17,6 +17,10 @@
     clippy::panic
 )]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
@@ -25,16 +29,12 @@ use beamcraft_host::{
 use beamcraft_json::{Json, Limits};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 const USER: &str = "01890a5d-ac96-774b-b9cc-aaaaaaaaaaaa";
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 
 struct Scene {
@@ -44,22 +44,15 @@ struct Scene {
 
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a09-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("a09-tests"),
+        }
     }
     fn store(&self) -> String {
-        self.root.join("store").to_str().unwrap().to_owned()
+        self.shared.root.join("store").to_str().unwrap().to_owned()
     }
     fn dir(&self, name: &str) -> String {
-        self.root.join(name).to_str().unwrap().to_owned()
+        self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     fn run_in(&self, store: &str, command: &str, extra: &[&str]) -> (i32, Json) {
         let mut args = vec![command, "--store", store];
@@ -209,7 +202,7 @@ impl Fixture {
     /// Commits a head-based revision with edited layer text and no content verification, the way
     /// a layer edited outside BeamCraft would arrive through `commit-revision`.
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
-        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
         let content = head.manifest().content();
         let mut ids = IdSource::system();
@@ -242,25 +235,12 @@ impl Fixture {
             .unwrap();
     }
     fn authored_text(&self) -> String {
-        let store = RevisionStore::new(BlobStore::new(self.root.join("store")).unwrap());
+        let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
         String::from_utf8(head.layer_bytes("authored.usda").unwrap()).unwrap()
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     at(json, &[key]).array().unwrap()
 }
@@ -772,13 +752,14 @@ fn the_reader_reads_the_stored_marks() {
     let f = Fixture::new();
     let s = f.scene();
     f.approve(&f.token(&[]), &[]);
-    let layers = f.root.join("layers");
+    let layers = f.shared.root.join("layers");
     fs::create_dir(&layers).unwrap();
     let opened = f.ok("open-revision", &[]);
     for entry in list(&opened, "layers") {
         let digest = text(entry, "digest");
         fs::copy(
-            f.root
+            f.shared
+                .root
                 .join("store")
                 .join("blobs")
                 .join(&digest[..2])

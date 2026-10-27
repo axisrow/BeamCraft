@@ -10,36 +10,31 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("a07-3-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        fs::create_dir(root.join("libs")).unwrap();
-        Self { root }
+        let fixture = Self {
+            shared: support::StoreFixture::new("a07-3-tests"),
+        };
+        fs::create_dir(fixture.shared.root.join("libs")).unwrap();
+        fixture
     }
     fn path(&self, name: &str) -> String {
-        self.root.join(name).to_str().unwrap().to_owned()
+        self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     fn write(&self, name: &str, text: &str) -> String {
-        fs::write(self.root.join(name), text).unwrap();
+        fs::write(self.shared.root.join(name), text).unwrap();
         self.path(name)
     }
     fn raw(&self, args: &[&str]) -> (i32, Json) {
@@ -60,19 +55,6 @@ impl Fixture {
         assert_eq!(code, 2, "{args:?}: {body:?}");
         text(&body, "code")
     }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
 }
 fn num(json: &Json, path: &[&str]) -> f64 {
     at(json, path).float().unwrap()
@@ -726,7 +708,7 @@ fn library_add_refuses_what_it_cannot_write_faithfully_and_leaves_the_file_alone
         "a refused add leaves the file byte for byte"
     );
     // Only the stated library is touched; no temporary file stays behind.
-    let leftovers: Vec<_> = fs::read_dir(&f.root)
+    let leftovers: Vec<_> = fs::read_dir(&f.shared.root)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|n| n.contains(".tmp"))

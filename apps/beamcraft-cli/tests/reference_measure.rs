@@ -10,12 +10,15 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// An invented architect model: metres, Y up, one box body 2 x 1 x 3 (volume 6 m3).
 const SITE: &str = r#"#usda 1.0
@@ -76,8 +79,6 @@ def Xform "Site"
     }
 }
 "#;
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn the_composed_surface_measures_in_world_millimetres_and_answers_twice_the_same() {
@@ -267,28 +268,22 @@ def Xform "Site"
 }
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("r02-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        fs::create_dir(root.join("sources")).unwrap();
-        Self { root }
+        let fixture = Self {
+            shared: support::StoreFixture::new("r02-tests"),
+        };
+        fs::create_dir(fixture.shared.root.join("sources")).unwrap();
+        fixture
     }
     fn store(&self) -> String {
-        self.root.join("store").to_str().unwrap().to_owned()
+        self.shared.root.join("store").to_str().unwrap().to_owned()
     }
     fn source(&self, name: &str, bytes: impl AsRef<[u8]>) -> String {
-        let path = self.root.join("sources").join(name);
+        let path = self.shared.root.join("sources").join(name);
         fs::write(&path, bytes).unwrap();
         path.to_str().unwrap().to_owned()
     }
@@ -337,30 +332,15 @@ impl Fixture {
                 }
             }
         }
-        let root = self.root.join("store");
+        let root = self.shared.root.join("store");
         let mut out = BTreeMap::new();
         walk(&root, &root, &mut out);
         out
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
 fn decode(bytes: &[u8]) -> Json {
     beamcraft_json::decode(bytes, &Limits::DEFAULT).unwrap()
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
 }
 
 /// The `index`-th element of the array at `key`.
