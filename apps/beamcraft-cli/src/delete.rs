@@ -66,6 +66,8 @@ pub enum DeletedKind {
     Bolt,
     /// A level (D2); refused while a plate, beam or column is assigned to it.
     Level,
+    /// Construction object (T02).
+    Helper,
     /// Shared project grid (T01).
     Grid,
 }
@@ -149,6 +151,8 @@ pub fn delete_element(
         Some(DeletedKind::Bolt)
     } else if crate::grid::is_grid(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Grid)
+    } else if crate::helper::is_helper(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Helper)
     } else if crate::level::is_level(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Level)
     } else {

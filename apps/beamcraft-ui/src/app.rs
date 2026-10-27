@@ -376,6 +376,57 @@ fn draw_selection(
     }
 }
 
+/// Construction markers are a view overlay; they never become triangles of a part.
+fn draw_helpers(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    view: &View,
+    loaded: &Loaded,
+    definitions: &crate::tools::Definitions,
+) {
+    if definitions
+        .head
+        .as_ref()
+        .is_none_or(|h| h.manifest_digest != loaded.snapshot.pin().revision().to_string())
+    {
+        return;
+    }
+    let project = |p: [f64; 3]| {
+        let mut local = [0.0f32; 3];
+        for ((slot, value), origin) in local.iter_mut().zip(p).zip(loaded.summary.origin_mm) {
+            *slot = (value - origin) as f32;
+        }
+        let [x, y, z] = view.project(local);
+        ((0.0..1.0).contains(&z) && x.is_finite() && y.is_finite()).then(|| {
+            egui::pos2(
+                rect.min.x + (x * 0.5 + 0.5) * rect.width(),
+                rect.min.y + (0.5 - y * 0.5) * rect.height(),
+            )
+        })
+    };
+    let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(45, 175, 210));
+    for helper in definitions.helpers.helpers() {
+        let Ok(guides) = beamcraft_engine::helper::display_guides(helper) else {
+            continue;
+        };
+        for guide in guides {
+            if let [point] = guide.as_slice()
+                && let Some(p) = project(*point)
+            {
+                painter.line_segment([p - egui::vec2(4.0, 0.0), p + egui::vec2(4.0, 0.0)], stroke);
+                painter.line_segment([p - egui::vec2(0.0, 4.0), p + egui::vec2(0.0, 4.0)], stroke);
+            }
+            for pair in guide.windows(2) {
+                if let [a, b] = pair
+                    && let (Some(a), Some(b)) = (project(*a), project(*b))
+                {
+                    painter.line_segment([a, b], stroke);
+                }
+            }
+        }
+    }
+}
+
 fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
     ui.horizontal(|ui| {
         ui.label(label);
@@ -1713,6 +1764,7 @@ impl App {
             Ok(created) => {
                 self.reload();
                 let what = match created.kind {
+                    ToolKind::Helper => "helper",
                     ToolKind::Plate => "plate",
                     ToolKind::Member => "member",
                 };
@@ -1884,6 +1936,39 @@ impl App {
         }
     }
 
+    /// Uses construction geometry only when its refresh has the exact displayed model pin.
+    fn helper_snap_point(&self, point: [f64; 3]) -> [f64; 3] {
+        if !self.tools.helper_snaps {
+            return point;
+        }
+        let Some(loaded) = &self.loaded else {
+            return point;
+        };
+        let Some(head) = &self.tools.definitions.head else {
+            return point;
+        };
+        if head.manifest_digest != loaded.snapshot.pin().revision().to_string() {
+            return point;
+        }
+        let Ok(Some(snap)) = self
+            .tools
+            .definitions
+            .helpers
+            .snap(point, self.tools.helper_snap_radius_mm)
+        else {
+            return point;
+        };
+        if let Some(plane) = self.tools.plane {
+            let Ok([_, _, height]) = plane.to_local(snap.point_mm) else {
+                return point;
+            };
+            if height.abs() > 1e-6 {
+                return point;
+            }
+        }
+        snap.point_mm
+    }
+
     /// One click of the placement: the engine's front-face point on the viewed snapshot, else
     /// the ground plane. The first click arms the start, the second fills the form's endpoints.
     /// The query is bounded by the snapshot caps and runs only while placing.
@@ -1910,6 +1995,7 @@ impl App {
             ));
             return;
         };
+        let point = self.helper_snap_point(point);
         let point = match self.beam.start() {
             Some(start) => match self.tools.plane.map_or_else(
                 || self.tools.member.axis_lock.constrain(start, point),
@@ -2007,6 +2093,7 @@ impl App {
         } else {
             end
         };
+        let end = self.helper_snap_point(end);
         let constrained = match self.tools.plane {
             Some(plane) => plane.constrain_world(start, end, self.tools.member.axis_lock),
             None => self.tools.member.axis_lock.constrain(start, end),
@@ -2084,27 +2171,55 @@ impl App {
     }
 
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
-        match self.plane_form.show(ui) {
-            Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
-            Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
-            Ok(Some(crate::work_plane::Action::PickFace)) => {
-                self.install_plane(self.tools.plane);
-                self.plane_pick = true;
-                self.tool_note = Some(Ok("Click a face to set the session work plane.".into()));
+        if self.tools.active != ToolKind::Helper {
+            match self.plane_form.show(ui) {
+                Ok(Some(crate::work_plane::Action::Apply(plane))) => {
+                    self.install_plane(Some(plane))
+                }
+                Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
+                Ok(Some(crate::work_plane::Action::PickFace)) => {
+                    self.install_plane(self.tools.plane);
+                    self.plane_pick = true;
+                    self.tool_note = Some(Ok("Click a face to set the session work plane.".into()));
+                }
+                Err(e) => self.tool_note = Some(Err(e.to_string())),
+                _ => {}
             }
-            Err(e) => self.tool_note = Some(Err(e.to_string())),
-            _ => {}
-        }
-        if let Some(plane) = self.tools.plane {
-            ui.label(format!("Plane origin: {}", PointText(plane.origin())));
+            if let Some(plane) = self.tools.plane {
+                ui.label(format!("Plane origin: {}", PointText(plane.origin())));
+            }
         }
         ui.label("Dimensions in mm.");
+        ui.checkbox(&mut self.tools.helper_snaps, "Snap to construction objects");
+        ui.horizontal(|ui| {
+            ui.label("Snap radius (mm)");
+            ui.add(egui::DragValue::new(&mut self.tools.helper_snap_radius_mm).range(0.0..=1e6));
+        });
         // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
         // frame the window draws.
         let definitions = &self.tools.definitions;
         let placing = self.beam_mode;
         let mut place_clicked = false;
         match self.tools.active {
+            ToolKind::Helper => {
+                let form = &mut self.tools.helper;
+                ui.label("World coordinates in mm. Construction objects have no engineering body.");
+                egui::ComboBox::from_id_salt("helper-kind")
+                    .selected_text(form.kind)
+                    .show_ui(ui, |ui| {
+                        for kind in ["point", "line", "circle", "plane"] {
+                            ui.selectable_value(&mut form.kind, kind, kind);
+                        }
+                    });
+                field(ui, "Name", &mut form.name, 140.0);
+                field(ui, "Parameters", &mut form.parameters, 180.0);
+                ui.label(match form.kind {
+                    "point" => "X,Y,Z",
+                    "line" => "Start X,Y,Z, End X,Y,Z",
+                    "circle" => "Center X,Y,Z, Normal X,Y,Z, Radius",
+                    _ => "Origin X,Y,Z, Normal X,Y,Z",
+                });
+            }
             ToolKind::Plate => {
                 let form = &mut self.tools.plate;
                 field(ui, "Width", &mut form.width, 80.0);
@@ -2488,6 +2603,13 @@ impl eframe::App for App {
                                 self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
                             );
                         }
+                        draw_helpers(
+                            &ui.painter_at(response.rect),
+                            response.rect,
+                            &view,
+                            l,
+                            &self.tools.definitions,
+                        );
                         if let Some(selected) = self.editor.selected() {
                             let painter = ui.painter_at(response.rect);
                             draw_selection(&painter, response.rect, &view, l, &selected.id);

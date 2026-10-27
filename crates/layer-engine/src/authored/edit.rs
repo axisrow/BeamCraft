@@ -552,6 +552,7 @@ fn create(
         Shape::Assembly => "assembly",
         Shape::Weld(_) | Shape::Bolt(_) => "connection",
         Shape::Level { .. } => "level",
+        Shape::Helper(_) => "helper",
         Shape::Grid(_) => "grid",
         Shape::Plate { .. } => "plate",
         Shape::Member {
@@ -783,6 +784,7 @@ fn create(
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
         Shape::Grid(g) => grid::author(data, &p, g)?,
+        Shape::Helper(g) => helper::author(data, &p, g)?,
         Shape::Level { elevation_mm } => attr(
             data,
             &p,
@@ -1453,6 +1455,11 @@ fn capture(
                             add(name, ty, 0);
                         }
                     }
+                    Shape::Helper(_) => {
+                        for &(name, ty) in helper::FIELDS {
+                            add(name, ty, 0);
+                        }
+                    }
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
                     Shape::Grid(_) => {
                         for &(name, ty) in grid::FIELDS {
@@ -1523,6 +1530,8 @@ fn capture(
                     ("bim:mainPart", "rel"),
                     ("bim:level", "rel"),
                     ("bim:elevationMm", "double"),
+                    ("bim:helper:kind", "token"),
+                    ("bim:helper:parameters", "double[]"),
                     (MARK_SERIES, "string"),
                     (MARK_NUMBER, "int"),
                     (MARK_BASIS, "string"),

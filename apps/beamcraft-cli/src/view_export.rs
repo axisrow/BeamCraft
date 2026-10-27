@@ -168,8 +168,22 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         message: "the view snapshot could not be bundled",
     })?;
     if framed {
-        let definitions =
-            with_definitions.then(|| printed(definitions_json(&inspection, &BTreeMap::new())));
+        let definitions = with_definitions.then(|| {
+            printed(
+                definitions_json(&inspection, &BTreeMap::new()).and_then(|json| {
+                    let Json::Object(mut fields) = json else {
+                        return Err(invalid("invalid refresh metadata"));
+                    };
+                    fields.insert(
+                        "helpers".into(),
+                        crate::helper_cmd::views_json(&beamcraft_cli::helper::views(
+                            &inspection.helpers,
+                        ))?,
+                    );
+                    Ok(Json::Object(fields))
+                }),
+            )
+        });
         let element = with_element.map(|id| printed(inspection_json(&inspection, Some(id))));
         let mut head = if with_grids {
             GRID_FRAME_MAGIC

@@ -298,7 +298,31 @@ impl Scene {
         representation: Representation,
         resident: &BTreeSet<ContentDigest>,
     ) -> Result<Self, Error> {
-        let bounds = snapshot.engineering_bounds();
+        Self::from_snapshot_with_helpers(snapshot, representation, resident, None)
+    }
+
+    /// Builds display bounds and the floating origin including construction markers, without
+    /// changing the snapshot's engineering bounds or adding any helper triangles.
+    pub fn from_snapshot_with_helpers(
+        snapshot: &ViewSnapshot,
+        representation: Representation,
+        resident: &BTreeSet<ContentDigest>,
+        helpers: Option<&beamcraft_engine::helper::Helpers>,
+    ) -> Result<Self, Error> {
+        let mut bounds = snapshot.engineering_bounds();
+        if let Some(helpers) = helpers {
+            for helper in helpers.helpers() {
+                let guides = beamcraft_engine::helper::display_guides(helper)
+                    .map_err(|_| Error::Input("invalid helper display geometry"))?;
+                for point in guides.into_iter().flatten() {
+                    let at = beamcraft_engine::Aabb {
+                        min: point,
+                        max: point,
+                    };
+                    bounds = Some(bounds.map_or(at, |b| b.union(at)));
+                }
+            }
+        }
         let origin_mm = bounds.map_or([0.0; 3], |b| {
             [
                 (b.min[0] + b.max[0]) / 2.0,

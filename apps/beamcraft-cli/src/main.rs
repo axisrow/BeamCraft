@@ -24,6 +24,7 @@ mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
 mod grid_cmd;
+mod helper_cmd;
 mod history_cmd;
 mod level_cmd;
 mod library_cmd;
@@ -136,6 +137,8 @@ fn main() -> std::process::ExitCode {
         project_cmd::execute(&args)
     } else if args.first().is_some_and(grid_cmd::handles) {
         grid_cmd::execute(&args)
+    } else if args.first().is_some_and(helper_cmd::handles) {
+        helper_cmd::execute(&args)
     } else if args.first().is_some_and(level_cmd::handles) {
         level_cmd::execute(&args)
     } else if args.first().is_some_and(numbering_cmd::handles) {
