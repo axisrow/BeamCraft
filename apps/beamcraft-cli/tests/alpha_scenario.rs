@@ -7,6 +7,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use std::collections::BTreeMap;
 use std::fs;
@@ -70,14 +74,6 @@ impl Drop for Story {
             let _ = fs::remove_dir_all(&self.0);
         }
     }
-}
-
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |value, key| value.get(key).unwrap())
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
 }
 
 fn close(actual: f64, expected: f64) {

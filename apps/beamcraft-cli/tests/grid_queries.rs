@@ -4,6 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod support;
 use beamcraft_json::Json;
+use support::text;
 const G: &str = "01990000-0000-7000-8000-000000003001";
 const P: &str = "01990000-0000-7000-8000-000000003002";
 const OP: &str = "01990000-0000-7000-8000-000000003003";
@@ -12,9 +13,6 @@ fn ok(f: &support::StoreFixture, c: &str, a: &[&str]) -> Json {
     let (code, j) = f.run(c, a);
     assert_eq!(code, 0, "{c}: {j:?}");
     j
-}
-fn text(j: &Json, k: &str) -> String {
-    j.get(k).unwrap().string().unwrap().into()
 }
 fn list<'a>(j: &'a Json, k: &str) -> &'a [Json] {
     j.get(k).unwrap().array().unwrap()

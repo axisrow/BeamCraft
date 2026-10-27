@@ -44,7 +44,7 @@ fn standard_curves_and_exact_double_values_compose_in_a_fresh_usd_reader() {
     let f = Fixture::new();
     f.model();
     let head = f.head();
-    let source = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let source = SourceArchive::capture(&f.shared.root.join("store")).unwrap();
     let drawing = intent(source.pin());
     let snapshot = source.inspect().unwrap().snapshot;
     let geometry = derived::encode(&drawing, &snapshot).unwrap();
@@ -165,7 +165,7 @@ fn standard_curves_and_exact_double_values_compose_in_a_fresh_usd_reader() {
 fn rehashed_fabricated_or_stale_geometry_refuses_and_missing_features_store_no_value() {
     let f = Fixture::new();
     f.model();
-    let source = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let source = SourceArchive::capture(&f.shared.root.join("store")).unwrap();
     let drawing = intent(source.pin());
     let geometry = derived::encode(&drawing, &source.inspect().unwrap().snapshot).unwrap();
     let text = String::from_utf8(geometry.bytes.clone()).unwrap();
@@ -180,12 +180,12 @@ fn rehashed_fabricated_or_stale_geometry_refuses_and_missing_features_store_no_v
         "update-element",
         &["--id", MEMBER, "--translation", "100,2000,0"],
     );
-    let moved = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let moved = SourceArchive::capture(&f.shared.root.join("store")).unwrap();
     let snapshot = moved.inspect().unwrap().snapshot;
     assert!(derived::verify(&geometry, &drawing, &snapshot).is_err());
     assert!(derived::verify(&geometry, &drawing.refreshed(moved.pin()), &snapshot).is_err());
     f.ok("delete-element", &["--id", MEMBER]);
-    let deleted = SourceArchive::capture(&f.root.join("store")).unwrap();
+    let deleted = SourceArchive::capture(&f.shared.root.join("store")).unwrap();
     let refreshed = drawing.refreshed(deleted.pin());
     let unresolved = derived::encode(&refreshed, &deleted.inspect().unwrap().snapshot).unwrap();
     let text = String::from_utf8(unresolved.bytes.clone()).unwrap();

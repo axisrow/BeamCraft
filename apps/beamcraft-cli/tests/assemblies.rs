@@ -12,6 +12,8 @@
 
 mod support;
 
+use support::{at, text};
+
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
@@ -153,12 +155,6 @@ impl Fixture {
     }
 }
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     at(json, &[key]).array().unwrap()
 }

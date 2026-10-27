@@ -5,12 +5,10 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 mod support;
 use beamcraft_json::Json;
+use support::text;
 const GRID: &str = "01990000-0000-7000-8000-000000002001";
 const AXES: &str = "01990000-0000-7000-8000-000000002010,01990000-0000-7000-8000-000000002011,01990000-0000-7000-8000-000000002012";
 const NEW: &str = "01990000-0000-7000-8000-000000002013";
-fn text(j: &Json, key: &str) -> String {
-    j.get(key).unwrap().string().unwrap().to_owned()
-}
 fn list<'a>(j: &'a Json, key: &str) -> &'a [Json] {
     j.get(key).unwrap().array().unwrap()
 }

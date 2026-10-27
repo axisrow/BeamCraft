@@ -16,6 +16,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::text;
+
 use beamcraft_engine::reference::ReferenceRecord;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::Placement;
@@ -54,10 +58,6 @@ fn run_binary(args: &[&str]) -> Json {
         .unwrap();
     assert_eq!(output.status.code(), Some(0), "{args:?}");
     beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap()
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
 }
 
 #[test]

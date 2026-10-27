@@ -7,32 +7,27 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::{at, text};
+
 use beamcraft_json::{Json, Limits};
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static NEXT: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("p06-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("published")).unwrap();
-        Self { root }
+        let fixture = Self {
+            shared: support::StoreFixture::new("p06-tests"),
+        };
+        fs::create_dir(fixture.shared.root.join("published")).unwrap();
+        fixture
     }
     fn dir(&self, name: &str) -> String {
-        self.root.join(name).to_str().unwrap().to_owned()
+        self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     fn run_in(&self, store: &str, command: &str, extra: &[&str]) -> (i32, Json) {
         let mut args = vec![command, "--store", store];
@@ -98,19 +93,7 @@ impl Fixture {
         (dir, created)
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
-}
 fn head(status: &Json, which: &str) -> String {
     text(at(status, &["workspace", which]), "manifest_digest")
 }

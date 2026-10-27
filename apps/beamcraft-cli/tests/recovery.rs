@@ -10,6 +10,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::text;
+
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::{Path, PathBuf};
@@ -100,9 +104,6 @@ impl Drop for Fixture {
     }
 }
 
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
 fn ids(json: &Json, key: &str) -> Vec<String> {
     json.get(key)
         .unwrap()

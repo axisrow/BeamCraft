@@ -11,6 +11,10 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+mod support;
+
+use support::text;
+
 use beamcraft_engine::{Limits, ViewSnapshot};
 use beamcraft_json::Json;
 use std::fs;
@@ -36,10 +40,6 @@ fn run(args: &[&str]) -> (i32, Vec<u8>) {
 
 fn json_of(bytes: &[u8]) -> Json {
     beamcraft_json::decode(bytes, &beamcraft_json::Limits::DEFAULT).unwrap()
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
 }
 
 #[test]

@@ -22,7 +22,7 @@ use crate::plate::{
     decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record,
     mesh_change, open_base, plate_record, prior_op_with, replay_summary, summarize,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::copy::{copy_member, copy_plate};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
@@ -463,12 +463,7 @@ fn copy_with_mode(
         &control,
     )?;
     check_footprint(&prepared, &footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {

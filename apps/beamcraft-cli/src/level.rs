@@ -23,7 +23,7 @@ use crate::plate::{
     control, digest_of, host_uuid, integrity, load_base, number, open_base, prior_op_with,
     property, replay_summary, summarize, text,
 };
-use crate::publication::{PublishRequest, publish_revision};
+use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::level::{HolderKind, LevelRecord, Levels};
 use beamcraft_engine::transaction::PriorOp;
@@ -318,12 +318,7 @@ pub fn create_level(
         &control,
     )?;
     check_footprint(&prepared, &creation.footprint)?;
-    let changed_layers = prepared
-        .layers
-        .iter()
-        .filter(|l| before.get(&l.name) != Some(&l.digest))
-        .map(|l| l.name.clone())
-        .collect();
+    let changed_layers = changed_layers(&prepared, &before);
     let committed = publish_revision(
         store,
         &PublishRequest {

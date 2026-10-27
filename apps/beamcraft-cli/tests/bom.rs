@@ -10,40 +10,24 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_json::{Json, Limits};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+mod support;
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
+use support::{at, text};
+
+use beamcraft_json::Json;
+use std::fs;
 
 struct Fixture {
-    root: PathBuf,
+    shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("e03-tests");
-        fs::create_dir_all(&base).unwrap();
-        let root = base.join(format!(
-            "e2e-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&root).unwrap();
-        fs::create_dir(root.join("store")).unwrap();
-        Self { root }
+        Self {
+            shared: support::StoreFixture::new("e03-tests"),
+        }
     }
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
-        let store = self.root.join("store").to_str().unwrap().to_owned();
-        let mut args = vec![command, "--store", store.as_str()];
-        args.extend_from_slice(extra);
-        let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
-            .args(&args)
-            .output()
-            .unwrap();
-        let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
-        (output.status.code().unwrap(), body)
+        self.shared.run(command, extra)
     }
     fn ok(&self, command: &str, extra: &[&str]) -> Json {
         let (code, body) = self.run(command, extra);
@@ -67,11 +51,11 @@ impl Fixture {
         text(&self.ok("open-revision", &[]), "revision_id")
     }
     fn read(&self, name: &str) -> String {
-        fs::read_to_string(self.root.join(name)).unwrap()
+        fs::read_to_string(self.shared.root.join(name)).unwrap()
     }
     /// Absolute path of an output file under the fixture root.
     fn out(&self, name: &str) -> String {
-        self.root.join(name).to_str().unwrap().to_owned()
+        self.shared.root.join(name).to_str().unwrap().to_owned()
     }
     /// The model of the design-note evidence: a graded material, a plate on it, a plate without
     /// any material, a rectangle-section beam on the graded material and an I-section column
@@ -201,19 +185,6 @@ impl Fixture {
         );
         (plate, bare_plate, beam, column)
     }
-}
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        assert!(self.root.is_absolute() && self.root.file_name().is_some());
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
-
-fn text(json: &Json, key: &str) -> String {
-    json.get(key).unwrap().string().unwrap().to_owned()
-}
-fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
-    path.iter().fold(json, |j, k| j.get(k).unwrap())
 }
 fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
     at(json, &[key]).array().unwrap()
@@ -377,7 +348,7 @@ fn refusals_write_nothing() {
         ),
         "NOT_FOUND"
     );
-    assert!(!f.root.join("elements.csv").exists());
+    assert!(!f.shared.root.join("elements.csv").exists());
 
     f.build_model();
     let elements_path = f.out("elements.csv");
@@ -393,7 +364,7 @@ fn refusals_write_nothing() {
         f.rejected("export-bom", &["--out", &other, "--bogus", "x"]),
         "INVALID_ARGUMENT"
     );
-    assert!(!f.root.join("other.csv").exists());
+    assert!(!f.shared.root.join("other.csv").exists());
     // At least one output file is required.
     assert_eq!(f.rejected("export-bom", &[]), "INVALID_ARGUMENT");
     // A refusal on either path leaves nothing, not even the file of the other output: both
@@ -405,11 +376,11 @@ fn refusals_write_nothing() {
         f.rejected("export-bom", &["--out", &fresh, "--summary", &taken]),
         "INVALID_ARGUMENT"
     );
-    assert!(!f.root.join("fresh.csv").exists());
+    assert!(!f.shared.root.join("fresh.csv").exists());
     let same = f.out("same.csv");
     assert_eq!(
         f.rejected("export-bom", &["--out", &same, "--summary", &same]),
         "INVALID_ARGUMENT"
     );
-    assert!(!f.root.join("same.csv").exists());
+    assert!(!f.shared.root.join("same.csv").exists());
 }

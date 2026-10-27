@@ -21,7 +21,7 @@ const REV3: &str = "01900000-0000-7000-8000-000000000011";
 fn document_cli_creates_publishes_inspects_and_lists_versions() {
     let f = Fixture::new();
     f.model();
-    let document_dir = f.root.join("drawing-doc");
+    let document_dir = f.shared.root.join("drawing-doc");
     let document_path = document_dir.to_str().unwrap();
     let intent = [
         "--drawing-id",
@@ -56,7 +56,7 @@ fn document_cli_creates_publishes_inspects_and_lists_versions() {
             "--document-dir",
             document_path,
             "--model-store",
-            f.root.join("store").to_str().unwrap(),
+            f.shared.root.join("store").to_str().unwrap(),
         ],
     );
     assert_eq!(text(&inspected, "freshness"), "current");
