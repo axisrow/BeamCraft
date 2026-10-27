@@ -5,7 +5,6 @@
 //! store at all, published versions survive later edits unchanged, and a refusal keeps the head.
 
 use super::*;
-use beamcraft_json::Limits;
 
 const DRAWING: &str = "01900000-0000-7000-8000-000000000201";
 const VIEW: &str = "01900000-0000-7000-8000-000000000202";
