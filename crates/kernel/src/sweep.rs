@@ -725,7 +725,7 @@ fn analytic_volume(traversal: &Walk, section: &Section, area: f64) -> Result<f64
 }
 
 /// Summed area vector of a wall quad (its two triangles, in mesh winding order).
-fn quad_area_vector(
+pub(crate) fn quad_area_vector(
     vertices: &[[f64; 3]],
     a: usize,
     b: usize,
