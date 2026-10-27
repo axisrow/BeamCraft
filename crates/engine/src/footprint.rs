@@ -208,8 +208,7 @@ impl Footprint {
     /// supported fields it changes, plus the derived group when the shape or the material does.
     /// A rename touches the label alone. A move or an orientation change reads the local shape
     /// and the placement and writes the placement plus the derived group (the world-measurement
-    /// invalidation of F04 section 8; only an orientation change of a member also rebuilds its
-    /// element-local body, as a mesh write inside the derived group).
+    /// invalidation of F04 section 8). The local body is unchanged for either part kind.
     pub fn for_update(
         id: ElementId,
         name: bool,

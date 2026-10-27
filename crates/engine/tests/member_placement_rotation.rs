@@ -63,7 +63,7 @@ fn quarter_about_z() -> Placement {
 }
 
 #[test]
-fn a_rotated_member_mesh_is_the_analytically_rotated_local_one() {
+fn a_rotated_member_keeps_the_element_local_mesh() {
     let identity = create_straight_member(
         &member_command(Placement::IDENTITY, None),
         &|_| false,
@@ -78,22 +78,8 @@ fn a_rotated_member_mesh_is_the_analytically_rotated_local_one() {
         &no_materials,
     )
     .unwrap();
-    // R_z(90 degrees): (x, y, z) -> (-y, x, z). The rotation is part of the body; the
-    // translation is not, and the vertex order is unchanged.
-    for (v, r) in identity
-        .body
-        .solid
-        .vertices()
-        .iter()
-        .zip(rotated.body.solid.vertices())
-    {
-        assert!(
-            close(-v[1], r[0]) && close(v[0], r[1]) && close(v[2], r[2]),
-            "local {v:?} vs rotated {r:?}"
-        );
-    }
-    // The blob and digest follow the rotated vertices.
-    assert_ne!(rotated.body.solid.digest(), identity.body.solid.digest());
+    assert_eq!(rotated.body.solid, identity.body.solid);
+    assert_eq!(rotated.body.solid.digest(), identity.body.solid.digest());
 }
 
 #[test]
@@ -127,9 +113,8 @@ fn a_rotation_keeps_the_axis_length_volume_and_section_area() {
 
 /// Composition order, pinned by hand. The local frame of the `+X` axis is `X_m = +Y`,
 /// `Y_m = +Z`; a roll of `+pi/2` about the axis maps the frame to `X_m = +Z`, `Y_m = -Y`
-/// (right-handed, about the member axis *before* the placement). The placement then maps
-/// `R_z(90)`, so a local vertex `(a, b, c)` becomes `(c, a, b)`: height along world `X`,
-/// the axis along world `Y`, width along world `Z`.
+/// (right-handed, about the member axis *before* the placement). The local body thus maps
+/// `(a,b,c)` to `(a,-c,b)`; the placement remains separate for world-space queries.
 #[test]
 fn the_roll_composes_in_the_member_frame_before_the_placement() {
     let local = create_straight_member(
@@ -155,7 +140,7 @@ fn the_roll_composes_in_the_member_frame_before_the_placement() {
     {
         let (a, b, c) = (v[0], v[1], v[2]);
         assert!(
-            close(c, r[0]) && close(a, r[1]) && close(b, r[2]),
+            close(a, r[0]) && close(-c, r[1]) && close(b, r[2]),
             "{v:?} vs {r:?}"
         );
     }

@@ -353,9 +353,8 @@ fn a_rotated_member_reopens_with_world_bounds_and_unchanged_shape() {
     };
     let local = vector("local");
     let world = vector("world");
-    // The member mesh carries the placement rotation (issue #130), so the snapshot places it
-    // by the translation only and the world position is the rotated local plus the translation.
-    let expected = [local[0] - 50.0, local[1] + 70.0, local[2] + 1000.0];
+    // World features apply the instance rotation to the element-local mesh before translation.
+    let expected = [-local[1] - 50.0, local[0] + 70.0, local[2] + 1000.0];
     for (actual, expected) in world.iter().zip(expected) {
         assert!((actual - expected).abs() < 1e-8, "{actual} != {expected}");
     }
@@ -711,7 +710,7 @@ fn an_orientation_update_sets_clears_and_replays() {
     let member_id = text(member, "element_id");
     let plain = text(member, "mesh_digest");
 
-    // Set: the stored orientation is the quarter turn and the mesh carries the rotation.
+    // Set: the stored placement carries the quarter turn and the local mesh is unchanged.
     let quarter = "0,0,0.7071067811865476,0.7071067811865476";
     let set = |op: &str| {
         f.ok(
@@ -744,7 +743,7 @@ fn an_orientation_update_sets_clears_and_replays() {
     {
         assert!((actual - expected).abs() < 1e-8, "{quaternion:?}");
     }
-    assert_ne!(text(member, "mesh_digest"), plain);
+    assert_eq!(text(member, "mesh_digest"), plain);
     let translation: Vec<f64> = at(member, &["placement", "translation_mm"])
         .array()
         .unwrap()
@@ -760,7 +759,7 @@ fn an_orientation_update_sets_clears_and_replays() {
     let replayed = set("01a00000-0000-7000-8000-000000000042");
     assert_eq!(text(&replayed, "outcome"), "element_update_replayed");
 
-    // Clear: none resets the rotation to the identity and the body to the unrotated mesh.
+    // Clear: none resets only the placement rotation; the body remains the same local mesh.
     let cleared = f.ok(
         "update-element",
         &[

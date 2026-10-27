@@ -2065,9 +2065,11 @@ impl App {
             },
         )
         .ok()?;
+        // Ghost buffers are display-only world geometry; the committed body stays local.
+        let solid = body.solid.rotated_by(authored.placement.orientation_xyzw)?;
         Some(GhostMesh::of(
-            body.solid.vertices(),
-            body.solid.triangles(),
+            solid.vertices(),
+            solid.triangles(),
             origin_mm,
         ))
     }
