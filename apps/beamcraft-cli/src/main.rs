@@ -30,6 +30,7 @@ mod level_cmd;
 mod library_cmd;
 mod numbering_cmd;
 mod pick_cmd;
+mod plane_view_cmd;
 mod plate_cmd;
 mod project_cmd;
 mod rebase_cmd;
@@ -139,6 +140,8 @@ fn main() -> std::process::ExitCode {
         project_cmd::execute(&args)
     } else if args.first().is_some_and(grid_cmd::handles) {
         grid_cmd::execute(&args)
+    } else if args.first().is_some_and(plane_view_cmd::handles) {
+        plane_view_cmd::execute(&args)
     } else if args.first().is_some_and(saved_views_cmd::handles) {
         saved_views_cmd::execute(&args)
     } else if args.first().is_some_and(transform_cmd::handles) {

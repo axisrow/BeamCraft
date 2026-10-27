@@ -228,6 +228,29 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             .map(str::to_owned)
             .unwrap_or_else(|| old.as_ref().map_or_else(String::new, |v| v.comment.clone()));
         let view = saved_views::capture(dir, id, name, camera, plane, comment)?;
+        let record_key = beamcraft_cli::plane_views::key(id);
+        if let Some(record) = views.document.records.get(&record_key).cloned() {
+            if [
+                "--position",
+                "--orientation-xyzw",
+                "--projection",
+                "--fov",
+                "--plane",
+            ]
+            .iter()
+            .any(|k| given(k).is_some())
+            {
+                views.document.records.remove(&record_key);
+            } else {
+                let mut construction = beamcraft_cli::plane_views::decode(&record)?;
+                construction.width_mm = view.camera.width_mm;
+                construction.aspect = view.camera.aspect;
+                views.document.records.insert(
+                    record_key,
+                    beamcraft_cli::plane_views::encode(construction)?,
+                );
+            }
+        }
         views.document.views.retain(|v| v.id != id);
         views.document.views.push(view.clone());
         views.document.views.sort_by_key(|v| v.id);
@@ -262,10 +285,10 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             ("version", Json::text(version.to_string())),
         ]));
     }
-    let changed = if *command == "restore-view" {
-        saved_views::restore(dir, id)?.1
+    let (view, changed) = if *command == "restore-view" {
+        saved_views::restore(dir, id)?
     } else {
-        false
+        (view, false)
     };
     Ok(Json::object([
         (
@@ -283,6 +306,18 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                 .map_or(Json::Null, |d| Json::text(d.to_string())),
         ),
         ("model_changed", Json::Bool(changed)),
+        (
+            "construction",
+            match views
+                .document
+                .records
+                .get(&beamcraft_cli::plane_views::key(id))
+            {
+                Some(s) => beamcraft_json::decode(s.as_bytes(), &beamcraft_json::Limits::DEFAULT)
+                    .map_err(|_| invalid("invalid saved construction"))?,
+                None => Json::Null,
+            },
+        ),
         ("view", view_json(&view)?),
     ]))
 }
