@@ -99,6 +99,24 @@ pub fn copy_element(
     request: &CopyRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<Copied, PlateError> {
+    copy_with_mode(store, request, hook, false)
+}
+
+/// Copies a part as an instance of its canonical shared definition (P11).
+pub fn copy_instance(
+    store: &RevisionStore,
+    request: &CopyRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<Copied, PlateError> {
+    copy_with_mode(store, request, hook, true)
+}
+
+fn copy_with_mode(
+    store: &RevisionStore,
+    request: &CopyRequest,
+    hook: &mut dyn CommitHook,
+    instance: bool,
+) -> Result<Copied, PlateError> {
     let command = &request.command;
     command.validate_arguments()?;
     let control = control();
@@ -119,7 +137,7 @@ pub fn copy_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, levels) = {
+    let (plates, members, definitions, levels, instances) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -137,31 +155,39 @@ pub fn copy_element(
             )
             .into());
         }
-        (plates, members, decoded.definitions, decoded.levels)
+        (
+            plates,
+            members,
+            decoded.definitions,
+            decoded.levels,
+            decoded.instances,
+        )
     };
     // The copy checks that the pinned definitions still resolve, as every create does.
     let materials = material_lookup(&definitions);
 
+    let canonical = match instances.definition(command.source_id) {
+        Ok(id) => id,
+        Err(e) if e.code == ErrorCode::NotFound => command.source_id,
+        Err(e) => return Err(e.into()),
+    };
     let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
-        let mut authored = copy_plate(&source.authored, command)?;
-        // F04 section 7: a copy's records keep their ordinals and take fresh operation ids,
-        // so a record of the source and of the copy never share one identity.
-        let mut ids = beamcraft_host::ids::IdSource::system();
-        for record in &mut authored.hole_records {
-            record.operation_id = OpId::from_uuid(ids.next_id().map_err(|_| PlateError {
-                rule_id: None,
-                code: ErrorCode::BackendUnavailable,
-                message: "no identity could be generated",
-            })?);
-        }
         CopiedElement::Plate(Box::new(PlateRecord {
-            authored,
+            authored: if instance {
+                beamcraft_engine::instance::copy_plate_instance(&source.authored, command)?
+            } else {
+                copy_plate(&source.authored, command)?
+            },
             body: source.body.clone(),
             quantities: source.quantities,
         }))
     } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Member(Box::new(MemberRecord {
-            authored: copy_member(&source.authored, command)?,
+            authored: if instance {
+                beamcraft_engine::instance::copy_member_instance(&source.authored, command)?
+            } else {
+                copy_member(&source.authored, command)?
+            },
             body: source.body.clone(),
             quantities: source.quantities,
         }))
@@ -218,11 +244,24 @@ pub fn copy_element(
     };
 
     let op_host = host_uuid(&request.op_id.to_string())?;
-    let fingerprint = command.content_fingerprint()?;
+    let fingerprint = if instance {
+        beamcraft_model::instance::CopyInstance {
+            copy: command.clone(),
+        }
+        .content_fingerprint()?
+    } else {
+        command.content_fingerprint()?
+    };
     let (prior, recorded) = prior_op_with(store, &op_host, || {
         // The head already holds this copy exactly when the retry is the same request.
         match &head_copy {
-            Some(held) if same_state(held, &copy) => Ok(fingerprint),
+            Some(held)
+                if same_state(held, &copy)
+                    && instances.is_instance(command.new_id) == instance
+                    && (!instance || instances.definition(command.new_id)? == canonical) =>
+            {
+                Ok(fingerprint)
+            }
             _ => digest_of(b"no accepted request matches the head state"),
         }
     })?;
@@ -248,6 +287,14 @@ pub fn copy_element(
         }
         PriorOp::Unseen => {}
     }
+    if instance && instances.links().count() >= beamcraft_model::instance::MAX_PART_INSTANCES {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "instances",
+            "too many part instances",
+        )
+        .into());
+    }
     if head_copy.is_some() {
         return Err(CommandError::new(
             ErrorCode::DuplicateId,
@@ -260,6 +307,14 @@ pub fn copy_element(
     // The copy stays on the source's level (D2).
     let level = levels.level_of(&command.source_id);
     let mut footprint = Footprint::for_copy(command.source_id, command.new_id, profile, material)?;
+    if canonical != command.source_id {
+        footprint = footprint.union(Footprint::for_copy(
+            canonical,
+            command.new_id,
+            profile,
+            material,
+        )?)?;
+    }
     if let Some(level) = level {
         footprint = footprint.union(Footprint::for_level(command.new_id, Some(level))?)?;
     }
@@ -371,6 +426,24 @@ pub fn copy_element(
             ]
         }
     };
+    if instance {
+        for change in &mut changes {
+            if let Change::Create(element) = change {
+                let kind = match &copy {
+                    CopiedElement::Plate(_) => beamcraft_model::instance::PartKind::Plate,
+                    CopiedElement::Member(r) => match r.authored.kind {
+                        MemberKind::Beam => beamcraft_model::instance::PartKind::Beam,
+                        MemberKind::Column => beamcraft_model::instance::PartKind::Column,
+                    },
+                };
+                element.shape = Shape::Instance {
+                    kind,
+                    definition: canonical.to_string(),
+                };
+                element.material = None;
+            }
+        }
+    }
     if let Some(level) = level {
         changes.push(Change::Level {
             id: command.new_id.to_string(),

@@ -415,10 +415,14 @@ impl ElementIndex {
             .iter()
             .filter(|l| l.owner.as_ref() == Some(source))
         {
-            // DV-REL-011: a duplicate is a loose part, with no copied connections.
+            // A duplicate is a loose independent part. P11 instance creation authors its
+            // canonical definition link explicitly; an ordinary duplicate drops that link.
             if matches!(entry.kind.as_deref(), Some("plate" | "beam" | "column"))
                 && link.source_path == entry.path
-                && matches!(link.name.as_str(), "bim:partOf" | "bim:connects")
+                && matches!(
+                    link.name.as_str(),
+                    "bim:partOf" | "bim:connects" | "bim:instanceOf"
+                )
             {
                 continue;
             }

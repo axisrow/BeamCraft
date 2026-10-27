@@ -127,7 +127,7 @@ pub fn update_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, levels) = {
+    let (plates, members, definitions, levels, instances) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -145,7 +145,13 @@ pub fn update_element(
             )
             .into());
         }
-        (plates, members, decoded.definitions, decoded.levels)
+        (
+            plates,
+            members,
+            decoded.definitions,
+            decoded.levels,
+            decoded.instances,
+        )
     };
     let materials = material_lookup(&definitions);
     let patch_effect = effect(&command.patch);
@@ -258,6 +264,46 @@ pub fn update_element(
         .into());
     }
 
+    let canonical = instances.definition(command.target_id)?;
+    let shared = patch_effect.material || patch_effect.shape;
+    let mut shared_records = Vec::new();
+    if shared {
+        let patch = beamcraft_model::command::ElementPatch {
+            material: command.patch.material,
+            thickness_mm: command.patch.thickness_mm,
+            ..Default::default()
+        };
+        for id in instances.group(command.target_id)? {
+            if id == command.target_id {
+                continue;
+            }
+            let record = match &next {
+                UpdatedElement::Plate(r) => {
+                    let head = plates
+                        .iter()
+                        .find(|p| p.authored.id == id)
+                        .ok_or_else(|| integrity("shared plate is not evaluated"))?;
+                    UpdatedElement::Plate(Box::new(PlateRecord {
+                        authored: patch_plate(&head.authored, &patch)?,
+                        body: r.body.clone(),
+                        quantities: r.quantities,
+                    }))
+                }
+                UpdatedElement::Member(r) => {
+                    let head = members
+                        .iter()
+                        .find(|p| p.authored.id == id)
+                        .ok_or_else(|| integrity("shared member is not evaluated"))?;
+                    UpdatedElement::Member(Box::new(MemberRecord {
+                        authored: patch_member(&head.authored, &patch)?,
+                        body: r.body.clone(),
+                        quantities: r.quantities,
+                    }))
+                }
+            };
+            shared_records.push(record);
+        }
+    }
     let mut footprint = Footprint::for_update(
         command.target_id,
         patch_effect.name || patch_effect.class,
@@ -266,6 +312,21 @@ pub fn update_element(
         patch_effect.placement || patch_effect.orientation,
         new_material,
     )?;
+    if shared {
+        footprint = footprint.union(instances.dependencies(command.target_id)?)?;
+        for id in instances.group(command.target_id)? {
+            if id != command.target_id {
+                footprint = footprint.union(Footprint::for_update(
+                    id,
+                    false,
+                    patch_effect.material,
+                    patch_effect.shape,
+                    false,
+                    new_material,
+                )?)?;
+            }
+        }
+    }
     // The level decision needs the model (kind of the target, existence and kind of the level);
     // it runs after replay and no-op detection, so a retry never fails on its own result.
     if let Some(level) = command.patch.level {
@@ -282,6 +343,7 @@ pub fn update_element(
         &control,
     )?;
     let id_text = command.target_id.to_string();
+    let definition_text = canonical.to_string();
     let mut changes = Vec::new();
     if let Some(class) = command.patch.class {
         changes.push(Change::PartClass {
@@ -297,13 +359,13 @@ pub fn update_element(
     }
     if let Some(material) = command.patch.material {
         changes.push(Change::Material {
-            id: id_text.clone(),
+            id: definition_text.clone(),
             opinion: material.map_or(MaterialOpinion::Empty, MaterialOpinion::Target),
         });
     }
     if let Some(mm) = command.patch.thickness_mm {
         changes.push(Change::Thickness {
-            id: id_text.clone(),
+            id: definition_text.clone(),
             mm,
         });
     }
@@ -329,6 +391,16 @@ pub fn update_element(
     }
     if patch_effect.material || patch_effect.shape {
         changes.push(match &next {
+            UpdatedElement::Plate(r) => {
+                mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?
+            }
+            UpdatedElement::Member(r) => {
+                mesh_change(&r.authored.id, &r.body.solid, &member_record(r))?
+            }
+        });
+    }
+    for record in &shared_records {
+        changes.push(match record {
             UpdatedElement::Plate(r) => {
                 mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?
             }

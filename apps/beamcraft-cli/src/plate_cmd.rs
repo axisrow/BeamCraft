@@ -6,7 +6,7 @@
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
 use crate::report::report_with;
-use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element};
+use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element, copy_instance};
 use beamcraft_cli::cut::{CutElement, CutRequest, cut_by_plane_record};
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
@@ -270,7 +270,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "add-hole" => ADD_HOLE_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
-        "copy-element" => COPY_OPTIONS,
+        "copy-element" | "copy-instance" => COPY_OPTIONS,
         "cut-by-plane" => CUT_OPTIONS,
         "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
@@ -318,7 +318,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "add-hole" => add_hole_cli(&store, &options),
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
-        "copy-element" => copy_command(&store, &options),
+        "copy-element" => copy_command(&store, &options, false),
+        "copy-instance" => copy_command(&store, &options, true),
         "cut-by-plane" => cut_command(&store, &options),
         "create-workspace" | "inspect-workspace" | "publish-workspace" => {
             workspace_command(&store, command, &options, candidates)
@@ -1342,7 +1343,11 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     ]))
 }
 
-fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+fn copy_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    instance: bool,
+) -> Run<Json> {
     let source_id = ElementId::parse(
         options
             .get("--id")
@@ -1354,6 +1359,9 @@ fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
         .any(|g| g.id == source_id)
         || options.contains_key("--new-axis-ids")
     {
+        if instance {
+            return Err(invalid("a grid cannot be a part instance"));
+        }
         return crate::grid_cmd::copy_command(store, options);
     }
 
@@ -1392,7 +1400,12 @@ fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
         Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
-    let copied = copy_element(
+    let copy = if instance {
+        copy_instance
+    } else {
+        copy_element
+    };
+    let copied = copy(
         store,
         &CopyRequest {
             op_id,
@@ -2606,6 +2619,25 @@ fn with_stored(element: Json, id: ElementId, inspection: &Inspection) -> Run<Jso
     let Json::Object(mut object) = element else {
         return Ok(element);
     };
+    let count = match inspection.instances.group_size(id) {
+        Ok(count) => count,
+        Err(error) if error.code == ErrorCode::NotFound => 1,
+        Err(error) => return Err(error.into()),
+    };
+    object.insert(
+        "shared_definition".into(),
+        if count > 1 {
+            Json::object([
+                (
+                    "id",
+                    Json::text(inspection.instances.definition(id)?.to_string()),
+                ),
+                ("part_count", Json::uint(count as u64)),
+            ])
+        } else {
+            Json::Null
+        },
+    );
     if let Some(report) = inspection.quantities.get(&id) {
         object.insert("stored_quantities".into(), stored_json(report)?);
     }
