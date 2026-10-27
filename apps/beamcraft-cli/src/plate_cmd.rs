@@ -1538,16 +1538,26 @@ fn create_member_command(
         Some(_) => return Err(invalid("--kind is beam or column")),
     };
     use beamcraft_engine::coordinate::AxisLock;
-    if !options.contains_key("--start-at-grid") && !options.contains_key("--end-at-grid")
-        && ["--z", "--level", "--offset"].iter().any(|k| options.contains_key(k)) {
+    if !options.contains_key("--start-at-grid")
+        && !options.contains_key("--end-at-grid")
+        && ["--z", "--level", "--offset"]
+            .iter()
+            .any(|k| options.contains_key(k))
+    {
         return Err(invalid("height options require grid placement"));
     }
     let coordinate = |key: &'static str, grid, origin, lock: AxisLock| -> Run<[f64; 3]> {
         if options.contains_key(grid) {
-            if options.contains_key(key) { return Err(invalid("point and grid address are mutually exclusive")); }
-            return lock.constrain(origin, grid_placement(store, options, &op_id, grid)?).map_err(PlateError::from);
+            if options.contains_key(key) {
+                return Err(invalid("point and grid address are mutually exclusive"));
+            }
+            return lock
+                .constrain(origin, grid_placement(store, options, &op_id, grid)?)
+                .map_err(PlateError::from);
         }
-        let text = options.get(key).ok_or_else(|| invalid("--start and --end are required"))?;
+        let text = options
+            .get(key)
+            .ok_or_else(|| invalid("--start and --end are required"))?;
         beamcraft_engine::coordinate::resolve(text, origin, lock).map_err(PlateError::from)
     };
     let lock = AxisLock::parse(given("--axis-lock").unwrap_or("none")).map_err(PlateError::from)?;
