@@ -44,7 +44,6 @@ jobs:
         with:
           ref: master
           fetch-depth: 0
-          token: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
 
       # The script guards on both remotes; checkout configures only origin.
       - name: Add the upstream remote
