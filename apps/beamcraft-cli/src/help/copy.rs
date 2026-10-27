@@ -9,9 +9,11 @@ pub(super) const COMMANDS: &[&str] = &[
     "copy-elements",
     "move-elements",
     "rotate-elements",
+    "mirror-elements",
 ];
 
 pub(super) const HELP: &str = concat!(
+    "Mirror (T03): mirror-elements --store ROOT --ids UUID,... --point X,Y,Z --normal X,Y,Z [--plane ORIGIN,XDIR,YDIR] creates independent reflected copies in one revision.\n",
     "Group transforms (T03): move-elements|copy-elements --store ROOT --ids UUID,... (--vector X,Y,Z | --from X,Y,Z --to X,Y,Z) [--plane ORIGIN,XDIR,YDIR]; copy-elements also accepts --instance true|false. rotate-elements --store ROOT --ids UUID,... --center X,Y,Z --axis X,Y,Z --angle RADIANS [--plane ORIGIN,XDIR,YDIR]. All accept common operation identity options. One atomic revision per group.\n",
     "Copy (P05): copy-element --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--new-id ",
     "UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] ",
