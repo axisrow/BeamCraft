@@ -65,7 +65,7 @@ pub fn patch(
                         "attribute definition is absent",
                     )
                 })?
-                .admits(value)?;
+                .admits_value(value)?;
             reads.push(entry(*id, Group::ShapeInputs));
         }
     }

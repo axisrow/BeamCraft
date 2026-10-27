@@ -188,6 +188,10 @@ impl AttributeDefinition {
     /// Admit a value exactly, without conversion, fallback or treating missing values as zero.
     pub fn admits(&self, v: &AttributeValue) -> Result<(), CommandError> {
         self.validate()?;
+        self.admits_value(v)
+    }
+    /// Check a value against an already admitted definition; registry admission remains required.
+    pub fn admits_value(&self, v: &AttributeValue) -> Result<(), CommandError> {
         v.validate()?;
         let valid = match (self.kind, v) {
             (AttributeType::Text, AttributeValue::Text(_))
