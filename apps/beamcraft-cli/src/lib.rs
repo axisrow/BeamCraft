@@ -44,3 +44,6 @@ pub mod saved_views;
 
 /// Plane camera construction (V09).
 pub mod plane_views;
+
+/// Non-destructive personal clipping state (V15).
+pub mod view_clipping;

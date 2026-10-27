@@ -330,6 +330,10 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             .document
             .records
             .remove(&format!("area_{}", id.to_string().replace('-', "")));
+        views
+            .document
+            .records
+            .remove(&format!("clip_{}", id.to_string().replace('-', "")));
         let version = saved_views::write(dir, &views)?;
         return Ok(Json::object([
             ("outcome", Json::text("view_deleted")),

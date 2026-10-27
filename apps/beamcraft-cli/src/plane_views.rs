@@ -240,8 +240,16 @@ pub struct Restored {
 /// Restore all model-dependent inputs from the same verified model context.
 pub fn restore(dir: &Path, views: &Views, view: &SavedView) -> Result<Restored, PlateError> {
     let model = current(dir)?;
+    restore_against(views, view, &model)
+}
+/// Restore against a caller's single verified active model context, without opening it again.
+pub fn restore_against(
+    views: &Views,
+    view: &SavedView,
+    model: &crate::plate::Inspection,
+) -> Result<Restored, PlateError> {
     let model_changed = view.source_manifest != model.revision.manifest_digest;
-    let (view, unresolved) = match resolve_with(views, view, &model) {
+    let (view, unresolved) = match resolve_with(views, view, model) {
         Ok(view) => (view, false),
         Err(e) if e.code == ErrorCode::NotFound => (view.clone(), true),
         Err(e) => return Err(e),

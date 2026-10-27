@@ -32,6 +32,8 @@ use std::io::Write;
 pub const FRAME_MAGIC: &[u8; 8] = b"BCVXFRM1";
 /// Version 2 adds pinned grid display data as a third length-prefixed reply.
 pub const GRID_FRAME_MAGIC: &[u8; 8] = b"BCVXFRM2";
+/// Version 3 adds a fourth JSON presentation section; the engineering bundle stays unchanged.
+pub const PRESENTATION_FRAME_MAGIC: &[u8; 8] = b"BCVXFRM3";
 
 /// What `execute` produced.
 pub enum Output {
@@ -112,7 +114,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 10 {
+    if !args.len().is_multiple_of(2) || args.len() > 16 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
@@ -120,7 +122,12 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         let [key, value] = pair;
         if !matches!(
             *key,
-            "--store" | "--out" | "--with-definitions" | "--with-element" | "--with-grids"
+            "--store"
+                | "--out"
+                | "--with-definitions"
+                | "--with-element"
+                | "--with-grids"
+                | "--view"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated option"));
@@ -146,9 +153,14 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         Some(&"true") => true,
         Some(_) => return Err(invalid("--with-grids is true or false")),
     };
-    let framed = with_definitions || with_element.is_some() || with_grids;
+    let selected_view = options
+        .get("--view")
+        .map(|s| ElementId::parse(s).map_err(id_error))
+        .transpose()?;
+    let replies_framed = with_definitions || with_element.is_some() || with_grids;
+    let framed = replies_framed || selected_view.is_some();
     // Checked before the store is opened, so a refused request never creates the file.
-    if framed && *out != "-" {
+    if replies_framed && *out != "-" {
         return Err(invalid("a framed reply needs --out -"));
     }
     let blobs = BlobStore::new(store).map_err(|e| PlateError {
@@ -156,7 +168,14 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         code: e.code(),
         message: "store root is not usable",
     })?;
-    let inspection = inspect(&RevisionStore::new(blobs))?;
+    let inspection = if selected_view.is_some() {
+        beamcraft_cli::plane_views::current(std::path::Path::new(store))?
+    } else {
+        inspect(&RevisionStore::new(blobs))?
+    };
+    let presentation = selected_view
+        .map(|id| presentation_json(&inspection, std::path::Path::new(store), id))
+        .transpose()?;
     inspection.require_evaluated_geometry()?;
     if let Some(error) = inspection.reference_view_error {
         return Err(error);
@@ -167,30 +186,46 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         code: e.f04_code(),
         message: "the view snapshot could not be bundled",
     })?;
+    let mut frame_head = Vec::new();
     if framed {
         let definitions =
             with_definitions.then(|| printed(definitions_json(&inspection, &BTreeMap::new())));
         let element = with_element.map(|id| printed(inspection_json(&inspection, Some(id))));
-        let mut head = if with_grids {
+        frame_head.extend_from_slice(if presentation.is_some() {
+            PRESENTATION_FRAME_MAGIC
+        } else if with_grids {
             GRID_FRAME_MAGIC
         } else {
             FRAME_MAGIC
-        }
-        .to_vec();
-        section(&mut head, definitions.as_deref())?;
-        section(&mut head, element.as_deref())?;
-        if with_grids {
-            let grids =
+        });
+        section(&mut frame_head, definitions.as_deref())?;
+        section(&mut frame_head, element.as_deref())?;
+        if with_grids || presentation.is_some() {
+            let grids = with_grids.then(|| {
                 printed(crate::grid_cmd::views_json(&inspection.grids).map(|grids| {
                     Json::object([("outcome", Json::text("grids")), ("grids", grids)])
-                }));
-            section(&mut head, Some(&grids))?;
+                }))
+            });
+            section(&mut frame_head, grids.as_deref())?;
         }
-        return Ok(Output::Framed { head, bundle });
+        if let Some(p) = &presentation {
+            let bytes = p
+                .encode(&beamcraft_json::Limits::DEFAULT)
+                .map_err(|_| invalid("presentation reply exceeds its limit"))?;
+            section(&mut frame_head, Some(&bytes))?;
+        }
     }
     if *out == "-" {
-        return Ok(Output::Raw(bundle));
+        return Ok(if framed {
+            Output::Framed {
+                head: frame_head,
+                bundle,
+            }
+        } else {
+            Output::Raw(bundle)
+        });
     }
+    let total_bytes = frame_head.len().saturating_add(bundle.len());
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -200,25 +235,82 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
             code: ErrorCode::InvalidArgument,
             message: "the output file exists or cannot be created",
         })?;
-    file.write_all(&bundle)
+    file.write_all(&frame_head)
+        .and_then(|()| file.write_all(&bundle))
         .and_then(|()| file.sync_all())
         .map_err(|_| PlateError {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "the bundle could not be written",
         })?;
-    Ok(Output::Json(
-        Json::object([
-            ("outcome", Json::text("view_exported")),
-            (
-                "revision_id",
-                Json::text(inspection.revision.revision_id.clone()),
+    let mut reply = Json::object([
+        ("outcome", Json::text("view_exported")),
+        ("revision_id", Json::text(&inspection.revision.revision_id)),
+        ("token", Json::text(snapshot.token().as_str())),
+        ("elements", Json::text(snapshot.len().to_string())),
+        ("meshes", Json::text(snapshot.meshes().len().to_string())),
+        ("bytes", Json::text(total_bytes.to_string())),
+    ]);
+    if let (Some(p), Json::Object(fields)) = (presentation, &mut reply) {
+        fields.insert("presentation".into(), p);
+    }
+    Ok(Output::Json(reply, 0))
+}
+
+fn presentation_json(
+    inspection: &beamcraft_cli::plate::Inspection,
+    dir: &std::path::Path,
+    id: ElementId,
+) -> Result<Json, PlateError> {
+    let views = beamcraft_cli::saved_views::read(dir)?;
+    let view = views
+        .document
+        .views
+        .iter()
+        .find(|v| v.id == id)
+        .ok_or(PlateError {
+            code: ErrorCode::NotFound,
+            message: "saved view not found",
+            rule_id: None,
+        })?;
+    let restored = beamcraft_cli::plane_views::restore_against(&views, view, inspection)?;
+    if restored.unresolved {
+        return Err(PlateError {
+            code: ErrorCode::DependencyUnavailable,
+            message: "saved view source is unresolved",
+            rule_id: None,
+        });
+    }
+    let planes = beamcraft_cli::view_clipping::effective(&views, &restored.view)?;
+    let ids = beamcraft_engine::view_clipping::visible_elements(&inspection.snapshot, &planes)?;
+    Ok(Json::object([
+        ("version", Json::uint(1)),
+        (
+            "snapshot_token",
+            Json::text(inspection.snapshot.token().as_str()),
+        ),
+        (
+            "model_manifest",
+            Json::text(inspection.revision.manifest_digest.to_string()),
+        ),
+        (
+            "personal_version",
+            views
+                .version
+                .map_or(Json::Null, |v| Json::text(v.to_string())),
+        ),
+        ("view", crate::saved_views_cmd::view_json(&restored.view)?),
+        (
+            "clip_planes",
+            beamcraft_cli::view_clipping::planes_json(&planes)?,
+        ),
+        (
+            "visible_elements",
+            Json::Array(
+                ids.into_iter()
+                    .map(|id| Json::text(id.to_string()))
+                    .collect(),
             ),
-            ("token", Json::text(snapshot.token().as_str())),
-            ("elements", Json::text(snapshot.len().to_string())),
-            ("meshes", Json::text(snapshot.meshes().len().to_string())),
-            ("bytes", Json::text(bundle.len().to_string())),
-        ]),
-        0,
-    ))
+        ),
+    ]))
 }
