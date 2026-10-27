@@ -20,6 +20,7 @@ fn command(s: f64) -> CreatePlate {
         class: 0,
         thickness_mm: 10.,
         thickness_side: None,
+        corners: Vec::new(),
         contour_points_mm: vec![
             [999000000., 0., 0.],
             [999393216., 0., s],

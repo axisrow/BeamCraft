@@ -45,7 +45,8 @@ use beamcraft_kernel::profile::{Cavity, Point2, extrude};
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
 use beamcraft_model::command::{
-    AddHole, CommandError, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, Placement, PlateSide,
+    AddHole, CommandError, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, Placement, PlateCorner,
+    PlateSide,
 };
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
@@ -58,6 +59,12 @@ pub const VOLUME_ALGORITHM: &str = "kernel-g02-rectangular-plate-volume/1;tolera
 /// Version label of the volume algorithm of a plate with a G05 contour and no hole: the analytic
 /// `net_area * thickness` of the extruded simple polygon.
 pub const CONTOUR_VOLUME_ALGORITHM: &str = "kernel-g05-contour-plate-volume/1;tolerance-policy-3";
+
+/// Version label of the volume algorithm of a plate whose contour carries corner treatments
+/// (A12.2): the analytic `net_area * thickness` of the derived outline, faceted to the reported
+/// chord deviation, so an analytical area of the rounded shape is never claimed.
+pub const TREATED_VOLUME_ALGORITHM: &str =
+    "kernel-a12-corner-treatment-volume/1;tolerance-policy-3";
 
 /// Version label of the volume algorithm of a plate with through holes: the midpoint of the G06
 /// enclosure of the certified result of the G09 hole operation.
@@ -108,6 +115,10 @@ pub struct AuthoredPlate {
     pub thickness_mm: f64,
     /// Where the thickness is laid off from the contour plane (A12.1); absence reads as `top`.
     pub thickness_side: Option<PlateSide>,
+    /// Corner treatments of authored contour vertices (A12.2); empty means every corner sharp.
+    /// The contour keeps its sharp points; these are authored parameters, evaluated to the
+    /// treated outline on every evaluation.
+    pub corners: Vec<PlateCorner>,
     /// Rigid placement as submitted.
     pub placement: Placement,
     /// Pinned physical material definition; absence means the material and density are unknown.
@@ -132,6 +143,7 @@ impl AuthoredPlate {
             contour_points_mm: command.contour_points_mm.clone(),
             thickness_mm: command.thickness_mm,
             thickness_side: command.thickness_side,
+            corners: command.corners.clone(),
             placement: command.placement,
             material: command.material_digest,
             holes_mm: command.holes_mm.clone(),
@@ -151,6 +163,7 @@ impl AuthoredPlate {
             contour_points_mm: self.contour_points_mm.clone(),
             thickness_mm: self.thickness_mm,
             thickness_side: self.thickness_side,
+            corners: self.corners.clone(),
             placement: self.placement,
             material_digest: self.material,
             holes_mm: self.holes_mm.clone(),
@@ -267,6 +280,17 @@ pub struct PlateBody {
     pub hole_count: usize,
     /// Whether the authored plane cut was applied after the holes (A03).
     pub cut_applied: bool,
+    /// Whether a corner treatment was applied to the authored contour (A12.2). A treated plate
+    /// never takes the canonical box path, even when the sharp contour is the origin rectangle.
+    pub corner_treated: bool,
+    /// The evaluated outline of a G05 contour plate in the element-local plane `z = 0`: the
+    /// treated outline when corners carry treatments (A12.2), the authored contour otherwise.
+    /// Empty for a canonical rectangular box. Numbering compares this outline, so two plates
+    /// whose geometry differs share no part number.
+    pub outline_mm: Vec<[f64; 2]>,
+    /// The largest chord deviation any faceted arc of a treated outline keeps, in millimetres
+    /// (A12.2); `0.0` when no corner is rounded. The quantities are those of the faceted body.
+    pub arc_deviation_mm: f64,
 }
 
 impl PlateBody {
@@ -278,6 +302,8 @@ impl PlateBody {
             HOLED_VOLUME_ALGORITHM
         } else if self.result.is_some() {
             VOLUME_ALGORITHM
+        } else if self.corner_treated {
+            TREATED_VOLUME_ALGORITHM
         } else {
             CONTOUR_VOLUME_ALGORITHM
         }
@@ -549,7 +575,9 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
     let contour = beamcraft_kernel::plate_contour::admit(points, authored.thickness_mm)?;
     let offset = side_offset(authored);
     match classify(points) {
-        Contour::OriginRectangle { width, length } => {
+        // A treated origin rectangle (A12.2) is no longer the G02 box: the treatments replace
+        // corners, so it evaluates as the contour below and takes the treated label.
+        Contour::OriginRectangle { width, length } if authored.corners.is_empty() => {
             let result = rectangular_plate(RectangularPlate {
                 width_mm: width,
                 length_mm: length,
@@ -598,14 +626,28 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 thickness_mm: authored.thickness_mm,
                 hole_count: holes.len(),
                 cut_applied: !authored.cuts.is_empty(),
+                corner_treated: false,
+                outline_mm: Vec::new(),
+                arc_deviation_mm: 0.0,
             })
         }
+        // A treated origin rectangle falls through to the contour evaluation below (A12.2).
+        Contour::OriginRectangle { .. } => evaluate_contour(authored),
         Contour::ClockwiseOriginRectangle => Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "contour_points_mm",
             "contour winding is clockwise",
         )),
         Contour::Other if points.iter().any(|p| p[2] != 0.0) => {
+            // A corner treatment is authored on the z = 0 contour plane (the amendment); the
+            // framed body has no corner of that frame to treat.
+            if !authored.corners.is_empty() {
+                return Err(CommandError::new(
+                    ErrorCode::UnsupportedGeometry,
+                    "corner",
+                    "corner treatments on a framed plate are not evaluated",
+                ));
+            }
             let [width, length] = contour.rectangle_mm.ok_or_else(|| {
                 CommandError::new(
                     ErrorCode::UnsupportedGeometry,
@@ -672,6 +714,9 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 thickness_mm: authored.thickness_mm,
                 hole_count: 0,
                 cut_applied: !authored.cuts.is_empty(),
+                corner_treated: false,
+                outline_mm: Vec::new(),
+                arc_deviation_mm: 0.0,
             })
         }
         Contour::Other => evaluate_contour(authored),
@@ -695,13 +740,16 @@ fn map_profile(failure: &ProfileFailure) -> CommandError {
     )
 }
 
-/// Evaluates a contour that is not the origin rectangle (A02): the G05 extrusion of a simple
-/// polygon that lies in the plane `z = 0`, counter-clockwise seen from `+Z`.
+/// Evaluates a contour that is not the origin rectangle (A02), or any contour carrying corner
+/// treatments (A12.2): the G05 extrusion of a simple polygon that lies in the plane `z = 0`,
+/// counter-clockwise seen from `+Z`.
 ///
-/// The contour is used exactly as authored (F04 P-1): nothing is reordered, merged or repaired,
-/// and the kernel decides winding, self-intersection and touching with exact predicates, so a
-/// clockwise, self-crossing or backtracking outline is `INVALID_ARGUMENT`. Rectangles outside
-/// `z = 0` take the separate framed-box path in `evaluate_plate`.
+/// The contour is used exactly as authored (F04 P-1) unless a vertex carries a corner
+/// treatment, in which case the treated outline is derived first (in `f64`, arcs faceted to
+/// the reported deviation) and the kernel validates the derived polygon with its exact
+/// predicates, as for any contour: nothing is reordered, merged or repaired, and a clockwise,
+/// self-crossing or backtracking outline is `INVALID_ARGUMENT`. Rectangles outside `z = 0`
+/// take the separate framed-box path in `evaluate_plate`.
 fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError> {
     if authored.contour_points_mm.iter().any(|p| p[2] != 0.0) {
         return Err(CommandError::new(
@@ -710,11 +758,9 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
             "only a contour in the plane z = 0 is evaluated in this slice",
         ));
     }
-    let outer: Vec<Point2> = authored
-        .contour_points_mm
-        .iter()
-        .map(|[x, y, _]| Point2::new(*x, *y))
-        .collect();
+    let (outline, arc_deviation) =
+        crate::corners::treated_outline(&authored.contour_points_mm, &authored.corners)?;
+    let outer: Vec<Point2> = outline.iter().map(|[x, y]| Point2::new(*x, *y)).collect();
     let extrusion = extrude(&outer, &[], authored.thickness_mm).map_err(|f| map_profile(&f))?;
     let offset = side_offset(authored);
     let shifted = laid_off(
@@ -766,6 +812,9 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
         thickness_mm: authored.thickness_mm,
         hole_count: holes.len(),
         cut_applied: !authored.cuts.is_empty(),
+        corner_treated: !authored.corners.is_empty(),
+        outline_mm: outline.clone(),
+        arc_deviation_mm: arc_deviation,
     })
 }
 
@@ -1009,6 +1058,7 @@ mod tests {
             contour_points_mm: contour,
             thickness_mm: thickness,
             thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
@@ -1203,6 +1253,7 @@ mod tests {
             contour_points_mm: rect(1000.0, 500.0),
             thickness_mm: 10.0,
             thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material: None,
             class: 0,
@@ -1269,6 +1320,7 @@ mod tests {
             contour_points_mm: rect(1000.0, 500.0),
             thickness_mm: 10.0,
             thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material: None,
             class: 0,
@@ -1826,6 +1878,7 @@ mod tests {
                 contour_points_mm: contour,
                 thickness_mm: 10.0,
                 thickness_side: None,
+                corners: Vec::new(),
                 placement: Placement::IDENTITY,
                 material: None,
                 holes_mm: Vec::new(),

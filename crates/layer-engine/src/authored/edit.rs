@@ -692,6 +692,7 @@ fn create(
             contour_mm,
             thickness_mm,
             thickness_side,
+            corners,
             holes,
             hole_records,
             ..
@@ -717,6 +718,65 @@ fn create(
                     "steel:plate:thicknessSide",
                     "token",
                     sdf::Value::token(side.as_str()),
+                )?;
+            }
+            if !corners.is_empty() {
+                // The five parallel corner attributes (A12.2), always together; a value that
+                // its treatment does not use is written as zero.
+                let mut vertices = Vec::with_capacity(corners.len());
+                let mut kinds: Vec<&str> = Vec::with_capacity(corners.len());
+                let mut d1s = Vec::with_capacity(corners.len());
+                let mut d2s = Vec::with_capacity(corners.len());
+                let mut radii = Vec::with_capacity(corners.len());
+                for corner in corners {
+                    vertices.push(i32::try_from(corner.vertex).map_err(|_| limit())?);
+                    kinds.push(corner.treatment.kind());
+                    let (d1, d2, radius) = match corner.treatment {
+                        beamcraft_model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => {
+                            (d1_mm, d2_mm, 0.0)
+                        }
+                        beamcraft_model::command::CornerTreatment::Round { radius_mm } => {
+                            (0.0, 0.0, radius_mm)
+                        }
+                    };
+                    d1s.push(d1);
+                    d2s.push(d2);
+                    radii.push(radius);
+                }
+                attr(
+                    data,
+                    &p,
+                    "steel:plate:cornerVertex",
+                    "int[]",
+                    sdf::Value::IntVec(vertices),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:plate:cornerKind",
+                    "token[]",
+                    sdf::Value::token_vec(kinds),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:plate:cornerD1Mm",
+                    "double[]",
+                    sdf::Value::DoubleVec(d1s),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:plate:cornerD2Mm",
+                    "double[]",
+                    sdf::Value::DoubleVec(d2s),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:plate:cornerRadiusMm",
+                    "double[]",
+                    sdf::Value::DoubleVec(radii),
                 )?;
             }
             if !holes.is_empty() {

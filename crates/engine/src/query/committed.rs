@@ -19,7 +19,7 @@ use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
 use beamcraft_geom::Translation3;
 use beamcraft_model::command::{
-    CommandError, CutRecord, KeepSide, MemberKind, PlateSide, label_is_valid,
+    CommandError, CornerTreatment, CutRecord, KeepSide, MemberKind, PlateSide, label_is_valid,
 };
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
@@ -222,6 +222,7 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         contour_points_mm,
         thickness_mm,
         thickness_side,
+        corners,
         placement: _,
         material: _,
         holes_mm,
@@ -229,7 +230,7 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         cuts,
     } = plate;
     let mut key = Vec::with_capacity(160);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v3\0");
+    key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v4\0");
     push_points(&mut key, contour_points_mm);
     push_f64(&mut key, *thickness_mm);
     // The side changes the body: the mesh is laid off from the contour plane (A12.1).
@@ -239,6 +240,22 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         Some(PlateSide::Middle) => 2,
         Some(PlateSide::Bottom) => 3,
     });
+    // The treatments change the evaluated outline the body is extruded from (A12.2).
+    push_len(&mut key, corners.len());
+    for corner in corners {
+        push_len(&mut key, corner.vertex);
+        key.push(match corner.treatment {
+            CornerTreatment::Chamfer { .. } => 1,
+            CornerTreatment::Round { .. } => 2,
+        });
+        match corner.treatment {
+            CornerTreatment::Chamfer { d1_mm, d2_mm } => {
+                push_f64(&mut key, d1_mm);
+                push_f64(&mut key, d2_mm);
+            }
+            CornerTreatment::Round { radius_mm } => push_f64(&mut key, radius_mm),
+        }
+    }
     push_len(&mut key, holes_mm.len());
     for hole in holes_mm {
         push_points(&mut key, hole);
@@ -552,6 +569,7 @@ mod tests {
             ],
             thickness_mm: 10.0,
             thickness_side: None,
+            corners: Vec::new(),
             placement: Placement {
                 translation_mm: [x, 0.0, 0.0],
                 ..Placement::IDENTITY

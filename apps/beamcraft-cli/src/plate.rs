@@ -57,6 +57,7 @@ use beamcraft_host::revision::{
     LayerRole, Manifest, Revision, RevisionError, RevisionInfo, RevisionStore, Uuid7,
     VerifyRequest,
 };
+use beamcraft_layer_engine::Property;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, PROJECT_RECORD_KEY,
     Placement as LayerPlacement, Prepare, Prepared, Shape, StoredQuantities, project_record,
@@ -68,8 +69,8 @@ use beamcraft_layer_engine::{
     Prim, Profile, Reader, Value,
 };
 use beamcraft_model::command::{
-    CommandError, CreatePlate, CutRecord, HoleRecord, KeepSide, MemberKind, PlateSide,
-    SectionDepthPosition, SectionPlacement, SectionPlanePosition,
+    CommandError, CornerTreatment, CreatePlate, CutRecord, HoleRecord, KeepSide, MemberKind,
+    PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
 };
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
@@ -594,6 +595,90 @@ fn decode_section_placement(prim: &Prim) -> Result<Option<SectionPlacement>, Pla
     }))
 }
 
+/// The authored corner treatments (A12.2); absence means every corner is sharp, so every plate
+/// authored before the field existed reads as it was authored. The five parallel attributes
+/// always appear together; a malformed opinion is an integrity error, never a default.
+fn decode_corners(prim: &Prim) -> Result<Vec<PlateCorner>, PlateError> {
+    const NAMES: [&str; 5] = [
+        "steel:plate:cornerVertex",
+        "steel:plate:cornerKind",
+        "steel:plate:cornerD1Mm",
+        "steel:plate:cornerD2Mm",
+        "steel:plate:cornerRadiusMm",
+    ];
+    let bad_type = || integrity("corner attributes must have their declared USD types");
+    let found: Vec<Option<&Property>> = NAMES
+        .iter()
+        .map(|name| prim.properties.iter().find(|p| p.name == *name))
+        .collect();
+    if found.iter().all(Option::is_none) {
+        return Ok(Vec::new());
+    }
+    let Some(properties) = found.into_iter().collect::<Option<Vec<&Property>>>() else {
+        return Err(integrity("the corner attributes must be authored together"));
+    };
+    let integers = |property: &Property| -> Option<Vec<usize>> {
+        match &property.value {
+            Some(Value::Array(values)) => values
+                .iter()
+                .map(|v| integer(v).and_then(|n| usize::try_from(n).ok()))
+                .collect(),
+            _ => None,
+        }
+    };
+    let reals = |property: &Property| -> Option<Vec<f64>> {
+        match &property.value {
+            Some(Value::Array(values)) => values.iter().map(number).collect(),
+            _ => None,
+        }
+    };
+    let kind_property = properties.get(1).ok_or_else(bad_type)?;
+    if kind_property.type_name != "token[]" {
+        return Err(bad_type());
+    }
+    let kinds: Vec<String> = match &kind_property.value {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| match v {
+                Value::Text(token) => Some(token.clone()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(bad_type)?,
+        _ => return Err(bad_type()),
+    };
+    let at = |i: usize| properties.get(i).ok_or_else(bad_type);
+    let vertices = integers(at(0)?).ok_or_else(bad_type)?;
+    let d1s = reals(at(2)?).ok_or_else(bad_type)?;
+    let d2s = reals(at(3)?).ok_or_else(bad_type)?;
+    let radii = reals(at(4)?).ok_or_else(bad_type)?;
+    if vertices.len() != kinds.len()
+        || vertices.len() != d1s.len()
+        || vertices.len() != d2s.len()
+        || vertices.len() != radii.len()
+    {
+        return Err(integrity("the corner attributes must have equal lengths"));
+    }
+    vertices
+        .into_iter()
+        .zip(kinds)
+        .zip(d1s)
+        .zip(d2s)
+        .zip(radii)
+        .map(|((((vertex, kind), d1), d2), radius)| {
+            let treatment = match kind.as_str() {
+                "chamfer" => CornerTreatment::Chamfer {
+                    d1_mm: d1,
+                    d2_mm: d2,
+                },
+                "round" => CornerTreatment::Round { radius_mm: radius },
+                _ => return Err(integrity("corner kind is not chamfer or round")),
+            };
+            Ok(PlateCorner { vertex, treatment })
+        })
+        .collect()
+}
+
 fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError> {
     let bad = || integrity("committed plate lacks a required authored input");
     let name = property(prim, "bim:name").and_then(text).ok_or_else(bad)?;
@@ -622,6 +707,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         contour_points_mm: contour,
         thickness_mm: thickness,
         thickness_side: decode_thickness_side(prim)?,
+        corners: decode_corners(prim)?,
         placement: beamcraft_model::command::Placement {
             translation_mm: translation,
             orientation_xyzw: [x, y, z, w],
@@ -1973,6 +2059,7 @@ pub fn create_plate(
                         contour_mm: outcome.authored.contour_points_mm.clone(),
                         thickness_mm: outcome.authored.thickness_mm,
                         thickness_side: outcome.authored.thickness_side,
+                        corners: outcome.authored.corners.clone(),
                         holes: outcome
                             .authored
                             .holes_mm

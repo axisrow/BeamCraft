@@ -379,6 +379,7 @@ fn copy_with_mode(
                         contour_mm: a.contour_points_mm.clone(),
                         thickness_mm: a.thickness_mm,
                         thickness_side: a.thickness_side,
+                        corners: a.corners.clone(),
                         holes: a
                             .holes_mm
                             .iter()

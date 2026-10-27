@@ -240,6 +240,7 @@ mod tests {
             ],
             thickness_mm: 10.0,
             thickness_side: None,
+            corners: Vec::new(),
             placement: Placement {
                 translation_mm: [0.0, 0.0, 0.0],
                 orientation_xyzw,

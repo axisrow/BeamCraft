@@ -7,7 +7,7 @@ pub(super) const COMMANDS: &[&str] = &["create-plate", "add-hole", "inspect-elem
 
 pub(super) const HELP: &str = concat!(
     "Plate (P01, committed USD revision): create-plate --store ROOT (--width MM --length MM | ",
-    "--contour X,Y[,Z];...) --thickness MM [--thickness-side top|middle|bottom] [--name TEXT] [--class INT32] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] ",
+    "--contour X,Y[,Z];...) --thickness MM [--thickness-side top|middle|bottom] [--corners V=chamfer:D1[,D2];V=round:R;...] [--name TEXT] [--class INT32] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] ",
     "[--material-digest SHA256] [--hole-rect X,Y,W,H[;...]] [--hole-round X,Y,D[;...]] ",
     "[--hole-segments N] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id ",
     "UUID] [--project-id UUID] [--workspace-id UUID] (--width and --length make the origin ",
@@ -18,7 +18,11 @@ pub(super) const HELP: &str = concat!(
     "is reordered or repaired; the origin rectangle written as a contour is the same box; ",
     "--thickness-side (A12.1) lays the thickness off from the contour plane, top is the ",
     "default and what older plates read as, middle is half on each side, bottom is laid off ",
-    "in -Z; inspect-elements lists thickness_side and contour_points_mm and outline ",
+    "in -Z; --corners (A12.2) treats contour vertices: V is the vertex position, chamfer ",
+    "takes one distance for a symmetric cut or two (along the previous and the next edge), ",
+    "round takes a radius tangent to both edges; a treated corner that does not really turn ",
+    "or treatments that consume a whole edge are INVALID_ARGUMENT, arcs are faceted to at ",
+    "most 0.05 mm chord deviation and arc_deviation_mm reports the largest kept; inspect-elements lists thickness_side and corners and contour_points_mm and outline ",
     "rectangle|contour, and width and ",
     "length are the bounding-box extents of a contour; a retry of the same --op-id needs the ",
     "same --new-id and arguments and is replayed); add-hole --store ROOT --id UUID ",
