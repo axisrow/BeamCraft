@@ -543,8 +543,8 @@ fn create(
     container(data, folder, "Scope", Some("group"))?;
     prim(data, &p, Some("Xform"), true)?;
     let model_kind = match e.shape {
-        Shape::Instance { kind, .. } => kind.token(),
         Shape::Assembly => "assembly",
+        // An instance is a component; its part kind lives only in bim:elementKind.
         _ => "component",
     };
     field(data, &p, "kind", sdf::Value::token(model_kind))?;
