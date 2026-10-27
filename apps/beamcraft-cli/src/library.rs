@@ -403,7 +403,7 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
     load_bytes_as(bytes, ENTRY_PARENT, decode_record)
 }
 
-/// [`load_bytes_as`] for the fastener library at `path` (A14.1): the same layer format and
+/// [`load`] for the fastener library at `path` (A14.1): the same layer format and
 /// loading rules, entries under `/Library/Fasteners` carrying `steel:fastener:*` attributes.
 pub fn load_fastener(path: &str) -> Result<Library, PlateError> {
     check_source_path(path).map_err(command)?;
