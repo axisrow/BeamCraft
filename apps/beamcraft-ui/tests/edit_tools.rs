@@ -22,7 +22,7 @@ use beamcraft_engine::query::pick::SelectionFilter;
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::camera::Camera;
 use beamcraft_ui::edit::{
-    EditKind, Editor, Target, ndc_of, parse_pick, pick_args, pick_in, ray_through,
+    EditKind, Editor, Target, ndc_of, parse_pick, pick_args, pick_in, pick_point_in, ray_through,
 };
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::stats::Stats;
@@ -224,6 +224,53 @@ fn commit(
     let result = command::commit_edit(cli, &edit, &Stats::default());
     editor.finish();
     result
+}
+
+/// V13 acceptance: with the orthographic projection on, the pixel of a plate's top-face centre
+/// still names that plate (picking) and the ray meets the plate at the clicked point (snaps).
+#[test]
+fn an_orthographic_click_picks_and_snaps_like_the_perspective_one() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    two_plates(&cli, &stores.ui());
+    let snapshot = source::load(&cli, &stores.ui(), &Stats::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let (framing_target, extent) = scene.framing();
+    let aspect = 1.6;
+    let mut camera = Camera::new(framing_target, extent, aspect).unwrap();
+    camera.set_projection(true);
+    let view = camera.view(aspect).unwrap();
+    let size = [1600.0f32, 1000.0];
+    for (id, world) in [(A, [500.0, 250.0, 10.0]), (B, [3500.0, 250.0, 10.0])] {
+        let relative = [0, 1, 2].map(|i| (world[i] - scene.origin_mm[i]) as f32);
+        let [nx, ny, _] = view.project(relative);
+        let pixel = [(nx * 0.5 + 0.5) * size[0], (0.5 - ny * 0.5) * size[1]];
+        let ndc = ndc_of(pixel, [0.0, 0.0], size).unwrap();
+        let ray = ray_through(&view, ndc, scene.origin_mm).unwrap();
+        // Picking: the window's own query and the CLI's `pick` agree on the plate.
+        assert_eq!(
+            pick_in(&snapshot, &ray, SelectionFilter::ALL)
+                .unwrap()
+                .as_deref(),
+            Some(id)
+        );
+        assert_eq!(cli_pick(&cli, &stores.ui(), &ray).as_deref(), Some(id));
+        // Snapping: a placement click meets the plate at the point the pixel shows.
+        let (point, element) = pick_point_in(&snapshot, &ray).unwrap().unwrap();
+        assert_eq!(element, id);
+        for axis in 0..3 {
+            assert!(
+                (point[axis] - world[axis]).abs() < 1.0,
+                "{id}: {point:?} vs {world:?}"
+            );
+        }
+    }
+    // A pixel on empty space still selects nothing.
+    let ray = ray_through(&view, [-0.99, 0.99], scene.origin_mm).unwrap();
+    assert_eq!(
+        pick_in(&snapshot, &ray, SelectionFilter::ALL).unwrap(),
+        None
+    );
 }
 
 #[test]

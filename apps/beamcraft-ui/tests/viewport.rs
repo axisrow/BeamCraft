@@ -17,7 +17,7 @@
 use beamcraft_engine::synthetic::plate_scene;
 use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
-use beamcraft_ui::camera::Camera;
+use beamcraft_ui::camera::{Camera, View};
 use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
 use beamcraft_ui::scene::{Scene, SelectedDraw};
 use beamcraft_ui::stats::Stats;
@@ -48,6 +48,11 @@ fn gpu() -> Option<Gpu> {
 fn render(gpu: &Gpu, scene: &Scene) -> ([u8; 4], [u8; 4], usize) {
     let (target, extent) = scene.framing();
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    render_view(gpu, scene, view)
+}
+
+/// Renders `scene` with `view`; same evidence as [`render`].
+fn render_view(gpu: &Gpu, scene: &Scene, view: View) -> ([u8; 4], [u8; 4], usize) {
     let stats = Stats::default();
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
@@ -94,6 +99,23 @@ fn an_engine_snapshot_renders_lit_geometry_on_a_background() {
     let (corner, centre, _) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
     assert!(is_lit(centre), "lit plate {centre:?}");
+}
+
+/// V13: the orthographic projection draws the same framed scene, in its own scale.
+#[test]
+fn an_orthographic_camera_renders_lit_geometry_on_a_background() {
+    let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let Some(gpu) = gpu() else { return };
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    camera.set_projection(true);
+    let (corner, centre, lit) = render_view(&gpu, &scene, camera.view(1.0).unwrap());
+    assert!(is_background(corner), "background {corner:?}");
+    assert!(is_lit(centre), "lit plate {centre:?}");
+    assert!(lit > 0);
 }
 
 /// Draws `uploaded` framed on `scene` and returns the lit pixel count.
