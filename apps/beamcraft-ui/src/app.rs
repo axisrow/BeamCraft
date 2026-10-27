@@ -1387,6 +1387,9 @@ impl App {
                 details.kind,
                 details.revision.label()
             ));
+            if let Some((_, count)) = &details.shared_definition {
+                ui.label(format!("Shape and material edits affect all {count} shared parts. Name, position and level affect this part."));
+            }
             // One wrapped row per value: the inspector has a fixed width and values can be long.
             let muted = crate::theme::Palette::current(ui).muted;
             for (label, value) in details.read_only_rows() {
@@ -1591,6 +1594,10 @@ impl App {
                 point_fields(ui, &mut self.editor.move_to);
             }
             EditKind::Copy => {
+                ui.checkbox(
+                    &mut self.editor.copy_instance,
+                    "Instance: share shape and material edits",
+                );
                 ui.label("Offset of the copy in mm:");
                 point_fields(ui, &mut self.editor.copy_offset);
             }
@@ -2065,9 +2072,11 @@ impl App {
             },
         )
         .ok()?;
+        // Ghost buffers are display-only world geometry; the committed body stays local.
+        let solid = body.solid.rotated_by(authored.placement.orientation_xyzw)?;
         Some(GhostMesh::of(
-            body.solid.vertices(),
-            body.solid.triangles(),
+            solid.vertices(),
+            solid.triangles(),
             origin_mm,
         ))
     }

@@ -54,7 +54,7 @@ fn property_group(name: &str) -> Option<G> {
         "steel:numbering:series" | "steel:numbering:number" | "steel:numbering:basis" => G::Mark,
         "xformOp:translate" | "xformOp:orient" | "xformOpOrder" => G::Placement,
         "bim:material" => G::MaterialRef,
-        "bim:partOf" | "bim:level" | "bim:connects" => G::Relationship,
+        "bim:partOf" | "bim:level" | "bim:connects" | "bim:instanceOf" => G::Relationship,
         "steel:plate:contourPointsMm"
         | "steel:plate:thicknessMm"
         | "steel:plate:holePointsMm"

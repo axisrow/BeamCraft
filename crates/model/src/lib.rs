@@ -13,6 +13,7 @@ pub mod grid;
 pub mod grid_edit;
 pub mod grid_update;
 pub mod id;
+pub mod instance;
 pub mod limits;
 pub mod prim;
 pub mod reference;

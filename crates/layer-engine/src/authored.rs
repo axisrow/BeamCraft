@@ -8,6 +8,7 @@ mod derive;
 mod edit;
 pub mod grid;
 mod guard;
+pub mod instance;
 pub mod rebase;
 mod reference;
 mod validate;
@@ -45,7 +46,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
     "all four steel:hole attributes or none, ordinals are engine-assigned and never reused\n",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
+    "memberBody=element-local-v2;placement rotation excluded from shape and mass keys\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
+    "bim:instanceOf=rel(1 canonical owned plate|beam|column of same kind;source instance);shared shape/profile/material/operations;no chains or shadow fields\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
     "bim:mainPart=rel(0..1 element target that is a direct part of the assembly;source assembly;one main per assembly)\n",
     "connection=element;bim:elementKind=connection;kind=component;a weld (A06) or bolt group (A05);no material;placement=identity;",
@@ -237,6 +240,13 @@ pub enum Shape {
         /// order. Empty means an uncut member.
         cuts: Vec<CutRecord>,
     },
+    /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
+    Instance {
+        /// Same part kind as the canonical definition.
+        kind: beamcraft_model::instance::PartKind,
+        /// Canonical part identity, never another instance.
+        definition: String,
+    },
     /// A01 assembly: a grouping target of `bim:partOf` with no shape inputs, no material and no
     /// derived body. Its placement must be the identity in this slice.
     Assembly,
@@ -264,9 +274,12 @@ impl Shape {
     pub(crate) fn cuts(&self) -> &[CutRecord] {
         match self {
             Self::Plate { cuts, .. } | Self::Member { cuts, .. } => cuts,
-            Self::Assembly | Self::Weld(_) | Self::Bolt(_) | Self::Grid(_) | Self::Level { .. } => {
-                &[]
-            }
+            Self::Instance { .. }
+            | Self::Assembly
+            | Self::Weld(_)
+            | Self::Bolt(_)
+            | Self::Grid(_)
+            | Self::Level { .. } => &[],
         }
     }
 }
@@ -1009,7 +1022,9 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Weld(_) | Shape::Bolt(_) => ElementCategory::Connection,
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
-        Shape::Plate { .. } | Shape::Member { .. } => ElementCategory::Part,
+        Shape::Plate { .. } | Shape::Member { .. } | Shape::Instance { .. } => {
+            ElementCategory::Part
+        }
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {

@@ -101,6 +101,8 @@ pub struct Details {
     pub profile_name: Option<String>,
     /// The assigned level's id.
     pub level: Option<String>,
+    /// Shared definition owner and affected part count, when edits are linked.
+    pub shared_definition: Option<(String, usize)>,
     /// The engine's quantities.
     pub quantities: Quantities,
 }
@@ -195,6 +197,22 @@ pub fn parse_details(
                 [a, b] => Some([floats::<3>(a)?, floats::<3>(b)?]),
                 _ => None,
             });
+        let shared_definition = match element.get("shared_definition").ok() {
+            None | Some(Json::Null) => None,
+            Some(record) => {
+                let owner = text(record, "id").ok_or_else(unreadable)?;
+                beamcraft_model::id::ElementId::parse(&owner).map_err(|_| unreadable())?;
+                let count = record
+                    .get("part_count")
+                    .and_then(Json::unsigned)
+                    .map_err(|_| unreadable())?;
+                let count = usize::try_from(count).map_err(|_| unreadable())?;
+                if !(2..=beamcraft_model::instance::MAX_PART_INSTANCES + 1).contains(&count) {
+                    return Err(unreadable());
+                }
+                Some((owner, count))
+            }
+        };
         return Ok(Details {
             id: id.to_owned(),
             kind,
@@ -222,6 +240,7 @@ pub fn parse_details(
             axis_points_mm,
             profile_name: text(element, "profile_name"),
             level: text(element, "level"),
+            shared_definition,
             quantities: read_quantities(element),
         });
     }

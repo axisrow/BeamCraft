@@ -14,12 +14,12 @@
 //! | `material` | no | yes | quantity record only (same mesh bytes) |
 //! | `thickness_mm` | yes | yes | mesh and quantity record |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
-//! | `orientation_xyzw` | a member: yes (the rotation is in the mesh), a plate: no | no | the placement attribute; for a member also the mesh |
+//! | `orientation_xyzw` | no | no | untouched (the body is element-local) |
 //! | `level` | no | no | untouched (a relationship of the element only) |
 //!
 //! A move keeps the rotation and never touches the shape, the body or the stored quantities, so
 //! no geometry is copied or rebuilt. An orientation change replaces the stored quaternion as a
-//! whole (a member body is rebuilt with the new rotation, the quantities are unchanged). Fields
+//! whole; local meshes and quantities are unchanged. Fields
 //! outside this list (contour, axis, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to
 //! later tasks.
 

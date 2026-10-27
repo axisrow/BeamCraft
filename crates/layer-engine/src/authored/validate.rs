@@ -835,86 +835,89 @@ pub(super) fn snapshot(
         {
             return Err(invalid());
         }
-        match kind {
-            "plate" => {
-                plate(
-                    &points(p, "steel:plate:contourPointsMm")?,
-                    number(p, "steel:plate:thicknessMm")?,
-                )?;
-                plate_holes(p)?;
-                plate_hole_records(p)?;
-                element_cut(p)?;
-            }
-            "beam" | "column" => {
-                let axis = points(p, "bim:axisPointsMm")?;
-                let [a, b] = axis.as_slice() else {
-                    return Err(invalid());
-                };
-                let profile =
-                    link(p, prims, "bim:profile", &PROFILE_KINDS, true)?.ok_or_else(invalid)?;
-                let profile =
-                    read_definition(profile, text(profile, "bim:definitionKind", "token")?)?;
-                definition(&profile)?;
-                let (width, height) = match &profile {
-                    Definition::RectangleProfile {
-                        width_mm,
-                        height_mm,
-                        ..
-                    } => (*width_mm, *height_mm),
-                    Definition::SectionProfile { shape, .. } => shape.extent_mm(),
-                    Definition::Material { .. } => return Err(invalid()),
-                };
-                let length = norm(difference(*b, *a));
-                let half_width = width / 2.0;
-                let half_height = height / 2.0;
-                let size = length.max((half_width * half_width + half_height * half_height).sqrt());
-                if size > 1e6 {
-                    return Err(limit());
+        if instance::definition(p, prims)?.is_none() {
+            match kind {
+                "plate" => {
+                    plate(
+                        &points(p, "steel:plate:contourPointsMm")?,
+                        number(p, "steel:plate:thicknessMm")?,
+                    )?;
+                    plate_holes(p)?;
+                    plate_hole_records(p)?;
+                    element_cut(p)?;
                 }
-                let eps = 0.001f64.max(size / 4194304.0);
-                if length < eps || width < eps || height < eps {
-                    return Err(invalid());
+                "beam" | "column" => {
+                    let axis = points(p, "bim:axisPointsMm")?;
+                    let [a, b] = axis.as_slice() else {
+                        return Err(invalid());
+                    };
+                    let profile =
+                        link(p, prims, "bim:profile", &PROFILE_KINDS, true)?.ok_or_else(invalid)?;
+                    let profile =
+                        read_definition(profile, text(profile, "bim:definitionKind", "token")?)?;
+                    definition(&profile)?;
+                    let (width, height) = match &profile {
+                        Definition::RectangleProfile {
+                            width_mm,
+                            height_mm,
+                            ..
+                        } => (*width_mm, *height_mm),
+                        Definition::SectionProfile { shape, .. } => shape.extent_mm(),
+                        Definition::Material { .. } => return Err(invalid()),
+                    };
+                    let length = norm(difference(*b, *a));
+                    let half_width = width / 2.0;
+                    let half_height = height / 2.0;
+                    let size =
+                        length.max((half_width * half_width + half_height * half_height).sqrt());
+                    if size > 1e6 {
+                        return Err(limit());
+                    }
+                    let eps = 0.001f64.max(size / 4194304.0);
+                    if length < eps || width < eps || height < eps {
+                        return Err(invalid());
+                    }
+                    if let Some(Value::Number(n)) = p
+                        .properties
+                        .iter()
+                        .find(|v| v.name == "steel:member:rollRad")
+                        .and_then(|v| v.value.as_ref())
+                    {
+                        cap([*n], std::f64::consts::TAU)?;
+                    }
+                    element_cut(p)?;
                 }
-                if let Some(Value::Number(n)) = p
-                    .properties
-                    .iter()
-                    .find(|v| v.name == "steel:member:rollRad")
-                    .and_then(|v| v.value.as_ref())
-                {
-                    cap([*n], std::f64::consts::TAU)?;
-                }
-                element_cut(p)?;
-            }
-            // An assembly has no shape inputs and no material of its own; a connection is a weld
-            // (A06) or a bolt group (A05) with its own properties and no material either.
-            "grid" => {
-                grid::read(p)?;
-                if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
-                    return Err(invalid());
-                }
-            }
-            "assembly" | "connection" | "level" => {
-                if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
-                    return Err(invalid());
-                }
-                if kind == "connection" {
-                    let connection_type = text(p, "steel:connection:type", "token")?;
-                    let has =
-                        |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
-                    match connection_type {
-                        "weld" if !has("steel:bolt:") => weld_properties(p)?,
-                        "bolt_group" if !has("steel:weld:") => bolt_properties(p)?,
-                        _ => return Err(invalid().with_rule("DV-ATTR-002")),
+                // An assembly has no shape inputs and no material of its own; a connection is a weld
+                // (A06) or a bolt group (A05) with its own properties and no material either.
+                "grid" => {
+                    grid::read(p)?;
+                    if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
+                        return Err(invalid());
                     }
                 }
-                if kind == "level" {
-                    elevation(number(p, "bim:elevationMm")?)?;
+                "assembly" | "connection" | "level" => {
+                    if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
+                        return Err(invalid());
+                    }
+                    if kind == "connection" {
+                        let connection_type = text(p, "steel:connection:type", "token")?;
+                        let has =
+                            |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
+                        match connection_type {
+                            "weld" if !has("steel:bolt:") => weld_properties(p)?,
+                            "bolt_group" if !has("steel:weld:") => bolt_properties(p)?,
+                            _ => return Err(invalid().with_rule("DV-ATTR-002")),
+                        }
+                    }
+                    if kind == "level" {
+                        elevation(number(p, "bim:elevationMm")?)?;
+                    }
                 }
+                _ => continue, // Unknown vocabulary remains inert; edits below refuse it.
             }
-            _ => continue, // Unknown vocabulary remains inert; edits below refuse it.
-        }
-        if let Some(material) = link(p, prims, "bim:material", &["material"], false)? {
-            definition(&read_definition(material, "material")?)?;
+            if let Some(material) = link(p, prims, "bim:material", &["material"], false)? {
+                definition(&read_definition(material, "material")?)?;
+            }
         }
         owned_pose(p)?;
         // The placement of an assembly, a weld and a level is the identity in this slice.
@@ -933,6 +936,7 @@ pub(super) fn snapshot(
         }
     }
     grid::read_grids(prims)?;
+    instance::links(prims)?;
     part_of(prims)?;
     main_part(prims)?;
     connects(prims)?;
@@ -2090,6 +2094,25 @@ pub(super) fn changes(
                             });
                         }
                     }
+                    Shape::Instance { kind, definition } => {
+                        if e.id == *definition || e.material.is_some() {
+                            return Err(invalid());
+                        }
+                        instance::validate_source(definition, *kind, prims)?;
+                        for group in [
+                            Group::Lifecycle,
+                            Group::Label,
+                            Group::ShapeInputs,
+                            Group::Placement,
+                            Group::Material,
+                            Group::Relationship,
+                        ] {
+                            reads.insert(Footprint {
+                                identity: definition.clone(),
+                                group,
+                            });
+                        }
+                    }
                     Shape::Grid(g) => {
                         grid::validate_record(g)?;
                         if e.id != g.id.to_string()
@@ -2277,6 +2300,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(b.direction_mm),
                 ),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
+                Shape::Instance { .. } => Ok(()),
                 Shape::Grid(g) => grid::validate_record(g),
             }
         }

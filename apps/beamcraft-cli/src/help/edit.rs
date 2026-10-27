@@ -14,7 +14,7 @@ pub(super) const HELP: &str = concat!(
     "thickness change the mesh, a move (--translation, absolute, rotation kept) only the ",
     "placement without rebuilding the body; --orientation-xyzw replaces the stored placement ",
     "quaternion (absolute; none resets to the identity) and is validated like on ",
-    "creation: a plate keeps its local mesh; a member rebuilds its rotated body; inspect-elements reports stored ",
+    "creation: plates and members keep their local mesh and quantity keys; inspect-elements reports stored ",
     "quantities as current, stale or missing)\n",
     "Cut (A03, A-2 record): cut-by-plane --store ROOT --id UUID --operation-id UUID ",
     "--point X,Y,Z --normal X,Y,Z --keep positive|negative [--op-id UUID] [--revision-id ",

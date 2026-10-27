@@ -390,6 +390,7 @@ pub(crate) struct Decoded {
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
+    pub(crate) instances: beamcraft_engine::instance::InstanceGraph,
     pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
@@ -834,6 +835,27 @@ pub(crate) fn decode(
             None => break,
         }
     }
+    let links = beamcraft_layer_engine::authored::instance::links(&prims)?;
+    let parts = prims
+        .iter()
+        .filter_map(|p| {
+            if p.sources.is_empty()
+                || p.sources.iter().any(|s| !s.owned)
+                || property(p, "bim:schemaVersion").and_then(text) != Some("0.1.0")
+                || property(p, "bim:geometryMode").and_then(text) != Some("parametric")
+            {
+                return None;
+            }
+            Some((
+                ElementId::parse(p.element_id.as_deref()?).ok()?,
+                beamcraft_model::instance::PartKind::parse(
+                    property(p, "bim:elementKind").and_then(text)?,
+                )?,
+            ))
+        })
+        .collect();
+    let instances = beamcraft_engine::instance::InstanceGraph::build(parts, &links)?;
+    let prims = beamcraft_layer_engine::authored::instance::resolve(prims)?;
     let by_path: BTreeMap<&str, &Prim> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     let mut plates = Vec::new();
     let mut members = Vec::new();
@@ -919,6 +941,7 @@ pub(crate) fn decode(
         other_elements: other,
         definitions,
         levels,
+        instances,
         grids: beamcraft_layer_engine::authored::grid::read_grids(&prims)?,
         elements,
         derived_elements,
@@ -1934,6 +1957,8 @@ pub struct Inspection {
     pub project_record: Option<String>,
     /// D2: the levels of the revision and the level of every plate, beam and column.
     pub levels: Levels,
+    /// P11: canonical definition owners and linked part instances.
+    pub instances: beamcraft_engine::instance::InstanceGraph,
     /// T01: validated project grids, without engineering bodies.
     pub grids: Vec<beamcraft_model::grid::Grid>,
     /// The common facts of every element except levels, by id (E02).
@@ -2062,6 +2087,7 @@ pub(crate) fn inspect_manifest_assets(
         reference_view_error,
         project_record: record,
         levels: decoded.levels,
+        instances: decoded.instances,
         grids: decoded.grids,
         elements: decoded.elements,
     })

@@ -124,6 +124,8 @@ impl BodyCache {
         member: &AuthoredMember,
         profile: ProfileInfo,
     ) -> Result<MemberBody, CommandError> {
+        // Placement is excluded from the body key, but every caller still receives admission.
+        member.placement.validate()?;
         if self.budget == 0 {
             return evaluate_member(member, profile);
         }
@@ -241,8 +243,8 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
 
 /// The key of a member body with its resolved profile. Every field of [`AuthoredMember`] and of
 /// the profile is named, as for [`plate_key`]; the pinned profile digest is not an input, its
-/// resolved values are. The placement rotation is a shape input (it composes into the member
-/// mesh); the translation is not.
+/// resolved values are. Placement is excluded: both translation and rotation belong to the
+/// instance and never change the element-local body.
 fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
     let AuthoredMember {
         id: _,
@@ -252,20 +254,15 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         axis_points_mm,
         profile: _,
         roll_rad,
-        placement,
+        placement: _,
         material: _,
         cuts,
     } = member;
     let mut key = Vec::with_capacity(192);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v2\0");
+    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v3\0");
     push_points(&mut key, axis_points_mm);
     push_option(&mut key, *roll_rad);
     push_cut(&mut key, cuts);
-    let [qx, qy, qz, qw] = placement.orientation_xyzw;
-    push_f64(&mut key, qx);
-    push_f64(&mut key, qy);
-    push_f64(&mut key, qz);
-    push_f64(&mut key, qw);
     match profile {
         ProfileInfo::Rectangle {
             width_mm,
@@ -446,7 +443,7 @@ pub fn scene_elements(records: &[PlateRecord]) -> Result<Vec<SceneElement>, Comm
 /// The snapshot-builder input for committed plates and members, in element-id order.
 ///
 /// Plates keep their meshes local and carry their authored quaternion. A member's rotation
-/// remains composed into its body mesh, so its scene pose contributes only the translation.
+/// is carried by its scene instance, just as for a plate.
 pub fn scene_elements_with_members(
     plates: &[PlateRecord],
     members: &[MemberRecord],
@@ -479,7 +476,7 @@ pub fn scene_elements_with_members(
             MemberKind::Beam => ElementKind::Beam,
             MemberKind::Column => ElementKind::Column,
         };
-        // The member mesh carries the composed section frame; only the translation remains.
+        // Every mesh stays local; the instance carries the complete rigid placement.
         let [x, y, z] = r.authored.placement.translation_mm;
         let translation = Translation3::new(x, y, z).map_err(|_| {
             CommandError::new(
@@ -488,12 +485,10 @@ pub fn scene_elements_with_members(
                 "value is not finite",
             )
         })?;
-        elements.push(SceneElement::new(
-            r.authored.id,
-            kind,
-            translation,
-            r.body.solid.scene_mesh(),
-        ));
+        elements.push(
+            SceneElement::new(r.authored.id, kind, translation, r.body.solid.scene_mesh())
+                .with_orientation(r.authored.placement.orientation_xyzw),
+        );
     }
     elements.sort_by_key(SceneElement::id);
     Ok(elements)
@@ -632,10 +627,9 @@ mod tests {
             member.placement = Placement::IDENTITY;
             super::evaluate_committed_members(&[member], &profiles, &no_materials).unwrap()
         };
-        // The rotation composes into the mesh (same triangles, rotated vertices), so the body
-        // differs from the identity one while the quantities stay the same.
+        // Placement preserves the local body and quantities; world bounds apply the instance pose.
         assert_eq!(records[0].quantities, identity[0].quantities);
-        assert_ne!(records[0].body.solid, identity[0].body.solid);
+        assert_eq!(records[0].body.solid, identity[0].body.solid);
         let elements = scene_elements_with_members(&[], &records).unwrap();
         let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
         let snapshot = ViewSnapshot::build(pin, elements, &Limits::default()).unwrap();

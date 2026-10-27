@@ -10,14 +10,10 @@
 //! the axis, width along the rolled `X_m`, height along `Y_m`; F06 sections 2, 4 and 6) and
 //! returns the authored state, the body, the quantities and the declared footprint.
 //!
-//! Members admit a rigid placement rotation. The section frame is the axis x up/roll member
-//! frame *composed with the placement quaternion*: the roll is applied about the member axis in
-//! the local frame first, and the placement quaternion maps the result, so the world section
-//! orientation is `R_placement . (axis x up/roll)` and the mesh is the detailed outline in that
-//! composed frame. The placement translation is not part of the body: it stays a scene
-//! placement. A non-normalized or degenerate quaternion is `INVALID_ARGUMENT` (never a crash).
-//! Plates and the other kinds keep the identity-rotation refusal; their frame work is a later
-//! slice.
+//! Members keep their axis, roll, cuts and mesh in element-local coordinates. A rigid placement
+//! is carried by the scene instance and USD Xform; it never changes shape or mass keys. The
+//! world section orientation is the placement rotation applied after the local axis/roll frame.
+//! Placement admission remains mandatory even though it does not enter body evaluation.
 
 use crate::command::{
     AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, map_cut,
@@ -290,14 +286,13 @@ pub fn declared_section_area_warning(spec: &SectionProfileSpec) -> Option<Declar
 /// effective area is the declared catalogue area when the profile carries one, else the exact
 /// computed area (P-Mass).
 ///
-/// A non-identity placement rotation composes into the mesh: the placement quaternion maps the
-/// rolled member frame (module documentation), and the mesh keeps the same triangles and volume
-/// with rotated vertices. A non-normalized or degenerate quaternion is `INVALID_ARGUMENT`; the
-/// identity rotation leaves the mesh bytes unchanged.
+/// Placement is validated but excluded from the local body and its keys. The scene instance
+/// applies the complete rigid transform for bounds, picking, features and display.
 pub fn evaluate_member(
     authored: &AuthoredMember,
     profile: ProfileInfo,
 ) -> Result<MemberBody, CommandError> {
+    authored.placement.validate()?;
     let [p1, p2] = authored.axis_points_mm;
     let (start, end) = (
         Point3::new(p1[0], p1[1], p1[2]),
@@ -397,23 +392,6 @@ pub fn evaluate_member(
                 )
             }
         }
-    };
-    // The placement rotation composes into the body: the placement quaternion maps the rolled
-    // member frame (module documentation). Identity keeps the mesh bytes, so stored digests stay
-    // stable; the translation is never part of the body.
-    let solid = if authored.placement.is_identity_rotation() {
-        solid
-    } else {
-        authored.placement.validate()?;
-        solid
-            .rotated_by(authored.placement.orientation_xyzw)
-            .ok_or_else(|| {
-                CommandError::new(
-                    ErrorCode::UnsupportedGeometry,
-                    "placement.orientation_xyzw",
-                    "the rotated member mesh failed mesh admission",
-                )
-            })?
     };
     let (section_area_mm2, area_source) = profile.effective_area();
     // A cut member's volume is the certified cut result (A03); otherwise the P-Mass gross
@@ -995,7 +973,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rigid_member_rotation_composes_into_the_mesh_and_keeps_quantities() {
+    fn a_rigid_member_rotation_keeps_the_local_mesh_and_quantities() {
         let profile = digest(b"rectangle 200x300");
         let lookup = |d: &ContentDigest| rectangle(d, profile);
         let mut c = command(profile);
@@ -1021,20 +999,7 @@ mod tests {
             rotated.body.section_area_mm2,
             identity.body.section_area_mm2
         );
-        // The mesh is the local one mapped by R_z(90 degrees): (x, y, z) -> (-y, x, z).
-        let close = |a: f64, b: f64| (a - b).abs() <= 1e-6 * a.abs().max(b.abs()).max(1.0);
-        for (v, r) in identity
-            .body
-            .solid
-            .vertices()
-            .iter()
-            .zip(rotated.body.solid.vertices())
-        {
-            assert!(
-                close(-v[1], r[0]) && close(v[0], r[1]) && close(v[2], r[2]),
-                "{v:?} vs {r:?}"
-            );
-        }
+        assert_eq!(rotated.body.solid, identity.body.solid);
         // `q` and `-q` are the same rotation, and x = y = z = 0 keeps the mesh bytes.
         let mut flip = c.clone();
         flip.placement.orientation_xyzw = [0.0, 0.0, 0.0, -1.0];

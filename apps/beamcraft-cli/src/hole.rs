@@ -109,7 +109,7 @@ pub fn add_hole_command(
         expected,
         ..
     } = base;
-    let (plates, members, definitions) = {
+    let (plates, members, definitions, instances) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -127,7 +127,7 @@ pub fn add_hole_command(
             )
             .into());
         }
-        (plates, members, decoded.definitions)
+        (plates, members, decoded.definitions, decoded.instances)
     };
     let head_plate = plates
         .iter()
@@ -211,7 +211,28 @@ pub fn add_hole_command(
         body,
         quantities,
     };
-    let footprint = Footprint::for_update(command.target_id, false, false, true, false, None)?;
+    let canonical = instances.definition(command.target_id)?;
+    let mut footprint = Footprint::for_update(command.target_id, false, false, true, false, None)?
+        .union(instances.dependencies(command.target_id)?)?;
+    let mut others = Vec::new();
+    for id in instances.group(command.target_id)? {
+        if id == command.target_id {
+            continue;
+        }
+        footprint = footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
+        let mut authored = plates
+            .iter()
+            .find(|p| p.authored.id == id)
+            .ok_or_else(|| integrity("shared hole plate is not evaluated"))?
+            .authored
+            .clone();
+        authored.hole_records = next.authored.hole_records.clone();
+        others.push(PlateRecord {
+            authored,
+            body: next.body.clone(),
+            quantities: next.quantities,
+        });
+    }
     let schema = schema_identity()?;
     let (mut author, opened) = Author::open(
         base_request,
@@ -222,13 +243,20 @@ pub fn add_hole_command(
         schema,
         &control,
     )?;
-    let changes = vec![
+    let mut changes = vec![
         Change::HoleRecords {
-            id: command.target_id.to_string(),
+            id: canonical.to_string(),
             records: next.authored.hole_records.clone(),
         },
         mesh_change(&next.authored.id, &next.body.solid, &plate_record(&next))?,
     ];
+    for other in &others {
+        changes.push(mesh_change(
+            &other.authored.id,
+            &other.body.solid,
+            &plate_record(other),
+        )?);
+    }
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

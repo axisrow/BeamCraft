@@ -9,9 +9,8 @@
 //! a material change rewrites the quantity record next to an unchanged mesh, a thickness change
 //! rebuilds the mesh and the records, a move (P08) rewrites the placement alone: the
 //! element-local body, its mesh and its stored quantities are not copied or rebuilt. An
-//! orientation change rewrites the placement and, for a member, rebuilds the rotated body (the
-//! placement rotation is part of the member mesh). The engine decides which groups changed and
-//! the layer engine's own write set is checked against the footprint it declares.
+//! orientation change rewrites the placement alone and keeps the local body. The engine
+//! decides which groups changed; the layer engine's write set is checked against its footprint.
 //!
 //! Honesty limits: replay of an `op_id` is decided from the head model (the update is a replay
 //! when the head already holds the patched state), not from a stored canonical request; a later
@@ -19,7 +18,7 @@
 //! request (F04 section 3) replaces this. One implicit workspace, in-process layer engine, as in
 //! `plate`.
 
-use crate::definition::{material_lookup, profile_lookup};
+use crate::definition::material_lookup;
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
     decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record,
@@ -28,7 +27,7 @@ use crate::plate::{
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{evaluate_member, member_quantities};
+use beamcraft_engine::member::member_quantities;
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
@@ -128,7 +127,7 @@ pub fn update_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, levels) = {
+    let (plates, members, definitions, levels, instances) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -146,7 +145,13 @@ pub fn update_element(
             )
             .into());
         }
-        (plates, members, decoded.definitions, decoded.levels)
+        (
+            plates,
+            members,
+            decoded.definitions,
+            decoded.levels,
+            decoded.instances,
+        )
     };
     let materials = material_lookup(&definitions);
     let patch_effect = effect(&command.patch);
@@ -198,14 +203,8 @@ pub fn update_element(
         Target::Member(head) => {
             let authored = patch_member(&head.authored, &command.patch)?;
             let material = authored.material.as_ref().map(&materials).transpose()?;
-            // The placement rotation is part of the member mesh: an orientation change rebuilds
-            // the body, every other patch keeps the head's mesh.
-            let body = if patch_effect.orientation {
-                let profile = profile_lookup(&definitions)(&authored.profile)?;
-                evaluate_member(&authored, profile)?
-            } else {
-                head.body.clone()
-            };
+            // Supported member edits change metadata, placement or material, never local shape.
+            let body = head.body.clone();
             let quantities = member_quantities(&body, material)?;
             (
                 UpdatedElement::Member(Box::new(head.clone())),
@@ -265,6 +264,46 @@ pub fn update_element(
         .into());
     }
 
+    let canonical = instances.definition(command.target_id)?;
+    let shared = patch_effect.material || patch_effect.shape;
+    let mut shared_records = Vec::new();
+    if shared {
+        let patch = beamcraft_model::command::ElementPatch {
+            material: command.patch.material,
+            thickness_mm: command.patch.thickness_mm,
+            ..Default::default()
+        };
+        for id in instances.group(command.target_id)? {
+            if id == command.target_id {
+                continue;
+            }
+            let record = match &next {
+                UpdatedElement::Plate(r) => {
+                    let head = plates
+                        .iter()
+                        .find(|p| p.authored.id == id)
+                        .ok_or_else(|| integrity("shared plate is not evaluated"))?;
+                    UpdatedElement::Plate(Box::new(PlateRecord {
+                        authored: patch_plate(&head.authored, &patch)?,
+                        body: r.body.clone(),
+                        quantities: r.quantities,
+                    }))
+                }
+                UpdatedElement::Member(r) => {
+                    let head = members
+                        .iter()
+                        .find(|p| p.authored.id == id)
+                        .ok_or_else(|| integrity("shared member is not evaluated"))?;
+                    UpdatedElement::Member(Box::new(MemberRecord {
+                        authored: patch_member(&head.authored, &patch)?,
+                        body: r.body.clone(),
+                        quantities: r.quantities,
+                    }))
+                }
+            };
+            shared_records.push(record);
+        }
+    }
     let mut footprint = Footprint::for_update(
         command.target_id,
         patch_effect.name || patch_effect.class,
@@ -273,6 +312,21 @@ pub fn update_element(
         patch_effect.placement || patch_effect.orientation,
         new_material,
     )?;
+    if shared {
+        footprint = footprint.union(instances.dependencies(command.target_id)?)?;
+        for id in instances.group(command.target_id)? {
+            if id != command.target_id {
+                footprint = footprint.union(Footprint::for_update(
+                    id,
+                    false,
+                    patch_effect.material,
+                    patch_effect.shape,
+                    false,
+                    new_material,
+                )?)?;
+            }
+        }
+    }
     // The level decision needs the model (kind of the target, existence and kind of the level);
     // it runs after replay and no-op detection, so a retry never fails on its own result.
     if let Some(level) = command.patch.level {
@@ -289,6 +343,7 @@ pub fn update_element(
         &control,
     )?;
     let id_text = command.target_id.to_string();
+    let definition_text = canonical.to_string();
     let mut changes = Vec::new();
     if let Some(class) = command.patch.class {
         changes.push(Change::PartClass {
@@ -304,13 +359,13 @@ pub fn update_element(
     }
     if let Some(material) = command.patch.material {
         changes.push(Change::Material {
-            id: id_text.clone(),
+            id: definition_text.clone(),
             opinion: material.map_or(MaterialOpinion::Empty, MaterialOpinion::Target),
         });
     }
     if let Some(mm) = command.patch.thickness_mm {
         changes.push(Change::Thickness {
-            id: id_text.clone(),
+            id: definition_text.clone(),
             mm,
         });
     }
@@ -334,11 +389,18 @@ pub fn update_element(
             level: level.map(|l| l.to_string()),
         });
     }
-    if patch_effect.material
-        || patch_effect.shape
-        || (patch_effect.orientation && matches!(next, UpdatedElement::Member(_)))
-    {
+    if patch_effect.material || patch_effect.shape {
         changes.push(match &next {
+            UpdatedElement::Plate(r) => {
+                mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?
+            }
+            UpdatedElement::Member(r) => {
+                mesh_change(&r.authored.id, &r.body.solid, &member_record(r))?
+            }
+        });
+    }
+    for record in &shared_records {
+        changes.push(match record {
             UpdatedElement::Plate(r) => {
                 mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?
             }
