@@ -554,7 +554,7 @@ impl PerfRun {
                 observed.stats,
             ));
         }
-        match self.phases.get(self.index) {
+        let mut request = match self.phases.get(self.index) {
             Some(Phase::Idle(length)) => Request {
                 wake_after: Some(*length),
                 ..Request::default()
@@ -563,7 +563,16 @@ impl PerfRun {
                 repaint_now: true,
                 ..Request::default()
             },
+        };
+        // A mode phase must not leak its drawing style into the next phase's frames: the
+        // boundary frame draws shaded again, unless the next phase names its own mode.
+        if matches!(phase, Phase::Mode(..)) {
+            request.mode = match self.phases.get(self.index) {
+                Some(Phase::Mode(mode, _)) => Some(*mode),
+                _ => Some(beamcraft_engine::RenderMode::Shaded),
+            };
         }
+        request
     }
 
     /// One step of a reload, edit or resize phase: starts the next action or checks the
@@ -782,13 +791,36 @@ mod tests {
                 break;
             }
         }
-        // The frame that starts a phase is its first, so two mode frames per count of two.
+        // The frame that starts a phase is its first, so two mode frames per count of two; the
+        // boundary frames re-state the mode of the next phase, and the last one resets shaded.
         assert_eq!(
             modes,
             vec![
                 beamcraft_engine::RenderMode::Wireframe,
                 beamcraft_engine::RenderMode::Wireframe,
                 beamcraft_engine::RenderMode::SelectedOnly,
+                beamcraft_engine::RenderMode::SelectedOnly,
+                beamcraft_engine::RenderMode::Shaded,
+            ]
+        );
+        // A mode phase resets the drawing style on its boundary, so a following phase without
+        // a mode of its own is not measured in a leaked mode.
+        let mut run = PerfRun::new(parse("wireframe:1,ui:1").unwrap(), "\"x\":1".into());
+        let mut modes = Vec::new();
+        loop {
+            let request = run.step(&observed(t0));
+            if let Some(mode) = request.mode {
+                modes.push(mode);
+            }
+            if request.finished.is_some() {
+                break;
+            }
+        }
+        assert_eq!(
+            modes,
+            vec![
+                beamcraft_engine::RenderMode::Wireframe,
+                beamcraft_engine::RenderMode::Shaded,
             ]
         );
     }
