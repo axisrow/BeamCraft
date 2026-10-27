@@ -61,6 +61,9 @@ pub enum Phase {
     Ui(u32),
     /// Frames that orbit the camera.
     Orbit(u32),
+    /// Frames drawn in one render mode (V16), each with a light orbit: the frame-time baseline
+    /// of that mode over the loaded scene.
+    Mode(beamcraft_engine::RenderMode, u32),
     /// Refreshes of an unchanged store.
     Reload(u32),
     /// Click selections.
@@ -80,6 +83,7 @@ impl Phase {
             Self::Idle(_) => "idle",
             Self::Ui(_) => "ui",
             Self::Orbit(_) => "orbit",
+            Self::Mode(mode, _) => mode.as_token(),
             Self::Reload(_) => "reload",
             Self::Select(_) => "select",
             Self::Cancel(_) => "cancel",
@@ -94,6 +98,7 @@ impl Phase {
             Self::Idle(d) => d.as_secs(),
             Self::Ui(k)
             | Self::Orbit(k)
+            | Self::Mode(_, k)
             | Self::Reload(k)
             | Self::Select(k)
             | Self::Cancel(k)
@@ -105,7 +110,7 @@ impl Phase {
 
 fn usage() -> Error {
     Error::Input(
-        "perf plan: load,idle:S,ui:K,orbit:K,reload:K,select:K,cancel:K,edit:K,resize:K (comma-separated, 1 to 32)",
+        "perf plan: load,idle:S,ui:K,orbit:K,shaded:K,wireframe:K,transparent:K,grey:K,selected:K,reload:K,select:K,cancel:K,edit:K,resize:K (comma-separated, 1 to 32)",
     )
 }
 
@@ -143,7 +148,11 @@ pub fn parse(plan: &str) -> Result<Vec<Phase>, Error> {
             "cancel" => Phase::Cancel(count),
             "edit" => Phase::Edit(count),
             "resize" => Phase::Resize(count),
-            _ => return Err(usage()),
+            // Any render-mode name is K frames drawn in that mode.
+            other => {
+                let mode = beamcraft_engine::RenderMode::parse(other).ok_or_else(usage)?;
+                Phase::Mode(mode, count)
+            }
         });
     }
     Ok(phases)
@@ -200,6 +209,8 @@ pub struct Request {
     pub cancel: Option<u32>,
     /// Orbit the camera a little.
     pub orbit: bool,
+    /// Draw this frame in this render mode, as a key press would (a mode phase).
+    pub mode: Option<beamcraft_engine::RenderMode>,
     /// Ask for this window inner size (logical points).
     pub resize: Option<[f32; 2]>,
     /// Ask for another frame right away.
@@ -467,6 +478,17 @@ impl PerfRun {
                         false
                     }
                 }
+                Phase::Mode(mode, count) => {
+                    // The frame that starts the phase is the first of its count.
+                    if running.frames > count {
+                        true
+                    } else {
+                        request.orbit = true;
+                        request.mode = Some(mode);
+                        request.repaint_now = true;
+                        false
+                    }
+                }
                 Phase::Reload(count)
                 | Phase::Select(count)
                 | Phase::Cancel(count)
@@ -718,6 +740,16 @@ mod tests {
                 Phase::Resize(2),
             ]
         );
+        assert_eq!(
+            parse("shaded:2,wireframe:3,transparent:1,grey:2,selected:4").unwrap(),
+            vec![
+                Phase::Mode(beamcraft_engine::RenderMode::Shaded, 2),
+                Phase::Mode(beamcraft_engine::RenderMode::Wireframe, 3),
+                Phase::Mode(beamcraft_engine::RenderMode::Transparent, 1),
+                Phase::Mode(beamcraft_engine::RenderMode::Grey, 2),
+                Phase::Mode(beamcraft_engine::RenderMode::SelectedOnly, 4),
+            ]
+        );
         for bad in [
             "",
             "idle",
@@ -731,6 +763,34 @@ mod tests {
         ] {
             assert!(parse(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_mode_phase_orbits_and_draws_in_its_mode() {
+        let t0 = Instant::now();
+        let mut run = PerfRun::new(parse("wireframe:2,selected:1").unwrap(), "\"x\":1".into());
+        let mut modes = Vec::new();
+        loop {
+            let request = run.step(&observed(t0));
+            if let Some(mode) = request.mode {
+                modes.push(mode);
+            }
+            if let Some((report, ok)) = request.finished {
+                assert!(ok);
+                assert!(report.contains("\"phase\":\"wireframe\""), "{report}");
+                assert!(report.contains("\"phase\":\"selected\""), "{report}");
+                break;
+            }
+        }
+        // The frame that starts a phase is its first, so two mode frames per count of two.
+        assert_eq!(
+            modes,
+            vec![
+                beamcraft_engine::RenderMode::Wireframe,
+                beamcraft_engine::RenderMode::Wireframe,
+                beamcraft_engine::RenderMode::SelectedOnly,
+            ]
+        );
     }
 
     #[test]

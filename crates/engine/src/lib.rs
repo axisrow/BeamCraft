@@ -52,7 +52,9 @@ pub use beamcraft_kernel::PlateResult;
 pub use element::{ElementId, ElementKind, KindFilter};
 pub use error::{ViewCode, ViewError};
 pub use limits::Limits;
-pub use presentation::{ProjectedElement, Representation, ViewProjection, ViewSettings};
+pub use presentation::{
+    ProjectedElement, RenderMode, Representation, ViewProjection, ViewSettings,
+};
 pub use query::bounds::Aabb;
 pub use query::changes::{Change, ChangeKind, ChangeSet, ChangedFields, SnapshotHistory, diff};
 pub use query::mesh::MeshEntry;

@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -130,6 +130,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         Some(path) => PathBuf::from(path),
         None => source::default_cli()?,
     };
+    let config_dir = map.get("--config-dir").map(PathBuf::from);
     let store = match (map.get("--store"), &workspace) {
         (Some(store), None) => PathBuf::from(store),
         (None, Some(dir)) => dir.clone(),
@@ -148,11 +149,8 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         }
         _ => return Err(usage()),
     };
-    if map.contains_key("--config-dir") {
-        return Err(usage());
-    }
     if map.contains_key("--metrics") {
-        if map.contains_key("--perf-run") {
+        if map.contains_key("--perf-run") || config_dir.is_some() {
             return Err(usage());
         }
         let frames = number(&map, "--metrics", 300)?;
@@ -178,6 +176,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         actor: map.get("--actor-id").cloned(),
         environment: None,
         author: None,
+        config_dir,
     };
     let perf_run = plan.is_some();
     window(
@@ -217,6 +216,14 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
     let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends =
         wgpu::Backends::DX12 | wgpu::Backends::VULKAN | wgpu::Backends::METAL;
+    // The wireframe render mode draws triangle edges: a native desktop feature (Metal, DX12,
+    // and Vulkan with `fillModeNonSolid`), requested explicitly like the renderer's own
+    // headless device does.
+    setup.device_descriptor = std::sync::Arc::new(|_adapter| wgpu::DeviceDescriptor {
+        label: Some("BeamCraft viewport"),
+        required_features: wgpu::Features::POLYGON_MODE_LINE,
+        ..Default::default()
+    });
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size(size)
         .with_title("BeamCraft")

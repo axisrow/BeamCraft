@@ -39,6 +39,7 @@ pub mod render;
 pub mod scene;
 pub mod selection;
 pub mod shell;
+pub mod shortcuts;
 pub mod source;
 pub mod start;
 pub mod stats;

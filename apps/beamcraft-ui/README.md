@@ -44,6 +44,12 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   pinch and keys keep theirs). Both presets: `+` and `-` zoom from the keyboard, F fits, R
   reloads (`+`, `-`, F and R are ignored while a text field has the keyboard). A click selects,
   Esc clears the selection.
+- Render modes (experimental V16 slice, see [the design note](../../docs/design/v16-render-modes.md)):
+  the View tab's DISPLAY group and `Ctrl+1` to `Ctrl+5` switch the drawing of the one loaded
+  scene between wireframe, transparent, grey, shaded (the default) and selected only; switching
+  never reloads the scene. The bindings are remappable in `shortcuts.json` in the user's
+  configuration directory (`BEAMCRAFT_CONFIG_DIR`, or `--config-dir` with `--store`); a missing
+  file is the defaults, a damaged one keeps them and says so in the Details window.
 - Live refresh: the window watches the store's committed revisions and reloads by itself when
   another process (the CLI, an agent) commits to the store it shows; `R` stays for a manual
   reload. A reload whose framing changed fits the camera, so new content comes into view.

@@ -12,6 +12,7 @@ use crate::publish::Phase;
 use crate::selection::Selection;
 use crate::theme::{self, BRAND, INK, Icon, Kind, Palette};
 use crate::tools::{MemberKind, ToolKind};
+use beamcraft_engine::RenderMode;
 use beamcraft_engine::query::pick::{SelectionClass, SnapKind};
 use egui::{Rect, RichText, Sense, Stroke, StrokeKind, Ui, vec2};
 
@@ -429,6 +430,9 @@ impl App {
                 let edits_free = !self.editor.busy() && !self.other_command_running();
                 let has_workspace = self.source.workspace.is_some();
                 let mut pick = None;
+                let mut mode_pick = None;
+                let mode = self.mode;
+                let shortcuts = self.shortcuts;
                 let (mut undo, mut redo) = (false, false);
                 ui.horizontal(|ui| {
                     if menu_toggle(ui, self.menu_open).clicked() {
@@ -538,8 +542,31 @@ impl App {
                                     }
                                     RibbonTab::View => {
                                         group(ui, "DISPLAY", &mut |ui| {
-                                            tool_button(ui, Icon::Block, "Shaded", true, true);
-                                            tool_button(ui, Icon::Wire, "Wire", false, false);
+                                            for (m, icon, label) in [
+                                                (RenderMode::Shaded, Icon::Block, "Shaded"),
+                                                (RenderMode::Wireframe, Icon::Wire, "Wireframe"),
+                                                (
+                                                    RenderMode::Transparent,
+                                                    Icon::Block,
+                                                    "Transparent",
+                                                ),
+                                                (RenderMode::Grey, Icon::Block, "Grey"),
+                                                (
+                                                    RenderMode::SelectedOnly,
+                                                    Icon::Select,
+                                                    "Selected",
+                                                ),
+                                            ] {
+                                                let response =
+                                                    tool_button(ui, icon, label, mode == m, true);
+                                                if response.clicked() {
+                                                    mode_pick = Some(m);
+                                                }
+                                                response.on_hover_text(format!(
+                                                    "{label} ({})",
+                                                    shortcuts.text(m)
+                                                ));
+                                            }
                                         });
                                         group(ui, "VIEWS", &mut |ui| {
                                             for label in
@@ -611,6 +638,10 @@ impl App {
                     } else {
                         self.set_bench(bench);
                     }
+                }
+                // A render-mode button: the same state a Ctrl+1 to Ctrl+5 key press sets.
+                if let Some(m) = mode_pick {
+                    self.mode = m;
                 }
                 if undo {
                     self.start_edit(Some(EditKind::Undo));

@@ -15,11 +15,11 @@
 )]
 
 use beamcraft_engine::synthetic::plate_scene;
-use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
+use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
 use beamcraft_model::digest::Sha256;
 use beamcraft_ui::camera::Camera;
 use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
-use beamcraft_ui::scene::Scene;
+use beamcraft_ui::scene::{Scene, SelectedDraw};
 use beamcraft_ui::stats::Stats;
 use beamcraft_ui::tools::{ToolKind, Tools};
 use beamcraft_ui::{Error, command, source};
@@ -52,7 +52,14 @@ fn render(gpu: &Gpu, scene: &Scene) -> ([u8; 4], [u8; 4], usize) {
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats);
+    let index = renderer.draw(
+        &gpu.device,
+        &gpu.queue,
+        &uploaded,
+        view,
+        &stats,
+        RenderMode::Shaded,
+    );
     wait(&gpu.device, index).unwrap();
     let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
     assert!(pollster::block_on(scope.pop()).is_none());
@@ -95,7 +102,14 @@ fn lit_pixels(gpu: &Gpu, scene: &Scene, uploaded: &Uploaded) -> usize {
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &Stats::default()).unwrap();
     let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let index = renderer.draw(&gpu.device, &gpu.queue, uploaded, view, &Stats::default());
+    let index = renderer.draw(
+        &gpu.device,
+        &gpu.queue,
+        uploaded,
+        view,
+        &Stats::default(),
+        RenderMode::Shaded,
+    );
     wait(&gpu.device, index).unwrap();
     let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
     assert!(pollster::block_on(scope.pop()).is_none());
@@ -106,6 +120,86 @@ fn lit_pixels(gpu: &Gpu, scene: &Scene, uploaded: &Uploaded) -> usize {
             is_lit(pixels[at..at + 4].try_into().unwrap())
         })
         .count()
+}
+
+#[test]
+fn the_five_render_modes_draw_five_different_pictures_of_one_scene() {
+    let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let Some(gpu) = gpu() else { return };
+    let (target, extent) = scene.framing();
+    let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
+    let stats = Stats::default();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let scope = gpu.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let picture = |mode| -> (usize, [u8; 4]) {
+        let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats, mode);
+        wait(&gpu.device, index).unwrap();
+        let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        let pixel = |x: usize, y: usize| -> [u8; 4] {
+            pixels[y * row as usize + x * 4..][..4].try_into().unwrap()
+        };
+        let lit = (0..128usize)
+            .flat_map(|y| (0..128usize).map(move |x| (x, y)))
+            .filter(|(x, y)| is_lit(pixel(*x, *y)))
+            .count();
+        (lit, pixel(64, 64))
+    };
+    // Shaded is the existing picture: the plate fills the centre, lit.
+    let (shaded_lit, shaded_centre) = picture(RenderMode::Shaded);
+    assert!(is_lit(shaded_centre), "shaded centre {shaded_centre:?}");
+    // Wireframe draws the edges only: some lit pixels, far fewer than the fill.
+    let (wire_lit, _) = picture(RenderMode::Wireframe);
+    assert!(
+        wire_lit > 0 && wire_lit < shaded_lit,
+        "wire {wire_lit} of {shaded_lit}"
+    );
+    // Grey is lit and colourless.
+    let (grey_lit, grey_centre) = picture(RenderMode::Grey);
+    assert!(is_lit(grey_centre), "grey centre {grey_centre:?}");
+    assert!(grey_lit > 0);
+    let [r, g, b, _] = grey_centre;
+    assert!(
+        (i16::from(r) - i16::from(g)).abs() <= 2 && (i16::from(g) - i16::from(b)).abs() <= 2,
+        "grey is colourless: {grey_centre:?}"
+    );
+    // Transparent blends with the background: a picture of its own.
+    let (transparent_lit, transparent_centre) = picture(RenderMode::Transparent);
+    assert!(transparent_lit > 0);
+    assert!(
+        transparent_centre != shaded_centre && !is_background(transparent_centre),
+        "transparent centre {transparent_centre:?}"
+    );
+    // Selected only shows nothing until the selected element is drawn alone.
+    let (empty_lit, _) = picture(RenderMode::SelectedOnly);
+    assert_eq!(empty_lit, 0);
+    let id = &snapshot.elements()[0].id;
+    let selected = SelectedDraw::of(&snapshot, id, scene.origin_mm).unwrap();
+    let index = renderer
+        .draw_one(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            &selected.digest,
+            &selected.instance,
+        )
+        .expect("the selected element's mesh is on the device");
+    wait(&gpu.device, index).unwrap();
+    let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+    let selected_lit = (0..128usize)
+        .flat_map(|y| (0..128usize).map(move |x| (x, y)))
+        .filter(|(x, y)| is_lit(pixels[y * row as usize + x * 4..][..4].try_into().unwrap()))
+        .count();
+    assert_eq!(
+        selected_lit, shaded_lit,
+        "the one element fills like the scene"
+    );
+    assert!(pollster::block_on(scope.pop()).is_none());
 }
 
 #[test]
@@ -349,7 +443,14 @@ fn render_pixels(gpu: &Gpu, scene: &Scene) -> Vec<u8> {
     let stats = Stats::default();
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 128, 128, &stats).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, &stats).unwrap();
-    let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats);
+    let index = renderer.draw(
+        &gpu.device,
+        &gpu.queue,
+        &uploaded,
+        view,
+        &stats,
+        RenderMode::Shaded,
+    );
     wait(&gpu.device, index).unwrap();
     renderer.readback(&gpu.device, &gpu.queue).unwrap().0
 }
