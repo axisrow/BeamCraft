@@ -171,6 +171,7 @@ impl crate::weld::Parts {
         command: &CreateBoltGroup,
         spec: &FastenerSpec,
         bounds: &BTreeMap<ElementId, Bounds>,
+        pins_fastener: bool,
     ) -> Result<BoltGroupDecision, CommandError> {
         command.validate_arguments()?;
         if self.kinds.contains_key(&command.new_id) {
@@ -318,8 +319,12 @@ impl crate::weld::Parts {
                     ));
                 }
             }
-            let footprint =
-                Footprint::for_bolt_group(command.new_id, &command.parts, command.fastener)?;
+            let footprint = Footprint::for_bolt_group(
+                command.new_id,
+                &command.parts,
+                command.fastener,
+                pins_fastener,
+            )?;
             Ok(BoltGroupDecision {
                 length_mm,
                 washer_under_head,
@@ -477,7 +482,7 @@ mod tests {
         // from 17 down. The grip through both plates is 20; the length must cover
         // 20 + 3 + 14.8 + 5 = 42.8, so the smallest fitting standard length is 45.
         let decision = parts
-            .create_bolt_group(&command(), &spec(), &bounds)
+            .create_bolt_group(&command(), &spec(), &bounds, true)
             .unwrap();
         assert_eq!(decision.length_mm, 45.0);
         assert!(decision.washer_under_head && decision.washer_under_nut);
@@ -496,7 +501,7 @@ mod tests {
         command.fixed_length_mm = Some(50.0);
         assert_eq!(
             parts
-                .create_bolt_group(&command, &spec(), &bounds)
+                .create_bolt_group(&command, &spec(), &bounds, true)
                 .unwrap()
                 .length_mm,
             50.0
@@ -504,7 +509,7 @@ mod tests {
         command.fixed_length_mm = Some(55.0);
         assert_eq!(
             parts
-                .create_bolt_group(&command, &spec(), &bounds)
+                .create_bolt_group(&command, &spec(), &bounds, true)
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
@@ -518,7 +523,7 @@ mod tests {
         parallel.placement.plane_normal = [1.0, 0.0, 0.0];
         assert_eq!(
             two_plates
-                .create_bolt_group(&parallel, &spec(), &bounds)
+                .create_bolt_group(&parallel, &spec(), &bounds, true)
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
@@ -531,7 +536,7 @@ mod tests {
         uncrossed.parts.push(id(3));
         assert_eq!(
             parts
-                .create_bolt_group(&uncrossed, &spec(), &bounds)
+                .create_bolt_group(&uncrossed, &spec(), &bounds, true)
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
@@ -554,7 +559,7 @@ mod tests {
         command.placement.point1_mm = [100.0, 100.0, 110.0];
         command.placement.point2_mm = [400.0, 100.0, 110.0];
         assert_eq!(
-            many.create_bolt_group(&command, &spec(), &bounds_many)
+            many.create_bolt_group(&command, &spec(), &bounds_many, true)
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -567,7 +572,7 @@ mod tests {
         let mut generate = command();
         generate.hole_mode = HoleMode::Generate;
         let error = parts
-            .create_bolt_group(&generate, &spec(), &bounds)
+            .create_bolt_group(&generate, &spec(), &bounds, true)
             .unwrap_err();
         assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
         assert_eq!(error.field, "hole_mode");
@@ -602,14 +607,16 @@ mod tests {
         let (parts, bounds) = parts();
         let mut slid = command();
         slid.placement.on_plane_mm = 40.0;
-        let moved = parts.create_bolt_group(&slid, &spec(), &bounds).unwrap();
+        let moved = parts
+            .create_bolt_group(&slid, &spec(), &bounds, true)
+            .unwrap();
         assert_eq!(moved.length_mm, 45.0);
         // Sliding 400 mm along y leaves both plates: the row stops crossing them.
         let mut away = command();
         away.placement.on_plane_mm = 400.0;
         assert_eq!(
             parts
-                .create_bolt_group(&away, &spec(), &bounds)
+                .create_bolt_group(&away, &spec(), &bounds, true)
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument

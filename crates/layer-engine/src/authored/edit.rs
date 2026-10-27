@@ -226,10 +226,10 @@ fn relationship(
     let targets = match opinion {
         MaterialOpinion::Target(d) => Some(vec![path(&definition_path(
             d,
-            if name == "bim:material" {
-                DefinitionCategory::Material
-            } else {
-                DefinitionCategory::Profile
+            match name {
+                "bim:material" => DefinitionCategory::Material,
+                "bim:fastener" => DefinitionCategory::Fastener,
+                _ => DefinitionCategory::Profile,
             },
         ))?]),
         MaterialOpinion::Empty => Some(Vec::new()),
@@ -899,17 +899,17 @@ fn create(
             )?;
             let vec3 = |v: [f64; 3]| sdf::Value::vec3d(v[0], v[1], v[2]);
             for (name, value) in [
-                ("steel:bolt-group:point1Mm", vec3(g.point1_mm)),
-                ("steel:bolt-group:point2Mm", vec3(g.point2_mm)),
-                ("steel:bolt-group:planeNormal", vec3(g.plane_normal)),
+                ("steel:boltGroup:point1Mm", vec3(g.point1_mm)),
+                ("steel:boltGroup:point2Mm", vec3(g.point2_mm)),
+                ("steel:boltGroup:planeNormal", vec3(g.plane_normal)),
             ] {
                 attr(data, &p, name, "double3", value)?;
             }
             for (name, value) in [
-                ("steel:bolt-group:rotationRad", g.rotation_rad),
-                ("steel:bolt-group:onPlaneMm", g.on_plane_mm),
-                ("steel:bolt-group:depthMm", g.depth_mm),
-                ("steel:bolt-group:offsetStartMm", g.offset_start_mm),
+                ("steel:boltGroup:rotationRad", g.rotation_rad),
+                ("steel:boltGroup:onPlaneMm", g.on_plane_mm),
+                ("steel:boltGroup:depthMm", g.depth_mm),
+                ("steel:boltGroup:offsetStartMm", g.offset_start_mm),
             ] {
                 attr(data, &p, name, "double", sdf::Value::Double(value))?;
             }
@@ -917,7 +917,7 @@ fn create(
                 attr(
                     data,
                     &p,
-                    "steel:bolt-group:spacingsMm",
+                    "steel:boltGroup:spacingsMm",
                     "double[]",
                     sdf::Value::DoubleVec(g.spacings_mm.clone()),
                 )?;
@@ -925,15 +925,22 @@ fn create(
             attr(
                 data,
                 &p,
-                "steel:bolt-group:lengthMode",
+                "steel:boltGroup:lengthMode",
                 "token",
                 sdf::Value::Token(g.length_mode.clone().into()),
+            )?;
+            attr(
+                data,
+                &p,
+                "steel:boltGroup:lengthMm",
+                "double",
+                sdf::Value::Double(g.length_mm),
             )?;
             if let Some(length) = g.fixed_length_mm {
                 attr(
                     data,
                     &p,
-                    "steel:bolt-group:fixedLengthMm",
+                    "steel:boltGroup:fixedLengthMm",
                     "double",
                     sdf::Value::Double(length),
                 )?;
@@ -942,7 +949,7 @@ fn create(
                 attr(
                     data,
                     &p,
-                    "steel:bolt-group:washerUnderHead",
+                    "steel:boltGroup:washerUnderHead",
                     "bool",
                     sdf::Value::Bool(wanted),
                 )?;
@@ -951,7 +958,7 @@ fn create(
                 attr(
                     data,
                     &p,
-                    "steel:bolt-group:washerUnderNut",
+                    "steel:boltGroup:washerUnderNut",
                     "bool",
                     sdf::Value::Bool(wanted),
                 )?;
@@ -959,7 +966,7 @@ fn create(
             attr(
                 data,
                 &p,
-                "steel:bolt-group:holeMode",
+                "steel:boltGroup:holeMode",
                 "token",
                 sdf::Value::Token(g.hole_mode.clone().into()),
             )?;
@@ -967,7 +974,7 @@ fn create(
                 attr(
                     data,
                     &p,
-                    "steel:bolt-group:holeClearanceMm",
+                    "steel:boltGroup:holeClearanceMm",
                     "double",
                     sdf::Value::Double(clearance),
                 )?;
@@ -1568,15 +1575,16 @@ fn capture(
 
     const BOLT_GROUP: &[(&str, &str)] = &[
         ("steel:connection:type", "token"),
-        ("steel:bolt-group:point1Mm", "double3"),
-        ("steel:bolt-group:point2Mm", "double3"),
-        ("steel:bolt-group:planeNormal", "double3"),
-        ("steel:bolt-group:rotationRad", "double"),
-        ("steel:bolt-group:onPlaneMm", "double"),
-        ("steel:bolt-group:depthMm", "double"),
-        ("steel:bolt-group:offsetStartMm", "double"),
-        ("steel:bolt-group:lengthMode", "token"),
-        ("steel:bolt-group:holeMode", "token"),
+        ("steel:boltGroup:point1Mm", "double3"),
+        ("steel:boltGroup:point2Mm", "double3"),
+        ("steel:boltGroup:planeNormal", "double3"),
+        ("steel:boltGroup:rotationRad", "double"),
+        ("steel:boltGroup:onPlaneMm", "double"),
+        ("steel:boltGroup:depthMm", "double"),
+        ("steel:boltGroup:offsetStartMm", "double"),
+        ("steel:boltGroup:lengthMode", "token"),
+        ("steel:boltGroup:lengthMm", "double"),
+        ("steel:boltGroup:holeMode", "token"),
         ("bim:connects", "rel"),
         ("bim:fastener", "rel"),
     ];
@@ -1678,20 +1686,20 @@ fn capture(
                             add(name, ty, 0);
                         }
                         if g.fixed_length_mm.is_some() {
-                            add("steel:bolt-group:fixedLengthMm", "double", 0);
+                            add("steel:boltGroup:fixedLengthMm", "double", 0);
                         }
                         if g.washer_under_head.is_some() {
-                            add("steel:bolt-group:washerUnderHead", "bool", 0);
+                            add("steel:boltGroup:washerUnderHead", "bool", 0);
                         }
                         if g.washer_under_nut.is_some() {
-                            add("steel:bolt-group:washerUnderNut", "bool", 0);
+                            add("steel:boltGroup:washerUnderNut", "bool", 0);
                         }
                         if g.hole_clearance_mm.is_some() {
-                            add("steel:bolt-group:holeClearanceMm", "double", 0);
+                            add("steel:boltGroup:holeClearanceMm", "double", 0);
                         }
                         if !g.spacings_mm.is_empty() {
                             add(
-                                "steel:bolt-group:spacingsMm",
+                                "steel:boltGroup:spacingsMm",
                                 "double[]",
                                 g.spacings_mm.len() as u8,
                             );

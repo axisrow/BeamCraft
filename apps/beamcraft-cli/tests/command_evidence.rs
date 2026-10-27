@@ -22,6 +22,10 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+const FASTENERS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
 fn element(n: usize) -> ElementId {
     ElementId::parse(&format!("019a7bf0-0000-7000-8000-{n:012x}")).unwrap()
 }
@@ -373,20 +377,26 @@ fn every_modeling_publication_path_records_its_own_operation() {
         &[
             "--name",
             "Bolts",
-            "--main",
-            &element(1).to_string(),
-            "--secondary",
-            &element(2).to_string(),
-            "--origin",
-            "100,100,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
+            "--parts",
+            &format!("{},{}", element(1), element(2)),
+            "--fastener",
+            "SYN-BOLT-12x50",
+            "--fastener-library",
+            FASTENERS,
+            "--point1",
+            "100,100,30",
+            "--point2",
+            "900,100,30",
+            "--plane-normal",
+            "0,0,-1",
+            "--length-mode",
+            "fixed",
+            "--fixed-length",
+            "30",
+            "--spacings",
             "80",
-            "--diameter",
-            "16",
+            "--hole-mode",
+            "none",
         ],
     );
     let preview = f.ok("preview-numbering", &[]);

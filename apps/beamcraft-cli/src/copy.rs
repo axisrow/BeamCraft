@@ -201,7 +201,9 @@ fn copy_with_mode(
         )
         .with_rule("DV-REL-011")
         .into());
-    } else if crate::bolt::is_bolt(&base_request, &command.source_id, &control)? {
+    } else if crate::bolt::is_bolt(&base_request, &command.source_id, &control)?
+        || crate::bolt_group::is_group(&base_request, &command.source_id, &control)?
+    {
         // Same for a bolt group: its `connects` record is not carried over by a copy.
         return Err(CommandError::new(
             ErrorCode::DependencyConflict,

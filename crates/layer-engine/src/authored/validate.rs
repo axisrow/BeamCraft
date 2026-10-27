@@ -967,10 +967,10 @@ pub(super) fn snapshot(
                         let has =
                             |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
                         match connection_type {
-                            "weld" if !has("steel:bolt:") && !has("steel:bolt-group:") => {
+                            "weld" if !has("steel:bolt:") && !has("steel:boltGroup:") => {
                                 weld_properties(p)?
                             }
-                            "bolt_group" if !has("steel:weld:") && !has("steel:bolt-group:") => {
+                            "bolt_group" if !has("steel:weld:") && !has("steel:boltGroup:") => {
                                 bolt_properties(p)?
                             }
                             "fastener_group" if !has("steel:weld:") && !has("steel:bolt:") => {
@@ -1415,21 +1415,21 @@ fn bolt_properties(p: &Prim) -> Result<(), Diagnostic> {
 /// the structural read re-checks the bounds and tokens of every attribute.
 fn bolt_group_properties(p: &Prim) -> Result<(), Diagnostic> {
     for name in [
-        "steel:bolt-group:point1Mm",
-        "steel:bolt-group:point2Mm",
-        "steel:bolt-group:planeNormal",
+        "steel:boltGroup:point1Mm",
+        "steel:boltGroup:point2Mm",
+        "steel:boltGroup:planeNormal",
     ] {
         let v = bolt_vec3(p, name)?;
         finite(v)?;
         cap(v, 1e9)?;
     }
-    let rotation = number(p, "steel:bolt-group:rotationRad")?;
-    let on_plane = number(p, "steel:bolt-group:onPlaneMm")?;
-    let depth = number(p, "steel:bolt-group:depthMm")?;
-    let offset_start = number(p, "steel:bolt-group:offsetStartMm")?;
+    let rotation = number(p, "steel:boltGroup:rotationRad")?;
+    let on_plane = number(p, "steel:boltGroup:onPlaneMm")?;
+    let depth = number(p, "steel:boltGroup:depthMm")?;
+    let offset_start = number(p, "steel:boltGroup:offsetStartMm")?;
     finite([rotation, on_plane, depth, offset_start])?;
     cap([rotation, on_plane, depth, offset_start], 1e9)?;
-    let spacings = match required(p, "steel:bolt-group:spacingsMm", "double[]") {
+    let spacings = match required(p, "steel:boltGroup:spacingsMm", "double[]") {
         Ok(Value::Array(values)) => values,
         _ => return Err(invalid()),
     };
@@ -1446,11 +1446,17 @@ fn bolt_group_properties(p: &Prim) -> Result<(), Diagnostic> {
         }
         cap([*spacing], 1e6)?;
     }
-    let length_mode = text(p, "steel:bolt-group:lengthMode", "token")?;
+    let length_mode = text(p, "steel:boltGroup:lengthMode", "token")?;
     if !matches!(length_mode, "auto" | "fixed") {
         return Err(invalid());
     }
-    match optional(p, "steel:bolt-group:fixedLengthMm", "double")? {
+    let length = number(p, "steel:boltGroup:lengthMm")?;
+    finite([length])?;
+    if length <= 0.0 {
+        return Err(invalid());
+    }
+    cap([length], 1e6)?;
+    match optional(p, "steel:boltGroup:fixedLengthMm", "double")? {
         Some(Value::Number(length)) if length_mode == "fixed" => {
             finite([*length])?;
             cap([*length], 1e6)?;
@@ -1459,19 +1465,19 @@ fn bolt_group_properties(p: &Prim) -> Result<(), Diagnostic> {
         _ => return Err(invalid()),
     }
     for name in [
-        "steel:bolt-group:washerUnderHead",
-        "steel:bolt-group:washerUnderNut",
+        "steel:boltGroup:washerUnderHead",
+        "steel:boltGroup:washerUnderNut",
     ] {
         match optional(p, name, "bool")? {
             None | Some(Value::Bool(_)) => {}
             _ => return Err(invalid()),
         }
     }
-    let hole_mode = text(p, "steel:bolt-group:holeMode", "token")?;
+    let hole_mode = text(p, "steel:boltGroup:holeMode", "token")?;
     if !matches!(hole_mode, "generate" | "none") {
         return Err(invalid());
     }
-    match optional(p, "steel:bolt-group:holeClearanceMm", "double")? {
+    match optional(p, "steel:boltGroup:holeClearanceMm", "double")? {
         None => {}
         Some(Value::Number(clearance)) if *clearance >= 0.0 => {
             finite([*clearance])?;
@@ -2310,15 +2316,25 @@ pub(super) fn changes(
                                     g.on_plane_mm,
                                     g.depth_mm,
                                     g.offset_start_mm,
+                                    g.length_mm,
                                 ]),
                         )?;
                         cap(g.point1_mm, 1e9)?;
                         cap(g.point2_mm, 1e9)?;
                         cap(g.plane_normal, 1e9)?;
                         cap(
-                            [g.rotation_rad, g.on_plane_mm, g.depth_mm, g.offset_start_mm],
+                            [
+                                g.rotation_rad,
+                                g.on_plane_mm,
+                                g.depth_mm,
+                                g.offset_start_mm,
+                                g.length_mm,
+                            ],
                             1e9,
                         )?;
+                        if g.length_mm <= 0.0 {
+                            return Err(invalid());
+                        }
                         finite(g.spacings_mm.iter().copied())?;
                         cap(g.spacings_mm.iter().copied(), 1e6)?;
                         if g.spacings_mm.iter().any(|v| *v <= 0.0) {
@@ -2567,7 +2583,13 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .into_iter()
                         .chain(g.point2_mm)
                         .chain(g.plane_normal)
-                        .chain([g.rotation_rad, g.on_plane_mm, g.depth_mm, g.offset_start_mm])
+                        .chain([
+                            g.rotation_rad,
+                            g.on_plane_mm,
+                            g.depth_mm,
+                            g.offset_start_mm,
+                            g.length_mm,
+                        ])
                         .chain(g.spacings_mm.iter().copied())
                         .chain(g.fixed_length_mm)
                         .chain(g.hole_clearance_mm),

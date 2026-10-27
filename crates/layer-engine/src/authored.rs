@@ -60,11 +60,12 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:weld:contour=token(none|flush|concave|convex,optional)\n",
     "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
     "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
-    "fastener group (A14.3)=steel:connection:type=token(fastener_group);steel:bolt-group:point1Mm=double3;steel:bolt-group:point2Mm=double3;",
-    "steel:bolt-group:planeNormal=double3;steel:bolt-group:rotationRad=double;steel:bolt-group:onPlaneMm=double;steel:bolt-group:depthMm=double;",
-    "steel:bolt-group:offsetStartMm=double;steel:bolt-group:spacingsMm=double[](1..=511,>0 each);steel:bolt-group:lengthMode=token(auto|fixed);",
-    "steel:bolt-group:fixedLengthMm=double(fixed only);steel:bolt-group:washerUnderHead=bool(optional);steel:bolt-group:washerUnderNut=bool(optional);",
-    "steel:bolt-group:holeMode=token(generate|none);steel:bolt-group:holeClearanceMm=double(optional,>=0);bim:fastener=rel(1 fastener definition);",
+    "fastener group (A14.3)=steel:connection:type=token(fastener_group);steel:boltGroup:point1Mm=double3;steel:boltGroup:point2Mm=double3;",
+    "steel:boltGroup:planeNormal=double3;steel:boltGroup:rotationRad=double;steel:boltGroup:onPlaneMm=double;steel:boltGroup:depthMm=double;",
+    "steel:boltGroup:offsetStartMm=double;steel:boltGroup:spacingsMm=double[](1..=511,>0 each);steel:boltGroup:lengthMode=token(auto|fixed);",
+    "steel:boltGroup:lengthMm=double(resolved standard length);steel:boltGroup:fixedLengthMm=double(fixed only);steel:boltGroup:washerUnderHead=bool(optional);steel:boltGroup:washerUnderNut=bool(optional);",
+    "steel:boltGroup:fixedLengthMm=double(fixed only);steel:boltGroup:washerUnderHead=bool(optional);steel:boltGroup:washerUnderNut=bool(optional);",
+    "steel:boltGroup:holeMode=token(generate|none);steel:boltGroup:holeClearanceMm=double(optional,>=0);bim:fastener=rel(1 fastener definition);",
     "bim:connects=rel(2..=1024 distinct ordered plate|beam|column targets, main part first)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
     "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
@@ -384,6 +385,9 @@ pub struct BoltGroup {
     pub spacings_mm: Vec<f64>,
     /// `auto` or `fixed`.
     pub length_mode: String,
+    /// The resolved shank length in millimetres: the fixed value, or the auto choice, always
+    /// one of the pinned definition's standard lengths.
+    pub length_mm: f64,
     /// The fixed standard length for `fixed`.
     pub fixed_length_mm: Option<f64>,
     /// `Some` stores an explicit switch; `None` takes the definition's default.

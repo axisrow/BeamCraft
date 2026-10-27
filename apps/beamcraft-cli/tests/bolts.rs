@@ -1,14 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// Contributor-original synthetic plates, beams and bolt groups, MPL-2.0.
 
-//! A05 end to end: `create-bolt` and `bolts` through the real CLI binary and committed
-//! revisions. A bolt group is a `connection` element with its own identity, explicitly authored
-//! properties (diameter, count, pitch, world origin, unit direction) and one `connects` record
-//! towards two distinct parts; it has no body, and every bolt position must lie within both
-//! parts' bounds. Wrong parts and properties are refused with nothing written; a bolted part
-//! cannot be deleted while the group connects it, and a group cannot be copied. A weld and a
-//! bolt group coexist and neither listing decodes the other.
+//! A05 and A14.3 end to end: `create-bolt` (the bolt amendment's form) and `bolt-groups` through
+//! the real CLI binary, and the safety behaviour a group keeps from A05: replay by operation id,
+//! the delete and copy conflicts, and a damaged committed record that is refused, never reported.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -24,15 +19,30 @@ use beamcraft_json::Json;
 const BOLT: &str = "019a7bf0-0000-7000-8000-000000700001";
 const SECOND: &str = "019a7bf0-0000-7000-8000-000000700002";
 const FRAME: &str = "019a7bf0-0000-7000-8000-000000700003";
+const FASTENERS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
 
 struct Fixture {
     shared: support::StoreFixture,
 }
 impl Fixture {
     fn new() -> Self {
-        Self {
+        let fixture = Self {
             shared: support::StoreFixture::new("a05-tests"),
-        }
+        };
+        // The fastener definition is pinned once; every group references it by digest.
+        fixture.ok(
+            "define-fastener",
+            &[
+                "--fastener-library",
+                FASTENERS,
+                "--designation",
+                "SYN-BOLT-12x50",
+            ],
+        );
+        fixture
     }
 
     fn run(&self, command: &str, extra: &[&str]) -> (i32, Json) {
@@ -86,32 +96,39 @@ impl Fixture {
         );
         text(at(&body, &["member"]), "element_id")
     }
-    /// A group of three bolts along the seam of the plate and the beam: every position
-    /// `(100 + 80*i, 0, 5)` lies in both parts' bounds.
-    fn bolt_args<'a>(id: &'a str, main: &'a str, secondary: &'a str) -> Vec<&'a str> {
+    /// A group of three SYN bolts along the seam of the plate and the beam: the shank points
+    /// down from a bearing face at z = 30 and every shank crosses both parts' bounds.
+    fn bolt_args<'a>(id: &'a str, parts: &'a str) -> Vec<&'a str> {
         vec![
             "--name",
             "B1",
             "--new-id",
             id,
-            "--main",
-            main,
-            "--secondary",
-            secondary,
-            "--origin",
-            "100,0,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "3",
-            "--pitch",
-            "80",
-            "--diameter",
-            "16",
+            "--parts",
+            parts,
+            "--fastener",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "100,0,30",
+            "--point2",
+            "1000,0,30",
+            "--plane-normal",
+            "0,0,-1",
+            "--spacings",
+            "80,80",
+            "--length-mode",
+            "fixed",
+            "--fixed-length",
+            "30",
+            "--hole-mode",
+            "none",
         ]
     }
     fn bolt(&self, id: &str, main: &str, secondary: &str) -> Json {
-        self.ok("create-bolt", &Self::bolt_args(id, main, secondary))
+        self.ok(
+            "create-bolt",
+            &Self::bolt_args(id, &format!("{main},{secondary}")),
+        )
     }
     /// Commits a head-based revision with edited layer text and no content verification, the way
     /// a layer edited outside BeamCraft would arrive through `commit-revision`.
@@ -149,7 +166,7 @@ impl Fixture {
             .unwrap();
     }
     fn groups(&self) -> Vec<Json> {
-        list(&self.ok("bolts", &[]), "bolts").to_vec()
+        list(&self.ok("bolt-groups", &[]), "groups").to_vec()
     }
 }
 
@@ -180,15 +197,27 @@ fn a_bolt_group_authors_its_properties_and_connects_record_and_reads_its_parts()
     let f = Fixture::new();
     let plate = f.plate();
     let beam = f.beam();
+    // The fastener definition is pinned first; the group references it by digest.
+    let defined = f.ok(
+        "define-fastener",
+        &[
+            "--fastener-library",
+            FASTENERS,
+            "--designation",
+            "SYN-BOLT-12x50",
+        ],
+    );
+    let fastener = text(at(&defined, &["definition"]), "digest");
     let inspected = f.ok("inspect-elements", &[]);
     let mesh_before = text(&list(&inspected, "plates")[0], "mesh_digest");
 
     let created = f.bolt(BOLT, &plate, &beam);
-    assert_eq!(text(&created, "outcome"), "bolt_created");
+    assert_eq!(text(&created, "outcome"), "bolt_group_created");
     assert_eq!(text(&created, "element_id"), BOLT);
     // No body: only the authored layer changes.
     assert_eq!(strings(&created, "changed_layers"), ["authored.usda"]);
-    // The record lives with the group: every write is the group's own; both parts are read.
+    // The record lives with the group: every write is the group's own or the immutable
+    // definition it references (already present, so only read); both parts are read.
     let writes = groups_of(&created, "writes");
     assert_eq!(writes.len(), 7);
     assert!(writes.iter().all(|(target, _)| target == BOLT));
@@ -200,13 +229,12 @@ fn a_bolt_group_authors_its_properties_and_connects_record_and_reads_its_parts()
     let b = &groups[0];
     assert_eq!(text(b, "id"), BOLT);
     assert_eq!(text(b, "name"), "B1");
-    assert_eq!(text(b, "main"), plate);
-    assert_eq!(text(b, "secondary"), beam);
-    assert_eq!(text(b, "diameter_mm"), "16");
-    assert_eq!(text(b, "count"), "3");
-    assert_eq!(text(b, "pitch_mm"), "80");
-    assert_eq!(strings(b, "origin_mm"), ["100", "0", "5"]);
-    assert_eq!(strings(b, "direction_mm"), ["1", "0", "0"]);
+    assert_eq!(strings(b, "parts"), [plate.clone(), beam.clone()]);
+    assert_eq!(text(b, "fastener_digest"), fastener);
+    assert_eq!(num(b, &["fastener_count"]), 3.0);
+    assert_eq!(num(b, &["length_mm"]), 30.0);
+    assert_eq!(text(b, "length_mode"), "fixed");
+    assert_eq!(text(b, "hole_mode"), "none");
 
     // The parts' bodies are untouched and the group adds nothing to the view.
     let inspected = f.ok("inspect-elements", &[]);
@@ -218,15 +246,16 @@ fn a_bolt_group_authors_its_properties_and_connects_record_and_reads_its_parts()
 
     // A retry of the same operation replays; the same id with other content is reuse.
     let op = "019a7bf0-0000-7000-8000-0000007000a1";
-    let mut args = Fixture::bolt_args(SECOND, &beam, &plate);
+    let pair = format!("{beam},{plate}");
+    let mut args = Fixture::bolt_args(SECOND, &pair);
     args.extend_from_slice(&["--op-id", op]);
     let first = f.ok("create-bolt", &args);
-    assert_eq!(text(&first, "outcome"), "bolt_created");
+    assert_eq!(text(&first, "outcome"), "bolt_group_created");
     let head = f.head();
     let again = f.ok("create-bolt", &args);
-    assert_eq!(text(&again, "outcome"), "bolt_created_replayed");
+    assert_eq!(text(&again, "outcome"), "bolt_group_created_replayed");
     assert_eq!(f.head(), head);
-    let mut other = Fixture::bolt_args(SECOND, &beam, &plate);
+    let mut other = Fixture::bolt_args(SECOND, &pair);
     other[1] = "B2";
     other.extend_from_slice(&["--op-id", op]);
     assert_eq!(f.rejected("create-bolt", &other), "OP_ID_REUSE");
@@ -249,12 +278,19 @@ fn a_bolt_group_authors_its_properties_and_connects_record_and_reads_its_parts()
     f.ok("delete-element", &["--id", &plate]);
 }
 
+fn num(json: &Json, path: &[&str]) -> f64 {
+    at(json, path).float().unwrap()
+}
+
 #[test]
 fn wrong_parts_and_properties_are_refused_with_nothing_written() {
     let f = Fixture::new();
     // No head yet: the parts cannot exist.
     let missing = "019a7bf0-0000-7000-8000-0000007000ff";
-    let (code, body) = f.run("create-bolt", &Fixture::bolt_args(BOLT, missing, FRAME));
+    let (code, body) = f.run(
+        "create-bolt",
+        &Fixture::bolt_args(BOLT, &format!("{missing},{FRAME}")),
+    );
     assert_eq!((code, text(&body, "code").as_str()), (2, "NOT_FOUND"));
 
     let plate = f.plate();
@@ -262,7 +298,10 @@ fn wrong_parts_and_properties_are_refused_with_nothing_written() {
     f.ok("create-assembly", &["--name", "Frame", "--new-id", FRAME]);
     f.bolt(BOLT, &plate, &beam);
     let group = |main: &str, secondary: &str| {
-        f.rejected("create-bolt", &Fixture::bolt_args(SECOND, main, secondary))
+        f.rejected(
+            "create-bolt",
+            &Fixture::bolt_args(SECOND, &format!("{main},{secondary}")),
+        )
     };
     // DV-REL-006/007: two distinct parts.
     assert_eq!(group(&plate, &plate), "INVALID_ARGUMENT");
@@ -272,16 +311,23 @@ fn wrong_parts_and_properties_are_refused_with_nothing_written() {
     assert_eq!(group(&plate, BOLT), "INVALID_ARGUMENT");
     // A group is not one of its own parts, and its identity must be free.
     assert_eq!(
-        f.rejected("create-bolt", &Fixture::bolt_args(&plate, &plate, &beam)),
+        f.rejected(
+            "create-bolt",
+            &Fixture::bolt_args(&plate, &format!("{plate},{beam}"))
+        ),
         "INVALID_ARGUMENT"
     );
     assert_eq!(
-        f.rejected("create-bolt", &Fixture::bolt_args(FRAME, &plate, &beam)),
+        f.rejected(
+            "create-bolt",
+            &Fixture::bolt_args(FRAME, &format!("{plate},{beam}"))
+        ),
         "DUPLICATE_ID"
     );
     // Every property is authored explicitly and checked.
+    let pair = format!("{plate},{beam}");
     let with = |key: &str, value: Option<&str>| {
-        let mut args = Fixture::bolt_args(SECOND, &plate, &beam);
+        let mut args = Fixture::bolt_args(SECOND, &pair);
         let at = args.iter().position(|a| *a == key);
         match (at, value) {
             (Some(i), Some(v)) => args[i + 1] = v,
@@ -294,41 +340,44 @@ fn wrong_parts_and_properties_are_refused_with_nothing_written() {
         f.rejected("create-bolt", &args)
     };
     for key in [
-        "--diameter",
-        "--count",
-        "--pitch",
-        "--origin",
-        "--direction",
+        "--parts",
+        "--point1",
+        "--point2",
+        "--plane-normal",
+        "--spacings",
+        "--fastener",
         "--name",
-        "--main",
-        "--secondary",
     ] {
         assert_eq!(with(key, None), "INVALID_ARGUMENT", "{key}");
     }
-    assert_eq!(with("--diameter", Some("0")), "INVALID_ARGUMENT");
-    assert_eq!(with("--diameter", Some("1000.5")), "INVALID_ARGUMENT");
-    assert_eq!(with("--diameter", Some("NaN")), "NON_FINITE_NUMBER");
-    assert_eq!(with("--count", Some("0")), "INVALID_ARGUMENT");
-    assert_eq!(with("--count", Some("513")), "LIMIT_EXCEEDED");
-    assert_eq!(with("--count", Some("3.5")), "INVALID_ARGUMENT");
-    assert_eq!(with("--pitch", Some("0")), "INVALID_ARGUMENT");
-    assert_eq!(with("--origin", Some("100,400,5")), "INVALID_ARGUMENT");
-    assert_eq!(with("--origin", Some("100,0")), "INVALID_ARGUMENT");
-    assert_eq!(with("--origin", Some("NaN,0,0")), "NON_FINITE_NUMBER");
-    assert_eq!(with("--direction", Some("0,0,0")), "INVALID_ARGUMENT");
-    assert_eq!(with("--direction", Some("1,NaN,0")), "NON_FINITE_NUMBER");
+    assert_eq!(with("--spacings", Some("0")), "INVALID_ARGUMENT");
+    assert_eq!(with("--spacings", Some("NaN")), "NON_FINITE_NUMBER");
+    assert_eq!(with("--spacings", Some("80,0")), "INVALID_ARGUMENT");
+    assert_eq!(with("--point2", Some("100,0,30")), "INVALID_ARGUMENT");
+    assert_eq!(with("--point1", Some("NaN,0,30")), "NON_FINITE_NUMBER");
+    assert_eq!(with("--plane-normal", Some("0,0,0")), "INVALID_ARGUMENT");
+    assert_eq!(
+        with("--plane-normal", Some("1,0,0")),
+        "INVALID_ARGUMENT",
+        "the normal is parallel to the line"
+    );
+    assert_eq!(with("--length-mode", Some("bent")), "INVALID_ARGUMENT");
+    assert_eq!(
+        with("--washer-under-head", Some("maybe")),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(with("--hole-mode", Some("blind")), "INVALID_ARGUMENT");
     assert_eq!(with("--colour", Some("red")), "INVALID_ARGUMENT");
     assert_eq!(f.groups().len(), 1);
 
-    // A non-unit direction is normalized at the input edge; the stored direction is a unit
-    // vector, and the resulting group is the same line.
-    let mut args = Fixture::bolt_args(SECOND, &plate, &beam);
-    let at = args.iter().position(|a| *a == "--direction").unwrap();
-    args[at + 1] = "4,0,0";
+    // The same row via the generator: count and pitch expand to the same three fasteners.
+    let mut args = Fixture::bolt_args(SECOND, &pair);
+    let at = args.iter().position(|a| *a == "--spacings").unwrap();
+    args.splice(at..at + 2, ["--count", "3", "--pitch", "80"]);
     f.ok("create-bolt", &args);
     let groups = f.groups();
     assert_eq!(groups.len(), 2);
-    assert_eq!(strings(&groups[1], "direction_mm"), ["1", "0", "0"]);
+    assert_eq!(num(&groups[1], &["fastener_count"]), 3.0);
 }
 
 #[test]
@@ -348,12 +397,15 @@ fn a_damaged_connects_record_is_refused_not_reported() {
             text
         }
     });
-    let (code, body) = f.run("bolts", &[]);
+    let (code, body) = f.run("bolt-groups", &[]);
     assert_eq!(
         (code, text(&body, "code").as_str()),
         (2, "DEPENDENCY_CONFLICT")
     );
-    let (code, _) = f.run("create-bolt", &Fixture::bolt_args(SECOND, &plate, &beam));
+    let (code, _) = f.run(
+        "create-bolt",
+        &Fixture::bolt_args(SECOND, &format!("{plate},{beam}")),
+    );
     assert_eq!(code, 2);
 }
 
@@ -367,7 +419,8 @@ fn an_operation_id_replays_only_the_group_its_own_revision_created() {
         "019a7bf0-0000-7000-8000-0000007000b2",
     );
     let with_op = |id: &'static str, op: &'static str| {
-        let mut args = Fixture::bolt_args(id, &plate, &beam);
+        let pair = format!("{plate},{beam}");
+        let mut args = Fixture::bolt_args(id, &pair);
         args.extend_from_slice(&["--op-id", op]);
         args.iter().map(|s| s.to_string()).collect::<Vec<_>>()
     };
@@ -380,7 +433,7 @@ fn an_operation_id_replays_only_the_group_its_own_revision_created() {
     assert_eq!(f.rejected("create-bolt", &as_strs(&reused)), "OP_ID_REUSE");
     // Op A's own request still replays.
     let replay = f.ok("create-bolt", &as_strs(&first));
-    assert_eq!(text(&replay, "outcome"), "bolt_created_replayed");
+    assert_eq!(text(&replay, "outcome"), "bolt_group_created_replayed");
 }
 
 #[test]
@@ -416,7 +469,7 @@ fn a_weld_and_a_bolt_group_coexist_and_neither_listing_decodes_the_other() {
     let groups = f.groups();
     assert_eq!(groups.len(), 1);
     assert_eq!(text(&groups[0], "id"), BOLT);
-    assert_eq!(text(&groups[0], "count"), "3");
+    assert_eq!(num(&groups[0], &["fastener_count"]), 3.0);
     // Both connections hold the part: neither can be deleted under its connection.
     assert_eq!(
         f.rejected("delete-element", &["--id", &beam]),
@@ -446,7 +499,10 @@ fn a_weld_and_a_bolt_group_coexist_and_neither_listing_decodes_the_other() {
         "INVALID_ARGUMENT"
     );
     assert_eq!(
-        f.rejected("create-bolt", &Fixture::bolt_args(SECOND, &plate, FRAME)),
+        f.rejected(
+            "create-bolt",
+            &Fixture::bolt_args(SECOND, &format!("{plate},{FRAME}"))
+        ),
         "INVALID_ARGUMENT"
     );
     // Both delete in either order, and then the parts.
