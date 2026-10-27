@@ -440,7 +440,7 @@ impl CreateStraightMember {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(256);
-        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v3\0");
+        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v4\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         bytes.push(match self.kind {
             MemberKind::Beam => 0,
@@ -617,7 +617,7 @@ impl CreatePlate {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
-        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v5\0");
+        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v6\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
