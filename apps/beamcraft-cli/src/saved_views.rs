@@ -111,8 +111,9 @@ pub fn restore(dir: &Path, id: ElementId) -> Result<(SavedView, bool), PlateErro
             .map_err(|e| PlateError::new(e.code(), "workspace root is not usable"))?,
     );
     let head = store.open()?;
+    let resolved = crate::plane_views::resolve(&views, view)?;
     Ok(beamcraft_engine::saved_view::restore(
-        view,
+        &resolved,
         plate::summarize(head.info()).manifest_digest,
     )?)
 }

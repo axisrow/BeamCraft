@@ -12,9 +12,11 @@ pub(super) const COMMANDS: &[&str] = &[
     "update-view",
     "delete-view",
     "restore-view",
+    "create-view",
 ];
 
 pub(super) const HELP: &str = concat!(
+    "Plane views (V09): create-view --workspace-dir DIR --kind plane|two-points --name TEXT [--id UUID] [--plane ORIGIN,XDIR,YDIR] [--start X,Y,Z --end X,Y,Z] [--side positive|negative] [--depth MM] [--width MM] [--aspect F] [--comment TEXT] [--expected-views DIGEST|none]. Two points define a vertical plane; view state never edits the model.\n",
     "Personal views (W01): save-view --workspace-dir DIR --name TEXT [--id UUID] [--position X,Y,Z] [--orientation-xyzw X,Y,Z,W] [--projection orthographic|perspective] [--width MM] [--aspect F] [--fov RADIANS] [--plane ORIGIN,XDIR,YDIR] [--comment TEXT]; list-views --workspace-dir DIR; inspect-view|restore-view|delete-view --workspace-dir DIR --id UUID; update-view --workspace-dir DIR --id UUID [same camera fields]. All accept --expected-views DIGEST|none for optimistic concurrency. Views never change the model revision.\n",
     "View (synthetic kernel plate scene, no store): snapshot-view --plates 1..500 [--hide ",
     "KIND,...] [--representation full|simplified] [--stand-in-simplified true|false] ",

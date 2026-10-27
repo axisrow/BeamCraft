@@ -41,3 +41,6 @@ pub mod workspace;
 
 /// Personal saved cameras (W01).
 pub mod saved_views;
+
+/// Plane camera construction (V09).
+pub mod plane_views;
