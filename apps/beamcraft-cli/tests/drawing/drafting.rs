@@ -5,6 +5,7 @@
 //! store at all, published versions survive later edits unchanged, and a refusal keeps the head.
 
 use super::*;
+use beamcraft_json::Limits;
 
 const DRAWING: &str = "01900000-0000-7000-8000-000000000201";
 const VIEW: &str = "01900000-0000-7000-8000-000000000202";
@@ -45,7 +46,7 @@ fn intent() -> Vec<String> {
 }
 
 fn model_store(f: &Fixture) -> String {
-    f.root.join("store").to_str().unwrap().to_owned()
+    f.shared.root.join("store").to_str().unwrap().to_owned()
 }
 
 fn argv(options: &[String]) -> Vec<&str> {
@@ -87,7 +88,13 @@ fn edit(
 fn drawn_objects_live_in_the_document_only_and_published_versions_survive_edits() {
     let f = Fixture::new();
     f.model();
-    let document_dir = f.root.join("drawing-doc").to_str().unwrap().to_owned();
+    let document_dir = f
+        .shared
+        .root
+        .join("drawing-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
     let mut create = vec![
         "--document-dir".to_owned(),
         document_dir.clone(),
@@ -207,7 +214,7 @@ fn drawn_objects_live_in_the_document_only_and_published_versions_survive_edits(
     assert_eq!(list(&inspected, "drafting").len(), 1);
 
     // The published version still exports exactly as it did before the edit.
-    let before_out = f.root.join("before-edit.svg");
+    let before_out = f.shared.root.join("before-edit.svg");
     let (code, exported) = f.run(
         "export-drawing",
         &argv(&[
@@ -220,7 +227,7 @@ fn drawn_objects_live_in_the_document_only_and_published_versions_survive_edits(
         ]),
     );
     assert_eq!(code, 0, "{exported:?}");
-    let after_out = f.root.join("after-edit.svg");
+    let after_out = f.shared.root.join("after-edit.svg");
     let (code, exported_again) = f.run(
         "export-drawing",
         &argv(&[
