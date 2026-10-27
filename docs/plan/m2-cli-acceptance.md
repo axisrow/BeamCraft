@@ -3,7 +3,8 @@
 This tracks the approved engine/API and CLI slice. It does not close the M2 UI
 cards or claim that panels, windows, keyboard actions or GPU rendering are done.
 The feature stack includes master `36ca241` (D08), fetched and merged through every
-branch without rewriting published commits. Merge in the order below; no automatic
+branch without rewriting published commits. Merge CI prerequisite [#262](https://github.com/axisrow/BeamCraft/pull/262) first,
+then the feature stack below; no automatic
 merges are authorized. Drafts remain until checks and dependent changes are accepted.
 
 | Order | Scope | PR | CLI delivery |
@@ -77,3 +78,17 @@ The design notes under `docs/design/` specify the public CLI/API contracts and
 transport/schema changes. BCVXFRM3 carries presentation JSON version 3 followed by
 an unchanged complete engineering bundle. Requests without display options preserve
 legacy raw/V1/V2 output. UI consumers must opt into and validate the new contract.
+
+## Workflow validation correction
+
+The original check-runs report omitted failed workflow validation with zero jobs:
+`fork-sync.yml` declared the invalid GITHUB_TOKEN scope `workflows: write`.
+GitHub rejected the file before any jobs could start. PR #262 removes that scope,
+corrects PAT guidance and adds pinned, checksum-verified actionlint to Linux CI.
+The original workflow fails the regression check; every corrected workflow passes.
+The fix is propagated through every feature branch and this documentation branch.
+This PR and #238 temporarily target #262's branch to retain focused diffs; retarget
+them to master after #262 is merged. No synchronization job was dispatched.
+These changes touch CI and documentation only; the reported Rust test results
+remain those of the explicitly recorded implementation heads. New-head CI results
+must include workflow-run failures as well as check-runs.
