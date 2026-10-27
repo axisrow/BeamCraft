@@ -192,6 +192,93 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
 }
 
 #[test]
+fn export_pdf_prints_one_published_version_onto_a_deterministic_sheet() {
+    let f = Fixture::new();
+    f.model();
+    let document_dir = f.root.join("drawing-doc").to_str().unwrap().to_owned();
+    let head = create(&f, &document_dir);
+    let (code, published) = publish(&f, &document_dir, &head);
+    assert_eq!(code, 0, "{published:?}");
+
+    let out = f.root.join("version.pdf");
+    let (code, exported) = f.run(
+        "export-drawing",
+        &argv(&[
+            "--document-dir".to_owned(),
+            document_dir.clone(),
+            "--version-id".to_owned(),
+            VERSION.to_owned(),
+            "--format".to_owned(),
+            "pdf".to_owned(),
+            "--sheet".to_owned(),
+            "a4".to_owned(),
+            "--out".to_owned(),
+            out.to_str().unwrap().to_owned(),
+        ]),
+    );
+    assert_eq!(code, 0, "{exported:?}");
+    assert_eq!(text(&exported, "format"), "pdf");
+    assert_eq!(text(&exported, "version_id"), VERSION);
+    let bytes = fs::read(&out).unwrap();
+    let pdf = std::str::from_utf8(&bytes).unwrap();
+    assert!(pdf.starts_with("%PDF-1.4\n"));
+    assert!(pdf.ends_with("%%EOF\n"));
+    assert!(pdf.contains("/MediaBox [0 0 595.2756 841.8898]"));
+    // Fonts and symbols are our own: no font object exists, the label glyphs are strokes.
+    assert!(!pdf.contains("/Font"));
+    assert!(pdf.contains(&format!("version={VERSION} sheet=a4")));
+
+    // A fresh CLI process prints the identical bytes for the identical version.
+    let again = f.root.join("version-again.pdf");
+    let (code, exported) = f.run(
+        "export-drawing",
+        &argv(&[
+            "--document-dir".to_owned(),
+            document_dir.clone(),
+            "--version-id".to_owned(),
+            VERSION.to_owned(),
+            "--format".to_owned(),
+            "pdf".to_owned(),
+            "--sheet".to_owned(),
+            "a4".to_owned(),
+            "--out".to_owned(),
+            again.to_str().unwrap().to_owned(),
+        ]),
+    );
+    assert_eq!(code, 0, "{exported:?}");
+    assert_eq!(fs::read(&again).unwrap(), bytes);
+
+    // Refusals change nothing: an unknown sheet or format creates no file.
+    let refusals = [
+        (
+            "refused-sheet",
+            vec![("--format", "pdf"), ("--sheet", "letter")],
+        ),
+        ("refused-format", vec![("--format", "jpeg")]),
+    ];
+    for (name, pairs) in refusals {
+        let refused = f.root.join(name);
+        let mut options = vec![
+            "--document-dir".to_owned(),
+            document_dir.clone(),
+            "--version-id".to_owned(),
+            VERSION.to_owned(),
+            "--out".to_owned(),
+            refused.to_str().unwrap().to_owned(),
+        ];
+        options.extend(
+            pairs
+                .into_iter()
+                .flat_map(|(key, value)| [key.to_owned(), value.to_owned()]),
+        );
+        let (code, refusal) = f.run("export-drawing", &argv(&options));
+        assert_eq!(code, 2, "{refusal:?}");
+        assert_eq!(text(&refusal, "code"), "INVALID_ARGUMENT");
+        assert!(!refused.exists());
+    }
+}
+
+#[test]
 fn publication_refuses_an_unresolved_draft_and_keeps_the_document_head() {
     let f = Fixture::new();
     f.model();

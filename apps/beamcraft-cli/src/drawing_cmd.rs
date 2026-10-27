@@ -13,7 +13,7 @@ use beamcraft_engine::drawing::projection::{
 };
 use beamcraft_engine::drawing::{
     DEFAULT_SCALE_DENOMINATOR, DimensionSpec, Drawing, DrawingSpec, Plane, SourceModelPin,
-    ViewSpec, svg,
+    ViewSpec, print, svg,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_host::revision::{ExpectedBase, RevisionStore};
@@ -172,6 +172,8 @@ fn document_options(args: &[OsString]) -> Run<BTreeMap<&str, &str>> {
                 | "--version-id"
                 | "--model-store"
                 | "--out"
+                | "--format"
+                | "--sheet"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated drawing document option"));
@@ -425,7 +427,17 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 })?;
             let snapshot = published.source.inspect()?.snapshot;
             let projection = projection::resolve(&published.drawing, &snapshot)?;
-            let bytes = svg::export(&published.drawing, version, &projection)?;
+            let format = options.get("--format").copied().unwrap_or("svg");
+            let bytes = match format {
+                "svg" => svg::export(&published.drawing, version, &projection)?,
+                "pdf" => {
+                    let sheet =
+                        print::Sheet::parse(options.get("--sheet").copied().unwrap_or("a4"))
+                            .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+                    print::export(&published.drawing, version, &projection, sheet)?
+                }
+                _ => return Err(invalid("format must be svg or pdf")),
+            };
             // Reserve the destination only after the exact version verified and rendered; an
             // existing file is never opened for writing or removed.
             let mut file = std::fs::OpenOptions::new()
@@ -448,6 +460,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             }
             Ok(Json::object([
                 ("outcome", Json::text("drawing_export")),
+                ("format", Json::text(format)),
                 (
                     "drawing_id",
                     Json::text(published.drawing.spec().id.to_string()),
