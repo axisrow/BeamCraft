@@ -99,15 +99,37 @@ one explicit reason:
 
 There is no fabricated bounding-box fallback and no fabricated position mark in a label.
 
+## 6a. Drawn objects (D07 slice 1)
+
+A document also owns drawn paper-space objects (`drafting`). They are contributor-authored
+geometry, never projections of the model, and they hold no model reference of any kind: editing
+them reads and mutates only the document. Each is a typed UUIDv7 (`DraftingEntityId`) plus one
+of:
+
+| Kind | Payload | Bounds |
+| --- | --- | --- |
+| `line` | two distinct points | points within ±`MAX_PAPER_MM` |
+| `polyline` | 2–16 points, no zero-length segment | points within ±`MAX_PAPER_MM` |
+| `arc` | centre, radius > 0, start/end radians, nonzero sweep (magnitude ≤ one turn) | radius ≤ `MAX_PAPER_MM` |
+| `circle` | centre, radius > 0 | radius ≤ `MAX_PAPER_MM` |
+| `rectangle` | two opposite corners, positive width and height | corners within ±`MAX_PAPER_MM` |
+
+Admission refuses more than `MAX_DRAFTING_ENTITIES` (60) objects, any entity UUID equal to the
+drawing/view/dimension UUID, and any pair of equal entity UUIDs. Coordinates are exact paper
+millimetres; angles are radians. In the intent USD the entities are the canonical ordinal
+children `E1..En` of `/Drawing/Drafting` (`drawing:id`, `drawing:kind`,
+`drawing:geometry double[]`); the canonical re-encode comparison refuses any other topology.
+
 ## 7. Module map
 
 - `beamcraft-model::id` — drawing object identities (typed UUIDv7).
 - `beamcraft-model::drawing` — source pin, live-source and freshness states.
-- `beamcraft-engine::drawing` — admission (`Drawing::admit`), view/dimension specs, re-export of
-  the pin and freshness states; `projection`, `svg`, `pdf` and `print` submodules. `pdf` renders
-  one published version as stroke-only PDF 1.4 (no font is embedded or referenced); `print` is
-  the print pipeline shape: resolved strokes laid out 1:1, centred on a fixed A4–A0 sheet,
-  refusing instead of rescaling.
+- `beamcraft-engine::drawing` — admission (`Drawing::admit`), view/dimension specs, drawn
+  objects (`drafting`), re-export of the pin and freshness states; `projection`, `svg`, `pdf`
+  and `print` submodules. `pdf` renders one published version as stroke-only PDF 1.4 (no font is
+  embedded or referenced); `print` is the print pipeline shape: resolved strokes laid out 1:1,
+  centred on a fixed A4–A0 sheet, refusing instead of rescaling.
 - `apps/beamcraft-cli` — `preview-drawing`, `create-drawing`, `refresh-drawing`,
-  `publish-drawing`, `inspect-drawing`, `inspect-drawing-versions`, `export-drawing`, and the
-  drawing document store; it computes nothing the engine does not expose.
+  `edit-drafting`, `publish-drawing`, `inspect-drawing`, `inspect-drawing-versions`,
+  `export-drawing`, and the drawing document store; it computes nothing the engine does not
+  expose.

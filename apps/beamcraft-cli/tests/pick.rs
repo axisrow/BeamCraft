@@ -35,6 +35,9 @@ mod drawing_derived;
 #[path = "drawing/export.rs"]
 mod drawing_export;
 
+#[path = "drawing/drafting.rs"]
+mod drawing_drafting;
+
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000700001";
 const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";
 const COPY: &str = "019a7bf0-0000-7000-8000-000000700003";

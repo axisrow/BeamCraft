@@ -44,6 +44,7 @@ fn drawing() -> Drawing {
             paper_offset_mm: -7.5,
             decimal_places: 3,
         },
+        drafting: Vec::new(),
     })
     .unwrap()
 }
@@ -101,6 +102,72 @@ fn ordinary_usd_round_trips_exact_ids_pins_units_settings_and_qualified_referenc
             admitted
         );
     }
+}
+
+#[test]
+fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
+    let entity = |suffix: u64, geometry| DraftingSpec {
+        id: DraftingEntityId::parse(&format!("01900000-0000-7000-8000-{suffix:012}")).unwrap(),
+        geometry,
+    };
+    let intent = drawing()
+        .with_drafting(vec![
+            entity(
+                5,
+                DraftingGeometry::Line {
+                    a: [1.5, -2.0],
+                    b: [30.25, 4.0],
+                },
+            ),
+            entity(
+                6,
+                DraftingGeometry::Circle {
+                    center: [10.0, 10.0],
+                    radius: 2.5,
+                },
+            ),
+            entity(
+                7,
+                DraftingGeometry::Arc {
+                    center: [0.0, 0.0],
+                    radius: 5.0,
+                    start: 0.0,
+                    end: 1.25,
+                },
+            ),
+            entity(
+                8,
+                DraftingGeometry::Rectangle {
+                    a: [0.0, 0.0],
+                    b: [8.0, 3.0],
+                },
+            ),
+            entity(
+                9,
+                DraftingGeometry::Polyline {
+                    points: vec![[0.0, 0.0], [2.0, 1.0], [5.0, -1.0]],
+                },
+            ),
+        ])
+        .unwrap();
+    let asset = codec::encode(&intent).unwrap();
+    assert!(asset.bytes.len() < codec::MAX_INTENT_BYTES);
+    assert_eq!(asset.bytes, codec::encode(&intent).unwrap().bytes);
+    let decoded = codec::decode(asset.clone(), identity(), &control()).unwrap();
+    assert_eq!(decoded, intent);
+
+    // Ordinals are canonical: renaming a child prim leaves the closed schema.
+    let renamed = changed(&asset, "\"E1\"", "\"E9\"");
+    assert!(codec::decode(renamed, identity(), &control()).is_err());
+    // A foreign attribute is ignored by the semantic reader but is not canonical bytes.
+    let extra = changed(
+        &asset,
+        "custom token drawing:kind = \"line\"",
+        "custom token drawing:kind = \"line\"\n            custom string drawing:extra = \"x\"",
+    );
+    assert!(codec::decode(extra, identity(), &control()).is_err());
+    // A rewritten coordinate is a well-formed different document, not a decoding failure: its
+    // detection is the manifest digest's job, verified at the document store layer.
 }
 
 #[test]
