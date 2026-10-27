@@ -22,6 +22,35 @@ Task cards alone are not delivery evidence. No UI/GPU acceptance is claimed.
 | Master #217, #213, #244 | A03/A04 creation records; D08 PDF/print pipeline |
 | Existing Q01/Q02 | Frame story, drawing reopen/staleness, package layout and release workflow |
 
+## Reviewable candidates and continuing work
+
+These are candidate slices, not acceptance of the complete M5 CLI gate.
+
+| PR | Delivered slice / integration note |
+| --- | --- |
+| #264 → #265 | A03 cut record update, removal and identity/ordinal retirement |
+| #266 → #267 | A04 hole record update, removal and shared retirement history |
+| #268 | Original cut creation retries use immutable accepted evidence |
+| #270 | P13 circular member creation, quantities, persistence and point replacement; path-aware numbering remains |
+| #274 | Reuse the existing P14 section-placement candidate; do not duplicate |
+| #275 → #281 | Reuse A12.2; #281 adds complete corner-list replacement/clear, linked groups and undo |
+| #279 | Repair D07 drafting test compilation after shared fixture refactoring |
+| #280 | Repair current-master G13 Clippy admission guard |
+
+Verified master advanced to `b2ee4d9`: it includes A12.1, P12, G13 ruled-surface slice,
+D07 drawn-paper-object slice, V11, A14.1 and adjacent history fixes. A14.2 #260 and A14.3
+placement #269 merged into prerequisite branches: check master ancestry before treating
+these as master delivery. The separate native V16 #276 does not accept the headless M2 gate.
+
+A local alternate A12.2 implementation was retained only for comparison; it has no duplicate
+PR. Continue from #275. Vertex/edge contour editing and P-Degenerate creation/repair remain
+outstanding. #281 is a prerequisite and does not close A12.3. M2 integration, I05, remaining
+geometry/connection/drawing capabilities and Q01/Q02 acceptance remain as listed below.
+
+Every published candidate is ready for review under the owner's explicit non-draft instruction.
+Full workspace or hosted checks that are running are recorded as pending in their PRs; a
+successful predecessor run does not establish a later head. No automatic PR merge is authorized.
+
 ## Remaining implementation groups
 
 1. A03/A04 record update/removal and recovery of invalid authored elements. Existing create
