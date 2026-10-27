@@ -12,11 +12,8 @@ pub mod svg;
 
 use crate::query::feature::{BodyKind, FeatureId, FeatureKind};
 use beamcraft_model::command::{CommandError, label_is_valid};
-use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{
-    DimensionId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
-};
+use beamcraft_model::id::{DimensionId, DrawingId, DrawingViewId, ElementId};
 
 /// Version of the first closed drawing intent contract (distinct from the model schema).
 pub const CONTRACT_VERSION: &str = "beamcraft-drawing/1";
@@ -27,56 +24,7 @@ pub const MAX_SCALE_DENOMINATOR: f64 = 10_000.0;
 /// Default paper scale: one paper millimetre represents 100 model millimetres.
 pub const DEFAULT_SCALE_DENOMINATOR: f64 = 100.0;
 
-/// Exact identity of the captured engineering model. A document revision is a separate identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceModelPin {
-    /// Source project, checked against the captured manifest by the storage adapter.
-    pub project: ProjectId,
-    /// Immutable source revision UUID, not the drawing revision UUID.
-    pub revision: RevisionId,
-    /// SHA-256 of the complete canonical source manifest.
-    pub manifest: ContentDigest,
-    /// Engineering-model schema digest, not the drawing schema digest.
-    pub schema: ContentDigest,
-    /// Exact source workspace generation.
-    pub generation: u64,
-}
-
-/// Whether an application supplied a usable current-model context.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LiveSource {
-    /// No live context was requested, as when opening a self-contained historical drawing.
-    Unknown,
-    /// A requested live model cannot currently be verified/opened.
-    Unavailable,
-    /// Exact verified current model pin.
-    Available(SourceModelPin),
-}
-
-/// Freshness compares pins only; it neither refreshes intent nor changes an old published version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Freshness {
-    /// Captured and current pins are equal in every field.
-    Current,
-    /// A usable current pin differs from the captured pin.
-    Stale,
-    /// The requested live context could not be verified.
-    Unavailable,
-    /// No current-model context was supplied.
-    Unknown,
-}
-
-impl SourceModelPin {
-    /// Compares the exact pin without treating missing live context as current.
-    pub fn freshness(self, live: LiveSource) -> Freshness {
-        match live {
-            LiveSource::Unknown => Freshness::Unknown,
-            LiveSource::Unavailable => Freshness::Unavailable,
-            LiveSource::Available(current) if current == self => Freshness::Current,
-            LiveSource::Available(_) => Freshness::Stale,
-        }
-    }
-}
+pub use beamcraft_model::drawing::{Freshness, LiveSource, SourceModelPin};
 
 /// Fixed orthographic bases in a right-handed, Z-up model. Positive paper Y points up.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

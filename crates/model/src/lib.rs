@@ -7,6 +7,7 @@ pub mod changeset;
 pub mod command;
 pub mod definition;
 pub mod digest;
+pub mod drawing;
 pub mod error;
 pub mod grid;
 pub mod grid_edit;
