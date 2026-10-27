@@ -186,11 +186,16 @@ pub fn add_hole_command(
         PriorOp::Unseen => {}
     }
 
-    // The record id is unused in the project, not only on the target (F04 section 4).
+    // The record id is unused in the project, not only on the target (F04 section 4): the
+    // id namespaces of the A04 hole records and of the A03 cut records are one project-wide
+    // space, so a cut record on any plate or member also refuses the id here.
     let used = |id: OpId| {
-        plates
+        plates.iter().any(|p| {
+            p.authored.hole_records.iter().any(|r| r.operation_id == id)
+                || p.authored.cuts.iter().any(|c| c.operation_id == id)
+        }) || members
             .iter()
-            .any(|p| p.authored.hole_records.iter().any(|r| r.operation_id == id))
+            .any(|m| m.authored.cuts.iter().any(|c| c.operation_id == id))
     };
     let materials = material_lookup(&definitions);
     let material = head_plate
