@@ -158,6 +158,19 @@ const SECTION_ONLY_OPTIONS: &[&str] = &[
     "--h", "--b", "--tw", "--tf", "--t", "--r", "--c", "--d", "--outer", "--cavity",
 ];
 
+/// The `define-fastener` options (A14.1): the definition takes every value from one fastener
+/// library entry; there is no explicit-value form and no environment yet.
+const DEFINE_FASTENER_OPTIONS: &[&str] = &[
+    "--store",
+    "--fastener-library",
+    "--designation",
+    "--name",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
 const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--class",
     "--plane",
@@ -279,6 +292,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "inspect-workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
         "define-profile" => DEFINE_PROFILE_OPTIONS,
+        "define-fastener" => DEFINE_FASTENER_OPTIONS,
         "inspect-elements" => &["--store", "--element"],
         "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
@@ -326,7 +340,9 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "create-workspace" | "inspect-workspace" | "publish-workspace" => {
             workspace_command(&store, command, &options, candidates)
         }
-        "define-material" | "define-profile" => define_command(&store, command, &options),
+        "define-material" | "define-profile" | "define-fastener" => {
+            define_command(&store, command, &options)
+        }
         "definitions" => definitions_json(&inspect(&store)?, &options),
         _ => Ok(inspection_json(&inspect(&store)?, element)?),
     }
@@ -670,6 +686,19 @@ fn define_command(
             display_name: None,
         }
         .named(given("--name"))
+    } else if command == "define-fastener" {
+        // A14.1: the definition takes every value from one fastener library entry, so it never
+        // depends on the file afterwards. One library, no environment yet (O-B2).
+        let path =
+            given("--fastener-library").ok_or_else(|| invalid("--fastener-library is required"))?;
+        let designation =
+            given("--designation").ok_or_else(|| invalid("--designation is required"))?;
+        let library = beamcraft_cli::library::load_fastener(path)?;
+        library
+            .entry(designation)?
+            .record
+            .clone()
+            .named(given("--name"))
     } else if ["--library", "--environment", "--user-library"]
         .iter()
         .any(|option| options.contains_key(option))
@@ -2124,6 +2153,48 @@ pub(crate) fn definition_json(digest: &ContentDigest, record: &DefinitionRecord)
                     None => Json::Null,
                 },
             ));
+        }
+        DefinitionRecord::Fastener { spec } => {
+            let optional = |value: Option<f64>| -> Run<Json> { value.map_or(Ok(Json::Null), num) };
+            fields.push(("fastener_kind", Json::text(spec.kind.token())));
+            fields.push(("head_kind", Json::text(spec.head_kind.token())));
+            fields.push(("nominal_diameter_mm", num(spec.nominal_diameter_mm)?));
+            fields.push(("head_across_flats_mm", num(spec.head_across_flats_mm)?));
+            fields.push(("head_height_mm", num(spec.head_height_mm)?));
+            fields.push(("nut_across_flats_mm", optional(spec.nut_across_flats_mm)?));
+            fields.push(("nut_height_mm", optional(spec.nut_height_mm)?));
+            match &spec.washer {
+                Some(w) => {
+                    fields.push(("washer_outer_diameter_mm", num(w.outer_diameter_mm)?));
+                    fields.push(("washer_inner_diameter_mm", num(w.inner_diameter_mm)?));
+                    fields.push(("washer_thickness_mm", num(w.thickness_mm)?));
+                }
+                None => fields.push(("washer", Json::Null)),
+            }
+            fields.push(("hole_clearance_mm", num(spec.hole_clearance_mm)?));
+            fields.push((
+                "lengths_mm",
+                Json::Array(
+                    spec.lengths_mm
+                        .iter()
+                        .map(|v| num(*v))
+                        .collect::<Run<Vec<_>>>()?,
+                ),
+            ));
+            fields.push(("thread_protrusion_mm", num(spec.thread_protrusion_mm)?));
+            fields.push(("mass_each_kg", optional(spec.mass_each_kg)?));
+            fields.push(("washer_under_head", Json::Bool(spec.washer_under_head)));
+            fields.push(("washer_under_nut", Json::Bool(spec.washer_under_nut)));
+            fields.push(("hole_mode", Json::text(spec.hole_mode.token())));
+            fields.push((
+                "designation",
+                spec.designation.as_ref().map_or(Json::Null, Json::text),
+            ));
+            fields.push((
+                "standard",
+                spec.standard.as_ref().map_or(Json::Null, Json::text),
+            ));
+            fields.push(("grade", spec.grade.as_ref().map_or(Json::Null, Json::text)));
         }
     }
     Ok(Json::Object(

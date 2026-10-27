@@ -22,6 +22,7 @@ pub use reference::{
 use crate::*;
 pub use beamcraft_model::command::{CutRecord, HoleRecord, KeepSide, PlateSide};
 pub use beamcraft_model::definition::SectionProperties;
+pub use beamcraft_model::fastener::FastenerSpec;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 pub use beamcraft_model::section::SectionShape;
 use std::collections::BTreeMap;
@@ -82,6 +83,16 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:profile:cavityPointsMm=double3[](optional,z=0);steel:profile:cavityVertexCounts=int[](optional,>=3 each);",
     "bim:densityKgM3=double(optional);bim:materialGrade=string(optional);",
     "bim:materialStandard=string(optional)\n",
+    "fastener definition=bim:definitionKind=token(fastener);steel:fastener:kind=token(bolt|screw);steel:fastener:headKind=token(hex);",
+    "steel:fastener:nominalDiameterMm=double;steel:fastener:headAcrossFlatsMm=double;steel:fastener:headHeightMm=double;",
+    "steel:fastener:nutAcrossFlatsMm=double(optional);steel:fastener:nutHeightMm=double(optional);",
+    "steel:fastener:washerOuterDiameterMm=double(optional);steel:fastener:washerInnerDiameterMm=double(optional);",
+    "steel:fastener:washerThicknessMm=double(optional);",
+    "steel:fastener:holeClearanceMm=double;steel:fastener:lengthsMm=double[](strictly ascending);",
+    "steel:fastener:threadProtrusionMm=double;steel:fastener:massEachKg=double(optional);",
+    "steel:fastener:washerUnderHead=bool;steel:fastener:washerUnderNut=bool;",
+    "steel:fastener:holeMode=token(generate|none);steel:fastener:designation=string(optional);",
+    "steel:fastener:standard=string(optional);steel:fastener:grade=string(optional)\n",
     "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
@@ -391,6 +402,11 @@ pub enum Definition {
         standard: Option<String>,
         /// Readable name (prim `displayName` metadata), part of the definition content.
         display_name: Option<String>,
+    },
+    /// A14.1 fastener definition (bolt amendment section 2): one size of one standard.
+    Fastener {
+        /// The complete fastener values, admitted by the model crate.
+        spec: FastenerSpec,
     },
 }
 
@@ -1077,6 +1093,7 @@ fn definition_category(definition: &Definition) -> DefinitionCategory {
         Definition::RectangleProfile { .. } | Definition::SectionProfile { .. } => {
             DefinitionCategory::Profile
         }
+        Definition::Fastener { .. } => DefinitionCategory::Fastener,
     }
 }
 pub(super) fn definition_path(digest: ContentDigest, category: DefinitionCategory) -> String {

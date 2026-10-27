@@ -804,13 +804,17 @@ impl IndexBuilder {
         for (prim, id) in self.prims.iter().zip(&ids) {
             control.check()?;
             let definition = DefinitionCategory::parse_path(&prim.path);
-            let definition_leaf = [DefinitionCategory::Material, DefinitionCategory::Profile]
-                .into_iter()
-                .any(|category| {
-                    prim.path
-                        .strip_prefix(category.prefix())
-                        .is_some_and(|rest| !rest.contains('/'))
-                });
+            let definition_leaf = [
+                DefinitionCategory::Material,
+                DefinitionCategory::Profile,
+                DefinitionCategory::Fastener,
+            ]
+            .into_iter()
+            .any(|category| {
+                prim.path
+                    .strip_prefix(category.prefix())
+                    .is_some_and(|rest| !rest.contains('/'))
+            });
             if definition.is_none()
                 && (definition_leaf
                     || prim.path.starts_with("/World/Definitions/D_")
@@ -829,9 +833,7 @@ impl IndexBuilder {
                 let rest = digest_text.as_str();
                 if property(prim, "bim:definitionKind")
                     .and_then(text)
-                    .is_some_and(|kind| {
-                        (kind == "material") != (category == DefinitionCategory::Material)
-                    })
+                    .is_some_and(|kind| DefinitionCategory::for_kind(kind) != category)
                 {
                     return Err(invalid_id("definition category and kind differ"));
                 }
@@ -1111,14 +1113,17 @@ impl Lookup<'_> {
                 Err(dangling())
             };
         }
-        if [DefinitionCategory::Material, DefinitionCategory::Profile]
-            .into_iter()
-            .any(|category| {
-                target
-                    .strip_prefix(category.prefix())
-                    .is_some_and(|rest| !rest.contains('/'))
-            })
-        {
+        if [
+            DefinitionCategory::Material,
+            DefinitionCategory::Profile,
+            DefinitionCategory::Fastener,
+        ]
+        .into_iter()
+        .any(|category| {
+            target
+                .strip_prefix(category.prefix())
+                .is_some_and(|rest| !rest.contains('/'))
+        }) {
             return Err(invalid_id("definition target lacks a full SHA-256 digest"));
         }
         if self.paths.contains(target) {

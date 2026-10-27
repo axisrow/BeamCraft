@@ -61,3 +61,7 @@ pub const MAX_WELD_LENGTH_MM: f64 = 1_000_000.0;
 pub const BOLT_DIAMETER_CAP_MM: f64 = 1_000.0;
 /// Most bolts of one bolt group (A05).
 pub const MAX_BOLT_GROUP_SIZE: usize = 512;
+/// Most standard lengths of one fastener definition (A14.1).
+pub const MAX_FASTENER_LENGTHS: usize = 64;
+/// Largest declared mass of one fastener (bolt, nut and washers), in kg (A14.1).
+pub const MAX_FASTENER_MASS_KG: f64 = 10_000.0;

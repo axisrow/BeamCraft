@@ -9,6 +9,7 @@ pub mod definition;
 pub mod digest;
 pub mod drawing;
 pub mod error;
+pub mod fastener;
 pub mod grid;
 pub mod grid_edit;
 pub mod grid_update;

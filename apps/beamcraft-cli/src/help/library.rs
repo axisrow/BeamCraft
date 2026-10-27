@@ -41,5 +41,11 @@ pub(super) const HELP: &str = concat!(
     ".usdc destination or a binary USD library is refused, USDA text only; a replaced file ",
     "keeps its permissions; a duplicate designation, a library with refused entries or a file ",
     "that does not read back as intended is refused and nothing is written; the file is ",
-    "rendered again, so comments and unread attributes are not kept).",
+    "rendered again, so comments and unread attributes are not kept). Fastener libraries ",
+    "(A14.1): the same layer format, entries under /Library/Fasteners with steel:fastener:* ",
+    "attributes, no environment yet: list-library --fastener-library FILE and show-library ",
+    "--fastener-library FILE --designation NAME list and resolve fastener definitions ",
+    "(--fastener-library is an alternative to --library/--environment); define-fastener ",
+    "--store ROOT --fastener-library FILE --designation NAME [--name TEXT] pins the entry into ",
+    "the project by digest (see definitions help).",
 );

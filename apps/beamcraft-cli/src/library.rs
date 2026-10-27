@@ -41,6 +41,7 @@ use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 use beamcraft_model::reference::check_source_path;
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, ParametricSection, SectionFamily, SectionShape,
@@ -52,8 +53,10 @@ pub const MAX_LIBRARY_BYTES: usize = 8 * 1024 * 1024;
 /// Most entries one library may hold; more is `LIMIT_EXCEEDED`.
 pub const MAX_LIBRARY_ENTRIES: usize = 4096;
 
-/// Parent path of every entry prim.
+/// Parent path of every profile entry prim.
 const ENTRY_PARENT: &str = "/Library/Profiles";
+/// Parent path of every fastener entry prim (A14.1).
+const FASTENER_ENTRY_PARENT: &str = "/Library/Fasteners";
 const LIBRARY_LAYER: &str = "library.usda";
 const LIBRARY_LAYER_BINARY: &str = "library.usdc";
 /// A fixed read-only identity for the stage of a library: it is not a project or a workspace.
@@ -397,6 +400,28 @@ fn open_layer(bytes: Vec<u8>, not_self_contained: &'static str) -> Result<OpenLa
 
 /// [`load`] for bytes that were already read (at most 8 MiB, checked again here).
 pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
+    load_bytes_as(bytes, ENTRY_PARENT, decode_record)
+}
+
+/// [`load`] for the fastener library at `path` (A14.1): the same layer format and
+/// loading rules, entries under `/Library/Fasteners` carrying `steel:fastener:*` attributes.
+pub fn load_fastener(path: &str) -> Result<Library, PlateError> {
+    check_source_path(path).map_err(command)?;
+    load_fastener_bytes(read_file(path, MAX_LIBRARY_BYTES).map_err(io_error)?)
+}
+
+/// [`load_bytes`] for the bytes of a fastener library.
+pub fn load_fastener_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
+    load_bytes_as(bytes, FASTENER_ENTRY_PARENT, decode_fastener_record)
+}
+
+/// [`load_bytes`] for one entry parent path and its entry decoder; everything else (layer
+/// budgets, identity, admission, refused-entry reporting) is shared with the profile loading.
+fn load_bytes_as(
+    bytes: Vec<u8>,
+    entry_parent: &str,
+    decode: fn(&Prim, &str) -> Result<DefinitionRecord, PlateError>,
+) -> Result<Library, PlateError> {
     if bytes.len() > MAX_LIBRARY_BYTES {
         return Err(io_error(ErrorCode::LimitExceeded));
     }
@@ -419,7 +444,7 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
     let mut count = 0usize;
     for prim in prims
         .iter()
-        .filter(|p| p.path.rsplit_once('/').map(|(parent, _)| parent) == Some(ENTRY_PARENT))
+        .filter(|p| p.path.rsplit_once('/').map(|(parent, _)| parent) == Some(entry_parent))
     {
         count += 1;
         if count > MAX_LIBRARY_ENTRIES {
@@ -428,7 +453,7 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
                 "the library has more than 4096 entries",
             ));
         }
-        let designation = match required_text(prim, "steel:profile:designation", "string") {
+        let designation = match required_text(prim, designation_attribute(entry_parent), "string") {
             Ok(text) if label_is_valid(text) => text.to_owned(),
             Ok(_) | Err(_) => {
                 rejected.push(RejectedEntry {
@@ -454,7 +479,7 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
             });
             continue;
         }
-        match decode_record(prim, &designation) {
+        match decode(prim, &designation) {
             Ok(record) => entries.push(LibraryEntry {
                 prim_path: prim.path.clone(),
                 designation,
@@ -474,6 +499,98 @@ pub fn load_bytes(bytes: Vec<u8>) -> Result<Library, PlateError> {
         entries,
         rejected,
     })
+}
+
+/// The designation attribute of one entry kind: `steel:profile:designation` or
+/// `steel:fastener:designation`.
+fn designation_attribute(entry_parent: &str) -> &'static str {
+    if entry_parent == FASTENER_ENTRY_PARENT {
+        "steel:fastener:designation"
+    } else {
+        "steel:profile:designation"
+    }
+}
+
+/// The fastener definition of one entry prim, admitted by the F04 value rules (A14.1). A
+/// declared mass is optional; nothing is inferred from the designation.
+fn decode_fastener_record(prim: &Prim, designation: &str) -> Result<DefinitionRecord, PlateError> {
+    let double = |name: &str| -> Result<Option<f64>, PlateError> {
+        optional_number(prim, &format!("steel:fastener:{name}"))
+    };
+    let required_double = |name: &'static str| -> Result<f64, PlateError> {
+        double(name)?.ok_or_else(|| invalid("a required fastener dimension is missing"))
+    };
+    let optional_text = |name: &str| -> Result<Option<String>, PlateError> {
+        field(prim, &format!("steel:fastener:{name}"), "string")
+            .map_err(as_input)?
+            .map(|v| {
+                text(v)
+                    .map(str::to_owned)
+                    .ok_or_else(|| invalid("a fastener label is not a string"))
+            })
+            .transpose()
+    };
+    let token = |name: &str| -> Result<String, PlateError> {
+        field(prim, &format!("steel:fastener:{name}"), "token")
+            .map_err(as_input)?
+            .and_then(text)
+            .map(str::to_owned)
+            .ok_or_else(|| invalid("a required fastener token is missing or mistyped"))
+    };
+    let boolean = |name: &str| -> Result<bool, PlateError> {
+        match field(prim, &format!("steel:fastener:{name}"), "bool").map_err(as_input)? {
+            Some(Value::Bool(value)) => Ok(*value),
+            _ => Err(invalid("a required fastener switch is missing or mistyped")),
+        }
+    };
+    let kind = FastenerKind::from_token(&token("kind")?)
+        .ok_or_else(|| invalid("unknown fastener kind"))?;
+    let head_kind = HeadKind::from_token(&token("headKind")?)
+        .ok_or_else(|| invalid("unknown fastener head kind"))?;
+    let hole_mode = HoleMode::from_token(&token("holeMode")?)
+        .ok_or_else(|| invalid("unknown fastener hole mode"))?;
+    let washer = match (
+        double("washerOuterDiameterMm")?,
+        double("washerInnerDiameterMm")?,
+        double("washerThicknessMm")?,
+    ) {
+        (None, None, None) => None,
+        (outer, inner, thickness) => Some(WasherSpec {
+            outer_diameter_mm: outer.ok_or_else(|| invalid("a washer dimension is missing"))?,
+            inner_diameter_mm: inner.ok_or_else(|| invalid("a washer dimension is missing"))?,
+            thickness_mm: thickness.ok_or_else(|| invalid("a washer dimension is missing"))?,
+        }),
+    };
+    let lengths = match field(prim, "steel:fastener:lengthsMm", "double[]").map_err(as_input)? {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| number(v).ok_or_else(|| invalid("a standard length is not a number")))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(invalid("the standard lengths are missing or mistyped")),
+    };
+    let spec = FastenerSpec {
+        designation: Some(designation.to_owned()),
+        standard: optional_text("standard")?,
+        grade: optional_text("grade")?,
+        display_name: Some(designation.to_owned()),
+        kind,
+        head_kind,
+        nominal_diameter_mm: required_double("nominalDiameterMm")?,
+        head_across_flats_mm: required_double("headAcrossFlatsMm")?,
+        head_height_mm: required_double("headHeightMm")?,
+        nut_across_flats_mm: double("nutAcrossFlatsMm")?,
+        nut_height_mm: double("nutHeightMm")?,
+        washer,
+        hole_clearance_mm: required_double("holeClearanceMm")?,
+        lengths_mm: lengths,
+        thread_protrusion_mm: required_double("threadProtrusionMm")?,
+        mass_each_kg: double("massEachKg")?,
+        washer_under_head: boolean("washerUnderHead")?,
+        washer_under_nut: boolean("washerUnderNut")?,
+        hole_mode,
+    };
+    spec.validate().map_err(command)?;
+    Ok(DefinitionRecord::Fastener { spec })
 }
 
 /// One library of a lookup, with the path it was read from.
@@ -850,7 +967,9 @@ fn points_text(points: &[[f64; 2]]) -> String {
     format!("[{}]", items.join(", "))
 }
 
-/// The attribute lines of one entry; the inverse of [`decode_record`].
+/// The attribute lines of one entry; the inverse of [`decode_record`]. Fastener entries are not
+/// written here: a fastener library is shipped or maintained by hand, and the shipped files are
+/// the provenance record of their values (A14.1).
 fn entry_body(designation: &str, record: &DefinitionRecord) -> Result<String, PlateError> {
     let mut lines = vec![format!(
         "string steel:profile:designation = {}",
@@ -914,6 +1033,9 @@ fn entry_body(designation: &str, record: &DefinitionRecord) -> Result<String, Pl
         }
         DefinitionRecord::Material { .. } => {
             return Err(invalid("a library holds profiles, not materials"));
+        }
+        DefinitionRecord::Fastener { .. } => {
+            return Err(invalid("a profile library holds profiles, not fasteners"));
         }
     };
     if let Some(standard) = &section.standard {
@@ -1081,6 +1203,11 @@ pub fn add_entry(
         DefinitionRecord::Material { .. } => {
             return Err(invalid("a library holds profiles, not materials"));
         }
+        DefinitionRecord::Fastener { .. } => {
+            return Err(invalid(
+                "add-library writes profile entries; a fastener library is shipped or maintained by hand",
+            ));
+        }
     }
     record.validate().map_err(command)?;
     let (info, existing, created) = match load(path) {
@@ -1221,6 +1348,83 @@ mod tests {
 
     fn load_text(_name: &str, text: &str) -> Result<Library, PlateError> {
         load_bytes(text.as_bytes().to_vec())
+    }
+
+    fn fastener_entry(name: &str, designation: &str, body: &str) -> String {
+        format!(
+            "        def Scope \"{name}\" {{\n            string steel:fastener:designation = \"{designation}\"\n{body}        }}\n"
+        )
+    }
+
+    fn fastener_library(entries: &[String]) -> String {
+        format!(
+            "{HEADER}def Scope \"Library\" {{\n    def Scope \"Fasteners\" {{\n{}    }}\n}}\n",
+            entries.concat()
+        )
+    }
+
+    const BOLT_BODY: &str = "            token steel:fastener:kind = \"bolt\"\n            token steel:fastener:headKind = \"hex\"\n            double steel:fastener:nominalDiameterMm = 12\n            double steel:fastener:headAcrossFlatsMm = 18\n            double steel:fastener:headHeightMm = 7.5\n            double steel:fastener:nutAcrossFlatsMm = 18\n            double steel:fastener:nutHeightMm = 10.8\n            double steel:fastener:holeClearanceMm = 1\n            double[] steel:fastener:lengthsMm = [30, 40, 50]\n            double steel:fastener:threadProtrusionMm = 4\n            bool steel:fastener:washerUnderHead = false\n            bool steel:fastener:washerUnderNut = false\n            token steel:fastener:holeMode = \"generate\"\n";
+
+    #[test]
+    fn a_fastener_entry_resolves_to_a_complete_named_definition() {
+        let with_washer = format!(
+            "{BOLT_BODY}            double steel:fastener:washerOuterDiameterMm = 24\n            double steel:fastener:washerInnerDiameterMm = 13\n            double steel:fastener:washerThicknessMm = 2.5\n            string steel:fastener:standard = \"Synthetic\"\n"
+        );
+        let text = fastener_library(&[fastener_entry("A", "SYN-M12", &with_washer)]);
+        let loaded = load_fastener_bytes(text.clone().into_bytes()).unwrap();
+        assert_eq!(loaded.info.id, "t");
+        assert_eq!(loaded.entries.len(), 1);
+        let found = loaded.entry("SYN-M12").unwrap();
+        assert_eq!(found.record.display_name(), Some("SYN-M12"));
+        let DefinitionRecord::Fastener { spec } = &found.record else {
+            panic!("the entry is not a fastener definition");
+        };
+        assert_eq!(spec.kind, FastenerKind::Bolt);
+        assert_eq!(spec.nominal_diameter_mm, 12.0);
+        assert_eq!(spec.lengths_mm, [30.0, 40.0, 50.0]);
+        assert_eq!(
+            spec.washer.as_ref().map(|w| w.inner_diameter_mm),
+            Some(13.0)
+        );
+        assert_eq!(spec.standard.as_deref(), Some("Synthetic"));
+        // A profile loader never sees a fastener entry and the other way round.
+        assert_eq!(
+            load_text("p.usda", &text).unwrap().entries.len(),
+            0,
+            "the fastener entry is not a profile entry"
+        );
+        assert_eq!(
+            loaded.entry("SYN-M13").unwrap_err().code,
+            ErrorCode::NotFound
+        );
+    }
+
+    #[test]
+    fn a_bad_fastener_entry_is_reported_and_the_others_load() {
+        // A bolt without its nut height is refused by the definition's own rules.
+        let nutless = BOLT_BODY.replace("double steel:fastener:nutHeightMm = 10.8\n", "");
+        let text = fastener_library(&[
+            fastener_entry("A", "SYN-M12", BOLT_BODY),
+            fastener_entry("B", "SYN-BAD", &nutless),
+        ]);
+        let loaded = load_fastener_bytes(text.into_bytes()).unwrap();
+        assert_eq!(loaded.entries.len(), 1);
+        assert_eq!(loaded.rejected.len(), 1);
+        assert_eq!(loaded.rejected[0].designation.as_deref(), Some("SYN-BAD"));
+        assert_eq!(
+            loaded.entry("SYN-BAD").unwrap_err().code,
+            ErrorCode::InvalidArgument,
+            "a refused designation reports its refusal, never a near match"
+        );
+    }
+
+    #[test]
+    fn a_fastener_record_is_not_written_by_add_entry() {
+        let text = fastener_library(&[fastener_entry("A", "SYN-M12", BOLT_BODY)]);
+        let loaded = load_fastener_bytes(text.into_bytes()).unwrap();
+        let record = loaded.entry("SYN-M12").unwrap().record.clone();
+        let error = add_entry("/tmp/a14-unwritable.usda", record, "SYN-M12", None).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
     }
 
     #[test]

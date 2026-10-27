@@ -66,6 +66,8 @@ pub enum DefinitionCategory {
     Material,
     /// Section profile of any supported family.
     Profile,
+    /// Fastener definition (A14.1, bolt amendment section 2).
+    Fastener,
 }
 
 impl DefinitionCategory {
@@ -74,6 +76,7 @@ impl DefinitionCategory {
         match self {
             Self::Material => "/World/Definitions/Materials/MAT_",
             Self::Profile => "/World/Definitions/Profiles/PRF_",
+            Self::Fastener => "/World/Definitions/Fasteners/FST_",
         }
     }
 
@@ -84,7 +87,7 @@ impl DefinitionCategory {
 
     /// Parses an exact category path with a full lowercase SHA-256; descendants are excluded.
     pub fn parse_path(path: &str) -> Option<(Self, ContentDigest)> {
-        [Self::Material, Self::Profile]
+        [Self::Material, Self::Profile, Self::Fastener]
             .into_iter()
             .find_map(|category| {
                 Some((
@@ -92,5 +95,15 @@ impl DefinitionCategory {
                     path.strip_prefix(category.prefix())?.parse().ok()?,
                 ))
             })
+    }
+
+    /// The category the `bim:definitionKind` token names: `material` is a material, `fastener` a
+    /// fastener (A14.1), every other admitted kind a section profile.
+    pub fn for_kind(kind: &str) -> Self {
+        match kind {
+            "material" => Self::Material,
+            "fastener" => Self::Fastener,
+            _ => Self::Profile,
+        }
     }
 }

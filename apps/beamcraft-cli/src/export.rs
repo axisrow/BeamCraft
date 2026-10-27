@@ -365,7 +365,7 @@ fn declared_of(definition: &DefinitionRecord) -> Option<Declared> {
     let section = match definition {
         DefinitionRecord::RectangleProfile { section, .. }
         | DefinitionRecord::SectionProfile { section, .. } => section,
-        DefinitionRecord::Material { .. } => return None,
+        DefinitionRecord::Material { .. } | DefinitionRecord::Fastener { .. } => return None,
     };
     let declared = Declared {
         designation: section.designation.clone(),
