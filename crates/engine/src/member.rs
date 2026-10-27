@@ -1413,7 +1413,10 @@ mod tests {
         // times the path length, within the polygon bound of the straight member.
         let mesh = out.body.solid.volume_mm3();
         assert!(mesh > out.body.volume_mm3, "{mesh}");
-        assert!((mesh - out.body.volume_mm3) / out.body.volume_mm3 < 0.0025, "{mesh}");
+        assert!(
+            (mesh - out.body.volume_mm3) / out.body.volume_mm3 < 0.0025,
+            "{mesh}"
+        );
     }
 
     #[test]
