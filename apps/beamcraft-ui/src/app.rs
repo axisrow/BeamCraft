@@ -25,6 +25,7 @@ use crate::source::{Known, Refreshed, Reloaded};
 use crate::stats::Stats;
 use crate::tools::{BeamPlace, Choice, Created, MAX_TEXT, ToolError, ToolKind, Tools};
 use crate::{Error, check_font, command, json_string, source};
+use beamcraft_engine::RenderMode;
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
 use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
@@ -60,6 +61,9 @@ pub struct Source {
     pub environment: Option<String>,
     /// The author's name, shown in the header.
     pub author: Option<String>,
+    /// The user's configuration directory (`--config-dir`); `None` is the platform default. The
+    /// render-mode shortcuts are read from it, nothing else.
+    pub config_dir: Option<PathBuf>,
 }
 
 /// The scene on screen: the pinned snapshot, its buffers on the device and what the window
@@ -163,6 +167,16 @@ pub struct App {
     details: bool,
     logo: Option<egui::TextureHandle>,
     logo_tried: bool,
+    /// The active render mode (V16); [`beamcraft_engine::RenderMode::Shaded`] is the default and
+    /// switching never reloads the scene.
+    mode: beamcraft_engine::RenderMode,
+    /// The render-mode shortcuts: the user's file or the defaults.
+    shortcuts: crate::shortcuts::Shortcuts,
+    /// Why the shortcuts file was not used, when it was not.
+    shortcuts_note: Option<String>,
+    /// The selected-only draw and the (selected id, scene origin) it was built for, so the one
+    /// engine query runs on a selection or reload change, not per frame.
+    selected_only: ((String, [f64; 3]), Option<crate::scene::SelectedDraw>),
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -668,6 +682,8 @@ impl App {
             info.name, info.device_type, info.backend
         );
         let publisher = Publisher::new(source.published.clone(), source.workspace.clone());
+        let (shortcuts, shortcuts_note) =
+            crate::shortcuts::Shortcuts::load(source.config_dir.as_deref());
         let perf = perf.map(|(phases, report)| {
             let header = format!(
                 "\"adapter\":{},\"device_type\":{},\"backend\":{},\"samples\":{},\"text\":{}",
@@ -747,6 +763,10 @@ impl App {
             details: false,
             logo: None,
             logo_tried: false,
+            mode: beamcraft_engine::RenderMode::default(),
+            shortcuts,
+            shortcuts_note,
+            selected_only: ((String::new(), [0.0; 3]), None),
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -900,6 +920,9 @@ impl App {
     fn show(&mut self, loaded: Loaded) {
         note_loaded(&self.stats, &loaded);
         self.loaded = Some(loaded);
+        // A new revision may have moved or replaced the selected element: the selected-only
+        // draw is rebuilt against this scene.
+        self.selected_only = ((String::new(), [0.0; 3]), None);
         self.error = None;
     }
 
@@ -1098,6 +1121,19 @@ impl App {
             && ctx.input(|input| input.key_pressed(egui::Key::Delete))
         {
             self.delete_selection();
+        }
+    }
+
+    /// The render-mode shortcuts (V16): one key per mode, the user's bindings. Ignored while a
+    /// text field has the keyboard. Switching a mode changes only the drawing: the loaded
+    /// snapshot, its token and the camera stay as they are.
+    fn render_mode_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let pressed = ctx.input(|input| self.shortcuts.pressed(input));
+        if let Some(mode) = pressed {
+            self.mode = mode;
         }
     }
 
@@ -1848,6 +1884,11 @@ impl App {
         {
             self.error = Some(e.to_string());
         }
+        // A mode phase measures its mode: the drawing style follows the driver, as a key press
+        // would.
+        if let Some(mode) = request.mode {
+            self.mode = mode;
+        }
         if let Some([width, height]) = request.resize {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
         }
@@ -2279,6 +2320,10 @@ impl App {
         ui.label(format!("{:.0} FPS", self.fps));
         ui.label(&self.adapter);
         ui.label(format!("{}x MSAA", self.renderer.samples));
+        ui.label(format!("Render mode: {}", self.mode.as_token()));
+        if let Some(note) = &self.shortcuts_note {
+            ui.label(format!("Shortcuts: {note}"));
+        }
         ui.separator();
         match &self.loaded {
             Some(l) => {
@@ -2366,6 +2411,7 @@ impl eframe::App for App {
         self.poll_select();
         self.poll_reload();
         self.selection_shortcuts(ui.ctx());
+        self.render_mode_shortcuts(ui.ctx());
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
@@ -2485,13 +2531,70 @@ impl eframe::App for App {
                     let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
                     self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
                     if let Some(l) = &self.loaded {
-                        self.renderer.draw(
-                            &self.state.device,
-                            &self.state.queue,
-                            &l.uploaded,
-                            view,
-                            &self.stats,
-                        );
+                        // One loaded scene, five drawing styles: the mode picks the pipeline and
+                        // never rewrites the snapshot or its token.
+                        if self.mode == RenderMode::SelectedOnly {
+                            // The one engine query runs on a selection or reload change, not
+                            // per frame; the fields are disjoint, so the cache updates while
+                            // the scene is borrowed.
+                            let key = (
+                                self.editor
+                                    .selected()
+                                    .map(|s| s.id.clone())
+                                    .unwrap_or_default(),
+                                l.summary.origin_mm,
+                            );
+                            if self.selected_only.0 != key {
+                                let draw = self
+                                    .editor
+                                    .selected()
+                                    .and_then(|s| beamcraft_engine::ElementId::parse(&s.id).ok())
+                                    .and_then(|id| {
+                                        crate::scene::SelectedDraw::of(
+                                            &l.snapshot,
+                                            &id,
+                                            l.summary.origin_mm,
+                                        )
+                                    });
+                                self.selected_only = (key, draw);
+                            }
+                        }
+                        match self.mode {
+                            RenderMode::SelectedOnly => match &self.selected_only.1 {
+                                Some(selected) => {
+                                    self.renderer.draw_one(
+                                        &self.state.device,
+                                        &self.state.queue,
+                                        &l.uploaded,
+                                        view,
+                                        &self.stats,
+                                        &selected.digest,
+                                        &selected.instance,
+                                    );
+                                }
+                                // Nothing selected: an empty view, not the whole model.
+                                None => {
+                                    self.renderer.draw(
+                                        &self.state.device,
+                                        &self.state.queue,
+                                        &l.uploaded,
+                                        view,
+                                        &self.stats,
+                                        RenderMode::SelectedOnly,
+                                    );
+                                }
+                            },
+                            mode => {
+                                self.renderer.draw(
+                                    &self.state.device,
+                                    &self.state.queue,
+                                    &l.uploaded,
+                                    view,
+                                    &self.stats,
+                                    mode,
+                                );
+                            }
+                        }
                     }
                     if let Some(l) = &self.loaded {
                         if self.grids_visible {
@@ -2664,7 +2767,7 @@ mod tests {
     use crate::source::{Refreshed, Reloaded};
     use crate::tools::ToolError;
     use beamcraft_engine::synthetic::plate_scene;
-    use beamcraft_engine::{Limits, Representation, ViewPin, ViewSnapshot};
+    use beamcraft_engine::{Limits, RenderMode, Representation, ViewPin, ViewSnapshot};
     use beamcraft_model::digest::Sha256;
     use eframe::egui_wgpu;
     use std::sync::Arc;
@@ -2707,6 +2810,7 @@ mod tests {
             actor: None,
             environment: None,
             author: None,
+            config_dir: None,
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())
@@ -2919,6 +3023,117 @@ mod tests {
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
         // A final frame over the mutated state draws without errors.
         draw(&mut app, &ctx, Vec::new());
+    }
+
+    #[test]
+    fn ctrl_1_to_5_and_the_ribbon_switch_render_modes_without_touching_the_scene() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let draw = |app: &mut App, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.render_mode_shortcuts(ui.ctx());
+                    app.header(ui);
+                    app.ribbon(ui);
+                },
+            );
+            output.textures_delta.clear();
+            output
+        };
+        // egui tracks modifiers only through ModifiersChanged, as winit delivers them.
+        let press = |key, ctrl| {
+            let modifiers = if ctrl {
+                egui::Modifiers::CTRL
+            } else {
+                egui::Modifiers::NONE
+            };
+            vec![
+                egui::Event::ModifiersChanged(modifiers),
+                egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers,
+                },
+            ]
+        };
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        // A bare digit never switches a mode; Ctrl+1 to Ctrl+5 do, in order.
+        draw(&mut app, press(egui::Key::Num1, false));
+        assert_eq!(app.mode, RenderMode::Shaded);
+        for (key, expected) in [
+            (egui::Key::Num1, RenderMode::Wireframe),
+            (egui::Key::Num2, RenderMode::Transparent),
+            (egui::Key::Num3, RenderMode::Grey),
+            (egui::Key::Num4, RenderMode::Shaded),
+            (egui::Key::Num5, RenderMode::SelectedOnly),
+        ] {
+            draw(&mut app, press(key, true));
+            assert_eq!(app.mode, expected, "{key:?}");
+        }
+        assert_eq!(
+            app.loaded.as_ref().unwrap().snapshot.token(),
+            &token,
+            "a mode switch never reloads the scene"
+        );
+        // A remapped binding replaces the default one; the other modes keep theirs.
+        app.shortcuts
+            .set(
+                RenderMode::Wireframe,
+                crate::shortcuts::Binding::parse("Ctrl+7").unwrap(),
+            )
+            .unwrap();
+        draw(&mut app, press(egui::Key::Num1, true));
+        assert_eq!(app.mode, RenderMode::SelectedOnly);
+        draw(&mut app, press(egui::Key::Num7, true));
+        assert_eq!(app.mode, RenderMode::Wireframe);
+        // The View tab's DISPLAY buttons set the same state a key press does.
+        let first = draw(&mut app, Vec::new());
+        draw(&mut app, click(position(&first, "View")));
+        let view_tab = draw(&mut app, Vec::new());
+        draw(&mut app, click(position(&view_tab, "Transparent")));
+        assert_eq!(app.mode, RenderMode::Transparent);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 use crate::app::{App, Source};
 use crate::start::StartPage;
 use crate::stats::Stats;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The start page, then the window of the opened model.
@@ -70,6 +70,7 @@ impl eframe::App for Shell {
             actor: self.start.actor_id(),
             environment: self.start.environment().map(str::to_owned),
             author: self.start.author_name(),
+            config_dir: self.start.config_dir().map(Path::to_path_buf),
         };
         match App::open(
             ui.ctx(),

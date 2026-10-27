@@ -10,6 +10,7 @@ use crate::render::{Gpu, Renderer, Uploaded, wait};
 use crate::scene::Scene;
 use crate::stats::Stats;
 use crate::{Error, json_string};
+use beamcraft_engine::RenderMode;
 use std::time::Instant;
 
 /// Most measured frames of one run.
@@ -86,7 +87,14 @@ pub fn measure(
         camera.navigate([0.01, 0.0], [0.0; 2], 0.0)?;
         let view = camera.view(aspect)?;
         let start = Instant::now();
-        let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, stats);
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            stats,
+            RenderMode::Shaded,
+        );
         let submitted = start.elapsed().as_secs_f64() * 1000.0;
         wait(&gpu.device, index)?;
         let completed = start.elapsed().as_secs_f64() * 1000.0;

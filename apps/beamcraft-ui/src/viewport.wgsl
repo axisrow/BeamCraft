@@ -41,3 +41,17 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return vec4f(vec3f(0.85, 0.55, 0.1) * light, 1.0);
 }
+// The grey mode: the same lighting on one neutral grey, without the part colours.
+@fragment fn shade_grey(o: Out) -> @location(0) vec4f {
+    let n = normalize(o.normal);
+    let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
+    return vec4f(vec3f(0.62, 0.62, 0.62) * light, 1.0);
+}
+// The transparent mode: the shaded colours at partial opacity; the pipeline blends and keeps
+// depth testing but not depth writing, so hidden faces show through.
+@fragment fn shade_transparent(o: Out) -> @location(0) vec4f {
+    let n = normalize(o.normal);
+    let base = mix(vec3f(0.47, 0.71, 0.77), vec3f(0.96, 0.94, 0.88), clamp(n.z, 0.0, 1.0));
+    let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
+    return vec4f(base * light, 0.45);
+}

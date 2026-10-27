@@ -53,6 +53,54 @@ impl Representation {
     }
 }
 
+/// How a viewport displays the elements it has loaded (V16). A display style of the window, never
+/// model state: switching a mode changes no snapshot token, no authored or derived data and no
+/// engineering quantity. One query drives every mode: the renderer keeps one loaded scene and
+/// picks the drawing style, and the selected-only mode reads the one element it needs from
+/// [`ViewSnapshot::element`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
+pub enum RenderMode {
+    /// Triangle edges only, no filled faces.
+    Wireframe,
+    /// Filled faces at partial opacity, so hidden geometry shows through.
+    Transparent,
+    /// Filled, lit faces in one neutral grey without the part colours.
+    Grey,
+    /// The default: filled, lit faces in the part colours.
+    #[default]
+    Shaded,
+    /// Only the selected element is drawn; nothing, when nothing is selected.
+    SelectedOnly,
+}
+
+impl RenderMode {
+    /// Every mode, in the `Ctrl+1` to `Ctrl+5` order of the default shortcuts.
+    pub const ALL: [Self; 5] = [
+        Self::Wireframe,
+        Self::Transparent,
+        Self::Grey,
+        Self::Shaded,
+        Self::SelectedOnly,
+    ];
+
+    /// The stable token, also the name of a `--perf-run` measurement phase.
+    pub const fn as_token(self) -> &'static str {
+        match self {
+            Self::Wireframe => "wireframe",
+            Self::Transparent => "transparent",
+            Self::Grey => "grey",
+            Self::Shaded => "shaded",
+            Self::SelectedOnly => "selected",
+        }
+    }
+
+    /// Parses an exact token.
+    pub fn parse(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.as_token() == token)
+    }
+}
+
 /// The two view parameters V02 carries: an element-kind filter and a representation selector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ViewSettings {
@@ -255,5 +303,35 @@ impl<'a> ViewProjection<'a> {
     /// Whether a kind is shown by the current settings.
     pub const fn shows(&self, kind: ElementKind) -> bool {
         self.settings.hidden_kinds.is_visible(kind)
+    }
+}
+
+#[cfg(test)]
+mod render_mode_tests {
+    use super::*;
+
+    #[test]
+    fn modes_round_trip_through_tokens_and_have_the_default() {
+        for mode in RenderMode::ALL {
+            assert_eq!(RenderMode::parse(mode.as_token()), Some(mode));
+        }
+        assert_eq!(RenderMode::parse("shaded"), Some(RenderMode::Shaded));
+        assert_eq!(RenderMode::parse("wireframe"), Some(RenderMode::Wireframe));
+        assert_eq!(
+            RenderMode::parse("selected"),
+            Some(RenderMode::SelectedOnly)
+        );
+        assert_eq!(RenderMode::parse("secret"), None);
+        assert_eq!(RenderMode::default(), RenderMode::Shaded);
+        assert_eq!(
+            RenderMode::ALL,
+            [
+                RenderMode::Wireframe,
+                RenderMode::Transparent,
+                RenderMode::Grey,
+                RenderMode::Shaded,
+                RenderMode::SelectedOnly,
+            ]
+        );
     }
 }

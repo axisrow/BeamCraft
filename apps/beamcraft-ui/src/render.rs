@@ -8,6 +8,7 @@ use crate::{
     scene::{DrawMesh, INSTANCE_BYTES, Scene, VERTEX_BYTES},
     stats::Stats,
 };
+use beamcraft_engine::RenderMode;
 use beamcraft_model::digest::ContentDigest;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
@@ -64,6 +65,9 @@ impl Gpu {
             match adapter
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("BeamCraft viewport"),
+                    // The wireframe render mode draws triangle edges: a native desktop feature
+                    // (Metal, DX12, and Vulkan with `fillModeNonSolid`), requested explicitly.
+                    required_features: wgpu::Features::POLYGON_MODE_LINE,
                     ..Default::default()
                 })
                 .await
@@ -227,6 +231,15 @@ impl Uploaded {
         self.meshes.iter().map(|m| m.digest).collect()
     }
 
+    /// The device vertex buffer and vertex count of the mesh with `digest`, for
+    /// [`Renderer::draw_one`].
+    pub fn mesh_vertices(&self, digest: &ContentDigest) -> Option<(&wgpu::Buffer, u32)> {
+        self.meshes
+            .iter()
+            .find(|m| &m.digest == digest)
+            .map(|g| (&g.vertices, g.vertex_count))
+    }
+
     /// Vertex buffers this scene shares with `other` (the same buffer, not a copy).
     pub fn shared_vertex_buffers(&self, other: &Self) -> usize {
         self.meshes
@@ -312,21 +325,26 @@ fn targets(
     })
 }
 
-/// The device-, format- and sample-dependent half: the shader, the pipeline and the camera
-/// uniform with its bind group. A resize keeps it.
+/// The device-, format- and sample-dependent half: the shader, the pipelines and the camera
+/// uniform with its bind group. A resize keeps them.
+struct Pipelines {
+    /// Filled, lit faces in the part colours.
+    shaded: wgpu::RenderPipeline,
+    /// Triangle edges only.
+    wireframe: wgpu::RenderPipeline,
+    /// Filled faces at partial opacity, depth-tested without depth writes.
+    transparent: wgpu::RenderPipeline,
+    /// Filled, lit faces in one neutral grey.
+    grey: wgpu::RenderPipeline,
+    /// The ghost preview: the same vertices, a distinct fragment colour.
+    ghost: wgpu::RenderPipeline,
+}
+
 fn pipeline(
     device: &wgpu::Device,
     samples: u32,
     stats: &Stats,
-) -> Result<
-    (
-        wgpu::RenderPipeline,
-        wgpu::RenderPipeline,
-        wgpu::Buffer,
-        wgpu::BindGroup,
-    ),
-    Error,
-> {
+) -> Result<(Pipelines, wgpu::Buffer, wgpu::BindGroup), Error> {
     let scopes = error_scopes(device);
     let camera = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("BeamCraft camera"),
@@ -378,7 +396,7 @@ fn pipeline(
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &instance_attributes,
     });
-    let pipeline = |label, fragment, buffers: &[_]| {
+    let pipeline = |label, fragment, polygon_mode, blend, depth_write| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
@@ -386,15 +404,16 @@ fn pipeline(
                 module: &shader,
                 entry_point: Some("instanced"),
                 compilation_options: Default::default(),
-                buffers,
+                buffers: &[vertex_layout(), instance_layout.clone()],
             },
             primitive: wgpu::PrimitiveState {
                 cull_mode: Some(wgpu::Face::Back),
+                polygon_mode,
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH,
-                depth_write_enabled: Some(true),
+                depth_write_enabled: Some(depth_write),
                 depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: Default::default(),
                 bias: Default::default(),
@@ -409,7 +428,7 @@ fn pipeline(
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: FORMAT,
-                    blend: None,
+                    blend,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
             }),
@@ -417,19 +436,48 @@ fn pipeline(
             cache: None,
         })
     };
-    let instanced = pipeline(
-        "BeamCraft instanced",
-        "shade",
-        &[vertex_layout(), instance_layout.clone()],
-    );
-    let ghost = pipeline(
-        "BeamCraft ghost",
-        "shade_ghost",
-        &[vertex_layout(), instance_layout],
-    );
+    let alpha = wgpu::BlendState::ALPHA_BLENDING;
+    let pipelines = Pipelines {
+        shaded: pipeline(
+            "BeamCraft shaded",
+            "shade",
+            wgpu::PolygonMode::Fill,
+            None,
+            true,
+        ),
+        // `Line` draws every triangle edge; native backends only, which is all this app targets.
+        wireframe: pipeline(
+            "BeamCraft wireframe",
+            "shade",
+            wgpu::PolygonMode::Line,
+            None,
+            true,
+        ),
+        transparent: pipeline(
+            "BeamCraft transparent",
+            "shade_transparent",
+            wgpu::PolygonMode::Fill,
+            Some(alpha),
+            false,
+        ),
+        grey: pipeline(
+            "BeamCraft grey",
+            "shade_grey",
+            wgpu::PolygonMode::Fill,
+            None,
+            true,
+        ),
+        ghost: pipeline(
+            "BeamCraft ghost",
+            "shade_ghost",
+            wgpu::PolygonMode::Fill,
+            None,
+            true,
+        ),
+    };
     finish_scopes(scopes)?;
-    stats.pipeline_builds.add(2);
-    Ok((instanced, ghost, camera, bind))
+    stats.pipeline_builds.add(5);
+    Ok((pipelines, camera, bind))
 }
 
 /// The ghost preview's device buffers: one mesh, one instance.
@@ -447,9 +495,8 @@ pub struct Renderer {
     texture: wgpu::Texture,
     depth: wgpu::TextureView,
     msaa: Option<wgpu::TextureView>,
-    instanced: wgpu::RenderPipeline,
-    /// The ghost preview pipeline: the same vertices, a distinct fragment colour.
-    ghost: wgpu::RenderPipeline,
+    /// The pipelines of the five render modes and the ghost preview.
+    pipeline: Pipelines,
     camera: wgpu::Buffer,
     bind: wgpu::BindGroup,
     /// The ghost preview's device buffers, when a placement is armed.
@@ -505,14 +552,13 @@ impl Renderer {
             depth,
             msaa,
         } = targets(device, width, height, samples, stats)?;
-        let (instanced, ghost, camera, bind) = pipeline(device, samples, stats)?;
+        let (pipeline, camera, bind) = pipeline(device, samples, stats)?;
         Ok(Self {
             view,
             texture,
             depth,
             msaa,
-            instanced,
-            ghost,
+            pipeline,
             camera,
             bind,
             ghost_buffers: None,
@@ -570,7 +616,32 @@ impl Renderer {
         });
     }
 
-    /// Encodes one lit, depth-tested frame and submits it; completion is a separate measurement.
+    /// The pipeline a whole-scene mode draws with; `None` for [`RenderMode::SelectedOnly`],
+    /// which draws no whole scene (see [`Renderer::draw_one`]).
+    fn pipeline_of(&self, mode: RenderMode) -> Option<&wgpu::RenderPipeline> {
+        match mode {
+            RenderMode::Shaded => Some(&self.pipeline.shaded),
+            RenderMode::Wireframe => Some(&self.pipeline.wireframe),
+            RenderMode::Transparent => Some(&self.pipeline.transparent),
+            RenderMode::Grey => Some(&self.pipeline.grey),
+            _ => None,
+        }
+    }
+
+    /// Paints the ghost placement preview, when one is armed, into an open pass.
+    fn paint_ghost(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if let Some(g) = &self.ghost_buffers {
+            pass.set_pipeline(&self.pipeline.ghost);
+            pass.set_bind_group(0, &self.bind, &[]);
+            pass.set_vertex_buffer(0, g.vertices.slice(..));
+            pass.set_vertex_buffer(1, g.instances.slice(..));
+            pass.draw(0..g.vertex_count, 0..1);
+        }
+    }
+
+    /// Encodes one lit, depth-tested frame in `mode` and submits it; completion is a separate
+    /// measurement. [`RenderMode::SelectedOnly`] draws only the background and the ghost here;
+    /// the selected element goes through [`Renderer::draw_one`].
     pub fn draw(
         &self,
         device: &wgpu::Device,
@@ -578,6 +649,7 @@ impl Renderer {
         uploaded: &Uploaded,
         camera: View,
         stats: &Stats,
+        mode: RenderMode,
     ) -> wgpu::SubmissionIndex {
         stats.viewport_draws.add(1);
         stats.submits.add(1);
@@ -614,22 +686,85 @@ impl Renderer {
                 }),
                 ..Default::default()
             });
-            pass.set_pipeline(&self.instanced);
-            pass.set_bind_group(0, &self.bind, &[]);
-            for mesh in &uploaded.meshes {
-                pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                pass.set_vertex_buffer(1, mesh.instances.slice(..));
-                pass.draw(0..mesh.vertex_count, 0..mesh.instance_count);
-            }
-            if let Some(g) = &self.ghost_buffers {
-                pass.set_pipeline(&self.ghost);
+            if let Some(pipeline) = self.pipeline_of(mode) {
+                pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &self.bind, &[]);
-                pass.set_vertex_buffer(0, g.vertices.slice(..));
-                pass.set_vertex_buffer(1, g.instances.slice(..));
-                pass.draw(0..g.vertex_count, 0..1);
+                for mesh in &uploaded.meshes {
+                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+                    pass.set_vertex_buffer(1, mesh.instances.slice(..));
+                    pass.draw(0..mesh.vertex_count, 0..mesh.instance_count);
+                }
             }
+            self.paint_ghost(&mut pass);
         }
         queue.submit([encoder.finish()])
+    }
+
+    /// Encodes one frame in the selected-only mode: the one mesh `digest` with the single
+    /// `instance` ([`INSTANCE_BYTES`] bytes, the element's placement), plus the ghost preview.
+    /// The scene's instance buffers hold every element, so the selected element is drawn from
+    /// its mesh buffer alone. Returns `None`, and draws nothing, when that mesh is not on the
+    /// device.
+    #[allow(clippy::too_many_arguments)] // one draw of one element needs its scene, camera and instance
+    pub fn draw_one(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uploaded: &Uploaded,
+        camera: View,
+        stats: &Stats,
+        digest: &ContentDigest,
+        instance: &[u8; INSTANCE_BYTES],
+    ) -> Option<wgpu::SubmissionIndex> {
+        let (vertices, vertex_count) = uploaded.mesh_vertices(digest)?;
+        stats.viewport_draws.add(1);
+        stats.submits.add(1);
+        queue.write_buffer(&self.camera, 0, &camera.bytes());
+        let one = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("BeamCraft selected instance"),
+            size: INSTANCE_BYTES as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&one, 0, instance);
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("BeamCraft frame"),
+        });
+        {
+            let color = wgpu::RenderPassColorAttachment {
+                view: self.msaa.as_ref().unwrap_or(&self.view),
+                depth_slice: None,
+                resolve_target: self.msaa.as_ref().map(|_| &self.view),
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(self.background),
+                    store: if self.msaa.is_some() {
+                        wgpu::StoreOp::Discard
+                    } else {
+                        wgpu::StoreOp::Store
+                    },
+                },
+            };
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("BeamCraft selected"),
+                color_attachments: &[Some(color)],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+            pass.set_pipeline(&self.pipeline.shaded);
+            pass.set_bind_group(0, &self.bind, &[]);
+            pass.set_vertex_buffer(0, vertices.slice(..));
+            pass.set_vertex_buffer(1, one.slice(..));
+            pass.draw(0..vertex_count, 0..1);
+            self.paint_ghost(&mut pass);
+        }
+        Some(queue.submit([encoder.finish()]))
     }
     /// Reads RGBA pixels (row padding retained) for headless validation; never used per frame.
     pub fn readback(
@@ -723,7 +858,7 @@ mod tests {
                 .unwrap();
         assert_eq!(renderer.samples, samples);
         assert_eq!(renderer.msaa.is_some(), samples == 4);
-        let pipeline = renderer.instanced.clone();
+        let shaded = renderer.pipeline.shaded.clone();
         let bind = renderer.bind.clone();
         let texture = renderer.texture.clone();
         assert!(
@@ -735,7 +870,7 @@ mod tests {
         assert_eq!((renderer.width, renderer.height), (96, 80));
         assert!(renderer.texture != texture, "new targets");
         assert!(
-            renderer.instanced == pipeline && renderer.bind == bind,
+            renderer.pipeline.shaded == shaded && renderer.bind == bind,
             "same pipeline"
         );
         // The resized target draws and reads back at its new size.
@@ -757,7 +892,14 @@ mod tests {
             .unwrap()
             .view(1.2)
             .unwrap();
-        let index = renderer.draw(&gpu.device, &gpu.queue, &uploaded, view, &stats);
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+        );
         wait(&gpu.device, index).unwrap();
         let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
         assert_eq!(pixels.len(), row as usize * 80);

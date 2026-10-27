@@ -5,7 +5,7 @@
 //! per element that uses it (instancing by mesh digest). Nothing here is engineering geometry.
 
 use crate::Error;
-use beamcraft_engine::{Representation, ViewSnapshot};
+use beamcraft_engine::{ElementId, Representation, ViewSnapshot};
 use beamcraft_model::digest::ContentDigest;
 use std::collections::BTreeSet;
 
@@ -102,6 +102,87 @@ impl GhostMesh {
             anchor_mm: anchor,
             instance,
         }
+    }
+}
+
+/// The instance bytes of one element: its placement translation and orientation, with the mesh's
+/// own anchor (rotated in) and the scene origin folded in, little-endian f32. `None` when the
+/// orientation is not a usable rotation or a coordinate is not finite.
+pub fn instance_bytes(
+    placement_mm: [f64; 3],
+    orientation_xyzw: [f64; 4],
+    anchor_mm: [f64; 3],
+    origin_mm: [f64; 3],
+) -> Option<[u8; INSTANCE_BYTES]> {
+    let [qx, qy, qz, qw] = orientation_xyzw;
+    let norm = (((qx * qx + qy * qy) + qz * qz) + qw * qw).sqrt();
+    if !(norm.is_finite() && norm > 0.0) {
+        return None;
+    }
+    let [x, y, z, w] = [qx / norm, qy / norm, qz / norm, qw / norm];
+    let [ax, ay, az] = anchor_mm;
+    let anchor = [
+        (1.0 - 2.0 * (y * y + z * z)) * ax
+            + 2.0 * (x * y - z * w) * ay
+            + 2.0 * (x * z + y * w) * az,
+        2.0 * (x * y + z * w) * ax
+            + (1.0 - 2.0 * (x * x + z * z)) * ay
+            + 2.0 * (y * z - x * w) * az,
+        2.0 * (x * z - y * w) * ax
+            + 2.0 * (y * z + x * w) * ay
+            + (1.0 - 2.0 * (x * x + y * y)) * az,
+    ];
+    let mut out = [0u8; INSTANCE_BYTES];
+    let words: Vec<f32> = sub(
+        [
+            placement_mm[0] + anchor[0],
+            placement_mm[1] + anchor[1],
+            placement_mm[2] + anchor[2],
+        ],
+        origin_mm,
+    )
+    .into_iter()
+    .chain([x, y, z, w])
+    .map(|value| {
+        let value = value as f32;
+        value.is_finite().then_some(value)
+    })
+    .collect::<Option<_>>()?;
+    for (slot, value) in out.as_chunks_mut::<4>().0.iter_mut().zip(words) {
+        *slot = value.to_le_bytes();
+    }
+    Some(out)
+}
+
+/// The selected-only draw of one element (V16): its mesh digest and single instance, read from
+/// the snapshot with one engine query ([`ViewSnapshot::element`]), so the renderer draws that
+/// element alone from the mesh buffers it already holds. Nothing here is engineering geometry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedDraw {
+    /// Digest of the mesh drawn.
+    pub digest: ContentDigest,
+    /// The one instance: the element placed relative to the scene origin.
+    pub instance: [u8; INSTANCE_BYTES],
+}
+
+impl SelectedDraw {
+    /// Reads the element `id` from `snapshot` in its full representation, placed relative to
+    /// `origin_mm`. `None` when the element or its mesh is gone, or its placement cannot be
+    /// drawn.
+    pub fn of(snapshot: &ViewSnapshot, id: &ElementId, origin_mm: [f64; 3]) -> Option<Self> {
+        let entry = snapshot.element(id)?;
+        let mesh = snapshot.mesh_at(entry.representation(Representation::Full).mesh_slot)?;
+        let anchor = anchor(mesh.bytes(), mesh.vertex_count()).ok()?;
+        let instance = instance_bytes(
+            entry.placement_mm,
+            entry.orientation_xyzw,
+            anchor,
+            origin_mm,
+        )?;
+        Some(Self {
+            digest: mesh.digest(),
+            instance,
+        })
     }
 }
 
@@ -355,39 +436,14 @@ impl Scene {
                 }
             };
             let mesh = meshes.get_mut(at).ok_or(Error::Input("slot"))?;
-            let [px, py, pz] = element.placement_mm;
-            let [ax, ay, az] = mesh.anchor_mm;
-            let [qx, qy, qz, qw] = element.orientation_xyzw;
-            let norm = (((qx * qx + qy * qy) + qz * qz) + qw * qw).sqrt();
-            if !(norm.is_finite() && norm > 0.0) {
-                return Err(Error::Input("orientation"));
-            }
-            let [x, y, z, w] = [qx / norm, qy / norm, qz / norm, qw / norm];
-            let anchor = [
-                (1.0 - 2.0 * (y * y + z * z)) * ax
-                    + 2.0 * (x * y - z * w) * ay
-                    + 2.0 * (x * z + y * w) * az,
-                2.0 * (x * y + z * w) * ax
-                    + (1.0 - 2.0 * (x * x + z * z)) * ay
-                    + 2.0 * (y * z - x * w) * az,
-                2.0 * (x * z - y * w) * ax
-                    + 2.0 * (y * z + x * w) * ay
-                    + (1.0 - 2.0 * (x * x + y * y)) * az,
-            ];
-            for value in sub([px + anchor[0], py + anchor[1], pz + anchor[2]], origin_mm) {
-                let value = value as f32;
-                if !value.is_finite() {
-                    return Err(Error::Input("placement"));
-                }
-                mesh.instances.extend_from_slice(&value.to_le_bytes());
-            }
-            for value in [x, y, z, w] {
-                let value = value as f32;
-                if !value.is_finite() {
-                    return Err(Error::Input("orientation"));
-                }
-                mesh.instances.extend_from_slice(&value.to_le_bytes());
-            }
+            let bytes = instance_bytes(
+                element.placement_mm,
+                element.orientation_xyzw,
+                mesh.anchor_mm,
+                origin_mm,
+            )
+            .ok_or(Error::Input("instance"))?;
+            mesh.instances.extend_from_slice(&bytes);
             mesh.instance_count = mesh
                 .instance_count
                 .checked_add(1)
@@ -610,6 +666,58 @@ mod tests {
         let scene = Scene::from_snapshot(&empty, Representation::Full).unwrap();
         assert_eq!(scene.counts(), (0, 0));
         assert_eq!(scene.origin_mm, [0.0; 3]);
+    }
+
+    #[test]
+    fn a_selected_draw_places_its_element_where_the_scene_drew_it() {
+        let s = snapshot(3);
+        let scene = Scene::from_snapshot(&s, Representation::Full).unwrap();
+        for entry in s.elements() {
+            let selected = SelectedDraw::of(&s, &entry.id, scene.origin_mm).unwrap();
+            let mesh = scene
+                .meshes
+                .iter()
+                .find(|m| m.digest == selected.digest)
+                .unwrap();
+            // The element's slot in its mesh's instance buffer: the elements before it in id
+            // order that share the mesh.
+            let before = s
+                .elements()
+                .iter()
+                .take_while(|e| e.id != entry.id)
+                .filter(|e| {
+                    SelectedDraw::of(&s, &e.id, scene.origin_mm).unwrap().digest == selected.digest
+                })
+                .count();
+            let at = before * INSTANCE_BYTES;
+            assert_eq!(
+                &mesh.instances[at..at + INSTANCE_BYTES],
+                &selected.instance[..]
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_orientation_or_a_non_finite_word_draws_nothing() {
+        assert_eq!(instance_bytes([0.0; 3], [0.0; 4], [0.0; 3], [0.0; 3]), None);
+        assert_eq!(
+            instance_bytes(
+                [f64::NAN, 0.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+                [0.0; 3],
+                [0.0; 3]
+            ),
+            None
+        );
+        let identity =
+            instance_bytes([10.0, -4.0, 2.0], [0.0, 0.0, 0.0, 1.0], [0.0; 3], [0.0; 3]).unwrap();
+        let words: Vec<f32> = identity
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect();
+        assert_eq!(words, [10.0, -4.0, 2.0, 0.0, 0.0, 0.0, 1.0]);
     }
 }
 
