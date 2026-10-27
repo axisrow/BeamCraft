@@ -163,15 +163,15 @@ needs a positive and a negative executable case; no existing test is relabelled 
 | V06 / M | Properties and publication | V05, C05 | Property editor, local/accepted/stale states, publish (V06.1 without conflicts) | Unknown mass and unsupported states visible | merged (V06.1) |
 | V07 / M | Discipline view presets | V03, R01, W01, U12 | Presets: reference visibility and underlay, kind filter, representation, colours, enabled options | Switching never changes the model or the snapshot token | open |
 | V08 / M | Work plane | P10, V04 | Session work plane (origin, X and Y axes): parallel to XY/XZ/YZ with an offset, by three points, by a picked face, vertical through two points; tools enter 2D points in it; the CLI takes `--plane ORIGIN,XDIR,YDIR` | A plate drawn in any work plane gets the matching placement; the work plane is never stored in the model | open |
-| V09 / M | Views by two points and by plane | V08, W01 | A view looking across a line or onto a plane, with depth clipping and its work plane; switch between views | A view never changes the model or the snapshot token; saved views restore it | open |
+| V09 / M | Views by two points and by plane | V08, W01 | A view looking across a line or onto a plane, with depth clipping and its work plane; switch between views | A view never changes the model or the snapshot token; saved views restore it | open; [CLI integration PRs](m2-cli-acceptance.md) |
 | V10 / M | Ribbon | V05, V06 | Own ribbon of tabs and command buttons replacing the side panels; own icons only | Every button runs the same engine command as the CLI; nothing taken from other products | open |
 | V11 / M | Selection switches and snap panel | V04, T01.4 (grid switch and snaps) | A bottom bar of selection switches (parts, assemblies, bolts, welds, holes, grids, construction objects, items) and a snap panel | A switch changes picking only, never the model or the snapshot token | open |
-| V12 / M | Views | V08, V09, W01, T01.4 (view by grid line) | Named 3D and plane views (by grid line, level or two points), several windows, view properties, work area | A view never changes the model; saved views restore it | open |
+| V12 / M | Views | V08, V09, W01, T01.4 (view by grid line) | Named 3D and plane views (by grid line, level or two points), several windows, view properties, work area | A view never changes the model; saved views restore it | open; [CLI integration PRs](m2-cli-acceptance.md) |
 | V13 / S | Projection switch | V03 | Orthographic and perspective camera in one window | Picking and snaps stay correct in both | open |
-| V14 / M | Filters | I04, P15 | A rule engine on type, name, class and attributes with AND/OR groups, saved sets; object filters and view filters | Same result through API, CLI and UI; unknown attribute never matches silently | open |
-| V15 / M | Cut plane | V12 | Clip planes and a work-area box per view | Non-destructive; no change to the model or measurements | open |
-| V16 / M | Render modes | V03, U12 | Five modes on Ctrl+1 to Ctrl+5 (own set, user-remappable): wireframe, transparent, grey, shaded, selected only | One engine query; frame time baseline; shortcuts configurable | open |
-| V17 / M | Colour by filter and class | V14, V16, P15 | Saved representation sets (ordered filter rules with colour and transparency) and a temporary colouring overlay | The overlay is never stored in the model; a saved set lives in the views layer | open |
+| V14 / M | Filters | I04, P15 | A rule engine on type, name, class and attributes with AND/OR groups, saved sets; object filters and view filters | Same result through API, CLI and UI; unknown attribute never matches silently | open; [CLI integration PRs](m2-cli-acceptance.md) |
+| V15 / M | Cut plane | V12 | Clip planes and a work-area box per view | Non-destructive; no change to the model or measurements | open; [CLI integration PRs](m2-cli-acceptance.md) |
+| V16 / M | Render modes | V03, U12 | Five modes on Ctrl+1 to Ctrl+5 (own set, user-remappable): wireframe, transparent, grey, shaded, selected only | One engine query; frame time baseline; shortcuts configurable | open; [CLI integration PRs](m2-cli-acceptance.md) |
+| V17 / M | Colour by filter and class | V14, V16, P15 | Saved representation sets (ordered filter rules with colour and transparency) and a temporary colouring overlay | The overlay is never stored in the model; a saved set lives in the views layer | open; [CLI integration PRs](m2-cli-acceptance.md) |
 | V18 / M | Plate contour grips | A12.3, V05 | Highlighted contour with vertex and edge-middle grips; drag, insert, delete a vertex, corner treatment editor; the plate stays in its plane | The UI calls the A12.3 commands; a drag is one undo unit; the saved result equals the CLI's | open |
 | V19 / M | Bolt group tool | A14.3, V05 | Pick the fastener from the library, the washer switches and the hole setting, then two points on the active plane, the position values (`on_plane`, rotation, depth), offsets and spacings; preview of fasteners and holes; edit a selected group | The UI calls the A14.3 commands; cancel publishes nothing; the saved result equals the CLI's | open |
 
@@ -230,7 +230,7 @@ needs a positive and a negative executable case; no existing test is relabelled 
 | I01 / M | Item contract | F04, F06, U05 | An element with its own mesh geometry: an immutable mesh asset (full SHA-256), placement, units, own attributes; the geometry is read-only, the placement editable | Copy, move, delete and undo like any element; the asset is never rewritten | deferred |
 | I02 / M | GLB items | I01 | A bounded reader of glTF 2.0 / GLB (public specification) into an item | Hostile files refused within size and depth budgets; units and axes explicit | deferred |
 | I03 / M | IFC items | I01, E04 | Geometry of IFC4 products (extrusions and tessellations) read by our own reader into items; IFC class and name kept as attributes | No IFC model is converted into native elements; unsupported geometry is reported | deferred |
-| I04 / M | User attributes | F04, U02 | Defined attributes (text, number, integer, boolean, choice, with units) on any element, attribute sets, property editor | Stored in USD; an unknown attribute is shown, never dropped | open |
+| I04 / M | User attributes | F04, U02 | Defined attributes (text, number, integer, boolean, choice, with units) on any element, attribute sets, property editor | Stored in USD; an unknown attribute is shown, never dropped | open; [CLI integration PRs](m2-cli-acceptance.md) |
 | I05 / M | Schedules by attributes | I04, E03 | Schedule templates: columns from standard and user attributes, filters, grouping, totals; CSV and HTML | Unknown and stale shown; reproducible | open |
 
 ## T: model tools
@@ -247,8 +247,8 @@ needs a positive and a negative executable case; no existing test is relabelled 
 | T01.7 / S | Grid geometry for other USD viewers | T01.1 | Slice of T01: one 50 mm tube per GridLine at z = 0 in derived USD data with purpose guide; labels remain native UI text | GR-P16; another viewer shows the lines; authored geometry, picking, BOM and quantities ignore them | open |
 | T01.8 / M | Magnetic mode | T01.4, T01.5, O-G5 | Slice of T01: placed elements follow a grid when the mode is on | Cases written when O-G5 is answered; a shared grid edit never rewrites section elements outside their scope | blocked on O-G5 |
 | T01.9 / M | Curved lines and radial grids | T01.1, G12 | Slice of T01: arcs and other curves as GridLines, rings, radial grids, partial arcs | Written when scheduled | deferred (after the MVP) |
-| T02 / M | Construction objects | V08, V04 | Helper points, lines, circles and planes as snap targets | Excluded from schedules and numbering; stored as helper elements | open |
-| T03 / M | Copy, move, rotate, mirror, arrays | V05, P10, P11 | By vector or two points, linear and polar arrays, mirror about a plane | One undo step per operation; links and quantities remapped | open |
+| T02 / M | Construction objects | V08, V04 | Helper points, lines, circles and planes as snap targets | Excluded from schedules and numbering; stored as helper elements | open; [CLI integration PRs](m2-cli-acceptance.md) |
+| T03 / M | Copy, move, rotate, mirror, arrays | V05, P10, P11 | By vector or two points, linear and polar arrays, mirror about a plane | One undo step per operation; links and quantities remapped | open; [CLI integration PRs](m2-cli-acceptance.md) |
 | T04 / S | Numeric input and direction lock | V04 | Typed absolute, relative and polar coordinates, axis lock | The same values give the same result in the CLI and the UI | open |
 
 ## Q: integration and delivery
@@ -262,7 +262,7 @@ needs a positive and a negative executable case; no existing test is relabelled 
 
 | ID | Task | Depends on | Result | Acceptance | Status |
 |----|------|------------|--------|------------|--------|
-| W01 / M | Saved views | V03 | Camera prim with author, time, comment and model revision in a views layer | Restored through API and CLI; no effect on model keys or numbering | open |
+| W01 / M | Saved views | V03 | Camera prim with author, time, comment and model revision in a views layer | Restored through API and CLI; no effect on model keys or numbering | open; [CLI integration PRs](m2-cli-acceptance.md) |
 | W02 / M | Review notes | W01, U03 | Note bound to `bim:id`, revision, 3D point and camera; open/approved/rejected | A deleted element gives an explicit unresolved state; BCF later | open |
 | W03 / S | Saved measurements | R02, V04 | Measurement object with references, units, precision, value, input signature, status | A shape change makes it stale | open |
 | W04 / S | Compatibility with edits made in other USD tools | U06, U02 | Policy for foreign content in our root and layers | Publication keeps such data or moves it with a diagnostic; nothing lost silently | open |
