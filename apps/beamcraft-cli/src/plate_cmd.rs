@@ -2254,6 +2254,10 @@ pub(crate) fn definitions_json(
                 },
             ),
             ("definitions", Json::Array(definitions)),
+            (
+                "helpers",
+                crate::helper_cmd::views_json(&beamcraft_cli::helper::views(&inspection.helpers))?,
+            ),
         ]))
     })
 }
