@@ -180,6 +180,7 @@ mod tests {
             thickness_mm: 10.0,
             placement: Placement::IDENTITY,
             material: None,
+            class: 0,
             holes_mm: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),

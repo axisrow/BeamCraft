@@ -1331,6 +1331,7 @@ impl App {
             ui.add_enabled_ui(editable && !busy, |ui| {
                 ui.label("Editable, in mm:");
                 field(ui, "Name", &mut self.props.form.name, 140.0);
+                field(ui, "Class", &mut self.props.form.class, 80.0);
                 choice_combo(
                     ui,
                     "props-material",
@@ -1926,6 +1927,7 @@ impl App {
                 crate::tools::MemberKind::Column => ModelMemberKind::Column,
             },
             name: "ghost".into(),
+            class: 0,
             axis_points_mm: [start, end],
             profile: self.tools.member.profile.as_deref()?.parse().ok()?,
             roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
@@ -1977,6 +1979,7 @@ impl App {
                 field(ui, "Length", &mut form.length, 80.0);
                 field(ui, "Thickness", &mut form.thickness, 80.0);
                 field(ui, "Name", &mut form.name, 140.0);
+                field(ui, "Class", &mut form.class, 80.0);
                 choice_combo(
                     ui,
                     "plate-material",
@@ -2012,6 +2015,7 @@ impl App {
                     }
                 });
                 field(ui, "Name", &mut form.name, 140.0);
+                field(ui, "Class", &mut form.class, 80.0);
                 choice_combo(
                     ui,
                     "member-profile",

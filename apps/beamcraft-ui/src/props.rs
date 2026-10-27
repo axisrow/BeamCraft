@@ -81,6 +81,8 @@ pub struct Details {
     pub revision: RevisionStamp,
     /// The element's label.
     pub name: String,
+    /// Authored integer part class.
+    pub class: i32,
     /// The pinned material definition, `None` when the element has none.
     pub material: Option<String>,
     /// The material's display name, when the definition has one.
@@ -198,6 +200,19 @@ pub fn parse_details(
             kind,
             revision,
             name: text(element, "name").ok_or_else(unreadable)?,
+            class: match element.get("class") {
+                Ok(value) => {
+                    let number = value.float().map_err(|_| unreadable())?;
+                    if number.fract() != 0.0
+                        || number < f64::from(i32::MIN)
+                        || number > f64::from(i32::MAX)
+                    {
+                        return Err(unreadable());
+                    }
+                    number as i32
+                }
+                Err(_) => 0,
+            },
             material,
             material_name: text(element, "material_name"),
             translation_mm,
@@ -368,6 +383,8 @@ fn unknown_reason(error: &ToolError) -> String {
 /// The editable fields, as typed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Form {
+    /// Integer part class.
+    pub class: String,
     /// `--name`.
     pub name: String,
     /// `--material-digest` (`None` is the engine's explicit `none`).
@@ -382,6 +399,7 @@ impl Form {
     /// The form as the engine reports the element: nothing is guessed or rounded.
     pub fn of(details: &Details) -> Self {
         Self {
+            class: details.class.to_string(),
             name: details.name.clone(),
             material: details.material.clone(),
             thickness: details.thickness_mm.map(show).unwrap_or_default(),
@@ -575,6 +593,16 @@ impl Properties {
             id.clone(),
         ];
         let mut changed = Vec::new();
+        if self.form.class != self.baseline.class {
+            let class = self
+                .form
+                .class
+                .trim()
+                .parse::<i32>()
+                .map_err(|_| refuse("Class", "enter an int32 integer"))?;
+            args.extend(["--class".into(), class.to_string()]);
+            changed.push("class");
+        }
         if self.form.name != self.baseline.name {
             let name = self.form.name.trim();
             if name.is_empty() {

@@ -214,6 +214,7 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
     let AuthoredPlate {
         id: _,
         name: _,
+        class: _,
         contour_points_mm,
         thickness_mm,
         placement: _,
@@ -247,6 +248,7 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         id: _,
         kind: _,
         name: _,
+        class: _,
         axis_points_mm,
         profile: _,
         roll_rad,
@@ -519,6 +521,7 @@ mod tests {
         AuthoredPlate {
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             name: format!("Plate {n}"),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [width, 0.0, 0.0],
@@ -556,6 +559,7 @@ mod tests {
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             kind,
             name: format!("Member {n}"),
+            class: 0,
             axis_points_mm: [[0.0; 3], [0.0, 0.0, 3000.0]],
             profile,
             roll_rad: None,
@@ -610,6 +614,7 @@ mod tests {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000001102").unwrap(),
             kind: MemberKind::Beam,
             name: "F06 POS-12".into(),
+            class: 0,
             axis_points_mm: [[0.0; 3], [4000.0, 0.0, 0.0]],
             profile,
             roll_rad: None,
@@ -857,6 +862,7 @@ mod tests {
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             kind,
             name: format!("Member {n}"),
+            class: 0,
             axis_points_mm: [[0.0; 3], [3000.0, 0.0, 0.0]],
             profile: Sha256::digest(&[n]).unwrap(),
             roll_rad: None,

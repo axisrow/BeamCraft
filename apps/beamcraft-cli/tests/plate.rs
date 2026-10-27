@@ -749,6 +749,7 @@ fn request(op: &str, element: &str, revision: &str, thickness: f64) -> CreateReq
         command: CreatePlate {
             new_id: ElementId::parse(element).unwrap(),
             name: "Crash plate".into(),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [400.0, 0.0, 0.0],

@@ -50,7 +50,7 @@ fn property_group(name: &str) -> Option<G> {
     Some(match name {
         "bim:id" | "bim:elementKind" | "bim:geometryMode" | "bim:schemaVersion"
         | "bim:createdBy" | "bim:revision" => G::Lifecycle,
-        "bim:name" => G::Label,
+        "bim:name" | "steel:class" => G::Label,
         "steel:numbering:series" | "steel:numbering:number" | "steel:numbering:basis" => G::Mark,
         "xformOp:translate" | "xformOp:orient" | "xformOpOrder" => G::Placement,
         "bim:material" => G::MaterialRef,

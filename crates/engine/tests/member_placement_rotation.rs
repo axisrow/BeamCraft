@@ -28,6 +28,7 @@ fn member_command(placement: Placement, roll_rad: Option<f64>) -> CreateStraight
         new_id: ElementId::parse(MEMBER_ID).unwrap(),
         kind: MemberKind::Beam,
         name: "Rotated beam".into(),
+        class: 0,
         axis_points_mm: [[0.0, 0.0, 0.0], [4000.0, 0.0, 0.0]],
         profile_digest: digest(b"rectangle 200x300"),
         placement,
@@ -193,6 +194,7 @@ fn a_plate_accepts_a_rigid_placement_without_changing_its_local_body() {
     let command = CreatePlate {
         new_id: ElementId::parse(PLATE_ID).unwrap(),
         name: "Rotated plate".into(),
+        class: 0,
         contour_points_mm: origin_rectangle_contour(1000.0, 500.0).unwrap(),
         thickness_mm: 10.0,
         placement: quarter_about_z(),

@@ -211,6 +211,7 @@ fn the_real_cli_persists_exact_reads_writes_and_request_fingerprints() {
     let command = CreatePlate {
         new_id: element(1),
         name: "Plate".into(),
+        class: 0,
         contour_points_mm: vec![
             [0., 0., 0.],
             [1000., 0., 0.],

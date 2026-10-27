@@ -34,7 +34,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "part=/World/Steel/Parts/PRT_<uuid7-32>;kinds=plate|beam|column;type=Xform\n",
     "assembly=/World/Steel/Assemblies/ASM_<uuid7-32>;connection=/World/Steel/Connections/CON_<uuid7-32>;",
     "level=/World/Levels/LVL_<uuid7-32>;reference=/World/References/REF_<uuid7-32>;type=Xform\n",
-    "bim:id=string;bim:name=string;bim:elementKind=token;bim:geometryMode=token(parametric);",
+    "bim:id=string;bim:name=string;steel:class=int;bim:elementKind=token;bim:geometryMode=token(parametric);",
     "bim:isDeactivated=bool(optional,default=false);bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
@@ -462,6 +462,13 @@ pub enum Change {
         /// Exact new label.
         name: String,
     },
+    /// Set the authored integer class of a steel part.
+    PartClass {
+        /// Full target UUIDv7.
+        id: String,
+        /// Class from the engine's typed command.
+        class: i32,
+    },
     /// Replace the complete contour; engineering validity is a host prerequisite.
     Contour {
         /// Full target UUIDv7.
@@ -591,6 +598,7 @@ impl Change {
         match self {
             Self::Create(e) => (&e.id, "lifecycle"),
             Self::Delete { id } => (id, "lifecycle"),
+            Self::PartClass { id, .. } => (id, "steel:class"),
             Self::Label { id, .. } => (id, "bim:name"),
             Self::Grid { id, .. } => (id, "bim:grid"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),

@@ -530,6 +530,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
     Ok(AuthoredPlate {
         id,
         name: name.to_owned(),
+        class: decode_class(prim)?,
         contour_points_mm: contour,
         thickness_mm: thickness,
         placement: beamcraft_model::command::Placement {
@@ -541,6 +542,22 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         cuts: decode_cut(prim)?,
         hole_records: decode_hole_records(prim)?,
     })
+}
+
+/// The authored int32 part class; absence defaults to zero, malformed opinions are refused.
+pub(crate) fn decode_class(prim: &Prim) -> Result<i32, PlateError> {
+    let Some(property) = prim.properties.iter().find(|p| p.name == "steel:class") else {
+        return Ok(0);
+    };
+    if property.type_name != "int" {
+        return Err(integrity("part class must have USD type int"));
+    }
+    match property.value {
+        Some(Value::Int(value)) => {
+            i32::try_from(value).map_err(|_| integrity("part class exceeds int32"))
+        }
+        _ => Err(integrity("part class must be an integer")),
+    }
 }
 
 /// The owned plane-cut records of a committed element (A03, amendment A-2): five parallel
@@ -950,6 +967,7 @@ fn decode_member(
         id,
         kind,
         name: name.to_owned(),
+        class: decode_class(prim)?,
         axis_points_mm,
         profile,
         roll_rad,
@@ -1829,6 +1847,10 @@ pub fn create_plate(
             schema,
             resources: Vec::new(),
             changes: vec![
+                Change::PartClass {
+                    id: outcome.authored.id.to_string(),
+                    class: outcome.authored.class,
+                },
                 Change::Create(Element {
                     id: id_text,
                     name: outcome.authored.name.clone(),

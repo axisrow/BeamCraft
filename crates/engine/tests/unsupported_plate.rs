@@ -17,6 +17,7 @@ fn command(s: f64) -> CreatePlate {
     CreatePlate {
         new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
         name: "Near-planar original".into(),
+        class: 0,
         thickness_mm: 10.,
         contour_points_mm: vec![
             [999000000., 0., 0.],

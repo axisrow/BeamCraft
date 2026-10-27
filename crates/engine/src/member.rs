@@ -153,6 +153,8 @@ pub struct AuthoredMember {
     pub kind: MemberKind,
     /// Label.
     pub name: String,
+    /// Authored integer part class (P15); zero is the default.
+    pub class: i32,
     /// Element-local axis points `p1`, `p2`.
     pub axis_points_mm: [[f64; 3]; 2],
     /// Pinned profile definition.
@@ -175,6 +177,7 @@ impl AuthoredMember {
             id: command.new_id,
             kind: command.kind,
             name: command.name.clone(),
+            class: command.class,
             axis_points_mm: command.axis_points_mm,
             profile: command.profile_digest,
             roll_rad: command.roll_rad,
@@ -190,6 +193,7 @@ impl AuthoredMember {
             new_id: self.id,
             kind: self.kind,
             name: self.name.clone(),
+            class: self.class,
             axis_points_mm: self.axis_points_mm,
             profile_digest: self.profile,
             placement: self.placement,
@@ -569,6 +573,7 @@ mod tests {
             new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000007").unwrap(),
             kind: MemberKind::Beam,
             name: "Synthetic beam".into(),
+            class: 0,
             axis_points_mm: [[0.0; 3], [6000.0, 0.0, 0.0]],
             profile_digest: profile,
             placement: Placement::IDENTITY,
@@ -894,6 +899,7 @@ mod tests {
             roll_rad: None,
             placement: Placement::IDENTITY,
             material: None,
+            class: 0,
             cuts: vec![record([3000.0, 0.0, 0.0])],
         };
         let body = evaluate_member(&authored, profile.clone()).unwrap();

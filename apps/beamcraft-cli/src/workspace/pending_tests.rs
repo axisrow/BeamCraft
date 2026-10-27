@@ -80,6 +80,7 @@ impl Fixture {
                 command: CreatePlate {
                     new_id: element(n),
                     name: format!("part {n}"),
+                    class: 0,
                     contour_points_mm: vec![
                         [0.0, 0.0, 0.0],
                         [100.0, 0.0, 0.0],

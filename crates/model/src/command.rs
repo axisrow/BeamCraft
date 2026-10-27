@@ -314,6 +314,8 @@ pub struct CreatePlate {
     pub new_id: ElementId,
     /// Label, 1 to 256 UTF-8 bytes without control characters. Not an identity.
     pub name: String,
+    /// Authored integer part class (P15); zero is the default.
+    pub class: i32,
     /// Element-local contour, 3 to 1024 points, closure implicit.
     pub contour_points_mm: Vec<[f64; 3]>,
     /// Extrusion thickness in millimetres.
@@ -364,6 +366,8 @@ pub struct CreateStraightMember {
     pub kind: MemberKind,
     /// Label, 1 to 256 UTF-8 bytes without control characters.
     pub name: String,
+    /// Authored integer part class (P15); zero is the default.
+    pub class: i32,
     /// The two element-local axis points `p1` and `p2`.
     pub axis_points_mm: [[f64; 3]; 2],
     /// Pinned profile definition.
@@ -436,7 +440,7 @@ impl CreateStraightMember {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(256);
-        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v3\0");
+        bytes.extend_from_slice(b"BeamCraft/P03/CreateStraightMember/v4\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         bytes.push(match self.kind {
             MemberKind::Beam => 0,
@@ -445,6 +449,7 @@ impl CreateStraightMember {
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
         bytes.extend_from_slice(name);
+        bytes.extend_from_slice(&self.class.to_le_bytes());
         bytes.extend_from_slice(self.profile_digest.as_bytes());
         match &self.material_digest {
             Some(digest) => {
@@ -612,11 +617,12 @@ impl CreatePlate {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
-        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v5\0");
+        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v6\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
         bytes.extend_from_slice(name);
+        bytes.extend_from_slice(&self.class.to_le_bytes());
         bytes.extend_from_slice(&(self.contour_points_mm.len() as u64).to_le_bytes());
         let mut scalars = self
             .contour_points_mm
@@ -986,6 +992,8 @@ impl AddHole {
 pub struct ElementPatch {
     /// New label.
     pub name: Option<String>,
+    /// New authored integer part class (P15).
+    pub class: Option<i32>,
     /// New material reference, or its explicit removal.
     pub material: Option<Option<ContentDigest>>,
     /// New plate thickness in millimetres (a plate only).
@@ -1016,7 +1024,8 @@ impl UpdateElement {
     /// target's kind and the geometry are the engine's decisions.
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
         let patch = &self.patch;
-        if patch.name.is_none()
+        if patch.class.is_none()
+            && patch.name.is_none()
             && patch.material.is_none()
             && patch.thickness_mm.is_none()
             && patch.translation_mm.is_none()
@@ -1083,13 +1092,20 @@ impl UpdateElement {
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
         self.validate_arguments()?;
         let mut bytes = Vec::with_capacity(128);
-        bytes.extend_from_slice(b"BeamCraft/P04/UpdateElement/v1\0");
+        bytes.extend_from_slice(b"BeamCraft/P04/UpdateElement/v2\0");
         bytes.extend_from_slice(self.target_id.as_bytes());
         match &self.patch.name {
             Some(name) => {
                 bytes.push(1);
                 bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
                 bytes.extend_from_slice(name.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        match self.patch.class {
+            Some(class) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&class.to_le_bytes());
             }
             None => bytes.push(0),
         }
@@ -2043,6 +2059,7 @@ mod tests {
         CreatePlate {
             new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
             name: "Synthetic plate".into(),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -2393,6 +2410,7 @@ mod tests {
             new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000007").unwrap(),
             kind: MemberKind::Beam,
             name: "Synthetic beam".into(),
+            class: 0,
             axis_points_mm: [[0.0; 3], [6000.0, 0.0, 0.0]],
             profile_digest: digest(b"profile"),
             placement: Placement::IDENTITY,

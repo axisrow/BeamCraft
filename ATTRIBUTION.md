@@ -23,3 +23,9 @@ crates.io dependencies (versions in `Cargo.lock`, licences checked by `cargo den
 | `licenses/TOST-1.0-openusd.txt` | The OpenUSD authors (Pixar and contributors) | Unmodified copy of `third-party/LICENSE` in the `openusd` crate 0.8.0 (crates.io), the Tomorrow Open Source Technology License 1.0 as used by OpenUSD; SHA-256 `ce5cb334bff4a1c576be24069eec3e49ff6eeba1ccccc45c33607655d347ae75` | `LicenseRef-TOST-1.0` | Upstream licence text kept for compliance; not a BeamCraft asset or code |
 | `NOTICE` section "OpenUSD-derived material" | The OpenUSD authors (Pixar) | Upstream notice copied from `third-party/NOTICE.txt` in the `openusd` crate 0.8.0 (trailing spaces removed); surrounding BeamCraft text is contributor-original | `LicenseRef-TOST-1.0` for the quoted upstream notice; `MPL-2.0` for BeamCraft's own text | Required upstream notice for the OpenUSD-derived material below |
 | OpenUSD-derived schema definitions in `src/usd/core_schemas.rs` of the `openusd` crate 0.8.x (crates.io, not copied into this repository) | The OpenUSD authors (and the `openusd` crate authors for the Rust packaging) | `openusd` 0.8.0, file `src/usd/core_schemas.rs`, generated from OpenUSD's own schema definitions; the rest of the crate is declared MIT | `LicenseRef-TOST-1.0` | Schema definitions compiled into `beamcraft-cli` through `beamcraft-layer-engine`, under the upstream licence; no BeamCraft rights claimed (`AGENTS.md` §1.2) |
+
+## P15 class colour preset
+
+`crates/engine/src/class_palette.rs`: original RGB palette by BeamCraft contributors (2026),
+MPL-2.0. Used as the default environment preset for class display; no vendor palette or asset
+was used. Class colours are independent of physical materials.

@@ -823,6 +823,18 @@ pub(super) fn snapshot(
         if p.type_name.as_deref() != Some("Xform") {
             return Err(unsupported());
         }
+        if !matches!(kind, "plate" | "beam" | "column")
+            && p.properties.iter().any(|p| p.name == "steel:class")
+        {
+            return Err(unsupported());
+        }
+        if matches!(kind, "plate" | "beam" | "column")
+            && let Some(prop) = p.properties.iter().find(|a| a.name == "steel:class")
+            && (prop.type_name != "int"
+                || !matches!(prop.value, Some(Value::Int(v)) if i32::try_from(v).is_ok()))
+        {
+            return Err(invalid());
+        }
         match kind {
             "plate" => {
                 plate(
@@ -1661,7 +1673,10 @@ pub(super) fn changes(
             Change::Create(_) | Change::AttachReference(_) => (),
             // A mesh or part-of record of an element created in the same batch; the candidate
             // snapshot re-validates it as a whole.
-            Change::Mesh(_) | Change::PartOf { .. } | Change::Level { .. }
+            Change::Mesh(_)
+            | Change::PartClass { .. }
+            | Change::PartOf { .. }
+            | Change::Level { .. }
                 if existing.is_none()
                     && input
                         .changes
@@ -1691,6 +1706,7 @@ pub(super) fn changes(
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
                     }
+                    Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
                     Change::Grid { .. } => kind == "grid",
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
@@ -1764,7 +1780,9 @@ pub(super) fn changes(
             // A mark is stored with the label's group: it conflicts with a rename or another
             // mark of the element and with nothing derived.
             Change::Mark { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
-            Change::Label { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
+            Change::PartClass { .. } | Change::Label { .. } => {
+                (&[Group::Lifecycle, Group::Label], &[Group::Label])
+            }
             Change::Grid { .. } => (
                 &[Group::Lifecycle, Group::ShapeInputs, Group::Placement],
                 &[Group::ShapeInputs],
@@ -1859,7 +1877,8 @@ pub(super) fn changes(
         }
         if !matches!(
             change,
-            Change::Label { .. }
+            Change::PartClass { .. }
+                | Change::Label { .. }
                 | Change::Create(_)
                 | Change::Delete { .. }
                 | Change::PartOf { .. }
@@ -2117,6 +2136,7 @@ pub(super) fn changes(
                     return Err(unsupported());
                 }
             }
+            Change::PartClass { .. } => {}
             Change::Label { name, .. } => label(name)?,
             Change::AttachReference(r) => reference::check_new(r)?,
             Change::ReferenceUnits { interpretation, .. } => {

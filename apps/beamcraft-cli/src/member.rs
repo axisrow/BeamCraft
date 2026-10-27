@@ -153,6 +153,10 @@ pub fn create_member(
             schema,
             resources: Vec::new(),
             changes: vec![
+                Change::PartClass {
+                    id: outcome.authored.id.to_string(),
+                    class: outcome.authored.class,
+                },
                 Change::Create(Element {
                     id: outcome.authored.id.to_string(),
                     name: outcome.authored.name.clone(),

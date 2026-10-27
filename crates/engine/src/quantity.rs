@@ -382,6 +382,7 @@ mod tests {
         AuthoredPlate {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000005").unwrap(),
             name: "Plate".into(),
+            class: 0,
             contour_points_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -468,6 +469,7 @@ mod tests {
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000009").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),
+            class: 0,
             axis_points_mm: [[0.0; 3], [6000.0, 0.0, 0.0]],
             profile: Sha256::digest(b"profile").unwrap(),
             roll_rad: None,
