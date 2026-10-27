@@ -437,3 +437,26 @@ fn dependency_cap_context_and_cancellation_are_checked_before_output() {
         ErrorCode::Cancelled
     );
 }
+
+#[test]
+fn part_class_edits_rebase_as_label_opinions_and_keep_their_value() {
+    let base = initial();
+    let source = edit(
+        base.clone(),
+        vec![Change::PartClass {
+            id: id(10).to_string(),
+            class: 3,
+        }],
+        Vec::new(),
+    );
+    let accepted = edit(base.clone(), vec![rename(11, "remote")], Vec::new());
+    let merged = prepare(&base, &source, &accepted, &[write(10, G::Label)]).unwrap();
+    assert_eq!(
+        value(&merged, &format!("{}.steel:class", path(10)), "default"),
+        sdf::Value::Int(3)
+    );
+    assert_eq!(
+        value(&merged, &format!("{}.bim:name", path(11)), "default"),
+        sdf::Value::String("remote".into())
+    );
+}
