@@ -38,3 +38,6 @@ pub mod source_file;
 pub mod transform;
 pub mod weld;
 pub mod workspace;
+
+/// Personal saved cameras (W01).
+pub mod saved_views;

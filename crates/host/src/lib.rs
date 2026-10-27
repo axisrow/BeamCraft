@@ -14,3 +14,6 @@ pub mod output;
 pub mod revision;
 pub mod settings;
 pub mod storage;
+
+/// Independent personal camera storage (W01).
+pub mod personal_views;

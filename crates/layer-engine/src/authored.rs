@@ -10,6 +10,7 @@ pub mod grid;
 mod guard;
 pub mod helper;
 pub mod instance;
+pub mod personal_views;
 pub mod rebase;
 mod reference;
 mod validate;

@@ -56,3 +56,6 @@ mod tests {
         assert!((beam.length() - 6000.0).abs() < 1e-9);
     }
 }
+
+/// Personal saved cameras (W01).
+pub mod saved_view;

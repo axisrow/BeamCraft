@@ -65,3 +65,6 @@ pub use query::snapshot::{
     ElementEntry, ElementPage, RepresentationRef, SnapshotToken, ViewPin, ViewSnapshot,
 };
 pub use scene::SceneElement;
+
+/// Personal saved views (W01).
+pub mod saved_view;
