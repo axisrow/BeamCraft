@@ -1300,6 +1300,24 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.code, expected, "{w} x {h}");
         }
+        // The same for a committed member's section placement: `evaluate_member` runs without
+        // the model admission, so the kernel's own cap refusal is the only guard here.
+        let mut authored = AuthoredMember::from_command(&command(profile));
+        authored.section_placement = Some(SectionPlacement {
+            end_offset_mm: 2_000_000.0,
+            ..SectionPlacement::default()
+        });
+        let error = evaluate_member(
+            &authored,
+            ProfileInfo::Rectangle {
+                width_mm: 200.0,
+                height_mm: 300.0,
+                declared_area_mm2: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+        assert_eq!(error.field, "section_placement");
     }
 
     #[test]

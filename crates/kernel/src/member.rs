@@ -53,6 +53,27 @@ pub(crate) fn solid_length(
     Ok(length)
 }
 
+/// Admits the P14 offsets themselves: finite and within the dimension cap. The frame's `locate`
+/// re-checks the same values, but it only runs when the frame is refused, and the kernel never
+/// trusts a caller's admission (a committed definition or store is re-evaluated without the
+/// model layer's argument checks), so every builder runs this first.
+pub(crate) fn check_placement(placement: &SectionPlacement) -> Result<(), (Code, Field, Stage)> {
+    for value in [
+        placement.plane_offset_mm,
+        placement.depth_offset_mm,
+        placement.start_offset_mm,
+        placement.end_offset_mm,
+    ] {
+        if !value.is_finite() {
+            return Err((Code::NonFinite, Field::SectionPlacement, Stage::Finiteness));
+        }
+        if value.abs() > DIMENSION_CAP_MM {
+            return Err((Code::AboveLimit, Field::SectionPlacement, Stage::Caps));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn locate(input: &StraightMember, error: MathError) -> (Code, Field, Stage) {
     let placement = &input.placement;
     let scalars = [
@@ -131,6 +152,8 @@ pub(crate) fn locate(input: &StraightMember, error: MathError) -> (Code, Field, 
 /// plane and scales the extent along `Z_m`.
 pub fn straight_member(input: StraightMember) -> Result<PlateResult, Failure> {
     let numeric = || Failure::one(Code::NumericUncertain, Field::Mesh, Stage::Build);
+    check_placement(&input.placement)
+        .map_err(|(code, field, stage)| Failure::one(code, field, stage))?;
     let frame = MemberFrame::new(
         input.start,
         input.end,
@@ -381,5 +404,30 @@ mod tests {
             finding(non_finite),
             (Code::NonFinite, Field::SectionPlacement, Stage::Finiteness)
         );
+    }
+
+    #[test]
+    fn an_over_cap_finite_offset_is_refused_by_the_builder_itself() {
+        // The frame is fine, so the frame-error mapping never runs: the builder checks the P14
+        // caps itself, or a direct caller (or an untrusted committed store) builds past 1e6 mm.
+        for mutate in [
+            |p: &mut SectionPlacement| p.plane_offset_mm = 1_000_000.5,
+            |p: &mut SectionPlacement| p.depth_offset_mm = -1_000_001.0,
+            |p: &mut SectionPlacement| p.start_offset_mm = 2_000_000.0,
+            |p: &mut SectionPlacement| p.end_offset_mm = 1e9,
+        ] {
+            let mut input = input();
+            mutate(&mut input.placement);
+            let failure = straight_member(input).unwrap_err();
+            let d = failure.diagnostics().next().unwrap();
+            assert_eq!(
+                (d.code, d.field, d.stage),
+                (Code::AboveLimit, Field::SectionPlacement, Stage::Caps)
+            );
+        }
+        // Within the cap it builds.
+        let mut input = input();
+        input.placement.end_offset_mm = 1_000_000.0;
+        assert!(straight_member(input).is_ok());
     }
 }

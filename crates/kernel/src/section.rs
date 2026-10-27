@@ -25,7 +25,7 @@
 //! [`crate::straight_member`]), then certifies the closed single shell with G06 before sealing it.
 
 use crate::diagnostic::{Failure, Field};
-use crate::member::{StraightMember, locate, solid_length};
+use crate::member::{StraightMember, check_placement, locate, solid_length};
 use crate::ops::{Body, OpFailure, OpField};
 use crate::profile::diagnostic::{ProfileCode, ProfileFailure};
 use crate::profile::{Cavity, CurveSpec, Point2, extrude};
@@ -545,14 +545,17 @@ impl SectionResult {
 
 /// Builds a closed straight member of any admitted section, validating every submitted value.
 ///
-/// Order: the section shape, then the member frame from the axis, the outline's bounding box and
-/// the roll (the [`crate::straight_member`] rules and codes), then the P14 solid length (the
-/// axis length moved by the end offsets, positive), then the G05 outline admission and extrusion
-/// over that length, then the rigid placement `world = R*local + q1` — with `q1` the shifted
-/// start point, or `p1` itself for the default placement, which keeps the centred body bit for
-/// bit — and the G06 certification of one closed shell.
+/// Order: the section shape, then the P14 offsets themselves (finite, within the cap), then the
+/// member frame from the axis, the outline's bounding box and the roll (the
+/// [`crate::straight_member`] rules and codes), then the P14 solid length (the axis length moved
+/// by the end offsets, positive), then the G05 outline admission and extrusion over that length,
+/// then the rigid placement `world = R*local + q1` — with `q1` the shifted start point, or `p1`
+/// itself for the default placement, which keeps the centred body bit for bit — and the G06
+/// certification of one closed shell.
 pub fn section_member(input: &SectionMember) -> Result<SectionResult, SectionFailure> {
     let shape = outline(&input.shape, input.representation)?;
+    check_placement(&input.placement)
+        .map_err(|(code, field, stage)| SectionFailure::Frame(Failure::one(code, field, stage)))?;
     let frame_input = StraightMember {
         start: input.start,
         end: input.end,
