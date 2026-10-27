@@ -37,6 +37,7 @@ pub mod props;
 pub mod publish;
 pub mod render;
 pub mod scene;
+pub mod selection;
 pub mod shell;
 pub mod source;
 pub mod start;

@@ -18,6 +18,7 @@
 )]
 
 use beamcraft_engine::Representation;
+use beamcraft_engine::query::pick::SelectionFilter;
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::camera::Camera;
 use beamcraft_ui::edit::{
@@ -254,6 +255,7 @@ fn a_click_selects_what_the_engine_picks() {
             &ray,
             &AtomicBool::new(false),
             &Stats::default(),
+            SelectionFilter::ALL,
         )
         .unwrap()
         .unwrap();
@@ -275,7 +277,10 @@ fn a_click_selects_what_the_engine_picks() {
     // A pixel on empty space (the top-left corner) selects nothing, in the CLI as here.
     let ray = ray_through(&view, [-0.99, 0.99], scene.origin_mm).unwrap();
     assert_eq!(cli_pick(&cli, &stores.ui(), &ray), None);
-    assert_eq!(pick_in(&snapshot, &ray).unwrap(), None);
+    assert_eq!(
+        pick_in(&snapshot, &ray, SelectionFilter::ALL).unwrap(),
+        None
+    );
     let picked = command::select(
         &cli,
         &stores.ui(),
@@ -283,6 +288,7 @@ fn a_click_selects_what_the_engine_picks() {
         &ray,
         &AtomicBool::new(false),
         &Stats::default(),
+        SelectionFilter::ALL,
     )
     .unwrap();
     assert!(picked.is_none());
@@ -391,6 +397,7 @@ fn a_click_selects_an_i_section_member_and_a_holed_plate() {
             &ray,
             &AtomicBool::new(false),
             &Stats::default(),
+            SelectionFilter::ALL,
         )
         .unwrap()
         .unwrap();
