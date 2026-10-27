@@ -3927,3 +3927,105 @@ fn connection_discriminator_roundtrips_and_rejects_missing_unknown_or_conflictin
         }
     }
 }
+
+#[test]
+fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
+    use beamcraft_model::{command::KeepSide, id::OpId};
+    let record = CutRecord {
+        operation_id: OpId::parse("019a7bf0-0000-7000-8000-00000000cf01").unwrap(),
+        ordinal: 7,
+        point_mm: [250.0, 0.0, 0.0],
+        normal: [1.0, 0.0, 0.0],
+        keep: KeepSide::Negative,
+    };
+    let (mut a, o) = open(initial());
+    let mut changes = elements();
+    let Change::Create(e) = changes.first_mut().unwrap() else {
+        panic!("create");
+    };
+    let Shape::Plate { cuts, .. } = &mut e.shape else {
+        panic!("plate");
+    };
+    cuts.push(record);
+    let mut create = batch(&o.context, changes);
+    create.resources = resources();
+    let p = a.prepare(create, &control()).unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let mut b = batch(
+        &o.context,
+        vec![Change::Cuts {
+            id: PLATE.into(),
+            cuts: Vec::new(),
+        }],
+    );
+    b.op_id = "019a7bf0-0000-7000-8000-00000000cf02".into();
+    let p = a.prepare(b, &control()).unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    let prim = prims
+        .iter()
+        .find(|p| p.element_id.as_deref() == Some(PLATE))
+        .unwrap();
+    let h = cut_history::read(prim).unwrap();
+    assert_eq!(h.next_ordinal, 8);
+    assert_eq!(h.retired, vec![record.operation_id]);
+    let mut bad = prim.clone();
+    bad.properties
+        .iter_mut()
+        .find(|p| p.name == cut_history::NEXT)
+        .unwrap()
+        .value = Some(Value::Int(1001));
+    assert!(cut_history::read(&bad).is_err());
+    let mut bad = prim.clone();
+    bad.properties
+        .iter_mut()
+        .find(|p| p.name == cut_history::RETIRED)
+        .unwrap()
+        .value = Some(Value::Array(vec![
+        Value::Text(
+            record.operation_id.to_string()
+        );
+        2
+    ]));
+    assert!(cut_history::read(&bad).is_err());
+
+    assert_eq!(
+        value(&prims, PLATE, "steel:cut:operationId"),
+        Some(&Value::Array(Vec::new()))
+    );
+    let mut b = batch(
+        &o.context,
+        vec![Change::Cuts {
+            id: PLATE.into(),
+            cuts: vec![record],
+        }],
+    );
+    b.op_id = "019a7bf0-0000-7000-8000-00000000cf03".into();
+    assert!(a.prepare(b, &control()).is_err());
+    assert_eq!(
+        cut_history::read(
+            snapshot(&a, &o.context)
+                .iter()
+                .find(|p| p.element_id.as_deref() == Some(PLATE))
+                .unwrap()
+        )
+        .unwrap(),
+        h
+    );
+}

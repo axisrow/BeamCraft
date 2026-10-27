@@ -387,6 +387,8 @@ fn element_meta(
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Decoded {
+    pub(crate) cut_history:
+        BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::CutHistory>,
     pub(crate) plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
     pub(crate) members: Vec<(AuthoredMember, Option<DerivedMesh>)>,
     other_elements: usize,
@@ -1126,7 +1128,28 @@ pub(crate) fn decode(
             has_geometry.then_some(plate.id)
         })
         .collect();
+    let cut_history = prims
+        .iter()
+        .filter_map(|p| {
+            p.element_id
+                .as_deref()
+                .and_then(|s| ElementId::parse(s).ok())
+                .map(|id| (id, p))
+        })
+        .filter(|(_, p)| {
+            !p.sources.is_empty()
+                && p.sources.iter().all(|s| s.owned)
+                && property(p, "bim:schemaVersion").and_then(text) == Some("0.1.0")
+                && property(p, "bim:geometryMode").and_then(text) == Some("parametric")
+                && matches!(
+                    property(p, "bim:elementKind").and_then(text),
+                    Some("plate" | "beam" | "column")
+                )
+        })
+        .map(|(id, p)| Ok((id, beamcraft_layer_engine::authored::cut_history::read(p)?)))
+        .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
     Ok(Decoded {
+        cut_history,
         plates,
         members,
         other_elements: other,
