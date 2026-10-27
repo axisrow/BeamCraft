@@ -931,7 +931,7 @@ fn snap_answers_axis_start_end_and_nearest_for_a_45_degree_sloped_beam() {
 
 /// The axis snap of a member with a rotated placement: the same 90-degree-about-Z beam as
 /// `a_rotated_member_reopens_with_world_bounds_and_unchanged_shape` (members.rs), where the
-/// rotation is composed into the body, so the authored axis `(0,0,0)..(4000,0,0)` answers in
+/// instance rotation maps the authored axis `(0,0,0)..(4000,0,0)` answers in
 /// world at `(-50,70,1000)..(-50,4070,1000)`. A rotated member must not land in the skipped
 /// bucket (issue #132).
 #[test]

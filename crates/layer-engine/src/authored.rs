@@ -45,6 +45,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
     "all four steel:hole attributes or none, ordinals are engine-assigned and never reused\n",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
+    "memberBody=element-local-v2;placement rotation excluded from shape and mass keys\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
     "bim:mainPart=rel(0..1 element target that is a direct part of the assembly;source assembly;one main per assembly)\n",

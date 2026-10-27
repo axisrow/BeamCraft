@@ -9,9 +9,8 @@
 //! a material change rewrites the quantity record next to an unchanged mesh, a thickness change
 //! rebuilds the mesh and the records, a move (P08) rewrites the placement alone: the
 //! element-local body, its mesh and its stored quantities are not copied or rebuilt. An
-//! orientation change rewrites the placement and, for a member, rebuilds the rotated body (the
-//! placement rotation is part of the member mesh). The engine decides which groups changed and
-//! the layer engine's own write set is checked against the footprint it declares.
+//! orientation change rewrites the placement alone and keeps the local body. The engine
+//! decides which groups changed; the layer engine's write set is checked against its footprint.
 //!
 //! Honesty limits: replay of an `op_id` is decided from the head model (the update is a replay
 //! when the head already holds the patched state), not from a stored canonical request; a later
@@ -19,7 +18,7 @@
 //! request (F04 section 3) replaces this. One implicit workspace, in-process layer engine, as in
 //! `plate`.
 
-use crate::definition::{material_lookup, profile_lookup};
+use crate::definition::material_lookup;
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
     decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record,
@@ -28,7 +27,7 @@ use crate::plate::{
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{evaluate_member, member_quantities};
+use beamcraft_engine::member::member_quantities;
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
@@ -198,14 +197,8 @@ pub fn update_element(
         Target::Member(head) => {
             let authored = patch_member(&head.authored, &command.patch)?;
             let material = authored.material.as_ref().map(&materials).transpose()?;
-            // The placement rotation is part of the member mesh: an orientation change rebuilds
-            // the body, every other patch keeps the head's mesh.
-            let body = if patch_effect.orientation {
-                let profile = profile_lookup(&definitions)(&authored.profile)?;
-                evaluate_member(&authored, profile)?
-            } else {
-                head.body.clone()
-            };
+            // Supported member edits change metadata, placement or material, never local shape.
+            let body = head.body.clone();
             let quantities = member_quantities(&body, material)?;
             (
                 UpdatedElement::Member(Box::new(head.clone())),
@@ -328,10 +321,7 @@ pub fn update_element(
             level: level.map(|l| l.to_string()),
         });
     }
-    if patch_effect.material
-        || patch_effect.shape
-        || (patch_effect.orientation && matches!(next, UpdatedElement::Member(_)))
-    {
+    if patch_effect.material || patch_effect.shape {
         changes.push(match &next {
             UpdatedElement::Plate(r) => {
                 mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?
