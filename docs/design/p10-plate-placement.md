@@ -21,3 +21,7 @@ separate work. No model schema, dependency, asset or store migration is added he
 Tests independently check a plate rotated 90 degrees about X, unchanged local mesh/quantities,
 world bounds, a face pick and real IFC export after reopening. Engine tests accept rigid plate
 creation and patches while retaining quaternion validation.
+
+The former F06-POS-11 unsupported-placement deviation now checks world vertices and bounds
+against the frozen fixture, alongside unchanged local mesh and quantities. This remains partial
+F06 evidence: the adapter does not expose the section 7 shape/world measurement keys.

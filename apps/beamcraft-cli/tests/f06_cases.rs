@@ -36,7 +36,7 @@ const PROTOCOL: &str = "POS-16 POS-17 POS-18 POS-19 POS-20 POS-21 POS-22 POS-23 
     NEG-33 NEG-34 NEG-36";
 const INJECTION: &str = "POS-37 NEG-16 NEG-17 NEG-31 NEG-32 NEG-35 NEG-50";
 const SUPERSEDED: &str = "NEG-08 NEG-39";
-const DEVIATIONS: &[&str] = &["POS-11"];
+const DEVIATIONS: &[&str] = &[];
 
 fn fixture() -> Json {
     let bytes = std::fs::read(concat!(
@@ -409,6 +409,47 @@ fn check_success(
                 expected.get("local_bounds_mm").unwrap(),
             );
             // Area/status are not exposed by this engine API and are NOT claimed here.
+        }
+        "POS-11" => {
+            use beamcraft_engine::query::committed::{evaluate_committed, scene_elements};
+            use beamcraft_engine::query::feature::{
+                FeatureGeometry, list_features, lookup_feature,
+            };
+            use beamcraft_engine::{Limits as ViewLimits, ViewPin, ViewSnapshot};
+            let records =
+                evaluate_committed(std::slice::from_ref(&out.authored), &no_materials).unwrap();
+            let pin = ViewPin::new(Sha256::digest(b"P10 F06 POS-11").unwrap(), 1);
+            let snapshot = ViewSnapshot::build(
+                pin,
+                scene_elements(&records).unwrap(),
+                &ViewLimits::default(),
+            )
+            .unwrap();
+            let world = list_features(&snapshot, &out.authored.id)
+                .unwrap()
+                .into_iter()
+                .filter_map(
+                    |id| match lookup_feature(&snapshot, &id.to_string()).unwrap().world {
+                        FeatureGeometry::Vertex { position } => Some(position),
+                        _ => None,
+                    },
+                )
+                .collect::<Vec<_>>();
+            let reference = expected.get("world_vertices_mm").unwrap().array().unwrap();
+            assert_eq!(world.len(), reference.len());
+            for (actual, reference) in world.iter().zip(reference) {
+                for (actual, reference) in actual.iter().zip(vector::<3>(reference)) {
+                    close(*actual, reference, true);
+                }
+            }
+            check_bounds(&world, expected.get("world_bounds_mm").unwrap());
+            check_number(out.body.solid.volume_mm3(), expected, "signed_volume_mm3");
+            let mut unplaced = command.clone();
+            unplaced.placement = Placement::IDENTITY;
+            let unplaced = create_plate(&unplaced, &|_| false, &no_materials).unwrap();
+            assert_eq!(out.body.solid.blob(), unplaced.body.solid.blob());
+            assert_eq!(out.quantities, unplaced.quantities);
+            // F06 section 7 shape/world measurement keys are not exposed by this adapter.
         }
         "POS-48" | "POS-49" => {
             check_bounds(
