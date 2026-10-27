@@ -66,7 +66,7 @@ pub struct CutByPlaneOutcome {
 }
 
 /// The found target, borrowed for the record admission.
-enum Found<'a> {
+pub(crate) enum Found<'a> {
     Plate(&'a AuthoredPlate),
     Member(&'a crate::member::AuthoredMember),
 }
@@ -78,24 +78,37 @@ impl Found<'_> {
             Self::Member(authored) => &authored.cuts,
         }
     }
+
+    /// The target with `record` appended as its next plane-cut record.
+    pub(crate) fn appended(self, record: CutRecord) -> CutTarget {
+        match self {
+            Self::Plate(authored) => {
+                let mut next = authored.clone();
+                next.cuts.push(record);
+                CutTarget::Plate(next)
+            }
+            Self::Member(authored) => {
+                let mut next = authored.clone();
+                next.cuts.push(record);
+                CutTarget::Member(next)
+            }
+        }
+    }
 }
 
-/// Applies `CutByPlane` to the target's authored state in memory: argument admission, target
-/// lifecycle, record identity, ordinal capacity, then the append. Nothing is evaluated here;
-/// the adapter re-evaluates the body and refuses the whole command if the replay does.
-///
-/// `operation_used` reports whether a record identity is already used in the project
-/// (`DUPLICATE_ID`); the adapter closes it over every element's records.
-pub fn cut_by_plane(
-    command: &CutByPlane,
-    plate: Option<&AuthoredPlate>,
-    member: Option<&crate::member::AuthoredMember>,
+/// The shared admission of one appended operation record (F04 sections 4 and 8): the target
+/// lifecycle, the record identity across the project and the per-element ordinal capacity.
+/// Returns the found target and the next ordinal in creation order.
+pub(crate) fn admit_record<'a>(
+    target_id: ElementId,
+    operation_id: OpId,
+    plate: Option<&'a AuthoredPlate>,
+    member: Option<&'a crate::member::AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
-) -> Result<CutByPlaneOutcome, CommandError> {
-    command.validate_arguments()?;
+) -> Result<(Found<'a>, u16), CommandError> {
     let found = match (plate, member) {
-        (Some(authored), _) if authored.id == command.target_id => Found::Plate(authored),
-        (_, Some(authored)) if authored.id == command.target_id => Found::Member(authored),
+        (Some(authored), _) if authored.id == target_id => Found::Plate(authored),
+        (_, Some(authored)) if authored.id == target_id => Found::Member(authored),
         _ => {
             return Err(CommandError::new(
                 ErrorCode::NotFound,
@@ -104,7 +117,7 @@ pub fn cut_by_plane(
             ));
         }
     };
-    if operation_used(&command.operation_id) {
+    if operation_used(&operation_id) {
         return Err(CommandError::new(
             ErrorCode::DuplicateId,
             "operation_id",
@@ -125,7 +138,29 @@ pub fn cut_by_plane(
             "the element has no operation ordinal left",
         ));
     }
-    let ordinal = ordinal.unwrap_or_default();
+    Ok((found, ordinal.unwrap_or_default()))
+}
+
+/// Applies `CutByPlane` to the target's authored state in memory: argument admission, target
+/// lifecycle, record identity, ordinal capacity, then the append. Nothing is evaluated here;
+/// the adapter re-evaluates the body and refuses the whole command if the replay does.
+///
+/// `operation_used` reports whether a record identity is already used in the project
+/// (`DUPLICATE_ID`); the adapter closes it over every element's records.
+pub fn cut_by_plane(
+    command: &CutByPlane,
+    plate: Option<&AuthoredPlate>,
+    member: Option<&crate::member::AuthoredMember>,
+    operation_used: &dyn Fn(&OpId) -> bool,
+) -> Result<CutByPlaneOutcome, CommandError> {
+    command.validate_arguments()?;
+    let (found, ordinal) = admit_record(
+        command.target_id,
+        command.operation_id,
+        plate,
+        member,
+        operation_used,
+    )?;
     let record = CutRecord {
         operation_id: command.operation_id,
         ordinal,
@@ -133,20 +168,8 @@ pub fn cut_by_plane(
         normal: command.normal,
         keep: command.keep,
     };
-    let target = match found {
-        Found::Plate(authored) => {
-            let mut next = authored.clone();
-            next.cuts.push(record);
-            CutTarget::Plate(next)
-        }
-        Found::Member(authored) => {
-            let mut next = authored.clone();
-            next.cuts.push(record);
-            CutTarget::Member(next)
-        }
-    };
     Ok(CutByPlaneOutcome {
-        target,
+        target: found.appended(record),
         ordinal,
         footprint: Footprint::for_update(command.target_id, false, false, true, false, None)?,
         fingerprint: command.content_fingerprint()?,

@@ -16,6 +16,12 @@
 //! Honesty limits: replay of an `op_id` is decided from the head model (the command is a replay
 //! when the head already holds the appended record), as in `edit`. One implicit workspace,
 //! in-process layer engine, as in `plate`.
+//!
+//! The same adapter also runs the A13 fabrication commands (`a13_record`): line and polygon
+//! cuts, a cut by a part, fitting an end to a part, chamfers, split and combine. Each derives
+//! its record or state change at admission through `beamcraft_engine::fabricate`; a split
+//! creates the second element in the same transaction and a combine deletes the consumed
+//! member, and each is one revision and one undo unit.
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
@@ -32,11 +38,17 @@ use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Author, Change, EditTargets, Prepare, schema_identity};
-use beamcraft_model::command::{CommandError, CutByPlane, CutRecord};
+use beamcraft_layer_engine::authored::{
+    Author, Change, EditTargets, Element, MemberKind, Placement, Prepare, Shape, schema_identity,
+};
+use beamcraft_layer_engine::index::ElementId as LayerElementId;
+use beamcraft_model::command::{
+    ChamferPart, CombineParts, CommandError, CutByLine, CutByPart, CutByPlane, CutByPolygon,
+    CutRecord, FitEndToPart, HoleRecord, SplitPart,
+};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use std::collections::BTreeMap;
 
 fn not_found() -> PlateError {
@@ -360,5 +372,876 @@ impl CutElement {
             Self::Plate(r) => &r.authored.cuts,
             Self::Member(r) => &r.authored.cuts,
         }
+    }
+}
+
+/// The authored state of one element, for probe comparisons and change authoring.
+#[derive(Debug, Clone, PartialEq)]
+enum AuthoredState {
+    /// A plate's authored state.
+    Plate(beamcraft_engine::command::AuthoredPlate),
+    /// A member's authored state.
+    Member(beamcraft_engine::member::AuthoredMember),
+}
+
+/// The authored state a cut target carries, without evaluating a body.
+fn state_of_target(target: CutTarget) -> AuthoredState {
+    match target {
+        CutTarget::Plate(authored) => AuthoredState::Plate(authored),
+        CutTarget::Member(authored) => AuthoredState::Member(authored),
+    }
+}
+
+/// The authored state a split outcome carries.
+fn state_of_part(part: beamcraft_engine::fabricate::AuthoredPart) -> AuthoredState {
+    match part {
+        beamcraft_engine::fabricate::AuthoredPart::Plate(authored) => {
+            AuthoredState::Plate(authored)
+        }
+        beamcraft_engine::fabricate::AuthoredPart::Member(authored) => {
+            AuthoredState::Member(authored)
+        }
+    }
+}
+
+/// One A13 fabrication command (A13): the engine call, the record vocabulary and the resulting
+/// changes differ per variant, the adapter plumbing does not.
+#[derive(Debug, Clone, PartialEq)]
+pub enum A13Command {
+    /// A cut with the plane through a line and an axis.
+    Line(CutByLine),
+    /// A through-cut with a polygon in the plate's local XY.
+    Polygon(CutByPolygon),
+    /// A through-cut with another plate's prism.
+    Part(CutByPart),
+    /// A trim flush with another plate's nearest face.
+    Fit(FitEndToPart),
+    /// A chamfer of one plate contour vertex.
+    Chamfer(ChamferPart),
+    /// A split of one element in two at a plane.
+    Split(SplitPart),
+    /// A combine of two collinear members into the survivor.
+    Combine(CombineParts),
+}
+
+/// Inputs of one A13 `a13_record` call beyond the command itself.
+#[derive(Debug, Clone)]
+pub struct A13Request {
+    /// The logical operation. A retry with the same id and identical content is a replay.
+    pub op_id: OpId,
+    /// Identity of the revision this call creates.
+    pub revision_id: RevisionId,
+    /// The acting user (trusted context).
+    pub actor: Uuid7,
+    /// Project of a store that has no revision yet; such a store is `NOT_FOUND`.
+    pub project: ProjectId,
+    /// Workspace of a store that has no revision yet.
+    pub workspace: WorkspaceId,
+    /// The command.
+    pub command: A13Command,
+}
+
+/// Result of one A13 command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct A13Result {
+    /// True when the same operation was already committed and nothing was written.
+    pub replayed: bool,
+    /// The affected elements in head order: the target (or survivor), then a split's created
+    /// element.
+    pub elements: Vec<CutElement>,
+    /// The element a combine deleted.
+    pub deleted: Option<ElementId>,
+    /// The ordinal the record took, when the command appends one.
+    pub ordinal: Option<u16>,
+    /// The revision that holds the result.
+    pub revision: RevisionSummary,
+    /// The declared footprint; `None` for a replay.
+    pub footprint: Option<Footprint>,
+    /// Names of the layers whose bytes changed (empty for a replay).
+    pub changed_layers: Vec<String>,
+}
+
+/// Runs one A13 fabrication command and publishes the next revision, or replays the operation.
+///
+/// The plumbing follows `cut_by_plane_record`: open and verify the head, resolve the targets,
+/// decide replay by probing the engine admission against the head state, apply for real,
+/// re-evaluate every affected body, author the record and mesh changes (and a create, an axis
+/// and placement change or a delete for split and combine) and commit as one transaction.
+pub fn a13_record(
+    store: &RevisionStore,
+    request: &A13Request,
+    hook: &mut dyn CommitHook,
+) -> Result<A13Result, PlateError> {
+    let control = control();
+    let (head, base) = load_base(store, &request.project, &request.workspace)?;
+    if head.is_none() {
+        return Err(not_found());
+    }
+    let before: BTreeMap<String, ContentDigest> = base
+        .assets
+        .iter()
+        .map(|a| (a.name.clone(), a.digest))
+        .collect();
+    let base_request = open_base(&base)?;
+    let Base {
+        project,
+        workspace,
+        generation: base_generation,
+        expected,
+        ..
+    } = base;
+    let (plates, members, definitions, instances) = {
+        let mut reader = Reader::default();
+        let opened = reader.open(base_request.clone(), &control)?;
+        let decoded = decode(&reader, &opened, &control)?;
+        let (plates, members) = evaluate_decoded(&decoded)?;
+        (plates, members, decoded.definitions, decoded.instances)
+    };
+    let find = |id: ElementId| -> Option<CutElement> {
+        plates
+            .iter()
+            .find(|r| r.authored.id == id)
+            .map(|r| CutElement::Plate(Box::new(r.clone())))
+            .or_else(|| {
+                members
+                    .iter()
+                    .find(|r| r.authored.id == id)
+                    .map(|r| CutElement::Member(Box::new(r.clone())))
+            })
+    };
+    let present = |id: ElementId| find(id).is_some();
+    let plate_of = |id: ElementId| -> Option<beamcraft_engine::command::AuthoredPlate> {
+        match find(id) {
+            Some(CutElement::Plate(record)) => Some(record.authored),
+            _ => None,
+        }
+    };
+    let member_of = |id: ElementId| -> Option<beamcraft_engine::member::AuthoredMember> {
+        match find(id) {
+            Some(CutElement::Member(record)) => Some(record.authored),
+            _ => None,
+        }
+    };
+    // The elements a replay predicate compares and the ids the commands touch.
+    let (primary_id,) = match &request.command {
+        A13Command::Line(c) => (c.target_id,),
+        A13Command::Polygon(c) => (c.target_id,),
+        A13Command::Part(c) => (c.target_id,),
+        A13Command::Fit(c) => (c.target_id,),
+        A13Command::Chamfer(c) => (c.target_id,),
+        A13Command::Split(c) => (c.target_id,),
+        A13Command::Combine(c) => (c.survivor_id,),
+    };
+    // Every operation id of the project, from both record vocabularies.
+    let used: Vec<OpId> = plates
+        .iter()
+        .flat_map(|r| {
+            r.authored
+                .cuts
+                .iter()
+                .map(|c| c.operation_id)
+                .chain(r.authored.hole_records.iter().map(|c| c.operation_id))
+        })
+        .chain(
+            members
+                .iter()
+                .flat_map(|r| r.authored.cuts.iter().map(|c| c.operation_id)),
+        )
+        .collect();
+    let used_contains = |id: &OpId| used.contains(id);
+    let no_used = |_: &OpId| false;
+    let no_id_used = |_: &ElementId| false;
+    let head_primary = find(primary_id);
+    // The record identity the command appends, when it appends one.
+    let record_op = match &request.command {
+        A13Command::Line(c) => Some(c.operation_id),
+        A13Command::Polygon(c) => Some(c.operation_id),
+        A13Command::Part(c) => Some(c.operation_id),
+        A13Command::Fit(c) => Some(c.operation_id),
+        A13Command::Chamfer(c) => Some(c.operation_id),
+        A13Command::Split(c) => Some(c.operation_id),
+        A13Command::Combine(_) => None,
+    };
+    // The head states for the probe: on a retry the primary element's own last record carries
+    // the command's identity, and the probe must rebuild exactly it, so that record is removed
+    // from the probe's input first.
+    let strip =
+        |authored: &mut beamcraft_engine::command::AuthoredPlate, id: ElementId, through: bool| {
+            if id != primary_id {
+                return;
+            }
+            let Some(operation) = record_op else {
+                return;
+            };
+            if through
+                && authored
+                    .hole_records
+                    .last()
+                    .is_some_and(|r| r.operation_id == operation)
+            {
+                authored.hole_records.pop();
+            } else if authored
+                .cuts
+                .last()
+                .is_some_and(|r| r.operation_id == operation)
+            {
+                authored.cuts.pop();
+            }
+        };
+    let strip_member = |authored: &mut beamcraft_engine::member::AuthoredMember, id: ElementId| {
+        if id != primary_id {
+            return;
+        }
+        let Some(operation) = record_op else {
+            return;
+        };
+        if authored
+            .cuts
+            .last()
+            .is_some_and(|r| r.operation_id == operation)
+        {
+            authored.cuts.pop();
+        }
+    };
+    let probe_plate_of = |id: ElementId| -> Option<beamcraft_engine::command::AuthoredPlate> {
+        match find(id) {
+            Some(CutElement::Plate(record)) => {
+                let mut authored = record.authored.clone();
+                strip(&mut authored, id, true);
+                Some(authored)
+            }
+            _ => None,
+        }
+    };
+    let probe_member_of = |id: ElementId| -> Option<beamcraft_engine::member::AuthoredMember> {
+        match find(id) {
+            Some(CutElement::Member(record)) => {
+                let mut authored = record.authored.clone();
+                strip_member(&mut authored, id);
+                Some(authored)
+            }
+            _ => None,
+        }
+    };
+
+    // The probe: what the command would produce from the head with the identity checks
+    // relaxed. Comparing its authored states with the head decides replay without the ledger.
+    #[allow(
+        clippy::large_enum_variant,
+        reason = "a short-lived local probe of one or two authored states"
+    )]
+    #[derive(Debug, Clone, PartialEq)]
+    enum Probe {
+        /// The single element after the command.
+        One(AuthoredState),
+        /// A split's kept and created states.
+        Split(AuthoredState, AuthoredState),
+    }
+    let state_of = |element: &CutElement| match element {
+        CutElement::Plate(r) => AuthoredState::Plate(r.authored.clone()),
+        CutElement::Member(r) => AuthoredState::Member(r.authored.clone()),
+    };
+    let probe = (|| -> Option<Probe> {
+        Some(match &request.command {
+            A13Command::Line(c) => Probe::One(
+                match beamcraft_engine::fabricate::cut_by_line(
+                    c,
+                    probe_plate_of(c.target_id).as_ref(),
+                    probe_member_of(c.target_id).as_ref(),
+                    &no_used,
+                ) {
+                    Ok(outcome) => state_of_target(outcome.target),
+                    Err(_) => return None,
+                },
+            ),
+            A13Command::Fit(c) => Probe::One(
+                match beamcraft_engine::fabricate::fit_end_to_part(
+                    c,
+                    probe_plate_of(c.target_id).as_ref(),
+                    probe_member_of(c.target_id).as_ref(),
+                    plate_of(c.tool_id).as_ref(),
+                    &no_used,
+                ) {
+                    Ok(outcome) => state_of_target(outcome.target),
+                    Err(_) => return None,
+                },
+            ),
+            A13Command::Chamfer(c) => Probe::One(
+                match beamcraft_engine::fabricate::chamfer_part(
+                    c,
+                    probe_plate_of(c.target_id).as_ref(),
+                    probe_member_of(c.target_id).as_ref(),
+                    &no_used,
+                ) {
+                    Ok(outcome) => state_of_target(outcome.target),
+                    Err(_) => return None,
+                },
+            ),
+            A13Command::Polygon(c) => Probe::One(
+                match beamcraft_engine::fabricate::cut_by_polygon(
+                    c,
+                    probe_plate_of(c.target_id).as_ref(),
+                    probe_member_of(c.target_id).as_ref(),
+                    &no_used,
+                ) {
+                    Ok(outcome) => AuthoredState::Plate(outcome.authored),
+                    Err(_) => return None,
+                },
+            ),
+            A13Command::Part(c) => Probe::One(
+                match beamcraft_engine::fabricate::cut_by_part(
+                    c,
+                    probe_plate_of(c.target_id).as_ref(),
+                    probe_member_of(c.target_id).as_ref(),
+                    plate_of(c.tool_id).as_ref(),
+                    &no_used,
+                ) {
+                    Ok(outcome) => AuthoredState::Plate(outcome.authored),
+                    Err(_) => return None,
+                },
+            ),
+            A13Command::Split(c) => {
+                let outcome = beamcraft_engine::fabricate::split_part(
+                    c,
+                    probe_plate_of(c.target_id).as_ref(),
+                    probe_member_of(c.target_id).as_ref(),
+                    &no_used,
+                    &no_id_used,
+                )
+                .ok()?;
+                Probe::Split(state_of_part(outcome.kept), state_of_part(outcome.created))
+            }
+            A13Command::Combine(_) => return None,
+        })
+    })();
+    // The head holds this operation's result exactly when the probe reproduces it. A combine
+    // is decided like a delete: a retry's consumed member is already gone, so the effect is
+    // held when the consumed identity is absent from the head.
+    let holds = match (&probe, &request.command) {
+        (_, A13Command::Combine(c)) => !present(c.consumed_id),
+        (Some(Probe::One(after)), _) => head_primary
+            .as_ref()
+            .is_some_and(|head| state_of(head) == *after),
+        (Some(Probe::Split(kept, _)), A13Command::Split(c)) => {
+            // A committed split holds both halves: the kept record AND the created element.
+            head_primary
+                .as_ref()
+                .is_some_and(|head| state_of(head) == *kept)
+                && present(c.new_id)
+        }
+        _ => false,
+    };
+    let op_host = host_uuid(&request.op_id.to_string())?;
+    let fingerprint = match &request.command {
+        A13Command::Line(c) => c.content_fingerprint()?,
+        A13Command::Polygon(c) => c.content_fingerprint()?,
+        A13Command::Part(c) => c.content_fingerprint()?,
+        A13Command::Fit(c) => c.content_fingerprint()?,
+        A13Command::Chamfer(c) => c.content_fingerprint()?,
+        A13Command::Split(c) => c.content_fingerprint()?,
+        A13Command::Combine(c) => c.content_fingerprint()?,
+    };
+    let (prior, recorded) = prior_op_with(store, &op_host, || {
+        if holds {
+            Ok(fingerprint)
+        } else {
+            digest_of(b"no accepted request matches the head state")
+        }
+    })?;
+    match prior {
+        PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
+            let elements = match &request.command {
+                A13Command::Split(c) => match (&head_primary, find(c.new_id)) {
+                    (Some(head), Some(created)) => vec![head.clone(), created],
+                    _ => return Err(integrity("a split replay lost its halves")),
+                },
+                _ => match &head_primary {
+                    Some(head) => vec![head.clone()],
+                    None => return Err(not_found()),
+                },
+            };
+            let deleted = match &request.command {
+                A13Command::Combine(c) => Some(c.consumed_id),
+                _ => None,
+            };
+            return Ok(A13Result {
+                replayed: true,
+                elements,
+                deleted,
+                ordinal: None,
+                revision: replay_summary(&head, recorded)?,
+                footprint: None,
+                changed_layers: Vec::new(),
+            });
+        }
+        PriorOp::Accepted { .. } => return Err(reuse()),
+        PriorOp::Unseen => {}
+    }
+
+    // The real admission, the re-evaluated bodies and the layer changes of one transaction.
+    let materials = material_lookup(&definitions);
+    let evaluate_state = |authored: AuthoredState| -> Result<CutElement, PlateError> {
+        match authored {
+            AuthoredState::Plate(a) => {
+                let body = evaluate_plate(&a)?;
+                let quantities =
+                    body.quantities_for(a.material.as_ref().map(&materials).transpose()?)?;
+                Ok(CutElement::Plate(Box::new(PlateRecord {
+                    authored: a,
+                    body,
+                    quantities,
+                })))
+            }
+            AuthoredState::Member(a) => {
+                let profile = profile_lookup(&definitions)(&a.profile)?;
+                let body = evaluate_member(&a, profile)?;
+                let quantities =
+                    member_quantities(&body, a.material.as_ref().map(&materials).transpose()?)?;
+                Ok(CutElement::Member(Box::new(MemberRecord {
+                    authored: a,
+                    body,
+                    quantities,
+                })))
+            }
+        }
+    };
+    let mut changes: Vec<Change> = Vec::new();
+    let mut elements: Vec<CutElement> = Vec::new();
+    let mut deleted: Option<ElementId> = None;
+    let mut ordinal: Option<u16> = None;
+    let mut footprint;
+    match &request.command {
+        A13Command::Line(c) => {
+            let outcome = beamcraft_engine::fabricate::cut_by_line(
+                c,
+                plate_of(c.target_id).as_ref(),
+                member_of(c.target_id).as_ref(),
+                &used_contains,
+            )?;
+            let (id_text, cuts, authored) = match &outcome.target {
+                CutTarget::Plate(a) => (
+                    a.id.to_string(),
+                    a.cuts.clone(),
+                    AuthoredState::Plate(a.clone()),
+                ),
+                CutTarget::Member(a) => (
+                    a.id.to_string(),
+                    a.cuts.clone(),
+                    AuthoredState::Member(a.clone()),
+                ),
+            };
+            let element = evaluate_state(authored)?;
+            footprint = outcome
+                .footprint
+                .clone()
+                .union(instances.dependencies(c.target_id)?)?;
+            ordinal = Some(outcome.ordinal);
+            changes.push(Change::Cuts {
+                id: id_text.clone(),
+                cuts: cuts.clone(),
+            });
+            changes.push(mesh_change_of(&element)?);
+            elements.push(element);
+            for id in instances.group(c.target_id)? {
+                if id == c.target_id {
+                    continue;
+                }
+                footprint =
+                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
+                let other = shared_with_cuts(&plates, &members, id, &cuts)?;
+                changes.push(mesh_change_of(&other)?);
+                elements.push(other);
+            }
+        }
+        A13Command::Fit(c) => {
+            let outcome = beamcraft_engine::fabricate::fit_end_to_part(
+                c,
+                plate_of(c.target_id).as_ref(),
+                member_of(c.target_id).as_ref(),
+                plate_of(c.tool_id).as_ref(),
+                &used_contains,
+            )?;
+            let (id_text, cuts, authored) = match &outcome.target {
+                CutTarget::Plate(a) => (
+                    a.id.to_string(),
+                    a.cuts.clone(),
+                    AuthoredState::Plate(a.clone()),
+                ),
+                CutTarget::Member(a) => (
+                    a.id.to_string(),
+                    a.cuts.clone(),
+                    AuthoredState::Member(a.clone()),
+                ),
+            };
+            let element = evaluate_state(authored)?;
+            footprint = outcome
+                .footprint
+                .clone()
+                .union(instances.dependencies(c.target_id)?)?;
+            ordinal = Some(outcome.ordinal);
+            changes.push(Change::Cuts {
+                id: id_text.clone(),
+                cuts: cuts.clone(),
+            });
+            changes.push(mesh_change_of(&element)?);
+            elements.push(element);
+            for id in instances.group(c.target_id)? {
+                if id == c.target_id {
+                    continue;
+                }
+                footprint =
+                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
+                let other = shared_with_cuts(&plates, &members, id, &cuts)?;
+                changes.push(mesh_change_of(&other)?);
+                elements.push(other);
+            }
+        }
+        A13Command::Chamfer(c) => {
+            let outcome = beamcraft_engine::fabricate::chamfer_part(
+                c,
+                plate_of(c.target_id).as_ref(),
+                member_of(c.target_id).as_ref(),
+                &used_contains,
+            )?;
+            let (id_text, cuts, authored) = match &outcome.target {
+                CutTarget::Plate(a) => (
+                    a.id.to_string(),
+                    a.cuts.clone(),
+                    AuthoredState::Plate(a.clone()),
+                ),
+                CutTarget::Member(a) => (
+                    a.id.to_string(),
+                    a.cuts.clone(),
+                    AuthoredState::Member(a.clone()),
+                ),
+            };
+            let element = evaluate_state(authored)?;
+            footprint = outcome
+                .footprint
+                .clone()
+                .union(instances.dependencies(c.target_id)?)?;
+            ordinal = Some(outcome.ordinal);
+            changes.push(Change::Cuts {
+                id: id_text.clone(),
+                cuts: cuts.clone(),
+            });
+            changes.push(mesh_change_of(&element)?);
+            elements.push(element);
+            for id in instances.group(c.target_id)? {
+                if id == c.target_id {
+                    continue;
+                }
+                footprint =
+                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
+                let other = shared_with_cuts(&plates, &members, id, &cuts)?;
+                changes.push(mesh_change_of(&other)?);
+                elements.push(other);
+            }
+        }
+        A13Command::Polygon(c) => {
+            let outcome = beamcraft_engine::fabricate::cut_by_polygon(
+                c,
+                plate_of(c.target_id).as_ref(),
+                member_of(c.target_id).as_ref(),
+                &used_contains,
+            )?;
+            let authored = outcome.authored.clone();
+            let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
+            footprint = outcome
+                .footprint
+                .clone()
+                .union(instances.dependencies(c.target_id)?)?;
+            ordinal = None;
+            changes.push(Change::HoleRecords {
+                id: authored.id.to_string(),
+                records: authored.hole_records.clone(),
+            });
+            changes.push(mesh_change_of(&element)?);
+            elements.push(element);
+            for id in instances.group(c.target_id)? {
+                if id == c.target_id {
+                    continue;
+                }
+                footprint =
+                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
+                let other = shared_with_holes(&plates, id, &authored.hole_records)?;
+                changes.push(mesh_change_of(&other)?);
+                elements.push(other);
+            }
+        }
+        A13Command::Part(c) => {
+            let outcome = beamcraft_engine::fabricate::cut_by_part(
+                c,
+                plate_of(c.target_id).as_ref(),
+                member_of(c.target_id).as_ref(),
+                plate_of(c.tool_id).as_ref(),
+                &used_contains,
+            )?;
+            let authored = outcome.authored.clone();
+            let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
+            footprint = outcome
+                .footprint
+                .clone()
+                .union(instances.dependencies(c.target_id)?)?;
+            changes.push(Change::HoleRecords {
+                id: authored.id.to_string(),
+                records: authored.hole_records.clone(),
+            });
+            changes.push(mesh_change_of(&element)?);
+            elements.push(element);
+            for id in instances.group(c.target_id)? {
+                if id == c.target_id {
+                    continue;
+                }
+                footprint =
+                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
+                let other = shared_with_holes(&plates, id, &authored.hole_records)?;
+                changes.push(mesh_change_of(&other)?);
+                elements.push(other);
+            }
+        }
+        A13Command::Split(c) => {
+            if instances.group_size(c.target_id)? > 1 {
+                return Err(PlateError::from(CommandError::new(
+                    ErrorCode::DependencyConflict,
+                    "target_id",
+                    "the element shares an instance definition; a split is per element",
+                )));
+            }
+            let outcome = beamcraft_engine::fabricate::split_part(
+                c,
+                plate_of(c.target_id).as_ref(),
+                member_of(c.target_id).as_ref(),
+                &used_contains,
+                &|id: &ElementId| present(*id),
+            )?;
+            footprint = outcome.footprint.clone();
+            ordinal = Some(outcome.ordinal);
+            let kept_state = state_of_part(outcome.kept);
+            let created_state = state_of_part(outcome.created);
+            let kept = evaluate_state(kept_state.clone())?;
+            let created = evaluate_state(created_state.clone())?;
+            let (kept_cuts, kept_id) = match &kept_state {
+                AuthoredState::Plate(a) => (a.cuts.clone(), a.id.to_string()),
+                AuthoredState::Member(a) => (a.cuts.clone(), a.id.to_string()),
+            };
+            changes.push(Change::Cuts {
+                id: kept_id,
+                cuts: kept_cuts,
+            });
+            changes.push(Change::Create(created_element(&created_state)?));
+            changes.push(mesh_change_of(&kept)?);
+            changes.push(mesh_change_of(&created)?);
+            elements.push(kept);
+            elements.push(created);
+        }
+        A13Command::Combine(c) => {
+            for id in [c.survivor_id, c.consumed_id] {
+                if instances.group_size(id)? > 1 {
+                    return Err(PlateError::from(CommandError::new(
+                        ErrorCode::DependencyConflict,
+                        "consumed_id",
+                        "a member shares an instance definition; a combine is per element",
+                    )));
+                }
+            }
+            let outcome = beamcraft_engine::fabricate::combine_parts(
+                c,
+                member_of(c.survivor_id).as_ref(),
+                member_of(c.consumed_id).as_ref(),
+                &used_contains,
+            )?;
+            footprint = outcome.footprint.clone();
+            let authored = outcome.survivor.clone();
+            let before = member_of(c.survivor_id);
+            let moved = before.is_some_and(|head| {
+                head.placement.translation_mm != authored.placement.translation_mm
+            });
+            let survivor = evaluate_state(AuthoredState::Member(authored.clone()))?;
+            changes.push(Change::Axis {
+                id: authored.id.to_string(),
+                points_mm: authored.axis_points_mm,
+            });
+            if moved {
+                changes.push(Change::Placement {
+                    id: authored.id.to_string(),
+                    placement: Placement {
+                        translation_mm: authored.placement.translation_mm,
+                        orientation_xyzw: authored.placement.orientation_xyzw,
+                    },
+                });
+            }
+            changes.push(mesh_change_of(&survivor)?);
+            changes.push(Change::Delete {
+                id: c.consumed_id.to_string(),
+            });
+            elements.push(survivor);
+            deleted = Some(c.consumed_id);
+        }
+    }
+
+    let schema = schema_identity()?;
+    let (mut author, opened) = Author::open(
+        base_request,
+        EditTargets {
+            authored: AUTHORED_LAYER.into(),
+            derived: DERIVED_LAYER.into(),
+        },
+        schema,
+        &control,
+    )?;
+    if let Some(consumed) = deleted {
+        let index = author.element_index(&opened.context, &control)?;
+        author.check_delete(
+            &index,
+            &LayerElementId::parse(&consumed.to_string())?,
+            &control,
+        )?;
+    }
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: request.op_id.to_string(),
+            actor: request.actor.to_string(),
+            schema,
+            resources: Vec::new(),
+            changes,
+        },
+        &control,
+    )?;
+    check_footprint(&prepared, &footprint)?;
+    let changed_layers = prepared
+        .layers
+        .iter()
+        .filter(|l| before.get(&l.name) != Some(&l.digest))
+        .map(|l| l.name.clone())
+        .collect();
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            footprint: &footprint,
+            fingerprint,
+            prepared: &prepared,
+            schema,
+            project: &project,
+            workspace: &workspace,
+            revision_id: &request.revision_id,
+            op: op_host,
+            base_generation,
+            expected: &expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("an unseen operation was reported as replayed"));
+    }
+    Ok(A13Result {
+        replayed: false,
+        elements,
+        deleted,
+        ordinal,
+        revision: summarize(&committed.info),
+        footprint: Some(footprint),
+        changed_layers,
+    })
+}
+
+/// The mesh change of one element, for either kind.
+fn mesh_change_of(element: &CutElement) -> Result<Change, PlateError> {
+    match element {
+        CutElement::Plate(r) => mesh_change(&r.authored.id, &r.body.solid, &plate_record(r)),
+        CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
+    }
+}
+
+/// A shared-instance group member re-authored with the canonical part's cut records.
+fn shared_with_cuts(
+    plates: &[beamcraft_engine::query::committed::PlateRecord],
+    members: &[beamcraft_engine::query::committed::MemberRecord],
+    id: ElementId,
+    cuts: &[CutRecord],
+) -> Result<CutElement, PlateError> {
+    if let Some(found) = plates.iter().find(|p| p.authored.id == id) {
+        let mut authored = found.authored.clone();
+        authored.cuts = cuts.to_vec();
+        return Ok(CutElement::Plate(Box::new(PlateRecord {
+            authored,
+            body: found.body.clone(),
+            quantities: found.quantities,
+        })));
+    }
+    if let Some(found) = members.iter().find(|m| m.authored.id == id) {
+        let mut authored = found.authored.clone();
+        authored.cuts = cuts.to_vec();
+        return Ok(CutElement::Member(Box::new(MemberRecord {
+            authored,
+            body: found.body.clone(),
+            quantities: found.quantities,
+        })));
+    }
+    Err(integrity("shared instance member is not evaluated"))
+}
+
+/// A shared-instance group member re-authored with the canonical plate's through-cut records.
+fn shared_with_holes(
+    plates: &[beamcraft_engine::query::committed::PlateRecord],
+    id: ElementId,
+    records: &[HoleRecord],
+) -> Result<CutElement, PlateError> {
+    if let Some(found) = plates.iter().find(|p| p.authored.id == id) {
+        let mut authored = found.authored.clone();
+        authored.hole_records = records.to_vec();
+        return Ok(CutElement::Plate(Box::new(PlateRecord {
+            authored,
+            body: found.body.clone(),
+            quantities: found.quantities,
+        })));
+    }
+    Err(integrity("shared instance plate is not evaluated"))
+}
+
+/// The layer-engine `Create` element of a split's created half.
+fn created_element(state: &AuthoredState) -> Result<Element, PlateError> {
+    let pose = |placement: beamcraft_model::command::Placement| Placement {
+        translation_mm: placement.translation_mm,
+        orientation_xyzw: placement.orientation_xyzw,
+    };
+    match state {
+        AuthoredState::Plate(authored) => Ok(Element {
+            id: authored.id.to_string(),
+            name: authored.name.clone(),
+            placement: pose(authored.placement),
+            material: authored.material,
+            shape: Shape::Plate {
+                contour_mm: authored.contour_points_mm.clone(),
+                thickness_mm: authored.thickness_mm,
+                thickness_side: authored.thickness_side,
+                corners: authored.corners.clone(),
+                holes: authored
+                    .holes_mm
+                    .iter()
+                    .map(|hole| hole.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
+                    .collect(),
+                hole_records: authored.hole_records.clone(),
+                cuts: authored.cuts.clone(),
+            },
+        }),
+        AuthoredState::Member(authored) => Ok(Element {
+            id: authored.id.to_string(),
+            name: authored.name.clone(),
+            placement: pose(authored.placement),
+            material: authored.material,
+            shape: Shape::Member {
+                kind: match authored.kind {
+                    beamcraft_model::command::MemberKind::Beam => MemberKind::Beam,
+                    beamcraft_model::command::MemberKind::Column => MemberKind::Column,
+                },
+                axis_mm: authored.axis_points_mm.clone(),
+                profile: authored.profile,
+                roll_rad: authored.roll_rad,
+                placement: authored.section_placement,
+                cuts: authored.cuts.clone(),
+            },
+        }),
     }
 }

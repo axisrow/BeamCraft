@@ -1392,11 +1392,43 @@ impl HoleSpec {
     }
 }
 
+/// What one through-cut record of a plate authors (A13): a fastener hole (A04) or a polygon
+/// cut. Both replay through the same certified kernel subtraction and share the per-element
+/// ordinal counter and the `cut:f.h<ordinal>` wall ids; the kind keeps the operations distinct
+/// for numbering and reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoleKind {
+    /// A through hole authored by `AddHole` (A04).
+    Hole,
+    /// A polygon cut authored by `CutByPolygon` or derived from `CutByPart` (A13).
+    PolygonCut,
+}
+
+impl HoleKind {
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hole => "hole",
+            Self::PolygonCut => "polygon_cut",
+        }
+    }
+
+    /// Parses the wire token; anything else is `None`.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "hole" => Some(Self::Hole),
+            "polygon_cut" => Some(Self::PolygonCut),
+            _ => None,
+        }
+    }
+}
+
 /// One through-hole operation record of a plate (F04 section 4, A04): an owned record with an
 /// engine-assigned ordinal and the authoritative clockwise polygon. The records of one element
 /// are always replayed from the base shape in ordinal order, so no stored intermediate mesh can
 /// go stale. Ordinals are never reused or renumbered; `UpdateHole` and `RemoveHole`, later
-/// slices of A04, address a record by its `operation_id`.
+/// slices of A04, address a record by its `operation_id`. Polygon cuts (A13) share the record
+/// form and the ordinal counter, told apart by `kind`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HoleRecord {
     /// Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`).
@@ -1406,6 +1438,8 @@ pub struct HoleRecord {
     pub ordinal: usize,
     /// The authoritative clockwise polygon in plate-local XY, as generated at the input edge.
     pub polygon_mm: Vec<[f64; 2]>,
+    /// Whether the record is a hole (A04) or a polygon cut (A13).
+    pub kind: HoleKind,
 }
 
 /// F04 section 7 `AddHole`: one through-hole operation record on a valid plate (A04). The
@@ -1485,6 +1519,460 @@ impl AddHole {
                 .with_rule("DV-LIM-001")
         })
     }
+}
+
+/// F04 section 7 `CutByLine` (A13): cuts a valid plate, beam or column with the plane through
+/// the line `point_a_mm`–`point_b_mm` and the given axis direction, keeping one side. The plane
+/// is derived once at admission and stored as an ordinary `plane_cut` record; the line itself is
+/// not kept in the record.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CutByLine {
+    /// The element to cut.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the new record; unused in the project.
+    pub operation_id: OpId,
+    /// First point of the cutting line, element-local millimetres.
+    pub point_a_mm: [f64; 3],
+    /// Second point of the cutting line, element-local millimetres; equal to `point_a_mm` is
+    /// `INVALID_ARGUMENT`.
+    pub point_b_mm: [f64; 3],
+    /// A non-zero direction the cutting plane contains besides the line; parallel to the line
+    /// is `INVALID_ARGUMENT`.
+    pub axis: [f64; 3],
+    /// The kept half-space of the derived plane.
+    pub keep: KeepSide,
+}
+
+impl CutByLine {
+    /// Admits what does not depend on geometry or model state: finiteness, the coordinate cap,
+    /// distinct line points and a non-zero axis. Whether the derived plane actually crosses the
+    /// element is the kernel's decision at replay.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        let values = [self.point_a_mm, self.point_b_mm, self.axis];
+        if values.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "cut_by_line",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if values.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "cut_by_line",
+                "coordinate exceeds the coordinate cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if self.point_a_mm == self.point_b_mm {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "cut_by_line",
+                "the two line points must differ",
+            ));
+        }
+        if self.axis == [0.0; 3] {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "cut_by_line",
+                "the cutting plane needs a non-zero axis",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The derived plane as a `plane_cut` record geometry: the plane contains the line and the
+    /// axis, so its normal is `normalize(cross(b - a, axis))`. An axis parallel to the line is
+    /// `INVALID_ARGUMENT`.
+    pub fn plane(&self) -> Result<([f64; 3], [f64; 3]), CommandError> {
+        let dir = [
+            self.point_b_mm[0] - self.point_a_mm[0],
+            self.point_b_mm[1] - self.point_a_mm[1],
+            self.point_b_mm[2] - self.point_a_mm[2],
+        ];
+        let n = [
+            dir[1] * self.axis[2] - dir[2] * self.axis[1],
+            dir[2] * self.axis[0] - dir[0] * self.axis[2],
+            dir[0] * self.axis[1] - dir[1] * self.axis[0],
+        ];
+        let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if !length.is_finite() || length == 0.0 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "cut_by_line",
+                "the axis must not be parallel to the line",
+            ));
+        }
+        Ok((
+            self.point_a_mm,
+            [n[0] / length, n[1] / length, n[2] / length],
+        ))
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, as
+    /// for [`CutByPlane::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        fingerprint_cut(
+            b"BeamCraft/A13/CutByLine/v1",
+            self.target_id,
+            self.operation_id,
+            self.validate_arguments(),
+            |bytes| {
+                for value in self
+                    .point_a_mm
+                    .into_iter()
+                    .chain(self.point_b_mm)
+                    .chain(self.axis)
+                {
+                    push_f64(bytes, value)?;
+                }
+                Ok(())
+            },
+        )
+    }
+}
+
+/// F04 section 7 `CutByPolygon` (A13): cuts a valid plate with the prism of a closed polygon in
+/// plate-local XY swept through the whole thickness, removing the material inside it. The
+/// polygon admission is the kernel's (clockwise, simple, strictly inside the outline, clear of
+/// every other record), exactly as for a hole; the record is a cut, not a hole.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CutByPolygon {
+    /// The plate to cut; a member target is `UNSUPPORTED_GEOMETRY` (the kernel subtracts
+    /// Z-prisms only).
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the new record; unused in the project.
+    pub operation_id: OpId,
+    /// The clockwise polygon in plate-local XY, 3 to 1024 points, closure implicit.
+    pub polygon_mm: Vec<[f64; 2]>,
+}
+
+impl CutByPolygon {
+    /// Admits the polygon shape (count, finiteness, caps) as [`HoleSpec::validate`] does.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        HoleSpec::Polygon(self.polygon_mm.clone()).validate()
+    }
+
+    /// The clockwise polygon this command authors; the stored polygon is authoritative.
+    pub fn polygon(&self) -> Result<Vec<[f64; 2]>, CommandError> {
+        HoleSpec::Polygon(self.polygon_mm.clone()).polygon()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, as
+    /// for [`CutByPlane::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let polygon = self.polygon()?;
+        fingerprint_cut(
+            b"BeamCraft/A13/CutByPolygon/v1",
+            self.target_id,
+            self.operation_id,
+            self.validate_arguments(),
+            |bytes| {
+                for value in polygon.iter().flatten().copied() {
+                    push_f64(bytes, value)?;
+                }
+                Ok(())
+            },
+        )
+    }
+}
+
+/// F04 section 7 `CutByPart` (A13): cuts a plate with another plate, removing the material
+/// inside the tool's prism. The tool's contour and reach are derived once at admission in the
+/// target's local frame and stored as a polygon-cut record; moving the tool afterwards never
+/// updates the cut. A tool whose relative rotation is not about the target normal, or whose
+/// prism does not cross the target, is refused.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CutByPart {
+    /// The plate to cut.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the new record; unused in the project.
+    pub operation_id: OpId,
+    /// The plate used as the cutter.
+    pub tool_id: ElementId,
+}
+
+impl CutByPart {
+    /// Nothing to admit beyond identity; everything else is the engine's decision.
+    pub const fn validate_arguments(&self) -> Result<(), CommandError> {
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, as
+    /// for [`CutByPlane::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        fingerprint_cut(
+            b"BeamCraft/A13/CutByPart/v1",
+            self.target_id,
+            self.operation_id,
+            self.validate_arguments(),
+            |bytes| {
+                bytes.extend_from_slice(self.tool_id.as_bytes());
+                Ok(())
+            },
+        )
+    }
+}
+
+/// F04 section 7 `FitEndToPart` (A13): trims a plate, beam or column flush with the face of
+/// another plate. The engine fits to the tool face nearest the target's extent midpoint and
+/// keeps the side the target body lies on; the derived plane is stored as an ordinary
+/// `plane_cut` record. Moving the tool afterwards never updates the fit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FitEndToPart {
+    /// The element to fit.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the new record; unused in the project.
+    pub operation_id: OpId,
+    /// The plate whose face the end is fitted to.
+    pub tool_id: ElementId,
+}
+
+impl FitEndToPart {
+    /// Nothing to admit beyond identity; everything else is the engine's decision.
+    pub const fn validate_arguments(&self) -> Result<(), CommandError> {
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, as
+    /// for [`CutByPlane::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        fingerprint_cut(
+            b"BeamCraft/A13/FitEndToPart/v1",
+            self.target_id,
+            self.operation_id,
+            self.validate_arguments(),
+            |bytes| {
+                bytes.extend_from_slice(self.tool_id.as_bytes());
+                Ok(())
+            },
+        )
+    }
+}
+
+/// F04 section 7 `ChamferPart` (A13): chamfers one corner of a valid plate by cutting it with
+/// the plane through the two points `first_distance_mm` and `second_distance_mm` back along the
+/// two contour edges at the vertex, keeping the far side. The derived plane is stored as an
+/// ordinary `plane_cut` record; the vertex distances are not kept in the record.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ChamferPart {
+    /// The plate to chamfer.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the new record; unused in the project.
+    pub operation_id: OpId,
+    /// Index of the contour vertex to chamfer, into the stored contour order; out of range is
+    /// `NOT_FOUND` at the engine.
+    pub vertex_index: usize,
+    /// Distance back along the edge from the previous vertex, in millimetres.
+    pub first_distance_mm: f64,
+    /// Distance back along the edge to the next vertex, in millimetres.
+    pub second_distance_mm: f64,
+}
+
+impl ChamferPart {
+    /// Admits the distances: finite, positive, within the coordinate cap. Whether they fit the
+    /// edges and whether the derived plane crosses the element are the engine's and the
+    /// kernel's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        for (name, value) in [
+            ("first_distance_mm", self.first_distance_mm),
+            ("second_distance_mm", self.second_distance_mm),
+        ] {
+            if !value.is_finite() {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    name,
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if value <= 0.0 {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    name,
+                    "a chamfer distance must be positive",
+                ));
+            }
+            if value > COORDINATE_CAP_MM {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    name,
+                    "distance exceeds the coordinate cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, as
+    /// for [`CutByPlane::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        fingerprint_cut(
+            b"BeamCraft/A13/ChamferPart/v1",
+            self.target_id,
+            self.operation_id,
+            self.validate_arguments(),
+            |bytes| {
+                push_f64(bytes, self.first_distance_mm)?;
+                push_f64(bytes, self.second_distance_mm)?;
+                push_f64(bytes, self.vertex_index as f64)
+            },
+        )
+    }
+}
+
+/// F04 section 7 `SplitPart` (A13): splits a valid plate, beam or column in two with a plane.
+/// The target keeps the `keep` half-space and gains the matching `plane_cut` record; a new
+/// element with the given identity receives a copy of the target's authored state and the
+/// complementary cut. One command, one revision, one undo unit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SplitPart {
+    /// The element to split.
+    pub target_id: ElementId,
+    /// Full identity of the new element holding the other half; unused in the project.
+    pub new_id: ElementId,
+    /// Full UUIDv7 of the new record; unused in the project.
+    pub operation_id: OpId,
+    /// Label of the new element.
+    pub new_name: String,
+    /// A point of the splitting plane, element-local millimetres.
+    pub point_mm: [f64; 3],
+    /// A non-zero normal of the splitting plane.
+    pub normal: [f64; 3],
+    /// The half-space the target keeps; the new element keeps the other.
+    pub keep: KeepSide,
+}
+
+impl SplitPart {
+    /// Admits the label and the plane arguments as `CutByPlane` does.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.new_name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "new_name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
+        CutRecord {
+            operation_id: self.operation_id,
+            ordinal: 0,
+            point_mm: self.point_mm,
+            normal: self.normal,
+            keep: self.keep,
+        }
+        .validate()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, as
+    /// for [`CutByPlane::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        fingerprint_cut(
+            b"BeamCraft/A13/SplitPart/v1",
+            self.target_id,
+            self.operation_id,
+            self.validate_arguments(),
+            |bytes| {
+                bytes.extend_from_slice(self.new_id.as_bytes());
+                for value in self.point_mm.into_iter().chain(self.normal) {
+                    push_f64(bytes, value)?;
+                }
+                // The label bytes, length-prefixed as `CreatePlate` does, so same-length
+                // renames are never one recorded content.
+                let name = self.new_name.as_bytes();
+                bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(name);
+                push_f64(
+                    bytes,
+                    match self.keep {
+                        KeepSide::Positive => 0.0,
+                        KeepSide::Negative => 1.0,
+                    },
+                )
+            },
+        )
+    }
+}
+
+/// F04 section 7 `CombineParts` (A13): combines two straight members with the same pinned
+/// profile, orientation and material into one longer member along the same axis. The survivor
+/// keeps its identity and extends over the union of the two axis ranges, which must overlap or
+/// touch; the consumed element is deleted. The effect is the resulting authored state and the
+/// revision ledger entry; the journal, not a per-element record, carries the operation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CombineParts {
+    /// The member that survives and extends.
+    pub survivor_id: ElementId,
+    /// The member consumed by the combination; it is deleted.
+    pub consumed_id: ElementId,
+    /// Full UUIDv7 of the operation; unused in the project.
+    pub operation_id: OpId,
+}
+
+impl CombineParts {
+    /// The two members must differ; everything else is the engine's decision.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if self.survivor_id == self.consumed_id {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "consumed_id",
+                "a member cannot be combined with itself",
+            ));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, as
+    /// for [`CutByPlane::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        fingerprint_cut(
+            b"BeamCraft/A13/CombineParts/v1",
+            self.survivor_id,
+            self.operation_id,
+            self.validate_arguments(),
+            |bytes| {
+                bytes.extend_from_slice(self.consumed_id.as_bytes());
+                Ok(())
+            },
+        )
+    }
+}
+
+/// The shared fingerprint form of the A13 commands: a version tag, the primary element, the
+/// record identity and a caller-provided tail, digested as [`CutByPlane`] does. A failed
+/// admission or an inexpressible value has no fingerprint.
+fn fingerprint_cut(
+    tag: &[u8],
+    element: ElementId,
+    operation: OpId,
+    admitted: Result<(), CommandError>,
+    tail: impl FnOnce(&mut Vec<u8>) -> Result<(), CommandError>,
+) -> Result<ContentDigest, CommandError> {
+    admitted?;
+    let bad = || {
+        CommandError::new(ErrorCode::NonFiniteNumber, "cut", "value cannot be encoded")
+            .with_rule("DV-ATTR-003")
+    };
+    let mut bytes = Vec::with_capacity(96);
+    bytes.extend_from_slice(tag);
+    bytes.push(0);
+    bytes.extend_from_slice(element.as_bytes());
+    bytes.extend_from_slice(operation.as_bytes());
+    tail(&mut bytes).map_err(|_| bad())?;
+    Sha256::digest(&bytes).map_err(|_| {
+        CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+            .with_rule("DV-LIM-001")
+    })
+}
+
+/// Appends the canonical bytes of one f64 to a fingerprint buffer.
+fn push_f64(bytes: &mut Vec<u8>, value: f64) -> Result<(), CommandError> {
+    let bad = CommandError::new(ErrorCode::NonFiniteNumber, "cut", "value cannot be encoded")
+        .with_rule("DV-ATTR-003");
+    bytes.extend_from_slice(&canonical_f64_bytes(value).map_err(|_| bad)?);
+    Ok(())
 }
 
 /// A typed patch of supported authored fields (F04 section 7 `UpdateElement`). A field that is

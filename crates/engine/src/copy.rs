@@ -67,7 +67,10 @@ fn copied_operation_id(
 
 /// Deterministic fresh identity of a duplicated A04 record. Instance copies retain the
 /// canonical record identity instead; an independent duplicate must own a distinct one.
-fn copied_hole(record: &HoleRecord, new_id: &ElementId) -> Result<HoleRecord, CommandError> {
+pub(crate) fn copied_hole(
+    record: &HoleRecord,
+    new_id: &ElementId,
+) -> Result<HoleRecord, CommandError> {
     if record.polygon_mm.len() > beamcraft_model::limits::CONTOUR_POINT_CAP {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
@@ -119,7 +122,7 @@ fn copied_hole(record: &HoleRecord, new_id: &ElementId) -> Result<HoleRecord, Co
 }
 
 /// The copy's records: fresh operation ids, the same ordinals and the same plane parameters.
-fn copied_records(
+pub(crate) fn copied_records(
     records: &[CutRecord],
     new_id: &ElementId,
 ) -> Result<Vec<CutRecord>, CommandError> {
@@ -301,6 +304,7 @@ mod tests {
             operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
             ordinal: 3,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
+            kind: beamcraft_model::command::HoleKind::Hole,
         };
         // A retried copy derives the exact same identity.
         let first = copied_hole(&record, &id(6)).unwrap();

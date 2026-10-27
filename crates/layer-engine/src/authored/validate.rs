@@ -523,6 +523,7 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         "steel:hole:vertexCounts",
         "steel:hole:operationIds",
         "steel:hole:ordinals",
+        "steel:hole:kinds",
     ];
     let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
     if declared.iter().all(|seen| !seen) {
@@ -540,9 +541,13 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     let Value::Array(ordinals) = required(prim, "steel:hole:ordinals", "int[]")? else {
         return Err(invalid());
     };
+    let Value::Array(kinds) = required(prim, "steel:hole:kinds", "token[]")? else {
+        return Err(invalid());
+    };
     if counts.len() > MAX_HOLES
         || counts.len() != ids.len()
         || counts.len() != ordinals.len()
+        || counts.len() != kinds.len()
         || counts.is_empty()
     {
         return Err(invalid());
@@ -586,6 +591,14 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
             return Err(invalid());
         }
         last = Some(*n);
+    }
+    for kind in kinds {
+        let Value::Text(kind) = kind else {
+            return Err(invalid());
+        };
+        if kind != "hole" && kind != "polygon_cut" {
+            return Err(invalid());
+        }
     }
     Ok(())
 }

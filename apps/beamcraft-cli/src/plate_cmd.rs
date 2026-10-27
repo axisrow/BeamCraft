@@ -7,7 +7,9 @@
 
 use crate::report::report_with;
 use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element, copy_instance};
-use beamcraft_cli::cut::{CutElement, CutRequest, cut_by_plane_record};
+use beamcraft_cli::cut::{
+    A13Command, A13Request, CutElement, CutRequest, a13_record, cut_by_plane_record,
+};
 use beamcraft_cli::definition::{
     DefineRequest, Defined, DefinitionRecord, NameResolution, define, definition_path,
     head_definitions, resolve_name,
@@ -42,10 +44,11 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    AddHole, CopyElement, CornerTreatment, CreatePlate, CreatePolybeam, CreateStraightMember,
-    CutByPlane, CutRecord, DeleteElement, ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind,
-    Placement, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
-    SectionPlanePosition, UpdateElement,
+    AddHole, ChamferPart, CombineParts, CopyElement, CornerTreatment, CreatePlate, CreatePolybeam,
+    CreateStraightMember, CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord, DeleteElement,
+    ElementPatch, FitEndToPart, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner,
+    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition, SplitPart,
+    UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -246,6 +249,59 @@ const CUT_OPTIONS: &[&str] = &[
     "--workspace-id",
 ];
 
+/// The full option lists of the A13 commands: the base ledger options plus the command's own.
+macro_rules! a13_options {
+    ($name:ident, $($extra:expr),+ $(,)?) => {
+        const $name: &[&str] = &[
+            "--store",
+            "--id",
+            "--operation-id",
+            "--op-id",
+            "--revision-id",
+            "--actor-id",
+            "--project-id",
+            "--workspace-id",
+            $($extra,)+
+        ];
+    };
+}
+
+a13_options!(
+    A13_LINE_OPTIONS_ALL,
+    "--point-a",
+    "--point-b",
+    "--axis",
+    "--keep"
+);
+a13_options!(A13_POLYGON_OPTIONS_ALL, "--polygon");
+a13_options!(A13_PART_OPTIONS_ALL, "--tool");
+a13_options!(A13_FIT_OPTIONS_ALL, "--tool");
+a13_options!(
+    A13_CHAMFER_OPTIONS_ALL,
+    "--vertex-index",
+    "--first-distance",
+    "--second-distance"
+);
+a13_options!(
+    A13_SPLIT_OPTIONS_ALL,
+    "--new-id",
+    "--new-name",
+    "--point",
+    "--normal",
+    "--keep"
+);
+const A13_COMBINE_OPTIONS_ALL: &[&str] = &[
+    "--store",
+    "--survivor",
+    "--consumed",
+    "--operation-id",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
 const UPDATE_OPTIONS: &[&str] = &[
     "--class",
     "--store",
@@ -321,6 +377,13 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "delete-element" => DELETE_OPTIONS,
         "copy-element" | "copy-instance" => COPY_OPTIONS,
         "cut-by-plane" => CUT_OPTIONS,
+        "cut-by-line" => A13_LINE_OPTIONS_ALL,
+        "cut-by-polygon" => A13_POLYGON_OPTIONS_ALL,
+        "cut-by-part" => A13_PART_OPTIONS_ALL,
+        "fit-end-to-part" => A13_FIT_OPTIONS_ALL,
+        "chamfer-part" => A13_CHAMFER_OPTIONS_ALL,
+        "split-part" => A13_SPLIT_OPTIONS_ALL,
+        "combine-parts" => A13_COMBINE_OPTIONS_ALL,
         "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
         "inspect-workspace-history" => &["--workspace-dir"],
@@ -372,6 +435,13 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "copy-element" => copy_command(&store, &options, false),
         "copy-instance" => copy_command(&store, &options, true),
         "cut-by-plane" => cut_command(&store, &options),
+        "cut-by-line" => a13_command(&store, "cut-by-line", &options),
+        "cut-by-polygon" => a13_command(&store, "cut-by-polygon", &options),
+        "cut-by-part" => a13_command(&store, "cut-by-part", &options),
+        "fit-end-to-part" => a13_command(&store, "fit-end-to-part", &options),
+        "chamfer-part" => a13_command(&store, "chamfer-part", &options),
+        "split-part" => a13_command(&store, "split-part", &options),
+        "combine-parts" => a13_command(&store, "combine-parts", &options),
         "create-workspace" | "inspect-workspace" | "publish-workspace" => {
             workspace_command(&store, command, &options, candidates)
         }
@@ -1250,6 +1320,177 @@ fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Jso
         ("revision", revision_json(&cut.revision)),
         ("footprint", footprint_json(cut.footprint.as_ref())),
     ]))
+}
+
+/// Semicolon-separated `X,Y` pairs, the clockwise polygon of `cut-by-polygon` and `add-hole`.
+fn polygon_pairs(text: &str) -> Run<Vec<[f64; 2]>> {
+    text.split(';')
+        .filter(|p| !p.trim().is_empty())
+        .map(|pair| {
+            let [x, y] = numbers_list(pair, 2)?[..] else {
+                return Err(invalid("a polygon point has the wrong number of values"));
+            };
+            Ok([x, y])
+        })
+        .collect()
+}
+
+/// One A13 fabrication command (A13): the shared identity and ledger parsing of `cut_command`
+/// and the per-command arguments, dispatched to `a13_record`.
+fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let element = |key: &'static str| -> Run<ElementId> {
+        ElementId::parse(given(key).ok_or_else(|| invalid("an element id is required"))?)
+            .map_err(id_error)
+    };
+    let operation_id =
+        OpId::parse(given("--operation-id").ok_or_else(|| invalid("--operation-id is required"))?)
+            .map_err(id_error)?;
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let command = match name {
+        "cut-by-line" => A13Command::Line(CutByLine {
+            target_id: element("--id")?,
+            operation_id,
+            point_a_mm: translation(
+                given("--point-a").ok_or_else(|| invalid("--point-a is required"))?,
+            )?,
+            point_b_mm: translation(
+                given("--point-b").ok_or_else(|| invalid("--point-b is required"))?,
+            )?,
+            axis: translation(given("--axis").ok_or_else(|| invalid("--axis is required"))?)?,
+            keep: keep_side(options)?,
+        }),
+        "cut-by-polygon" => A13Command::Polygon(CutByPolygon {
+            target_id: element("--id")?,
+            operation_id,
+            polygon_mm: polygon_pairs(
+                given("--polygon").ok_or_else(|| invalid("--polygon is required"))?,
+            )?,
+        }),
+        "cut-by-part" => A13Command::Part(CutByPart {
+            target_id: element("--id")?,
+            operation_id,
+            tool_id: element("--tool")?,
+        }),
+        "fit-end-to-part" => A13Command::Fit(FitEndToPart {
+            target_id: element("--id")?,
+            operation_id,
+            tool_id: element("--tool")?,
+        }),
+        "chamfer-part" => {
+            let index = given("--vertex-index")
+                .ok_or_else(|| invalid("--vertex-index is required"))?
+                .parse::<usize>()
+                .map_err(|_| invalid("--vertex-index is not a natural number"))?;
+            let distance = |key: &'static str| -> Run<f64> {
+                given(key)
+                    .ok_or_else(|| invalid("a chamfer distance is required"))?
+                    .parse::<f64>()
+                    .map_err(|_| invalid("a number is malformed"))
+            };
+            A13Command::Chamfer(ChamferPart {
+                target_id: element("--id")?,
+                operation_id,
+                vertex_index: index,
+                first_distance_mm: distance("--first-distance")?,
+                second_distance_mm: distance("--second-distance")?,
+            })
+        }
+        "split-part" => A13Command::Split(SplitPart {
+            target_id: element("--id")?,
+            new_id: element("--new-id")?,
+            operation_id,
+            new_name: given("--new-name")
+                .ok_or_else(|| invalid("--new-name is required"))?
+                .to_owned(),
+            point_mm: translation(given("--point").ok_or_else(|| invalid("--point is required"))?)?,
+            normal: translation(given("--normal").ok_or_else(|| invalid("--normal is required"))?)?,
+            keep: keep_side(options)?,
+        }),
+        "combine-parts" => A13Command::Combine(CombineParts {
+            survivor_id: element("--survivor")?,
+            consumed_id: element("--consumed")?,
+            operation_id,
+        }),
+        _ => return Err(invalid("unknown command")),
+    };
+    let result = a13_record(
+        store,
+        &A13Request {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command,
+        },
+        &mut NoFault,
+    )?;
+    let outcome = if result.replayed {
+        "a13_replayed"
+    } else {
+        "a13_applied"
+    };
+    let mut fields = vec![
+        ("outcome", Json::text(outcome)),
+        ("op_id", Json::text(op_id.to_string())),
+    ];
+    if let Some(ordinal) = result.ordinal {
+        fields.push((
+            "record",
+            Json::object([("ordinal", Json::uint(u64::from(ordinal)))]),
+        ));
+    }
+    let element_json = |element: &CutElement| match element {
+        CutElement::Plate(record) => plate_json(record),
+        CutElement::Member(record) => member_json(record),
+    };
+    match result.elements.as_slice() {
+        [single] => fields.push(("element", element_json(single)?)),
+        [kept, created] => {
+            fields.push(("kept", element_json(kept)?));
+            fields.push(("created", element_json(created)?));
+        }
+        _ => return Err(invalid("the command produced no element")),
+    }
+    if let Some(deleted) = result.deleted {
+        fields.push(("deleted", Json::text(deleted.to_string())));
+    }
+    fields.push(("revision", revision_json(&result.revision)));
+    fields.push(("footprint", footprint_json(result.footprint.as_ref())));
+    Ok(Json::Object(
+        fields
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    ))
 }
 
 /// Comma-separated numbers, exactly `count` of them (the shared shape of every hole option).

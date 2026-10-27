@@ -69,8 +69,9 @@ use beamcraft_layer_engine::{
     Prim, Profile, Reader, Value,
 };
 use beamcraft_model::command::{
-    CommandError, CornerTreatment, CreatePlate, CutRecord, HoleRecord, KeepSide, MemberKind,
-    PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
+    CommandError, CornerTreatment, CreatePlate, CutRecord, HoleKind, HoleRecord, KeepSide,
+    MemberKind, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
+    SectionPlanePosition,
 };
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
@@ -451,6 +452,7 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
         "steel:hole:vertexCounts",
         "steel:hole:operationIds",
         "steel:hole:ordinals",
+        "steel:hole:kinds",
     ];
     let declared: Vec<bool> = names.iter().map(|name| declared(name)).collect();
     if declared.iter().all(|seen| !seen) {
@@ -484,18 +486,33 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
             _ => None,
         })
         .ok_or_else(bad)?;
-    if polygons.len() != ids.len() || polygons.len() != ordinals.len() || polygons.is_empty() {
+    let kinds = property(prim, "steel:hole:kinds")
+        .and_then(|value| match value {
+            Value::Array(items) => items
+                .iter()
+                .map(|v| text(v).and_then(HoleKind::parse))
+                .collect::<Option<Vec<_>>>(),
+            _ => None,
+        })
+        .ok_or_else(bad)?;
+    if polygons.len() != ids.len()
+        || polygons.len() != ordinals.len()
+        || polygons.len() != kinds.len()
+        || polygons.is_empty()
+    {
         return Err(bad());
     }
     let records = polygons
         .into_iter()
         .zip(ids)
         .zip(ordinals)
-        .map(|((polygon_mm, id), ordinal)| {
+        .zip(kinds)
+        .map(|(((polygon_mm, id), ordinal), kind)| {
             Ok(HoleRecord {
                 operation_id: OpId::parse(&id).map_err(|_| bad())?,
                 ordinal: ordinal.ok_or_else(bad)?,
                 polygon_mm,
+                kind,
             })
         })
         .collect::<Result<Vec<_>, PlateError>>()?;
