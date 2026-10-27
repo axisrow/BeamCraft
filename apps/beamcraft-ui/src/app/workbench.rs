@@ -259,6 +259,7 @@ impl App {
             self.grid_form = crate::grid::GridForm::default();
             self.grid_note = None;
         }
+        self.plane_pick = false;
         self.bench = bench;
         match bench {
             Bench::Plate => self.tools.active = ToolKind::Plate,

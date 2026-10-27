@@ -45,6 +45,7 @@ pub mod synthetic;
 pub mod transaction;
 pub mod update;
 pub mod weld;
+pub mod work_plane;
 
 pub use beamcraft_kernel::PlateResult;
 pub use element::{ElementId, ElementKind, KindFilter};

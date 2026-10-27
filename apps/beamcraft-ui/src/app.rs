@@ -105,6 +105,8 @@ pub struct App {
     beam: BeamPlace,
     /// Whether viewport clicks place the beam instead of selecting.
     beam_mode: bool,
+    plane_form: crate::work_plane::Form,
+    plane_pick: bool,
     /// The millimetre-quantized hover end the current ghost was built for: the buffers rebuild
     /// only when the preview actually moves.
     ghost_end: Option<[i64; 3]>,
@@ -698,6 +700,8 @@ impl App {
             tools: Tools::default(),
             beam: BeamPlace::default(),
             beam_mode: false,
+            plane_form: crate::work_plane::Form::default(),
+            plane_pick: false,
             ghost_end: None,
             job: None,
             reload_job: None,
@@ -1850,8 +1854,23 @@ impl App {
         self.perf = Some((run, report));
     }
 
+    fn install_plane(&mut self, plane: Option<beamcraft_engine::work_plane::WorkPlane>) {
+        self.tools.cancel();
+        self.tools.plane = plane;
+        self.plane_pick = false;
+        self.beam_mode = false;
+        self.beam.reset();
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.tool_note = Some(Ok(
+            "Work plane updated for this session; the model is unchanged.".into(),
+        ));
+    }
+
     /// Turns viewport placement of the member on or off (issue #134).
     fn toggle_place(&mut self) {
+        self.plane_pick = false;
         self.beam_mode = !self.beam_mode;
         self.beam.reset();
         self.ghost_end = None;
@@ -1880,6 +1899,11 @@ impl App {
             }
             None => ground_point(&ray),
         };
+        let resolved = if let Some(plane) = self.tools.plane {
+            plane.ray_point(ray.origin, ray.direction)
+        } else {
+            resolved
+        };
         let Some(point) = resolved else {
             self.tool_note = Some(Err(
                 "the click has no world point: aim at the model or the ground plane".into(),
@@ -1887,7 +1911,10 @@ impl App {
             return;
         };
         let point = match self.beam.start() {
-            Some(start) => match self.tools.member.axis_lock.constrain(start, point) {
+            Some(start) => match self.tools.plane.map_or_else(
+                || self.tools.member.axis_lock.constrain(start, point),
+                |plane| plane.constrain_world(start, point, self.tools.member.axis_lock),
+            ) {
                 Ok(point) => point,
                 Err(e) => {
                     self.tool_note = Some(Err(e.to_string()));
@@ -1905,6 +1932,19 @@ impl App {
                 )));
             }
             Some((start, end)) => {
+                let points = self.tools.plane.map(|plane| {
+                    plane
+                        .to_local(start)
+                        .and_then(|start| plane.to_local(end).map(|end| (start, end)))
+                });
+                let (start, end) = match points {
+                    Some(Ok(pair)) => pair,
+                    Some(Err(e)) => {
+                        self.tool_note = Some(Err(e.to_string()));
+                        return;
+                    }
+                    None => (start, end),
+                };
                 self.tools.member.set_endpoints(start, end);
                 self.beam_mode = false;
                 self.ghost_end = None;
@@ -1959,7 +1999,19 @@ impl App {
             ray.origin[1] + t * ray.direction[1],
             ray.origin[2] + t * ray.direction[2],
         ];
-        let Ok(end) = self.tools.member.axis_lock.constrain(start, end) else {
+        let end = if let Some(plane) = self.tools.plane {
+            let Some(end) = plane.ray_point(ray.origin, ray.direction) else {
+                return;
+            };
+            end
+        } else {
+            end
+        };
+        let constrained = match self.tools.plane {
+            Some(plane) => plane.constrain_world(start, end, self.tools.member.axis_lock),
+            None => self.tools.member.axis_lock.constrain(start, end),
+        };
+        let Ok(end) = constrained else {
             return;
         };
         let key = end.map(|v| v.round() as i64);
@@ -2032,6 +2084,20 @@ impl App {
     }
 
     fn tools_panel(&mut self, ui: &mut egui::Ui) {
+        match self.plane_form.show(ui) {
+            Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
+            Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
+            Ok(Some(crate::work_plane::Action::PickFace)) => {
+                self.install_plane(self.tools.plane);
+                self.plane_pick = true;
+                self.tool_note = Some(Ok("Click a face to set the session work plane.".into()));
+            }
+            Err(e) => self.tool_note = Some(Err(e.to_string())),
+            _ => {}
+        }
+        if let Some(plane) = self.tools.plane {
+            ui.label(format!("Plane origin: {}", PointText(plane.origin())));
+        }
         ui.label("Dimensions in mm.");
         // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
         // frame the window draws.
@@ -2291,6 +2357,7 @@ impl eframe::App for App {
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
         } else if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.plane_pick = false;
             // Esc closes the publish dialog first; it clears the selection only when none is open.
             if self.publisher.phase() == Phase::Confirming {
                 self.publisher.cancel();
@@ -2466,7 +2533,25 @@ impl eframe::App for App {
                     self.select_grid(&id);
                 }
             } else if let Some(ray) = picked {
-                if self.beam_mode {
+                if self.plane_pick {
+                    if let Some(loaded) = &self.loaded {
+                        match beamcraft_engine::work_plane::pick_work_plane(
+                            &loaded.snapshot,
+                            ray.origin,
+                            ray.direction,
+                        ) {
+                            Ok(Some(plane)) => {
+                                self.plane_form.set(plane);
+                                self.install_plane(Some(plane));
+                            }
+                            Ok(None) => {
+                                self.tool_note =
+                                    Some(Err("No face was hit; pick a model face.".into()))
+                            }
+                            Err(e) => self.tool_note = Some(Err(e.to_string())),
+                        }
+                    }
+                } else if self.beam_mode {
                     self.place_beam(ray);
                 } else if !self.other_command_running() {
                     self.start_select(ray);

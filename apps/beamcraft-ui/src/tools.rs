@@ -295,8 +295,17 @@ impl PlateForm {
 }
 
 impl MemberForm {
-    /// The `create-member` command for this form on `store`.
+    /// The `create-member` command in global coordinates.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
+        self.prepare_in_plane(store, None)
+    }
+
+    /// The command with numeric inputs admitted in the active plane's axes when supplied.
+    pub fn prepare_in_plane(
+        &self,
+        store: &Path,
+        plane: Option<beamcraft_engine::work_plane::WorkPlane>,
+    ) -> Result<Prepared, FormError> {
         let start = if self.start_input.trim().is_empty() {
             point("Start", &self.start)?
         } else {
@@ -311,13 +320,19 @@ impl MemberForm {
             field: "Coordinates",
             message: e.to_string(),
         };
-        let origin = beamcraft_engine::coordinate::resolve(
+        let resolve = |text: &str, reference, lock| {
+            plane.map_or_else(
+                || beamcraft_engine::coordinate::resolve(text, reference, lock),
+                |p| p.resolve_coordinate(text, reference, lock),
+            )
+        };
+        let origin = resolve(
             &start,
             [0.0; 3],
             beamcraft_engine::coordinate::AxisLock::None,
         )
         .map_err(reject)?;
-        beamcraft_engine::coordinate::resolve(&end, origin, self.axis_lock).map_err(reject)?;
+        resolve(&end, origin, self.axis_lock).map_err(reject)?;
         let profile = self.profile.as_ref().ok_or_else(|| FormError {
             field: "Profile",
             message: "choose a profile definition of the store".into(),
@@ -677,6 +692,8 @@ pub struct Tools {
     pub definitions: Definitions,
     /// The author recorded as `--actor-id` of every create command, when the window has one.
     pub actor: Option<String>,
+    /// Active session frame; no plane is authored in the model.
+    pub plane: Option<beamcraft_engine::work_plane::WorkPlane>,
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -689,6 +706,7 @@ impl Default for Tools {
             member: MemberForm::default(),
             definitions: Definitions::default(),
             actor: None,
+            plane: None,
             staged: None,
             busy: false,
         }
@@ -726,8 +744,17 @@ impl Tools {
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
         let mut prepared = match self.active {
             ToolKind::Plate => self.plate.prepare(store),
-            ToolKind::Member => self.member.prepare(store),
+            ToolKind::Member => self.member.prepare_in_plane(store, self.plane),
         }?;
+        if let Some(plane) = self.plane {
+            if self.active == ToolKind::Member && !self.member.orientation.trim().is_empty() {
+                return Err(FormError {
+                    field: "Work plane",
+                    message: "clear the explicit orientation before using a work plane".into(),
+                });
+            }
+            prepared.args.extend(["--plane".into(), plane.expression()]);
+        }
         push_actor(&mut prepared.args, self.actor.as_deref());
         Ok(prepared)
     }

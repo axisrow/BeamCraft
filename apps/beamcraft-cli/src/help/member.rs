@@ -8,7 +8,7 @@ pub(super) const COMMANDS: &[&str] = &["create-member"];
 pub(super) const HELP: &str = concat!(
     "Member (P03): create-member --store ROOT --start X,Y,Z --end X,Y,Z (--profile-digest ",
     "SHA256 | --profile NAME) [--kind beam|column] [--roll RAD] [--material-digest SHA256 | ",
-    "--material NAME] [--name TEXT] [--class INT32] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] ",
+    "--material NAME] [--name TEXT] [--class INT32] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] ",
     "[--axis-lock none|x|y|z] ",
     "(T04 coordinates: X,Y,Z absolute; @DX,DY,DZ relative; @DISTANCE<ANGLE[,DZ] polar, ",
     "millimetres/radians; start is relative to zero, end to start; lock constrains end) ",
