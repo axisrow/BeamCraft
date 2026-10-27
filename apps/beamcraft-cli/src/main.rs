@@ -16,6 +16,7 @@ use beamcraft_model::{ErrorCode, digest::ContentDigest};
 use std::collections::BTreeMap;
 
 mod assembly_cmd;
+mod attributes_cmd;
 mod bolt_cmd;
 mod bom_cmd;
 mod changeset_cmd;
@@ -141,6 +142,8 @@ fn main() -> std::process::ExitCode {
         project_cmd::execute(&args)
     } else if args.first().is_some_and(grid_cmd::handles) {
         grid_cmd::execute(&args)
+    } else if args.first().is_some_and(attributes_cmd::handles) {
+        attributes_cmd::execute(&args)
     } else if args.first().is_some_and(clipping_cmd::handles) {
         clipping_cmd::execute(&args)
     } else if args.first().is_some_and(plane_view_cmd::handles) {

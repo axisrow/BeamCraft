@@ -555,6 +555,7 @@ fn create(
         Shape::Weld(_) | Shape::Bolt(_) => "connection",
         Shape::Level { .. } => "level",
         Shape::Helper(_) => "helper",
+        Shape::AttributeDefinition(_) => "attribute_definition",
         Shape::Grid(_) => "grid",
         Shape::Plate { .. } => "plate",
         Shape::Member {
@@ -787,6 +788,7 @@ fn create(
         }
         Shape::Grid(g) => grid::author(data, &p, g)?,
         Shape::Helper(g) => helper::author(data, &p, g)?,
+        Shape::AttributeDefinition(d) => attribute::author_definition(data, &p, d)?,
         Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
         Shape::Level { elevation_mm } => attr(
             data,
@@ -1070,6 +1072,9 @@ pub(super) fn apply(
         let p = change_path(id, input, prims)?;
         match c {
             Change::Grid { grid: g, .. } => grid::author(&mut authored, &p, g)?,
+            Change::UserAttributes { values, .. } => {
+                attribute::author_values(&mut authored, &p, values)?
+            }
             Change::PartClass { class, .. } => attr(
                 &mut authored,
                 &p,
@@ -1387,8 +1392,8 @@ fn capture(
     let mut fields = BTreeMap::new();
     for change in &input.changes {
         let (id, _) = change.key();
-        let mut add = |name: &'static str, ty: &'static str, place: u8| {
-            fields.insert((id.to_owned(), name, place), ty);
+        let mut add = |name: &str, ty: &'static str, place: u8| {
+            fields.insert((id.to_owned(), name.to_owned(), place), ty);
         };
         match change {
             Change::Create(e) => {
@@ -1456,6 +1461,11 @@ fn capture(
                     }
                     Shape::Bolt(_) => {
                         for &(name, ty) in BOLT {
+                            add(name, ty, 0);
+                        }
+                    }
+                    Shape::AttributeDefinition(_) => {
+                        for &(name, ty) in attribute::FIELDS {
                             add(name, ty, 0);
                         }
                     }
@@ -1559,6 +1569,21 @@ fn capture(
                     add(name, ty, 1);
                 }
             }
+            Change::UserAttributes { values, .. } => {
+                let target = prims.iter().find(|p| p.element_id.as_deref() == Some(id));
+                for (key, value) in values {
+                    let name = beamcraft_model::attribute::property_name(*key);
+                    let ty = match value {
+                        Some(v) => v.usd_type(),
+                        None => target
+                            .and_then(|p| p.properties.iter().find(|v| v.name == name))
+                            .map(|v| attribute::scalar_type(&v.type_name))
+                            .transpose()?
+                            .unwrap_or("string"),
+                    };
+                    add(&name, ty, 0);
+                }
+            }
             Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", 0),
             Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", 0),
             Change::Cuts { cuts, .. } if !cuts.is_empty() => {
@@ -1647,7 +1672,7 @@ fn capture(
             match data.try_field(&spec, "default").map_err(|_| corrupt())? {
                 None => Opinion::Absent,
                 Some(v) if matches!(v.as_ref(), sdf::Value::ValueBlock) => Opinion::Block,
-                Some(v) => Opinion::Value(backend::typed_attribute(v.as_ref(), b, name)?),
+                Some(v) => Opinion::Value(backend::typed_attribute(v.as_ref(), b, &name)?),
             }
         };
         result.push(AuthoredItem {

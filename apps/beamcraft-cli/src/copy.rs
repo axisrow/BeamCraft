@@ -137,7 +137,7 @@ fn copy_with_mode(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, levels, instances) = {
+    let (plates, members, definitions, levels, instances, attributes) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -161,6 +161,7 @@ fn copy_with_mode(
             decoded.definitions,
             decoded.levels,
             decoded.instances,
+            decoded.attributes,
         )
     };
     // The copy checks that the pinned definitions still resolve, as every create does.
@@ -450,6 +451,10 @@ fn copy_with_mode(
             level: Some(level.to_string()),
         });
     }
+    let (user_changes, user_footprint) =
+        crate::attributes::copy_properties(&attributes, command.source_id, command.new_id)?;
+    changes.extend(user_changes);
+    footprint = footprint.union(user_footprint)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

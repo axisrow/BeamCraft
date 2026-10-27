@@ -59,3 +59,6 @@ mod tests {
 
 /// Personal saved cameras (W01).
 pub mod saved_view;
+
+/// Typed user attribute definitions and values (I04).
+pub mod attribute;
