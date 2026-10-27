@@ -184,6 +184,7 @@ fn a_plate_accepts_a_rigid_placement_without_changing_its_local_body() {
         contour_points_mm: origin_rectangle_contour(1000.0, 500.0).unwrap(),
         thickness_mm: 10.0,
         thickness_side: None,
+        corners: Vec::new(),
         placement: quarter_about_z(),
         material_digest: None,
         holes_mm: Vec::new(),

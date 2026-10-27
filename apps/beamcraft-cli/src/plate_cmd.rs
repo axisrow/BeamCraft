@@ -42,9 +42,10 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    AddHole, CopyElement, CreatePlate, CreatePolybeam, CreateStraightMember, CutByPlane, CutRecord,
-    DeleteElement, ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateSide,
-    SectionDepthPosition, SectionPlacement, SectionPlanePosition, UpdateElement,
+    AddHole, CopyElement, CornerTreatment, CreatePlate, CreatePolybeam, CreateStraightMember,
+    CutByPlane, CutRecord, DeleteElement, ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind,
+    Placement, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
+    SectionPlanePosition, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -81,6 +82,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--contour",
     "--thickness",
     "--thickness-side",
+    "--corners",
     "--name",
     "--translation",
     "--orientation-xyzw",
@@ -849,6 +851,7 @@ fn create(
     };
     let thickness = float(options, "--thickness")?;
     let thickness_side = thickness_side(options)?;
+    let corners = corner_treatments(options)?;
     let contour = match given("--contour") {
         Some(text) => {
             if options.contains_key("--width") || options.contains_key("--length") {
@@ -875,6 +878,7 @@ fn create(
         contour_points_mm: contour,
         thickness_mm: thickness,
         thickness_side,
+        corners,
         placement: if let Some(plane) = plane {
             plane.placement()?
         } else {
@@ -996,6 +1000,49 @@ fn thickness_side(options: &BTreeMap<&str, &str>) -> Run<Option<PlateSide>> {
                 .ok_or_else(|| invalid("--thickness-side is top, middle or bottom"))
         })
         .transpose()
+}
+
+/// The `--corners` option (A12.2): `vertex=chamfer:d1[,d2]` or `vertex=round:r`, several
+/// separated by `;`, for example `--corners "0=chamfer:100;2=round:50"`. A chamfer with one
+/// distance is the symmetric cut (d2 defaults to d1). The order of the entries is the authored
+/// order; the engine decides whether each treated corner really turns and fits its edges.
+fn corner_treatments(options: &BTreeMap<&str, &str>) -> Run<Vec<PlateCorner>> {
+    let Some(text) = options.get("--corners") else {
+        return Ok(Vec::new());
+    };
+    text.split(';')
+        .map(|entry| {
+            let bad =
+                || invalid("a corner is vertex=chamfer:d1[,d2] or vertex=round:r, `;`-separated");
+            let (vertex, rest) = entry.split_once('=').ok_or_else(bad)?;
+            let vertex: usize = vertex.trim().parse().map_err(|_| bad())?;
+            let (kind, params) = rest.split_once(':').ok_or_else(bad)?;
+            let values: Vec<f64> = params
+                .split(',')
+                .map(|v| v.trim().parse::<f64>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| bad())?;
+            let treatment = match kind.trim() {
+                "chamfer" => match values.as_slice() {
+                    [d1] => CornerTreatment::Chamfer {
+                        d1_mm: *d1,
+                        d2_mm: *d1,
+                    },
+                    [d1, d2] => CornerTreatment::Chamfer {
+                        d1_mm: *d1,
+                        d2_mm: *d2,
+                    },
+                    _ => return Err(bad()),
+                },
+                "round" => match values.as_slice() {
+                    [radius] => CornerTreatment::Round { radius_mm: *radius },
+                    _ => return Err(bad()),
+                },
+                _ => return Err(bad()),
+            };
+            Ok(PlateCorner { vertex, treatment })
+        })
+        .collect()
 }
 
 /// The cutting plane of `cut-by-plane`: `--point X,Y,Z --normal X,Y,Z --keep positive|negative`,
@@ -2243,6 +2290,28 @@ fn cuts_json(cuts: &[CutRecord]) -> Run<Json> {
     Ok(Json::Array(records))
 }
 
+/// The authored corner treatments (A12.2) as authored, vertex position included.
+fn corners_json(corners: &[PlateCorner]) -> Run<Json> {
+    let records = corners
+        .iter()
+        .map(|corner| {
+            let values = match corner.treatment {
+                CornerTreatment::Chamfer { d1_mm, d2_mm } => vec![d1_mm, d2_mm],
+                CornerTreatment::Round { radius_mm } => vec![radius_mm],
+            };
+            Ok(Json::object([
+                ("vertex", Json::uint(corner.vertex as u64)),
+                ("corner", Json::text(corner.treatment.kind())),
+                (
+                    "values_mm",
+                    Json::Array(values.into_iter().map(num).collect::<Run<Vec<_>>>()?),
+                ),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::Array(records))
+}
+
 pub(crate) fn num(value: f64) -> Run<Json> {
     Json::number(value).map_err(|_| PlateError {
         rule_id: None,
@@ -2725,6 +2794,15 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
             } else {
                 "contour"
             }),
+        ),
+        ("corners", corners_json(&record.authored.corners)?),
+        (
+            "arc_deviation_mm",
+            if record.body.arc_deviation_mm == 0.0 {
+                Json::Null
+            } else {
+                num(record.body.arc_deviation_mm)?
+            },
         ),
         (
             "placement",

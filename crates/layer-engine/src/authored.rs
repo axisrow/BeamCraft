@@ -21,8 +21,8 @@ pub use reference::{
 
 use crate::*;
 pub use beamcraft_model::command::{
-    CutRecord, HoleRecord, KeepSide, PlateSide, SectionDepthPosition, SectionPlacement,
-    SectionPlanePosition,
+    CornerTreatment, CutRecord, HoleRecord, KeepSide, PlateCorner, PlateSide, SectionDepthPosition,
+    SectionPlacement, SectionPlanePosition,
 };
 pub use beamcraft_model::definition::SectionProperties;
 pub use beamcraft_model::fastener::FastenerSpec;
@@ -43,6 +43,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:isDeactivated=bool(optional,default=false);bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
     "steel:plate:thicknessSide=token(optional,top|middle|bottom;absent=top);",
+    "steel:plate:cornerVertex=int[](optional);steel:plate:cornerKind=token[](optional,chamfer|round);",
+    "steel:plate:cornerD1Mm=double[](optional);steel:plate:cornerD2Mm=double[](optional);steel:plate:cornerRadiusMm=double[](optional);",
+    "all five steel:plate:corner attributes or none, equal lengths, one vertex at most once, sharp corners store nothing\n",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
@@ -237,6 +240,9 @@ pub enum Shape {
         /// Where the thickness is laid off from the contour plane (A12.1); absence is the
         /// `top` default and stores no attribute.
         thickness_side: Option<PlateSide>,
+        /// Corner treatments of authored contour vertices (A12.2); empty means every corner
+        /// sharp and stores no attribute. The contour keeps its sharp points.
+        corners: Vec<PlateCorner>,
         /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
         /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
         holes: Vec<Vec<[f64; 3]>>,

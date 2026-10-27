@@ -17,6 +17,7 @@ pub mod class_palette;
 pub mod command;
 pub mod coordinate;
 pub mod copy;
+pub mod corners;
 pub mod cut;
 pub mod drawing;
 pub mod element;

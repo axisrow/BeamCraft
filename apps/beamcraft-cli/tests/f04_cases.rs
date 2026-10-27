@@ -175,6 +175,7 @@ fn command_of(arguments: &Json) -> Result<CreatePlate, ErrorCode> {
         contour_points_mm: contour,
         thickness_mm: thickness,
         thickness_side: None,
+        corners: Vec::new(),
         placement: Placement {
             translation_mm: [translation[0], translation[1], translation[2]],
             orientation_xyzw: [

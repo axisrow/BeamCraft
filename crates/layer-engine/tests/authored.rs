@@ -22,6 +22,8 @@ const PLATE: &str = "0199e7a0-0000-7000-8000-000000000003";
 const MEMBER: &str = "0199e7a0-0000-7000-8000-000000000004";
 const ACTOR: &str = "0199e7a0-0000-7000-8000-000000000005";
 const OP: &str = "0199e7a0-0000-7000-8000-000000000006";
+/// A second part prim for the A12.2 corner-treatment authoring regression.
+const TREATED: &str = "0199e7a0-0000-7000-8000-000000000007";
 fn digest(bytes: &[u8]) -> ContentDigest {
     Sha256::digest(bytes).unwrap()
 }
@@ -126,6 +128,7 @@ fn elements() -> Vec<Change> {
                 ],
                 thickness_mm: 10.123456789012345,
                 thickness_side: None,
+                corners: Vec::new(),
                 holes: Vec::new(),
                 hole_records: Vec::new(),
                 cuts: Vec::new(),
@@ -1190,6 +1193,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
             ],
             thickness_mm: 10.0,
             thickness_side: None,
+            corners: Vec::new(),
             holes,
             hole_records: Vec::new(),
             cuts: Vec::new(),
@@ -1309,6 +1313,191 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 }
 
 #[test]
+fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
+    use beamcraft_model::command::{CornerTreatment, PlateCorner};
+    let treated = |corners: Vec<PlateCorner>| Shape::Plate {
+        contour_mm: vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 500.0, 0.0],
+            [0.0, 500.0, 0.0],
+        ],
+        thickness_mm: 10.0,
+        thickness_side: None,
+        corners,
+        holes: Vec::new(),
+        hole_records: Vec::new(),
+        cuts: Vec::new(),
+    };
+    let chamfer = PlateCorner {
+        vertex: 1,
+        treatment: CornerTreatment::Chamfer {
+            d1_mm: 100.0,
+            d2_mm: 50.0,
+        },
+    };
+    let round = PlateCorner {
+        vertex: 3,
+        treatment: CornerTreatment::Round { radius_mm: 25.0 },
+    };
+    let (mut a, o) = open(initial());
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Create(Element {
+                    id: TREATED.into(),
+                    name: "Treated plate".into(),
+                    shape: treated(vec![chamfer, round]),
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    // The five parallel arrays, always together and of equal length; a value its treatment
+    // does not use is zero.
+    assert_eq!(
+        value(&prims, TREATED, "steel:plate:cornerVertex"),
+        Some(&Value::Array(vec![Value::Int(1), Value::Int(3)]))
+    );
+    let kinds = value(&prims, TREATED, "steel:plate:cornerKind").unwrap();
+    let Value::Array(kinds) = kinds else {
+        panic!("corner kinds are missing");
+    };
+    fn kind(k: &Value) -> &str {
+        match k {
+            Value::Text(token) => token.as_str(),
+            _ => panic!("a corner kind must be a token"),
+        }
+    }
+    assert_eq!(
+        kinds.iter().map(kind).collect::<Vec<_>>(),
+        ["chamfer", "round"]
+    );
+    assert_eq!(
+        value(&prims, TREATED, "steel:plate:cornerD1Mm"),
+        Some(&Value::Array(vec![
+            Value::Number(100.0),
+            Value::Number(0.0)
+        ]))
+    );
+    assert_eq!(
+        value(&prims, TREATED, "steel:plate:cornerD2Mm"),
+        Some(&Value::Array(vec![Value::Number(50.0), Value::Number(0.0)]))
+    );
+    assert_eq!(
+        value(&prims, TREATED, "steel:plate:cornerRadiusMm"),
+        Some(&Value::Array(vec![Value::Number(0.0), Value::Number(25.0)]))
+    );
+    // The exported layers pass the structural validator.
+    let layers = a.export(&o.context, &control()).unwrap();
+    let mut request = initial();
+    request.assets = layers;
+    request.manifest = request.manifest_digest().unwrap();
+    validate_layers(request, schema_identity().unwrap(), &control()).unwrap();
+
+    // An untreated plate authors none of the five attributes.
+    let (mut b, ob) = open(initial());
+    let p = b
+        .prepare(
+            batch(
+                &ob.context,
+                vec![Change::Create(Element {
+                    id: TREATED.into(),
+                    name: "Sharp plate".into(),
+                    shape: treated(Vec::new()),
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let ob = b
+        .install(
+            &ob.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    assert_eq!(
+        value(
+            &snapshot(&b, &ob.context),
+            TREATED,
+            "steel:plate:cornerVertex"
+        ),
+        None
+    );
+
+    // Invalid corner input is refused before anything is written.
+    let (mut c, oc) = open(initial());
+    let mut bad = |corners: Vec<PlateCorner>| {
+        c.prepare(
+            batch(
+                &oc.context,
+                vec![Change::Create(Element {
+                    id: TREATED.into(),
+                    name: "Bad plate".into(),
+                    shape: treated(corners),
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .code
+    };
+    // A vertex that does not exist, one named twice, and unbounded values.
+    assert_eq!(
+        bad(vec![PlateCorner {
+            vertex: 9,
+            treatment: CornerTreatment::Round { radius_mm: 10.0 }
+        }]),
+        ErrorCode::InvalidArgument
+    );
+    assert_eq!(bad(vec![round, round]), ErrorCode::InvalidArgument);
+    assert_eq!(
+        bad(vec![PlateCorner {
+            vertex: 0,
+            treatment: CornerTreatment::Round { radius_mm: 2e9 }
+        }]),
+        ErrorCode::LimitExceeded
+    );
+    assert_eq!(
+        bad(vec![PlateCorner {
+            vertex: 0,
+            treatment: CornerTreatment::Round {
+                radius_mm: f64::NAN
+            }
+        }]),
+        ErrorCode::NonFiniteNumber
+    );
+    assert_eq!(
+        bad(vec![PlateCorner {
+            vertex: 0,
+            treatment: CornerTreatment::Round { radius_mm: 0.0 }
+        }]),
+        ErrorCode::InvalidArgument
+    );
+}
+
+#[test]
 fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
     use beamcraft_model::command::KeepSide;
     use beamcraft_model::id::OpId;
@@ -1328,6 +1517,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         ],
         thickness_mm: 10.0,
         thickness_side: None,
+        corners: Vec::new(),
         holes: Vec::new(),
         hole_records: Vec::new(),
         cuts: records,

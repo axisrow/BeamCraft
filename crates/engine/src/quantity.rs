@@ -19,7 +19,7 @@ use crate::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM
 use crate::member::{AuthoredMember, ProfileInfo};
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
-use beamcraft_model::command::{CutRecord, KeepSide, PlateSide};
+use beamcraft_model::command::{CornerTreatment, CutRecord, KeepSide, PlateCorner, PlateSide};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::section::SectionShape;
 
@@ -153,9 +153,12 @@ fn float(bytes: &mut Vec<u8>, value: f64) {
 }
 
 /// Signature of the shape inputs of a plate: outline, thickness, thickness side (A12.1: the
-/// side changes the body, so the mesh and this signature change with it), holes and cut
-/// records, with the algorithm and tolerance policy. Name, placement and material are not
-/// shape inputs.
+/// side changes the body, so the mesh and this signature change with it), corner treatments
+/// (A12.2: they change the evaluated outline) and holes and cut records, with the algorithm and
+/// tolerance policy. Name, placement and material are not shape inputs.
+///
+/// The corner block is appended only when a corner carries a treatment, so the signatures of
+/// plates authored before A12.2 are unchanged and their stored quantity records stay current.
 pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentDigest {
     let mut bytes = Vec::with_capacity(256);
     bytes.extend_from_slice(b"BeamCraft/P04/PlateShape/v2\0");
@@ -173,6 +176,7 @@ pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentD
         Some(PlateSide::Middle) => 2,
         Some(PlateSide::Bottom) => 3,
     });
+    push_corners(&mut bytes, &plate.corners);
     bytes.extend_from_slice(&(plate.holes_mm.len() as u64).to_le_bytes());
     for hole in &plate.holes_mm {
         bytes.extend_from_slice(&(hole.len() as u64).to_le_bytes());
@@ -200,6 +204,30 @@ fn push_cuts(bytes: &mut Vec<u8>, cuts: &[CutRecord]) {
     }
 }
 
+/// The corner treatments of a signature (A12.2): each treatment's content, vertex position
+/// included, in authored order. Written only for a treated plate, so the block is absent for
+/// every plate authored before A12.2 and no stored record turns stale.
+fn push_corners(bytes: &mut Vec<u8>, corners: &[PlateCorner]) {
+    if corners.is_empty() {
+        return;
+    }
+    bytes.extend_from_slice(&(corners.len() as u64).to_le_bytes());
+    for corner in corners {
+        bytes.extend_from_slice(&(corner.vertex as u64).to_le_bytes());
+        match corner.treatment {
+            CornerTreatment::Chamfer { d1_mm, d2_mm } => {
+                bytes.push(1);
+                float(bytes, d1_mm);
+                float(bytes, d2_mm);
+            }
+            CornerTreatment::Round { radius_mm } => {
+                bytes.push(2);
+                float(bytes, radius_mm);
+            }
+        }
+    }
+}
+
 /// Signature of the GROSS inputs of a plate: the outline and thickness, with the gross algorithm
 /// label and tolerance policy. Holes, name, placement and material are not gross inputs, so a
 /// hole edit changes the net signature and leaves this one unchanged.
@@ -214,6 +242,7 @@ pub fn plate_gross_signature(plate: &AuthoredPlate) -> ContentDigest {
         float(&mut bytes, *v);
     }
     float(&mut bytes, plate.thickness_mm);
+    push_corners(&mut bytes, &plate.corners);
     digest(&bytes)
 }
 
@@ -418,6 +447,7 @@ mod tests {
             ],
             thickness_mm: 10.0,
             thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),

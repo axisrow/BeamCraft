@@ -80,7 +80,7 @@ fn edit(
         .args(&args)
         .output()
         .unwrap();
-    let body = beamcraft_json::decode(&output.stdout, &Limits::DEFAULT).unwrap();
+    let body = beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
     (output.status.code().unwrap(), body)
 }
 

@@ -179,6 +179,7 @@ mod tests {
             ],
             thickness_mm: 10.0,
             thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material: None,
             class: 0,

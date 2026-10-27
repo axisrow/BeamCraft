@@ -58,16 +58,19 @@ fn contour_origin(record: &PlateRecord) -> [f64; 2] {
     ]
 }
 
-/// The outline of a plate whose contour is not the origin rectangle, relative to
+/// The outline of an untreated plate whose contour is not the origin rectangle, relative to
 /// [`contour_origin`]; empty for the origin rectangle (its width and length already say it all).
+/// The evaluated outline carries the corner treatments (A12.2): a treated plate — the treated
+/// origin rectangle included — is compared by its treated outline, so two plates whose treated
+/// outlines differ are different parts, and without treatments it is the authored contour.
 fn outline_of(record: &PlateRecord) -> Vec<[f64; 2]> {
     if record.body.is_rectangular_box() {
         return Vec::new();
     }
     let [low_x, low_y] = contour_origin(record);
     record
-        .authored
-        .contour_points_mm
+        .body
+        .outline_mm
         .iter()
         .map(|p| [p[0] - low_x, p[1] - low_y])
         .collect()

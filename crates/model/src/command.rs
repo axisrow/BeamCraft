@@ -355,6 +355,82 @@ impl PlateSide {
     }
 }
 
+/// The treatment of one contour vertex (A12.2, the F04 plate amendment section 2). The authored
+/// contour keeps the sharp corner point; the treatment is an authored parameter, so a rounded
+/// corner stays editable by its radius and is never a stored polygon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CornerTreatment {
+    /// The corner is replaced by a straight cut. `d1_mm` is measured from the vertex along the
+    /// edge towards the **previous** vertex, `d2_mm` along the edge towards the **next** vertex;
+    /// equal values give the symmetric cut of a single authored distance.
+    Chamfer {
+        /// Cut distance along the previous edge, in millimetres.
+        d1_mm: f64,
+        /// Cut distance along the next edge, in millimetres.
+        d2_mm: f64,
+    },
+    /// The corner is replaced by a circular arc of the given radius, tangent to both edges.
+    Round {
+        /// Arc radius in millimetres.
+        radius_mm: f64,
+    },
+}
+
+impl CornerTreatment {
+    /// The wire token of the treatment kind.
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::Chamfer { .. } => "chamfer",
+            Self::Round { .. } => "round",
+        }
+    }
+}
+
+/// One contour vertex's corner treatment (A12.2): the vertex is named by its position in the
+/// authored contour (amendment section 3, decision O-1: no stable vertex ids).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlateCorner {
+    /// Position of the vertex in the authored contour, `0` to point count - 1.
+    pub vertex: usize,
+    /// The treatment authored on it.
+    pub treatment: CornerTreatment,
+}
+
+impl PlateCorner {
+    /// Admits one corner: the parameters are finite (`NON_FINITE_NUMBER`), greater than zero
+    /// (`INVALID_ARGUMENT`) and within the F04 coordinate cap (`LIMIT_EXCEEDED`).
+    pub fn validate(&self) -> Result<(), CommandError> {
+        let values = match self.treatment {
+            CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
+            CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
+        };
+        if values.iter().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "corner",
+                "corner treatment value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if values.iter().any(|v| *v <= 0.0) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "corner",
+                "corner treatment value is not positive",
+            ));
+        }
+        if values.iter().any(|v| *v > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "corner",
+                "corner treatment value exceeds the coordinate cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        Ok(())
+    }
+}
+
 /// F04 section 7 `CreatePlate`. `material_digest` pins an existing immutable material definition;
 /// whether the digest resolves (`NOT_FOUND`) is the engine's decision, not an argument check.
 #[derive(Debug, Clone, PartialEq)]
@@ -371,6 +447,10 @@ pub struct CreatePlate {
     pub thickness_mm: f64,
     /// Where the thickness is laid off from the contour plane (A12.1); absent means `top`.
     pub thickness_side: Option<PlateSide>,
+    /// Corner treatments of authored contour vertices (A12.2); empty means every corner is
+    /// sharp. Each vertex is named at most once; the geometry it must really turn is the
+    /// engine's decision.
+    pub corners: Vec<PlateCorner>,
     /// Rigid placement.
     pub placement: Placement,
     /// Optional pinned material definition.
@@ -918,6 +998,42 @@ impl CreatePlate {
         }
         self.placement.validate()?;
         self.validate_holes()?;
+        self.validate_corners()?;
+        Ok(())
+    }
+
+    /// Admits the corner treatments (A12.2): at most one per contour vertex, each naming a real
+    /// vertex of this contour. The values are bounded by [`PlateCorner::validate`]; whether the
+    /// treated corner really turns is the engine's decision.
+    fn validate_corners(&self) -> Result<(), CommandError> {
+        let count = self.contour_points_mm.len();
+        if self.corners.len() > count {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "corner",
+                "more corner treatments than contour vertices",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        let mut seen = Vec::new();
+        for corner in &self.corners {
+            if corner.vertex >= count {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "corner",
+                    "corner names no vertex of the contour",
+                ));
+            }
+            if seen.contains(&corner.vertex) {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "corner",
+                    "a contour vertex carries more than one corner treatment",
+                ));
+            }
+            seen.push(corner.vertex);
+            corner.validate()?;
+        }
         Ok(())
     }
 
@@ -982,7 +1098,7 @@ impl CreatePlate {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
-        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v7\0");
+        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v8\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
@@ -994,6 +1110,21 @@ impl CreatePlate {
             Some(PlateSide::Middle) => 2,
             Some(PlateSide::Bottom) => 3,
         });
+        bytes.extend_from_slice(&(self.corners.len() as u64).to_le_bytes());
+        for corner in &self.corners {
+            bytes.extend_from_slice(&(corner.vertex as u64).to_le_bytes());
+            bytes.push(match corner.treatment {
+                CornerTreatment::Chamfer { .. } => 1,
+                CornerTreatment::Round { .. } => 2,
+            });
+            let values = match corner.treatment {
+                CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
+                CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
+            };
+            for v in values {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+            }
+        }
         bytes.extend_from_slice(&(self.contour_points_mm.len() as u64).to_le_bytes());
         let mut scalars = self
             .contour_points_mm
@@ -2498,6 +2629,7 @@ mod tests {
             ],
             thickness_mm: 10.0,
             thickness_side: None,
+            corners: Vec::new(),
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
@@ -2547,6 +2679,65 @@ mod tests {
             base.content_fingerprint().unwrap(),
             top.content_fingerprint().unwrap()
         );
+    }
+
+    #[test]
+    fn corner_treatments_are_admitted_per_vertex_and_in_the_fingerprint() {
+        // A12.2: one treatment per vertex, each naming a real vertex, each with bounded values.
+        let chamfer = |vertex, d1, d2| {
+            let mut c = plate();
+            c.corners = vec![PlateCorner {
+                vertex,
+                treatment: CornerTreatment::Chamfer {
+                    d1_mm: d1,
+                    d2_mm: d2,
+                },
+            }];
+            c
+        };
+        let round = |vertex, r| {
+            let mut c = plate();
+            c.corners = vec![PlateCorner {
+                vertex,
+                treatment: CornerTreatment::Round { radius_mm: r },
+            }];
+            c
+        };
+        assert!(chamfer(0, 100.0, 100.0).validate_arguments().is_ok());
+        assert!(round(3, 50.0).validate_arguments().is_ok());
+        // A vertex that does not exist, and a vertex named twice.
+        assert_eq!(code(&chamfer(4, 100.0, 100.0)), ErrorCode::InvalidArgument);
+        let mut twice = plate();
+        twice.corners = vec![
+            PlateCorner {
+                vertex: 1,
+                treatment: CornerTreatment::Round { radius_mm: 10.0 },
+            },
+            PlateCorner {
+                vertex: 1,
+                treatment: CornerTreatment::Round { radius_mm: 20.0 },
+            },
+        ];
+        assert_eq!(code(&twice), ErrorCode::InvalidArgument);
+        // Zero, negative, non-finite and over the cap (the amendment's negative case 1).
+        assert_eq!(code(&chamfer(0, 0.0, 100.0)), ErrorCode::InvalidArgument);
+        assert_eq!(code(&round(0, -1.0)), ErrorCode::InvalidArgument);
+        assert_eq!(code(&round(0, f64::NAN)), ErrorCode::NonFiniteNumber);
+        assert_eq!(
+            code(&round(0, COORDINATE_CAP_MM * 2.0)),
+            ErrorCode::LimitExceeded
+        );
+        // Different treatments fingerprint differently, and the empty list differs from a
+        // treated plate (the v8 tag covers the new block).
+        let base = plate().content_fingerprint().unwrap();
+        let a = chamfer(0, 100.0, 100.0).content_fingerprint().unwrap();
+        let b = chamfer(0, 100.0, 50.0).content_fingerprint().unwrap();
+        let c = round(0, 100.0).content_fingerprint().unwrap();
+        let other_vertex = chamfer(1, 100.0, 100.0).content_fingerprint().unwrap();
+        assert_ne!(base, a);
+        assert_ne!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, other_vertex);
     }
 
     fn hole() -> Vec<[f64; 2]> {
