@@ -96,4 +96,14 @@ impl DefinitionCategory {
                 ))
             })
     }
+
+    /// The category the `bim:definitionKind` token names: `material` is a material, `fastener` a
+    /// fastener (A14.1), every other admitted kind a section profile.
+    pub fn for_kind(kind: &str) -> Self {
+        match kind {
+            "material" => Self::Material,
+            "fastener" => Self::Fastener,
+            _ => Self::Profile,
+        }
+    }
 }
