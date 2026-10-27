@@ -17,7 +17,9 @@ use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::hole::{AddHoleRequest, add_hole_command};
 use beamcraft_cli::library::open_lookup;
-use beamcraft_cli::member::{CreateMemberRequest, create_member};
+use beamcraft_cli::member::{
+    CreateMemberRequest, CreatePolybeamRequest, create_member, create_polybeam,
+};
 use beamcraft_cli::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport,
     RevisionSummary, accepted_binding, claim_project, ensure_project, inspect,
@@ -40,13 +42,15 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    AddHole, CopyElement, CreatePlate, CreateStraightMember, CutByPlane, CutRecord, DeleteElement,
-    ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateSide, UpdateElement,
+    AddHole, CopyElement, CreatePlate, CreatePolybeam, CreateStraightMember, CutByPlane, CutRecord,
+    DeleteElement, ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateSide,
+    UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -200,6 +204,26 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--end-at-grid",
 ];
 
+const CREATE_POLYBEAM_OPTIONS: &[&str] = &[
+    "--class",
+    "--store",
+    "--kind",
+    "--points",
+    "--profile-digest",
+    "--profile",
+    "--name",
+    "--translation",
+    "--orientation-xyzw",
+    "--material-digest",
+    "--material",
+    "--new-id",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
 const CUT_OPTIONS: &[&str] = &[
     "--store",
     "--id",
@@ -222,6 +246,7 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--material-digest",
     "--thickness",
     "--thickness-side",
+    "--axis-point",
     "--translation",
     "--orientation-xyzw",
     "--level",
@@ -282,6 +307,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let allowed: &[&str] = match *command {
         "create-plate" => CREATE_OPTIONS,
         "create-member" => CREATE_MEMBER_OPTIONS,
+        "create-polybeam" => CREATE_POLYBEAM_OPTIONS,
         "add-hole" => ADD_HOLE_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
@@ -331,6 +357,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     match *command {
         "create-plate" => create(&store, &options, candidates),
         "create-member" => create_member_command(&store, &options, candidates),
+        "create-polybeam" => create_polybeam_command(&store, &options, candidates),
         "add-hole" => add_hole_cli(&store, &options),
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
@@ -1039,6 +1066,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 other => ElementId::parse(other).map(Some).map_err(id_error),
             })
             .transpose()?,
+        axis_points_mm: given("--axis-point").map(path_points).transpose()?,
     };
     let updated = update_element(
         store,
@@ -1876,6 +1904,146 @@ fn create_member_command(
     ]))
 }
 
+/// The member path of `--points "X,Y,Z;X,Y,Z;..."`: at least three three-component points in
+/// the order given. Chord floors, mitres and the mesh budget are the kernel's to decide.
+fn path_points(text: &str) -> Run<Vec<[f64; 3]>> {
+    if text.split(';').count() > MAX_MEMBER_PATH_POINTS {
+        return Err(PlateError {
+            rule_id: None,
+            code: ErrorCode::LimitExceeded,
+            message: "more than 1024 path points",
+        });
+    }
+    text.split(';')
+        .map(|point| {
+            let bad = || invalid("a path point is not three numbers");
+            let mut parts = point.split(',').map(|v| v.trim().parse::<f64>());
+            let mut next = || parts.next().transpose().map_err(|_| bad());
+            let (x, y, z) = (next()?, next()?, next()?);
+            match (x, y, z, next()?) {
+                (Some(x), Some(y), Some(z), None) => Ok([x, y, z]),
+                _ => Err(bad()),
+            }
+        })
+        .collect()
+}
+
+fn create_polybeam_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let new_id = match given("--new-id") {
+        Some(text) => ElementId::parse(text).map_err(id_error)?,
+        None => ElementId::from_uuid(fresh()?),
+    };
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let kind = match given("--kind") {
+        Some("beam") | None => MemberKind::Beam,
+        Some("column") => MemberKind::Column,
+        Some(_) => return Err(invalid("--kind is beam or column")),
+    };
+    let points = path_points(given("--points").ok_or_else(|| invalid("--points is required"))?)?;
+    let replay = if options.contains_key("--op-id")
+        && (options.contains_key("--profile") || options.contains_key("--material"))
+    {
+        accepted_binding(store, &op_id, &new_id)?
+    } else {
+        None
+    };
+    let profile_digest = selected(
+        store,
+        options,
+        ("--profile-digest", "--profile"),
+        true,
+        replay.as_ref(),
+        candidates,
+    )?
+    .ok_or_else(|| invalid("--profile-digest or --profile is required"))?;
+    let material_digest = selected(
+        store,
+        options,
+        ("--material-digest", "--material"),
+        false,
+        replay.as_ref(),
+        candidates,
+    )?;
+    let command = CreatePolybeam {
+        new_id,
+        kind,
+        name: given("--name").unwrap_or(kind.as_str()).to_owned(),
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?
+            .unwrap_or(0),
+        path_points_mm: points,
+        profile_digest,
+        placement: Placement {
+            translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
+            orientation_xyzw: given("--orientation-xyzw")
+                .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
+        },
+        material_digest,
+    };
+    let created = create_polybeam(
+        store,
+        &CreatePolybeamRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command,
+        },
+        &mut NoFault,
+    )?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if created.replayed {
+                "polybeam_replayed"
+            } else {
+                "polybeam_created"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        ("member", member_json(&created.member)?),
+        ("revision", revision_json(&created.revision)),
+        ("footprint", footprint_json(created.footprint.as_ref())),
+    ]))
+}
+
 fn command_plane(
     options: &BTreeMap<&str, &str>,
 ) -> Run<Option<beamcraft_engine::work_plane::WorkPlane>> {
@@ -1963,10 +2131,12 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ),
         (
             "axis_points_mm",
-            Json::Array(vec![
-                triple(a.axis_points_mm[0])?,
-                triple(a.axis_points_mm[1])?,
-            ]),
+            Json::Array(
+                a.axis_points_mm
+                    .iter()
+                    .map(|point| triple(*point))
+                    .collect::<Run<Vec<_>>>()?,
+            ),
         ),
         ("roll_rad", a.roll_rad.map_or(Ok(Json::Null), num)?),
         (

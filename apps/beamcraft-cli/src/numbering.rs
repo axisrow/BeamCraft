@@ -136,9 +136,9 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
         }
         for record in &inspection.members {
             let a = &record.authored;
-            let [p, q] = a.axis_points_mm;
-            let length =
-                ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2) + (q[2] - p[2]).powi(2)).sqrt();
+            // The numbering length is the body's own: the axis chord for a straight member, the
+            // polyline path length for a polybeam.
+            let length = record.body.axis_length_mm;
             parts.push(PartFact {
                 id: a.id,
                 kind: match a.kind {

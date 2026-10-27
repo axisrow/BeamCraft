@@ -57,6 +57,11 @@ pub const MAX_WELD_PATH_POINTS: usize = 1024;
 pub const MIN_WELD_SEGMENT_MM: f64 = 0.001;
 /// Largest total weld path length (A15), in millimetres.
 pub const MAX_WELD_LENGTH_MM: f64 = 1_000_000.0;
+/// Fewest points of a member path (P12); a two-point path is a straight member (P03), so a
+/// polybeam command refuses it as an argument.
+pub const MIN_MEMBER_PATH_POINTS: usize = 3;
+/// Most points of a member path (P12); the kernel's sweep mesh budget refuses earlier.
+pub const MAX_MEMBER_PATH_POINTS: usize = 1024;
 /// Largest nominal bolt diameter (A05), in millimetres.
 pub const BOLT_DIAMETER_CAP_MM: f64 = 1_000.0;
 /// Most bolts of one bolt group (A05).

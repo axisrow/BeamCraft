@@ -138,7 +138,7 @@ fn elements() -> Vec<Change> {
             name: "Member".into(),
             shape: Shape::Member {
                 kind: MemberKind::Beam,
-                axis_mm: [[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
+                axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
                 profile: r[0].digest,
                 roll_rad: Some(0.125),
                 cuts: Vec::new(),
@@ -1393,7 +1393,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
             name: "Cut beam".into(),
             shape: Shape::Member {
                 kind: MemberKind::Beam,
-                axis_mm: [[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
+                axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
                 profile: resources()[0].digest,
                 roll_rad: None,
                 cuts: vec![record(
@@ -1491,7 +1491,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
     assert_eq!(
         refuse(Shape::Member {
             kind: MemberKind::Beam,
-            axis_mm: [[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
+            axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
             profile: resources()[0].digest,
             roll_rad: None,
             cuts: vec![record(

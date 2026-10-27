@@ -148,6 +148,7 @@ fn main() -> std::process::ExitCode {
             || c == "define-fastener"
             || c == "definitions"
             || c == "create-member"
+            || c == "create-polybeam"
             || c == "add-hole"
             || c == "update-element"
             || c == "delete-element"

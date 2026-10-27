@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! `UpdateElement` for the supported fields (F04 section 7, P04, P08, D2): a typed patch of the
-//! label, the material reference, a plate's thickness, the placement translation (a move), the
-//! placement rotation and the level assignment.
+//! `UpdateElement` for the supported fields (F04 section 7, P04, P08, D2, P12): a typed patch of
+//! the label, the material reference, a plate's thickness, a member's path points, the placement
+//! translation (a move), the placement rotation and the level assignment.
 //!
 //! The engine applies the patch to the authored state, re-evaluates what depends on it and says
 //! which groups changed, so the adapter writes only those:
@@ -14,6 +14,7 @@
 //! | `material` | no | yes | quantity record only (same mesh bytes) |
 //! | `thickness_mm` | yes | yes | mesh and quantity record |
 //! | `thickness_side` (A12.1) | yes | yes | mesh and quantity record |
+//! | `axis_points_mm` | yes | yes | mesh and quantity record (a member path, P12) |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
 //! | `orientation_xyzw` | no | no | untouched (the body is element-local) |
 //! | `level` | no | no | untouched (a relationship of the element only) |
@@ -21,8 +22,8 @@
 //! A move keeps the rotation and never touches the shape, the body or the stored quantities, so
 //! no geometry is copied or rebuilt. An orientation change replaces the stored quaternion as a
 //! whole; local meshes and quantities are unchanged. Fields
-//! outside this list (contour, axis, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to
-//! later tasks.
+//! outside this list (contour, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to later
+//! tasks.
 
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
@@ -55,7 +56,9 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         name: patch.name.is_some(),
         class: patch.class.is_some(),
         material: patch.material.is_some(),
-        shape: patch.thickness_mm.is_some() || patch.thickness_side.is_some(),
+        shape: patch.thickness_mm.is_some()
+            || patch.thickness_side.is_some()
+            || patch.axis_points_mm.is_some(),
         placement: patch.translation_mm.is_some(),
         orientation: patch.orientation_xyzw.is_some(),
         level: patch.level.is_some(),
@@ -88,7 +91,9 @@ pub fn patch_plate(
 }
 
 /// Applies a patch to an authored member. A member has no thickness: that field and the
-/// thickness side are `UNSUPPORTED_PROPERTY`.
+/// thickness side are `UNSUPPORTED_PROPERTY`. A path patch replaces the whole polyline; fewer
+/// than two points is `INVALID_ARGUMENT`, and whether the chords are long enough is the body
+/// evaluation's decision.
 pub fn patch_member(
     member: &AuthoredMember,
     patch: &ElementPatch,
@@ -116,6 +121,16 @@ pub fn patch_member(
     }
     if let Some(material) = patch.material {
         next.material = material;
+    }
+    if let Some(points) = &patch.axis_points_mm {
+        if points.len() < 2 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "axis_points_mm",
+                "a member path has at least two points",
+            ));
+        }
+        next.axis_points_mm.clone_from(points);
     }
     next.placement = placement_after(&member.placement, patch)?;
     Ok(next)
@@ -359,7 +374,7 @@ mod tests {
             kind: MemberKind::Beam,
             name: "Beam".into(),
             class: 0,
-            axis_points_mm: [[0.0; 3], [1000.0, 0.0, 0.0]],
+            axis_points_mm: vec![[0.0; 3], [1000.0, 0.0, 0.0]],
             profile: Sha256::digest(b"profile").unwrap(),
             roll_rad: None,
             placement: Placement::IDENTITY,
@@ -393,7 +408,7 @@ mod tests {
             kind: MemberKind::Beam,
             name: "Beam".into(),
             class: 0,
-            axis_points_mm: [[0.0; 3], [1000.0, 0.0, 0.0]],
+            axis_points_mm: vec![[0.0; 3], [1000.0, 0.0, 0.0]],
             profile,
             roll_rad: None,
             placement: Placement::IDENTITY,
@@ -422,5 +437,46 @@ mod tests {
         .unwrap();
         assert_eq!(renamed.name, "Beam 2");
         assert_eq!(renamed.profile, profile);
+    }
+
+    #[test]
+    fn a_path_patch_replaces_the_whole_member_path_and_is_a_shape_change() {
+        // The effect names the shape group, so the adapter re-evaluates the body.
+        let bent = ElementPatch {
+            axis_points_mm: Some(vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]),
+            ..ElementPatch::default()
+        };
+        assert!(effect(&bent).shape);
+        assert!(!effect(&bent).placement);
+        let patched = patch_member(&member(), &bent).unwrap();
+        assert_eq!(
+            patched.axis_points_mm,
+            vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]
+        );
+        // Fewer than two points is an argument refusal; two points straighten the member.
+        assert_eq!(
+            patch_member(
+                &member(),
+                &ElementPatch {
+                    axis_points_mm: Some(vec![[0.0; 3]]),
+                    ..ElementPatch::default()
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        let straightened = patch_member(
+            &patched,
+            &ElementPatch {
+                axis_points_mm: Some(vec![[0.0; 3], [7000.0, 0.0, 0.0]]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(straightened.axis_points_mm.len(), 2);
+        // The untouched patch keeps the path and everything else.
+        let untouched = patch_member(&member(), &ElementPatch::default()).unwrap();
+        assert_eq!(untouched, member());
     }
 }

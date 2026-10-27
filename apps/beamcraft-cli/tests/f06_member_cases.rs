@@ -122,7 +122,7 @@ fn member(
     })?;
     assert_eq!(
         out.authored.to_command(),
-        command,
+        Some(command),
         "authored inputs changed"
     );
     Ok(out)

@@ -27,7 +27,7 @@ use crate::plate::{
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::member_quantities;
+use beamcraft_engine::member::{evaluate_member, member_quantities};
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
@@ -203,8 +203,14 @@ pub fn update_element(
         Target::Member(head) => {
             let authored = patch_member(&head.authored, &command.patch)?;
             let material = authored.material.as_ref().map(&materials).transpose()?;
-            // Supported member edits change metadata, placement or material, never local shape.
-            let body = head.body.clone();
+            // A path patch (P12) is the supported member shape edit: the body is re-evaluated
+            // from the resolved profile. The other supported member edits change metadata,
+            // placement or material, never local shape.
+            let body = if patch_effect.shape {
+                evaluate_member(&authored, head.body.profile.clone())?
+            } else {
+                head.body.clone()
+            };
             let quantities = member_quantities(&body, material)?;
             (
                 UpdatedElement::Member(Box::new(head.clone())),
@@ -272,6 +278,7 @@ pub fn update_element(
             material: command.patch.material,
             thickness_mm: command.patch.thickness_mm,
             thickness_side: command.patch.thickness_side,
+            axis_points_mm: command.patch.axis_points_mm.clone(),
             ..Default::default()
         };
         for id in instances.group(command.target_id)? {
@@ -374,6 +381,14 @@ pub fn update_element(
         changes.push(Change::ThicknessSide {
             id: definition_text.clone(),
             side,
+        });
+    }
+    // A member path change (P12) is authored on the canonical part, like a thickness change:
+    // the instances of the group read their shape inputs from it.
+    if let (UpdatedElement::Member(record), true) = (&next, patch_effect.shape) {
+        changes.push(Change::Axis {
+            id: definition_text.clone(),
+            points_mm: record.authored.axis_points_mm.clone(),
         });
     }
     if patch_effect.placement || patch_effect.orientation {

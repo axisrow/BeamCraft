@@ -989,7 +989,9 @@ fn decode_member(
         .map(numbers::<3>)
         .collect::<Option<_>>()
         .ok_or_else(bad)?;
-    let axis_points_mm: [[f64; 3]; 2] = axis.try_into().map_err(|_| bad())?;
+    if axis.len() < 2 {
+        return Err(bad());
+    }
     let roll_rad = property(prim, "steel:member:rollRad")
         .map(|v| number(v).ok_or_else(bad))
         .transpose()?;
@@ -1014,7 +1016,7 @@ fn decode_member(
         kind,
         name: name.to_owned(),
         class: decode_class(prim)?,
-        axis_points_mm,
+        axis_points_mm: axis,
         profile,
         roll_rad,
         placement: beamcraft_model::command::Placement {

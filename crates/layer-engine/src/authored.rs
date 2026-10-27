@@ -241,15 +241,17 @@ pub enum Shape {
         /// order, stored as five parallel attributes. Empty means an uncut plate.
         cuts: Vec<CutRecord>,
     },
-    /// Straight member, with a required pinned rectangular profile.
+    /// Member (P03 straight, P12 polybeam), with a required pinned profile.
     Member {
         /// Explicit beam or column kind.
         kind: MemberKind,
-        /// Two element-local axis points.
-        axis_mm: [[f64; 3]; 2],
+        /// Ordered element-local path points: exactly two for a straight member, at least three
+        /// for a polybeam.
+        axis_mm: Vec<[f64; 3]>,
         /// Immutable profile content digest.
         profile: ContentDigest,
-        /// Missing roll has no authored default; engineering default is zero.
+        /// Missing roll has no authored default; engineering default is zero. A polybeam has no
+        /// authored roll.
         roll_rad: Option<f64>,
         /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
         /// order. Empty means an uncut member.
@@ -533,12 +535,12 @@ pub enum Change {
         /// The records in ascending ordinal order.
         cuts: Vec<CutRecord>,
     },
-    /// Replace both member axis points.
+    /// Replace the member's path points as a whole (P03 two, P12 three or more).
     Axis {
         /// Full target UUIDv7.
         id: String,
-        /// Element-local axis.
-        points_mm: [[f64; 3]; 2],
+        /// Ordered element-local path points.
+        points_mm: Vec<[f64; 3]>,
     },
     /// Change the optional roll opinion in the selected authored layer.
     Roll {
