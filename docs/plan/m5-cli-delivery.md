@@ -34,8 +34,7 @@ These are candidate slices, not acceptance of the complete M5 CLI gate.
 | #270 | P13 circular member creation, quantities, persistence and point replacement; path-aware numbering remains |
 | #274 | Reuse the existing P14 section-placement candidate; do not duplicate |
 | #275 → #281 | Reuse A12.2; #281 adds complete corner-list replacement/clear, linked groups and undo |
-| #279 | Repair D07 drafting test compilation after shared fixture refactoring |
-| #280 | Repair current-master G13 Clippy admission guard |
+| #279 | Repair D07 drafting test compilation and the G13 Clippy admission guard; supersedes #280 |
 
 Verified master advanced to `b2ee4d9`: it includes A12.1, P12, G13 ruled-surface slice,
 D07 drawn-paper-object slice, V11, A14.1 and adjacent history fixes. A14.2 #260 and A14.3
