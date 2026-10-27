@@ -70,6 +70,23 @@ pub struct CreatePolybeamRequest {
     pub command: CreatePolybeam,
 }
 
+/// Inputs of one `create_curved_beam` call beyond the command itself.
+#[derive(Debug, Clone)]
+pub struct CreateCurvedBeamRequest {
+    /// The logical operation. A retry with the same id and identical content is a replay.
+    pub op_id: OpId,
+    /// Identity of the revision this call creates.
+    pub revision_id: RevisionId,
+    /// The creating actor (trusted context, `bim:createdBy`).
+    pub actor: Uuid7,
+    /// Project of a store that has no revision yet. Ignored otherwise.
+    pub project: ProjectId,
+    /// Workspace of a store that has no revision yet. Ignored otherwise.
+    pub workspace: WorkspaceId,
+    /// The command.
+    pub command: beamcraft_model::command::CreateCurvedBeam,
+}
+
 /// Result of `create_member` and `create_polybeam`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreatedMember {
@@ -140,6 +157,7 @@ impl MemberBase {
 enum MemberCreate<'a> {
     Straight(&'a CreateMemberRequest),
     Polybeam(&'a CreatePolybeamRequest),
+    Curved(&'a CreateCurvedBeamRequest),
 }
 
 impl MemberCreate<'_> {
@@ -147,6 +165,7 @@ impl MemberCreate<'_> {
         match self {
             Self::Straight(request) => request.op_id,
             Self::Polybeam(request) => request.op_id,
+            Self::Curved(request) => request.op_id,
         }
     }
 
@@ -154,6 +173,7 @@ impl MemberCreate<'_> {
         match self {
             Self::Straight(request) => &request.revision_id,
             Self::Polybeam(request) => &request.revision_id,
+            Self::Curved(request) => &request.revision_id,
         }
     }
 
@@ -161,6 +181,7 @@ impl MemberCreate<'_> {
         match self {
             Self::Straight(request) => &request.actor,
             Self::Polybeam(request) => &request.actor,
+            Self::Curved(request) => &request.actor,
         }
     }
 }
@@ -275,6 +296,106 @@ pub fn create_polybeam(
     )
 }
 
+/// Creates a circular-path member with immutable accepted-request replay.
+pub fn create_curved_beam(
+    store: &RevisionStore,
+    request: &CreateCurvedBeamRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<CreatedMember, PlateError> {
+    request.command.validate_arguments()?;
+    let fingerprint = request.command.content_fingerprint()?;
+    let op_host = host_uuid(&request.op_id.to_string())?;
+    let replay = || -> Result<Option<CreatedMember>, PlateError> {
+        match store.query_outcome(&op_host)? {
+            beamcraft_host::ledger::Outcome::Committed {
+                sequence,
+                manifest,
+                revision: accepted_revision,
+                ..
+            } => {
+                let revision = store.open_at(sequence)?;
+                if revision.info().manifest_digest() != manifest
+                    || revision.manifest().content().revision() != &accepted_revision
+                    || revision.manifest().content().op() != &op_host
+                {
+                    return Err(crate::plate::integrity(
+                        "accepted revision manifest mismatch",
+                    ));
+                }
+                let evidence = crate::command_evidence::read(&revision)?
+                    .ok_or_else(|| crate::plate::integrity("accepted request evidence missing"))?;
+                if evidence.fingerprint != fingerprint {
+                    return Err(beamcraft_model::command::CommandError::new(
+                        beamcraft_model::error::ErrorCode::OpIdReuse,
+                        "op_id",
+                        "operation was accepted with different arguments",
+                    )
+                    .into());
+                }
+                let old = crate::plate::inspect_revision(&revision)?;
+                let member = old
+                    .members
+                    .into_iter()
+                    .find(|m| m.authored.id == request.command.member.new_id)
+                    .ok_or_else(|| crate::plate::integrity("accepted curved member missing"))?;
+                Ok(Some(CreatedMember {
+                    replayed: true,
+                    member,
+                    revision: old.revision,
+                    footprint: None,
+                }))
+            }
+            beamcraft_host::ledger::Outcome::Unknown => {
+                Err(beamcraft_model::command::CommandError::new(
+                    beamcraft_model::error::ErrorCode::OutcomeUnknown,
+                    "op_id",
+                    "operation outcome requires recovery",
+                )
+                .into())
+            }
+            _ => Ok(None),
+        }
+    };
+    if let Some(accepted) = replay()? {
+        return Ok(accepted);
+    }
+    let (head, base) = load_base(store, &request.project, &request.workspace)?;
+    if let Some(accepted) = replay()? {
+        return Ok(accepted);
+    }
+    let (member_base, base_request) = MemberBase::open(base)?;
+    let (head_plates, head_members, definitions) = {
+        let mut reader = Reader::default();
+        let opened = reader.open(base_request, &control())?;
+        let decoded = decode(&reader, &opened, &control())?;
+        let (plates, members) = evaluate_decoded(&decoded)?;
+        (plates, members, decoded.definitions)
+    };
+    let mut existing = ids(&head_plates);
+    existing.extend(head_members.iter().map(|m| m.authored.id));
+    let outcome = beamcraft_engine::member::create_curved_beam(
+        &request.command,
+        &|id| existing.contains(id),
+        &profile_lookup(&definitions),
+        &material_lookup(&definitions),
+    )?;
+    let admission = MemberAdmission::Apply(Box::new(beamcraft_engine::member::MemberTransaction {
+        op_id: request.op_id,
+        outcome,
+    }));
+    finish_member(
+        store,
+        admission,
+        head_members,
+        &head,
+        None,
+        member_base,
+        MemberCreate::Curved(request),
+        op_host,
+        hook,
+    )
+}
+
 /// The replay or the committed outcome of one admitted member create: the tail shared by
 /// [`create_member`] and [`create_polybeam`]. A replay re-reads the head's record; an apply
 /// authors the U02 changes (class, element, mesh and quantities), checks the layer engine's
@@ -347,6 +468,7 @@ fn finish_member(
                             MemberKind::Beam => LayerKind::Beam,
                             MemberKind::Column => LayerKind::Column,
                         },
+                        curved: outcome.authored.curved,
                         axis_mm: outcome.authored.axis_points_mm.clone(),
                         profile: outcome.authored.profile,
                         roll_rad: outcome.authored.roll_rad,
@@ -398,5 +520,6 @@ fn new_id_of(create: &MemberCreate<'_>) -> ElementId {
     match create {
         MemberCreate::Straight(request) => request.command.new_id,
         MemberCreate::Polybeam(request) => request.command.new_id,
+        MemberCreate::Curved(request) => request.command.member.new_id,
     }
 }

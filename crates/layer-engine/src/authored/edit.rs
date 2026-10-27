@@ -855,6 +855,7 @@ fn create(
             }
         }
         Shape::Member {
+            curved,
             axis_mm,
             profile,
             roll_rad,
@@ -862,6 +863,15 @@ fn create(
             ..
         } => {
             attr(data, &p, "bim:axisPointsMm", "double3[]", points(axis_mm))?;
+            if *curved {
+                attr(
+                    data,
+                    &p,
+                    "steel:member:pathType",
+                    "token",
+                    sdf::Value::token("arc"),
+                )?;
+            }
             relationship(data, &p, "bim:profile", MaterialOpinion::Target(*profile))?;
             if let Some(n) = roll_rad {
                 attr(
@@ -1784,8 +1794,12 @@ fn capture(
                     Shape::Member {
                         ref cuts,
                         ref placement,
+                        curved,
                         ..
                     } => {
+                        if curved {
+                            add("steel:member:pathType", "token", 0);
+                        }
                         add("bim:axisPointsMm", "double3[]", 0);
                         add("steel:member:rollRad", "double", 0);
                         if placement.is_some() {
@@ -1887,6 +1901,7 @@ fn capture(
                     (cut_history::HOLE_NEXT, "int"),
                     (cut_history::HOLE_RETIRED, "string[]"),
                     ("bim:axisPointsMm", "double3[]"),
+                    ("steel:member:pathType", "token"),
                     ("steel:member:rollRad", "double"),
                     ("steel:member:planePosition", "token"),
                     ("steel:member:planeOffsetMm", "double"),

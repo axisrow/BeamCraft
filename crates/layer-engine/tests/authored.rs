@@ -4113,3 +4113,74 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     b.op_id = "019a7bf0-0000-7000-8000-00000000af03".into();
     assert!(a.prepare(b, &control()).is_err());
 }
+#[test]
+fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
+    let (mut author, opened) = open(initial());
+    let make = |points: Vec<[f64; 3]>, roll: Option<f64>| {
+        Change::Create(Element {
+            id: MEMBER.into(),
+            name: "arc".into(),
+            shape: Shape::Member {
+                kind: MemberKind::Beam,
+                curved: true,
+                axis_mm: points,
+                profile: resources()[0].digest,
+                roll_rad: roll,
+                placement: None,
+                cuts: vec![],
+            },
+            placement: pose(),
+            material: None,
+        })
+    };
+    for (points, roll) in [
+        (vec![[0.; 3], [1000., 0., 0.]], None),
+        (
+            vec![[1000., 0., 0.], [0., 1000., 0.], [-1000., 0., 0.]],
+            Some(0.),
+        ),
+    ] {
+        let mut request = batch(&opened.context, vec![make(points, roll)]);
+        request.resources = resources();
+        assert!(author.prepare(request, &control()).is_err());
+    }
+    let mut request = batch(
+        &opened.context,
+        vec![make(
+            vec![[1000., 0., 0.], [0., 1000., 0.], [-1000., 0., 0.]],
+            None,
+        )],
+    );
+    request.resources = resources();
+    let prepared = author.prepare(request, &control()).unwrap();
+    let installed = author
+        .install(
+            &opened.context,
+            &prepared.token,
+            &prepared.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let layers = author.export(&installed.context, &control()).unwrap();
+    let mut input = initial();
+    input.assets = layers;
+    input.manifest = input.manifest_digest().unwrap();
+    validate_layers(input.clone(), schema_identity().unwrap(), &control()).unwrap();
+    let authored = input
+        .assets
+        .iter_mut()
+        .find(|a| a.name == "authored.usda")
+        .unwrap();
+    let text = String::from_utf8(authored.bytes.clone()).unwrap();
+    assert!(text.contains("steel:member:pathType = \"arc\""));
+    *authored = asset(
+        "authored.usda",
+        text.replace(
+            "steel:member:pathType = \"arc\"",
+            "steel:member:pathType = \"spline\"",
+        ),
+    );
+    input.manifest = input.manifest_digest().unwrap();
+    assert!(validate_layers(input, schema_identity().unwrap(), &control()).is_err());
+}

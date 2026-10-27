@@ -846,6 +846,41 @@ impl CreateStraightMember {
     }
 }
 
+/// P13 curved member. `member.path_points_mm` is exactly start, on-arc, end.
+/// The three points retain the arc's plane and direction; they are never stored as facets.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateCurvedBeam {
+    /// Shared identity, profile, material and pose, with three authored arc points.
+    pub member: CreatePolybeam,
+}
+impl CreateCurvedBeam {
+    /// Admit bounded, finite inputs. Circle existence is an engineering check.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.member.validate_arguments()?;
+        if self.member.path_points_mm.len() != 3 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "arc_points_mm",
+                "an arc requires exactly three points",
+            ));
+        }
+        Ok(())
+    }
+    /// Request identity in a separate command domain from a three-point polybeam.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = b"BeamCraft/P13/CreateCurvedBeam/v1\0".to_vec();
+        bytes.extend_from_slice(self.member.content_fingerprint()?.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "command",
+                "request encoding exceeds capacity",
+            )
+        })
+    }
+}
+
 /// P12 `CreatePolybeam`: a member along a polyline path with one section along the whole path.
 /// The section is the pinned profile (required), the optional material is a pinned definition,
 /// and the path is at least three element-local points whose interior vertices the kernel

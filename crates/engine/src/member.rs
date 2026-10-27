@@ -29,9 +29,7 @@ use crate::transaction::PriorOp;
 use beamcraft_geom::{MemberFrame, Point3};
 use beamcraft_kernel::diagnostic::{Failure, Field};
 use beamcraft_kernel::ops::{Body, OpFailure};
-use beamcraft_kernel::section::{
-    DETAILED_MIN_SAGITTA_MM, Representation, SectionFailure, SectionMember, section_member,
-};
+use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, section_member};
 use beamcraft_kernel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
 use beamcraft_kernel::{StraightMember, straight_member};
 use beamcraft_model::command::{
@@ -158,6 +156,8 @@ pub fn no_profiles(_: &ContentDigest) -> Result<ProfileInfo, CommandError> {
 /// The authored state of one member: exactly the inputs F04 section 4 stores in the model layer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AuthoredMember {
+    /// Three axis points describe a circular arc instead of polyline chords (P13).
+    pub curved: bool,
     /// Full element identity.
     pub id: ElementId,
     /// Beam or column.
@@ -193,6 +193,7 @@ impl AuthoredMember {
             kind: command.kind,
             name: command.name.clone(),
             class: command.class,
+            curved: false,
             axis_points_mm: vec![command.axis_points_mm[0], command.axis_points_mm[1]],
             profile: command.profile_digest,
             roll_rad: command.roll_rad,
@@ -210,6 +211,7 @@ impl AuthoredMember {
             kind: command.kind,
             name: command.name.clone(),
             class: command.class,
+            curved: false,
             axis_points_mm: command.path_points_mm.clone(),
             profile: command.profile_digest,
             roll_rad: None,
@@ -223,6 +225,9 @@ impl AuthoredMember {
     /// The `CreateStraightMember` that would author exactly this state, or `None` for a
     /// polybeam member.
     pub fn to_command(&self) -> Option<CreateStraightMember> {
+        if self.curved {
+            return None;
+        }
         let [p1, p2] = self.axis_points_mm.as_slice() else {
             return None;
         };
@@ -243,7 +248,7 @@ impl AuthoredMember {
     /// The `CreatePolybeam` that would author exactly this state, or `None` for a straight
     /// member.
     pub fn to_polybeam_command(&self) -> Option<CreatePolybeam> {
-        if self.axis_points_mm.len() < 3 {
+        if self.curved || self.axis_points_mm.len() < 3 {
             return None;
         }
         Some(CreatePolybeam {
@@ -267,6 +272,8 @@ pub struct MemberBody {
     /// [`Self::volume_mm3`] by the arc approximation: at most about `pi/3 * r * s` of area per
     /// quarter arc of radius `r` and sagitta `s <= max(0.25 mm, 0.5 % r)`, times the length.
     pub solid: SolidMesh,
+    /// Achieved swept-surface chord bound for a circular path, in millimetres.
+    pub arc_deviation_mm: Option<f64>,
     /// The resolved profile the body was built from.
     pub profile: ProfileInfo,
     /// Width of the section's bounding box in millimetres.
@@ -324,6 +331,73 @@ fn map_sweep(failure: &SweepFailure) -> CommandError {
         SweepFailure::Body(_) => ("geometry", "polybeam body certification failed"),
     };
     CommandError::new(failure.f04_code(), field, message)
+}
+
+/// Resolve the minor circular arc from endpoints, radius and an oriented plane normal.
+/// The on-arc point lies on `normal × (end-start)` side of the chord. Negating the normal
+/// selects the other side. No arbitrary world plane is inferred.
+pub fn arc_from_radius(
+    start: [f64; 3],
+    end: [f64; 3],
+    radius_mm: f64,
+    normal: [f64; 3],
+) -> Result<[[f64; 3]; 3], CommandError> {
+    let invalid = || {
+        CommandError::new(
+            ErrorCode::InvalidArgument,
+            "arc",
+            "endpoints, radius and perpendicular plane normal must define a finite minor arc",
+        )
+    };
+    if start
+        .iter()
+        .chain(end.iter())
+        .chain(normal.iter())
+        .any(|v| !v.is_finite())
+        || !radius_mm.is_finite()
+    {
+        return Err(CommandError::new(
+            ErrorCode::NonFiniteNumber,
+            "arc",
+            "arc arguments must be finite",
+        ));
+    }
+    if radius_mm <= 0.0 {
+        return Err(invalid());
+    }
+    if radius_mm > 1e6 || start.iter().chain(end.iter()).any(|v| v.abs() > 1e9) {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "arc",
+            "arc arguments exceed coordinate or dimension cap",
+        ));
+    }
+    let a = Point3::new(start[0], start[1], start[2]);
+    let b = Point3::new(end[0], end[1], end[2]);
+    let chord = a.vector_to(b).map_err(|_| invalid())?;
+    let length = chord.norm().map_err(|_| invalid())?;
+    let n = beamcraft_geom::Vec3::new(normal[0], normal[1], normal[2])
+        .and_then(|v| v.normalized())
+        .map_err(|_| invalid())?;
+    if length <= 0.0
+        || length > 2.0 * radius_mm
+        || n.dot(chord).map_err(|_| invalid())?.abs() > 1e-9 * length
+    {
+        return Err(invalid());
+    }
+    let side = n
+        .cross(chord)
+        .and_then(|v| v.normalized())
+        .map_err(|_| invalid())?;
+    let half = length / 2.0;
+    let height = half * half / (radius_mm + (radius_mm * radius_mm - half * half).sqrt());
+    let midpoint = a
+        .translated(chord.scaled(0.5).map_err(|_| invalid())?)
+        .map_err(|_| invalid())?;
+    let on = midpoint
+        .translated(side.scaled(height).map_err(|_| invalid())?)
+        .map_err(|_| invalid())?;
+    Ok([start, [on.x, on.y, on.z], end])
 }
 
 /// Total polyline path length in millimetres. A stored axis is untrusted input, so a
@@ -385,6 +459,7 @@ fn evaluate_polybeam_body(
     authored: &AuthoredMember,
     profile: &ProfileInfo,
     points: &[[f64; 3]],
+    arc_deviation: &mut Option<f64>,
 ) -> Result<(SolidMesh, f64, &'static str, Option<f64>), CommandError> {
     let shape = match profile {
         ProfileInfo::Rectangle {
@@ -394,27 +469,59 @@ fn evaluate_polybeam_body(
         } => rectangle_outline(*width_mm, *height_mm, *declared_area_mm2)?,
         ProfileInfo::Section { shape, .. } => shape.clone(),
     };
-    let swept = sweep(&Sweep {
-        path: SweepPath::Polyline(
+    let path = if authored.curved {
+        let [start, on, end] = points else {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "arc_points_mm",
+                "an arc requires three points",
+            ));
+        };
+        if authored.roll_rad.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "roll_rad",
+                "a curved path uses transported section orientation",
+            ));
+        }
+        SweepPath::Arc {
+            start: Point3::new(start[0], start[1], start[2]),
+            on: Point3::new(on[0], on[1], on[2]),
+            end: Point3::new(end[0], end[1], end[2]),
+        }
+    } else {
+        SweepPath::Polyline(
             points
                 .iter()
                 .map(|p| Point3::new(p[0], p[1], p[2]))
                 .collect(),
-        ),
+        )
+    };
+    let swept = sweep(&Sweep {
+        path,
         shape,
         // The detailed outline of the section, like a straight member of the same section.
         representation: Representation::Detailed,
         // Unused by a pure polyline, which has no curve; a positive value is required anyway.
-        chord_deviation_mm: DETAILED_MIN_SAGITTA_MM,
+        chord_deviation_mm: 0.05,
     })
     .map_err(|failure| map_sweep(&failure))?;
-    let path_length_mm = path_length_mm(points)?;
+    *arc_deviation = swept.chord_deviation_bound_mm();
+    let path_length_mm = swept
+        .arc_length_mm()
+        .map_or_else(|| path_length_mm(points), Ok)?;
     if authored.cuts.is_empty() {
+        let solid = SolidMesh::from_sweep(&swept);
+        let volume = None;
         Ok((
-            SolidMesh::from_sweep(&swept),
+            solid,
             path_length_mm,
-            POLYBEAM_VOLUME_ALGORITHM,
-            None,
+            if authored.curved {
+                "pmass-member-area-x-arc-length/1;curved-beam;tolerance-policy-3"
+            } else {
+                POLYBEAM_VOLUME_ALGORITHM
+            },
+            volume,
         ))
     } else {
         let solid = replay_cuts(swept.body(), SolidMesh::from_sweep(&swept), &authored.cuts)?;
@@ -480,10 +587,15 @@ pub fn evaluate_member(
         ..SectionProperties::default()
     }
     .validate()?;
-    let (solid, axis_length_mm, algorithm, cut_volume_mm3) = if points.len() > 2 {
-        // A polybeam (P12) has no P14 section placement yet: the sweep slice carries one centred
-        // section along the path and authors no placement attributes.
-        evaluate_polybeam_body(authored, &profile, &authored.axis_points_mm)?
+    let mut arc_deviation_mm = None;
+    let (solid, axis_length_mm, algorithm, cut_volume_mm3) = if authored.curved || points.len() > 2
+    {
+        evaluate_polybeam_body(
+            authored,
+            &profile,
+            &authored.axis_points_mm,
+            &mut arc_deviation_mm,
+        )?
     } else {
         let Some((start, end)) = points.first().zip(points.last()).map(|(a, b)| (*a, *b)) else {
             return Err(CommandError::new(
@@ -598,6 +710,7 @@ pub fn evaluate_member(
     }
     Ok(MemberBody {
         solid,
+        arc_deviation_mm,
         profile,
         width_mm,
         height_mm,
@@ -764,6 +877,46 @@ pub fn create_polybeam(
     let quantities = member_quantities(&body, material)?;
     Ok(CreatePolybeamOutcome {
         fingerprint: command.content_fingerprint()?,
+        authored,
+        body,
+        quantities,
+        footprint,
+    })
+}
+
+/// Prepare a circular-path member without writing external state.
+pub fn create_curved_beam(
+    curved: &beamcraft_model::command::CreateCurvedBeam,
+    existing: &dyn Fn(&ElementId) -> bool,
+    profiles: ProfileLookup<'_>,
+    materials: MaterialLookup<'_>,
+) -> Result<CreatePolybeamOutcome, CommandError> {
+    curved.validate_arguments()?;
+    let command = &curved.member;
+    if existing(&command.new_id) {
+        return Err(CommandError::new(
+            ErrorCode::DuplicateId,
+            "new_id",
+            "element id is already owned",
+        ));
+    }
+    let profile = profiles(&command.profile_digest)?;
+    let material = command
+        .material_digest
+        .as_ref()
+        .map(materials)
+        .transpose()?;
+    let footprint = Footprint::for_create_member(
+        command.new_id,
+        command.profile_digest,
+        command.material_digest,
+    )?;
+    let mut authored = AuthoredMember::from_polybeam(command);
+    authored.curved = true;
+    let body = evaluate_member(&authored, profile)?;
+    let quantities = member_quantities(&body, material)?;
+    Ok(CreatePolybeamOutcome {
+        fingerprint: curved.content_fingerprint()?,
         authored,
         body,
         quantities,
@@ -1136,6 +1289,7 @@ mod tests {
             keep: KeepSide::Negative,
         };
         let authored = AuthoredMember {
+            curved: false,
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000007").unwrap(),
             kind: MemberKind::Beam,
             name: "Cut beam".into(),
@@ -1582,5 +1736,76 @@ mod tests {
             "{}",
             body.volume_mm3
         );
+    }
+    #[test]
+    fn curved_member_retains_true_length_and_bounds_mesh_approximation() {
+        let profile = digest(b"p13-section");
+        let mut command = polybeam_command(profile);
+        command.path_points_mm = vec![[1000., 0., 0.], [0., 1000., 0.], [-1000., 0., 0.]];
+        let curved = beamcraft_model::command::CreateCurvedBeam {
+            member: command.clone(),
+        };
+        assert_ne!(
+            curved.content_fingerprint().unwrap(),
+            command.content_fingerprint().unwrap()
+        );
+        let lookup = |_: &ContentDigest| {
+            Ok(ProfileInfo::Rectangle {
+                width_mm: 20.,
+                height_mm: 30.,
+                declared_area_mm2: None,
+            })
+        };
+        let out = create_curved_beam(&curved, &none, &lookup, &no_materials).unwrap();
+        let analytic_length = std::f64::consts::PI * 1000.;
+        assert!((out.body.axis_length_mm - analytic_length).abs() < 1e-9);
+        assert!(out.body.arc_deviation_mm.unwrap() <= 0.05);
+        let true_volume = 600. * analytic_length;
+        assert!((out.body.volume_mm3 - true_volume).abs() < 1e-8);
+        assert_eq!(out.body.volume_mm3, 600. * out.body.axis_length_mm);
+        assert!(
+            (out.body.solid.volume_mm3() - true_volume).abs() < 600. * std::f64::consts::PI * 0.1
+        );
+        assert!(out.authored.to_polybeam_command().is_none());
+        let mut polygonal = out.authored.clone();
+        polygonal.curved = false;
+        assert_ne!(
+            crate::quantity::member_gross_signature(
+                &out.authored,
+                &out.body.profile,
+                CUT_VOLUME_ALGORITHM
+            ),
+            crate::quantity::member_gross_signature(
+                &polygonal,
+                &out.body.profile,
+                CUT_VOLUME_ALGORITHM
+            )
+        );
+        let mut cache = crate::query::committed::BodyCache::new();
+        let arc = cache
+            .member(&out.authored, lookup(&profile).unwrap())
+            .unwrap();
+        let poly = cache.member(&polygonal, lookup(&profile).unwrap()).unwrap();
+        assert_ne!(arc.solid.digest(), poly.solid.digest());
+    }
+    #[test]
+    fn radius_arc_resolution_checks_plane_radius_and_coordinates() {
+        let points =
+            arc_from_radius([1000., 0., 0.], [-1000., 0., 0.], 1000., [0., 0., 1.]).unwrap();
+        assert_eq!(
+            points,
+            [[1000., 0., 0.], [0., -1000., 0.], [-1000., 0., 0.]]
+        );
+        for (radius, normal) in [
+            (999., [0., 0., 1.]),
+            (1000., [1., 0., 0.]),
+            (1000., [0.; 3]),
+            (-1., [0., 0., 1.]),
+            (f64::NAN, [0., 0., 1.]),
+            (1e7, [0., 0., 1.]),
+        ] {
+            assert!(arc_from_radius([1000., 0., 0.], [-1000., 0., 0.], radius, normal).is_err());
+        }
+        assert!(arc_from_radius([0.; 3], [0.; 3], 1., [0., 0., 1.]).is_err());
     }
 }

@@ -279,6 +279,7 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         name: _,
         class: _,
         axis_points_mm,
+        curved,
         profile: _,
         roll_rad,
         section_placement,
@@ -288,6 +289,7 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
     } = member;
     let mut key = Vec::with_capacity(224);
     key.extend_from_slice(b"BeamCraft/BodyCache/Member/v4\0");
+    key.push(u8::from(*curved));
     push_points(&mut key, axis_points_mm);
     push_option(&mut key, *roll_rad);
     match section_placement {
@@ -597,6 +599,7 @@ mod tests {
             }
         };
         let member = |n: u8, kind: MemberKind| AuthoredMember {
+            curved: false,
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             kind,
             name: format!("Member {n}"),
@@ -653,6 +656,7 @@ mod tests {
         };
         let half = core::f64::consts::FRAC_1_SQRT_2;
         let mut member = AuthoredMember {
+            curved: false,
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000001102").unwrap(),
             kind: MemberKind::Beam,
             name: "F06 POS-12".into(),
@@ -901,6 +905,7 @@ mod tests {
             declared_area_mm2: None,
         };
         let member = |n: u8, kind: MemberKind| AuthoredMember {
+            curved: false,
             id: ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap(),
             kind,
             name: format!("Member {n}"),

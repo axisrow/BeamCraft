@@ -58,7 +58,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:hole:kinds=token[](hole|polygon_cut);all five steel:hole attributes or none,",
     "ordinals are engine-assigned and never reused\n",
     "steel:hole:nextOrdinal=int(optional,0..1000);steel:hole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
-    "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional);\n",
+    "bim:axisPointsMm=double3[];steel:member:pathType=token(arc,optional);steel:member:rollRad=double(optional);\n",
     "steel:member:planePosition=token(left|centre|right);steel:member:planeOffsetMm=double;\n",
     "steel:member:depthPosition=token(front|centre|back);steel:member:depthOffsetMm=double;\n",
     "steel:member:startOffsetMm=double;steel:member:endOffsetMm=double;",
@@ -261,6 +261,8 @@ pub enum Shape {
     },
     /// Member (P03 straight, P12 polybeam), with a required pinned profile.
     Member {
+        /// Three authored axis points describe a circular arc (P13).
+        curved: bool,
         /// Explicit beam or column kind.
         kind: MemberKind,
         /// Ordered element-local path points: exactly two for a straight member, at least three
@@ -1134,6 +1136,11 @@ mod pin_tests {
     #[test]
     fn only_the_current_mapping_is_accepted() {
         assert!(pin_accepted(&schema_identity().unwrap().digest.to_string()).unwrap());
+        let before_p13 =
+            SCHEMA_DESCRIPTOR.replace("steel:member:pathType=token(arc,optional);", "");
+        assert!(
+            !pin_accepted(&Sha256::digest(before_p13.as_bytes()).unwrap().to_string()).unwrap()
+        );
         let before_f10 = SCHEMA_DESCRIPTOR
             .replace("bim:isDeactivated=bool(optional,default=false);", "")
             .replace("steel:connection:type=token(weld|bolt_group);", "");

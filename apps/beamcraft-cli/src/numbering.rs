@@ -145,6 +145,14 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
         }
         for record in &inspection.members {
             let a = &record.authored;
+            // Existing facts compare length and roll only. Equal arc length cannot prove
+            // equal curved geometry; integration must add path-aware facts before numbering.
+            if a.curved {
+                return Err(error(
+                    ErrorCode::UnsupportedGeometry,
+                    "numbering circular members requires path-aware shape facts",
+                ));
+            }
             // The numbering length is the body's own: the axis chord for a straight member, the
             // polyline path length for a polybeam.
             let length = record.body.axis_length_mm;

@@ -1222,6 +1222,11 @@ fn decode_member(
         .and_then(numbers::<4>)
         .ok_or_else(bad)?;
     Ok(AuthoredMember {
+        curved: match property(prim, "steel:member:pathType") {
+            None => false,
+            Some(v) if text(v) == Some("arc") => true,
+            _ => return Err(bad()),
+        },
         id,
         kind,
         name: name.to_owned(),

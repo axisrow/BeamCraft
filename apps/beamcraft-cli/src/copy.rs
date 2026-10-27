@@ -413,6 +413,7 @@ fn copy_with_mode(
                             MemberKind::Beam => LayerKind::Beam,
                             MemberKind::Column => LayerKind::Column,
                         },
+                        curved: a.curved,
                         axis_mm: a.axis_points_mm.clone(),
                         profile: a.profile,
                         roll_rad: a.roll_rad,
