@@ -1819,6 +1819,16 @@ impl App {
             ));
             return;
         };
+        let point = match self.beam.start() {
+            Some(start) => match self.tools.member.axis_lock.constrain(start, point) {
+                Ok(point) => point,
+                Err(e) => {
+                    self.tool_note = Some(Err(e.to_string()));
+                    return;
+                }
+            },
+            None => point,
+        };
         match self.beam.click(point) {
             None => {
                 self.ghost_end = None;
@@ -1882,6 +1892,9 @@ impl App {
             ray.origin[1] + t * ray.direction[1],
             ray.origin[2] + t * ray.direction[2],
         ];
+        let Ok(end) = self.tools.member.axis_lock.constrain(start, end) else {
+            return;
+        };
         let key = end.map(|v| v.round() as i64);
         if self.ghost_end == Some(key) {
             return;
@@ -1988,6 +2001,16 @@ impl App {
                         }
                     });
                 }
+                field(ui, "Start expression", &mut form.start_input, 180.0);
+                field(ui, "End expression", &mut form.end_input, 180.0);
+                ui.label("X,Y,Z | @DX,DY,DZ | @distance<angle[,DZ] (mm, rad)");
+                ui.horizontal(|ui| {
+                    ui.label("Direction lock");
+                    use beamcraft_engine::coordinate::AxisLock;
+                    for lock in [AxisLock::None, AxisLock::X, AxisLock::Y, AxisLock::Z] {
+                        ui.selectable_value(&mut form.axis_lock, lock, lock.token());
+                    }
+                });
                 field(ui, "Name", &mut form.name, 140.0);
                 choice_combo(
                     ui,

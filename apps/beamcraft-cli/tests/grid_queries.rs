@@ -260,3 +260,42 @@ fn a_grid_placed_plate_is_one_workspace_undo_redo_unit() {
         list(&created, "plates")
     );
 }
+
+#[test]
+fn numeric_member_input_can_use_a_grid_start_without_losing_relative_end_semantics() {
+    let f = support::StoreFixture::new("t04-grid-input");
+    create(&f);
+    let profile = ok(&f, "define-profile", &["--width", "20", "--height", "30"]);
+    let digest = text(profile.get("definition").unwrap(), "digest");
+    let address = format!("{G}:B,3");
+    let made = ok(
+        &f,
+        "create-member",
+        &[
+            "--start-at-grid",
+            &address,
+            "--z",
+            "3000",
+            "--end",
+            "@500,100,20",
+            "--axis-lock",
+            "x",
+            "--profile-digest",
+            &digest,
+        ],
+    );
+    let points = list(made.get("member").unwrap(), "axis_points_mm");
+    for (p, expected) in points
+        .iter()
+        .zip([[12000., 7500., 3000.], [12500., 7500., 3000.]])
+    {
+        assert_eq!(
+            p.array()
+                .unwrap()
+                .iter()
+                .map(|v| v.float().unwrap())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+}

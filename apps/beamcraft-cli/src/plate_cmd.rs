@@ -145,6 +145,7 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--kind",
     "--start",
     "--end",
+    "--axis-lock",
     "--profile-digest",
     "--profile",
     "--roll",
@@ -1536,13 +1537,32 @@ fn create_member_command(
         Some("column") => MemberKind::Column,
         Some(_) => return Err(invalid("--kind is beam or column")),
     };
-    let point = |key: &'static str| -> Run<[f64; 3]> {
-        translation(
-            options
-                .get(key)
-                .ok_or_else(|| invalid("--start and --end are required"))?,
-        )
+    use beamcraft_engine::coordinate::AxisLock;
+    if !options.contains_key("--start-at-grid")
+        && !options.contains_key("--end-at-grid")
+        && ["--z", "--level", "--offset"]
+            .iter()
+            .any(|k| options.contains_key(k))
+    {
+        return Err(invalid("height options require grid placement"));
+    }
+    let coordinate = |key: &'static str, grid, origin, lock: AxisLock| -> Run<[f64; 3]> {
+        if options.contains_key(grid) {
+            if options.contains_key(key) {
+                return Err(invalid("point and grid address are mutually exclusive"));
+            }
+            return lock
+                .constrain(origin, grid_placement(store, options, &op_id, grid)?)
+                .map_err(PlateError::from);
+        }
+        let text = options
+            .get(key)
+            .ok_or_else(|| invalid("--start and --end are required"))?;
+        beamcraft_engine::coordinate::resolve(text, origin, lock).map_err(PlateError::from)
     };
+    let lock = AxisLock::parse(given("--axis-lock").unwrap_or("none")).map_err(PlateError::from)?;
+    let start = coordinate("--start", "--start-at-grid", [0.0; 3], AxisLock::None)?;
+    let end = coordinate("--end", "--end-at-grid", start, lock)?;
     let replay = if options.contains_key("--op-id")
         && (options.contains_key("--profile") || options.contains_key("--material"))
     {
@@ -1571,30 +1591,7 @@ fn create_member_command(
         new_id,
         kind,
         name: given("--name").unwrap_or(kind.as_str()).to_owned(),
-        axis_points_mm: {
-            let resolve = |direct, grid| {
-                if options.contains_key(grid) {
-                    if options.contains_key(direct) {
-                        return Err(invalid("point and grid address are mutually exclusive"));
-                    }
-                    grid_placement(store, options, &op_id, grid)
-                } else {
-                    point(direct)
-                }
-            };
-            if !options.contains_key("--start-at-grid")
-                && !options.contains_key("--end-at-grid")
-                && ["--z", "--level", "--offset"]
-                    .iter()
-                    .any(|k| options.contains_key(k))
-            {
-                return Err(invalid("height options require grid placement"));
-            }
-            [
-                resolve("--start", "--start-at-grid")?,
-                resolve("--end", "--end-at-grid")?,
-            ]
-        },
+        axis_points_mm: [start, end],
         profile_digest,
         placement: Placement {
             translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
