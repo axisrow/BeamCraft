@@ -19,6 +19,8 @@ to the chord; negating it selects the other side. Radius must be at least half t
 Major arcs are specified by three points. Mixing the two input forms is refused.
 
 The existing `update-element --axis-point "START;ON;END"` replaces all three arc points.
+Non-default P14 section placement is currently supported only by straight members;
+circular members explicitly refuse it instead of ignoring offsets or extending their length.
 The arc kind remains explicit: replacing them with two or four points refuses atomically.
 Use independent creation for a different path family. No new roll rule is invented;
 sections are parallel-transported by G12 and authored roll on an arc is refused.
