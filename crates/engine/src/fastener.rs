@@ -194,10 +194,10 @@ fn solid(
     Ok((mesh, volume))
 }
 
-/// One stack step: the component at the current offset, then the offset grows by its length.
-fn stack(
+/// One placed component: the mesh over `z_start_mm..z_end_mm`, pushed onto the stack.
+fn place(
     components: &mut Vec<FastenerComponent>,
-    z: &mut f64,
+    z_start_mm: f64,
     kind: ComponentKind,
     outer: &[Point2],
     cavities: &[Cavity],
@@ -208,22 +208,21 @@ fn stack(
         kind,
         mesh,
         volume_mm3: volume,
-        z_start_mm: *z,
-        z_end_mm: *z + length_mm,
+        z_start_mm,
+        z_end_mm: z_start_mm + length_mm,
     });
-    *z += length_mm;
     Ok(())
 }
 
-/// The round washer of a definition at the current stack offset, when the switches place one.
+/// The round washer of a definition, placed at `z_start_mm`, when the switch wants one.
 fn washer(
     components: &mut Vec<FastenerComponent>,
-    z: &mut f64,
+    z_start_mm: f64,
     spec: &FastenerSpec,
     under_head: bool,
-) -> Result<(), CommandError> {
+) -> Result<bool, CommandError> {
     let Some(washer) = &spec.washer else {
-        return Ok(());
+        return Ok(false);
     };
     let wanted = if under_head {
         spec.washer_under_head
@@ -231,7 +230,7 @@ fn washer(
         spec.washer_under_nut
     };
     if !wanted {
-        return Ok(());
+        return Ok(false);
     }
     let cavity = Cavity::circle(
         Point2 { x: 0.0, y: 0.0 },
@@ -239,22 +238,32 @@ fn washer(
         ROUND_CURVE,
     )
     .map_err(|_| kernel_refused())?;
-    stack(
+    place(
         components,
-        z,
+        z_start_mm,
         ComponentKind::Washer,
         &ring(washer.outer_diameter_mm / 2.0),
         &[cavity],
         washer.thickness_mm,
-    )
+    )?;
+    Ok(true)
 }
 
 /// Builds the prototype of one fastener of `spec` with the shank length `length_mm`, which must
 /// be one of the definition's standard lengths.
 ///
+/// The standard length is the shank length under the head, and the parts hang on it: it covers
+/// the grip, the washers the shank carries (the washer under the nut), the nut and the
+/// `thread_protrusion` (bolt amendment section 4). The layout is the part-free exploded stack:
+/// the grip space between the head and the washer under the nut is where the connected parts
+/// sit, and the nut ends at `shank end - protrusion`, leaving the protrusion as bare shank
+/// beyond it. A14.3 places the group from these offsets and the grip
+/// (`length - washer - nut - protrusion`), without re-deriving the stack.
+///
 /// Errors: `INVALID_ARGUMENT` for a definition or a length that is not admitted;
-/// `UNSUPPORTED_GEOMETRY` when the kernel refuses a component (a dimension past the kernel's own
-/// caps). Nothing here depends on the group size: a group of `n` builds this prototype once.
+/// `UNSUPPORTED_GEOMETRY` when the kernel refuses a component or the length does not cover the
+/// definition's own nut, washer and protrusion. Nothing here depends on the group size: a group
+/// of `n` builds this prototype once.
 pub fn prototype(spec: &FastenerSpec, length_mm: f64) -> Result<FastenerPrototype, CommandError> {
     spec.validate()?;
     if !spec.lengths_mm.contains(&length_mm) {
@@ -266,18 +275,25 @@ pub fn prototype(spec: &FastenerSpec, length_mm: f64) -> Result<FastenerPrototyp
     }
     let mut components: Vec<FastenerComponent> = Vec::new();
     let mut z = 0.0;
-    washer(&mut components, &mut z, spec, true)?;
-    stack(
+    let under_head = washer(&mut components, z, spec, true)?;
+    if under_head {
+        z += spec.washer.as_ref().map_or(0.0, |w| w.thickness_mm);
+    }
+    place(
         &mut components,
-        &mut z,
+        z,
         ComponentKind::Head,
         &hexagon(spec.head_across_flats_mm),
         &[],
         spec.head_height_mm,
     )?;
-    stack(
+    let shank_start = z + spec.head_height_mm;
+    // The shank runs under the head over the whole standard length; the nut ends
+    // `thread_protrusion` before its end.
+    let shank_end = shank_start + length_mm;
+    place(
         &mut components,
-        &mut z,
+        shank_start,
         ComponentKind::Shank,
         &ring(spec.nominal_diameter_mm / 2.0),
         &[],
@@ -287,16 +303,31 @@ pub fn prototype(spec: &FastenerSpec, length_mm: f64) -> Result<FastenerPrototyp
         // A bolt always carries a nut; the unwrapped defaults are only for the compiler.
         let nut_height = spec.nut_height_mm.unwrap_or_default();
         let nut_across = spec.nut_across_flats_mm.unwrap_or_default();
-        stack(
+        let nut_end = shank_end - spec.thread_protrusion_mm;
+        let washer_thickness = if spec.washer_under_nut {
+            spec.washer.as_ref().map_or(0.0, |w| w.thickness_mm)
+        } else {
+            0.0
+        };
+        let nut_start = nut_end - washer_thickness - nut_height;
+        if nut_start < shank_start {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "length_mm",
+                "the standard length does not cover the definition's own nut, washer and protrusion",
+            ));
+        }
+        let under_nut = washer(&mut components, nut_start, spec, false)?;
+        let nut_offset = if under_nut { washer_thickness } else { 0.0 };
+        place(
             &mut components,
-            &mut z,
+            nut_start + nut_offset,
             ComponentKind::Nut,
             &hexagon(nut_across),
             &[],
             nut_height,
         )?;
     }
-    washer(&mut components, &mut z, spec, false)?;
     Ok(FastenerPrototype {
         mass_kg: spec.mass_each_kg,
         mass_source: if spec.mass_each_kg.is_some() {
@@ -393,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn the_stack_runs_from_the_bearing_face_towards_the_nut() {
+    fn the_stack_runs_from_the_bearing_face_and_keeps_the_protrusion() {
         let prototype = prototype(&bolt(), 60.0).unwrap();
         assert_eq!(
             kinds(&prototype),
@@ -401,14 +432,16 @@ mod tests {
                 ComponentKind::Washer,
                 ComponentKind::Head,
                 ComponentKind::Shank,
-                ComponentKind::Nut,
                 ComponentKind::Washer,
+                ComponentKind::Nut,
             ]
         );
-        let first = prototype.components.first().unwrap();
+        let starts: Vec<f64> = prototype.components.iter().map(|c| c.z_start_mm).collect();
+        // Washer 0..3, head 3..13, shank 13..73; the nut ends at 73 - 5 protrusion, and the
+        // washer under the nut sits right before it.
+        assert_eq!(starts, [0.0, 3.0, 13.0, 50.2, 53.2]);
         let last = prototype.components.last().unwrap();
-        assert_eq!(first.z_start_mm, 0.0, "the bearing face starts the stack");
-        assert!((last.z_end_mm - 90.8).abs() < 1e-9);
+        assert!((last.z_end_mm - 68.0).abs() < 1e-9);
         assert_eq!(
             prototype.counts(),
             vec![

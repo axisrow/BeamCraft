@@ -19,7 +19,7 @@ fastener::prototype(&FastenerSpec, length_mm) -> FastenerPrototype
 
 | Area | What exists |
 |---|---|
-| Stack | Components in amendment order from the bearing face along `+z`: the optional washer under the head, the hex head, the shank over the chosen standard length, the nut of a bolt, the optional washer under the nut. Each [`FastenerComponent`] carries its kind, its own sealed mesh, its exact volume and its `z_start`/`z_end` offsets, so A14.3 places the components without re-deriving the layout. |
+| Stack | From the bearing face along `+z`: the optional washer under the head, the hex head, the shank over the chosen standard length, then — for a bolt — the washer under the nut and the nut ending at `shank end - thread_protrusion`, leaving the protrusion as bare shank beyond the nut. The standard length is the shank length under the head and covers grip, the washer under the nut, the nut and the protrusion (bolt amendment section 4); the layout is the part-free exploded stack, the grip space between the head and the washer under the nut is where the connected parts sit, and A14.3 places the group from the offsets (`length - washer - nut - protrusion` is the grip) without re-deriving it. Each [`FastenerComponent`] carries its kind, its own sealed mesh, its exact volume and its `z_start`/`z_end` offsets. A length that cannot cover the definition's own nut, washer and protrusion is refused. |
 | Shapes | The head and nut are exact regular hexagons across the flats; the shank and the washer faces are regular polygons on the 0.05 mm chord rule with a vertex count that is a multiple of four (F06 A-2 D-2), floored at 8 and capped at 1020 like the kernel's own curves; the washer is the outer polygon with a round `Cavity::circle` hole. Threads are not modelled; edges are not chamfered. |
 | Meshes | Every component is a separate `SolidMesh` sealed by the kernel (G05), so colour, quantities and the BOM read them one by one. The builder takes no group size: a group of `n` fasteners builds this one prototype once and places it `n` times (U11 instancing at the group), and the same definition builds byte-identical meshes (digest-checked in the tests). |
 | Quantities | Exact polygon volumes per component and for the whole fastener; the count of every component kind; the mass from the definition's declared `mass_each_kg` with source `declared`, else `unknown` — the definition carries no material density and none is inferred. The `computed` source of the amendment needs a density source the definition does not have yet; it joins when the owner decides where the fastener's material density lives. |
@@ -50,6 +50,8 @@ construction and by the determinism test; the mass source is shown as a stable t
 ## Tests
 
 `crates/engine/src/fastener.rs`: analytic volumes within the chord rule (amendment section 9
-case 1); the stack order and offsets; a screw has no nut and a bare bolt no washers; the mass
+case 1); the stack order, offsets and the protrusion (washer 0–3, head 3–13, shank 13–73,
+washer under the nut 50.2–53.2, nut 53.2–68 for the case definition at length 60 — the nut ends
+at `shank end - protrusion`); a screw has no nut and a bare bolt no washers; the mass
 source is declared or unknown; only a standard length builds; the prototype is deterministic, so
 a group of `n` shares one mesh.
