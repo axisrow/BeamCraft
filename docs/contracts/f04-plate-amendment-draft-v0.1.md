@@ -1,6 +1,9 @@
 # F04 amendment draft: plate position, corner treatment and contour editing
 
-Status: **draft for owner review (2026-10-23).** F04 0.1.0 stays frozen and unchanged until the
+Status: **accepted amendment (2026-10-27), current MVP rules for M5 CLI delivery.**
+The draft date below records its origin; accepted amendments are versioned alongside the frozen contracts, not a rewrite of them.
+
+Historical proposal status (superseded): **draft for owner review (2026-10-23).** F04 0.1.0 stays frozen and unchanged until the
 owner accepts this text; on acceptance it is recorded as an F04 amendment (name to be confirmed)
 and the sections it replaces in [F04](f04-model-and-commands-v0.1.md) and
 [F06](f06-geometry-contract-v0.1.md) get a dated pointer. It extends the plate of A02 and is the

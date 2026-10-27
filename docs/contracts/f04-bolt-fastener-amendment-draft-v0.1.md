@@ -1,6 +1,9 @@
 # F04 amendment draft: fastener definitions, bolt geometry and bolt groups
 
-Status: **draft for owner review (2026-10-23).** [F04](f04-model-and-commands-v0.1.md) 0.1.0 and
+Status: **accepted amendment (2026-10-27), current MVP rules for M5 CLI delivery.**
+The draft date below records its origin; accepted amendments are versioned alongside the frozen contracts, not a rewrite of them.
+
+Historical proposal status (superseded): **draft for owner review (2026-10-23).** [F04](f04-model-and-commands-v0.1.md) 0.1.0 and
 the domain vocabulary stay unchanged until the owner accepts this text; on acceptance it is
 recorded as an amendment and the sections it replaces get a dated pointer. It is the contract for
 the slices A14.1 to A14.4 and V19 in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474) and extends the minimal bolt
