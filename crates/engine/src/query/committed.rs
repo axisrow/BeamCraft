@@ -207,7 +207,9 @@ fn push_cut(key: &mut Vec<u8>, cuts: &[CutRecord]) {
 }
 
 /// The key of a plate body. Every field is named, so a field added to [`AuthoredPlate`] does not
-/// compile here until it is classified as a shape input or not.
+/// compile here until it is classified as a shape input or not. The record ids and ordinals of
+/// the A04 hole records are identity, not geometry: the body is a function of the polygons
+/// alone, so only they enter the key.
 fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
     let AuthoredPlate {
         id: _,
@@ -217,6 +219,7 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         placement: _,
         material: _,
         holes_mm,
+        hole_records,
         cuts,
     } = plate;
     let mut key = Vec::with_capacity(160);
@@ -226,6 +229,10 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
     push_len(&mut key, holes_mm.len());
     for hole in holes_mm {
         push_points(&mut key, hole);
+    }
+    push_len(&mut key, hole_records.len());
+    for record in hole_records {
+        push_points(&mut key, &record.polygon_mm);
     }
     push_cut(&mut key, cuts);
     key
@@ -530,6 +537,7 @@ mod tests {
             },
             material: None,
             holes_mm: Vec::new(),
+            hole_records: Vec::new(),
             cuts: Vec::new(),
         }
     }

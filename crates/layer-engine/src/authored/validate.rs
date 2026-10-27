@@ -442,6 +442,85 @@ fn plate_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 3]>>, Diagnostic> {
     }
     Ok(holes)
 }
+
+/// The optional through-hole operation records of a loaded plate (A04): all four attributes or
+/// none, the counts add up to the points, every polygon has at least three in-cap points with
+/// every `z` zero, there is one full UUIDv7 and one strictly increasing non-negative ordinal
+/// per polygon, and the totals are capped. Winding, placement and clearance are the engine's
+/// decision on replay, never re-derived here.
+fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
+    let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let names = [
+        "steel:hole:pointsMm",
+        "steel:hole:vertexCounts",
+        "steel:hole:operationIds",
+        "steel:hole:ordinals",
+    ];
+    let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
+    if declared.iter().all(|seen| !seen) {
+        return Ok(());
+    }
+    if !declared.iter().all(|seen| *seen) {
+        return Err(invalid());
+    }
+    let Value::Array(counts) = required(prim, "steel:hole:vertexCounts", "int[]")? else {
+        return Err(invalid());
+    };
+    let Value::Array(ids) = required(prim, "steel:hole:operationIds", "string[]")? else {
+        return Err(invalid());
+    };
+    let Value::Array(ordinals) = required(prim, "steel:hole:ordinals", "int[]")? else {
+        return Err(invalid());
+    };
+    if counts.len() > MAX_HOLES
+        || counts.len() != ids.len()
+        || counts.len() != ordinals.len()
+        || counts.is_empty()
+    {
+        return Err(invalid());
+    }
+    let points = points(prim, "steel:hole:pointsMm")?;
+    if points.len() > MAX_HOLES * MAX_HOLE_POINTS {
+        return Err(limit());
+    }
+    cap(points.iter().flatten().copied(), 1e9)?;
+    let mut at = 0usize;
+    let mut last: Option<i64> = None;
+    for count in counts {
+        let n = match count {
+            Value::Int(n) => usize::try_from(*n).map_err(|_| invalid())?,
+            _ => return Err(invalid()),
+        };
+        if !(3..=MAX_HOLE_POINTS).contains(&n) {
+            return Err(invalid());
+        }
+        let end = at.checked_add(n).ok_or_else(invalid)?;
+        let hole = points.get(at..end).ok_or_else(invalid)?;
+        if hole.iter().any(|p| p[2] != 0.0) {
+            return Err(invalid());
+        }
+        at = end;
+    }
+    if at != points.len() {
+        return Err(invalid());
+    }
+    for (id, ordinal) in ids.iter().zip(ordinals.iter()) {
+        let Value::Text(id) = id else {
+            return Err(invalid());
+        };
+        if !uuid7(id) {
+            return Err(invalid());
+        }
+        let Value::Int(n) = ordinal else {
+            return Err(invalid());
+        };
+        if *n < 0 || last.is_some_and(|seen| *n <= seen) {
+            return Err(invalid());
+        }
+        last = Some(*n);
+    }
+    Ok(())
+}
 /// Most through holes of one plate and most points of one hole.
 const MAX_HOLES: usize = 64;
 const MAX_HOLE_POINTS: usize = 1024;
@@ -751,6 +830,7 @@ pub(super) fn snapshot(
                     number(p, "steel:plate:thicknessMm")?,
                 )?;
                 plate_holes(p)?;
+                plate_hole_records(p)?;
                 element_cut(p)?;
             }
             "beam" | "column" => {
@@ -1607,6 +1687,7 @@ pub(super) fn changes(
                 }
                 let valid = match change {
                     Change::Contour { .. } | Change::Thickness { .. } => kind == "plate",
+                    Change::HoleRecords { .. } => kind == "plate",
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
                     }
@@ -1847,12 +1928,13 @@ pub(super) fn changes(
                         contour_mm,
                         thickness_mm,
                         holes,
+                        hole_records,
                         cuts,
                     } => {
                         count_points(contour_mm, b)?;
                         cap(contour_mm.iter().flatten().copied(), 1e9)?;
                         cap([*thickness_mm], 1e6)?;
-                        if holes.len() > MAX_HOLES {
+                        if holes.len() + hole_records.len() > MAX_HOLES {
                             return Err(limit());
                         }
                         for hole in holes {
@@ -1863,6 +1945,16 @@ pub(super) fn changes(
                                 return Err(invalid());
                             }
                             cap(hole.iter().flatten().copied(), 1e9)?;
+                        }
+                        for record in hole_records {
+                            // Record polygons are planar XY pairs by type; winding, placement
+                            // and clearance are the engine's replay decision.
+                            if record.polygon_mm.len() > MAX_HOLE_POINTS
+                                || record.polygon_mm.len() < 3
+                            {
+                                return Err(invalid());
+                            }
+                            cap(record.polygon_mm.iter().flatten().copied(), 1e9)?;
                         }
                         cut_values(cuts)?;
                     }
@@ -2117,6 +2209,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     contour_mm,
                     thickness_mm,
                     holes,
+                    hole_records,
                     cuts,
                 } => finite(
                     contour_mm
@@ -2124,6 +2217,11 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .flatten()
                         .copied()
                         .chain(holes.iter().flatten().flatten().copied())
+                        .chain(
+                            hole_records
+                                .iter()
+                                .flat_map(|r| r.polygon_mm.iter().flatten().copied()),
+                        )
                         .chain([*thickness_mm])
                         .chain(
                             cuts.iter()

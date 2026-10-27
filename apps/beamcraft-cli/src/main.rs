@@ -144,6 +144,7 @@ fn main() -> std::process::ExitCode {
             || c == "define-profile"
             || c == "definitions"
             || c == "create-member"
+            || c == "add-hole"
             || c == "update-element"
             || c == "delete-element"
             || c == "copy-element"

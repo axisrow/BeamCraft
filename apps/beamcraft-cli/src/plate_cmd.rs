@@ -15,6 +15,7 @@ use beamcraft_cli::definition::{
 use beamcraft_cli::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
+use beamcraft_cli::hole::{AddHoleRequest, add_hole_command};
 use beamcraft_cli::library::open_lookup;
 use beamcraft_cli::member::{CreateMemberRequest, create_member};
 use beamcraft_cli::plate::{
@@ -39,8 +40,8 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    CopyElement, CreatePlate, CreateStraightMember, CutByPlane, CutRecord, DeleteElement,
-    ElementPatch, KeepSide, MAX_HOLES, MemberKind, Placement, UpdateElement,
+    AddHole, CopyElement, CreatePlate, CreateStraightMember, CutByPlane, CutRecord, DeleteElement,
+    ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -90,6 +91,19 @@ const CREATE_OPTIONS: &[&str] = &[
     "--level",
     "--offset",
     "--origin-at-grid",
+];
+
+const ADD_HOLE_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--operation-id",
+    "--polygon",
+    "--hole-rect",
+    "--hole-round",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
 ];
 
 const DEFINE_MATERIAL_OPTIONS: &[&str] = &[
@@ -247,6 +261,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let allowed: &[&str] = match *command {
         "create-plate" => CREATE_OPTIONS,
         "create-member" => CREATE_MEMBER_OPTIONS,
+        "add-hole" => ADD_HOLE_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" => COPY_OPTIONS,
@@ -294,6 +309,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     match *command {
         "create-plate" => create(&store, &options, candidates),
         "create-member" => create_member_command(&store, &options, candidates),
+        "add-hole" => add_hole_cli(&store, &options),
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options),
@@ -841,21 +857,6 @@ fn create(
 /// the input edge, and are authored as the doubles they round to.
 fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     let given = |key: &str| options.get(key).copied();
-    let numbers = |text: &str, count: usize| -> Run<Vec<f64>> {
-        let values: Vec<f64> = text
-            .split(',')
-            .map(|p| {
-                p.trim()
-                    .parse::<f64>()
-                    .map_err(|_| invalid("a hole value is not a number"))
-            })
-            .collect::<Run<_>>()?;
-        if values.len() == count {
-            Ok(values)
-        } else {
-            Err(invalid("a hole has the wrong number of values"))
-        }
-    };
     let segments = match given("--hole-segments") {
         Some(text) => text
             .parse::<usize>()
@@ -870,7 +871,7 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     let mut result = Vec::new();
     if let Some(list) = given("--hole-rect") {
         for item in list.split(';').take(MAX_HOLES.saturating_add(1)) {
-            if let [x, y, w, h] = numbers(item, 4)?[..] {
+            if let [x, y, w, h] = numbers_list(item, 4)?[..] {
                 if !size_ok(&[w, h]) {
                     return Err(invalid("a hole width and height must be positive"));
                 }
@@ -880,7 +881,7 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     }
     if let Some(list) = given("--hole-round") {
         for item in list.split(';').take(MAX_HOLES.saturating_add(1)) {
-            if let [x, y, d] = numbers(item, 3)?[..] {
+            if let [x, y, d] = numbers_list(item, 3)?[..] {
                 if !size_ok(&[d]) {
                     return Err(invalid("a hole diameter must be positive"));
                 }
@@ -1094,6 +1095,146 @@ fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Jso
         ("element", element),
         ("revision", revision_json(&cut.revision)),
         ("footprint", footprint_json(cut.footprint.as_ref())),
+    ]))
+}
+
+/// Comma-separated numbers, exactly `count` of them (the shared shape of every hole option).
+fn numbers_list(text: &str, count: usize) -> Run<Vec<f64>> {
+    let values: Vec<f64> = text
+        .split(',')
+        .map(|p| {
+            p.trim()
+                .parse::<f64>()
+                .map_err(|_| invalid("a hole value is not a number"))
+        })
+        .collect::<Run<_>>()?;
+    if values.len() == count {
+        Ok(values)
+    } else {
+        Err(invalid("a hole has the wrong number of values"))
+    }
+}
+
+/// The one hole of `add-hole` (A04): `--polygon "X,Y;..."` (the clockwise polygon itself) or a
+/// generator, `--hole-rect "X,Y,W,H"` or `--hole-round "X,Y,D"`, in plate-local millimetres.
+/// Exactly one is accepted, and only the shape is parsed here: finiteness, positivity and the
+/// caps are the model's admission (`hole` field), and a round hole is the regular inscribed
+/// `N`-gon of F06 section 2 (A-2), whose `N` follows the contract's own tolerance, so
+/// `--hole-segments` does not apply.
+fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
+    let given = |key: &str| options.get(key).copied();
+    let given_count = ["--polygon", "--hole-rect", "--hole-round"]
+        .iter()
+        .filter(|key| given(key).is_some())
+        .count();
+    if given_count != 1 {
+        return Err(invalid(
+            "exactly one of --polygon, --hole-rect or --hole-round is required",
+        ));
+    }
+    if let Some(text) = given("--polygon") {
+        let points = text
+            .split(';')
+            .map(|item| match numbers_list(item, 2)?[..] {
+                [x, y] => Ok([x, y]),
+                _ => Err(invalid("a hole has the wrong number of values")),
+            })
+            .collect::<Run<Vec<_>>>()?;
+        return Ok(HoleSpec::Polygon(points));
+    }
+    if let Some(text) = given("--hole-rect") {
+        return match numbers_list(text, 4)?[..] {
+            [x, y, w, h] => Ok(HoleSpec::Rectangle {
+                corner_mm: [x, y],
+                width_mm: w,
+                height_mm: h,
+            }),
+            _ => Err(invalid("a hole has the wrong number of values")),
+        };
+    }
+    let Some(text) = given("--hole-round") else {
+        return Err(invalid(
+            "exactly one of --polygon, --hole-rect or --hole-round is required",
+        ));
+    };
+    match numbers_list(text, 3)?[..] {
+        [x, y, d] => Ok(HoleSpec::Round {
+            centre_mm: [x, y],
+            diameter_mm: d,
+        }),
+        _ => Err(invalid("a hole has the wrong number of values")),
+    }
+}
+
+/// The `add-hole` command (A04): one through-hole operation record on a plate, committed as
+/// the next revision. The `--operation-id` is the record's identity and the logical operation
+/// of the command; absent, a fresh id is generated.
+fn add_hole_cli(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let operation_id = match given("--operation-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let added = add_hole_command(
+        store,
+        &AddHoleRequest {
+            op_id: operation_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: AddHole {
+                target_id,
+                operation_id,
+                hole: hole_spec(options)?,
+            },
+        },
+        &mut NoFault,
+    )?;
+    let element = plate_json(&added.plate)?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if added.replayed {
+                "hole_add_replayed"
+            } else {
+                "hole_added"
+            }),
+        ),
+        ("op_id", Json::text(operation_id.to_string())),
+        (
+            "changed_layers",
+            Json::Array(added.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("element", element),
+        ("revision", revision_json(&added.revision)),
+        ("footprint", footprint_json(added.footprint.as_ref())),
     ]))
 }
 
@@ -2192,7 +2333,9 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
         ("triangles", Json::uint(mesh.triangles().len() as u64)),
         (
             "hole_count",
-            Json::uint(record.authored.holes_mm.len() as u64),
+            Json::uint(
+                (record.authored.holes_mm.len() + record.authored.hole_records.len()) as u64,
+            ),
         ),
         ("cuts", cuts_json(&record.authored.cuts)?),
         (
@@ -2200,7 +2343,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
             Json::Array(
                 record
                     .authored
-                    .holes_mm
+                    .hole_polygons_in_replay_order()
                     .iter()
                     .map(|hole| {
                         Ok(Json::Array(
@@ -2210,6 +2353,22 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                         ))
                     })
                     .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        (
+            "hole_records",
+            Json::Array(
+                record
+                    .authored
+                    .hole_records
+                    .iter()
+                    .map(|r| {
+                        Json::object([
+                            ("operation_id", Json::text(r.operation_id.to_string())),
+                            ("ordinal", Json::uint(r.ordinal as u64)),
+                        ])
+                    })
+                    .collect(),
             ),
         ),
     ]))

@@ -582,6 +582,7 @@ fn create(
             contour_mm,
             thickness_mm,
             holes,
+            hole_records,
             ..
         } => {
             attr(
@@ -617,6 +618,40 @@ fn create(
                     "steel:plate:holeVertexCounts",
                     "int[]",
                     sdf::Value::IntVec(counts),
+                )?;
+            }
+            if !hole_records.is_empty() {
+                let mut flat: Vec<[f64; 3]> = Vec::new();
+                let mut counts = Vec::new();
+                let mut ids = Vec::new();
+                let mut ordinals = Vec::new();
+                for record in hole_records {
+                    flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
+                    counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
+                    ids.push(record.operation_id.to_string());
+                    ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+                }
+                attr(data, &p, "steel:hole:pointsMm", "double3[]", points(&flat))?;
+                attr(
+                    data,
+                    &p,
+                    "steel:hole:vertexCounts",
+                    "int[]",
+                    sdf::Value::IntVec(counts),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:hole:operationIds",
+                    "string[]",
+                    sdf::Value::StringVec(ids),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:hole:ordinals",
+                    "int[]",
+                    sdf::Value::IntVec(ordinals),
                 )?;
             }
         }
@@ -1057,6 +1092,49 @@ pub(super) fn apply(
                 sdf::Value::Double(*mm),
             )?,
             Change::Cuts { cuts, .. } => author_cuts(&mut authored, &p, cuts)?,
+            Change::HoleRecords { records, .. } => {
+                // The four record attributes, always together: the authoritative polygons of
+                // every record, replayed from the base shape in ordinal order, with the id and
+                // the engine-assigned ordinal of each.
+                let mut flat = Vec::new();
+                let mut counts = Vec::new();
+                let mut ids = Vec::new();
+                let mut ordinals = Vec::new();
+                for record in records {
+                    flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
+                    counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
+                    ids.push(record.operation_id.to_string());
+                    ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+                }
+                attr(
+                    &mut authored,
+                    &p,
+                    "steel:hole:pointsMm",
+                    "double3[]",
+                    points(&flat),
+                )?;
+                attr(
+                    &mut authored,
+                    &p,
+                    "steel:hole:vertexCounts",
+                    "int[]",
+                    sdf::Value::IntVec(counts),
+                )?;
+                attr(
+                    &mut authored,
+                    &p,
+                    "steel:hole:operationIds",
+                    "string[]",
+                    sdf::Value::StringVec(ids),
+                )?;
+                attr(
+                    &mut authored,
+                    &p,
+                    "steel:hole:ordinals",
+                    "int[]",
+                    sdf::Value::IntVec(ordinals),
+                )?;
+            }
             Change::Axis { points_mm, .. } => attr(
                 &mut authored,
                 &p,
@@ -1178,6 +1256,7 @@ pub(super) fn apply(
                 | Change::Axis { .. }
                 | Change::Roll { .. }
                 | Change::Profile { .. }
+                | Change::HoleRecords { .. }
         ) {
             // Never reveal a weaker stale result after removing the derived opinion.
             let mesh_path = format!("{p}/Geometry");
@@ -1307,6 +1386,7 @@ fn capture(
                     Shape::Plate {
                         ref holes,
                         ref cuts,
+                        ref hole_records,
                         ..
                     } => {
                         add("steel:plate:contourPointsMm", "double3[]", 0);
@@ -1319,6 +1399,12 @@ fn capture(
                             for &(name, ty) in CUT_FIELDS {
                                 add(name, ty, 0);
                             }
+                        }
+                        if !hole_records.is_empty() {
+                            add("steel:hole:pointsMm", "double3[]", 0);
+                            add("steel:hole:vertexCounts", "int[]", 0);
+                            add("steel:hole:operationIds", "string[]", 0);
+                            add("steel:hole:ordinals", "int[]", 0);
                         }
                     }
                     Shape::Member { ref cuts, .. } => {
@@ -1380,6 +1466,12 @@ fn capture(
                 }
             }
             Change::Label { .. } => add("bim:name", "string", 0),
+            Change::HoleRecords { .. } => {
+                add("steel:hole:pointsMm", "double3[]", 0);
+                add("steel:hole:vertexCounts", "int[]", 0);
+                add("steel:hole:operationIds", "string[]", 0);
+                add("steel:hole:ordinals", "int[]", 0);
+            }
             Change::Delete { .. } => {
                 for (name, ty) in [
                     ("bim:id", "string"),
@@ -1398,6 +1490,10 @@ fn capture(
                     ("steel:cut:pointMm", "double3[]"),
                     ("steel:cut:normal", "double3[]"),
                     ("steel:cut:keep", "token[]"),
+                    ("steel:hole:pointsMm", "double3[]"),
+                    ("steel:hole:vertexCounts", "int[]"),
+                    ("steel:hole:operationIds", "string[]"),
+                    ("steel:hole:ordinals", "int[]"),
                     ("bim:axisPointsMm", "double3[]"),
                     ("steel:member:rollRad", "double"),
                     ("bim:profile", "rel"),

@@ -19,7 +19,7 @@ pub use reference::{
 };
 
 use crate::*;
-pub use beamcraft_model::command::{CutRecord, KeepSide};
+pub use beamcraft_model::command::{CutRecord, HoleRecord, KeepSide};
 pub use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 pub use beamcraft_model::section::SectionShape;
@@ -41,6 +41,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
     "steel:cut:keep=token[](optional,positive|negative);all five or none,equal lengths,ascending ordinals\n",
+    "steel:hole:pointsMm=double3[](optional,z=0);steel:hole:vertexCounts=int[](optional,>=3 each);",
+    "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
+    "all four steel:hole attributes or none, ordinals are engine-assigned and never reused\n",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
@@ -91,7 +94,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Delete;",
+    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -212,6 +215,10 @@ pub enum Shape {
         /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
         /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
         holes: Vec<Vec<[f64; 3]>>,
+        /// Through-hole operation records (A04) authored with the element. An ordinary create
+        /// carries none (F04 section 4); a copy authors the source's records with fresh
+        /// operation ids and the same ordinals.
+        hole_records: Vec<HoleRecord>,
         /// The owned `plane_cut` operation records (A03, amendment A-2) in ascending ordinal
         /// order, stored as five parallel attributes. Empty means an uncut plate.
         cuts: Vec<CutRecord>,
@@ -568,6 +575,16 @@ pub enum Change {
         /// The mark to store.
         mark: Mark,
     },
+    /// Replace the complete set of through-hole operation records of a plate (A04): the four
+    /// `steel:hole:*` attributes, replaced as a whole and always together. The engine has
+    /// already replayed every record against the base shape and certified the body; this
+    /// writes the authoritative polygons with their operation ids and ordinals.
+    HoleRecords {
+        /// Full target UUIDv7 of the plate.
+        id: String,
+        /// Every record of the plate, ordered by ordinal; at least one.
+        records: Vec<HoleRecord>,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
@@ -591,6 +608,7 @@ impl Change {
             Self::MainPart { id, .. } => (id, "bim:mainPart"),
             Self::Level { id, .. } => (id, "bim:level"),
             Self::Mark { id, .. } => (id, "steel:numbering"),
+            Self::HoleRecords { id, .. } => (id, "steel:hole"),
         }
     }
 }
