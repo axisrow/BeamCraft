@@ -176,6 +176,52 @@ pub fn cut_by_plane(
     })
 }
 
+/// Replace a cut in memory without changing its record UUID, ordinal or placement. The
+/// adapter evaluates the complete replay before publication, including all linked instances.
+pub fn update_cut(
+    command: &beamcraft_model::command::UpdateCut,
+    plate: Option<&AuthoredPlate>,
+    member: Option<&crate::member::AuthoredMember>,
+) -> Result<CutByPlaneOutcome, CommandError> {
+    command.validate_arguments()?;
+    let c = &command.cut;
+    let mut target = match (plate, member) {
+        (Some(p), _) if p.id == c.target_id => CutTarget::Plate(p.clone()),
+        (_, Some(m)) if m.id == c.target_id => CutTarget::Member(m.clone()),
+        _ => {
+            return Err(CommandError::new(
+                ErrorCode::NotFound,
+                "target_id",
+                "cut target not found",
+            ));
+        }
+    };
+    let cuts = match &mut target {
+        CutTarget::Plate(p) => &mut p.cuts,
+        CutTarget::Member(m) => &mut m.cuts,
+    };
+    let r = cuts
+        .iter_mut()
+        .find(|r| r.operation_id == c.operation_id)
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::NotFound,
+                "operation_id",
+                "cut record not found on target",
+            )
+        })?;
+    r.point_mm = c.point_mm;
+    r.normal = c.normal;
+    r.keep = c.keep;
+    let ordinal = r.ordinal;
+    Ok(CutByPlaneOutcome {
+        target,
+        ordinal,
+        footprint: Footprint::for_update(c.target_id, false, false, true, false, None)?,
+        fingerprint: command.content_fingerprint()?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,5 +334,49 @@ mod tests {
         let refused = cut_by_plane(&command(id(5)), Some(&full), None, &none).unwrap_err();
         assert_eq!(refused.code, ErrorCode::LimitExceeded);
         assert_eq!(refused.field, "kernel_capacity");
+    }
+    #[test]
+    fn update_keeps_record_identity_and_ordinal_and_has_its_own_fingerprint() {
+        let p = plate();
+        let c = CutByPlane {
+            target_id: p.id,
+            operation_id: op(60),
+            point_mm: [800.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+            keep: KeepSide::Negative,
+        };
+        let added = cut_by_plane(&c, Some(&p), None, &|_| false).unwrap();
+        let CutTarget::Plate(p) = added.target else {
+            panic!("plate");
+        };
+        let edit = beamcraft_model::command::UpdateCut {
+            cut: CutByPlane {
+                point_mm: [600.0, 0.0, 0.0],
+                ..c
+            },
+        };
+        let r = update_cut(&edit, Some(&p), None).unwrap();
+        assert_eq!(r.ordinal, 0);
+        assert_eq!(
+            r.target.cuts().first().unwrap().operation_id,
+            c.operation_id
+        );
+        assert_ne!(
+            edit.content_fingerprint().unwrap(),
+            edit.cut.content_fingerprint().unwrap()
+        );
+        assert!(
+            update_cut(
+                &beamcraft_model::command::UpdateCut {
+                    cut: CutByPlane {
+                        operation_id: op(61),
+                        ..c
+                    }
+                },
+                Some(&p),
+                None
+            )
+            .is_err()
+        );
     }
 }

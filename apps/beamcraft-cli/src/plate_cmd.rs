@@ -376,7 +376,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" | "copy-instance" => COPY_OPTIONS,
-        "cut-by-plane" => CUT_OPTIONS,
+        "cut-by-plane" | "update-cut" => CUT_OPTIONS,
         "cut-by-line" => A13_LINE_OPTIONS_ALL,
         "cut-by-polygon" => A13_POLYGON_OPTIONS_ALL,
         "cut-by-part" => A13_PART_OPTIONS_ALL,
@@ -434,7 +434,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options, false),
         "copy-instance" => copy_command(&store, &options, true),
-        "cut-by-plane" => cut_command(&store, &options),
+        "cut-by-plane" => cut_command(&store, &options, false),
+        "update-cut" => cut_command(&store, &options, true),
         "cut-by-line" => a13_command(&store, "cut-by-line", &options),
         "cut-by-polygon" => a13_command(&store, "cut-by-polygon", &options),
         "cut-by-part" => a13_command(&store, "cut-by-part", &options),
@@ -1249,7 +1250,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
 
 /// The engine's `CutByPlane` (A03, amendment A-2) through the real adapter: appends one
 /// `plane_cut` record, rebuilds the mesh and the quantities, and publishes the revision.
-fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, update: bool) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
@@ -1291,7 +1292,12 @@ fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Jso
         normal: translation(given("--normal").ok_or_else(|| invalid("--normal is required"))?)?,
         keep: keep_side(options)?,
     };
-    let cut = cut_by_plane_record(
+    let apply = if update {
+        beamcraft_cli::cut::update_cut_record
+    } else {
+        cut_by_plane_record
+    };
+    let cut = apply(
         store,
         &CutRequest {
             op_id,
@@ -1312,6 +1318,8 @@ fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Jso
             "outcome",
             Json::text(if cut.replayed {
                 "cut_replayed"
+            } else if update {
+                "cut_updated"
             } else {
                 "cut_applied"
             }),
