@@ -9,7 +9,7 @@
 //! member pins its required profile and optional material by the full digest of an immutable
 //! definition published earlier ([`crate::definition`]); the engine resolves both from the head
 //! and the kernel builds the body. The two command families share the commit tail
-//! ([`finish_member`]).
+//! (`finish_member`).
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
@@ -104,7 +104,7 @@ fn replay_fingerprint(
     }
 }
 
-/// The opened base and its commit expectations, as [`finish_member`] takes them.
+/// The opened base and its commit expectations, as the shared commit tail takes them.
 struct MemberBase {
     base_request: OpenRequest,
     project: String,

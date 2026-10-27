@@ -65,11 +65,19 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
     }
 }
 
-/// Applies a patch to an authored plate.
+/// Applies a patch to an authored plate. A plate has no path points: that field is
+/// `UNSUPPORTED_PROPERTY`.
 pub fn patch_plate(
     plate: &AuthoredPlate,
     patch: &ElementPatch,
 ) -> Result<AuthoredPlate, CommandError> {
+    if patch.axis_points_mm.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "axis_points_mm",
+            "a plate has no path points",
+        ));
+    }
     let mut next = plate.clone();
     if let Some(name) = &patch.name {
         next.name.clone_from(name);
@@ -131,6 +139,12 @@ pub fn patch_member(
             ));
         }
         next.axis_points_mm.clone_from(points);
+        // A polybeam carries no authored roll (the G12 sweep has no roll input): bending a
+        // rolled straight member into a polybeam clears the opinion instead of storing one
+        // the body would silently ignore.
+        if points.len() > 2 {
+            next.roll_rad = None;
+        }
     }
     next.placement = placement_after(&member.placement, patch)?;
     Ok(next)
@@ -478,5 +492,48 @@ mod tests {
         // The untouched patch keeps the path and everything else.
         let untouched = patch_member(&member(), &ElementPatch::default()).unwrap();
         assert_eq!(untouched, member());
+    }
+
+    #[test]
+    fn bending_a_rolled_straight_member_clears_the_roll_opinion() {
+        let mut rolled = member();
+        rolled.roll_rad = Some(0.5);
+        let bent = patch_member(
+            &rolled,
+            &ElementPatch {
+                axis_points_mm: Some(vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        // A stored polybeam reads rollRad absent: the sweep has no roll input.
+        assert_eq!(bent.roll_rad, None);
+        // Straightening keeps the patch's own two points; a polybeam patch on a member
+        // without roll stays without one.
+        let straight = patch_member(
+            &bent,
+            &ElementPatch {
+                axis_points_mm: Some(vec![[0.0; 3], [7000.0, 0.0, 0.0]]),
+                ..ElementPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(straight.roll_rad, None);
+    }
+
+    #[test]
+    fn a_plate_has_no_path_points() {
+        assert_eq!(
+            patch_plate(
+                &plate(),
+                &ElementPatch {
+                    axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0]]),
+                    ..ElementPatch::default()
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::UnsupportedProperty
+        );
     }
 }

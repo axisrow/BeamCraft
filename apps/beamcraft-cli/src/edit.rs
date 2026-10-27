@@ -34,7 +34,7 @@ use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, MaterialOpinion, Placement as LayerPlacement, Prepare,
+    Author, Change, EditTargets, MaterialOpinion, Opinion, Placement as LayerPlacement, Prepare,
     schema_identity,
 };
 use beamcraft_model::command::{CommandError, UpdateElement};
@@ -390,6 +390,14 @@ pub fn update_element(
             id: definition_text.clone(),
             points_mm: record.authored.axis_points_mm.clone(),
         });
+        // A bent member carries no authored roll: the polybeam sweep has no roll input, so
+        // the old straight member's opinion is removed instead of being silently ignored.
+        if record.authored.axis_points_mm.len() > 2 {
+            changes.push(Change::Roll {
+                id: definition_text.clone(),
+                opinion: Opinion::Remove,
+            });
+        }
     }
     if patch_effect.placement || patch_effect.orientation {
         let placement = match &next {
