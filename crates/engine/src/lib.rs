@@ -71,3 +71,6 @@ pub mod saved_view;
 
 /// Plane camera builders (V09).
 pub mod plane_view;
+
+/// Presentation-only clipping (V15).
+pub mod view_clipping;

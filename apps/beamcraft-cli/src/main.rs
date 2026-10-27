@@ -19,6 +19,7 @@ mod assembly_cmd;
 mod bolt_cmd;
 mod bom_cmd;
 mod changeset_cmd;
+mod clipping_cmd;
 mod command_context;
 mod coordinator_cmd;
 mod drawing_cmd;
@@ -140,6 +141,8 @@ fn main() -> std::process::ExitCode {
         project_cmd::execute(&args)
     } else if args.first().is_some_and(grid_cmd::handles) {
         grid_cmd::execute(&args)
+    } else if args.first().is_some_and(clipping_cmd::handles) {
+        clipping_cmd::execute(&args)
     } else if args.first().is_some_and(plane_view_cmd::handles) {
         plane_view_cmd::execute(&args)
     } else if args.first().is_some_and(saved_views_cmd::handles) {
