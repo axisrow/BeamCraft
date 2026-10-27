@@ -1429,17 +1429,23 @@ fn bolt_group_properties(p: &Prim) -> Result<(), Diagnostic> {
     let offset_start = number(p, "steel:boltGroup:offsetStartMm")?;
     finite([rotation, on_plane, depth, offset_start])?;
     cap([rotation, on_plane, depth, offset_start], 1e9)?;
-    let spacings = match required(p, "steel:boltGroup:spacingsMm", "double[]") {
-        Ok(Value::Array(values)) => values,
+    // An absent attribute is the empty row: the single-fastener group authors no spacings,
+    // because the USD text layer does not round-trip an empty array.
+    let spacings: Vec<f64> = match optional(p, "steel:boltGroup:spacingsMm", "double[]")? {
+        None => Vec::new(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| match v {
+                Value::Number(n) => Ok(*n),
+                _ => Err(invalid()),
+            })
+            .collect::<Result<Vec<_>, Diagnostic>>()?,
         _ => return Err(invalid()),
     };
     if spacings.len() >= 512 {
         return Err(limit());
     }
-    for spacing in spacings {
-        let Value::Number(spacing) = spacing else {
-            return Err(invalid());
-        };
+    for spacing in &spacings {
         finite([*spacing])?;
         if *spacing <= 0.0 {
             return Err(invalid());

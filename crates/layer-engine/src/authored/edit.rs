@@ -913,6 +913,9 @@ fn create(
             ] {
                 attr(data, &p, name, "double", sdf::Value::Double(value))?;
             }
+            // The spacings are authored only when non-empty: the USD text layer does not
+            // round-trip an empty array, and the structural reader treats an absent attribute
+            // as the empty row (the single-fastener group).
             if !g.spacings_mm.is_empty() {
                 attr(
                     data,
@@ -1685,6 +1688,11 @@ fn capture(
                         for &(name, ty) in BOLT_GROUP {
                             add(name, ty, 0);
                         }
+                        add(
+                            "steel:boltGroup:spacingsMm",
+                            "double[]",
+                            g.spacings_mm.len() as u8,
+                        );
                         if g.fixed_length_mm.is_some() {
                             add("steel:boltGroup:fixedLengthMm", "double", 0);
                         }
@@ -1697,13 +1705,11 @@ fn capture(
                         if g.hole_clearance_mm.is_some() {
                             add("steel:boltGroup:holeClearanceMm", "double", 0);
                         }
-                        if !g.spacings_mm.is_empty() {
-                            add(
-                                "steel:boltGroup:spacingsMm",
-                                "double[]",
-                                g.spacings_mm.len() as u8,
-                            );
-                        }
+                        add(
+                            "steel:boltGroup:spacingsMm",
+                            "double[]",
+                            g.spacings_mm.len() as u8,
+                        );
                     }
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
                     Shape::Grid(_) => {

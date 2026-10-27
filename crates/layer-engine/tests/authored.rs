@@ -3550,3 +3550,113 @@ fn connection_discriminator_roundtrips_and_rejects_missing_unknown_or_conflictin
         }
     }
 }
+
+#[test]
+fn a_single_fastener_group_authors_empty_spacings_and_passes_the_structural_read() {
+    use beamcraft_model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode};
+    let fastener = Resource::new(Definition::Fastener {
+        spec: FastenerSpec {
+            kind: FastenerKind::Bolt,
+            head_kind: HeadKind::Hex,
+            nominal_diameter_mm: 16.0,
+            head_across_flats_mm: 24.0,
+            head_height_mm: 10.0,
+            nut_across_flats_mm: Some(24.0),
+            nut_height_mm: Some(14.8),
+            washer: None,
+            hole_clearance_mm: 2.0,
+            lengths_mm: vec![30.0, 40.0, 50.0],
+            thread_protrusion_mm: 4.0,
+            mass_each_kg: None,
+            washer_under_head: false,
+            washer_under_nut: false,
+            hole_mode: HoleMode::None,
+            designation: Some("SYN".into()),
+            standard: None,
+            grade: None,
+            display_name: Some("SYN".into()),
+        },
+    })
+    .unwrap();
+    let part_one = "0199e7a0-0000-7000-8000-0000000000a1";
+    let part_two = "0199e7a0-0000-7000-8000-0000000000a2";
+    let group = "0199e7a0-0000-7000-8000-0000000000a3";
+    let plate = |id: &str| {
+        Change::Create(Element {
+            id: id.into(),
+            name: "Plate".into(),
+            shape: Shape::Plate {
+                contour_mm: vec![
+                    [0.0, 0.0, 0.0],
+                    [500.0, 0.0, 0.0],
+                    [500.0, 500.0, 0.0],
+                    [0.0, 500.0, 0.0],
+                ],
+                thickness_mm: 10.0,
+                holes: Vec::new(),
+                hole_records: Vec::new(),
+                cuts: Vec::new(),
+            },
+            placement: pose(),
+            material: None,
+        })
+    };
+    let (mut a, o) = open(initial());
+    let mut input = batch(
+        &o.context,
+        vec![
+            plate(part_one),
+            plate(part_two),
+            Change::Create(Element {
+                id: group.into(),
+                name: "Single".into(),
+                shape: Shape::BoltGroup(BoltGroup {
+                    connects: vec![part_one.into(), part_two.into()],
+                    fastener: fastener.digest,
+                    point1_mm: [100.0, 100.0, 30.0],
+                    point2_mm: [400.0, 100.0, 30.0],
+                    plane_normal: [0.0, 0.0, -1.0],
+                    rotation_rad: 0.0,
+                    on_plane_mm: 0.0,
+                    depth_mm: 0.0,
+                    offset_start_mm: 0.0,
+                    // The legal single-fastener group: the empty spacings attribute is
+                    // authored, never omitted (A14.3).
+                    spacings_mm: Vec::new(),
+                    length_mode: "fixed".into(),
+                    length_mm: 30.0,
+                    fixed_length_mm: Some(30.0),
+                    washer_under_head: None,
+                    washer_under_nut: None,
+                    hole_mode: "none".into(),
+                    hole_clearance_mm: None,
+                }),
+                // A connection's placement is the identity (the A05 rule the group keeps).
+                placement: Placement {
+                    translation_mm: [0.0; 3],
+                    orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+                },
+                material: None,
+            }),
+        ],
+    );
+    input.resources = vec![fastener];
+    let p = a.prepare(input, &control()).unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    // The single-fastener group authors no spacings attribute; the reader treats the absent
+    // attribute as the empty row.
+    assert_eq!(value(&prims, group, "steel:boltGroup:spacingsMm"), None);
+    // The exported layers pass the structural validator, so a reader can rely on the record.
+    let layers = a.export(&o.context, &control()).unwrap();
+    let request = request(layers, &["root.usda", "authored.usda", "derived.usda"]);
+    validate_layers(request, schema_identity().unwrap(), &control()).unwrap();
+}

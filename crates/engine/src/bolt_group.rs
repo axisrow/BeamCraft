@@ -579,6 +579,17 @@ mod tests {
     }
 
     #[test]
+    fn a_single_fastener_group_is_admitted_with_empty_spacings() {
+        let (parts, bounds) = parts();
+        let mut single = command();
+        single.spacings_mm = Vec::new();
+        let decision = parts
+            .create_bolt_group(&single, &spec(), &bounds, true)
+            .unwrap();
+        assert_eq!(decision.length_mm, 45.0);
+    }
+
+    #[test]
     fn the_rotation_turns_the_shank_about_the_line() {
         let placement = BoltGroupPlacement {
             point1_mm: [0.0, 0.0, 0.0],

@@ -64,7 +64,6 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:boltGroup:planeNormal=double3;steel:boltGroup:rotationRad=double;steel:boltGroup:onPlaneMm=double;steel:boltGroup:depthMm=double;",
     "steel:boltGroup:offsetStartMm=double;steel:boltGroup:spacingsMm=double[](1..=511,>0 each);steel:boltGroup:lengthMode=token(auto|fixed);",
     "steel:boltGroup:lengthMm=double(resolved standard length);steel:boltGroup:fixedLengthMm=double(fixed only);steel:boltGroup:washerUnderHead=bool(optional);steel:boltGroup:washerUnderNut=bool(optional);",
-    "steel:boltGroup:fixedLengthMm=double(fixed only);steel:boltGroup:washerUnderHead=bool(optional);steel:boltGroup:washerUnderNut=bool(optional);",
     "steel:boltGroup:holeMode=token(generate|none);steel:boltGroup:holeClearanceMm=double(optional,>=0);bim:fastener=rel(1 fastener definition);",
     "bim:connects=rel(2..=1024 distinct ordered plate|beam|column targets, main part first)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
