@@ -318,17 +318,46 @@ fn semantic_conflicts_include_indirect_reads_and_intermediate_reverted_writes() 
 }
 
 #[test]
-fn absent_evidence_and_wrong_actor_do_not_become_independence() {
+fn a_plain_undo_carries_evidence_rebase_proceeds_and_a_stranger_is_refused() {
     let f = Fixture::new(false);
+    let fork_name = plate::inspect(&store(&f.path("b")))
+        .unwrap()
+        .plates
+        .iter()
+        .find(|p| p.authored.id == ElementId::parse(&id(10)).unwrap())
+        .unwrap()
+        .authored
+        .name
+        .clone();
     f.update("b", 10, &["--name", "temporary"]);
     f.ok(&["undo-workspace", "--workspace-dir", f.s("b")]);
     f.update("a", 11, &["--name", "remote"]);
     f.publish("a");
     let accepted = f.head("published");
     let draft = f.head("b");
+    // The undo revision inherited the undone command's footprint, so the draft interval stays
+    // complete: the rebase plans with it and merges the independent accepted edit.
     let (code, result) = f.rebase(500, &accepted, &draft);
-    assert_eq!(code, 2, "{result:?}");
-    assert_eq!(text(&result, "code"), "DEPENDENCY_UNAVAILABLE");
+    assert_eq!(code, 0, "{result:?}");
+    assert_eq!(text(&result, "outcome"), "workspace_rebased");
+    let report = plate::inspect(&store(&f.path("b"))).unwrap();
+    let ten = report
+        .plates
+        .iter()
+        .find(|p| p.authored.id == ElementId::parse(&id(10)).unwrap())
+        .unwrap();
+    assert_eq!(ten.authored.name, fork_name, "the edit stayed undone");
+    assert_eq!(
+        report
+            .plates
+            .iter()
+            .find(|p| p.authored.id == ElementId::parse(&id(11)).unwrap())
+            .unwrap()
+            .authored
+            .name,
+        "remote"
+    );
+    let merged = f.head("b");
     let (code, result) = f.run(&[
         "rebase-workspace",
         "--store",
@@ -352,14 +381,16 @@ fn absent_evidence_and_wrong_actor_do_not_become_independence() {
             .unwrap()
             .is_none()
     );
-    assert_eq!(f.head("b").manifest_digest(), draft.manifest_digest());
+    assert_eq!(f.head("b").manifest_digest(), merged.manifest_digest());
     assert_eq!(
         f.head("published").manifest_digest(),
         accepted.manifest_digest()
     );
     f.update("a", 11, &["--name", "a later accepted head"]);
     f.publish("a");
-    let (code, retry) = f.rebase(500, &accepted, &draft);
+    // A fresh rebase request against the stale observed head is refused; the completed one
+    // only replays.
+    let (code, retry) = f.rebase(502, &accepted, &draft);
     assert_eq!(code, 2);
     assert_eq!(text(&retry, "code"), "BASE_REVISION_MISMATCH");
 }
