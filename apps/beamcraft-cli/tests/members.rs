@@ -944,9 +944,7 @@ fn a_member_without_placement_flags_keeps_the_unchanged_default() {
     assert_eq!(num(member, &["quantities", "volume", "mm3"]), 360_000_000.0);
     assert_eq!(member.get("section_placement").unwrap(), &Json::Null);
     let inspected = f.ok("inspect-elements", &[]);
-    let elements = at(&inspected, &["snapshot", "elements"])
-        .array()
-        .unwrap();
+    let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
     let lo: Vec<f64> = at(&elements[0], &["world_min_mm"])
         .array()
         .unwrap()
@@ -1005,9 +1003,7 @@ fn p14_plane_and_depth_flags_move_the_section_and_reopen() {
     // the positive quadrant of the section plane: X in 0..200, Y in 0..300, axis 0..3000.
     assert_eq!(num(member, &["quantities", "volume", "mm3"]), 180_000_000.0);
     let inspected = f.ok("inspect-elements", &[]);
-    let elements = at(&inspected, &["snapshot", "elements"])
-        .array()
-        .unwrap();
+    let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
     let lo: Vec<f64> = at(&elements[0], &["world_min_mm"])
         .array()
         .unwrap()
@@ -1086,9 +1082,7 @@ fn p14_offsets_move_the_faces_along_the_axis_and_follow_the_volume() {
     assert_eq!(num(placement, &["depth_offset_mm"]), -10.0);
     // The published world bounds follow the shifted, shortened solid.
     let inspected = f.ok("inspect-elements", &[]);
-    let elements = at(&inspected, &["snapshot", "elements"])
-        .array()
-        .unwrap();
+    let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
     let lo: Vec<f64> = at(&elements[0], &["world_min_mm"])
         .array()
         .unwrap()
