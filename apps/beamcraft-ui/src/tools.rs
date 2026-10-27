@@ -24,6 +24,8 @@ pub const MAX_TEXT: usize = 256;
 /// The tools of this slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolKind {
+    /// A construction object (`create-helper`).
+    Helper,
     /// A rectangular plate (`create-plate`).
     Plate,
     /// A straight beam or column (`create-member`).
@@ -34,6 +36,7 @@ impl ToolKind {
     /// The CLI command this tool runs.
     pub fn command(self) -> &'static str {
         match self {
+            Self::Helper => "create-helper",
             Self::Plate => "create-plate",
             Self::Member => "create-member",
         }
@@ -41,6 +44,7 @@ impl ToolKind {
 
     fn noun(self) -> &'static str {
         match self {
+            Self::Helper => "helper",
             Self::Plate => "plate",
             Self::Member => "member",
         }
@@ -429,7 +433,7 @@ pub struct Created {
     pub element_id: String,
     /// The element's name.
     pub name: String,
-    /// The digest of its mesh (shape key).
+    /// The digest of its mesh; empty for a construction helper with no body.
     pub mesh_digest: String,
     /// Its volume in mm3, when the CLI reports a current one.
     pub volume_mm3: Option<f64>,
@@ -520,7 +524,11 @@ pub fn parse_created(
         kind,
         element_id: text(element, "element_id").ok_or_else(unreadable)?,
         name: text(element, "name").unwrap_or_default(),
-        mesh_digest: text(element, "mesh_digest").ok_or_else(unreadable)?,
+        mesh_digest: if kind == ToolKind::Helper {
+            String::new()
+        } else {
+            text(element, "mesh_digest").ok_or_else(unreadable)?
+        },
         volume_mm3: volume,
         revision_id: text(revision, "revision_id").ok_or_else(unreadable)?,
         manifest_digest: text(revision, "manifest_digest").ok_or_else(unreadable)?,
@@ -586,6 +594,8 @@ pub struct Definitions {
     pub materials: Vec<Choice>,
     /// The revision the listing was read from: the store's head at that moment.
     pub head: Option<RevisionStamp>,
+    /// Construction geometry from the same pinned refresh.
+    pub helpers: beamcraft_engine::helper::Helpers,
 }
 
 /// The arguments of the command that lists the definitions of `store`.
@@ -621,6 +631,7 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
     }
     let unreadable = || ToolError::local("UNREADABLE_REPLY", "the CLI reply lacks a field");
     let mut out = Definitions {
+        helpers: crate::helper::parse_helpers(&reply)?,
         head: reply
             .get("revision")
             .ok()
@@ -688,6 +699,12 @@ pub struct Tools {
     pub plate: PlateForm,
     /// The member form.
     pub member: MemberForm,
+    /// Construction object inputs.
+    pub helper: crate::helper::Form,
+    /// Whether placement uses helper snaps.
+    pub helper_snaps: bool,
+    /// Helper snap radius in world millimetres.
+    pub helper_snap_radius_mm: f64,
     /// The store's definitions, as of the last refresh.
     pub definitions: Definitions,
     /// The author recorded as `--actor-id` of every create command, when the window has one.
@@ -704,6 +721,9 @@ impl Default for Tools {
             active: ToolKind::Plate,
             plate: PlateForm::default(),
             member: MemberForm::default(),
+            helper: crate::helper::Form::default(),
+            helper_snaps: true,
+            helper_snap_radius_mm: 10.0,
             definitions: Definitions::default(),
             actor: None,
             plane: None,
@@ -743,10 +763,11 @@ impl Tools {
     /// The command of the selected form.
     pub fn prepare(&self, store: &Path) -> Result<Prepared, FormError> {
         let mut prepared = match self.active {
+            ToolKind::Helper => self.helper.prepare(store),
             ToolKind::Plate => self.plate.prepare(store),
             ToolKind::Member => self.member.prepare_in_plane(store, self.plane),
         }?;
-        if let Some(plane) = self.plane {
+        if let Some(plane) = self.plane.filter(|_| self.active != ToolKind::Helper) {
             if self.active == ToolKind::Member && !self.member.orientation.trim().is_empty() {
                 return Err(FormError {
                     field: "Work plane",

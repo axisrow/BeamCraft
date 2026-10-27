@@ -16,6 +16,7 @@ mod drawing;
 mod edit;
 mod export;
 mod grid;
+mod helper;
 mod history;
 mod level;
 mod library;
@@ -54,6 +55,7 @@ const COMMAND_GROUPS: &[&[&str]] = &[
     bolt::COMMANDS,
     level::COMMANDS,
     grid::COMMANDS,
+    helper::COMMANDS,
     export::COMMANDS,
     numbering::COMMANDS,
     changeset::COMMANDS,
@@ -87,6 +89,7 @@ const SECTIONS: &[&str] = &[
     bolt::HELP,
     level::HELP,
     grid::HELP,
+    helper::HELP,
     grid::LINES,
     grid::UPDATE,
     grid::QUERIES,

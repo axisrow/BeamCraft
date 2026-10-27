@@ -391,6 +391,7 @@ pub(crate) struct Decoded {
     /// The levels of the model and the level of every plate, beam and column (D2).
     pub(crate) levels: Levels,
     pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
+    pub(crate) helpers: beamcraft_engine::helper::Helpers,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
     /// Any geometry subtree or derived-value opinion, including malformed/non-mesh prims.
@@ -866,7 +867,7 @@ pub(crate) fn decode(
                 .and_then(|m| decode_mesh(m))
         };
         let kind = property(prim, "bim:elementKind").and_then(text);
-        if kind != Some("level") {
+        if !matches!(kind, Some("level" | "helper")) {
             let proxy_mesh = match kind {
                 Some("plate" | "beam" | "column") => None,
                 _ => mesh().as_ref().and_then(published_mesh),
@@ -920,6 +921,7 @@ pub(crate) fn decode(
         definitions,
         levels,
         grids: beamcraft_layer_engine::authored::grid::read_grids(&prims)?,
+        helpers: crate::helper::helpers_of(&prims)?,
         elements,
         derived_elements,
         reference_scene: crate::reference_view::scene_elements(&prims),
@@ -1936,6 +1938,8 @@ pub struct Inspection {
     pub levels: Levels,
     /// T01: validated project grids, without engineering bodies.
     pub grids: Vec<beamcraft_model::grid::Grid>,
+    /// T02: construction geometry, excluded from engineering bodies and quantities.
+    pub helpers: beamcraft_engine::helper::Helpers,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
 }
@@ -2063,6 +2067,7 @@ pub(crate) fn inspect_manifest_assets(
         project_record: record,
         levels: decoded.levels,
         grids: decoded.grids,
+        helpers: decoded.helpers,
         elements: decoded.elements,
     })
 }

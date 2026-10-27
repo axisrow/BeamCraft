@@ -11,6 +11,7 @@ pub mod error;
 pub mod grid;
 pub mod grid_edit;
 pub mod grid_update;
+pub mod helper;
 pub mod id;
 pub mod limits;
 pub mod prim;

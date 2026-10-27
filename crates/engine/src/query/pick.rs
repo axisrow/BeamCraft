@@ -886,6 +886,8 @@ pub fn pick(snapshot: &ViewSnapshot, query: &PickQuery) -> Result<PickResult, Vi
 /// What a snap candidate snaps to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapKind {
+    /// Nearest point on a construction helper.
+    Helper,
     /// A box vertex.
     Vertex,
     /// The start or end point of a member's axis.
@@ -904,6 +906,7 @@ impl SnapKind {
     /// The wire token.
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Helper => "helper",
             Self::Vertex => "vertex",
             Self::AxisEnd => "axis_end",
             Self::Axis => "axis",
@@ -916,6 +919,7 @@ impl SnapKind {
     /// Parses an exact wire token.
     pub fn parse(token: &str) -> Option<Self> {
         match token {
+            "helper" => Some(Self::Helper),
             "vertex" => Some(Self::Vertex),
             "axis_end" => Some(Self::AxisEnd),
             "axis" => Some(Self::Axis),
@@ -928,6 +932,7 @@ impl SnapKind {
 
     const fn rank(self) -> u8 {
         match self {
+            Self::Helper => 6,
             Self::Vertex => 0,
             Self::AxisEnd => 1,
             Self::Axis => 2,
@@ -1193,6 +1198,42 @@ pub fn snap_with_grids(
                         push(SnapKind::GridIntersection, u, Some(v), point);
                     }
                 }
+            }
+        }
+    }
+    result.truncated |= keep_best(&mut result.candidates, max, snap_order);
+    Ok(result)
+}
+
+/// Combines body, grid and helper snaps from the same pinned revision. Helpers have stable
+/// element identities but no body feature IDs; they never enter engineering geometry.
+pub fn snap_with_helpers(
+    snapshot: &ViewSnapshot,
+    query: &SnapQuery,
+    grids: &[beamcraft_model::grid::Grid],
+    visible_grids: Option<&std::collections::BTreeSet<ElementId>>,
+    helpers: &crate::helper::Helpers,
+) -> Result<SnapResult, ViewError> {
+    let mut result = snap_with_grids(snapshot, query, grids, visible_grids)?;
+    if !query.kinds.contains(&SnapKind::Helper) {
+        return Ok(result);
+    }
+    let max = usize::try_from(query.max_hits).map_err(|_| limit())?;
+    for helper in helpers.helpers() {
+        if let Some(c) = crate::helper::snap_helper(helper, query.point_mm, query.radius_mm)
+            .map_err(|_| input())?
+        {
+            result.candidates.push(SnapCandidate {
+                grid: None,
+                element_id: c.id,
+                kind: SnapKind::Helper,
+                feature_id: None,
+                axis_parameter: None,
+                point_world_mm: c.point_mm,
+                distance_mm: c.distance_mm,
+            });
+            if result.candidates.len() > max.saturating_mul(2) {
+                result.truncated |= keep_best(&mut result.candidates, max, snap_order);
             }
         }
     }
