@@ -18,6 +18,7 @@ pub mod mesh;
 pub mod plate_contour;
 pub mod profile;
 pub mod result;
+pub mod ruled;
 pub mod section;
 pub mod sweep;
 

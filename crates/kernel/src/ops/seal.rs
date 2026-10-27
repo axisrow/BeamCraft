@@ -25,6 +25,8 @@ pub enum OpKind {
     ThroughHole,
     /// A section swept along a polyline or arc path (G12).
     Sweep,
+    /// A ruled surface between two contours (G13).
+    Ruled,
 }
 
 /// An uncertified candidate in operation-local numbering.
