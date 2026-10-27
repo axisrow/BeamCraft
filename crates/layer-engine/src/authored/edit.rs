@@ -238,7 +238,7 @@ fn relationship(
     relationship_targets(data, p, name, targets)
 }
 /// Authors an explicit relationship target list, or removes the relationship spec (`None`).
-fn relationship_targets(
+pub(super) fn relationship_targets(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -543,12 +543,14 @@ fn create(
     container(data, folder, "Scope", Some("group"))?;
     prim(data, &p, Some("Xform"), true)?;
     let model_kind = match e.shape {
+        Shape::Instance { kind, .. } => kind.token(),
         Shape::Assembly => "assembly",
         _ => "component",
     };
     field(data, &p, "kind", sdf::Value::token(model_kind))?;
     field(data, &p, "displayName", sdf::Value::String(e.name.clone()))?;
     let kind = match e.shape {
+        Shape::Instance { kind, .. } => kind.token(),
         Shape::Assembly => "assembly",
         Shape::Weld(_) | Shape::Bolt(_) => "connection",
         Shape::Level { .. } => "level",
@@ -780,6 +782,7 @@ fn create(
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
         Shape::Grid(g) => grid::author(data, &p, g)?,
+        Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
         Shape::Level { elevation_mm } => attr(
             data,
             &p,
@@ -1417,6 +1420,7 @@ fn capture(
                             }
                         }
                     }
+                    Shape::Instance { .. } => add(instance::RELATIONSHIP, "rel", 0),
                     Shape::Assembly => (),
                     Shape::Weld(ref w) => {
                         for &(name, ty) in WELD {
@@ -1498,6 +1502,7 @@ fn capture(
                     ("steel:member:rollRad", "double"),
                     ("bim:profile", "rel"),
                     ("bim:partOf", "rel"),
+                    (instance::RELATIONSHIP, "rel"),
                     ("bim:mainPart", "rel"),
                     ("bim:level", "rel"),
                     ("bim:elevationMm", "double"),

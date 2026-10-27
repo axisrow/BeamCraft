@@ -365,6 +365,8 @@ pub struct Editor {
     pub move_to: [String; 3],
     /// `--offset` of a copy.
     pub copy_offset: [String; 3],
+    /// Copy as a linked instance of the shared definition.
+    pub copy_instance: bool,
     /// The author recorded as `--actor-id` of a move, copy or delete, when the window has one.
     pub actor: Option<String>,
     staged: Option<Edit>,
@@ -378,6 +380,7 @@ impl Default for Editor {
             action: EditKind::Move,
             move_to: Default::default(),
             copy_offset: Default::default(),
+            copy_instance: false,
             actor: None,
             staged: None,
             busy: false,
@@ -467,7 +470,12 @@ impl Editor {
                 point("Position", &self.move_to)?,
             ],
             EditKind::Copy => vec![
-                "copy-element".to_owned(),
+                if self.copy_instance {
+                    "copy-instance"
+                } else {
+                    "copy-element"
+                }
+                .to_owned(),
                 "--store".into(),
                 store,
                 "--id".into(),

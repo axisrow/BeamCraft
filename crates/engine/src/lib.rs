@@ -25,6 +25,7 @@ pub mod grid;
 pub mod grid_edit;
 pub mod grid_query;
 pub mod grid_update;
+pub mod instance;
 pub mod level;
 pub mod limits;
 pub mod measure;

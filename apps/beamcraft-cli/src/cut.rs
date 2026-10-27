@@ -139,7 +139,7 @@ pub fn cut_by_plane_record(
         expected,
         ..
     } = base;
-    let (plates, members, definitions) = {
+    let (plates, members, definitions, instances) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -155,7 +155,7 @@ pub fn cut_by_plane_record(
         {
             return Err(unsupported_target());
         }
-        (plates, members, decoded.definitions)
+        (plates, members, decoded.definitions, decoded.instances)
     };
     let head_plate = plates.iter().find(|r| r.authored.id == command.target_id);
     let head_member = members.iter().find(|r| r.authored.id == command.target_id);
@@ -243,7 +243,50 @@ pub fn cut_by_plane_record(
         }
     };
 
-    let id_text = command.target_id.to_string();
+    let canonical = instances.definition(command.target_id)?;
+    let mut footprint = outcome
+        .footprint
+        .clone()
+        .union(instances.dependencies(command.target_id)?)?;
+    let mut others = Vec::new();
+    for id in instances.group(command.target_id)? {
+        if id == command.target_id {
+            continue;
+        }
+        footprint = footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
+        let other = match &element {
+            CutElement::Plate(r) => {
+                let mut authored = plates
+                    .iter()
+                    .find(|p| p.authored.id == id)
+                    .ok_or_else(|| integrity("shared cut plate is not evaluated"))?
+                    .authored
+                    .clone();
+                authored.cuts = r.authored.cuts.clone();
+                CutElement::Plate(Box::new(PlateRecord {
+                    authored,
+                    body: r.body.clone(),
+                    quantities: r.quantities,
+                }))
+            }
+            CutElement::Member(r) => {
+                let mut authored = members
+                    .iter()
+                    .find(|p| p.authored.id == id)
+                    .ok_or_else(|| integrity("shared cut member is not evaluated"))?
+                    .authored
+                    .clone();
+                authored.cuts = r.authored.cuts.clone();
+                CutElement::Member(Box::new(MemberRecord {
+                    authored,
+                    body: r.body.clone(),
+                    quantities: r.quantities,
+                }))
+            }
+        };
+        others.push(other);
+    }
+    let id_text = canonical.to_string();
     let schema = schema_identity()?;
     let (mut author, opened) = Author::open(
         base_request,
@@ -258,6 +301,16 @@ pub fn cut_by_plane_record(
         CutElement::Plate(r) => mesh_change(&r.authored.id, &r.body.solid, &plate_record(r)),
         CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
     };
+    let mut changes = vec![
+        Change::Cuts {
+            id: id_text,
+            cuts: element.cuts().to_vec(),
+        },
+        record(&element)?,
+    ];
+    for other in &others {
+        changes.push(record(other)?);
+    }
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -265,17 +318,11 @@ pub fn cut_by_plane_record(
             actor: request.actor.to_string(),
             schema,
             resources: Vec::new(),
-            changes: vec![
-                Change::Cuts {
-                    id: id_text.clone(),
-                    cuts: element.cuts().to_vec(),
-                },
-                record(&element)?,
-            ],
+            changes,
         },
         &control,
     )?;
-    check_footprint(&prepared, &outcome.footprint)?;
+    check_footprint(&prepared, &footprint)?;
     let changed_layers = prepared
         .layers
         .iter()
@@ -285,7 +332,7 @@ pub fn cut_by_plane_record(
     let committed = publish_revision(
         store,
         &PublishRequest {
-            footprint: &outcome.footprint,
+            footprint: &footprint,
             fingerprint,
             prepared: &prepared,
             schema,
@@ -306,7 +353,7 @@ pub fn cut_by_plane_record(
         element,
         ordinal: outcome.ordinal,
         revision: summarize(&committed.info),
-        footprint: Some(outcome.footprint),
+        footprint: Some(footprint),
         changed_layers,
     })
 }
