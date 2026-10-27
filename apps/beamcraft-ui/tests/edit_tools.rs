@@ -248,7 +248,12 @@ fn an_orthographic_click_picks_and_snaps_like_the_perspective_one() {
         let ndc = ndc_of(pixel, [0.0, 0.0], size).unwrap();
         let ray = ray_through(&view, ndc, scene.origin_mm).unwrap();
         // Picking: the window's own query and the CLI's `pick` agree on the plate.
-        assert_eq!(pick_in(&snapshot, &ray).unwrap().as_deref(), Some(id));
+        assert_eq!(
+            pick_in(&snapshot, &ray, SelectionFilter::ALL)
+                .unwrap()
+                .as_deref(),
+            Some(id)
+        );
         assert_eq!(cli_pick(&cli, &stores.ui(), &ray).as_deref(), Some(id));
         // Snapping: a placement click meets the plate at the point the pixel shows.
         let (point, element) = pick_point_in(&snapshot, &ray).unwrap().unwrap();
@@ -262,7 +267,10 @@ fn an_orthographic_click_picks_and_snaps_like_the_perspective_one() {
     }
     // A pixel on empty space still selects nothing.
     let ray = ray_through(&view, [-0.99, 0.99], scene.origin_mm).unwrap();
-    assert_eq!(pick_in(&snapshot, &ray).unwrap(), None);
+    assert_eq!(
+        pick_in(&snapshot, &ray, SelectionFilter::ALL).unwrap(),
+        None
+    );
 }
 
 #[test]
