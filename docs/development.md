@@ -209,6 +209,12 @@ Actions read, Contents read (for checkout) and Issues write permissions.
 
 ## Releases
 
+Owner policy (2026-10-27, [decision](plan/decisions.md#2026-10-27)): Windows x64 and ARM64
+releases are built on the owner's computer and signed there with the company's signing identity.
+Apple developer registration, Developer ID signing and notarization are scheduled after the MVP.
+This records the intended release process; it does not add ARM64 or company-signing automation
+to the workflow below. Existing macOS ad-hoc package signing remains unchanged.
+
 Push a tag such as `v0.1.0`, or run `.github/workflows/release.yml` by hand. It builds unsigned
 packages and attaches them to a GitHub release:
 

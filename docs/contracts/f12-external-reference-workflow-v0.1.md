@@ -5,6 +5,12 @@ Companion to [F12](f12-project-coordination-v0.1.md), its
 [opening assignments](f12-opening-assignments-v0.1.md) and
 [common Craft reading](f12-craft-read-capabilities-v0.1.md), in the same branch and PR.
 
+**Scope update 2026-10-27:** the owner requires IFC reference loading in the MVP and separately
+requires native steel IFC import through the engineering kernel into an editable project,
+including KM to KMD. The latter needs its own detailed import contract; it does not make a
+reference editable or change the reference rules below. This scope approval does not bring all
+F12 coordination/assignment workflows into the MVP. See the [owner decision](../plan/decisions.md#2026-10-27).
+
 ## 1. External references participate in the common workflow
 
 F12 PC-WORK-001 covers companies authoring every section, just one section, or several sections

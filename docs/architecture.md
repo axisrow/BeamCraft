@@ -262,8 +262,15 @@ occurrence by the connection path. F12 defines the draft rules and required acce
 `bim:projectCode` (`2401-DEMO`), `bim:projectName` (`Demo warehouse`), `bim:organization` (`ACME`) and
 `bim:zones` (`["K1", "K2"]`, empty for a project without zones).
 
-**From KM to KMD — deferred; decide after the MVP.** The following is the earlier candidate
-direction for R06, to be reassessed after the MVP rather than finalized or implemented now.
+**From KM to KMD — MVP import and deferred source tracking.** On 2026-10-27 the owner approved
+steel IFC import through the engineering kernel into an editable BeamCraft project for the MVP,
+including creating KMD from KM. Read-only IFC reference loading is a separate MVP workflow.
+Both require detailed input contracts and implementation; this is an approved scope, not a
+delivered capability. See the [owner decision](plan/decisions.md#2026-10-27).
+
+The following earlier R06 candidate concerns persistent links between KM and KMD layers and
+later source-change review. That broader workflow remains deferred for a separate decision
+after the MVP; it is not a finalized contract for the new native steel IFC import.
 Steel design (`KM`) and steel detailing (`KMD`) are a chain, not two
 independent disciplines. `KM` is its own layer, made in BeamCraft or arriving read-only from
 another program. Detailing starts from it: a "create KMD from KM" command carries the KM elements
@@ -298,7 +305,9 @@ A KM-only company can model steel against architectural IFC, and an OV-only comp
 services against structural IFC. The proposed [external-reference workflow](contracts/f12-external-reference-workflow-v0.1.md)
 converts each received IFC into one logical read-only USD reference, retaining original source
 bytes, IFC identifiers, conversion settings, coordinate mapping and losses. It does not create
-native editable parts. New deliveries are explicitly reviewed and pinned without overwriting
+native editable parts. The separately approved native steel IFC import creates an editable
+working project through the kernel; it does not change this read-only reference boundary.
+New deliveries are explicitly reviewed and pinned without overwriting
 the source versions on which existing work depends. A shared Craft coordination project is
 optional, and external companies need no Craft application or account.
 

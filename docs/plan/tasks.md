@@ -11,6 +11,14 @@ the parent ID stays the acceptance gate. Status is the state on `master`:
 
 Status as of 2026-10-20, `master` at `d456670`. New tasks are added here in a docs-only PR.
 
+**Scope update 2026-10-27:** the [owner decision](decisions.md#2026-10-27) requires both read-only
+IFC reference loading (the relevant E04/X05 slice) and separate native steel IFC import through
+the kernel in the MVP, including creating KMD from KM. This supersedes blanket deferrals of those
+two input workflows in the older rows below. Their detailed contracts, task breakdown and
+implementation remain open; no new task ID or accepted status is assigned here. I01-I03 mesh
+items, IFC export and the broader persistent R06 `builtFrom`/source-change workflow remain
+separate and deferred. Product acceptance gates are outside issue #129.
+
 ## F: foundations and contracts
 
 | ID | Task | Depends on | Result | Acceptance | Status |

@@ -4,6 +4,40 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-27
+
+Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129):
+
+- **Windows releases are built and signed locally by the owner.** A local signing capability is
+  available. The owner will build and release Windows x64 and ARM64 versions on their own
+  computer, signing them with the company's signing identity. This is the release policy;
+  it does not claim that ARM64 packaging or signing automation is already implemented.
+- **Apple developer registration and distribution signing are after the MVP.** No Apple developer
+  setup is currently available. Developer registration, the paid membership, Developer ID signing
+  and notarization are deferred to M6 - PostMVP. Native macOS packaging remains in the MVP;
+  this decision does not remove the existing ad-hoc package signing.
+- **Both IFC input workflows are in the MVP.** IFC files can be loaded as read-only reference
+  models so users can author their own discipline/section against them. Separately, steel IFC
+  models can be imported through BeamCraft's engineering kernel into a working, editable project,
+  including the use case of creating steel detailing (KMD) from steel design (KM).
+  Reference loading never makes the reference editable. Native steel import is a separate entry
+  point, not the deferred I01-I03 mesh-item workflow. This supersedes the earlier blanket deferral
+  of these two IFC input workflows. It does not bring IFC export into the MVP or approve the
+  broader persistent R06 `builtFrom`/source-change workflow. Supported IFC subsets, mapping,
+  kernel admission, refusal behavior and end-to-end acceptance still need an import contract;
+  approving scope is not a claim of implementation or acceptance.
+- **DSTV NC export remains after the MVP**, in M6 - PostMVP.
+- **Regional profile and material catalogue coverage:** Australia, Europe, Brazil, Canada, China,
+  Russia, India, Middle East, Philippines, South Africa, South America and USA. Brazil and South
+  America are both retained as requested. Exact standards/editions, families and data sources
+  must be specified per regional pack. The existing asset policy remains binding: every shipped
+  value needs admitted provenance, a provable permitted licence and attribution. Naming a region
+  does not admit any catalogue or commercial-product data.
+- **The open-source/commercial question is resolved for the MVP.** The existing decision stands:
+  BeamCraft's own code stays MPL-2.0 through the MVP; any later split is considered after it.
+- **Acceptance gates are separate from issue #129.** That issue records owner decisions only.
+  Gate verdicts require their own evidence and owner acceptance; this entry changes none of them.
+
 ## 2026-10-26
 
 - **T01 MVP defaults.** The user delegated the unanswered grid defaults to project best practices and
@@ -42,7 +76,8 @@ Open questions are at the end.
   waived as passes: a rotated plate placement (F06-POS-11) stays `UNSUPPORTED_GEOMETRY`, the
   face-table strings carry the `plate:f.` prefix, and the F04 envelope, workspace and
   trusted-context cases stay unrun until a decoder and a trusted context exist. The sign-off of
-  K3 to K5 in [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129) stays open.
+  K3 to K5 was still open at that date. Update 2026-10-27: gate acceptance is tracked separately
+  from [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129); this changes no verdict.
 
 ## 2026-10-23
 
@@ -359,8 +394,8 @@ Open questions are at the end.
 | # | Question | Blocks |
 |---|----------|--------|
 | 1 | Independent IFC validation tool (E01 Q-8) | E02 acceptance |
-| 2 | macOS policy without project hardware | Q02 acceptance |
-| 3 | IFC reference converter, supported subset, budgets and provenance (read-only workflow selected on 2026-10-22) | E04 |
+| 2 | macOS runtime verification without project hardware; Developer ID signing/notarization is deferred after the MVP by the 2026-10-27 decision | Q02 runtime acceptance |
+| 3 | IFC reference conversion and editable steel import: supported subsets, mapping, kernel admission, budgets and provenance (both input workflows in the MVP from 2026-10-27) | E04 reference-loading slice and native steel IFC import |
 | 4 | Live channel and permission model (C07, C08) | C07, C08 |
 | 5 | Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16 ([contract](../contracts/t01-project-grids-draft-v0.1.md) section 12) | T01.3, T01.4, T01.7, T01.8 |
 | 5 | Where saved views and review notes live: workspace only or a shared review layer | W01, W02 |

@@ -25,8 +25,10 @@ Drawings have a milestone of their own.
 The current target is the free single-user desktop MVP widened by the owner on 2026-10-21 (see
 [decisions](decisions.md)): full manual steel modelling without automation, connection objects and
 nested assemblies, user attributes and schedules, model tools, views, filters and
-render modes, and drawings with drafting tools. Items (GLB and IFC), IFC export, multi-client conflicts and parametric
-connections follow after the MVP.
+render modes, and drawings with drafting tools. The 2026-10-27 owner decision adds read-only IFC
+reference loading and separate native steel IFC import through the kernel, including KM to KMD,
+to the MVP. Their contracts and implementation remain open. Items (GLB and IFC mesh items), IFC
+export, multi-client conflicts and parametric connections follow after the MVP.
 
 The first alpha demonstrates the architecture on a limited subset. It does not mean that every
 requirement is met, that any arbitrary USD file can be measured exactly, or that fabrication
@@ -59,7 +61,7 @@ Fixed constraints:
 | Concurrency | Bounded pools for independent immutable work, after a sequential reference and measurements | A commit stays serialisable |
 | UI | `wgpu` + `egui`/`eframe` | Own renderer and interaction; fonts and assets audited |
 | Storage | USD files, immutable blobs, a journal, atomic publication of the root | No database or object store for the first product |
-| IFC | Own Rust writer of a chosen IFC4 subset (E01) | Export only; import needs a new scope decision |
+| IFC | Read-only reference loading and separate native steel import through the kernel (MVP scope approved 2026-10-27); existing own IFC4 writer (E01) | Input contracts and implementation remain open; export and I01-I03 mesh items remain after the MVP |
 | Platforms | Desktop only: Windows, Linux, macOS | Only `geom`, `model` and `kernel` keep the WASM requirement, as a layering discipline |
 
 ### Own logic
@@ -180,7 +182,7 @@ Each area below is an epic, split into small verifiable tasks before work starts
 | Area | Later work |
 |------|------------|
 | Parts and operations | Parametric and library connections, further part types |
-| Catalogues and environments | Licensed profile, material and bolt data packs; firm, project and user resolution; aliases and migrations |
+| Catalogues and environments | Expand beyond the regional coverage decided on 2026-10-27; licensed bolt packs, firm/project/user resolution, aliases and migrations |
 | Connections | Full bolt, hole and weld coverage, modifiers and feature dependencies, parametric joints |
 | Measurement and checking | Complex closed meshes, clash detection, supported reference comparisons |
 | UI | Large models, accessibility, further display options |
@@ -188,5 +190,5 @@ Each area below is an epic, split into small verifiable tasks before work starts
 | Drawings | Automatic dimensioning and layout rules beyond the first drawings, further output formats |
 | Fabrication output | DSTV NC to a public specification; DXF and other formats after a scope and licence audit |
 | Synchronisation | Soft leases with expiry, frequent autosync, access between computers, permissions by discipline |
-| Exchange | IFC import and native conversion only by a new owner decision |
+| Exchange | Extend the separately specified MVP IFC reference/native steel-import scope; broader persistent source-change coordination needs its own decision |
 | Presentation | 4D erection sequence as a separate layer; `GeomSubset` for face groups of FeatureIds |
