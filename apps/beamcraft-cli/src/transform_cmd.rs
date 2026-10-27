@@ -7,7 +7,7 @@ use crate::{
 };
 use beamcraft_cli::{
     plate::PlateError,
-    transform::{TransformRequest, mirror_elements, transform_elements},
+    transform::{TransformRequest, array_elements, mirror_elements, transform_elements},
 };
 use beamcraft_engine::{transform::RigidDelta, work_plane::WorkPlane};
 use beamcraft_host::{
@@ -29,7 +29,12 @@ fn invalid(message: &'static str) -> PlateError {
     error(ErrorCode::InvalidArgument, message)
 }
 pub fn handles(c: &OsString) -> bool {
-    c == "mirror-elements" || c == "move-elements" || c == "rotate-elements" || c == "copy-elements"
+    c == "array-linear"
+        || c == "array-polar"
+        || c == "mirror-elements"
+        || c == "move-elements"
+        || c == "rotate-elements"
+        || c == "copy-elements"
 }
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))
@@ -51,6 +56,8 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
     }
     let common = ["--store", "--ids", "--plane"];
     let own: &[&str] = match *command {
+        "array-linear" => &["--step", "--count", "--instance"],
+        "array-polar" => &["--center", "--axis", "--angle", "--count", "--instance"],
         "mirror-elements" => &["--point", "--normal"],
         "move-elements" => &["--vector", "--from", "--to"],
         "copy-elements" => &["--vector", "--from", "--to", "--instance"],
@@ -90,7 +97,8 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
         let [a, b, c] = plane.origin();
         Ok([x - a, y - b, z - c])
     };
-    let delta = if *command == "mirror-elements" {
+    let is_array = *command == "array-linear" || *command == "array-polar";
+    let delta = if *command == "mirror-elements" || is_array {
         RigidDelta::translation([0.; 3])?
     } else if *command == "rotate-elements" {
         let center = plane.to_world(point(need("--center")?, [0.; 3])?)?;
@@ -140,10 +148,25 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
         workspace: context.workspace,
         ids,
         delta,
-        copy: *command == "copy-elements" || *command == "mirror-elements",
+        copy: *command == "copy-elements" || *command == "mirror-elements" || is_array,
         instance,
     };
-    let result = if *command == "mirror-elements" {
+    let result = if is_array {
+        let count = need("--count")?
+            .parse::<u32>()
+            .map_err(|_| invalid("count must be a positive integer"))?;
+        let deltas = if *command == "array-linear" {
+            beamcraft_engine::array::linear(world_vector(point(need("--step")?, [0.; 3])?)?, count)?
+        } else {
+            let center = plane.to_world(point(need("--center")?, [0.; 3])?)?;
+            let axis = world_vector(point(need("--axis")?, [0.; 3])?)?;
+            let angle = need("--angle")?
+                .parse::<f64>()
+                .map_err(|_| invalid("angle must be radians"))?;
+            beamcraft_engine::array::polar(center, axis, angle, count)?
+        };
+        array_elements(&store, &request, &deltas, &mut NoFault)?
+    } else if *command == "mirror-elements" {
         let point = plane.to_world(point(need("--point")?, [0.; 3])?)?;
         let normal = world_vector(beamcraft_engine::helper::parse_point(need("--normal")?)?)?;
         mirror_elements(

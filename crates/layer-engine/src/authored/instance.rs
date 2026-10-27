@@ -126,6 +126,37 @@ pub(super) fn validate_source<'a>(
     Ok(source)
 }
 
+/// Validate a canonical definition already present or created in the same atomic group.
+pub(super) fn validate_group_source(
+    id: &str,
+    kind: PartKind,
+    input: &Prepare,
+    prims: &[Prim],
+) -> Result<(), Diagnostic> {
+    if let Some(element) = input.changes.iter().find_map(|c| match c {
+        Change::Create(e) if e.id == id => Some(e),
+        _ => None,
+    }) {
+        let actual = match &element.shape {
+            Shape::Plate { .. } => Some(PartKind::Plate),
+            Shape::Member {
+                kind: MemberKind::Beam,
+                ..
+            } => Some(PartKind::Beam),
+            Shape::Member {
+                kind: MemberKind::Column,
+                ..
+            } => Some(PartKind::Column),
+            _ => None,
+        };
+        if actual != Some(kind) {
+            return Err(invalid());
+        }
+        return Ok(());
+    }
+    validate_source(id, kind, prims).map(|_| ())
+}
+
 /// Persistent links of a validated stage. Definitions are canonical parts, never chains.
 pub fn links(prims: &[Prim]) -> Result<Vec<InstanceLink>, Diagnostic> {
     let mut out = Vec::new();

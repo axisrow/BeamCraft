@@ -166,7 +166,7 @@ pub fn transform_elements(
     request: &TransformRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<Transformed, PlateError> {
-    transform_with_mirror(store, request, None, hook)
+    transform_with_mirror(store, request, None, None, hook)
 }
 /// Reflect a group as independent copies. The supplied rigid delta must be identity.
 pub fn mirror_elements(
@@ -181,12 +181,36 @@ pub fn mirror_elements(
             "mirror needs independent copies and an identity rigid delta",
         ));
     }
-    transform_with_mirror(store, request, Some(plane), hook)
+    transform_with_mirror(store, request, Some(plane), None, hook)
+}
+/// Copy a group for each admitted array transform; one atomic revision and undo unit.
+pub fn array_elements(
+    store: &RevisionStore,
+    request: &TransformRequest,
+    deltas: &[RigidDelta],
+    hook: &mut dyn CommitHook,
+) -> Result<Transformed, PlateError> {
+    if !request.copy || request.delta != RigidDelta::translation([0.; 3])? {
+        return Err(error(
+            ErrorCode::InvalidArgument,
+            "arrays require copying with an identity base delta",
+        ));
+    }
+    if deltas.is_empty()
+        || request.ids.len().saturating_mul(deltas.len()) > beamcraft_engine::transform::MAX_GROUP
+    {
+        return Err(error(
+            ErrorCode::LimitExceeded,
+            "array produces more than 128 new parts or is empty",
+        ));
+    }
+    transform_with_mirror(store, request, None, Some(deltas), hook)
 }
 fn transform_with_mirror(
     store: &RevisionStore,
     request: &TransformRequest,
     mirror: Option<beamcraft_engine::mirror::MirrorPlane>,
+    array: Option<&[RigidDelta]>,
     hook: &mut dyn CommitHook,
 ) -> Result<Transformed, PlateError> {
     validate_ids(&request.ids)?;
@@ -213,20 +237,34 @@ fn transform_with_mirror(
         fingerprint = plate::digest_of(&bytes)?;
     }
 
-    let elements = request
-        .ids
-        .iter()
-        .map(|id| {
-            Ok((
+    if let Some(deltas) = array {
+        let mut bytes = b"BeamCraft/T03/ArrayGroup/v1\0".to_vec();
+        bytes.extend(fingerprint.as_bytes());
+        for delta in deltas {
+            bytes.extend(
+                delta
+                    .fingerprint(&request.ids, true, request.instance)?
+                    .as_bytes(),
+            );
+        }
+        fingerprint = plate::digest_of(&bytes)?;
+    }
+    let deltas = array.map_or_else(|| vec![request.delta], |d| d.to_vec());
+    let mut elements = Vec::new();
+    for (slot, _) in deltas.iter().enumerate() {
+        let slot = u32::try_from(slot)
+            .map_err(|_| error(ErrorCode::LimitExceeded, "too many array slots"))?;
+        for id in &request.ids {
+            elements.push((
                 *id,
                 if request.copy {
-                    copy_id(request.op_id, *id, 0)?
+                    copy_id(request.op_id, *id, slot)?
                 } else {
                     *id
                 },
-            ))
-        })
-        .collect::<Result<Vec<_>, PlateError>>()?;
+            ));
+        }
+    }
     let op = plate::host_uuid(&request.op_id.to_string())?;
     // Read the committed request evidence, not current source state: later source edits do not
     // turn a retry into a second relative transformation.
@@ -284,7 +322,7 @@ fn transform_with_mirror(
             .instances
             .links()
             .count()
-            .saturating_add(request.ids.len())
+            .saturating_add(elements.len())
             > beamcraft_model::instance::MAX_PART_INSTANCES
     {
         return Err(error(
@@ -305,14 +343,17 @@ fn transform_with_mirror(
     let index = author.element_index(&opened.context, &control)?;
     let mut footprint = Footprint::default();
     let mut changes = Vec::new();
-    for (source, target) in &elements {
+    for (index_in_plan, (source, target)) in elements.iter().enumerate() {
         let source_record = records.get(source).ok_or_else(|| {
             error(
                 ErrorCode::UnsupportedProperty,
                 "selection contains a missing or unsupported part",
             )
         })?;
-        let transformed = request.delta.apply(pose(source_record))?;
+        let delta = deltas
+            .get(index_in_plan / request.ids.len())
+            .ok_or_else(|| error(ErrorCode::InvalidArgument, "array slot is absent"))?;
+        let transformed = delta.apply(pose(source_record))?;
         if request.copy {
             let plan = index.copy_plan(
                 &LayerId::parse(&source.to_string())?,
@@ -390,10 +431,25 @@ fn transform_with_mirror(
                 footprint =
                     footprint.union(Footprint::for_copy(canonical, *target, profile, material)?)?;
             }
-            changes.extend(create_changes(
-                &next,
-                request.instance.then_some(canonical),
-            )?);
+            // Preserve links inside an independent copied group, isolated from the original.
+            // A linked copy explicitly retains the existing canonical definition instead.
+            let definition = if request.instance {
+                Some(canonical)
+            } else if canonical != *source && request.ids.binary_search(&canonical).is_ok() {
+                let slot = u32::try_from(index_in_plan / request.ids.len())
+                    .map_err(|_| error(ErrorCode::LimitExceeded, "too many array slots"))?;
+                let copied_owner = copy_id(request.op_id, canonical, slot)?;
+                footprint = footprint.union(Footprint::for_copy(
+                    copied_owner,
+                    *target,
+                    profile,
+                    material,
+                )?)?;
+                Some(copied_owner)
+            } else {
+                None
+            };
+            changes.extend(create_changes(&next, definition)?);
             if let Some(level) = decoded.levels.level_of(source) {
                 footprint = footprint.union(Footprint::for_level(*target, Some(level))?)?;
                 changes.push(Change::Level {

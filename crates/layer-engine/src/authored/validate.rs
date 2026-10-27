@@ -2112,7 +2112,7 @@ pub(super) fn changes(
                         if e.id == *definition || e.material.is_some() {
                             return Err(invalid());
                         }
-                        instance::validate_source(definition, *kind, prims)?;
+                        instance::validate_group_source(definition, *kind, input, prims)?;
                         for group in [
                             Group::Lifecycle,
                             Group::Label,
