@@ -1229,6 +1229,15 @@ impl UpdateElement {
                 })?);
             }
         }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(side) = self.patch.thickness_side {
+            bytes.push(5);
+            bytes.push(match side {
+                PlateSide::Top => 1,
+                PlateSide::Middle => 2,
+                PlateSide::Bottom => 3,
+            });
+        }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
                 .with_rule("DV-LIM-001")
@@ -2720,6 +2729,40 @@ mod tests {
             },
         };
         assert_ne!(rename.content_fingerprint().unwrap(), base);
+    }
+
+    #[test]
+    fn a_thickness_side_patch_has_its_own_fingerprint() {
+        // A retry that differs only in the side must not replay as the same operation (A12.1).
+        let update = |side: Option<PlateSide>| UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                thickness_side: side,
+                ..ElementPatch::default()
+            },
+        };
+        assert!(update(Some(PlateSide::Bottom)).validate_arguments().is_ok());
+        // A patch that names no field changes nothing and stays inadmissible, so the three
+        // sides are compared against each other.
+        let top = update(Some(PlateSide::Top)).content_fingerprint().unwrap();
+        let middle = update(Some(PlateSide::Middle))
+            .content_fingerprint()
+            .unwrap();
+        let bottom = update(Some(PlateSide::Bottom))
+            .content_fingerprint()
+            .unwrap();
+        assert_ne!(top, middle);
+        assert_ne!(top, bottom);
+        assert_ne!(middle, bottom);
+        // The side rides behind the append-only tags, so older patches keep their digests.
+        let rename = UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                name: Some("A".into()),
+                ..ElementPatch::default()
+            },
+        };
+        assert_ne!(rename.content_fingerprint().unwrap(), bottom);
     }
 
     #[test]
