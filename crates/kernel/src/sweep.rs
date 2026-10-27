@@ -543,8 +543,8 @@ fn chord_arc(
         return Err(SweepFailure::Path(PathCode::AboveLimit));
     }
     // Angles in the (e1, e2) basis about the centre; travel passes through `on`. An end
-    // equal to the start sweeps the full circle (such a sweep is refused later, by the
-    // certification of its two coincident caps).
+    // equal to the start never reaches this point: its chord is the zero vector, so the
+    // plane check above has already refused the call as coincident points.
     let a0 = (-length / 2.0).atan2(-across);
     let delta_on = ((length / 2.0).atan2(-across) - a0).rem_euclid(TAU);
     let delta_end = (((q2x - length / 2.0).atan2(q2y - across)) - a0).rem_euclid(TAU);

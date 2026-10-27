@@ -21,7 +21,7 @@ The result is a G09-certified `Body` (one closed outward shell, volume enclosure
 sealed BCMESH01 blob with its SHA-256, the net polygon area, whether any curve was
 approximated, the number of prism segments and, for an arc, the achieved chord-deviation
 bound of the swept surface. Refusals are typed and carry no geometry:
-`SweepFailure::{Shape, Frame, Path, Profile, Body}` mirroring `SectionFailure`.
+`SweepFailure::{Section, Path, Profile, Body}` mirroring `SectionFailure`.
 
 ## 2. Mitre construction
 
