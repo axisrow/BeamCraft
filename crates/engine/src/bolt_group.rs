@@ -49,6 +49,9 @@ fn error(code: ErrorCode, field: &'static str, message: &'static str) -> Command
     CommandError::new(code, field, message)
 }
 
+/// The line direction `x`, the rotated shank axis `z` and `y = z × x` of a group.
+pub type GroupFrame = ([f64; 3], [f64; 3], [f64; 3]);
+
 /// The unit vector and its input length, or `None` for a zero-length vector.
 fn unit(v: &[f64; 3]) -> Option<[f64; 3]> {
     let squared = v.iter().map(|v| v * v).sum::<f64>();
@@ -62,9 +65,7 @@ fn unit(v: &[f64; 3]) -> Option<[f64; 3]> {
 /// The group frame of the bolt amendment: the line direction `x`, the shank axis `z` (the
 /// plane normal's component perpendicular to `x`, rotated by `rotation_rad` about `x`) and
 /// `y = z × x`.
-pub fn frame(
-    placement: &BoltGroupPlacement,
-) -> Result<([f64; 3], [f64; 3], [f64; 3]), CommandError> {
+pub fn frame(placement: &BoltGroupPlacement) -> Result<GroupFrame, CommandError> {
     let [x1, y1, z1] = placement.point1_mm;
     let [x2, y2, z2] = placement.point2_mm;
     let x = unit(&[x2 - x1, y2 - y1, z2 - z1]).ok_or_else(|| {
@@ -110,36 +111,40 @@ pub fn frame(
     Ok((x, y, z))
 }
 
-/// Whether the segment `from + t * direction` for `t` in `[0, length]` meets the box.
-fn segment_meets_box(from: &[f64; 3], direction: &[f64; 3], length: f64, bounds: &Bounds) -> bool {
+/// The parametric overlap of the segment `from + t * direction` (`t` in `[0, length]`) with the
+/// box, or `None` when it misses: a slab test per axis.
+fn segment_span(
+    from: &[f64; 3],
+    direction: &[f64; 3],
+    length: f64,
+    bounds: &Bounds,
+) -> Option<(f64, f64)> {
     let [[xmin, ymin, zmin], [xmax, ymax, zmax]] = *bounds;
-    let (mut t_min, mut t_max) = (0.0_f64, length);
-    for axis in 0..3 {
-        let d = direction[axis];
-        let o = from[axis];
-        let (lo, hi) = match axis {
-            0 => (xmin, xmax),
-            1 => (ymin, ymax),
-            _ => (zmin, zmax),
-        };
+    let slabs = [(xmin, xmax), (ymin, ymax), (zmin, zmax)];
+    let (mut lo, mut hi) = (0.0_f64, length);
+    for ((&d, &o), &(min, max)) in direction.iter().zip(from.iter()).zip(slabs.iter()) {
         if d.abs() < 1e-12 {
-            if o < lo || o > hi {
-                return false;
+            if o < min || o > max {
+                return None;
             }
         } else {
-            let mut t0 = (lo - o) / d;
-            let mut t1 = (hi - o) / d;
+            let (mut t0, mut t1) = ((min - o) / d, (max - o) / d);
             if t0 > t1 {
                 core::mem::swap(&mut t0, &mut t1);
             }
-            t_min = t_min.max(t0);
-            t_max = t_max.min(t1);
-            if t_min > t_max {
-                return false;
+            lo = lo.max(t0);
+            hi = hi.min(t1);
+            if lo > hi {
+                return None;
             }
         }
     }
-    true
+    Some((lo, hi))
+}
+
+/// Whether the segment `from + t * direction` for `t` in `[0, length]` meets the box.
+fn segment_meets_box(from: &[f64; 3], direction: &[f64; 3], length: f64, bounds: &Bounds) -> bool {
+    segment_span(from, direction, length, bounds).is_some()
 }
 
 /// The length of the segment `from + t * direction` inside the box, or `None`.
@@ -149,34 +154,7 @@ fn segment_inside_length(
     length: f64,
     bounds: &Bounds,
 ) -> Option<f64> {
-    let [[xmin, ymin, zmin], [xmax, ymax, zmax]] = *bounds;
-    let (mut t_min, mut t_max) = (0.0_f64, length);
-    for axis in 0..3 {
-        let d = direction[axis];
-        let o = from[axis];
-        let (lo, hi) = match axis {
-            0 => (xmin, xmax),
-            1 => (ymin, ymax),
-            _ => (zmin, zmax),
-        };
-        if d.abs() < 1e-12 {
-            if o < lo || o > hi {
-                return None;
-            }
-        } else {
-            let mut t0 = (lo - o) / d;
-            let mut t1 = (hi - o) / d;
-            if t0 > t1 {
-                core::mem::swap(&mut t0, &mut t1);
-            }
-            t_min = t_min.max(t0);
-            t_max = t_max.min(t1);
-            if t_min > t_max {
-                return None;
-            }
-        }
-    }
-    Some(t_max - t_min)
+    segment_span(from, direction, length, bounds).map(|(lo, hi)| hi - lo)
 }
 
 impl crate::weld::Parts {

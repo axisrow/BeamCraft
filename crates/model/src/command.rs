@@ -23,6 +23,7 @@ use crate::limits::{
 };
 use beamcraft_geom::canonical_f64_bytes;
 use core::fmt;
+use std::collections::BTreeSet;
 
 /// The only contract version this implementation accepts.
 pub const CONTRACT_VERSION: &str = "0.1.0";
@@ -2155,7 +2156,8 @@ impl CreateBoltGroup {
             )
             .with_rule("DV-LIM-001"));
         }
-        for (index, part) in self.parts.iter().enumerate() {
+        let mut seen = BTreeSet::new();
+        for part in self.parts.iter() {
             if *part == self.new_id {
                 return Err(CommandError::new(
                     ErrorCode::InvalidArgument,
@@ -2164,7 +2166,7 @@ impl CreateBoltGroup {
                 )
                 .with_rule("DV-REL-006"));
             }
-            if self.parts[..index].contains(part) {
+            if !seen.insert(*part) {
                 return Err(CommandError::new(
                     ErrorCode::InvalidArgument,
                     "parts",
@@ -2355,8 +2357,8 @@ impl CreateBoltGroup {
             bytes.extend_from_slice(&canonical_f64_bytes(*spacing).map_err(|_| bad())?);
         }
         bytes.extend_from_slice(self.length_mode.token().as_bytes());
-        bytes.push(self.washer_under_head.map_or(2, |v| u8::from(v)));
-        bytes.push(self.washer_under_nut.map_or(2, |v| u8::from(v)));
+        bytes.push(self.washer_under_head.map_or(2, u8::from));
+        bytes.push(self.washer_under_nut.map_or(2, u8::from));
         bytes.extend_from_slice(self.hole_mode.token().as_bytes());
         bytes.push(u8::from(self.hole_clearance_mm.is_some()));
         if let Some(clearance) = self.hole_clearance_mm {

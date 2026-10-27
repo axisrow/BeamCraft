@@ -1584,8 +1584,9 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
                 )
                 .with_rule("DV-REL-004"));
             }
-            for (index, target) in r.targets.iter().enumerate() {
-                if r.targets[..index].contains(target) {
+            let mut seen = std::collections::BTreeSet::new();
+            for target in &r.targets {
+                if !seen.insert(target.as_str()) {
                     return Err(fail(
                         ErrorCode::InvalidArgument,
                         "the parts of a connection are distinct",
