@@ -3,7 +3,7 @@
 
 //! Help owned by the member command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-member"];
+pub(super) const COMMANDS: &[&str] = &["create-member", "create-polybeam"];
 
 pub(super) const HELP: &str = concat!(
     "Member (P03): create-member --store ROOT --start X,Y,Z --end X,Y,Z (--profile-digest ",
@@ -20,5 +20,14 @@ pub(super) const HELP: &str = concat!(
     "validated: a non-normalized, zero or non-finite quaternion is INVALID_ARGUMENT; the ",
     "section frame is rolled by --roll about the axis first and then mapped by the ",
     "quaternion, so both compose; rigid placement leaves the local mesh and quantities ",
-    "unchanged; inspect-elements lists plates and members)",
+    "unchanged; inspect-elements lists plates and members)\n",
+    "Polybeam (P12): create-polybeam --store ROOT --points \"X,Y,Z;X,Y,Z[;...]\" ",
+    "(--profile-digest SHA256 | --profile NAME) [--kind beam|column] [--material-digest ",
+    "SHA256 | --material NAME] [--name TEXT] [--class INT32] [--translation X,Y,Z] ",
+    "[--orientation-xyzw X,Y,Z,W] [--new-id UUID] [--op-id UUID] [--revision-id UUID] ",
+    "[--actor-id UUID] [--project-id UUID] [--workspace-id UUID] (a member along a polyline ",
+    "path of 3 to 1024 absolute three-component points, one pinned section along the whole ",
+    "path, every interior corner mitred; the volume is the section area times the path ",
+    "length; points are absolute element-local millimetres, coordinate expressions and grid ",
+    "placement are not supported here; update-element --axis-point replaces the path)",
 );

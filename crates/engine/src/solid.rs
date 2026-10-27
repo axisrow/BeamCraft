@@ -14,6 +14,7 @@ use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
 use beamcraft_kernel::profile::Extrusion;
 use beamcraft_kernel::section::SectionResult;
+use beamcraft_kernel::sweep::SweepResult;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 
@@ -85,6 +86,21 @@ impl SolidMesh {
             blob: result.blob().to_vec(),
             digest: result.mesh_digest(),
             volume_mm3: result.volume_mm3(),
+        }
+    }
+
+    /// The mesh of a G12 sweep (a P12 polybeam); the volume is the midpoint of the enclosure of
+    /// the certified signed-volume sum, which the seal checked against the analytic truncated
+    /// prism value.
+    pub fn from_sweep(result: &SweepResult) -> Self {
+        let mesh = result.body().mesh();
+        Self {
+            vertices: mesh.vertices().to_vec(),
+            triangles: mesh.triangles().to_vec(),
+            face_table: result.body().face_table().to_vec(),
+            blob: result.blob().to_vec(),
+            digest: result.mesh_digest(),
+            volume_mm3: result.volume_mm3().midpoint(),
         }
     }
 

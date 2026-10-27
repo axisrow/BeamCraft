@@ -200,7 +200,7 @@ fn authored_batch() -> Vec<Change> {
             name: "Member".into(),
             shape: Shape::Member {
                 kind: MemberKind::Beam,
-                axis_mm: [[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
+                axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
                 profile: r[0].digest,
                 roll_rad: Some(0.125),
                 cuts: Vec::new(),

@@ -17,9 +17,10 @@ pub use crate::grid_update::UpdateGrid;
 use crate::id::{ElementId, OpId};
 use crate::limits::{
     BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,
-    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_WELD_LENGTH_MM, MAX_WELD_PATH_POINTS,
-    MIN_CONTOUR_POINTS, MIN_LABEL_BYTES, MIN_WELD_PATH_POINTS, MIN_WELD_SEGMENT_MM,
-    ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD, WELD_SIZE_CAP_MM,
+    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_MEMBER_PATH_POINTS, MAX_WELD_LENGTH_MM,
+    MAX_WELD_PATH_POINTS, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES, MIN_MEMBER_PATH_POINTS,
+    MIN_WELD_PATH_POINTS, MIN_WELD_SEGMENT_MM, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD,
+    WELD_SIZE_CAP_MM,
 };
 use beamcraft_geom::canonical_f64_bytes;
 use core::fmt;
@@ -526,6 +527,137 @@ impl CreateStraightMember {
             bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
             Ok::<(), CommandError>(())
         })?;
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
+/// P12 `CreatePolybeam`: a member along a polyline path with one section along the whole path.
+/// The section is the pinned profile (required), the optional material is a pinned definition,
+/// and the path is at least three element-local points whose interior vertices the kernel
+/// mitres; a two-point path is a straight member, not a polybeam. Whether the digests resolve
+/// (`NOT_FOUND`), the chords are long enough and the section is supported are the engine's
+/// decisions, not argument checks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreatePolybeam {
+    /// The new element's full identity.
+    pub new_id: ElementId,
+    /// Beam or column.
+    pub kind: MemberKind,
+    /// Label, 1 to 256 UTF-8 bytes without control characters.
+    pub name: String,
+    /// Authored integer part class (P15); zero is the default.
+    pub class: i32,
+    /// The ordered element-local path points, `MIN_MEMBER_PATH_POINTS` to
+    /// `MAX_MEMBER_PATH_POINTS` of them.
+    pub path_points_mm: Vec<[f64; 3]>,
+    /// Pinned profile definition, one section along the whole path.
+    pub profile_digest: ContentDigest,
+    /// Rigid placement.
+    pub placement: Placement,
+    /// Optional pinned material definition.
+    pub material_digest: Option<ContentDigest>,
+}
+
+impl CreatePolybeam {
+    /// Admits what does not depend on geometry: label, point count, finiteness, the coordinate
+    /// cap and the placement. A non-finite number is `NON_FINITE_NUMBER`; fewer than
+    /// `MIN_MEMBER_PATH_POINTS` points is `INVALID_ARGUMENT` (a two-point path is a straight
+    /// member), more than `MAX_MEMBER_PATH_POINTS` points or a coordinate above the coordinate
+    /// cap is `LIMIT_EXCEEDED`.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
+        if self.path_points_mm.len() < MIN_MEMBER_PATH_POINTS {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "path_points_mm",
+                "a polybeam path needs at least three points",
+            ));
+        }
+        if self.path_points_mm.len() > MAX_MEMBER_PATH_POINTS {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "path_points_mm",
+                "path must have 2 to 1024 points",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if self.path_points_mm.iter().flatten().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "path_points_mm",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if self
+            .path_points_mm
+            .iter()
+            .flatten()
+            .any(|v| v.abs() > COORDINATE_CAP_MM)
+        {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "path_points_mm",
+                "coordinate exceeds the coordinate cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        self.placement.validate()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments, with
+    /// signed zero normalized; like [`CreateStraightMember::content_fingerprint`] it is not the
+    /// F04 canonical form.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "path_points_mm",
+                "value cannot be encoded",
+            )
+            .with_rule("DV-ATTR-003")
+        };
+        let mut bytes = Vec::with_capacity(256);
+        bytes.extend_from_slice(b"BeamCraft/P12/CreatePolybeam/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        bytes.push(match self.kind {
+            MemberKind::Beam => 0,
+            MemberKind::Column => 1,
+        });
+        let name = self.name.as_bytes();
+        bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(name);
+        bytes.extend_from_slice(&self.class.to_le_bytes());
+        bytes.extend_from_slice(self.profile_digest.as_bytes());
+        match &self.material_digest {
+            Some(digest) => {
+                bytes.push(1);
+                bytes.extend_from_slice(digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        bytes.extend_from_slice(&(self.path_points_mm.len() as u64).to_le_bytes());
+        self.path_points_mm
+            .iter()
+            .flatten()
+            .copied()
+            .chain(self.placement.translation_mm)
+            .chain(self.placement.orientation_xyzw)
+            .try_for_each(|v| {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                Ok::<(), CommandError>(())
+            })?;
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
                 .with_rule("DV-LIM-001")
@@ -1066,6 +1198,9 @@ pub struct ElementPatch {
     /// D2: new level assignment of a plate, beam or column, or its explicit removal
     /// (`Some(None)`). Whether the level exists is the engine's decision.
     pub level: Option<Option<ElementId>>,
+    /// P12: the complete replacement of a member's path points, two for a straight member and
+    /// at least three for a polybeam. The whole path is replaced; there is no per-point setter.
+    pub axis_points_mm: Option<Vec<[f64; 3]>>,
 }
 
 /// F04 section 7 `UpdateElement`: the target element and a typed patch.
@@ -1092,6 +1227,7 @@ impl UpdateElement {
             && patch.translation_mm.is_none()
             && patch.orientation_xyzw.is_none()
             && patch.level.is_none()
+            && patch.axis_points_mm.is_none()
         {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
@@ -1142,6 +1278,32 @@ impl UpdateElement {
                     ErrorCode::LimitExceeded,
                     "thickness_mm",
                     "thickness exceeds the dimension cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
+        if let Some(points) = &patch.axis_points_mm {
+            if points.len() > MAX_MEMBER_PATH_POINTS {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "axis_points_mm",
+                    "path has more than 1024 points",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+            if points.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "axis_points_mm",
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "axis_points_mm",
+                    "coordinate exceeds the coordinate cap",
                 )
                 .with_rule("DV-LIM-001"));
             }
@@ -1237,6 +1399,21 @@ impl UpdateElement {
                 PlateSide::Middle => 2,
                 PlateSide::Bottom => 3,
             });
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(points) = &self.patch.axis_points_mm {
+            bytes.extend_from_slice(&[6, 1]);
+            bytes.extend_from_slice(&(points.len() as u64).to_le_bytes());
+            for v in points.iter().flatten().copied() {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "axis_points_mm",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
@@ -2582,6 +2759,63 @@ mod tests {
         let mut m = member();
         m.axis_points_mm[0][0] = -0.0;
         assert_eq!(m.content_fingerprint().unwrap(), base);
+    }
+
+    fn polybeam() -> CreatePolybeam {
+        CreatePolybeam {
+            new_id: ElementId::parse("019a7bf0-0000-7000-8000-000000000017").unwrap(),
+            kind: MemberKind::Beam,
+            name: "Polybeam".into(),
+            class: 0,
+            path_points_mm: vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]],
+            profile_digest: crate::digest::Sha256::digest(b"profile").unwrap(),
+            placement: Placement::IDENTITY,
+            material_digest: None,
+        }
+    }
+
+    #[test]
+    fn a_polybeam_has_the_f04_argument_rules() {
+        use crate::limits::MAX_MEMBER_PATH_POINTS;
+        assert!(polybeam().validate_arguments().is_ok());
+        let code = |m: CreatePolybeam| m.validate_arguments().unwrap_err().code;
+        // Two points author a straight member (P03), never a polybeam.
+        let mut m = polybeam();
+        m.path_points_mm.truncate(2);
+        assert_eq!(code(m), ErrorCode::InvalidArgument);
+        let mut m = polybeam();
+        m.path_points_mm = vec![[0.0; 3]; MAX_MEMBER_PATH_POINTS + 1];
+        assert_eq!(code(m), ErrorCode::LimitExceeded);
+        let mut m = polybeam();
+        m.path_points_mm[1][2] = f64::NAN;
+        assert_eq!(code(m), ErrorCode::NonFiniteNumber);
+        let mut m = polybeam();
+        m.path_points_mm[2][1] = 1_000_000_000.5;
+        assert_eq!(code(m), ErrorCode::LimitExceeded);
+        let mut m = polybeam();
+        m.name = "line\nbreak".into();
+        assert_eq!(code(m), ErrorCode::InvalidArgument);
+        let mut m = polybeam();
+        m.placement.translation_mm[1] = f64::INFINITY;
+        assert_eq!(code(m), ErrorCode::NonFiniteNumber);
+    }
+
+    #[test]
+    fn the_polybeam_fingerprint_tracks_the_whole_path() {
+        let base = polybeam().content_fingerprint().unwrap();
+        for mutate in [
+            |m: &mut CreatePolybeam| m.kind = MemberKind::Column,
+            |m: &mut CreatePolybeam| m.name = "Other".into(),
+            |m: &mut CreatePolybeam| {
+                m.path_points_mm[1] = [3000.0, 1000.0, 0.0];
+            },
+            |m: &mut CreatePolybeam| m.path_points_mm.push([6000.0, 4000.0, 0.0]),
+            |m: &mut CreatePolybeam| m.placement.translation_mm[1] = 1.0,
+        ] {
+            let mut m = polybeam();
+            mutate(&mut m);
+            assert_ne!(m.content_fingerprint().unwrap(), base);
+        }
     }
 
     fn copy() -> CopyElement {

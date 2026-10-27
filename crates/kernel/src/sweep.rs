@@ -802,6 +802,14 @@ fn build_mesh(
     let end_z = cap_normal(traversal.normals.last().copied().ok_or_else(numeric)?, 1.0);
     let last_base = (rings - 1) * points;
     let to_u32 = |v: usize| u32::try_from(v).map_err(|_| numeric());
+    // One face id — and one normal — per cap, like one per wall quad: every triangle of a
+    // cap names the same face, so the face table never repeats a role string.
+    let start_face = u16::try_from(ids.len()).map_err(|_| numeric())?;
+    ids.push("sweep:f.cap0".to_owned());
+    normals.push(start_z);
+    let end_face = u16::try_from(ids.len()).map_err(|_| numeric())?;
+    ids.push("sweep:f.cap1".to_owned());
+    normals.push(end_z);
     for cap in caps {
         let (a, b, c) = (
             cap.first().copied().ok_or_else(numeric)?,
@@ -809,22 +817,16 @@ fn build_mesh(
             cap.get(2).copied().ok_or_else(numeric)?,
         );
         let (a, b, c) = (to_usize(a)?, to_usize(b)?, to_usize(c)?);
-        let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
         // The start cap is the same triangulation wound the other way (its outward
         // normal points against the start tangent).
         triangles.push([to_u32(a)?, to_u32(c)?, to_u32(b)?]);
-        faces.push(face);
-        ids.push("sweep:f.cap0".to_owned());
-        normals.push(start_z);
-        let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
+        faces.push(start_face);
         triangles.push([
             to_u32(last_base + a)?,
             to_u32(last_base + b)?,
             to_u32(last_base + c)?,
         ]);
-        faces.push(face);
-        ids.push("sweep:f.cap1".to_owned());
-        normals.push(end_z);
+        faces.push(end_face);
     }
     Ok(Candidate {
         vertices: traversal.vertices.clone(),

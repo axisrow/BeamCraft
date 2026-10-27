@@ -286,7 +286,7 @@ mod tests {
             kind: beamcraft_model::command::MemberKind::Beam,
             name: "Beam".into(),
             class: 0,
-            axis_points_mm: [[0.; 3], [2000., 0., 0.]],
+            axis_points_mm: vec![[0.; 3], [2000., 0., 0.]],
             profile: ContentDigest::from_bytes([7; 32]),
             roll_rad: None,
             placement: Placement {

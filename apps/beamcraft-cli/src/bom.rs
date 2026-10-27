@@ -112,9 +112,9 @@ fn plate_row(inspection: &Inspection, marks: &[StoredMark], record: &PlateRecord
 }
 
 fn member_row(inspection: &Inspection, marks: &[StoredMark], record: &MemberRecord) -> Run<BomRow> {
-    let [p1, p2] = record.authored.axis_points_mm;
-    let d = [p2[0] - p1[0], p2[1] - p1[1], p2[2] - p1[2]];
-    let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    // The member length is the body's own: the axis chord for a straight member, the polyline
+    // path length for a polybeam.
+    let length = record.body.axis_length_mm;
     Ok(BomRow {
         id: record.authored.id,
         mark: mark_of(

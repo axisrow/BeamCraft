@@ -4,7 +4,7 @@
 use super::*;
 use beamcraft_model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
 use beamcraft_model::id::OpId;
-use beamcraft_model::limits::{MAX_FASTENER_LENGTHS, MIN_WELD_SEGMENT_MM};
+use beamcraft_model::limits::{MAX_FASTENER_LENGTHS, MAX_MEMBER_PATH_POINTS, MIN_WELD_SEGMENT_MM};
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
@@ -910,9 +910,9 @@ pub(super) fn snapshot(
                 }
                 "beam" | "column" => {
                     let axis = points(p, "bim:axisPointsMm")?;
-                    let [a, b] = axis.as_slice() else {
+                    if axis.len() < 2 || axis.len() > MAX_MEMBER_PATH_POINTS {
                         return Err(invalid());
-                    };
+                    }
                     let profile =
                         link(p, prims, "bim:profile", &PROFILE_KINDS, true)?.ok_or_else(invalid)?;
                     let profile =
@@ -930,7 +930,12 @@ pub(super) fn snapshot(
                             return Err(invalid());
                         }
                     };
-                    let length = norm(difference(*b, *a));
+                    // The size reference is the total path length for a polybeam and the one
+                    // chord for a straight member; both sum the same first chord.
+                    let mut length = 0.0;
+                    for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
+                        length += norm(difference(*b, *a));
+                    }
                     let half_width = width / 2.0;
                     let half_height = height / 2.0;
                     let size =
@@ -939,7 +944,12 @@ pub(super) fn snapshot(
                         return Err(limit());
                     }
                     let eps = 0.001f64.max(size / 4194304.0);
-                    if length < eps || width < eps || height < eps {
+                    // Every chord, not only the total, must clear the geometric floor.
+                    let mut short = length < eps;
+                    for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
+                        short |= norm(difference(*b, *a)) < eps;
+                    }
+                    if short || width < eps || height < eps {
                         return Err(invalid());
                     }
                     if let Some(Value::Number(n)) = p
@@ -2059,6 +2069,9 @@ pub(super) fn changes(
                         cuts,
                         ..
                     } => {
+                        if axis_mm.len() < 2 || axis_mm.len() > MAX_MEMBER_PATH_POINTS {
+                            return Err(invalid());
+                        }
                         cap(axis_mm.iter().flatten().copied(), 1e9)?;
                         if let Some(n) = roll_rad {
                             cap([*n], std::f64::consts::TAU)?;
