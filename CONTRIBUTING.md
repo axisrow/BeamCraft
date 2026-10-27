@@ -26,9 +26,10 @@ Thanks for helping. Humans and AI agents follow the same rules.
    so later syncs do not retry those skipped changes. If a conflict cannot be cleared, sync aborts
    the merge and exits 2 with the file list; after a green sync it lists the
    fork-only commits upstream does not have yet, with the exact commands for their upstream
-   PR. The cron needs the `workflows` permission to push upstream commits that touch
-   `.github/workflows/` (#234); it is granted to the default token, and setting the optional
-   `FORK_SYNC_TOKEN` secret to a PAT additionally pushes as the account, so every synced
+   PR. To push upstream commits touching `.github/workflows/` (#234), configure
+   `FORK_SYNC_TOKEN` with a PAT having classic `workflow` scope or fine-grained Contents
+   and Workflows write permissions. `GITHUB_TOKEN` has no `workflows` permission scope;
+   the fallback can push ordinary contents changes only. A PAT pushes as the account, so every synced
    master tip gets a CI run. The script doubles as the
    reference example for the small, single-purpose shell tools that live in [`tools/`](tools/).
 7. Mirror a merged fork PR to upstream: `bash tools/upstream-mirror.sh mirror <pr-number>`
