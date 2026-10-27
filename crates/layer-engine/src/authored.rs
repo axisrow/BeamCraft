@@ -44,6 +44,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional)\n",
     "assembly=element;bim:elementKind=assembly;kind=assembly;no shape inputs, material or Geometry;placement=identity\n",
     "bim:partOf=rel(0..1 element target of kind assembly;source plate|beam|column|assembly;no self;acyclic)\n",
+    "bim:mainPart=rel(0..1 element target that is a direct part of the assembly;source assembly;one main per assembly)\n",
     "connection=element;bim:elementKind=connection;kind=component;a weld (A06) or bolt group (A05);no material or Geometry;placement=identity\n",
     "steel:connection:type=token(weld|bolt_group);steel:weld:type=token(fillet);steel:weld:sizeMm=double(>0,<=1000);steel:weld:location=token(workshop|site);",
     "steel:weld:side=token(arrow|other|both)\n",
@@ -87,7 +88,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|Level|Mark|Delete;",
+    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -522,6 +523,15 @@ pub enum Change {
         /// Full UUIDv7 of the assembly, or `None` for an explicit empty record (a detach).
         assembly: Option<String>,
     },
+    /// Name the one main part of an assembly (A16.1). The record lives on the assembly; the
+    /// target must be a direct part of it, re-checked on the candidate. There is no clear: the
+    /// record is replaced by naming another part, and detaching the main part is refused.
+    MainPart {
+        /// Full source UUIDv7: the assembly.
+        id: String,
+        /// Full UUIDv7 of the main part.
+        part: String,
+    },
     /// Set or remove the one `bim:level` record of a plate, beam or column (D2). The target must
     /// be an active owned level; kind, cardinality and dangling targets are re-checked on the
     /// candidate.
@@ -560,6 +570,7 @@ impl Change {
             Self::AttachReference(r) => (&r.id, "lifecycle"),
             Self::ReferenceUnits { id, .. } => (id, "reference:units"),
             Self::PartOf { id, .. } => (id, "bim:partOf"),
+            Self::MainPart { id, .. } => (id, "bim:mainPart"),
             Self::Level { id, .. } => (id, "bim:level"),
             Self::Mark { id, .. } => (id, "steel:numbering"),
         }

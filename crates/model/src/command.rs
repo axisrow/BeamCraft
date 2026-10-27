@@ -1025,6 +1025,55 @@ impl AttachToAssembly {
     }
 }
 
+/// A16.1 `SetAssemblyMainPart`: names `part_id` as the assembly's one main part (A16.1). The
+/// record is stored on the assembly as its `bim:mainPart` relationship; the part is only read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SetAssemblyMainPart {
+    /// The assembly whose main part is named.
+    pub assembly_id: ElementId,
+    /// The part: a direct member of the assembly (plate, beam, column or nested assembly).
+    pub part_id: ElementId,
+}
+
+impl SetAssemblyMainPart {
+    /// SHA-256 of a versioned encoding of the request. That the part exists and is a direct
+    /// member of the assembly, and that the main part is unique, are the engine's decisions.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut bytes = Vec::with_capacity(80);
+        bytes.extend_from_slice(b"BeamCraft/A16/SetAssemblyMainPart/v1\0");
+        bytes.extend_from_slice(self.assembly_id.as_bytes());
+        bytes.extend_from_slice(self.part_id.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
+/// A16 `ExplodeAssembly`: dissolves one assembly level. The assembly element is deleted and its
+/// direct parts lose their `part-of` records; geometry, placement and attributes of the parts do
+/// not change, and a nested sub-assembly stays an assembly with its own parts (decision of
+/// 2026-10-21: explode means dissolve).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExplodeAssembly {
+    /// The assembly to dissolve.
+    pub assembly_id: ElementId,
+}
+
+impl ExplodeAssembly {
+    /// SHA-256 of a versioned encoding of the request. That the target exists and is an assembly
+    /// is the engine's decision.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut bytes = Vec::with_capacity(64);
+        bytes.extend_from_slice(b"BeamCraft/A16/ExplodeAssembly/v1\0");
+        bytes.extend_from_slice(self.assembly_id.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
 /// A01 `DetachFromAssembly`: removes the `part-of` record of `part_id`. The former assembly is
 /// not written and stays, even when it has no parts left.
 #[derive(Debug, Clone, PartialEq)]
@@ -2041,6 +2090,26 @@ mod tests {
         assert_ne!(
             detach.content_fingerprint().unwrap(),
             DetachFromAssembly { part_id: b }
+                .content_fingerprint()
+                .unwrap()
+        );
+        let main = SetAssemblyMainPart {
+            assembly_id: b,
+            part_id: a,
+        };
+        assert_ne!(
+            main.content_fingerprint().unwrap(),
+            SetAssemblyMainPart {
+                assembly_id: b,
+                part_id: b,
+            }
+            .content_fingerprint()
+            .unwrap()
+        );
+        let explode = ExplodeAssembly { assembly_id: a };
+        assert_ne!(
+            explode.content_fingerprint().unwrap(),
+            ExplodeAssembly { assembly_id: b }
                 .content_fingerprint()
                 .unwrap()
         );

@@ -1081,6 +1081,15 @@ pub(super) fn apply(
                 };
                 relationship_targets(&mut authored, &p, "bim:partOf", Some(targets))?;
             }
+            Change::MainPart { part, .. } => {
+                let targets = vec![path(&target_path(
+                    part,
+                    ElementCategory::Part,
+                    input,
+                    prims,
+                )?)?];
+                relationship_targets(&mut authored, &p, "bim:mainPart", Some(targets))?;
+            }
             Change::Level { level, .. } => {
                 // An unassignment authors an explicit empty target list, as a detach does.
                 let targets = match level.as_deref() {
@@ -1365,6 +1374,7 @@ fn capture(
                     ("steel:member:rollRad", "double"),
                     ("bim:profile", "rel"),
                     ("bim:partOf", "rel"),
+                    ("bim:mainPart", "rel"),
                     ("bim:level", "rel"),
                     ("bim:elevationMm", "double"),
                     (MARK_SERIES, "string"),
@@ -1401,6 +1411,7 @@ fn capture(
             Change::Profile { .. } => add("bim:profile", "rel", 0),
             Change::Material { .. } => add("bim:material", "rel", 0),
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
+            Change::MainPart { .. } => add("bim:mainPart", "rel", 0),
             Change::Level { .. } => add("bim:level", "rel", 0),
             Change::Mark { .. } => {
                 add(MARK_SERIES, "string", 0);

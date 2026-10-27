@@ -841,6 +841,7 @@ pub(super) fn snapshot(
     }
     grid::read_grids(prims)?;
     part_of(prims)?;
+    main_part(prims)?;
     connects(prims)?;
     level_links(prims)?;
     marks(prims)?;
@@ -953,6 +954,7 @@ pub(super) fn snapshot(
             "U02-V05:scalar-caps-dimensions-scaled-minima-pose",
             "U02-V06:standard-mesh-buffer-structure",
             "A01-V01:part-of-kinds-cardinality-self-link-and-cycles",
+            "A16-V01:main-part-on-an-assembly-one-per-assembly-direct-part",
             "A06-V01:weld-properties-and-connects-two-distinct-parts",
             "A05-V01:bolt-properties-and-connects-two-distinct-parts",
             "D2-V01:level-elevation-and-level-kinds-cardinality-and-dangling",
@@ -1379,6 +1381,83 @@ fn part_of(prims: &[Prim]) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// A16.1 `mainPart` records: only an assembly carries `bim:mainPart`, with at most one target
+/// (`DV-REL-004`), which must be an active owned element whose own `part-of` record names this
+/// assembly — a direct part, whatever its supported kind (`DV-REL-001` dangling, `DV-REL-003`
+/// kind). A record whose part is not a member is refused, never read as "no main part".
+fn main_part(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let elements: BTreeMap<&str, (&Prim, &str)> = prims
+        .iter()
+        .filter_map(|p| supported_kind(p).map(|k| (p.path.as_str(), (p, k))))
+        .collect();
+    for &(p, kind) in elements.values() {
+        let Some(r) = relationship(p, "bim:mainPart") else {
+            continue;
+        };
+        let target = match r.targets.as_slice() {
+            [] => continue,
+            [target] => target.as_str(),
+            _ => {
+                return Err(fail(
+                    ErrorCode::DependencyConflict,
+                    "an assembly has at most one main part",
+                )
+                .with_rule("DV-REL-004"));
+            }
+        };
+        if kind != "assembly" {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "only an assembly carries a main-part record",
+            )
+            .with_rule("DV-REL-003"));
+        }
+        match elements.get(target) {
+            // The main part must be a direct member: its own part-of record names this assembly.
+            Some((t, _)) if t.active && part_of_target(t, p.path.as_str()) => {}
+            Some((t, _)) if !t.active => {
+                return Err(fail(
+                    ErrorCode::DanglingRelationship,
+                    "main-part target is not active",
+                )
+                .with_rule("DV-REL-001"));
+            }
+            Some(_) => {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "main-part target is not a direct part of the assembly",
+                )
+                .with_rule("DV-REL-003"));
+            }
+            None if prims
+                .iter()
+                .any(|p| p.path == target && p.element_id.is_some()) =>
+            {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "main-part target is not a supported owned part",
+                )
+                .with_rule("DV-REL-003"));
+            }
+            None => {
+                return Err(fail(
+                    ErrorCode::DanglingRelationship,
+                    "main-part target unavailable",
+                )
+                .with_rule("DV-REL-001"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether the loaded `part-of` record of `part` names exactly `assembly` (an explicit empty
+/// record is not a membership).
+fn part_of_target(part: &Prim, assembly: &str) -> bool {
+    relationship(part, "bim:partOf")
+        .is_some_and(|r| matches!(r.targets.as_slice(), [target] if target.as_str() == assembly))
+}
+
 /// The `part-of` chain from `start` upwards: `start`, its assembly, that one's assembly, and so on.
 /// The batch's own `PartOf` changes override the composed records. The walk stops at a repeated
 /// element (a cycle, refused later by the candidate check) and is bounded by the prim count.
@@ -1511,6 +1590,8 @@ pub(super) fn changes(
                     Change::PartOf { .. } => {
                         matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
+                    // The main-part record lives on the assembly; only it is a source.
+                    Change::MainPart { .. } => kind == "assembly",
                     Change::Level { .. } => matches!(kind, "plate" | "beam" | "column"),
                     Change::Mark { .. } => {
                         matches!(kind, "plate" | "beam" | "column" | "assembly")
@@ -1561,7 +1642,7 @@ pub(super) fn changes(
                 &[Group::Placement, Group::Derived],
             ),
             Change::Mesh(_) => (&[Group::Lifecycle, Group::ShapeInputs], &[Group::Derived]),
-            Change::PartOf { .. } | Change::Level { .. } => (
+            Change::PartOf { .. } | Change::MainPart { .. } | Change::Level { .. } => (
                 &[Group::Lifecycle, Group::Relationship],
                 &[Group::Relationship],
             ),
@@ -1627,12 +1708,26 @@ pub(super) fn changes(
                 group: Group::Lifecycle,
             });
         }
+        if let Change::MainPart { part, .. } = change {
+            if !uuid7(part) {
+                return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
+            }
+            // The part's existence and its membership decide acceptance: only a direct part of
+            // the assembly can be its main part, so its relationships are read too.
+            for group in [Group::Lifecycle, Group::Relationship] {
+                reads.insert(Footprint {
+                    identity: part.clone(),
+                    group,
+                });
+            }
+        }
         if !matches!(
             change,
             Change::Label { .. }
                 | Change::Create(_)
                 | Change::Delete { .. }
                 | Change::PartOf { .. }
+                | Change::MainPart { .. }
                 | Change::Level { .. }
                 | Change::Mark { .. }
         ) && let Some(p) = existing

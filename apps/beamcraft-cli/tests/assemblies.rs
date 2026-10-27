@@ -22,6 +22,8 @@ use beamcraft_json::Json;
 const FRAME: &str = "019a7bf0-0000-7000-8000-000000200001";
 const OUTER: &str = "019a7bf0-0000-7000-8000-000000200002";
 const OTHER: &str = "019a7bf0-0000-7000-8000-000000200003";
+const MAIN_OP: &str = "019a7bf0-0000-7000-8000-00000000c001";
+const USER: &str = "01890a5d-ac96-774b-b9cc-aaaaaaaaaaaa";
 
 struct Fixture {
     shared: support::StoreFixture,
@@ -128,6 +130,27 @@ impl Fixture {
     fn assemblies(&self) -> Vec<Json> {
         list(&self.ok("assemblies", &[]), "assemblies").to_vec()
     }
+
+    /// Runs a command against another store root (a workspace draft), always through the binary.
+    fn run_in(&self, store: &str, command: &str, extra: &[&str]) -> (i32, Json) {
+        support::StoreFixture::run_in(store, command, extra)
+    }
+    fn ok_in(&self, store: &str, command: &str, extra: &[&str]) -> Json {
+        let (code, body) = self.run_in(store, command, extra);
+        assert_eq!(code, 0, "{command} {extra:?}: {body:?}");
+        body
+    }
+    /// Runs a command that takes no `--store` (the workspace commands take a directory).
+    fn ok_plain(&self, args: &[&str]) -> Json {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_beamcraft"))
+            .args(args)
+            .output()
+            .unwrap();
+        let body =
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        assert_eq!(output.status.code().unwrap(), 0, "{args:?}: {body:?}");
+        body
+    }
 }
 
 fn text(json: &Json, key: &str) -> String {
@@ -153,6 +176,9 @@ fn groups(change: &Json, key: &str) -> Vec<(String, String)> {
         .iter()
         .map(|e| (text(e, "target"), text(e, "group")))
         .collect()
+}
+fn number(json: &Json, key: &str) -> u64 {
+    at(json, &[key]).unsigned().unwrap()
 }
 
 #[test]
@@ -418,4 +444,235 @@ fn a_different_request_under_an_accepted_op_id_is_reuse_not_a_replay() {
     let (code, body) = detach(&one, op(5));
     assert_eq!(code, 0);
     assert_eq!(text(&body, "outcome"), "part_detached_replayed");
+}
+
+/// A16.1: the main part is stored on the assembly, is one of its direct parts, and guards its
+/// own detach and delete until another main part is named.
+#[test]
+fn the_main_part_is_stored_on_the_assembly_and_guards_detach_and_delete() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    f.assembly(FRAME, "Frame");
+    f.attach(&plate, FRAME);
+    f.attach(&beam, FRAME);
+
+    // The record lives on the assembly: only the assembly's relationship group is written.
+    let set = f.ok(
+        "set-main-part",
+        &["--id", &beam, "--assembly-id", FRAME, "--op-id", MAIN_OP],
+    );
+    assert_eq!(text(&set, "outcome"), "main_part_set");
+    assert_eq!(
+        groups(&set, "writes"),
+        [(FRAME.to_owned(), "relationship".to_owned())]
+    );
+    assert_eq!(text(assembly(&f.assemblies(), FRAME), "main"), beam);
+    let replay = f.ok(
+        "set-main-part",
+        &["--id", &beam, "--assembly-id", FRAME, "--op-id", MAIN_OP],
+    );
+    assert_eq!(text(&replay, "outcome"), "main_part_set_replayed");
+    assert_eq!(at(&replay, &["footprint"]), &Json::Null);
+
+    // A foreign part cannot be main: not a member at all, or a member of another assembly.
+    let foreign = f.plate();
+    assert_eq!(
+        f.rejected("set-main-part", &["--id", &foreign, "--assembly-id", FRAME]),
+        "INVALID_ARGUMENT"
+    );
+    f.assembly(OUTER, "Outer");
+    f.attach(&foreign, OUTER);
+    assert_eq!(
+        f.rejected("set-main-part", &["--id", &foreign, "--assembly-id", FRAME]),
+        "INVALID_ARGUMENT"
+    );
+    let missing = "019a7bf0-0000-7000-8000-0000002000ff";
+    assert_eq!(
+        f.rejected("set-main-part", &["--id", missing, "--assembly-id", FRAME]),
+        "NOT_FOUND"
+    );
+    assert_eq!(
+        f.rejected("set-main-part", &["--id", &beam, "--assembly-id", missing]),
+        "NOT_FOUND"
+    );
+    // The same main part again is no change.
+    assert_eq!(
+        f.rejected("set-main-part", &["--id", &beam, "--assembly-id", FRAME]),
+        "INVALID_ARGUMENT"
+    );
+
+    // Detaching the main part is refused until another main part is named; then it works.
+    assert_eq!(
+        f.rejected("detach-from-assembly", &["--id", &beam]),
+        "DEPENDENCY_CONFLICT"
+    );
+    f.ok("set-main-part", &["--id", &plate, "--assembly-id", FRAME]);
+    assert_eq!(text(assembly(&f.assemblies(), FRAME), "main"), plate);
+    f.ok("detach-from-assembly", &["--id", &beam]);
+
+    // A delete cannot remove the main part either.
+    f.attach(&beam, FRAME);
+    f.ok("set-main-part", &["--id", &beam, "--assembly-id", FRAME]);
+    assert_eq!(
+        f.rejected("delete-element", &["--id", &beam]),
+        "DEPENDENCY_CONFLICT"
+    );
+    // An assembly that is itself a main part of its parent cannot be deleted while it has
+    // parts, and the record dies with the assembly on an explode.
+    f.attach(FRAME, OUTER);
+    f.ok("set-main-part", &["--id", FRAME, "--assembly-id", OUTER]);
+    assert_eq!(
+        f.rejected("delete-element", &["--id", FRAME]),
+        "DEPENDENCY_CONFLICT"
+    );
+    // Exploding the assembly that is the parent's main part is refused the same way, while
+    // exploding the parent is allowed: its record dies with it and the sub-assembly stays.
+    assert_eq!(
+        f.rejected("explode-assembly", &["--id", FRAME]),
+        "DEPENDENCY_CONFLICT"
+    );
+    f.ok("explode-assembly", &["--id", OUTER]);
+    let all = f.assemblies();
+    assert_eq!(all.len(), 1);
+    let frame = assembly(&all, FRAME);
+    assert_eq!(at(frame, &["part_of"]), &Json::Null);
+    assert_eq!(text(frame, "main"), beam);
+}
+
+/// A16: explode dissolves one level; the parts do not change and the undo brings the assembly
+/// back byte for byte. The whole scenario runs in a workspace draft, the only place an undo
+/// exists.
+#[test]
+fn explode_dissolves_one_level_and_its_undo_restores_it() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    f.assembly(FRAME, "Frame");
+    f.attach(&plate, FRAME);
+    f.attach(&beam, FRAME);
+    f.assembly(OUTER, "Outer");
+    f.attach(FRAME, OUTER);
+    f.ok("set-main-part", &["--id", &plate, "--assembly-id", FRAME]);
+    let mesh_before = text(
+        &f.ok("inspect-elements", &[])
+            .get("plates")
+            .unwrap()
+            .array()
+            .unwrap()[0],
+        "mesh_digest",
+    );
+
+    let published = f.shared.root.join("store").to_str().unwrap().to_owned();
+    let ws = f.shared.root.join("ws").to_str().unwrap().to_owned();
+    f.ok_in(
+        &published,
+        "create-workspace",
+        &["--workspace-dir", &ws, "--user-id", USER],
+    );
+
+    // Exploding the outer level leaves the inner assembly an assembly.
+    let exploded = f.ok_in(&ws, "explode-assembly", &["--id", OUTER]);
+    assert_eq!(text(&exploded, "outcome"), "assembly_exploded");
+    let ws_head = f.ok_in(&ws, "assemblies", &[]);
+    let all = list(&ws_head, "assemblies");
+    assert_eq!(all.len(), 1);
+    let frame = assembly(all, FRAME);
+    assert_eq!(at(frame, &["part_of"]), &Json::Null);
+    let mut parts = strings(frame, "parts");
+    parts.sort();
+    let mut expected = vec![plate.clone(), beam.clone()];
+    expected.sort();
+    assert_eq!(parts, expected);
+    assert_eq!(text(frame, "main"), plate);
+
+    // Exploding the frame itself leaves the parts loose and unchanged.
+    let exploded = f.ok_in(&ws, "explode-assembly", &["--id", FRAME]);
+    assert_eq!(text(&exploded, "outcome"), "assembly_exploded");
+    assert!(list(&f.ok_in(&ws, "assemblies", &[]), "assemblies").is_empty());
+    let inspected = f.ok_in(&ws, "inspect-elements", &[]);
+    assert_eq!(
+        text(
+            &inspected.get("plates").unwrap().array().unwrap()[0],
+            "mesh_digest"
+        ),
+        mesh_before
+    );
+    // Nothing is left to explode; the refusal writes nothing.
+    let missing = "019a7bf0-0000-7000-8000-0000002000ff";
+    let (code, body) = f.run_in(&ws, "explode-assembly", &["--id", missing]);
+    assert_eq!((code, text(&body, "code").as_str()), (2, "NOT_FOUND"));
+
+    // Each undo restores one unit (one explode). The first brings the frame back, the second
+    // also the outer assembly with its records and the main part.
+    f.ok_plain(&["undo-workspace", "--workspace-dir", &ws]);
+    let half_head = f.ok_in(&ws, "assemblies", &[]);
+    let half = list(&half_head, "assemblies");
+    assert_eq!(half.len(), 1);
+    let frame = assembly(half, FRAME);
+    assert_eq!(at(frame, &["part_of"]), &Json::Null);
+    assert_eq!(text(frame, "main"), plate);
+    f.ok_plain(&["undo-workspace", "--workspace-dir", &ws]);
+    let restored_head = f.ok_in(&ws, "assemblies", &[]);
+    let restored = list(&restored_head, "assemblies");
+    assert_eq!(restored.len(), 2);
+    let frame = assembly(restored, FRAME);
+    assert_eq!(text(frame, "part_of"), OUTER);
+    assert_eq!(text(frame, "main"), plate);
+    let inspected = f.ok_in(&ws, "inspect-elements", &[]);
+    assert_eq!(
+        text(
+            &inspected.get("plates").unwrap().array().unwrap()[0],
+            "mesh_digest"
+        ),
+        mesh_before
+    );
+}
+
+/// A16 acceptance: numbering and the bill of materials count the parts of a nested assembly
+/// exactly once — the inner assembly's parts belong to it alone, the outer assembly's own
+/// part to the outer one alone.
+#[test]
+fn numbering_and_bom_count_nested_parts_once() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    let beam = f.beam();
+    f.assembly(FRAME, "Frame");
+    f.attach(&plate, FRAME);
+    f.attach(&beam, FRAME);
+    f.assembly(OUTER, "Outer");
+    // A part of a different size, so the two assemblies cannot share a mark.
+    let extra = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &["--width", "700", "--length", "400", "--thickness", "12"],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    f.attach(&extra, OUTER);
+    f.attach(FRAME, OUTER);
+
+    let preview = f.ok("preview-numbering", &[]);
+    assert_eq!(text(&preview, "outcome"), "numbering_preview");
+    // Three parts exist and each is counted once, whatever its nesting depth.
+    assert_eq!(number(at(&preview, &["counts"]), "parts"), 3);
+    let assemblies: Vec<_> = list(&preview, "groups")
+        .iter()
+        .filter(|g| text(g, "kind") == "assembly")
+        .collect();
+    assert_eq!(assemblies.len(), 2);
+
+    let elements = format!("{}/bom-elements.csv", f.shared.root.to_str().unwrap());
+    let summary = format!("{}/bom-summary.csv", f.shared.root.to_str().unwrap());
+    let exported = f.ok("export-bom", &["--out", &elements, "--summary", &summary]);
+    assert_eq!(at(&exported, &["elements"]).float(), Ok(3.0));
+    let csv = std::fs::read_to_string(&elements).unwrap();
+    // The mark is the element id until numbering is approved, so every id appears twice.
+    for id in [&plate, &beam, &extra] {
+        assert_eq!(csv.matches(id).count(), 2, "{id}");
+    }
+    assert!(!csv.contains(FRAME));
 }
