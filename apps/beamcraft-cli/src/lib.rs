@@ -47,3 +47,6 @@ pub mod plane_views;
 
 /// Non-destructive personal clipping state (V15).
 pub mod view_clipping;
+
+/// Typed user attributes (I04).
+pub mod attributes;

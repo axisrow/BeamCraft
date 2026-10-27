@@ -1674,7 +1674,7 @@ fn replacing_a_mesh_drops_only_the_quantity_record_and_reports_every_removal() {
         .opinions
         .iter()
         .filter(|i| i.opinion == Opinion::Remove)
-        .map(|i| i.attribute)
+        .map(|i| i.attribute.as_str())
         .collect();
     for name in [
         "bim:volumeMm3",

@@ -739,6 +739,7 @@ pub(super) fn snapshot(
         ("/World/Levels", "group"),
         ("/World/Grids", "group"),
         ("/World/Helpers", "group"),
+        ("/World/Attributes", "group"),
         ("/World/References", "group"),
     ] {
         if let Some(p) = prims
@@ -791,7 +792,15 @@ pub(super) fn snapshot(
         }
         if !matches!(
             text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid" | "helper"
+            "plate"
+                | "beam"
+                | "column"
+                | "assembly"
+                | "connection"
+                | "level"
+                | "grid"
+                | "helper"
+                | "attribute_definition"
         ) {
             continue;
         }
@@ -896,7 +905,7 @@ pub(super) fn snapshot(
                         return Err(invalid());
                     }
                 }
-                "assembly" | "connection" | "level" | "helper" => {
+                "assembly" | "connection" | "level" | "helper" | "attribute_definition" => {
                     if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
                         return Err(invalid());
                     }
@@ -925,20 +934,23 @@ pub(super) fn snapshot(
         }
         owned_pose(p)?;
         // The placement of an assembly, a weld and a level is the identity in this slice.
-        if matches!(kind, "assembly" | "connection" | "level" | "helper")
-            && (required(p, "xformOp:translate", "double3")?
-                != &Value::Array(vec![Value::Number(0.0); 3])
-                || required(p, "xformOp:orient", "quatd")?
-                    != &Value::Array(vec![
-                        Value::Number(1.0),
-                        Value::Number(0.0),
-                        Value::Number(0.0),
-                        Value::Number(0.0),
-                    ]))
+        if matches!(
+            kind,
+            "assembly" | "connection" | "level" | "helper" | "attribute_definition"
+        ) && (required(p, "xformOp:translate", "double3")?
+            != &Value::Array(vec![Value::Number(0.0); 3])
+            || required(p, "xformOp:orient", "quatd")?
+                != &Value::Array(vec![
+                    Value::Number(1.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                    Value::Number(0.0),
+                ]))
         {
             return Err(unsupported());
         }
     }
+    attribute::validate_snapshot(prims)?;
     grid::read_grids(prims)?;
     instance::links(prims)?;
     if prims
@@ -971,12 +983,14 @@ pub(super) fn snapshot(
         // is refused, authored or loaded. A grid carries only derived guide meshes (T01.7);
         // only the A15 weld with an authored path carries a derived solid.
         let kind = supported_kind(element);
-        let bodyless = matches!(kind, Some("assembly" | "level" | "helper"))
-            || (kind == Some("connection")
-                && !element
-                    .properties
-                    .iter()
-                    .any(|v| v.name == "steel:weld:pathMm"));
+        let bodyless = matches!(
+            kind,
+            Some("assembly" | "level" | "helper" | "attribute_definition")
+        ) || (kind == Some("connection")
+            && !element
+                .properties
+                .iter()
+                .any(|v| v.name == "steel:weld:pathMm"));
         if bodyless {
             return Err(unsupported());
         }
@@ -1097,7 +1111,15 @@ fn supported_kind(p: &Prim) -> Option<&str> {
     token("bim:elementKind").filter(|k| {
         matches!(
             *k,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid" | "helper"
+            "plate"
+                | "beam"
+                | "column"
+                | "assembly"
+                | "connection"
+                | "level"
+                | "grid"
+                | "helper"
+                | "attribute_definition"
         )
     })
 }
@@ -1691,6 +1713,7 @@ pub(super) fn changes(
             // snapshot re-validates it as a whole.
             Change::Mesh(_)
             | Change::PartClass { .. }
+            | Change::UserAttributes { .. }
             | Change::PartOf { .. }
             | Change::Level { .. }
                 if existing.is_none()
@@ -1722,6 +1745,7 @@ pub(super) fn changes(
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
                     }
+                    Change::UserAttributes { .. } => ElementCategory::from_kind(kind).is_some(),
                     Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
                     Change::Grid { .. } => kind == "grid",
                     Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
@@ -1802,6 +1826,10 @@ pub(super) fn changes(
             Change::PartClass { .. } | Change::Label { .. } => {
                 (&[Group::Lifecycle, Group::Label], &[Group::Label])
             }
+            Change::UserAttributes { .. } => (
+                &[Group::Lifecycle, Group::ShapeInputs],
+                &[Group::ShapeInputs],
+            ),
             Change::Grid { .. } => (
                 &[Group::Lifecycle, Group::ShapeInputs, Group::Placement],
                 &[Group::ShapeInputs],
@@ -1881,6 +1909,20 @@ pub(super) fn changes(
                 group: Group::Lifecycle,
             });
         }
+        if let Change::UserAttributes { values, .. } = change {
+            for (id, has_value) in attribute::validate_patch(values, prims)? {
+                reads.insert(Footprint {
+                    identity: id.to_string(),
+                    group: Group::Lifecycle,
+                });
+                if has_value {
+                    reads.insert(Footprint {
+                        identity: id.to_string(),
+                        group: Group::ShapeInputs,
+                    });
+                }
+            }
+        }
         if let Change::MainPart { part, .. } = change {
             if !uuid7(part) {
                 return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
@@ -1897,6 +1939,7 @@ pub(super) fn changes(
         if !matches!(
             change,
             Change::PartClass { .. }
+                | Change::UserAttributes { .. }
                 | Change::Label { .. }
                 | Change::Create(_)
                 | Change::Delete { .. }
@@ -2137,6 +2180,17 @@ pub(super) fn changes(
                             return Err(invalid());
                         }
                     }
+                    Shape::AttributeDefinition(d) => {
+                        d.validate().map_err(|e| fail(e.code, e.message))?;
+                        if e.id != d.id.to_string()
+                            || e.name != d.name
+                            || e.material.is_some()
+                            || e.placement.translation_mm != [0.; 3]
+                            || e.placement.orientation_xyzw != [0., 0., 0., 1.]
+                        {
+                            return Err(invalid());
+                        }
+                    }
                     Shape::Helper(g) => {
                         g.validate().map_err(|e| fail(e.code, e.message))?;
                         if e.material.is_some()
@@ -2182,6 +2236,9 @@ pub(super) fn changes(
                 {
                     return Err(unsupported());
                 }
+            }
+            Change::UserAttributes { values, .. } => {
+                attribute::validate_patch(values, prims)?;
             }
             Change::PartClass { .. } => {}
             Change::Label { name, .. } => label(name)?,
@@ -2324,6 +2381,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 ),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
                 Shape::Instance { .. } => Ok(()),
+                Shape::AttributeDefinition(d) => d.validate().map_err(|e| fail(e.code, e.message)),
                 Shape::Helper(g) => g.validate().map_err(|e| fail(e.code, e.message)),
                 Shape::Grid(g) => grid::validate_record(g),
             }

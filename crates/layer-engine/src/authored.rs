@@ -4,6 +4,7 @@
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
+pub mod attribute;
 mod derive;
 mod edit;
 pub mod grid;
@@ -63,6 +64,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
     "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
+    "attribute_definition=/World/Attributes/ATD_<uuid7-32>;bim:attribute:type=token(text|number|integer|boolean|choice);unit=string;choices=string[];sets=string[];user:a_<uuid7-32>=scalar;unknown user properties preserved;no body;placement=identity\n",
     "helper=/World/Helpers/HLP_<uuid7-32>;bim:elementKind=helper;bim:helper:kind=token(point|line|circle|plane);bim:helper:parameters=double[];no material or Geometry;placement=identity\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
@@ -261,6 +263,8 @@ pub enum Shape {
     /// `bim:connects` record towards two distinct parts. Like a weld it has no material, no
     /// derived body and the identity placement in this slice.
     Bolt(Bolt),
+    /// I04 immutable scalar user-property definition, without an engineering body.
+    AttributeDefinition(beamcraft_model::attribute::AttributeDefinition),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
     /// T02 construction geometry, excluded from engineering quantities.
@@ -283,6 +287,7 @@ impl Shape {
             | Self::Assembly
             | Self::Weld(_)
             | Self::Bolt(_)
+            | Self::AttributeDefinition(_)
             | Self::Helper(_)
             | Self::Grid(_)
             | Self::Level { .. } => &[],
@@ -601,6 +606,16 @@ pub enum Change {
         /// The mark to store.
         mark: Mark,
     },
+    /// I04 typed user-property patch; None removes one explicitly addressed property.
+    UserAttributes {
+        /// Full target element UUID.
+        id: String,
+        /// Definition UUIDs and scalar values, bounded by the model profile.
+        values: BTreeMap<
+            beamcraft_model::id::ElementId,
+            Option<beamcraft_model::attribute::AttributeValue>,
+        >,
+    },
     /// Replace the complete set of through-hole operation records of a plate (A04): the four
     /// `steel:hole:*` attributes, replaced as a whole and always together. The engine has
     /// already replayed every record against the base shape and certified the body; this
@@ -617,6 +632,7 @@ impl Change {
         match self {
             Self::Create(e) => (&e.id, "lifecycle"),
             Self::Delete { id } => (id, "lifecycle"),
+            Self::UserAttributes { id, .. } => (id, "user:attributes"),
             Self::PartClass { id, .. } => (id, "steel:class"),
             Self::Label { id, .. } => (id, "bim:name"),
             Self::Grid { id, .. } => (id, "bim:grid"),
@@ -722,8 +738,8 @@ pub struct Prepared {
 pub struct AuthoredItem {
     /// Full matching element UUIDv7.
     pub element_id: String,
-    /// Fixed schema field name from the supported mapping.
-    pub attribute: &'static str,
+    /// Admitted schema or UUID-backed user field name from the supported mapping.
+    pub attribute: String,
     /// Fixed USD type name; relationships use `rel`.
     pub type_name: &'static str,
     /// Exact local opinion; missing property specs are reported as Remove.
@@ -1029,6 +1045,7 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Helper(_) => ElementCategory::Helper,
+        Shape::AttributeDefinition(_) => ElementCategory::AttributeDefinition,
         Shape::Plate { .. } | Shape::Member { .. } | Shape::Instance { .. } => {
             ElementCategory::Part
         }

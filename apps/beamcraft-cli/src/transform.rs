@@ -450,6 +450,10 @@ fn transform_with_mirror(
                 None
             };
             changes.extend(create_changes(&next, definition)?);
+            let (user_changes, user_footprint) =
+                crate::attributes::copy_properties(&decoded.attributes, *source, *target)?;
+            changes.extend(user_changes);
+            footprint = footprint.union(user_footprint)?;
             if let Some(level) = decoded.levels.level_of(source) {
                 footprint = footprint.union(Footprint::for_level(*target, Some(level))?)?;
                 changes.push(Change::Level {

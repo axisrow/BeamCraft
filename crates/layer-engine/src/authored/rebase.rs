@@ -42,12 +42,17 @@ fn scaffold(path: &str) -> bool {
             | "/World/Levels"
             | "/World/Helpers"
             | "/World/Definitions"
+            | "/World/Attributes"
             | "/World/Definitions/Materials"
             | "/World/Definitions/Profiles"
     )
 }
 
 fn property_group(name: &str) -> Option<G> {
+    if name.starts_with("user:") || name.starts_with("bim:attribute:") {
+        return Some(G::ShapeInputs);
+    }
+
     Some(match name {
         "bim:id" | "bim:elementKind" | "bim:geometryMode" | "bim:schemaVersion"
         | "bim:createdBy" | "bim:revision" => G::Lifecycle,

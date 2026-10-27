@@ -74,3 +74,6 @@ pub mod plane_view;
 
 /// Presentation-only clipping (V15).
 pub mod view_clipping;
+
+/// Typed user attributes (I04).
+pub mod attribute;
