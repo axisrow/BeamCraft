@@ -104,7 +104,10 @@ There is no fabricated bounding-box fallback and no fabricated position mark in 
 - `beamcraft-model::id` — drawing object identities (typed UUIDv7).
 - `beamcraft-model::drawing` — source pin, live-source and freshness states.
 - `beamcraft-engine::drawing` — admission (`Drawing::admit`), view/dimension specs, re-export of
-  the pin and freshness states; `projection` and `svg` submodules.
+  the pin and freshness states; `projection`, `svg`, `pdf` and `print` submodules. `pdf` renders
+  one published version as stroke-only PDF 1.4 (no font is embedded or referenced); `print` is
+  the print pipeline shape: resolved strokes laid out 1:1, centred on a fixed A4–A0 sheet,
+  refusing instead of rescaling.
 - `apps/beamcraft-cli` — `preview-drawing`, `create-drawing`, `refresh-drawing`,
   `publish-drawing`, `inspect-drawing`, `inspect-drawing-versions`, `export-drawing`, and the
   drawing document store; it computes nothing the engine does not expose.

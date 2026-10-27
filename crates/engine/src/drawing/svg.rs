@@ -21,7 +21,7 @@ pub const EXPORT_CONTRACT: &str = "beamcraft-drawing-export/1";
 pub const MAX_EXPORT_BYTES: usize = 65_536;
 
 /// Paper margin around every stroke in the viewport.
-const MARGIN_MM: f64 = 5.0;
+pub(super) const MARGIN_MM: f64 = 5.0;
 /// Stroke glyph digit box: 2.0 mm wide, 3.5 mm high, 1.0 mm advance gap.
 const GLYPH_WIDTH: f64 = 2.0;
 const GLYPH_HEIGHT: f64 = 3.5;
@@ -62,7 +62,7 @@ fn escape(text: &str) -> String {
 
 /// Original stroke glyphs for the bounded millimetre label; an unknown character advances a
 /// blank gap instead of a fabricated glyph.
-fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
+pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
     match digit {
         '0' => Some(&[
             SEGMENT_TOP,
@@ -131,7 +131,11 @@ fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
 }
 
 /// Positions the label glyphs centred on the dimension line, on the side the line is offset to.
-fn label_strokes(label: &str, line_mid: [f64; 2], anchor_mid: [f64; 2]) -> Vec<[[f64; 2]; 2]> {
+pub(super) fn label_strokes(
+    label: &str,
+    line_mid: [f64; 2],
+    anchor_mid: [f64; 2],
+) -> Vec<[[f64; 2]; 2]> {
     let width: f64 = label
         .chars()
         .map(|ch| {
@@ -172,7 +176,7 @@ fn label_strokes(label: &str, line_mid: [f64; 2], anchor_mid: [f64; 2]) -> Vec<[
 }
 
 /// Two open-V strokes forming an arrowhead at `tip`, opening back along the unit `inward`.
-fn arrow_strokes(tip: [f64; 2], inward: [f64; 2]) -> [[[f64; 2]; 2]; 2] {
+pub(super) fn arrow_strokes(tip: [f64; 2], inward: [f64; 2]) -> [[[f64; 2]; 2]; 2] {
     let side = [-inward[1], inward[0]];
     let wing = |sign: f64| {
         [
@@ -184,7 +188,7 @@ fn arrow_strokes(tip: [f64; 2], inward: [f64; 2]) -> [[[f64; 2]; 2]; 2] {
 }
 
 /// Validates and normalizes one paper point; negative zero normalizes so bytes stay canonical.
-fn checked(point: [f64; 2]) -> Result<[f64; 2], CommandError> {
+pub(super) fn checked(point: [f64; 2]) -> Result<[f64; 2], CommandError> {
     let [x, y] = point;
     if !x.is_finite() || !y.is_finite() {
         return Err(CommandError::new(
@@ -207,7 +211,7 @@ fn checked(point: [f64; 2]) -> Result<[f64; 2], CommandError> {
 }
 
 /// Validates a stroke list and returns the normalized copy used for geometry and bytes.
-fn normalized(strokes: Vec<[[f64; 2]; 2]>) -> Result<Vec<[[f64; 2]; 2]>, CommandError> {
+pub(super) fn normalized(strokes: Vec<[[f64; 2]; 2]>) -> Result<Vec<[[f64; 2]; 2]>, CommandError> {
     strokes
         .into_iter()
         .map(|[start, end]| Ok([checked(start)?, checked(end)?]))
@@ -229,14 +233,16 @@ fn path(strokes: &[[[f64; 2]; 2]]) -> String {
     text
 }
 
-/// Renders the exact resolved published geometry as deterministic stroke-only SVG bytes.
-/// Unresolved geometry, unbounded coordinates and an over-cap result refuse; the caller's
-/// model and document are never touched.
-pub fn export(
-    drawing: &Drawing,
-    version: DocumentVersionId,
+/// The five published stroke groups in draw order: body, extension, dimension line,
+/// arrowheads and label glyphs. Every coordinate is validated and normalized.
+pub(super) type StrokeGroups = [Vec<[[f64; 2]; 2]>; 5];
+
+/// Resolves and validates the exact published geometry once for every export surface
+/// (SVG, PDF, print). Unresolved geometry, an empty body and unbounded coordinates refuse;
+/// returns the groups and the model-unit dimension label used by export metadata.
+pub(super) fn stroke_groups(
     projection: &Projection,
-) -> Result<Vec<u8>, CommandError> {
+) -> Result<(StrokeGroups, String), CommandError> {
     let (BodyProjection::Resolved(edges), DimensionProjection::Resolved(dimension)) =
         (&projection.body, &projection.dimension)
     else {
@@ -270,26 +276,44 @@ pub fn export(
     let line_mid = [(la[0] + lb[0]) / 2.0, (la[1] + lb[1]) / 2.0];
     let anchor_mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
     let label = normalized(label_strokes(label_mm, line_mid, anchor_mid))?;
-    let (mut min_x, mut min_y, mut max_x, mut max_y) = (
-        f64::INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::NEG_INFINITY,
-    );
-    for group in [&body, &extension, &line, &arrows, &label] {
-        for [[sx, sy], [ex, ey]] in group {
-            for (x, y) in [(*sx, *sy), (*ex, *ey)] {
-                min_x = min_x.min(x);
-                min_y = min_y.min(y);
-                max_x = max_x.max(x);
-                max_y = max_y.max(y);
+    Ok((
+        [body, extension, line, arrows, label],
+        (*label_mm).to_owned(),
+    ))
+}
+
+/// Tight bounds of all validated strokes: `[min_x, min_y, max_x, max_y]` in paper mm.
+pub(super) fn bounds(groups: &StrokeGroups) -> [f64; 4] {
+    let mut low = [f64::INFINITY; 2];
+    let mut high = [f64::NEG_INFINITY; 2];
+    for group in groups {
+        for [start, end] in group {
+            for [x, y] in [*start, *end] {
+                low[0] = low[0].min(x);
+                low[1] = low[1].min(y);
+                high[0] = high[0].max(x);
+                high[1] = high[1].max(y);
             }
         }
     }
+    [low[0], low[1], high[0], high[1]]
+}
+
+/// Renders the exact resolved published geometry as deterministic stroke-only SVG bytes.
+/// Unresolved geometry, unbounded coordinates and an over-cap result refuse; the caller's
+/// model and document are never touched.
+pub fn export(
+    drawing: &Drawing,
+    version: DocumentVersionId,
+    projection: &Projection,
+) -> Result<Vec<u8>, CommandError> {
+    let (groups, label_mm) = stroke_groups(projection)?;
+    let [min_x, min_y, max_x, max_y] = bounds(&groups);
     let lo_x = ((min_x - MARGIN_MM) * 100.0).floor() / 100.0;
     let lo_y = ((min_y - MARGIN_MM) * 100.0).floor() / 100.0;
     let width = ((max_x + MARGIN_MM) * 100.0).ceil() / 100.0 - lo_x;
     let height = ((max_y + MARGIN_MM) * 100.0).ceil() / 100.0 - lo_y;
+    let [body, extension, line, arrows, label] = groups;
     let spec = drawing.spec();
     let metadata = format!(
         "{EXPORT_CONTRACT} drawing={} view={} dimension={} version={} source_revision={} \
@@ -302,7 +326,7 @@ pub fn export(
         escape(&spec.source.manifest.to_string()),
         ALGORITHM,
         spec.view.scale_denominator,
-        escape(label_mm),
+        escape(&label_mm),
     );
     let text = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
