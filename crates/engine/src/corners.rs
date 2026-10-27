@@ -153,6 +153,18 @@ pub fn treated_outline(
                 if !tangent.is_finite() || !offset.is_finite() {
                     return Err(refused("the rounding of this corner is not representable"));
                 }
+                // One arc can never fit the derived contour cap, so refuse before it allocates
+                // (the arc holds segments + 1 points); a radius near the coordinate cap on a
+                // sharp corner would otherwise expand to hundreds of thousands of points only
+                // to be refused by the same cap below.
+                if segments + 1 > beamcraft_geom::tolerance::CONTOUR_POINT_CAP {
+                    return Err(CommandError::new(
+                        ErrorCode::LimitExceeded,
+                        "corner",
+                        "the rounding of this corner needs more points than the contour cap",
+                    )
+                    .with_rule("DV-LIM-001"));
+                }
                 if let Some(slot) = consumed.get_mut(i) {
                     *slot = [tangent, tangent];
                 } else {
