@@ -563,9 +563,6 @@ fn chord_arc(
     if !(sweep > 0.0 && sweep.is_finite()) {
         return Err(SweepFailure::Path(PathCode::CollinearArc));
     }
-    if radius * sweep > DIMENSION_CAP_MM {
-        return Err(SweepFailure::Path(PathCode::AboveLimit));
-    }
     let spec = CurveSpec {
         max_sagitta_mm: deviation,
         min_segments: 8,
@@ -578,6 +575,9 @@ fn chord_arc(
     let facets = (sweep / step).ceil().max(1.0);
     if !facets.is_finite() || facets > 1021.0 {
         return Err(SweepFailure::Path(PathCode::DeviationUnreachable));
+    }
+    if radius * sweep > DIMENSION_CAP_MM {
+        return Err(SweepFailure::Path(PathCode::AboveLimit));
     }
     let facet_angle = sweep / facets;
     let tangent = |phi: f64| -> Result<Vec3, SweepFailure> {
