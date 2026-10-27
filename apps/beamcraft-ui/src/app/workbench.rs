@@ -685,7 +685,7 @@ impl App {
             });
     }
 
-    /// The status bar: the selection, snap switches (not available yet) and Details.
+    /// The status bar: the selection, the selection switches, the Snap switch and Details.
     pub(crate) fn status_bar(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::bottom("model-status")
