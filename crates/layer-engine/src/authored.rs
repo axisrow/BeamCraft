@@ -62,6 +62,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
     "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
+    "helper=/World/Helpers/HLP_<uuid7-32>;bim:elementKind=helper;bim:helper:kind=token(point|line|circle|plane);bim:helper:parameters=double[];no material or Geometry;placement=identity\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
     "numbering=approved mark of a plate|beam|column|assembly (A09);steel:numbering:series=string(<=16 of A-Z a-z 0-9 _ -);",

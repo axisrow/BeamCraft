@@ -105,12 +105,15 @@ pub(crate) fn is_helper(
     let mut reader = Reader::default();
     let opened = reader.open(request.clone(), control)?;
     // Deactivated helpers remain deletable, although queries exclude them from snapping.
-    Ok(read_prims(&reader, &opened.context, control)?.iter().any(|p| {
-        p.element_id.as_deref() == Some(id.to_string().as_str())
-            && property(p, "bim:elementKind").and_then(text) == Some("helper")
-            && property(p, "bim:schemaVersion").and_then(text) == Some("0.1.0")
-            && !p.sources.is_empty() && p.sources.iter().all(|s| s.owned)
-    }))
+    Ok(read_prims(&reader, &opened.context, control)?
+        .iter()
+        .any(|p| {
+            p.element_id.as_deref() == Some(id.to_string().as_str())
+                && property(p, "bim:elementKind").and_then(text) == Some("helper")
+                && property(p, "bim:schemaVersion").and_then(text) == Some("0.1.0")
+                && !p.sources.is_empty()
+                && p.sources.iter().all(|s| s.owned)
+        }))
 }
 
 /// Reads helpers from exactly one verified revision, retaining its pin for consumers.
