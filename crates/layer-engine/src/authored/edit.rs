@@ -785,6 +785,7 @@ fn create(
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
         Shape::Grid(g) => grid::author(data, &p, g)?,
+        Shape::Helper(g) => helper::author(data, &p, g)?,
         Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
         Shape::Level { elevation_mm } => attr(
             data,

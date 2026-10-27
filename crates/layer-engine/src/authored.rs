@@ -8,6 +8,7 @@ mod derive;
 mod edit;
 pub mod grid;
 mod guard;
+pub mod helper;
 pub mod instance;
 pub mod rebase;
 mod reference;
@@ -260,6 +261,8 @@ pub enum Shape {
     Bolt(Bolt),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
+    /// T02 construction geometry, excluded from engineering quantities.
+    Helper(beamcraft_model::helper::HelperGeometry),
     /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
     /// derived body. Plates, beams and columns are assigned to it by [`Change::Level`]. Its
     /// placement must be the identity: the elevation is a value, never a pose.
@@ -278,6 +281,7 @@ impl Shape {
             | Self::Assembly
             | Self::Weld(_)
             | Self::Bolt(_)
+            | Self::Helper(_)
             | Self::Grid(_)
             | Self::Level { .. } => &[],
         }
@@ -1022,6 +1026,7 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Weld(_) | Shape::Bolt(_) => ElementCategory::Connection,
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
+        Shape::Helper(_) => ElementCategory::Helper,
         Shape::Plate { .. } | Shape::Member { .. } | Shape::Instance { .. } => {
             ElementCategory::Part
         }

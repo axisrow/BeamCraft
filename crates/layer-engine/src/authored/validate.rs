@@ -895,7 +895,7 @@ pub(super) fn snapshot(
                         return Err(invalid());
                     }
                 }
-                "assembly" | "connection" | "level" => {
+                "assembly" | "connection" | "level" | "helper" => {
                     if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
                         return Err(invalid());
                     }
@@ -909,6 +909,9 @@ pub(super) fn snapshot(
                             _ => return Err(invalid().with_rule("DV-ATTR-002")),
                         }
                     }
+                    if kind == "helper" {
+                        helper::read(p)?;
+                    }
                     if kind == "level" {
                         elevation(number(p, "bim:elevationMm")?)?;
                     }
@@ -921,7 +924,7 @@ pub(super) fn snapshot(
         }
         owned_pose(p)?;
         // The placement of an assembly, a weld and a level is the identity in this slice.
-        if matches!(kind, "assembly" | "connection" | "level")
+        if matches!(kind, "assembly" | "connection" | "level" | "helper")
             && (required(p, "xformOp:translate", "double3")?
                 != &Value::Array(vec![Value::Number(0.0); 3])
                 || required(p, "xformOp:orient", "quatd")?
@@ -937,6 +940,9 @@ pub(super) fn snapshot(
     }
     grid::read_grids(prims)?;
     instance::links(prims)?;
+    if prims.iter().filter(|p| supported_kind(p) == Some("helper")).count() > beamcraft_model::helper::MAX_HELPERS {
+        return Err(limit());
+    }
     part_of(prims)?;
     main_part(prims)?;
     connects(prims)?;
@@ -2301,6 +2307,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 ),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
                 Shape::Instance { .. } => Ok(()),
+                Shape::Helper(g) => g.validate().map_err(|e| fail(e.code, e.message)),
                 Shape::Grid(g) => grid::validate_record(g),
             }
         }

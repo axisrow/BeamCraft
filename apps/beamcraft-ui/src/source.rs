@@ -289,8 +289,20 @@ fn frame_parts(frame: &Frame<'_>, known: &Known) -> Parts {
             if known.token.as_ref() == Some(snapshot.token()) {
                 return Ok(Refreshed::Unchanged);
             }
-            let scene =
-                Scene::from_snapshot_reusing(&snapshot, Representation::Full, &known.resident)?;
+            let scene = Scene::from_snapshot_with_helpers(
+                &snapshot,
+                Representation::Full,
+                &known.resident,
+                definitions
+                    .as_ref()
+                    .ok()
+                    .filter(|d| {
+                        d.head.as_ref().is_some_and(|h| {
+                            h.manifest_digest == snapshot.pin().revision().to_string()
+                        })
+                    })
+                    .map(|d| &d.helpers),
+            )?;
             Ok(Refreshed::New(Box::new((snapshot, scene))))
         });
     (

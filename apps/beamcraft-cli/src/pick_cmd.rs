@@ -18,7 +18,7 @@ use beamcraft_engine::query::feature::{
 };
 use beamcraft_engine::query::pick::{
     DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SnapKind, SnapQuery, pick,
-    snap_with_grids,
+    snap_with_helpers,
 };
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
@@ -240,12 +240,9 @@ fn run(args: &[OsString]) -> Run<Json> {
             point_mm: point("--point")?,
             radius_mm: number("--radius", 0.0)?,
             kinds: given("--kinds")
-                .unwrap_or("vertex,axis_end,axis")
+                .unwrap_or("vertex,axis_end,axis,helper")
                 .split(',')
-                .map(|t| {
-                    SnapKind::parse(t)
-                        .ok_or_else(|| invalid("--kinds are vertex, axis_end or axis"))
-                })
+                .map(|t| SnapKind::parse(t).ok_or_else(|| invalid("unknown snap kind")))
                 .collect::<Run<Vec<_>>>()?,
             max_hits,
         }),
@@ -332,11 +329,12 @@ fn run(args: &[OsString]) -> Run<Json> {
                         .collect::<Run<std::collections::BTreeSet<_>>>()
                 })
                 .transpose()?;
-            let result = snap_with_grids(
+            let result = snap_with_helpers(
                 snapshot,
                 &query,
-                &beamcraft_cli::grid::grids_at(&store, inspection.revision.sequence)?,
+                &inspection.grids,
                 visible.as_ref(),
+                &inspection.helpers,
             )?;
             let mut fields = header("snapped");
             let candidates = result
