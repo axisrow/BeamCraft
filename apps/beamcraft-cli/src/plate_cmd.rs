@@ -76,6 +76,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--thickness",
     "--name",
     "--translation",
+    "--orientation-xyzw",
     "--material-digest",
     "--material",
     "--hole-rect",
@@ -806,7 +807,8 @@ fn create(
                 }
                 given("--translation").map_or(Ok([0.0; 3]), translation)?
             },
-            ..Placement::IDENTITY
+            orientation_xyzw: given("--orientation-xyzw")
+                .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
         },
         material_digest: selected(
             store,

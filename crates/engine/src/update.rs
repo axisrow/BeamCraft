@@ -73,18 +73,6 @@ pub fn patch_plate(
     if let Some(thickness) = patch.thickness_mm {
         next.thickness_mm = thickness;
     }
-    // A plate keeps the create-time refusal for a non-identity rotation: committed rotated
-    // plates are not evaluated, so accepting the patch here would refuse every later read of
-    // the store. The identity stays the reset.
-    if let Some(xyzw) = patch.orientation_xyzw
-        && xyzw != Placement::IDENTITY.orientation_xyzw
-    {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedGeometry,
-            "placement.orientation_xyzw",
-            "rotated plate placement is not evaluated in this slice",
-        ));
-    }
     next.placement = placement_after(&plate.placement, patch)?;
     Ok(next)
 }
@@ -283,19 +271,15 @@ mod tests {
         .unwrap();
         assert_eq!(moved.placement.orientation_xyzw, quarter);
         assert_eq!(moved.placement.translation_mm, [5.0, 6.0, 7.0]);
-        // A plate keeps the create-time refusal for a non-identity orientation patch (a rotated
-        // plate would refuse every later read of the store), and the identity still resets it.
-        let refused = patch_plate(
+        let turned_plate = patch_plate(
             &plate(),
             &ElementPatch {
                 orientation_xyzw: Some(quarter),
-                translation_mm: Some([1.0, 0.0, 0.0]),
                 ..ElementPatch::default()
             },
         )
-        .unwrap_err();
-        assert_eq!(refused.code, ErrorCode::UnsupportedGeometry);
-        assert_eq!(refused.field, "placement.orientation_xyzw");
+        .unwrap();
+        assert_eq!(turned_plate.placement.orientation_xyzw, quarter);
         let reset = patch_plate(
             &plate(),
             &ElementPatch {
@@ -337,14 +321,12 @@ mod tests {
                 .code,
             ErrorCode::NonFiniteNumber
         );
-        // A plate refuses any non-identity orientation patch as unsupported geometry before
-        // validation details, mirroring create_plate; the model layer owns the code-level
-        // validation refusals.
+        // Plates and members use the same typed rigid-pose validation.
         assert_eq!(
             patch_plate(&plate(), &patch([2.0, 0.0, 0.0, 0.0]))
                 .unwrap_err()
                 .code,
-            ErrorCode::UnsupportedGeometry
+            ErrorCode::InvalidArgument
         );
     }
 

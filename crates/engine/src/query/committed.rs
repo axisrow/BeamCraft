@@ -436,29 +436,21 @@ pub fn evaluate_committed_members_cached(
     Ok(records)
 }
 
-/// The snapshot-builder input for committed plates. Plate placement remains translation-only in
-/// this slice.
+/// The snapshot-builder input for committed plates, including their complete rigid pose.
 pub fn scene_elements(records: &[PlateRecord]) -> Result<Vec<SceneElement>, CommandError> {
     scene_elements_with_members(records, &[])
 }
 
 /// The snapshot-builder input for committed plates and members, in element-id order.
 ///
-/// A scene placement is a translation for both kinds: a member's placement rotation is already
-/// composed into its body mesh (the section frame), and a plate keeps the identity-rotation
-/// refusal, so no scene element carries an orientation.
+/// Plates keep their meshes local and carry their authored quaternion. A member's rotation
+/// remains composed into its body mesh, so its scene pose contributes only the translation.
 pub fn scene_elements_with_members(
     plates: &[PlateRecord],
     members: &[MemberRecord],
 ) -> Result<Vec<SceneElement>, CommandError> {
     let translation = |placement: &beamcraft_model::command::Placement| {
-        if !placement.is_identity_rotation() {
-            return Err(CommandError::new(
-                ErrorCode::UnsupportedGeometry,
-                "placement.orientation_xyzw",
-                "rotated plate placement is not evaluated in this slice",
-            ));
-        }
+        placement.validate()?;
         let [x, y, z] = placement.translation_mm;
         Translation3::new(x, y, z).map_err(|_| {
             CommandError::new(
@@ -470,12 +462,15 @@ pub fn scene_elements_with_members(
     };
     let mut elements = Vec::with_capacity(plates.len().saturating_add(members.len()));
     for r in plates {
-        elements.push(SceneElement::new(
-            r.authored.id,
-            ElementKind::Plate,
-            translation(&r.authored.placement)?,
-            r.body.solid.scene_mesh(),
-        ));
+        elements.push(
+            SceneElement::new(
+                r.authored.id,
+                ElementKind::Plate,
+                translation(&r.authored.placement)?,
+                r.body.solid.scene_mesh(),
+            )
+            .with_orientation(r.authored.placement.orientation_xyzw),
+        );
     }
     for r in members {
         let kind = match r.authored.kind {
@@ -939,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicates_bad_labels_and_unsupported_rotation_are_rejected_without_a_partial_list() {
+    fn duplicate_ids_and_bad_labels_are_refused_and_plate_rotation_is_preserved() {
         assert_eq!(
             evaluate_committed(&[plate(5, 1000.0, 0.0), plate(5, 800.0, 0.0)])
                 .unwrap_err()
@@ -956,10 +951,8 @@ mod tests {
         let s = core::f64::consts::FRAC_1_SQRT_2;
         rotated.placement.orientation_xyzw = [0.0, 0.0, s, s];
         let records = evaluate_committed(&[rotated]).unwrap();
-        assert_eq!(
-            scene_elements(&records).unwrap_err().code,
-            ErrorCode::UnsupportedGeometry
-        );
+        let scene = scene_elements(&records).unwrap();
+        assert_eq!(scene[0].orientation_xyzw, [0.0, 0.0, s, s]);
         let mut broken = plate(5, 1000.0, 0.0);
         broken.thickness_mm = -1.0;
         assert!(evaluate_committed(&[broken]).is_err());

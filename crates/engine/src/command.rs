@@ -27,7 +27,7 @@
 //! Ordered 3D validity is checked before support: outside-band nonplanarity, clockwise winding,
 //! intersections and touches are `INVALID_ARGUMENT`. Other contours outside `z = 0`, including
 //! valid near-planar input, remain `UNSUPPORTED_GEOMETRY` in this evaluated-body API. Use
-//! [`crate::plate_draft`] to retain supported authored-only states. Rotated placements remain P10 work.
+//! [`crate::plate_draft`] to retain supported authored-only states. Rigid placements are applied by the snapshot and export consumers; the body stays local.
 //!
 //! Through holes (A04) apply to the existing `z = 0` bodies. A box reports width and length in
 //! its body frame; a G05 contour reports its element-local XY bounding-box extents.
@@ -775,7 +775,7 @@ pub fn origin_rectangle_contour(
 /// `DUPLICATE_ID`, checked after argument admission and before geometry as F04 section 8 orders.
 /// A pinned material is resolved next (`materials`), so a missing definition is `NOT_FOUND`
 /// before any geometry runs and its read is part of the footprint.
-/// A placement rotation other than the identity is `UNSUPPORTED_GEOMETRY` (module documentation).
+/// A rigid placement changes the scene pose, never the element-local body.
 pub fn create_plate(
     command: &CreatePlate,
     existing: &dyn Fn(&ElementId) -> bool,
@@ -797,13 +797,6 @@ pub fn create_plate(
     let footprint = Footprint::for_create(command.new_id, command.material_digest)?;
     let authored = AuthoredPlate::from_command(command);
     let body = evaluate_plate(&authored)?;
-    if !command.placement.is_identity_rotation() {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedGeometry,
-            "placement.orientation_xyzw",
-            "rotated plate placement is not evaluated in this slice",
-        ));
-    }
     let quantities = body.quantities_for(material)?;
     Ok(CreatePlateOutcome {
         fingerprint: command.content_fingerprint()?,
@@ -1540,7 +1533,7 @@ mod tests {
         assert!(create_plate(&c, &none).is_ok()); // F04-POS-09
         let s = core::f64::consts::FRAC_1_SQRT_2;
         c.placement.orientation_xyzw = [0.0, 0.0, s, s];
-        assert_eq!(code(&c), ErrorCode::UnsupportedGeometry);
+        assert!(create_plate(&c, &none).is_ok());
         let mut nan = command(rect(1000.0, 500.0), 10.0);
         nan.contour_points_mm[1][0] = f64::NAN;
         assert_eq!(code(&nan), ErrorCode::NonFiniteNumber);
