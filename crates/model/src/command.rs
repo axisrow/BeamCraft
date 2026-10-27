@@ -1516,6 +1516,30 @@ impl UpdateHole {
     }
 }
 
+/// Remove an existing hole by record identity, never by an unstable polygon index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoveHole {
+    /// Target owned plate.
+    pub target_id: ElementId,
+    /// Existing hole record.
+    pub operation_id: OpId,
+}
+impl RemoveHole {
+    /// Canonical typed removal digest.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut b = b"BeamCraft/A04/RemoveHole/v1\0".to_vec();
+        b.extend_from_slice(self.target_id.as_bytes());
+        b.extend_from_slice(self.operation_id.as_bytes());
+        Sha256::digest(&b).map_err(|_| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "content",
+                "hole request exceeds its bound",
+            )
+        })
+    }
+}
+
 /// F04 section 7 `AddHole`: one through-hole operation record on a valid plate (A04). The
 /// record's `operation_id` is also the logical command id: a retry with identical content
 /// replays the recorded result, different content under an accepted id is `OP_ID_REUSE`, and

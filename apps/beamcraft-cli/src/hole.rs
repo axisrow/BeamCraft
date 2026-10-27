@@ -19,7 +19,6 @@ use crate::plate::{
     plate_record, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
-use beamcraft_engine::command::add_hole;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
@@ -87,7 +86,7 @@ pub fn add_hole_command(
     request: &AddHoleRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<AddedHole, PlateError> {
-    apply_hole(store, request, hook, false)
+    apply_hole(store, request, hook, false, false)
 }
 /// Replace one hole record in a canonical instance group, in one atomic revision.
 /// `request.op_id` is a new logical request identity; command.operation_id names the record.
@@ -96,13 +95,56 @@ pub fn update_hole_command(
     request: &AddHoleRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<AddedHole, PlateError> {
-    apply_hole(store, request, hook, true)
+    apply_hole(store, request, hook, true, false)
+}
+/// Removal context with an independent logical request ID.
+#[derive(Debug, Clone)]
+pub struct RemoveHoleRequest {
+    /// Logical request UUID.
+    pub op_id: OpId,
+    /// New revision UUID.
+    pub revision_id: RevisionId,
+    /// Trusted actor.
+    pub actor: Uuid7,
+    /// Store project.
+    pub project: ProjectId,
+    /// Store workspace.
+    pub workspace: WorkspaceId,
+    /// Target and record UUID.
+    pub command: beamcraft_model::command::RemoveHole,
+}
+/// Same immutable response shape as other hole record changes; no live ordinal is invented.
+pub type RemovedHole = AddedHole;
+/// Remove and retire a record in one canonical-instance-group revision and undo unit.
+pub fn remove_hole_command(
+    store: &RevisionStore,
+    request: &RemoveHoleRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<RemovedHole, PlateError> {
+    let request = AddHoleRequest {
+        op_id: request.op_id,
+        revision_id: request.revision_id,
+        actor: request.actor.clone(),
+        project: request.project,
+        workspace: request.workspace,
+        command: AddHole {
+            target_id: request.command.target_id,
+            operation_id: request.command.operation_id,
+            hole: beamcraft_model::command::HoleSpec::Rectangle {
+                corner_mm: [0.0; 2],
+                width_mm: 1.0,
+                height_mm: 1.0,
+            },
+        },
+    };
+    apply_hole(store, &request, hook, false, true)
 }
 fn apply_hole(
     store: &RevisionStore,
     request: &AddHoleRequest,
     hook: &mut dyn CommitHook,
     update: bool,
+    remove: bool,
 ) -> Result<AddedHole, PlateError> {
     let command = &request.command;
     command.validate_arguments()?;
@@ -110,7 +152,13 @@ fn apply_hole(
     let edit = beamcraft_model::command::UpdateHole {
         hole: command.clone(),
     };
-    let fingerprint = if update {
+    let removal = beamcraft_model::command::RemoveHole {
+        target_id: command.target_id,
+        operation_id: command.operation_id,
+    };
+    let fingerprint = if remove {
+        removal.content_fingerprint()?
+    } else if update {
         edit.content_fingerprint()?
     } else {
         command.content_fingerprint()?
@@ -155,7 +203,7 @@ fn apply_hole(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances, history) = {
+    let (plates, members, definitions, instances, history, hole_history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -179,6 +227,7 @@ fn apply_hole(
             decoded.definitions,
             decoded.instances,
             decoded.cut_history,
+            decoded.hole_history,
         )
     };
     let head_plate = plates
@@ -235,7 +284,8 @@ fn apply_hole(
     // id namespaces of the A04 hole records and of the A03 cut records are one project-wide
     // space, so a cut record on any plate or member also refuses the id here.
     let used = |id: OpId| {
-        history.values().any(|h| h.retired.contains(&id))
+        hole_history.values().any(|h| h.retired.contains(&id))
+            || history.values().any(|h| h.retired.contains(&id))
             || plates.iter().any(|p| {
                 p.authored.hole_records.iter().any(|r| r.operation_id == id)
                     || p.authored.cuts.iter().any(|c| c.operation_id == id)
@@ -251,10 +301,19 @@ fn apply_hole(
         .as_ref()
         .map(&materials)
         .transpose()?;
-    let (authored, body) = if update {
+    let (authored, body) = if remove {
+        beamcraft_engine::command::remove_hole(&head_plate.authored, &removal)?
+    } else if update {
         beamcraft_engine::command::update_hole(&head_plate.authored, &edit)?
     } else {
-        add_hole(&head_plate.authored, command, &used)?
+        beamcraft_engine::command::add_hole_after(
+            &head_plate.authored,
+            command,
+            &used,
+            hole_history
+                .get(&command.target_id)
+                .map_or(0, |h| usize::from(h.next_ordinal)),
+        )?
     };
     let quantities = body.quantities_for(material)?;
     let next = PlateRecord {

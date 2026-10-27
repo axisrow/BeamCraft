@@ -302,7 +302,7 @@ fn apply_cut(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances, history) = {
+    let (plates, members, definitions, instances, history, hole_history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -324,6 +324,7 @@ fn apply_cut(
             decoded.definitions,
             decoded.instances,
             decoded.cut_history,
+            decoded.hole_history,
         )
     };
     let head_plate = plates.iter().find(|r| r.authored.id == command.target_id);
@@ -338,6 +339,16 @@ fn apply_cut(
         .flat_map(|r| r.authored.cuts.iter())
         .chain(members.iter().flat_map(|r| r.authored.cuts.iter()))
         .map(|c| c.operation_id)
+        .chain(
+            plates
+                .iter()
+                .flat_map(|p| p.authored.hole_records.iter().map(|r| r.operation_id)),
+        )
+        .chain(
+            hole_history
+                .values()
+                .flat_map(|h| h.retired.iter().copied()),
+        )
         .chain(history.values().flat_map(|h| h.retired.iter().copied()))
         .collect();
     // The op-id decision runs before the record admission (F04 section 8 order): the head holds

@@ -552,7 +552,6 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         || counts.len() != ids.len()
         || counts.len() != ordinals.len()
         || counts.len() != kinds.len()
-        || counts.is_empty()
     {
         return Err(invalid());
     }
@@ -917,10 +916,12 @@ pub(super) fn snapshot(
         }
         if instance::definition(p, prims)?.is_none() {
             if matches!(kind, "plate" | "beam" | "column") {
+                let hole_history = cut_history::read_holes(p)?;
                 let history = cut_history::read(p)?;
                 for id in history
                     .retired
                     .into_iter()
+                    .chain(hole_history.retired)
                     .chain(cut_history::ids(p, "steel:cut:operationId")?)
                     .chain(cut_history::ids(p, "steel:hole:operationIds")?)
                 {

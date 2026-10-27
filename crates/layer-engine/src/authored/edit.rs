@@ -801,6 +801,16 @@ fn create(
                 )?;
             }
             if !hole_records.is_empty() {
+                author_record_history(
+                    data,
+                    &p,
+                    None,
+                    &hole_records
+                        .iter()
+                        .map(|r| (r.operation_id, r.ordinal))
+                        .collect::<Vec<_>>(),
+                    true,
+                )?;
                 let mut flat: Vec<[f64; 3]> = Vec::new();
                 let mut counts = Vec::new();
                 let mut ids = Vec::new();
@@ -1034,49 +1044,52 @@ fn create(
     pose(data, &p, &e.placement)
 }
 
-/// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
-/// typed empty arrays, masking weaker opinions; fresh uncut elements still author no cuts.
-pub(super) fn author_cuts(
+fn author_record_history(
     data: &mut sdf::Data,
     p: &str,
-    cuts: &[CutRecord],
     source: Option<&Prim>,
+    records: &[(beamcraft_model::id::OpId, usize)],
+    hole: bool,
 ) -> Result<(), Diagnostic> {
-    // Read composed source opinions, including weaker owned layers, before replacing records.
+    let (next_name, retired_name, id_name, ordinal_name) = cut_history::fields(hole);
     let old = source
-        .map(cut_history::read)
+        .map(|p| {
+            if hole {
+                cut_history::read_holes(p)
+            } else {
+                cut_history::read(p)
+            }
+        })
         .transpose()?
         .unwrap_or_default();
-    let old_records = source
-        .map(validate::element_cut)
-        .transpose()?
-        .unwrap_or_default();
-    let mut next = old.next_ordinal;
+    let mut next = usize::from(old.next_ordinal);
     let mut retired = old
         .retired
         .into_iter()
-        .map(|id| id.to_string())
         .collect::<std::collections::BTreeSet<_>>();
-    if let Some(source) = source {
-        for id in cut_history::ids(source, "steel:cut:operationId")? {
-            if !cuts.iter().any(|c| c.operation_id == id) {
-                retired.insert(id.to_string());
-            }
+    let old_pairs = if let Some(source) = source {
+        cut_history::ids(source, id_name)?
+            .into_iter()
+            .zip(cut_history::ordinals(source, ordinal_name)?)
+            .collect::<BTreeMap<_, _>>()
+    } else {
+        BTreeMap::new()
+    };
+    for id in old_pairs.keys() {
+        if !records.iter().any(|(new, _)| new == id) {
+            retired.insert(*id);
         }
     }
-    for c in cuts {
-        match old_records
-            .iter()
-            .find(|old| old.operation_id == c.operation_id)
-        {
-            Some(old) if old.ordinal != c.ordinal => return Err(invalid()),
-            None if c.ordinal < old.next_ordinal => return Err(invalid()),
-            _ => {}
-        }
-        next = next.max(c.ordinal.checked_add(1).ok_or_else(invalid)?);
-        if retired.contains(&c.operation_id.to_string()) {
+    for (id, ordinal) in records {
+        if *ordinal > 999 || retired.contains(id) {
             return Err(invalid());
         }
+        match old_pairs.get(id) {
+            Some(old) if usize::from(*old) != *ordinal => return Err(invalid()),
+            None if *ordinal < usize::from(old.next_ordinal) => return Err(invalid()),
+            _ => {}
+        }
+        next = next.max(ordinal + 1);
     }
     if next > 1000 || retired.len() > 1000 {
         return Err(limit());
@@ -1085,20 +1098,41 @@ pub(super) fn author_cuts(
         attr(
             data,
             p,
-            cut_history::NEXT,
+            next_name,
             "int",
-            sdf::Value::Int(i32::from(next)),
+            sdf::Value::Int(i32::try_from(next).map_err(|_| limit())?),
         )?;
     }
     if !retired.is_empty() {
         attr(
             data,
             p,
-            cut_history::RETIRED,
+            retired_name,
             "string[]",
-            sdf::Value::StringVec(retired.into_iter().collect()),
+            sdf::Value::StringVec(retired.into_iter().map(|id| id.to_string()).collect()),
         )?;
     }
+    Ok(())
+}
+
+/// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
+/// typed empty arrays, masking weaker opinions; fresh uncut elements still author no cuts.
+pub(super) fn author_cuts(
+    data: &mut sdf::Data,
+    p: &str,
+    cuts: &[CutRecord],
+    source: Option<&Prim>,
+) -> Result<(), Diagnostic> {
+    author_record_history(
+        data,
+        p,
+        source,
+        &cuts
+            .iter()
+            .map(|r| (r.operation_id, usize::from(r.ordinal)))
+            .collect::<Vec<_>>(),
+        false,
+    )?;
     let ids: Vec<String> = cuts.iter().map(|c| c.operation_id.to_string()).collect();
     let ordinals = cuts.iter().map(|c| i32::from(c.ordinal)).collect();
     let cut_points: Vec<[f64; 3]> = cuts.iter().map(|c| c.point_mm).collect();
@@ -1390,6 +1424,16 @@ pub(super) fn apply(
                 prims.iter().find(|old| old.path == p),
             )?,
             Change::HoleRecords { records, .. } => {
+                author_record_history(
+                    &mut authored,
+                    &p,
+                    prims.iter().find(|old| old.path == p),
+                    &records
+                        .iter()
+                        .map(|r| (r.operation_id, r.ordinal))
+                        .collect::<Vec<_>>(),
+                    true,
+                )?;
                 // The five record attributes, always together: the authoritative polygons of
                 // every record, replayed from the base shape in ordinal order, with the id,
                 // the engine-assigned ordinal and the kind (hole or polygon cut) of each.
@@ -1733,6 +1777,8 @@ fn capture(
                             add("steel:hole:vertexCounts", "int[]", 0);
                             add("steel:hole:operationIds", "string[]", 0);
                             add("steel:hole:ordinals", "int[]", 0);
+                            add(cut_history::HOLE_NEXT, "int", 0);
+                            add(cut_history::HOLE_RETIRED, "string[]", 0);
                         }
                     }
                     Shape::Member {
@@ -1810,6 +1856,8 @@ fn capture(
                 add("steel:hole:vertexCounts", "int[]", 0);
                 add("steel:hole:operationIds", "string[]", 0);
                 add("steel:hole:ordinals", "int[]", 0);
+                add(cut_history::HOLE_NEXT, "int", 0);
+                add(cut_history::HOLE_RETIRED, "string[]", 0);
             }
             Change::Delete { .. } => {
                 for (name, ty) in [
@@ -1836,6 +1884,8 @@ fn capture(
                     ("steel:hole:vertexCounts", "int[]"),
                     ("steel:hole:operationIds", "string[]"),
                     ("steel:hole:ordinals", "int[]"),
+                    (cut_history::HOLE_NEXT, "int"),
+                    (cut_history::HOLE_RETIRED, "string[]"),
                     ("bim:axisPointsMm", "double3[]"),
                     ("steel:member:rollRad", "double"),
                     ("steel:member:planePosition", "token"),

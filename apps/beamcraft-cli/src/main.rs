@@ -151,6 +151,7 @@ fn main() -> std::process::ExitCode {
             || c == "create-polybeam"
             || c == "add-hole"
             || c == "update-hole"
+            || c == "remove-hole"
             || c == "update-element"
             || c == "delete-element"
             || c == "copy-element"
