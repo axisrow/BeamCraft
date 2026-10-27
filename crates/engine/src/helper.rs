@@ -274,3 +274,229 @@ fn basis(normal: [f64; 3]) -> ([f64; 3], [f64; 3]) {
     let [xx, xy, xz] = x;
     (x, [ny * xz - nz * xy, nz * xx - nx * xz, nx * xy - ny * xx])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(n: u32) -> ElementId {
+        ElementId::parse(&format!("019a7bf0-0000-7000-8000-{n:012x}")).unwrap()
+    }
+
+    fn helper(n: u32, geometry: HelperGeometry) -> Helper {
+        Helper {
+            id: id(n),
+            name: "helper".to_owned(),
+            geometry,
+        }
+    }
+
+    #[test]
+    fn a_segment_snaps_to_start_end_midpoint_and_clamped_nearest() {
+        let mut helpers = Helpers::default();
+        helpers
+            .insert(helper(1, HelperGeometry::Line([0.; 3], [100., 0., 0.])))
+            .unwrap();
+        // Near the far end the projection beats the endpoint and the midpoint.
+        let snap = helpers.snap([90., 4., 0.], 10.).unwrap().unwrap();
+        assert_eq!(snap.role, "nearest");
+        assert_eq!(snap.point_mm, [90., 0., 0.]);
+        assert!((snap.distance_mm - 4.).abs() < 1e-12);
+        // At the midpoint the midpoint role is recorded first and wins the tie.
+        let snap = helpers.snap([50., 3., 4.], 10.).unwrap().unwrap();
+        assert_eq!(snap.role, "midpoint");
+        assert_eq!(snap.point_mm, [50., 0., 0.]);
+        // Past the ends the projection clamps to the endpoints.
+        let snap = helpers.snap([-50., 0., 0.], 1e3).unwrap().unwrap();
+        assert_eq!(snap.role, "start");
+        assert_eq!(snap.point_mm, [0., 0., 0.]);
+    }
+
+    #[test]
+    fn a_plane_projects_onto_its_normalized_frame() {
+        let mut helpers = Helpers::default();
+        // A non-unit normal must not scale the projection distance.
+        helpers
+            .insert(helper(
+                1,
+                HelperGeometry::Plane {
+                    origin: [0.; 3],
+                    normal: [0., 0., 2.],
+                },
+            ))
+            .unwrap();
+        let snap = helpers.snap([30., 40., 500.], 1e3).unwrap().unwrap();
+        assert_eq!(snap.role, "plane");
+        assert_eq!(snap.point_mm, [30., 40., 0.]);
+        assert!((snap.distance_mm - 500.).abs() < 1e-9);
+        // An offset, tilted plane: the projection stays orthogonal to the unit normal.
+        let mut helpers = Helpers::default();
+        helpers
+            .insert(helper(
+                1,
+                HelperGeometry::Plane {
+                    origin: [10., 0., 0.],
+                    normal: [1., 1., 0.],
+                },
+            ))
+            .unwrap();
+        let snap = helpers.snap([10., 7., 7.], 1e3).unwrap().unwrap();
+        for (a, b) in snap.point_mm.into_iter().zip([6.5, 3.5, 7.]) {
+            assert!((a - b).abs() < 1e-12);
+        }
+        assert!((snap.distance_mm - 7.0 / std::f64::consts::SQRT_2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_circle_snaps_to_center_and_exact_circumference() {
+        let mut helpers = Helpers::default();
+        helpers
+            .insert(helper(
+                1,
+                HelperGeometry::Circle {
+                    center: [0.; 3],
+                    normal: [0., 0., 3.],
+                    radius_mm: 100.,
+                },
+            ))
+            .unwrap();
+        // Off axis the exact circumference point beats the center.
+        let snap = helpers.snap([200., 0., 0.], 250.).unwrap().unwrap();
+        assert_eq!(snap.role, "circumference");
+        assert_eq!(snap.point_mm, [100., 0., 0.]);
+        assert!((snap.distance_mm - 100.).abs() < 1e-12);
+        // On the axis every circumference point is equally far, so only the center qualifies.
+        let snap = helpers.snap([0., 0., 50.], 100.).unwrap().unwrap();
+        assert_eq!(snap.role, "center");
+        assert_eq!(snap.point_mm, [0., 0., 0.]);
+    }
+
+    #[test]
+    fn equal_distance_ties_are_broken_by_identity() {
+        let mut helpers = Helpers::default();
+        // The larger identity is inserted first and must still lose the tie.
+        helpers
+            .insert(helper(2, HelperGeometry::Point([50.; 3])))
+            .unwrap();
+        helpers
+            .insert(helper(1, HelperGeometry::Point([50.; 3])))
+            .unwrap();
+        let snap = helpers.snap([50.; 3], 1.).unwrap().unwrap();
+        assert_eq!(snap.id, id(1));
+    }
+
+    #[test]
+    fn snap_refuses_unbounded_queries_and_tolerances() {
+        let mut helpers = Helpers::default();
+        helpers
+            .insert(helper(1, HelperGeometry::Point([0.; 3])))
+            .unwrap();
+        for point in [[f64::NAN; 3], [f64::INFINITY, 0., 0.], [2e9, 0., 0.]] {
+            assert!(helpers.snap(point, 1.).is_err(), "{point:?}");
+        }
+        for tolerance in [f64::NAN, f64::INFINITY, -1., 2e6] {
+            assert!(helpers.snap([0.; 3], tolerance).is_err(), "{tolerance}");
+        }
+        // Zero tolerance is valid: a hit is exact, a miss is none.
+        assert!(matches!(helpers.snap([0.; 3], 0.), Ok(Some(_))));
+        assert!(matches!(helpers.snap([1.; 3], 0.), Ok(None)));
+    }
+
+    #[test]
+    fn degenerate_and_unbounded_geometry_is_refused_everywhere() {
+        let cases = [
+            HelperGeometry::Line([0.; 3], [0.; 3]),
+            HelperGeometry::Line([0.; 3], [2e6; 3]),
+            HelperGeometry::Point([f64::NAN; 3]),
+            HelperGeometry::Point([1e10, 0., 0.]),
+            HelperGeometry::Circle {
+                center: [0.; 3],
+                normal: [0.; 3],
+                radius_mm: 100.,
+            },
+            HelperGeometry::Circle {
+                center: [0.; 3],
+                normal: [0., 0., 1.],
+                radius_mm: 0.,
+            },
+            HelperGeometry::Plane {
+                origin: [0.; 3],
+                normal: [0.; 3],
+            },
+        ];
+        for geometry in cases {
+            let h = helper(1, geometry);
+            assert!(h.validate().is_err(), "{:?}", h.geometry);
+            assert!(snap_helper(&h, [0.; 3], 1.).is_err());
+        }
+    }
+
+    #[test]
+    fn helper_geometry_round_trips_through_its_parameters() {
+        let cases = [
+            HelperGeometry::Point([1., -2., 3.]),
+            HelperGeometry::Line([0.; 3], [100., 0., 0.]),
+            HelperGeometry::Circle {
+                center: [10., 20., 30.],
+                normal: [0., 0., 2.],
+                radius_mm: 50.,
+            },
+            HelperGeometry::Plane {
+                origin: [10., 20., 30.],
+                normal: [1., 1., 0.],
+            },
+        ];
+        for geometry in cases {
+            let reread =
+                HelperGeometry::from_parameters(geometry.kind(), &geometry.parameters()).unwrap();
+            assert_eq!(reread, geometry);
+        }
+        // Unknown kinds and wrong arities are refused.
+        assert!(HelperGeometry::from_parameters("point", &[1., 2.]).is_err());
+        assert!(HelperGeometry::from_parameters("line", &[0.; 7]).is_err());
+        assert!(HelperGeometry::from_parameters("polyline", &[]).is_err());
+        // A well-shaped circle with a degenerate normal is still refused.
+        assert!(HelperGeometry::from_parameters("circle", &[0., 0., 0., 0., 0., 0., 50.]).is_err());
+    }
+
+    #[test]
+    fn duplicate_and_overflowing_identities_are_refused() {
+        let mut helpers = Helpers::default();
+        helpers
+            .insert(helper(1, HelperGeometry::Point([0.; 3])))
+            .unwrap();
+        // Both admission paths refuse a known identity, including a non-helper one.
+        assert_eq!(
+            helpers
+                .insert(helper(1, HelperGeometry::Point([10.; 3])))
+                .unwrap_err()
+                .code,
+            ErrorCode::DuplicateId
+        );
+        assert_eq!(
+            helpers
+                .create(&helper(1, HelperGeometry::Point([10.; 3])))
+                .unwrap_err()
+                .code,
+            ErrorCode::DuplicateId
+        );
+        // Filling the project cap makes both paths refuse with the limit code.
+        let mut full = Helpers::default();
+        for n in 0..u32::try_from(beamcraft_model::helper::MAX_HELPERS).unwrap() {
+            full.insert(helper(n, HelperGeometry::Point([0.; 3])))
+                .unwrap();
+        }
+        let extra = helper(
+            u32::try_from(beamcraft_model::helper::MAX_HELPERS).unwrap(),
+            HelperGeometry::Point([0.; 3]),
+        );
+        assert_eq!(
+            full.insert(extra.clone()).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+        assert_eq!(
+            full.create(&extra).unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+    }
+}
