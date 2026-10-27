@@ -18,6 +18,8 @@ pub(super) const DOCUMENTS: &str = concat!(
     "--document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID ",
     "--version-id UUID; inspect-drawing --document-dir DIR [--model-store ROOT]; ",
     "inspect-drawing-versions --document-dir DIR; export-drawing --document-dir DIR ",
-    "--version-id UUID --out NEW_FILE.svg (one exact published version from its own archived ",
-    "source; deterministic bytes; refuses an existing destination; the live model is not read).",
+    "--version-id UUID --out NEW_FILE.svg [--format svg|pdf --sheet a4|a3|a2|a1|a0] ",
+    "(one exact published version from its own archived ",
+    "source; deterministic bytes; pdf is a print-ready centred 1:1 sheet page that refuses ",
+    "instead of rescaling; refuses an existing destination; the live model is not read).",
 );

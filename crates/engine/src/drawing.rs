@@ -7,6 +7,8 @@
 //! Geometry resolution, USD persistence and publication are separate operations. A storage DTO
 //! must enter through [`Drawing::admit`] before it can authorize any of them.
 
+pub mod pdf;
+pub mod print;
 pub mod projection;
 pub mod svg;
 
