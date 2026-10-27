@@ -114,7 +114,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 16 {
+    if !args.len().is_multiple_of(2) || args.len() > 24 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
@@ -128,6 +128,9 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 | "--with-element"
                 | "--with-grids"
                 | "--view"
+                | "--render-mode"
+                | "--select"
+                | "--select-file"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated option"));
@@ -157,8 +160,28 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         .get("--view")
         .map(|s| ElementId::parse(s).map_err(id_error))
         .transpose()?;
+    let mode = options
+        .get("--render-mode")
+        .map(|s| {
+            beamcraft_engine::render::Mode::parse(s).ok_or_else(|| invalid("unknown render mode"))
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let selected = match (options.get("--select"), options.get("--select-file")) {
+        (Some(_), Some(_)) => return Err(invalid("select and select-file are mutually exclusive")),
+        (Some(s), None) if !s.is_empty() => s
+            .split(',')
+            .map(|s| ElementId::parse(s).map_err(id_error))
+            .collect::<Result<Vec<_>, _>>()?,
+        (None, Some(path)) => beamcraft_cli::display::selection_file(path)?,
+        _ => Vec::new(),
+    };
+    let display_requested = selected_view.is_some()
+        || options.contains_key("--render-mode")
+        || options.contains_key("--select")
+        || options.contains_key("--select-file");
     let replies_framed = with_definitions || with_element.is_some() || with_grids;
-    let framed = replies_framed || selected_view.is_some();
+    let framed = replies_framed || display_requested;
     // Checked before the store is opened, so a refused request never creates the file.
     if replies_framed && *out != "-" {
         return Err(invalid("a framed reply needs --out -"));
@@ -173,8 +196,16 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
     } else {
         inspect(&RevisionStore::new(blobs))?
     };
-    let presentation = selected_view
-        .map(|id| presentation_json(&inspection, std::path::Path::new(store), id))
+    let presentation = display_requested
+        .then(|| {
+            presentation_json(
+                &inspection,
+                std::path::Path::new(store),
+                selected_view,
+                mode,
+                &selected,
+            )
+        })
         .transpose()?;
     inspection.require_evaluated_geometry()?;
     if let Some(error) = inspection.reference_view_error {
@@ -210,7 +241,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         }
         if let Some(p) = &presentation {
             let bytes = p
-                .encode(&beamcraft_json::Limits::DEFAULT)
+                .encode(&beamcraft_cli::display::LIMITS)
                 .map_err(|_| invalid("presentation reply exceeds its limit"))?;
             section(&mut frame_head, Some(&bytes))?;
         }
@@ -252,6 +283,14 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         ("bytes", Json::text(total_bytes.to_string())),
     ]);
     if let (Some(p), Json::Object(fields)) = (presentation, &mut reply) {
+        let mut p = p;
+        if let Json::Object(f) = &mut p {
+            for key in ["visible_elements", "selected_elements"] {
+                if let Some(Json::Array(a)) = f.remove(key) {
+                    f.insert(format!("{key}_count"), Json::uint(a.len() as u64));
+                }
+            }
+        }
         fields.insert("presentation".into(), p);
     }
     Ok(Output::Json(reply, 0))
@@ -260,37 +299,58 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
 fn presentation_json(
     inspection: &beamcraft_cli::plate::Inspection,
     dir: &std::path::Path,
-    id: ElementId,
+    id: Option<ElementId>,
+    mode: beamcraft_engine::render::Mode,
+    selected: &[ElementId],
 ) -> Result<Json, PlateError> {
-    let views = beamcraft_cli::saved_views::read(dir)?;
-    let view = views
-        .document
-        .views
-        .iter()
-        .find(|v| v.id == id)
-        .ok_or(PlateError {
-            code: ErrorCode::NotFound,
-            message: "saved view not found",
-            rule_id: None,
-        })?;
-    let restored = beamcraft_cli::plane_views::restore_against(&views, view, inspection)?;
-    if restored.unresolved {
-        return Err(PlateError {
-            code: ErrorCode::DependencyUnavailable,
-            message: "saved view source is unresolved",
-            rule_id: None,
-        });
+    let mut ids = beamcraft_engine::view_clipping::visible_elements(&inspection.snapshot, &[])?;
+    let mut view_json = Json::Null;
+    let mut version = Json::Null;
+    let mut filter_id = None;
+    let mut planes = Vec::new();
+    if let Some(id) = id {
+        let views = beamcraft_cli::saved_views::read(dir)?;
+        let view = views
+            .document
+            .views
+            .iter()
+            .find(|v| v.id == id)
+            .ok_or_else(|| display_error(ErrorCode::NotFound, "saved view not found"))?;
+        let restored = beamcraft_cli::plane_views::restore_against(&views, view, inspection)?;
+        if restored.unresolved {
+            return Err(display_error(
+                ErrorCode::DependencyUnavailable,
+                "saved view source is unresolved",
+            ));
+        }
+        planes = beamcraft_cli::view_clipping::effective(&views, &restored.view)?;
+        ids = beamcraft_engine::view_clipping::visible_elements(&inspection.snapshot, &planes)?;
+        filter_id = beamcraft_cli::filters::binding(&views, id)?;
+        if let Some(f) = filter_id {
+            let matching =
+                beamcraft_cli::filters::matching(&views, f, &inspection.user_attributes)?;
+            ids.retain(|id| matching.binary_search(id).is_ok());
+        }
+        view_json = crate::saved_views_cmd::view_json(&restored.view)?;
+        version = views
+            .version
+            .map_or(Json::Null, |v| Json::text(v.to_string()));
     }
-    let planes = beamcraft_cli::view_clipping::effective(&views, &restored.view)?;
-    let mut ids = beamcraft_engine::view_clipping::visible_elements(&inspection.snapshot, &planes)?;
-    let filter_id = beamcraft_cli::filters::binding(&views, id)?;
-    if let Some(filter) = filter_id {
-        let matching =
-            beamcraft_cli::filters::matching(&views, filter, &inspection.user_attributes)?;
-        ids.retain(|id| matching.binary_search(id).is_ok());
-    }
+    let render = beamcraft_engine::render::query(&inspection.snapshot, mode, selected, &ids)
+        .map_err(|e| display_error(e.f04_code(), "render selection is invalid"))?;
     Ok(Json::object([
-        ("version", Json::uint(1)),
+        ("version", Json::uint(2)),
+        ("render", beamcraft_cli::display::settings(&render)),
+        (
+            "selected_elements",
+            Json::Array(
+                render
+                    .selected
+                    .iter()
+                    .map(|id| Json::text(id.to_string()))
+                    .collect(),
+            ),
+        ),
         (
             "filter_id",
             filter_id.map_or(Json::Null, |id| Json::text(id.to_string())),
@@ -303,13 +363,8 @@ fn presentation_json(
             "model_manifest",
             Json::text(inspection.revision.manifest_digest.to_string()),
         ),
-        (
-            "personal_version",
-            views
-                .version
-                .map_or(Json::Null, |v| Json::text(v.to_string())),
-        ),
-        ("view", crate::saved_views_cmd::view_json(&restored.view)?),
+        ("personal_version", version),
+        ("view", view_json),
         (
             "clip_planes",
             beamcraft_cli::view_clipping::planes_json(&planes)?,
@@ -317,10 +372,20 @@ fn presentation_json(
         (
             "visible_elements",
             Json::Array(
-                ids.into_iter()
+                render
+                    .visible
+                    .into_iter()
                     .map(|id| Json::text(id.to_string()))
                     .collect(),
             ),
         ),
     ]))
+}
+
+fn display_error(code: ErrorCode, message: &'static str) -> PlateError {
+    PlateError {
+        code,
+        message,
+        rule_id: None,
+    }
 }
