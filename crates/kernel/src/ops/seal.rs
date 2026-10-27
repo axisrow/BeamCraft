@@ -23,6 +23,8 @@ pub enum OpKind {
     PlaneCut,
     /// A straight through hole.
     ThroughHole,
+    /// A section swept along a polyline or arc path (G12).
+    Sweep,
 }
 
 /// An uncertified candidate in operation-local numbering.
