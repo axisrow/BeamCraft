@@ -20,12 +20,14 @@ concurrency:
   group: fork-sync
   cancel-in-progress: false
 
-# `workflows: write` lets the default token push upstream commits that touch
-# .github/workflows/* (issue #234): GitHub rejects such a push from a token
-# holding only contents:write, and the merge itself was always green. The
-# default token's pushes skip CI on master (recursion protection); set the
-# optional FORK_SYNC_TOKEN secret to a PAT to push as the account and keep a
-# CI verdict on every synced master tip.
+# The optional PAT is the only token that can push upstream commits touching
+# .github/workflows/* (issue #234): granting `workflows: write` to the default
+# token makes GitHub reject the whole workflow file as invalid (startup
+# failure, bisected 2026-10-27), so the job keeps contents:write only. Set the
+# optional FORK_SYNC_TOKEN secret to a PAT with repo and workflow scopes; an
+# unset secret keeps the sync on the default token, which suffices for
+# everything else. A PAT push also carries the account identity, so the synced
+# master tip gets a CI verdict instead of the skipped bot-trigger run.
 permissions:
   contents: write
 
@@ -38,7 +40,8 @@ jobs:
       # ref: master keeps the script's current-branch guard green (a default
       # checkout detaches HEAD); the full history is needed for the merge base.
       # The token is optional: an unset FORK_SYNC_TOKEN falls back to the
-      # default github.token, which the permissions block above suffices for.
+      # default github.token, and a sync that touches workflow files then
+      # stops at the push with the script's exit 4 until a PAT is set.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: master
