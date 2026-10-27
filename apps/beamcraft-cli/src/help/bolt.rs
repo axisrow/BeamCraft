@@ -22,7 +22,7 @@ pub(super) const HELP: &str = concat!(
     "washers, the nut and the protrusion (auto), or --fixed-length; every listed part must be ",
     "crossed by at least one shank. hole_mode generate cuts holes (A14.4, refused yet); none ",
     "writes no part. bolt-groups --store ROOT (parts, digest, count, resolved ",
-    "length, mode). delete-element refuses a connected part while a group connects it and ",
-    "deletes a group. A05 bolt groups stored earlier stay readable as annotations and are ",
-    "upgraded by a later update that supplies a fastener",
+    "length, mode); bolts --store ROOT lists the A05 bolt groups stored earlier, readable as ",
+    "annotations and upgraded by a later update that supplies a fastener. delete-element ",
+    "refuses a connected part while a group connects it and deletes a group",
 );
