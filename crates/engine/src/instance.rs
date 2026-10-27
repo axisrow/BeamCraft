@@ -242,6 +242,7 @@ mod tests {
                 operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
                 ordinal: 0,
                 polygon_mm: vec![[10., 10.], [20., 10.], [20., 20.], [10., 20.]],
+                kind: beamcraft_model::command::HoleKind::Hole,
             }],
             cuts: vec![],
         }

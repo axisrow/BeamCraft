@@ -3,7 +3,17 @@
 
 //! Help owned by the edit command family.
 
-pub(super) const COMMANDS: &[&str] = &["update-element", "cut-by-plane"];
+pub(super) const COMMANDS: &[&str] = &[
+    "update-element",
+    "cut-by-plane",
+    "cut-by-line",
+    "cut-by-polygon",
+    "cut-by-part",
+    "fit-end-to-part",
+    "chamfer-part",
+    "split-part",
+    "combine-parts",
+];
 
 pub(super) const HELP: &str = concat!(
     "Update (P04, P08): update-element --store ROOT --id UUID [--name TEXT] [--class INT32] ",
@@ -23,5 +33,30 @@ pub(super) const HELP: &str = concat!(
     "millimetres, the plane must strictly cross the element once, the kept half-space is ",
     "--keep; the mesh, volume and mass are rebuilt in the same transaction, the cap face is ",
     "cut:f.p<ordinal>, features the plane removes stop resolving, and one command is one ",
-    "undo unit)",
+    "undo unit)\n",
+    "Fabrications (A13, A-2 records; every command is one undo unit and rebuilds the mesh, ",
+    "volume and mass in the same transaction; coordinates are element-local millimetres):\n",
+    "cut-by-line --id UUID --operation-id UUID --point-a X,Y,Z --point-b X,Y,Z --axis X,Y,Z ",
+    "--keep positive|negative (cuts with the plane through the line and the axis; the axis ",
+    "must not be parallel to the line)\n",
+    "cut-by-polygon --id UUID --operation-id UUID --polygon \"X,Y;X,Y;...\" (cuts a plate ",
+    "with the polygon prism swept through the whole thickness, removing the material inside; ",
+    "the kernel decides winding, simplicity, placement inside the outline and clearance, as ",
+    "for a hole, and the record stays a cut, not a hole)\n",
+    "cut-by-part --id UUID --operation-id UUID --tool UUID (cuts a plate with another ",
+    "plate's prism; the tool must lie parallel to the target and reach past both faces; the ",
+    "tool outline is derived once, so moving it never updates the cut)\n",
+    "fit-end-to-part --id UUID --operation-id UUID --tool UUID (trims a plate, beam or ",
+    "column flush with the tool plate's nearest face, keeping the side its midpoint lies on)\n",
+    "chamfer-part --id UUID --operation-id UUID --vertex-index N --first-distance MM ",
+    "--second-distance MM (chamfers one plate contour vertex, cutting the corner at the two ",
+    "distances back along the edges; each distance must be shorter than its edge)\n",
+    "split-part --id UUID --new-id UUID --new-name TEXT --operation-id UUID --point X,Y,Z ",
+    "--normal X,Y,Z --keep positive|negative (splits a plate, beam or column in two: the ",
+    "target keeps --keep, a new element with --new-id keeps the other half; the new identity ",
+    "must be unused and the target must not share an instance definition)\n",
+    "combine-parts --survivor UUID --consumed UUID --operation-id UUID (combines two ",
+    "collinear members with the same profile, orientation, roll and material into one ",
+    "longer member over the union of the two axis ranges, which must overlap or touch, and ",
+    "deletes the consumed member, which must carry no cut records)",
 );

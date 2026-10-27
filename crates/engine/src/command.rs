@@ -1033,6 +1033,7 @@ pub fn add_hole(
         operation_id: command.operation_id,
         ordinal: next.hole_records.last().map_or(0, |r| r.ordinal + 1),
         polygon_mm: command.polygon()?,
+        kind: beamcraft_model::command::HoleKind::Hole,
     });
     let body = evaluate_plate(&next).map_err(|error| {
         // The target was valid, so a refusal names the new hole, not the plate's fields.

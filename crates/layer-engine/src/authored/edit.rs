@@ -805,11 +805,13 @@ fn create(
                 let mut counts = Vec::new();
                 let mut ids = Vec::new();
                 let mut ordinals = Vec::new();
+                let mut kinds = Vec::new();
                 for record in hole_records {
                     flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
                     counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
                     ids.push(record.operation_id.to_string());
                     ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+                    kinds.push(record.kind.as_str().into());
                 }
                 attr(data, &p, "steel:hole:pointsMm", "double3[]", points(&flat))?;
                 attr(
@@ -832,6 +834,13 @@ fn create(
                     "steel:hole:ordinals",
                     "int[]",
                     sdf::Value::IntVec(ordinals),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:hole:kinds",
+                    "token[]",
+                    sdf::Value::TokenVec(kinds),
                 )?;
             }
         }
@@ -1333,18 +1342,20 @@ pub(super) fn apply(
             )?,
             Change::Cuts { cuts, .. } => author_cuts(&mut authored, &p, cuts)?,
             Change::HoleRecords { records, .. } => {
-                // The four record attributes, always together: the authoritative polygons of
-                // every record, replayed from the base shape in ordinal order, with the id and
-                // the engine-assigned ordinal of each.
+                // The five record attributes, always together: the authoritative polygons of
+                // every record, replayed from the base shape in ordinal order, with the id,
+                // the engine-assigned ordinal and the kind (hole or polygon cut) of each.
                 let mut flat = Vec::new();
                 let mut counts = Vec::new();
                 let mut ids = Vec::new();
                 let mut ordinals = Vec::new();
+                let mut kinds = Vec::new();
                 for record in records {
                     flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
                     counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
                     ids.push(record.operation_id.to_string());
                     ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+                    kinds.push(record.kind.as_str().into());
                 }
                 attr(
                     &mut authored,
@@ -1373,6 +1384,13 @@ pub(super) fn apply(
                     "steel:hole:ordinals",
                     "int[]",
                     sdf::Value::IntVec(ordinals),
+                )?;
+                attr(
+                    &mut authored,
+                    &p,
+                    "steel:hole:kinds",
+                    "token[]",
+                    sdf::Value::TokenVec(kinds),
                 )?;
             }
             Change::Axis { points_mm, .. } => attr(
