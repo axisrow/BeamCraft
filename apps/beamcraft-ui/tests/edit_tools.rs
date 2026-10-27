@@ -654,9 +654,11 @@ fn the_window_binary_refuses_a_store_and_a_workspace_together() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("usage: beamcraft-ui"));
     // Without a model the window opens on the start page, so only refused combinations run
     // here: the start page's settings directory and an explicit author belong to different modes.
+    // A config directory is now accepted with a store (it names the shortcuts file's directory),
+    // but still refused for a metrics run, which has no window to read it in.
     for args in [
-        ["--store", "S", "--config-dir", "C"],
         ["--actor-id", "A", "--config-dir", "C"],
+        ["--metrics", "1", "--config-dir", "C"],
     ] {
         let output = Command::new(ui).args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{args:?}");
