@@ -291,4 +291,27 @@ mod tests {
         let elsewhere = copy_plate(&source, &other).unwrap();
         assert_ne!(elsewhere.cuts[0].operation_id, copy.cuts[0].operation_id);
     }
+
+    #[test]
+    fn a_copied_hole_id_is_deterministic_uuid7_and_bound_to_the_copy() {
+        let record = HoleRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
+            ordinal: 3,
+            polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
+        };
+        // A retried copy derives the exact same identity.
+        let first = copied_hole(&record, &id(6)).unwrap();
+        let again = copied_hole(&record, &id(6)).unwrap();
+        assert_eq!(first.operation_id, again.operation_id);
+        assert_ne!(first.operation_id, record.operation_id);
+        // The derived identity carries the forced UUIDv7 version and RFC variant bits.
+        let bytes = first.operation_id.as_bytes();
+        assert_eq!(bytes[6] >> 4, 7);
+        assert_eq!(bytes[8] >> 6, 2);
+        // A copy under another identity mints another id; the rest of the record is kept.
+        let elsewhere = copied_hole(&record, &id(7)).unwrap();
+        assert_ne!(elsewhere.operation_id, first.operation_id);
+        assert_eq!(elsewhere.ordinal, record.ordinal);
+        assert_eq!(elsewhere.polygon_mm, record.polygon_mm);
+    }
 }
