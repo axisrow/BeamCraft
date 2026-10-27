@@ -5,7 +5,10 @@ Thanks for helping. Humans and AI agents follow the same rules.
 1. Read [`AGENTS.md`](AGENTS.md). The asset and provenance rules are absolute: nothing from Tekla
    Structures or any Trimble product may enter this repository; engineering rules come from public
    standards or are our own.
-2. Branch from the verified current `origin/master`, keep the change small and focused.
+2. Find the task in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474)
+   and read its issue for scope, dependencies and acceptance. Use milestones for delivery grouping.
+   New task scope needs the code owner's approval.
+   Branch from the verified current `origin/master`, keep the change small and focused.
    Use `<type>/<short-description>` with lowercase hyphenated words: `feat/`, `bug/`, `docs/`,
    `chore/`, `refactor/` or `test/`, as defined in `AGENTS.md` section 6. Include the task ID when
    applicable (for example `feat/f07-fixtures`); do not use agent/provider prefixes.

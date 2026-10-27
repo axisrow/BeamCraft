@@ -3,8 +3,9 @@
 **Stage:** pre-alpha. Scope updated 2026-10-27; gate verdicts are unchanged.
 
 This file is the short summary of the [implementation plan](docs/plan/README.md): the stage, the
-acceptance gates, the MVP scope and the next work. Every task ID (F04, U06, A03, ...) is in
-[`docs/plan/tasks.md`](docs/plan/tasks.md) and the owner decisions are in
+acceptance gates, the MVP scope and the next work. Task IDs, scope, dependencies, acceptance and
+status live in [GitHub issues](https://github.com/Apibim-com/BeamCraft/issues/474), grouped by
+[milestone](https://github.com/Apibim-com/BeamCraft/milestones). Owner decisions are in
 [`docs/plan/decisions.md`](docs/plan/decisions.md). It is updated when a gate or the scope changes,
 not for every merge. What each merged
 package does is in its note under [`docs/design/`](docs/design/) and in
@@ -85,7 +86,8 @@ until then everything stays MPL-2.0.
 ## Next work
 
 In this order (milestones M0 to M5; M1 to M5 are those of the decision of 2026-10-21, and the owner
-put grids first on 2026-10-23); the task cards are in [`docs/plan/tasks.md`](docs/plan/tasks.md).
+put grids first on 2026-10-23); the task cards are indexed in the
+[GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474).
 
 0. **M0, grids:** review the [T01/F04/F10 grid contract amendment](docs/contracts/t01-project-grids-draft-v0.1.md)
    with its MVP defaults, then T01.1 to T01.4 (model, layer, engine, CLI, drawn lines, snaps and

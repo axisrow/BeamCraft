@@ -7,8 +7,9 @@ their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 ## Start every session here
 
 1. Read `AGENTS.md` (it wins over this file) and `ROADMAP.md` (current stage and next tasks).
-   Task IDs (F04, U06, A03, ...), their dependencies and acceptance are in `docs/plan/tasks.md`;
-   owner decisions are in `docs/plan/decisions.md`.
+   Find task IDs (F04, U06, A03, ...), dependencies, acceptance and current status in the
+   [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474) and its linked
+   issues. Milestones group delivery work; owner decisions are in `docs/plan/decisions.md`.
 2. Read `docs/architecture.md` and the README of the crate you are touching.
 3. Work in small steps: orient → plan → implement + test → verify → record → commit.
 4. There is no progress log to append to: the history is git and the PR descriptions, and what a

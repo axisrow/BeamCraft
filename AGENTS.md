@@ -135,8 +135,14 @@ New outbound network access is the owner's decision, not an agent's.
 
 ## 7. Implementation plan and pull requests
 
-- The implementation plan is `docs/plan/`: tasks and their acceptance in `docs/plan/tasks.md`,
-  owner decisions in `docs/plan/decisions.md`. A new task or a changed status is a docs-only PR.
+- GitHub issues hold task scope, dependencies, acceptance, status and delivery evidence:
+  [task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474). Use
+  [milestones](https://github.com/Apibim-com/BeamCraft/milestones) to group delivery work.
+  Keep task IDs (F04, U06, A03, ...) stable; do not maintain a second task table in the repository.
+  Create or change tasks only within the code owner's explicit authorization.
+  `ROADMAP.md` remains the stage, MVP scope and acceptance-gate overview; owner decisions
+  remain in `docs/plan/decisions.md`. Changes to repository scope, contracts, plans or gate
+  verdicts still need a docs-only PR.
 - Each implementation-plan task (for example F01 or F03) gets its own focused pull request.
   Do not combine independent task IDs into one PR. Split a large task into named sub-tasks when
   needed; completing a sub-task does not complete its parent acceptance gate.

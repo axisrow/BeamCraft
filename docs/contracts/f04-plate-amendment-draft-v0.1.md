@@ -4,7 +4,7 @@ Status: **draft for owner review (2026-10-23).** F04 0.1.0 stays frozen and unch
 owner accepts this text; on acceptance it is recorded as an F04 amendment (name to be confirmed)
 and the sections it replaces in [F04](f04-model-and-commands-v0.1.md) and
 [F06](f06-geometry-contract-v0.1.md) get a dated pointer. It extends the plate of A02 and is the
-contract for the slices A12.1 to A12.3 and V18 in [`tasks.md`](../plan/tasks.md). The behaviours
+contract for the slices A12.1 to A12.3 and V18 in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474). The behaviours
 come from the owner's description of 2026-10-23 ([decisions](../plan/decisions.md)); the wording
 and the model are our own.
 

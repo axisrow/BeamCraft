@@ -6,6 +6,15 @@ Open questions are at the end.
 
 ## 2026-10-27
 
+- **Task tracking moves to GitHub.** The code owner directed removal of the repository task table
+  and creation of the migration PR. [GitHub issues](https://github.com/Apibim-com/BeamCraft/issues/474)
+  hold task scope, dependencies, acceptance, status and evidence; milestones group delivery work.
+  `ROADMAP.md` remains the stage, MVP scope and acceptance-gate overview. Contracts, design notes
+  and dated owner decisions stay in the repository. Update authorized task cards directly in
+  GitHub; repository scope, contract and gate-verdict changes still use docs-only PRs. Preserve
+  task IDs and acceptance boundaries. The [historical table](https://github.com/Apibim-com/BeamCraft/issues/473)
+  is an archive. Migration does not pass gates or reopen delivered slices.
+
 Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129):
 
 - **Windows releases are built and signed locally by the owner.** A local signing capability is
@@ -243,7 +252,7 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   bar, snap panel, projection switch, render modes); M2 model tools, views, filters, cut plane,
   colour by filter, classes; M3 attributes and schedules; M4 drawings; M5 the alpha scenario
   and packaging over the whole scope (Q01, Q02). Gates K9 to K11 are added; K8 (drawings) is no
-  longer deferred. The task cards are in [`tasks.md`](tasks.md).
+  longer deferred. The task cards are now indexed in the [GitHub catalogue](https://github.com/Apibim-com/BeamCraft/issues/474).
 - **Still after the MVP:** items (I01 to I03: the item contract and reading GLB and IFC geometry), IFC export (E01, E02), multi-client rebase and conflicts (C03–C06),
   reference measurements (R02–R03), DSTV NC and DXF output, parametric connections and macros,
   concrete and reinforcement, analysis.

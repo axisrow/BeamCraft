@@ -1,7 +1,7 @@
 # T01 contract v0.1: project grids (axes)
 
 Status: **proposed additive amendment to the F04 0.1.0 model and F10 0.2.0 kind registry; revised 2026-10-26 after the user delegated remaining MVP defaults to project best practices and conventions.**
-[F04](f04-model-and-commands-v0.1.md) and the current [F10](f10-domain-vocabulary-v0.2.md) baseline remain unchanged. On acceptance, this versioned T01 contract adds the shared `grid` kind, its stored attributes, commands, limits and diagnostic reasons without changing existing element rules. Dated pointers to this extension are then added to F04 and F10. It extends the draft delivered for [issue #192](https://github.com/Apibim-com/BeamCraft/issues/192), and governs T01.1 to T01.7 in [`tasks.md`](../plan/tasks.md). Development starts with grids ([decisions](../plan/decisions.md)).
+[F04](f04-model-and-commands-v0.1.md) and the current [F10](f10-domain-vocabulary-v0.2.md) baseline remain unchanged. On acceptance, this versioned T01 contract adds the shared `grid` kind, its stored attributes, commands, limits and diagnostic reasons without changing existing element rules. Dated pointers to this extension are then added to F04 and F10. It extends the draft delivered for [issue #192](https://github.com/Apibim-com/BeamCraft/issues/192), and governs T01.1 to T01.7 in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474). Development starts with grids ([decisions](../plan/decisions.md)).
 
 The MVP defaults below settle O-G7 and O-G11 to O-G16. Magnetic mode (O-G5/T01.8) remains deferred behind its scope and ownership dependencies. Nothing here is implemented.
 
@@ -477,7 +477,7 @@ Viewer geometry is covered by GR-P16. Magnetic-mode cases are added only after O
 
 ## 14. Slices and dependencies
 
-Recorded in [`tasks.md`](../plan/tasks.md): T01.1 grid model with regular families, labels and
+Recorded in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474): T01.1 grid model with regular families, labels and
 expressions (model, layer engine, engine, CLI); T01.2 drawn lines; T01.3 editing a regular family;
 T01.4 queries, snaps and placement; T01.5 shared-scope rights, pinned grids and the move to the
 `Grids` layer with U19; T01.6 the UI; T01.7 viewer geometry; T01.8 magnetic mode (after O-G5);

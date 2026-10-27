@@ -1,18 +1,21 @@
 # Implementation plan
 
-This folder is the project plan: where BeamCraft is going, in which order, and why. It replaces
-the owner's local planning document (Russian, kept outside the repository until 2026-10-20).
+This folder records product boundaries, acceptance gates and dated owner decisions.
+[GitHub issues](https://github.com/Apibim-com/BeamCraft/issues/474) hold task scope, dependencies,
+acceptance, status and delivery evidence; [milestones](https://github.com/Apibim-com/BeamCraft/milestones)
+group delivery work. The [historical table](https://github.com/Apibim-com/BeamCraft/issues/473)
+is archived in GitHub rather than maintained as a second backlog.
 
-| File | Contents |
+| Resource | Contents |
 |------|----------|
 | [README.md](README.md) | Goal and boundaries, principles, gates and their order, what "done" means |
-| [tasks.md](tasks.md) | Every task by ID (F04, U06, A03, ...): dependencies, result, acceptance, status |
+| [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474) | Stable task IDs linked to their issues and historical records |
 | [decisions.md](decisions.md) | Owner decisions with dates, and the decisions still open |
 
 [`ROADMAP.md`](../../ROADMAP.md) is the short public summary (stage, gate table, MVP, next work).
 What a merged task actually does is in its note under [`docs/design/`](../design/); the
-contracts it implements are under [`docs/contracts/`](../contracts/). The plan changes only in
-docs-only pull requests.
+contracts it implements are under [`docs/contracts/`](../contracts/). Update authorized task cards
+directly in GitHub. Repository scope, contract, plan and gate-verdict changes use docs-only PRs.
 
 ## 1. Goal and boundaries
 
@@ -142,6 +145,21 @@ flowchart LR
 ```
 
 ## 4. When a task is ready, and when it is done
+
+Use the [implementation-task template](../../.github/ISSUE_TEMPLATE/task.md) for an owner-authorized
+new task. Keep its ID stable and record dependencies, result, acceptance, status, delivery evidence
+and remaining limits in the issue. Split large work into numbered slices and link implementing PRs.
+
+Delivery terms are independent of GitHub's open/closed state:
+
+- **merged:** experimental slices are integrated; acceptance is not claimed.
+- **accepted:** acceptance holds on the integrated result, with recorded evidence.
+- **done:** a research, audit or contract deliverable is recorded.
+- **open**, **deferred** (after the MVP), **later** (needs an owner decision), or **blocked** with a named dependency.
+
+Size **S** means about 2–4 hours of focused work and **M** about 4–8; these are guides, not promises.
+A completed slice does not accept its parent gate. Keep remaining acceptance in a linked open issue;
+do not calculate product readiness from issue closure or milestone percentages.
 
 A task can start when its hard dependencies are merged and verified on `master`, its contract
 version and inputs are known, its write area does not overlap a running task, its acceptance checks

@@ -7,6 +7,9 @@ Delete any section that does not apply.
 
 <!-- What behaviour is different afterwards, and why. If it fixes an issue, say `Fixes #123`. -->
 
+<!-- Link the task issue and stable task ID. State which acceptance this PR covers;
+completing a slice does not accept its parent gate. Record delivery evidence in the issue. -->
+
 ## How you verified it
 
 - [ ] `cargo fmt --all -- --check`

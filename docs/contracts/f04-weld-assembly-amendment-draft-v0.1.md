@@ -3,7 +3,7 @@
 Status: **draft for owner review (2026-10-23).** The vocabulary and F04 0.1.0 stay unchanged until
 the owner accepts this text. It extends the minimal weld of [A06](../design/a06-welds.md), which
 only links two parts, with one behaviour: a **workshop weld joins the two parts into one
-assembly**. It is the contract for the slice A06.2 in [`tasks.md`](../plan/tasks.md); the weld
+assembly**. It is the contract for the slice A06.2 in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474); the weld
 geometry, length and symbols stay in A15.
 
 Interpretation: "workshop" is the `workshop` value of `steel:weld:location`. A site weld joins

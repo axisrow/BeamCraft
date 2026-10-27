@@ -3,7 +3,7 @@
 Status: **draft for owner review (2026-10-23).** [F04](f04-model-and-commands-v0.1.md) and
 [F06](f06-geometry-contract-v0.1.md) 0.1.0 stay unchanged until the owner accepts this text; on
 acceptance it is recorded as an amendment of both. It is the contract for G14.1, G14.2 and A04.2
-in [`tasks.md`](../plan/tasks.md) and the hole side of the
+in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474) and the hole side of the
 [bolt amendment](f04-bolt-fastener-amendment-draft-v0.1.md). Today a hole in a beam flange or web is
 `UNSUPPORTED_GEOMETRY` (F04 section 7), and the kernel's through hole needs a prism whose axis is
 the hole axis (F06 section 2). Bolted beam connections need holes in webs and flanges, so this
