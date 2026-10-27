@@ -213,6 +213,7 @@ impl AuthoredMember {
             axis_points_mm: command.path_points_mm.clone(),
             profile: command.profile_digest,
             roll_rad: None,
+            section_placement: None,
             placement: command.placement,
             material: command.material_digest,
             cuts: Vec::new(),

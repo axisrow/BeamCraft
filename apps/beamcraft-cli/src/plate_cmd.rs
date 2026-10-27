@@ -1911,7 +1911,6 @@ fn create_member_command(
     ]))
 }
 
-<<<<<<< HEAD
 /// The member path of `--points "X,Y,Z;X,Y,Z;..."`: at least three three-component points in
 /// the order given. Chord floors, mitres and the mesh budget are the kernel's to decide.
 fn path_points(text: &str) -> Run<Vec<[f64; 3]>> {
