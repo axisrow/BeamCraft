@@ -6,7 +6,7 @@
 //! A drawing captures one exact engineering-model revision (the pin) and later compares it
 //! against a live model context. Comparing pins is the whole freshness rule: it never refreshes
 //! intent, changes an old published version or guesses which part of the model moved. The
-//! referenced geometry itself is addressed by typed [`FeatureId`] references at the engine layer,
+//! referenced geometry itself is addressed by typed `FeatureId` references at the engine layer,
 //! never by mesh indices.
 
 use crate::digest::ContentDigest;
