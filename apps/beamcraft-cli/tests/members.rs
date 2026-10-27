@@ -923,3 +923,221 @@ fn t04_numeric_coordinates_and_axis_locks_persist_the_resolved_axis() {
         "refused numeric input must not publish a revision"
     );
 }
+
+#[test]
+fn a_member_without_placement_flags_keeps_the_unchanged_default() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let created = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+        ],
+    );
+    let member = at(&created, &["member"]);
+    // 200 x 300 x 6000 mm: the centred body every pre-P14 member had, byte for byte.
+    assert_eq!(num(member, &["quantities", "volume", "mm3"]), 360_000_000.0);
+    assert_eq!(member.get("section_placement").unwrap(), &Json::Null);
+    let inspected = f.ok("inspect-elements", &[]);
+    let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
+    let lo: Vec<f64> = at(&elements[0], &["world_min_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    let hi: Vec<f64> = at(&elements[0], &["world_max_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    assert_eq!(
+        (lo, hi),
+        (vec![0.0, -100.0, -150.0], vec![6000.0, 100.0, 150.0])
+    );
+    // The default stores no section-placement attributes at all.
+    let authored = f.authored_text(&created);
+    assert!(
+        !authored.contains("steel:member:planePosition"),
+        "{authored}"
+    );
+}
+
+#[test]
+fn p14_plane_and_depth_flags_move_the_section_and_reopen() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let created = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "column",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,3000",
+            "--profile-digest",
+            &profile,
+            "--section-plane",
+            "right",
+            "--section-depth",
+            "back",
+            "--name",
+            "Column C1",
+        ],
+    );
+    let member = at(&created, &["member"]);
+    let placement = at(member, &["section_placement"]);
+    assert_eq!(text(placement, "plane"), "right");
+    assert_eq!(text(placement, "depth"), "back");
+    assert_eq!(num(placement, &["plane_offset_mm"]), 0.0);
+    assert_eq!(num(placement, &["depth_offset_mm"]), 0.0);
+    // A pure shift: the volume is the column's 0.18 m3. The near-vertical frame rule puts the
+    // width along world X and the height along world Y, so right and back move the box into
+    // the positive quadrant of the section plane: X in 0..200, Y in 0..300, axis 0..3000.
+    assert_eq!(num(member, &["quantities", "volume", "mm3"]), 180_000_000.0);
+    let inspected = f.ok("inspect-elements", &[]);
+    let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
+    let lo: Vec<f64> = at(&elements[0], &["world_min_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    let hi: Vec<f64> = at(&elements[0], &["world_max_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    assert_eq!((lo, hi), (vec![0.0, 0.0, 0.0], vec![200.0, 300.0, 3000.0]));
+    // The six attributes are authored and reopen in a fresh process.
+    let authored = f.authored_text(&created);
+    for line in [
+        "custom token steel:member:planePosition = \"right\"",
+        "custom double steel:member:planeOffsetMm = 0.0",
+        "custom token steel:member:depthPosition = \"back\"",
+        "custom double steel:member:depthOffsetMm = 0.0",
+        "custom double steel:member:startOffsetMm = 0.0",
+        "custom double steel:member:endOffsetMm = 0.0",
+    ] {
+        assert!(authored.contains(line), "{line}\n{authored}");
+    }
+    let inspected = f.ok("inspect-elements", &[]);
+    let reopened = &at(&inspected, &["members"]).array().unwrap()[0];
+    assert_eq!(
+        at(reopened, &["section_placement"]),
+        at(member, &["section_placement"])
+    );
+    assert_eq!(text(reopened, "mesh_digest"), text(member, "mesh_digest"));
+}
+
+#[test]
+fn p14_offsets_move_the_faces_along_the_axis_and_follow_the_volume() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let created = f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--start-offset",
+            "1000",
+            "--end-offset",
+            "-500",
+            "--section-plane-offset",
+            "40",
+            "--section-depth",
+            "front",
+            "--section-depth-offset",
+            "-10",
+        ],
+    );
+    let member = at(&created, &["member"]);
+    // The solid runs from 1000 to 5500 mm: 200 x 300 x 4500 mm. The axis is unchanged.
+    assert_eq!(num(member, &["quantities", "volume", "mm3"]), 270_000_000.0);
+    let axis = at(member, &["axis_points_mm"]).array().unwrap();
+    let start: Vec<f64> = axis[0]
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    assert_eq!(start, vec![0.0, 0.0, 0.0]);
+    let placement = at(member, &["section_placement"]);
+    assert_eq!(num(placement, &["start_offset_mm"]), 1000.0);
+    assert_eq!(num(placement, &["end_offset_mm"]), -500.0);
+    assert_eq!(num(placement, &["plane_offset_mm"]), 40.0);
+    assert_eq!(text(placement, "depth"), "front");
+    assert_eq!(num(placement, &["depth_offset_mm"]), -10.0);
+    // The published world bounds follow the shifted, shortened solid.
+    let inspected = f.ok("inspect-elements", &[]);
+    let elements = at(&inspected, &["snapshot", "elements"]).array().unwrap();
+    let lo: Vec<f64> = at(&elements[0], &["world_min_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    let hi: Vec<f64> = at(&elements[0], &["world_max_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    assert_eq!(
+        (lo, hi),
+        (vec![1000.0, -60.0, -310.0], vec![5500.0, 140.0, -10.0])
+    );
+}
+
+#[test]
+fn p14_a_placement_that_consumes_the_axis_is_refused_and_publishes_nothing() {
+    let f = Fixture::new();
+    let profile = f.profile("200", "300");
+    let before = f.ok("inspect-elements", &[]);
+    assert_eq!(
+        f.rejected(
+            "create-member",
+            &[
+                "--start",
+                "0,0,0",
+                "--end",
+                "6000,0,0",
+                "--profile-digest",
+                &profile,
+                "--end-offset",
+                "-6000",
+            ]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
+        f.rejected(
+            "create-member",
+            &[
+                "--start",
+                "0,0,0",
+                "--end",
+                "6000,0,0",
+                "--profile-digest",
+                &profile,
+                "--section-plane",
+                "middle",
+            ]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    let after = f.ok("inspect-elements", &[]);
+    assert_eq!(before, after, "a refused placement must not publish");
+}

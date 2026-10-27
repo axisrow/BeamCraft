@@ -25,13 +25,14 @@
 //! [`crate::straight_member`]), then certifies the closed single shell with G06 before sealing it.
 
 use crate::diagnostic::{Failure, Field};
-use crate::member::{StraightMember, locate};
+use crate::member::{StraightMember, check_placement, locate, solid_length};
 use crate::ops::{Body, OpFailure, OpField};
 use crate::profile::diagnostic::{ProfileCode, ProfileFailure};
 use crate::profile::{Cavity, CurveSpec, Point2, extrude};
 use crate::trimesh::TriMesh;
 use beamcraft_geom::tolerance::Tolerance;
 use beamcraft_geom::{MemberFrame, Point3, RigidTransform};
+use beamcraft_model::command::SectionPlacement;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
@@ -481,6 +482,8 @@ pub struct SectionMember {
     pub representation: Representation,
     /// Explicit roll about `+Z_m`; absent is zero.
     pub roll_rad: Option<f64>,
+    /// Position of the section about the axis (P14). The default keeps the centred body.
+    pub placement: SectionPlacement,
 }
 
 /// A sealed straight member of any section.
@@ -542,18 +545,24 @@ impl SectionResult {
 
 /// Builds a closed straight member of any admitted section, validating every submitted value.
 ///
-/// Order: the section shape, then the member frame from the axis, the outline's bounding box and
-/// the roll (the [`crate::straight_member`] rules and codes), then the G05 outline admission and
-/// extrusion along the axis length, then the rigid placement `world = R*local + p1` and the G06
+/// Order: the section shape, then the P14 offsets themselves (finite, within the cap), then the
+/// member frame from the axis, the outline's bounding box and the roll (the
+/// [`crate::straight_member`] rules and codes), then the P14 solid length (the axis length moved
+/// by the end offsets, positive), then the G05 outline admission and extrusion over that length,
+/// then the rigid placement `world = R*local + q1` — with `q1` the shifted start point, or `p1`
+/// itself for the default placement, which keeps the centred body bit for bit — and the G06
 /// certification of one closed shell.
 pub fn section_member(input: &SectionMember) -> Result<SectionResult, SectionFailure> {
     let shape = outline(&input.shape, input.representation)?;
+    check_placement(&input.placement)
+        .map_err(|(code, field, stage)| SectionFailure::Frame(Failure::one(code, field, stage)))?;
     let frame_input = StraightMember {
         start: input.start,
         end: input.end,
         width_mm: shape.width_mm,
         height_mm: shape.height_mm,
         roll_rad: input.roll_rad,
+        placement: input.placement,
     };
     let frame = MemberFrame::new(
         input.start,
@@ -566,7 +575,14 @@ pub fn section_member(input: &SectionMember) -> Result<SectionResult, SectionFai
         let (code, field, stage) = locate(&frame_input, error);
         SectionFailure::Frame(Failure::one(code, field, stage))
     })?;
-    let length = frame.scale().axis_length_mm();
+    let shifted = !input.placement.is_default();
+    let length = if shifted {
+        solid_length(frame.scale().axis_length_mm(), &input.placement).map_err(
+            |(code, field, stage)| SectionFailure::Frame(Failure::one(code, field, stage)),
+        )?
+    } else {
+        frame.scale().axis_length_mm()
+    };
     let extrusion =
         extrude(&shape.outer, &shape.cavities, length).map_err(SectionFailure::Profile)?;
     let numeric = || {
@@ -576,8 +592,28 @@ pub fn section_member(input: &SectionMember) -> Result<SectionResult, SectionFai
             crate::diagnostic::Stage::Build,
         ))
     };
+    let origin = if shifted {
+        let basis = frame.frame();
+        let (x, y, z) = (basis.x(), basis.y(), basis.z());
+        let shift_x =
+            input.placement.plane.half_shift_mm(shape.width_mm) + input.placement.plane_offset_mm;
+        let shift_y =
+            input.placement.depth.half_shift_mm(shape.height_mm) + input.placement.depth_offset_mm;
+        let mut moved = input.start;
+        for (axis, mm) in [
+            (z, input.placement.start_offset_mm),
+            (x, shift_x),
+            (y, shift_y),
+        ] {
+            let step = axis.scaled(mm).map_err(|_| numeric())?;
+            moved = moved.translated(step).map_err(|_| numeric())?;
+        }
+        moved
+    } else {
+        input.start
+    };
     let placement =
-        RigidTransform::from_body_frame(frame.frame(), input.start).map_err(|_| numeric())?;
+        RigidTransform::from_body_frame(frame.frame(), origin).map_err(|_| numeric())?;
     let local = TriMesh::from_blob(extrusion.mesh().blob())
         .map_err(|e| SectionFailure::Body(OpFailure::from_mesh(e, OpField::Body)))?;
     let placed = local
@@ -632,6 +668,7 @@ pub fn section_member(input: &SectionMember) -> Result<SectionResult, SectionFai
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beamcraft_model::command::SectionDepthPosition;
 
     fn family(f: SectionFamily, values: &[f64]) -> ParametricSection {
         ParametricSection::new(f, values.to_vec()).unwrap()
@@ -717,5 +754,59 @@ mod tests {
         assert!((polygon - exact) / exact < 0.0035);
         let closed_form = 3935.0 + (4.0 - core::f64::consts::PI) * 169.0;
         assert!((exact - closed_form).abs() <= 1e-9 * closed_form);
+    }
+
+    fn input() -> SectionMember {
+        SectionMember {
+            start: Point3::ORIGIN,
+            end: Point3::new(0.0, 0.0, 1000.0),
+            shape: SectionShape::Parametric(family(SectionFamily::Rhs, &[150.0, 100.0, 5.0, 10.0])),
+            representation: Representation::Detailed,
+            roll_rad: None,
+            placement: SectionPlacement::default(),
+        }
+    }
+
+    #[test]
+    fn a_shifted_section_moves_the_whole_outline_and_keeps_the_volume() {
+        // Default: the bounding box straddles the axis over the full 1000 mm.
+        let base = section_member(&input()).unwrap();
+        assert_eq!(base.volume_mm3(), base.net_area_mm2() * 1000.0);
+        let centre = base
+            .body()
+            .mesh()
+            .vertices()
+            .iter()
+            .map(|p| p[1])
+            .fold((f64::MAX, f64::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+        assert!((centre.0 + 75.0).abs() < 1e-9, "{centre:?}");
+        assert!((centre.1 - 75.0).abs() < 1e-9, "{centre:?}");
+        // Back: the box occupies Y_m in 0..h; start offset 250 shortens the solid to 750 mm.
+        let mut shifted = input();
+        shifted.placement = SectionPlacement {
+            depth: SectionDepthPosition::Back,
+            start_offset_mm: 250.0,
+            ..SectionPlacement::default()
+        };
+        let moved = section_member(&shifted).unwrap();
+        let bounds = moved
+            .body()
+            .mesh()
+            .vertices()
+            .iter()
+            .map(|p| p[1])
+            .fold((f64::MAX, f64::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+        assert!(bounds.0.abs() < 1e-9, "{bounds:?}");
+        assert!((bounds.1 - 150.0).abs() < 1e-9, "{bounds:?}");
+        let z = moved
+            .body()
+            .mesh()
+            .vertices()
+            .iter()
+            .map(|p| p[2])
+            .fold((f64::MAX, f64::MIN), |(lo, hi), z| (lo.min(z), hi.max(z)));
+        assert!((z.0 - 250.0).abs() < 1e-9, "{z:?}");
+        assert!((z.1 - 1000.0).abs() < 1e-9, "{z:?}");
+        assert_eq!(moved.volume_mm3(), base.net_area_mm2() * 750.0);
     }
 }

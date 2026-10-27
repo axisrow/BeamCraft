@@ -44,7 +44,7 @@ use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
     AddHole, CopyElement, CreatePlate, CreatePolybeam, CreateStraightMember, CutByPlane, CutRecord,
     DeleteElement, ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateSide,
-    UpdateElement,
+    SectionDepthPosition, SectionPlacement, SectionPlanePosition, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -186,6 +186,12 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--profile-digest",
     "--profile",
     "--roll",
+    "--section-plane",
+    "--section-plane-offset",
+    "--section-depth",
+    "--section-depth-offset",
+    "--start-offset",
+    "--end-offset",
     "--name",
     "--translation",
     "--orientation-xyzw",
@@ -1874,6 +1880,7 @@ fn create_member_command(
                     .map_err(|_| invalid("a number is malformed"))
             })
             .transpose()?,
+        section_placement: section_placement(options)?,
         material_digest,
     };
     let created = create_member(
@@ -2044,6 +2051,48 @@ fn create_polybeam_command(
     ]))
 }
 
+/// The P14 section-placement flags of `create-member`: absence of every flag is `None` (the
+/// centred default); any flag present authors a full `SectionPlacement` with the remaining
+/// values at their defaults. An unknown position token or a malformed number is refused.
+fn section_placement(options: &BTreeMap<&str, &str>) -> Run<Option<SectionPlacement>> {
+    let keys = [
+        "--section-plane",
+        "--section-plane-offset",
+        "--section-depth",
+        "--section-depth-offset",
+        "--start-offset",
+        "--end-offset",
+    ];
+    if !keys.iter().any(|k| options.contains_key(k)) {
+        return Ok(None);
+    }
+    let offset = |key: &str| -> Run<f64> {
+        let Some(text) = options.get(key) else {
+            return Ok(0.0);
+        };
+        text.parse::<f64>()
+            .map_err(|_| invalid("a number is malformed"))
+    };
+    let plane = match options.get("--section-plane") {
+        Some(token) => SectionPlanePosition::parse(token)
+            .ok_or_else(|| invalid("--section-plane is left, centre or right"))?,
+        None => SectionPlanePosition::Centre,
+    };
+    let depth = match options.get("--section-depth") {
+        Some(token) => SectionDepthPosition::parse(token)
+            .ok_or_else(|| invalid("--section-depth is front, centre or back"))?,
+        None => SectionDepthPosition::Centre,
+    };
+    Ok(Some(SectionPlacement {
+        plane,
+        plane_offset_mm: offset("--section-plane-offset")?,
+        depth,
+        depth_offset_mm: offset("--section-depth-offset")?,
+        start_offset_mm: offset("--start-offset")?,
+        end_offset_mm: offset("--end-offset")?,
+    }))
+}
+
 fn command_plane(
     options: &BTreeMap<&str, &str>,
 ) -> Run<Option<beamcraft_engine::work_plane::WorkPlane>> {
@@ -2139,6 +2188,20 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
             ),
         ),
         ("roll_rad", a.roll_rad.map_or(Ok(Json::Null), num)?),
+        (
+            "section_placement",
+            match a.section_placement {
+                None => Json::Null,
+                Some(p) => Json::object([
+                    ("plane", Json::text(p.plane.as_str())),
+                    ("plane_offset_mm", num(p.plane_offset_mm)?),
+                    ("depth", Json::text(p.depth.as_str())),
+                    ("depth_offset_mm", num(p.depth_offset_mm)?),
+                    ("start_offset_mm", num(p.start_offset_mm)?),
+                    ("end_offset_mm", num(p.end_offset_mm)?),
+                ]),
+            },
+        ),
         (
             "placement",
             Json::object([

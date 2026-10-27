@@ -44,6 +44,7 @@ fn member(start: [f64; 3], end: [f64; 3], w: f64, h: f64, roll: Option<f64>) -> 
         width_mm: w,
         height_mm: h,
         roll_rad: roll,
+        placement: beamcraft_model::command::SectionPlacement::default(),
     }
 }
 

@@ -36,6 +36,7 @@ use beamcraft_kernel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
 use beamcraft_kernel::{StraightMember, straight_member};
 use beamcraft_model::command::{
     CommandError, CreatePolybeam, CreateStraightMember, CutRecord, MemberKind, Placement,
+    SectionPlacement,
 };
 use beamcraft_model::definition::{
     DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
@@ -173,6 +174,8 @@ pub struct AuthoredMember {
     /// Explicit roll; `None` is zero. A polybeam has no authored roll: the G12 sweep carries the
     /// section parallel-transported.
     pub roll_rad: Option<f64>,
+    /// Position of the section about the axis (P14); `None` is the centred default.
+    pub section_placement: Option<SectionPlacement>,
     /// Rigid placement as submitted.
     pub placement: Placement,
     /// Pinned material definition, if any.
@@ -193,6 +196,7 @@ impl AuthoredMember {
             axis_points_mm: vec![command.axis_points_mm[0], command.axis_points_mm[1]],
             profile: command.profile_digest,
             roll_rad: command.roll_rad,
+            section_placement: command.section_placement,
             placement: command.placement,
             material: command.material_digest,
             cuts: Vec::new(),
@@ -209,6 +213,7 @@ impl AuthoredMember {
             axis_points_mm: command.path_points_mm.clone(),
             profile: command.profile_digest,
             roll_rad: None,
+            section_placement: None,
             placement: command.placement,
             material: command.material_digest,
             cuts: Vec::new(),
@@ -230,6 +235,7 @@ impl AuthoredMember {
             profile_digest: self.profile,
             placement: self.placement,
             roll_rad: self.roll_rad,
+            section_placement: self.section_placement,
             material_digest: self.material,
         })
     }
@@ -267,7 +273,8 @@ pub struct MemberBody {
     pub width_mm: f64,
     /// Height of the section's bounding box in millimetres.
     pub height_mm: f64,
-    /// The axis length in millimetres.
+    /// The physical length of the solid along the axis in millimetres: the axis length moved by
+    /// the P14 end offsets (equal to it for the default placement).
     pub axis_length_mm: f64,
     /// The effective section area in mm2 (declared catalogue area, else the exact area).
     pub section_area_mm2: f64,
@@ -292,6 +299,7 @@ fn map_kernel(failure: &Failure) -> CommandError {
                 Field::Axis => "axis_points_mm",
                 Field::Section => "profile",
                 Field::Roll => "roll_rad",
+                Field::SectionPlacement => "section_placement",
                 _ => "geometry",
             };
             CommandError::new(d.code.f04_code(), field, "geometry evaluation failed")
@@ -425,6 +433,7 @@ pub fn section_outline_area_mm2(shape: &SectionShape) -> Result<f64, CommandErro
         shape: shape.clone(),
         representation: Representation::Detailed,
         roll_rad: None,
+        placement: SectionPlacement::default(),
     })
     .map_err(|failure| map_section(&failure))?;
     Ok(result.net_area_mm2())
@@ -462,12 +471,18 @@ pub fn evaluate_member(
         .map(|p| Point3::new(p[0], p[1], p[2]))
         .collect();
     let (width_mm, height_mm) = profile.extent_mm();
+    // The P14 end offsets lengthen or shorten the solid along the axis; the kernel builders
+    // validate the offsets and refuse a non-positive net length.
+    let section_placement = authored.section_placement.unwrap_or_default();
+    let length_delta_mm = section_placement.end_offset_mm - section_placement.start_offset_mm;
     SectionProperties {
         area_mm2: profile.declared_area_mm2(),
         ..SectionProperties::default()
     }
     .validate()?;
     let (solid, axis_length_mm, algorithm, cut_volume_mm3) = if points.len() > 2 {
+        // A polybeam (P12) has no P14 section placement yet: the sweep slice carries one centred
+        // section along the path and authors no placement attributes.
         evaluate_polybeam_body(authored, &profile, &authored.axis_points_mm)?
     } else {
         let Some((start, end)) = points.first().zip(points.last()).map(|(a, b)| (*a, *b)) else {
@@ -501,6 +516,7 @@ pub fn evaluate_member(
                     width_mm: *width_mm,
                     height_mm: *height_mm,
                     roll_rad: authored.roll_rad,
+                    placement: section_placement,
                 })
                 .map_err(|failure| map_kernel(&failure))?;
                 // The kernel succeeded, so the frame exists; the same frame gives the same length.
@@ -512,6 +528,7 @@ pub fn evaluate_member(
                             "member frame could not be built",
                         )
                     })?;
+                let axis_length_mm = frame.scale().axis_length_mm() + length_delta_mm;
                 // The cuts replace both the mesh and the analytic volume with the certified replay
                 // result; without one the P-Mass `area x length` volume stands.
                 let (solid, cut_volume) = if authored.cuts.is_empty() {
@@ -524,7 +541,7 @@ pub fn evaluate_member(
                 };
                 (
                     solid,
-                    frame.scale().axis_length_mm(),
+                    axis_length_mm,
                     if cut_volume.is_some() {
                         CUT_VOLUME_ALGORITHM
                     } else {
@@ -541,6 +558,7 @@ pub fn evaluate_member(
                     shape: shape.clone(),
                     representation: Representation::Detailed,
                     roll_rad: authored.roll_rad,
+                    placement: section_placement,
                 })
                 .map_err(|failure| map_section(&failure))?;
                 if authored.cuts.is_empty() {
@@ -787,6 +805,7 @@ mod tests {
     use super::*;
     use crate::command::no_materials;
     use crate::footprint::{Group, Target};
+    use beamcraft_model::command::{SectionDepthPosition, SectionPlanePosition};
     use beamcraft_model::digest::Sha256;
 
     fn digest(text: &[u8]) -> ContentDigest {
@@ -803,6 +822,7 @@ mod tests {
             profile_digest: profile,
             placement: Placement::IDENTITY,
             roll_rad: None,
+            section_placement: None,
             material_digest: None,
         }
     }
@@ -1122,6 +1142,7 @@ mod tests {
             axis_points_mm: vec![[0.0; 3], [6000.0, 0.0, 0.0]],
             profile: digest(b"profile"),
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
             class: 0,
@@ -1280,6 +1301,74 @@ mod tests {
             .unwrap_err();
             assert_eq!(error.code, expected, "{w} x {h}");
         }
+        // The same for a committed member's section placement: `evaluate_member` runs without
+        // the model admission, so the kernel's own cap refusal is the only guard here.
+        let mut authored = AuthoredMember::from_command(&command(profile));
+        authored.section_placement = Some(SectionPlacement {
+            end_offset_mm: 2_000_000.0,
+            ..SectionPlacement::default()
+        });
+        let error = evaluate_member(
+            &authored,
+            ProfileInfo::Rectangle {
+                width_mm: 200.0,
+                height_mm: 300.0,
+                declared_area_mm2: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::LimitExceeded);
+        assert_eq!(error.field, "section_placement");
+    }
+
+    #[test]
+    fn a_section_placement_moves_the_body_and_changes_the_volume() {
+        let profile = digest(b"rectangle 200x300");
+        let lookup = |d: &ContentDigest| rectangle(d, profile);
+        // Left and front: the box occupies -X_m..0 and -Y_m..0 over a beam along +X, i.e. the
+        // world -Y and -Z directions of the default frame.
+        let mut shifted = command(profile);
+        shifted.axis_points_mm = [[0.0; 3], [6000.0, 0.0, 0.0]];
+        shifted.section_placement = Some(SectionPlacement {
+            plane: SectionPlanePosition::Left,
+            depth: SectionDepthPosition::Front,
+            ..SectionPlacement::default()
+        });
+        let out = create_straight_member(&shifted, &none, &lookup, &no_materials).unwrap();
+        // Volume is unchanged by a pure shift.
+        assert_eq!(out.quantities.volume_mm3, 360_000_000.0);
+        let vertices = out.body.solid.vertices();
+        let (y_lo, y_hi, z_lo, z_hi) = vertices.iter().fold(
+            (f64::MAX, f64::MIN, f64::MAX, f64::MIN),
+            |(ylo, yhi, zlo, zhi), p| (ylo.min(p[1]), yhi.max(p[1]), zlo.min(p[2]), zhi.max(p[2])),
+        );
+        assert_eq!((y_lo, y_hi), (-200.0, 0.0));
+        assert_eq!((z_lo, z_hi), (-300.0, 0.0));
+        // The default command keeps the centred body.
+        let plain =
+            create_straight_member(&command(profile), &none, &lookup, &no_materials).unwrap();
+        assert_eq!(plain.body.solid.vertices()[0][1], -100.0);
+        assert_eq!(plain.body.solid.vertices()[0][2], -150.0);
+        // End offsets stretch the solid past the axis and its volume follows the length.
+        let mut extended = command(profile);
+        extended.axis_points_mm = [[0.0; 3], [6000.0, 0.0, 0.0]];
+        extended.section_placement = Some(SectionPlacement {
+            start_offset_mm: -100.0,
+            end_offset_mm: 100.0,
+            ..SectionPlacement::default()
+        });
+        let out = create_straight_member(&extended, &none, &lookup, &no_materials).unwrap();
+        assert_eq!(out.quantities.volume_mm3, 200.0 * 300.0 * 6200.0);
+        assert_eq!(out.body.axis_length_mm, 6200.0);
+        // A placement that consumes the whole axis is refused by the kernel.
+        let mut consumed = command(profile);
+        consumed.section_placement = Some(SectionPlacement {
+            end_offset_mm: -6000.0,
+            ..SectionPlacement::default()
+        });
+        let error = create_straight_member(&consumed, &none, &lookup, &no_materials).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.field, "section_placement");
     }
 
     #[test]

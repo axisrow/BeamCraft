@@ -350,6 +350,7 @@ fn finish_member(
                         axis_mm: outcome.authored.axis_points_mm.clone(),
                         profile: outcome.authored.profile,
                         roll_rad: outcome.authored.roll_rad,
+                        placement: outcome.authored.section_placement,
                         cuts: Vec::new(),
                     },
                     placement: LayerPlacement {

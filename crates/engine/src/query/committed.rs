@@ -264,14 +264,31 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         axis_points_mm,
         profile: _,
         roll_rad,
+        section_placement,
         placement: _,
         material: _,
         cuts,
     } = member;
-    let mut key = Vec::with_capacity(192);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v3\0");
+    let mut key = Vec::with_capacity(224);
+    key.extend_from_slice(b"BeamCraft/BodyCache/Member/v4\0");
     push_points(&mut key, axis_points_mm);
     push_option(&mut key, *roll_rad);
+    match section_placement {
+        None => key.push(0),
+        Some(p) => {
+            key.push(1);
+            key.extend_from_slice(p.plane.as_str().as_bytes());
+            key.extend_from_slice(p.depth.as_str().as_bytes());
+            for v in [
+                p.plane_offset_mm,
+                p.depth_offset_mm,
+                p.start_offset_mm,
+                p.end_offset_mm,
+            ] {
+                push_f64(&mut key, v);
+            }
+        }
+    }
     push_cut(&mut key, cuts);
     match profile {
         ProfileInfo::Rectangle {
@@ -569,6 +586,7 @@ mod tests {
             axis_points_mm: vec![[0.0; 3], [0.0, 0.0, 3000.0]],
             profile,
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
             cuts: Vec::new(),
@@ -624,6 +642,7 @@ mod tests {
             axis_points_mm: vec![[0.0; 3], [4000.0, 0.0, 0.0]],
             profile,
             roll_rad: None,
+            section_placement: None,
             placement: Placement {
                 translation_mm: [-50.0, 70.0, 1000.0],
                 orientation_xyzw: [0.0, 0.0, half, half],
@@ -871,6 +890,7 @@ mod tests {
             axis_points_mm: vec![[0.0; 3], [3000.0, 0.0, 0.0]],
             profile: Sha256::digest(&[n]).unwrap(),
             roll_rad: None,
+            section_placement: None,
             placement: Placement::IDENTITY,
             material: None,
             cuts: Vec::new(),

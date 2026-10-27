@@ -289,6 +289,7 @@ mod tests {
             axis_points_mm: vec![[0.; 3], [2000., 0., 0.]],
             profile: ContentDigest::from_bytes([7; 32]),
             roll_rad: None,
+            section_placement: None,
             placement: Placement {
                 translation_mm: [0., 0., 0.],
                 orientation_xyzw: [0., 0., 0., 1.],

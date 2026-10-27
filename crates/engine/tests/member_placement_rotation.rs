@@ -33,6 +33,7 @@ fn member_command(placement: Placement, roll_rad: Option<f64>) -> CreateStraight
         profile_digest: digest(b"rectangle 200x300"),
         placement,
         roll_rad,
+        section_placement: None,
         material_digest: None,
     }
 }

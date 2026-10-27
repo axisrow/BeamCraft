@@ -113,6 +113,7 @@ fn member(
         profile_digest: Sha256::digest(b"F06 synthetic profile").unwrap(),
         placement,
         roll_rad: body.get("roll_rad").ok().map(number),
+        section_placement: None,
         material_digest: density.map(|_| Sha256::digest(b"F06 synthetic material").unwrap()),
     };
     let out = create_straight_member(&command, &|_| false, &|_| Ok(shape.clone()), &|_| {
