@@ -41,7 +41,7 @@ use beamcraft_host::{
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
     AddHole, CopyElement, CreatePlate, CreateStraightMember, CutByPlane, CutRecord, DeleteElement,
-    ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, UpdateElement,
+    ElementPatch, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateSide, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -76,6 +76,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--length",
     "--contour",
     "--thickness",
+    "--thickness-side",
     "--name",
     "--translation",
     "--orientation-xyzw",
@@ -207,6 +208,7 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--name",
     "--material-digest",
     "--thickness",
+    "--thickness-side",
     "--translation",
     "--orientation-xyzw",
     "--level",
@@ -784,6 +786,7 @@ fn create(
         None
     };
     let thickness = float(options, "--thickness")?;
+    let thickness_side = thickness_side(options)?;
     let contour = match given("--contour") {
         Some(text) => {
             if options.contains_key("--width") || options.contains_key("--length") {
@@ -809,6 +812,7 @@ fn create(
         name,
         contour_points_mm: contour,
         thickness_mm: thickness,
+        thickness_side,
         placement: if let Some(plane) = plane {
             plane.placement()?
         } else {
@@ -920,6 +924,18 @@ fn holes(options: &BTreeMap<&str, &str>) -> Run<Vec<Vec<[f64; 2]>>> {
     Ok(result)
 }
 
+/// The `--thickness-side` option (A12.1): `top`, `middle` or `bottom`; absent means the
+/// engine's `top` default.
+fn thickness_side(options: &BTreeMap<&str, &str>) -> Run<Option<PlateSide>> {
+    options
+        .get("--thickness-side")
+        .map(|token| {
+            PlateSide::parse(token)
+                .ok_or_else(|| invalid("--thickness-side is top, middle or bottom"))
+        })
+        .transpose()
+}
+
 /// The cutting plane of `cut-by-plane`: `--point X,Y,Z --normal X,Y,Z --keep positive|negative`,
 /// element-local millimetres; whether the plane crosses the element is the kernel's decision, and
 /// a scaled normal describes the same plane.
@@ -981,6 +997,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     .map_err(|_| invalid("a number is malformed"))
             })
             .transpose()?,
+        thickness_side: thickness_side(options)?,
         translation_mm: given("--translation").map(translation).transpose()?,
         orientation_xyzw: match given("--orientation-xyzw") {
             None => None,
@@ -2315,6 +2332,10 @@ fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
         ),
         ("thickness_mm", num(authored.thickness_mm)?),
         (
+            "thickness_side",
+            Json::text(authored.thickness_side.unwrap_or(PlateSide::Top).as_str()),
+        ),
+        (
             "placement",
             Json::object([
                 ("translation_mm", triple(authored.placement.translation_mm)?),
@@ -2371,6 +2392,16 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                 ("length", num(record.body.length_mm)?),
                 ("thickness", num(record.body.thickness_mm)?),
             ]),
+        ),
+        (
+            "thickness_side",
+            Json::text(
+                record
+                    .authored
+                    .thickness_side
+                    .unwrap_or(PlateSide::Top)
+                    .as_str(),
+            ),
         ),
         (
             "contour_points_mm",

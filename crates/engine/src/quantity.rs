@@ -19,7 +19,7 @@ use crate::command::{AuthoredPlate, Quantities, QuantityStatus, VOLUME_ALGORITHM
 use crate::member::{AuthoredMember, ProfileInfo};
 use beamcraft_geom::canonical_f64_bytes;
 use beamcraft_geom::tolerance::TOLERANCE_POLICY_VERSION;
-use beamcraft_model::command::{CutRecord, KeepSide};
+use beamcraft_model::command::{CutRecord, KeepSide, PlateSide};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::section::SectionShape;
 
@@ -152,11 +152,13 @@ fn float(bytes: &mut Vec<u8>, value: f64) {
     bytes.extend_from_slice(&canonical_f64_bytes(value).unwrap_or([0xff; 8]));
 }
 
-/// Signature of the shape inputs of a plate: outline, thickness, holes and cut records, with the
-/// algorithm and tolerance policy. Name, placement and material are not shape inputs.
+/// Signature of the shape inputs of a plate: outline, thickness, thickness side (A12.1: the
+/// side changes the body, so the mesh and this signature change with it), holes and cut
+/// records, with the algorithm and tolerance policy. Name, placement and material are not
+/// shape inputs.
 pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentDigest {
     let mut bytes = Vec::with_capacity(256);
-    bytes.extend_from_slice(b"BeamCraft/P04/PlateShape/v1\0");
+    bytes.extend_from_slice(b"BeamCraft/P04/PlateShape/v2\0");
     bytes.extend_from_slice(&TOLERANCE_POLICY_VERSION.to_le_bytes());
     bytes.extend_from_slice(&(algorithm.len() as u64).to_le_bytes());
     bytes.extend_from_slice(algorithm.as_bytes());
@@ -165,6 +167,12 @@ pub fn plate_shape_signature(plate: &AuthoredPlate, algorithm: &str) -> ContentD
         float(&mut bytes, *v);
     }
     float(&mut bytes, plate.thickness_mm);
+    bytes.push(match plate.thickness_side {
+        None => 0,
+        Some(PlateSide::Top) => 1,
+        Some(PlateSide::Middle) => 2,
+        Some(PlateSide::Bottom) => 3,
+    });
     bytes.extend_from_slice(&(plate.holes_mm.len() as u64).to_le_bytes());
     for hole in &plate.holes_mm {
         bytes.extend_from_slice(&(hole.len() as u64).to_le_bytes());
@@ -390,6 +398,7 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),

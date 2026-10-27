@@ -13,6 +13,7 @@
 //! | `name` | no | no | untouched |
 //! | `material` | no | yes | quantity record only (same mesh bytes) |
 //! | `thickness_mm` | yes | yes | mesh and quantity record |
+//! | `thickness_side` (A12.1) | yes | yes | mesh and quantity record |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
 //! | `orientation_xyzw` | no | no | untouched (the body is element-local) |
 //! | `level` | no | no | untouched (a relationship of the element only) |
@@ -54,7 +55,7 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         name: patch.name.is_some(),
         class: patch.class.is_some(),
         material: patch.material.is_some(),
-        shape: patch.thickness_mm.is_some(),
+        shape: patch.thickness_mm.is_some() || patch.thickness_side.is_some(),
         placement: patch.translation_mm.is_some(),
         orientation: patch.orientation_xyzw.is_some(),
         level: patch.level.is_some(),
@@ -79,12 +80,15 @@ pub fn patch_plate(
     if let Some(thickness) = patch.thickness_mm {
         next.thickness_mm = thickness;
     }
+    if let Some(side) = patch.thickness_side {
+        next.thickness_side = Some(side);
+    }
     next.placement = placement_after(&plate.placement, patch)?;
     Ok(next)
 }
 
-/// Applies a patch to an authored member. A member has no thickness: that field is
-/// `UNSUPPORTED_PROPERTY`.
+/// Applies a patch to an authored member. A member has no thickness: that field and the
+/// thickness side are `UNSUPPORTED_PROPERTY`.
 pub fn patch_member(
     member: &AuthoredMember,
     patch: &ElementPatch,
@@ -94,6 +98,13 @@ pub fn patch_member(
             ErrorCode::UnsupportedProperty,
             "thickness_mm",
             "a member has no thickness",
+        ));
+    }
+    if patch.thickness_side.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "thickness_side",
+            "a member has no thickness side",
         ));
     }
     let mut next = member.clone();
@@ -145,6 +156,7 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
             placement: Placement::IDENTITY,
             material: None,
             holes_mm: Vec::new(),
@@ -354,6 +366,23 @@ mod tests {
             material: None,
             cuts: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_thickness_side_patch_is_a_shape_change_and_a_member_refuses_it() {
+        use beamcraft_model::command::PlateSide;
+        let side = ElementPatch {
+            thickness_side: Some(PlateSide::Bottom),
+            ..ElementPatch::default()
+        };
+        assert!(effect(&side).shape && !effect(&side).placement);
+        let next = patch_plate(&plate(), &side).unwrap();
+        assert_eq!(next.thickness_side, Some(PlateSide::Bottom));
+        assert_eq!(next.thickness_mm, 10.0);
+        assert_eq!(
+            patch_member(&member(), &side).unwrap_err().code,
+            ErrorCode::UnsupportedProperty
+        );
     }
 
     #[test]

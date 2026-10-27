@@ -178,6 +178,7 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
             placement: Placement::IDENTITY,
             material: None,
             class: 0,

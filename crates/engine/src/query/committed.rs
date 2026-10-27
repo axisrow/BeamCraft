@@ -18,7 +18,9 @@ use crate::member::{
 use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
 use beamcraft_geom::Translation3;
-use beamcraft_model::command::{CommandError, CutRecord, KeepSide, MemberKind, label_is_valid};
+use beamcraft_model::command::{
+    CommandError, CutRecord, KeepSide, MemberKind, PlateSide, label_is_valid,
+};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use beamcraft_model::section::{CustomSection, SectionShape};
@@ -219,6 +221,7 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         class: _,
         contour_points_mm,
         thickness_mm,
+        thickness_side,
         placement: _,
         material: _,
         holes_mm,
@@ -226,9 +229,16 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         cuts,
     } = plate;
     let mut key = Vec::with_capacity(160);
-    key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v2\0");
+    key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v3\0");
     push_points(&mut key, contour_points_mm);
     push_f64(&mut key, *thickness_mm);
+    // The side changes the body: the mesh is laid off from the contour plane (A12.1).
+    key.push(match thickness_side {
+        None => 0,
+        Some(PlateSide::Top) => 1,
+        Some(PlateSide::Middle) => 2,
+        Some(PlateSide::Bottom) => 3,
+    });
     push_len(&mut key, holes_mm.len());
     for hole in holes_mm {
         push_points(&mut key, hole);
@@ -524,6 +534,7 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
             placement: Placement {
                 translation_mm: [x, 0.0, 0.0],
                 ..Placement::IDENTITY

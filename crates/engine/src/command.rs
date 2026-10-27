@@ -42,9 +42,10 @@ use beamcraft_kernel::ops::{
 };
 use beamcraft_kernel::profile::diagnostic::{ProfileFailure, ProfileField};
 use beamcraft_kernel::profile::{Cavity, Point2, extrude};
+use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_kernel::{PlateResult, RectangularPlate, rectangular_plate};
 use beamcraft_model::command::{
-    AddHole, CommandError, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, Placement,
+    AddHole, CommandError, CreatePlate, CutRecord, HoleRecord, MAX_HOLES, Placement, PlateSide,
 };
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
@@ -105,6 +106,8 @@ pub struct AuthoredPlate {
     pub contour_points_mm: Vec<[f64; 3]>,
     /// Thickness in millimetres.
     pub thickness_mm: f64,
+    /// Where the thickness is laid off from the contour plane (A12.1); absence reads as `top`.
+    pub thickness_side: Option<PlateSide>,
     /// Rigid placement as submitted.
     pub placement: Placement,
     /// Pinned physical material definition; absence means the material and density are unknown.
@@ -128,6 +131,7 @@ impl AuthoredPlate {
             class: command.class,
             contour_points_mm: command.contour_points_mm.clone(),
             thickness_mm: command.thickness_mm,
+            thickness_side: command.thickness_side,
             placement: command.placement,
             material: command.material_digest,
             holes_mm: command.holes_mm.clone(),
@@ -146,6 +150,7 @@ impl AuthoredPlate {
             class: self.class,
             contour_points_mm: self.contour_points_mm.clone(),
             thickness_mm: self.thickness_mm,
+            thickness_side: self.thickness_side,
             placement: self.placement,
             material_digest: self.material,
             holes_mm: self.holes_mm.clone(),
@@ -436,6 +441,64 @@ fn map_kernel(failure: &Failure) -> CommandError {
     )
 }
 
+/// The element-local Z of a plate's lower face (A12.1): the authored side laid off from the
+/// contour plane; absence is the `top` default.
+fn side_offset(authored: &AuthoredPlate) -> f64 {
+    authored
+        .thickness_side
+        .map_or(0.0, |side| side.offset_mm(authored.thickness_mm))
+}
+
+/// The certified plain body of a plate laid off by `offset_mm` along the element-local Z
+/// (A12.1 thickness side), with its mesh for the base result: the kernel blob is translated
+/// by the pure translation of the production rigid map and re-certified with the face table,
+/// normals and tolerance of the body it certifies. `None` for a zero offset, so the default
+/// `top` side keeps the kernel results bit-identical to A02. The offset is the authored
+/// thickness halved or negated, both exact, so every vertex moves by exactly that amount and
+/// winding, adjacency, the face table and the measured volume are preserved; a refusal is
+/// therefore `UNSUPPORTED_GEOMETRY`, field `thickness_side`, and never an input rejection.
+fn laid_off(
+    blob: &[u8],
+    face_table: &[String],
+    face_normals: &[Option<[f64; 3]>],
+    tolerance: beamcraft_geom::tolerance::Tolerance,
+    volume_mm3: f64,
+    offset_mm: f64,
+) -> Result<Option<(Body, SolidMesh)>, CommandError> {
+    if offset_mm == 0.0 {
+        return Ok(None);
+    }
+    use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
+    let refused = || {
+        CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "thickness_side",
+            "the laid-off plate body could not be certified",
+        )
+    };
+    let plain = TriMesh::from_blob(blob).map_err(|_| refused())?;
+    let axis = |v: [f64; 3]| Vec3::new(v[0], v[1], v[2]).map_err(|_| refused());
+    let frame = Frame3::try_new(
+        axis([1.0, 0.0, 0.0])?,
+        axis([0.0, 1.0, 0.0])?,
+        axis([0.0, 0.0, 1.0])?,
+    )
+    .map_err(|_| refused())?;
+    let translation = RigidTransform::from_body_frame(frame, Point3::new(0.0, 0.0, offset_mm))
+        .map_err(|_| refused())?;
+    let translated = plain.placed(&translation).map_err(|_| refused())?;
+    let body = Body::from_mesh(
+        translated.clone(),
+        face_table.to_vec(),
+        face_normals.to_vec(),
+        Some(tolerance),
+    )
+    .map_err(|_| refused())?;
+    let solid = SolidMesh::from_admitted(&translated, face_table.to_vec(), volume_mm3)
+        .ok_or_else(refused)?;
+    Ok(Some((body, solid)))
+}
+
 /// How a contour relates to the first-slice shape.
 enum Contour {
     /// `(0,0,0), (w,0,0), (w,l,0), (0,l,0)` with `w, l > 0`.
@@ -484,6 +547,7 @@ fn classify(points: &[[f64; 3]]) -> Contour {
 pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandError> {
     let points = &authored.contour_points_mm;
     let contour = beamcraft_kernel::plate_contour::admit(points, authored.thickness_mm)?;
+    let offset = side_offset(authored);
     match classify(points) {
         Contour::OriginRectangle { width, length } => {
             let result = rectangular_plate(RectangularPlate {
@@ -492,12 +556,36 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 thickness_mm: authored.thickness_mm,
             })
             .map_err(|f| map_kernel(&f))?;
-            let base = SolidMesh::from_box(&result);
+            let shifted = laid_off(
+                result.mesh().blob(),
+                &result
+                    .mesh()
+                    .face_table()
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect::<Vec<_>>(),
+                &result
+                    .mesh()
+                    .face_normals()
+                    .iter()
+                    .map(|n| Some([n.x(), n.y(), n.z()]))
+                    .collect::<Vec<_>>(),
+                result.tolerance(),
+                result.volume_mm3(),
+                offset,
+            )?;
+            let base = shifted
+                .as_ref()
+                .map_or_else(|| SolidMesh::from_box(&result), |(_, mesh)| mesh.clone());
             let holes = authored.hole_polygons_in_replay_order();
             let solid = apply_holes_and_cut(
-                || Body::from_plate(&result),
+                || match &shifted {
+                    Some((body, _)) => Ok(body.clone()),
+                    None => Body::from_plate(&result),
+                },
                 base,
                 authored.thickness_mm,
+                offset,
                 &holes,
                 &authored.cuts,
             )?;
@@ -543,11 +631,35 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
             }
             let result =
                 beamcraft_kernel::plate_contour::rectangular_body(points, authored.thickness_mm)?;
-            let base = SolidMesh::from_box(&result);
+            let shifted = laid_off(
+                result.mesh().blob(),
+                &result
+                    .mesh()
+                    .face_table()
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect::<Vec<_>>(),
+                &result
+                    .mesh()
+                    .face_normals()
+                    .iter()
+                    .map(|n| Some([n.x(), n.y(), n.z()]))
+                    .collect::<Vec<_>>(),
+                result.tolerance(),
+                result.volume_mm3(),
+                offset,
+            )?;
+            let base = shifted
+                .as_ref()
+                .map_or_else(|| SolidMesh::from_box(&result), |(_, mesh)| mesh.clone());
             let solid = apply_holes_and_cut(
-                || Body::from_plate(&result),
+                || match &shifted {
+                    Some((body, _)) => Ok(body.clone()),
+                    None => Body::from_plate(&result),
+                },
                 base,
                 authored.thickness_mm,
+                offset,
                 &[],
                 &authored.cuts,
             )?;
@@ -604,18 +716,39 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
         .map(|[x, y, _]| Point2::new(*x, *y))
         .collect();
     let extrusion = extrude(&outer, &[], authored.thickness_mm).map_err(|f| map_profile(&f))?;
-    let base = SolidMesh::from_extrusion(&extrusion).ok_or_else(|| {
-        CommandError::new(
-            ErrorCode::UnsupportedGeometry,
-            "contour_points_mm",
-            "the contour mesh could not be digested",
-        )
-    })?;
+    let offset = side_offset(authored);
+    let shifted = laid_off(
+        extrusion.mesh().blob(),
+        extrusion.mesh().face_table(),
+        &extrusion
+            .mesh()
+            .face_normals()
+            .iter()
+            .map(|n| n.map(|v| [v.x(), v.y(), v.z()]))
+            .collect::<Vec<_>>(),
+        extrusion.tolerance(),
+        extrusion.volume_mm3(),
+        offset,
+    )?;
+    let base = match shifted.as_ref() {
+        Some((_, mesh)) => mesh.clone(),
+        None => SolidMesh::from_extrusion(&extrusion).ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "contour_points_mm",
+                "the contour mesh could not be digested",
+            )
+        })?,
+    };
     let holes = authored.hole_polygons_in_replay_order();
     let solid = apply_holes_and_cut(
-        || Body::from_extrusion(&extrusion),
+        || match &shifted {
+            Some((body, _)) => Ok(body.clone()),
+            None => Body::from_extrusion(&extrusion),
+        },
         base,
         authored.thickness_mm,
+        offset,
         &holes,
         &authored.cuts,
     )?;
@@ -697,15 +830,18 @@ pub(crate) fn replay_cuts(
 /// The certified mesh of a plate with its through holes. Each hole is one kernel cutter, in
 /// order, so the wall ids of the first hole are `h0`. With no holes it is the plain body `base`.
 ///
-/// The kernel decides, with exact predicates, whether a hole lies strictly inside the outline,
-/// is clear of the others and is a clockwise simple polygon; a refusal is `INVALID_ARGUMENT`
-/// for a bad polygon and the kernel's own code otherwise, and nothing is applied. The plane-cut
-/// records (A03) then replay in ascending ordinal order, each keeping its own half-space; a cut
-/// the kernel would not apply refuses the whole command.
+/// The cutters span the body's own `z` band (A12.1): `offset_mm` is the element-local Z of the
+/// lower face, `0` for the default `top`. The kernel decides, with exact predicates, whether a
+/// hole lies strictly inside the outline, is clear of the others and is a clockwise simple
+/// polygon; a refusal is `INVALID_ARGUMENT` for a bad polygon and the kernel's own code
+/// otherwise, and nothing is applied. The plane-cut records (A03) then replay in ascending
+/// ordinal order, each keeping its own half-space; a cut the kernel would not apply refuses the
+/// whole command.
 fn apply_holes_and_cut(
     body: impl FnOnce() -> Result<Body, OpFailure>,
     base: SolidMesh,
     thickness_mm: f64,
+    offset_mm: f64,
     holes: &[Vec<[f64; 2]>],
     cuts: &[CutRecord],
 ) -> Result<SolidMesh, CommandError> {
@@ -718,8 +854,8 @@ fn apply_holes_and_cut(
         })?;
         let cutter = HoleCutter::new(
             cavity,
-            -CUTTER_OVERSHOOT_MM,
-            thickness_mm + CUTTER_OVERSHOOT_MM,
+            offset_mm - CUTTER_OVERSHOOT_MM,
+            offset_mm + thickness_mm + CUTTER_OVERSHOOT_MM,
             ordinal,
         );
         let applied = through_hole(&body, &cutter).map_err(|f| map_operation(&f))?;
@@ -872,6 +1008,7 @@ mod tests {
             class: 0,
             contour_points_mm: contour,
             thickness_mm: thickness,
+            thickness_side: None,
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
@@ -1065,6 +1202,7 @@ mod tests {
             name: "Cut plate".into(),
             contour_points_mm: rect(1000.0, 500.0),
             thickness_mm: 10.0,
+            thickness_side: None,
             placement: Placement::IDENTITY,
             material: None,
             class: 0,
@@ -1130,6 +1268,7 @@ mod tests {
             name: "Cut plate".into(),
             contour_points_mm: rect(1000.0, 500.0),
             thickness_mm: 10.0,
+            thickness_side: None,
             placement: Placement::IDENTITY,
             material: None,
             class: 0,
@@ -1223,6 +1362,114 @@ mod tests {
         );
         assert_eq!(plain.quantities.removed_volume_mm3, 0.0);
         assert_eq!(q.area_source, None);
+    }
+
+    #[test]
+    fn the_thickness_side_lays_the_material_off_the_contour_plane() {
+        let side_command = |side: Option<PlateSide>| {
+            AuthoredPlate::from_command(&CreatePlate {
+                thickness_side: side,
+                ..command(rect(1000.0, 500.0), 10.0)
+            })
+        };
+        let z_range = |body: &PlateBody| {
+            let z = || body.solid.vertices().iter().map(|p| p[2]);
+            (
+                z().fold(f64::INFINITY, f64::min),
+                z().fold(f64::NEG_INFINITY, f64::max),
+            )
+        };
+        // Absence is the top default, bit-identical to an explicit top.
+        let default = evaluate_plate(&side_command(None)).unwrap();
+        let top = evaluate_plate(&side_command(Some(PlateSide::Top))).unwrap();
+        assert_eq!(default.solid, top.solid);
+        for body in [&default, &top] {
+            let (low, high) = z_range(body);
+            assert_eq!((low, high), (0.0, 10.0));
+        }
+        // Middle is half on each side of the contour plane, bottom is laid off in -Z; the
+        // volume does not depend on the side.
+        let middle = evaluate_plate(&side_command(Some(PlateSide::Middle))).unwrap();
+        let bottom = evaluate_plate(&side_command(Some(PlateSide::Bottom))).unwrap();
+        assert_eq!(z_range(&middle), (-5.0, 5.0));
+        assert_eq!(z_range(&bottom), (-10.0, 0.0));
+        let volume = default.quantities().volume_mm3;
+        assert_eq!(top.quantities().volume_mm3, volume);
+        assert_eq!(middle.quantities().volume_mm3, volume);
+        assert_eq!(bottom.quantities().volume_mm3, volume);
+        assert_eq!(default.quantities().volume_gross_mm3, 5_000_000.0);
+        // A contour plate follows the same rule in its own evaluation path.
+        let outline = vec![
+            [0.0, 0.0, 0.0],
+            [600.0, 0.0, 0.0],
+            [600.0, 400.0, 0.0],
+            [300.0, 600.0, 0.0],
+            [0.0, 400.0, 0.0],
+        ];
+        let contour = |side: Option<PlateSide>| {
+            AuthoredPlate::from_command(&CreatePlate {
+                contour_points_mm: outline.clone(),
+                thickness_mm: 8.0,
+                thickness_side: side,
+                ..command(Vec::new(), 8.0)
+            })
+        };
+        let flat = evaluate_plate(&contour(None)).unwrap();
+        assert_eq!(z_range(&flat), (0.0, 8.0));
+        let laid = evaluate_plate(&contour(Some(PlateSide::Bottom))).unwrap();
+        assert_eq!(z_range(&laid), (-8.0, 0.0));
+        assert_eq!(laid.quantities().volume_mm3, flat.quantities().volume_mm3);
+    }
+
+    #[test]
+    fn a_cut_and_a_hole_replay_on_the_laid_off_body() {
+        let side_command = |side: Option<PlateSide>| AuthoredPlate {
+            cuts: Vec::new(),
+            holes_mm: Vec::new(),
+            ..AuthoredPlate::from_command(&CreatePlate {
+                thickness_side: side,
+                ..command(rect(1000.0, 500.0), 10.0)
+            })
+        };
+        let z_cut = |point: [f64; 3], keep: KeepSide| CutRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
+            ordinal: 0,
+            point_mm: point,
+            normal: [0.0, 0.0, 1.0],
+            keep,
+        };
+        // The same record at z = +5 keeps z <= 5: a top plate loses its upper half.
+        let top = evaluate_plate(&AuthoredPlate {
+            cuts: vec![z_cut([0.0, 0.0, 5.0], KeepSide::Negative)],
+            ..side_command(None)
+        })
+        .unwrap();
+        assert!((top.quantities().volume_mm3 - 2_500_000.0).abs() <= 1e-6);
+        // The bottom plate lies entirely below the plane, so the cut misses it and the
+        // command is refused: changing the side changes what a fixed cut removes.
+        let missed = evaluate_plate(&AuthoredPlate {
+            cuts: vec![z_cut([0.0, 0.0, 5.0], KeepSide::Negative)],
+            ..side_command(Some(PlateSide::Bottom))
+        });
+        assert_eq!(missed.unwrap_err().code, ErrorCode::InvalidArgument);
+        // A through hole pierces the laid-off body: the middle plate keeps the exact net
+        // volume of its own z band.
+        let square = |x: f64, y: f64, s: f64| vec![[x, y], [x, y + s], [x + s, y + s], [x + s, y]];
+        let holed = evaluate_plate(&AuthoredPlate {
+            holes_mm: vec![square(100.0, 100.0, 100.0)],
+            ..side_command(Some(PlateSide::Middle))
+        })
+        .unwrap();
+        assert_eq!(holed.hole_count, 1);
+        assert!((holed.quantities().volume_mm3 - 4_900_000.0).abs() <= 1e-6);
+        let (low, high) = {
+            let z = holed.solid.vertices().iter().map(|p| p[2]);
+            (
+                z.clone().fold(f64::INFINITY, f64::min),
+                z.fold(f64::NEG_INFINITY, f64::max),
+            )
+        };
+        assert_eq!((low, high), (-5.0, 5.0));
     }
 
     #[test]
@@ -1578,6 +1825,7 @@ mod tests {
                 class: 0,
                 contour_points_mm: contour,
                 thickness_mm: 10.0,
+                thickness_side: None,
                 placement: Placement::IDENTITY,
                 material: None,
                 holes_mm: Vec::new(),

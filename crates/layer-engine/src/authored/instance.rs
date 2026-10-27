@@ -40,6 +40,7 @@ pub fn shared_property(name: &str) -> bool {
         name,
         "steel:plate:contourPointsMm"
             | "steel:plate:thicknessMm"
+            | "steel:plate:thicknessSide"
             | "steel:plate:holePointsMm"
             | "steel:plate:holeVertexCounts"
             | "steel:hole:pointsMm"

@@ -239,6 +239,7 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
             placement: Placement {
                 translation_mm: [0.0, 0.0, 0.0],
                 orientation_xyzw,

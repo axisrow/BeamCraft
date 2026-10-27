@@ -68,7 +68,7 @@ use beamcraft_layer_engine::{
     Prim, Profile, Reader, Value,
 };
 use beamcraft_model::command::{
-    CommandError, CreatePlate, CutRecord, HoleRecord, KeepSide, MemberKind,
+    CommandError, CreatePlate, CutRecord, HoleRecord, KeepSide, MemberKind, PlateSide,
 };
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
@@ -507,6 +507,28 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
     Ok(records)
 }
 
+/// The authored thickness side (A12.1); absence is the `top` default, so every plate authored
+/// before the field existed reads as `top`. A malformed opinion is an integrity error, never a
+/// default.
+fn decode_thickness_side(prim: &Prim) -> Result<Option<PlateSide>, PlateError> {
+    let Some(property) = prim
+        .properties
+        .iter()
+        .find(|p| p.name == "steel:plate:thicknessSide")
+    else {
+        return Ok(None);
+    };
+    if property.type_name != "token" {
+        return Err(integrity("thickness side must have USD type token"));
+    }
+    match &property.value {
+        Some(Value::Text(token)) => PlateSide::parse(token)
+            .map(Some)
+            .ok_or_else(|| integrity("thickness side is not top, middle or bottom")),
+        _ => Err(integrity("thickness side must be a token")),
+    }
+}
+
 fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError> {
     let bad = || integrity("committed plate lacks a required authored input");
     let name = property(prim, "bim:name").and_then(text).ok_or_else(bad)?;
@@ -534,6 +556,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         class: decode_class(prim)?,
         contour_points_mm: contour,
         thickness_mm: thickness,
+        thickness_side: decode_thickness_side(prim)?,
         placement: beamcraft_model::command::Placement {
             translation_mm: translation,
             orientation_xyzw: [x, y, z, w],
@@ -1880,6 +1903,7 @@ pub fn create_plate(
                     shape: Shape::Plate {
                         contour_mm: outcome.authored.contour_points_mm.clone(),
                         thickness_mm: outcome.authored.thickness_mm,
+                        thickness_side: outcome.authored.thickness_side,
                         holes: outcome
                             .authored
                             .holes_mm

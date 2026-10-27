@@ -586,6 +586,7 @@ fn create(
         Shape::Plate {
             contour_mm,
             thickness_mm,
+            thickness_side,
             holes,
             hole_records,
             ..
@@ -604,6 +605,15 @@ fn create(
                 "double",
                 sdf::Value::Double(*thickness_mm),
             )?;
+            if let Some(side) = thickness_side {
+                attr(
+                    data,
+                    &p,
+                    "steel:plate:thicknessSide",
+                    "token",
+                    sdf::Value::token(side.as_str()),
+                )?;
+            }
             if !holes.is_empty() {
                 let flat: Vec<[f64; 3]> = holes.iter().flatten().copied().collect();
                 let counts = holes
@@ -1104,6 +1114,13 @@ pub(super) fn apply(
                 "double",
                 sdf::Value::Double(*mm),
             )?,
+            Change::ThicknessSide { side, .. } => attr(
+                &mut authored,
+                &p,
+                "steel:plate:thicknessSide",
+                "token",
+                sdf::Value::token(side.as_str()),
+            )?,
             Change::Cuts { cuts, .. } => author_cuts(&mut authored, &p, cuts)?,
             Change::HoleRecords { records, .. } => {
                 // The four record attributes, always together: the authoritative polygons of
@@ -1265,6 +1282,7 @@ pub(super) fn apply(
             c,
             Change::Contour { .. }
                 | Change::Thickness { .. }
+                | Change::ThicknessSide { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
@@ -1552,6 +1570,7 @@ fn capture(
             }
             Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", 0),
             Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", 0),
+            Change::ThicknessSide { .. } => add("steel:plate:thicknessSide", "token", 0),
             Change::Cuts { cuts, .. } if !cuts.is_empty() => {
                 for &(name, ty) in CUT_FIELDS {
                     add(name, ty, 0);
@@ -1593,6 +1612,7 @@ fn capture(
             change,
             Change::Contour { .. }
                 | Change::Thickness { .. }
+                | Change::ThicknessSide { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }

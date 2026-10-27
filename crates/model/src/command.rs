@@ -306,6 +306,54 @@ impl CutByPlane {
     }
 }
 
+/// Where the thickness of a plate is laid off from its contour plane (A12.1, the F04 plate
+/// amendment section 1). The contour lies in the element-local plane `z = 0`; the side names the
+/// band of `z` that carries the material. The side is the axis of the element-local frame, not a
+/// world direction: a rotated placement turns it with the plate. Volume, area and mass do not
+/// depend on it; the mesh does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlateSide {
+    /// Material between `z = 0` and `z = +t`. The default, and what every plate authored before
+    /// the field existed reads as.
+    Top,
+    /// Material between `z = -t/2` and `z = +t/2`, half on each side of the contour plane.
+    Middle,
+    /// Material between `z = -t` and `z = 0`, laid off in `-Z`.
+    Bottom,
+}
+
+impl PlateSide {
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Middle => "middle",
+            Self::Bottom => "bottom",
+        }
+    }
+
+    /// Parses the wire token.
+    pub fn parse(token: &str) -> Option<Self> {
+        match token {
+            "top" => Some(Self::Top),
+            "middle" => Some(Self::Middle),
+            "bottom" => Some(Self::Bottom),
+            _ => None,
+        }
+    }
+
+    /// The element-local `z` of the material's lower face for a plate of the given thickness:
+    /// `0`, `-t/2` or `-t`. Halving a finite `f64` and negating it are exact, so the offset is
+    /// the authored thickness unchanged.
+    pub const fn offset_mm(self, thickness_mm: f64) -> f64 {
+        match self {
+            Self::Top => 0.0,
+            Self::Middle => -thickness_mm / 2.0,
+            Self::Bottom => -thickness_mm,
+        }
+    }
+}
+
 /// F04 section 7 `CreatePlate`. `material_digest` pins an existing immutable material definition;
 /// whether the digest resolves (`NOT_FOUND`) is the engine's decision, not an argument check.
 #[derive(Debug, Clone, PartialEq)]
@@ -320,6 +368,8 @@ pub struct CreatePlate {
     pub contour_points_mm: Vec<[f64; 3]>,
     /// Extrusion thickness in millimetres.
     pub thickness_mm: f64,
+    /// Where the thickness is laid off from the contour plane (A12.1); absent means `top`.
+    pub thickness_side: Option<PlateSide>,
     /// Rigid placement.
     pub placement: Placement,
     /// Optional pinned material definition.
@@ -617,12 +667,18 @@ impl CreatePlate {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(64 + self.contour_points_mm.len() * 24);
-        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v6\0");
+        bytes.extend_from_slice(b"BeamCraft/P04/CreatePlate/v7\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         let name = self.name.as_bytes();
         bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
         bytes.extend_from_slice(name);
         bytes.extend_from_slice(&self.class.to_le_bytes());
+        bytes.push(match self.thickness_side {
+            None => 0,
+            Some(PlateSide::Top) => 1,
+            Some(PlateSide::Middle) => 2,
+            Some(PlateSide::Bottom) => 3,
+        });
         bytes.extend_from_slice(&(self.contour_points_mm.len() as u64).to_le_bytes());
         let mut scalars = self
             .contour_points_mm
@@ -998,6 +1054,10 @@ pub struct ElementPatch {
     pub material: Option<Option<ContentDigest>>,
     /// New plate thickness in millimetres (a plate only).
     pub thickness_mm: Option<f64>,
+    /// New thickness side of a plate (A12.1); `Some` names the side to lay the thickness off
+    /// from the contour plane. A plate always has a side (absent means `top`), so there is no
+    /// clearing.
+    pub thickness_side: Option<PlateSide>,
     /// New placement translation in millimetres, absolute; the rotation is kept (a move).
     pub translation_mm: Option<[f64; 3]>,
     /// New placement rotation, absolute. Replaces the stored quaternion (the identity resets a
@@ -1028,6 +1088,7 @@ impl UpdateElement {
             && patch.name.is_none()
             && patch.material.is_none()
             && patch.thickness_mm.is_none()
+            && patch.thickness_side.is_none()
             && patch.translation_mm.is_none()
             && patch.orientation_xyzw.is_none()
             && patch.level.is_none()
@@ -1167,6 +1228,15 @@ impl UpdateElement {
                     .with_rule("DV-ATTR-003")
                 })?);
             }
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(side) = self.patch.thickness_side {
+            bytes.push(5);
+            bytes.push(match side {
+                PlateSide::Top => 1,
+                PlateSide::Middle => 2,
+                PlateSide::Bottom => 3,
+            });
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
@@ -2067,6 +2137,7 @@ mod tests {
                 [0.0, 500.0, 0.0],
             ],
             thickness_mm: 10.0,
+            thickness_side: None,
             placement: Placement::IDENTITY,
             material_digest: None,
             holes_mm: Vec::new(),
@@ -2075,6 +2146,47 @@ mod tests {
 
     fn code(plate: &CreatePlate) -> ErrorCode {
         plate.validate_arguments().unwrap_err().code
+    }
+
+    #[test]
+    fn the_thickness_side_has_wire_tokens_exact_offsets_and_its_own_fingerprint() {
+        // The tokens round-trip; anything else does not parse.
+        for (side, token) in [
+            (PlateSide::Top, "top"),
+            (PlateSide::Middle, "middle"),
+            (PlateSide::Bottom, "bottom"),
+        ] {
+            assert_eq!(side.as_str(), token);
+            assert_eq!(PlateSide::parse(token), Some(side));
+        }
+        assert_eq!(PlateSide::parse("above"), None);
+        // The lower face sits at 0, -t/2 and -t; halving and negating are exact.
+        assert_eq!(PlateSide::Top.offset_mm(10.0), 0.0);
+        assert_eq!(PlateSide::Middle.offset_mm(10.0), -5.0);
+        assert_eq!(PlateSide::Bottom.offset_mm(10.0), -10.0);
+        // Absence is the top default in content: an older plate and an explicit top plate
+        // evaluate the same body, but the authored arguments stay distinguishable.
+        let base = plate();
+        let top = CreatePlate {
+            thickness_side: Some(PlateSide::Top),
+            ..base.clone()
+        };
+        let middle = CreatePlate {
+            thickness_side: Some(PlateSide::Middle),
+            ..base.clone()
+        };
+        assert_ne!(
+            base.content_fingerprint().unwrap(),
+            middle.content_fingerprint().unwrap()
+        );
+        assert_ne!(
+            top.content_fingerprint().unwrap(),
+            middle.content_fingerprint().unwrap()
+        );
+        assert_ne!(
+            base.content_fingerprint().unwrap(),
+            top.content_fingerprint().unwrap()
+        );
     }
 
     fn hole() -> Vec<[f64; 2]> {
@@ -2617,6 +2729,40 @@ mod tests {
             },
         };
         assert_ne!(rename.content_fingerprint().unwrap(), base);
+    }
+
+    #[test]
+    fn a_thickness_side_patch_has_its_own_fingerprint() {
+        // A retry that differs only in the side must not replay as the same operation (A12.1).
+        let update = |side: Option<PlateSide>| UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                thickness_side: side,
+                ..ElementPatch::default()
+            },
+        };
+        assert!(update(Some(PlateSide::Bottom)).validate_arguments().is_ok());
+        // A patch that names no field changes nothing and stays inadmissible, so the three
+        // sides are compared against each other.
+        let top = update(Some(PlateSide::Top)).content_fingerprint().unwrap();
+        let middle = update(Some(PlateSide::Middle))
+            .content_fingerprint()
+            .unwrap();
+        let bottom = update(Some(PlateSide::Bottom))
+            .content_fingerprint()
+            .unwrap();
+        assert_ne!(top, middle);
+        assert_ne!(top, bottom);
+        assert_ne!(middle, bottom);
+        // The side rides behind the append-only tags, so older patches keep their digests.
+        let rename = UpdateElement {
+            target_id: id(5),
+            patch: ElementPatch {
+                name: Some("A".into()),
+                ..ElementPatch::default()
+            },
+        };
+        assert_ne!(rename.content_fingerprint().unwrap(), bottom);
     }
 
     #[test]

@@ -20,7 +20,7 @@ pub use reference::{
 };
 
 use crate::*;
-pub use beamcraft_model::command::{CutRecord, HoleRecord, KeepSide};
+pub use beamcraft_model::command::{CutRecord, HoleRecord, KeepSide, PlateSide};
 pub use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 pub use beamcraft_model::section::SectionShape;
@@ -38,6 +38,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:id=string;bim:name=string;steel:class=int;bim:elementKind=token;bim:geometryMode=token(parametric);",
     "bim:isDeactivated=bool(optional,default=false);bim:schemaVersion=string(0.1.0);bim:createdBy=string(uuid7);bim:revision=string(uuid7,optional)\n",
     "steel:plate:contourPointsMm=double3[];steel:plate:thicknessMm=double;",
+    "steel:plate:thicknessSide=token(optional,top|middle|bottom;absent=top);",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
@@ -97,7 +98,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
+    "changes=Create|Label|Contour|Thickness|ThicknessSide|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -215,6 +216,9 @@ pub enum Shape {
         contour_mm: Vec<[f64; 3]>,
         /// Explicit extrusion thickness in millimetres.
         thickness_mm: f64,
+        /// Where the thickness is laid off from the contour plane (A12.1); absence is the
+        /// `top` default and stores no attribute.
+        thickness_side: Option<PlateSide>,
         /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
         /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
         holes: Vec<Vec<[f64; 3]>>,
@@ -496,6 +500,14 @@ pub enum Change {
         /// New thickness.
         mm: f64,
     },
+    /// Replace the thickness side of a plate (A12.1). A plate always has a side (absence is the
+    /// `top` default), so the change authors the exact token, `top` included.
+    ThicknessSide {
+        /// Full target UUIDv7.
+        id: String,
+        /// The side to lay the thickness off from the contour plane.
+        side: PlateSide,
+    },
     /// Replace the owned plane-cut records of a plate, beam or column (A03, amendment A-2) as a
     /// whole: five parallel attributes, or their removal for an empty list. Engineering validity
     /// is a host prerequisite; the candidate re-validates the stored form.
@@ -616,6 +628,7 @@ impl Change {
             Self::Grid { id, .. } => (id, "bim:grid"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
+            Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
             Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
             Self::Roll { id, .. } => (id, "steel:member:rollRad"),

@@ -104,6 +104,22 @@ impl SolidMesh {
         })
     }
 
+    /// The mesh of an admitted triangle set with the kernel face table of the body it
+    /// certifies (A12.1): a plain plate body translated along the element-local Z. The volume
+    /// is the caller's analytic value, which a translation preserves. `None` when the blob is
+    /// too long to hash.
+    pub fn from_admitted(mesh: &TriMesh, face_table: Vec<String>, volume_mm3: f64) -> Option<Self> {
+        let blob = mesh.to_blob();
+        Some(Self {
+            vertices: mesh.vertices().to_vec(),
+            triangles: mesh.triangles().to_vec(),
+            face_table,
+            blob: blob.clone(),
+            digest: Sha256::digest(&blob).ok()?,
+            volume_mm3,
+        })
+    }
+
     /// The mesh rotated by the rigid placement quaternion `(x, y, z, w)` about the element-local
     /// origin: the composed section frame of a placed member. The member frame is rolled first
     /// and the placement quaternion maps it, so the world map is `R_placement . (axis x up/roll)`.
