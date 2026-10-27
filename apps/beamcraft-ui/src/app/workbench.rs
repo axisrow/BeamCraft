@@ -19,6 +19,8 @@ pub(crate) enum Bench {
     /// Select elements and edit their properties.
     #[default]
     Select,
+    /// Create construction geometry.
+    Helper,
     /// Create a plate.
     Plate,
     /// Create a beam.
@@ -40,6 +42,7 @@ impl Bench {
     pub(crate) const fn title(self) -> &'static str {
         match self {
             Self::Select => "Properties",
+            Self::Helper => "Construction object",
             Self::Plate => "New plate",
             Self::Beam => "New beam",
             Self::Column => "New column",
@@ -56,7 +59,9 @@ impl Bench {
             Self::Move => Some(EditKind::Move),
             Self::Copy => Some(EditKind::Copy),
             Self::Delete => Some(EditKind::Delete),
-            Self::Select | Self::Plate | Self::Beam | Self::Column | Self::Grid => None,
+            Self::Select | Self::Plate | Self::Beam | Self::Column | Self::Grid | Self::Helper => {
+                None
+            }
         }
     }
 }
@@ -262,6 +267,7 @@ impl App {
         self.plane_pick = false;
         self.bench = bench;
         match bench {
+            Bench::Helper => self.tools.active = ToolKind::Helper,
             Bench::Plate => self.tools.active = ToolKind::Plate,
             Bench::Beam => {
                 self.tools.active = ToolKind::Member;
@@ -445,6 +451,7 @@ impl App {
                                     RibbonTab::Model => {
                                         group(ui, "STEEL PARTS", &mut |ui| {
                                             for (b, icon, label) in [
+                                                (Bench::Helper, Icon::Select, "Helpers"),
                                                 (Bench::Plate, Icon::Plate, "Plate"),
                                                 (Bench::Beam, Icon::Beam, "Beam"),
                                                 (Bench::Column, Icon::Column, "Column"),
@@ -659,7 +666,9 @@ impl App {
                         ui.label(theme::bold(self.bench.title(), 18.0));
                         match self.bench {
                             Bench::Select => self.props_panel(ui),
-                            Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
+                            Bench::Plate | Bench::Beam | Bench::Column | Bench::Helper => {
+                                self.tools_panel(ui)
+                            }
                             Bench::Grid => self.grid_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                         }

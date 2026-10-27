@@ -1331,6 +1331,7 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                     DeletedKind::Bolt => "bolt",
                     DeletedKind::Level => "level",
                     DeletedKind::Grid => "grid",
+                    DeletedKind::Helper => "helper",
                 })
             }),
         ),
@@ -2266,6 +2267,10 @@ pub(crate) fn definitions_json(
                 },
             ),
             ("definitions", Json::Array(definitions)),
+            (
+                "helpers",
+                crate::helper_cmd::views_json(&beamcraft_cli::helper::views(&inspection.helpers))?,
+            ),
         ]))
     })
 }

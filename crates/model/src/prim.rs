@@ -16,6 +16,8 @@ pub enum ElementCategory {
     Connection,
     /// Shared grid.
     Grid,
+    /// Construction geometry with no engineering body.
+    Helper,
     /// Shared level.
     Level,
     /// Read-only foreign model wrapper.
@@ -24,13 +26,14 @@ pub enum ElementCategory {
 
 impl ElementCategory {
     /// Every supported element category.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Part,
         Self::Assembly,
         Self::Connection,
         Self::Level,
         Self::Grid,
         Self::Reference,
+        Self::Helper,
     ];
 
     /// Maps `bim:elementKind` to its path category.
@@ -40,6 +43,7 @@ impl ElementCategory {
             "assembly" => Some(Self::Assembly),
             "connection" => Some(Self::Connection),
             "level" => Some(Self::Level),
+            "helper" => Some(Self::Helper),
             "grid" => Some(Self::Grid),
             "reference" => Some(Self::Reference),
             _ => None,
@@ -53,6 +57,7 @@ impl ElementCategory {
             Self::Assembly => "/World/Steel/Assemblies/ASM_",
             Self::Connection => "/World/Steel/Connections/CON_",
             Self::Level => "/World/Levels/LVL_",
+            Self::Helper => "/World/Helpers/HLP_",
             Self::Grid => "/World/Grids/GRD_",
             Self::Reference => "/World/References/REF_",
         }

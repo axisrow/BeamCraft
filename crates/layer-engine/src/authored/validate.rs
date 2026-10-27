@@ -738,6 +738,7 @@ pub(super) fn snapshot(
         ("/World/Steel/Connections", "group"),
         ("/World/Levels", "group"),
         ("/World/Grids", "group"),
+        ("/World/Helpers", "group"),
         ("/World/References", "group"),
     ] {
         if let Some(p) = prims
@@ -790,7 +791,7 @@ pub(super) fn snapshot(
         }
         if !matches!(
             text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
+            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid" | "helper"
         ) {
             continue;
         }
@@ -895,7 +896,7 @@ pub(super) fn snapshot(
                         return Err(invalid());
                     }
                 }
-                "assembly" | "connection" | "level" => {
+                "assembly" | "connection" | "level" | "helper" => {
                     if relationship(p, "bim:material").is_some_and(|r| !r.targets.is_empty()) {
                         return Err(invalid());
                     }
@@ -909,6 +910,9 @@ pub(super) fn snapshot(
                             _ => return Err(invalid().with_rule("DV-ATTR-002")),
                         }
                     }
+                    if kind == "helper" {
+                        helper::read(p)?;
+                    }
                     if kind == "level" {
                         elevation(number(p, "bim:elevationMm")?)?;
                     }
@@ -921,7 +925,7 @@ pub(super) fn snapshot(
         }
         owned_pose(p)?;
         // The placement of an assembly, a weld and a level is the identity in this slice.
-        if matches!(kind, "assembly" | "connection" | "level")
+        if matches!(kind, "assembly" | "connection" | "level" | "helper")
             && (required(p, "xformOp:translate", "double3")?
                 != &Value::Array(vec![Value::Number(0.0); 3])
                 || required(p, "xformOp:orient", "quatd")?
@@ -937,6 +941,14 @@ pub(super) fn snapshot(
     }
     grid::read_grids(prims)?;
     instance::links(prims)?;
+    if prims
+        .iter()
+        .filter(|p| supported_kind(p) == Some("helper"))
+        .count()
+        > beamcraft_model::helper::MAX_HELPERS
+    {
+        return Err(limit());
+    }
     part_of(prims)?;
     main_part(prims)?;
     connects(prims)?;
@@ -959,7 +971,7 @@ pub(super) fn snapshot(
         // is refused, authored or loaded. A grid carries only derived guide meshes (T01.7);
         // only the A15 weld with an authored path carries a derived solid.
         let kind = supported_kind(element);
-        let bodyless = matches!(kind, Some("assembly" | "level"))
+        let bodyless = matches!(kind, Some("assembly" | "level" | "helper"))
             || (kind == Some("connection")
                 && !element
                     .properties
@@ -1085,7 +1097,7 @@ fn supported_kind(p: &Prim) -> Option<&str> {
     token("bim:elementKind").filter(|k| {
         matches!(
             *k,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
+            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid" | "helper"
         )
     })
 }
@@ -1159,7 +1171,7 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
         .filter_map(|p| supported_kind(p).map(|k| (p.path.as_str(), (p, k))))
         .collect();
     for &(p, kind) in elements.values() {
-        if kind == "level" {
+        if matches!(kind, "level" | "helper") {
             for name in ["bim:level", "bim:partOf", "bim:profile"] {
                 if relationship(p, name).is_some_and(|r| !r.targets.is_empty()) {
                     return Err(fail(
@@ -1730,6 +1742,7 @@ pub(super) fn changes(
                                 | "connection"
                                 | "level"
                                 | "grid"
+                                | "helper"
                         )
                     }
                     Change::Delete { .. } => {
@@ -1742,6 +1755,7 @@ pub(super) fn changes(
                                 | "connection"
                                 | "level"
                                 | "grid"
+                                | "helper"
                         )
                     }
                     Change::PartOf { .. } => {
@@ -2123,6 +2137,15 @@ pub(super) fn changes(
                             return Err(invalid());
                         }
                     }
+                    Shape::Helper(g) => {
+                        g.validate().map_err(|e| fail(e.code, e.message))?;
+                        if e.material.is_some()
+                            || e.placement.translation_mm != [0.0; 3]
+                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
+                        {
+                            return Err(unsupported());
+                        }
+                    }
                     Shape::Level { elevation_mm } => {
                         if e.material.is_some()
                             || e.placement.translation_mm != [0.0; 3]
@@ -2301,6 +2324,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                 ),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
                 Shape::Instance { .. } => Ok(()),
+                Shape::Helper(g) => g.validate().map_err(|e| fail(e.code, e.message)),
                 Shape::Grid(g) => grid::validate_record(g),
             }
         }
