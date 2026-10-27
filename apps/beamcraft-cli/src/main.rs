@@ -37,6 +37,7 @@ mod resolve_cmd;
 mod view;
 mod view_export;
 mod weld_cmd;
+mod work_plane_cmd;
 
 fn invalid() -> HostError {
     HostError::logical(ErrorCode::InvalidArgument)
@@ -119,6 +120,8 @@ fn main() -> std::process::ExitCode {
         coordinator_cmd::execute(&args)
     } else if args.first().is_some_and(drawing_cmd::handles) {
         drawing_cmd::execute(&args)
+    } else if args.first().is_some_and(|c| c == "work-plane") {
+        work_plane_cmd::execute(&args)
     } else if args.first().is_some_and(pick_cmd::handles) {
         pick_cmd::execute(&args)
     } else if args.first().is_some_and(weld_cmd::handles) {

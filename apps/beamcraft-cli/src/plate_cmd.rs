@@ -70,6 +70,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 
 const CREATE_OPTIONS: &[&str] = &[
     "--class",
+    "--plane",
     "--store",
     "--width",
     "--length",
@@ -158,6 +159,7 @@ const SECTION_ONLY_OPTIONS: &[&str] = &[
 
 const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--class",
+    "--plane",
     "--store",
     "--kind",
     "--start",
@@ -750,6 +752,7 @@ fn create(
         })
     };
     let given = |key: &str| options.get(key).copied();
+    let plane = command_plane(options)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
         None => ElementId::from_uuid(fresh()?),
@@ -805,20 +808,24 @@ fn create(
         name,
         contour_points_mm: contour,
         thickness_mm: thickness,
-        placement: Placement {
-            translation_mm: if options.contains_key("--origin-at-grid") {
-                grid_placement(store, options, &op_id, "--origin-at-grid")?
-            } else {
-                if ["--z", "--level", "--offset"]
-                    .iter()
-                    .any(|k| options.contains_key(k))
-                {
-                    return Err(invalid("height options require grid placement"));
-                }
-                given("--translation").map_or(Ok([0.0; 3]), translation)?
-            },
-            orientation_xyzw: given("--orientation-xyzw")
-                .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
+        placement: if let Some(plane) = plane {
+            plane.placement()?
+        } else {
+            Placement {
+                translation_mm: if options.contains_key("--origin-at-grid") {
+                    grid_placement(store, options, &op_id, "--origin-at-grid")?
+                } else {
+                    if ["--z", "--level", "--offset"]
+                        .iter()
+                        .any(|k| options.contains_key(k))
+                    {
+                        return Err(invalid("height options require grid placement"));
+                    }
+                    given("--translation").map_or(Ok([0.0; 3]), translation)?
+                },
+                orientation_xyzw: given("--orientation-xyzw")
+                    .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
+            }
         },
         material_digest: selected(
             store,
@@ -1668,6 +1675,7 @@ fn create_member_command(
         })
     };
     let given = |key: &str| options.get(key).copied();
+    let plane = command_plane(options)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
         None => ElementId::from_uuid(fresh()?),
@@ -1718,7 +1726,12 @@ fn create_member_command(
         let text = options
             .get(key)
             .ok_or_else(|| invalid("--start and --end are required"))?;
-        beamcraft_engine::coordinate::resolve(text, origin, lock).map_err(PlateError::from)
+        plane
+            .map_or_else(
+                || beamcraft_engine::coordinate::resolve(text, origin, lock),
+                |p| p.resolve_coordinate(text, origin, lock),
+            )
+            .map_err(PlateError::from)
     };
     let lock = AxisLock::parse(given("--axis-lock").unwrap_or("none")).map_err(PlateError::from)?;
     let start = coordinate("--start", "--start-at-grid", [0.0; 3], AxisLock::None)?;
@@ -1758,7 +1771,10 @@ fn create_member_command(
             })
             .transpose()?
             .unwrap_or(0),
-        axis_points_mm: [start, end],
+        axis_points_mm: match plane {
+            Some(p) => [p.to_world(start)?, p.to_world(end)?],
+            None => [start, end],
+        },
         profile_digest,
         placement: Placement {
             translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
@@ -1799,6 +1815,34 @@ fn create_member_command(
         ("revision", revision_json(&created.revision)),
         ("footprint", footprint_json(created.footprint.as_ref())),
     ]))
+}
+
+fn command_plane(
+    options: &BTreeMap<&str, &str>,
+) -> Run<Option<beamcraft_engine::work_plane::WorkPlane>> {
+    let Some(text) = options.get("--plane") else {
+        return Ok(None);
+    };
+    if [
+        "--translation",
+        "--orientation-xyzw",
+        "--origin-at-grid",
+        "--start-at-grid",
+        "--end-at-grid",
+        "--z",
+        "--level",
+        "--offset",
+    ]
+    .iter()
+    .any(|key| options.contains_key(key))
+    {
+        return Err(invalid(
+            "--plane cannot be combined with explicit placement or grid placement",
+        ));
+    }
+    beamcraft_engine::work_plane::WorkPlane::parse(text)
+        .map(Some)
+        .map_err(PlateError::from)
 }
 
 fn grid_placement(

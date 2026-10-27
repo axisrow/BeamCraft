@@ -575,3 +575,63 @@ fn a_snapshot_export_that_misses_its_deadline_is_a_typed_error() {
     );
     assert!(matches!(missing, Err(Error::Cli(m)) if m.contains("CLI_UNAVAILABLE")));
 }
+
+#[test]
+fn a_work_plane_plate_from_the_ui_matches_explicit_cli_plane_input() {
+    use beamcraft_engine::work_plane::{WorkPlane, pick_work_plane};
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    let (ui, hand) = (stores.ui(), stores.hand());
+    let mut tools = Tools::default();
+    tools.plate.width = "200".into();
+    tools.plate.length = "100".into();
+    tools.plate.thickness = "10".into();
+    tools.plane = Some(WorkPlane::parallel("xz", 200.).unwrap());
+    tools.preview(&ui).unwrap();
+    tools.plane = Some(WorkPlane::parallel("yz", 200.).unwrap());
+    assert!(
+        !tools.can_commit(&ui),
+        "a changed session plane invalidates the staged command"
+    );
+    tools.plane = Some(WorkPlane::parallel("xz", 200.).unwrap());
+    let staged = tools.begin_commit(&ui).unwrap();
+    command::commit(&cli, &staged, &Stats::default()).unwrap();
+    tools.finish();
+    ok(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            hand.to_str().unwrap(),
+            "--width",
+            "200",
+            "--length",
+            "100",
+            "--thickness",
+            "10",
+            "--plane",
+            "0,200,0,1,0,0,0,0,1",
+        ],
+    );
+    let (a, b) = (
+        inspected(&cli, &ui, "plates"),
+        inspected(&cli, &hand, "plates"),
+    );
+    for key in ["mesh_digest", "quantities", "placement"] {
+        assert_eq!(a.get(key).unwrap(), b.get(key).unwrap(), "{key}");
+    }
+    assert_eq!(bounds(&cli, &ui), bounds(&cli, &hand));
+    let snapshot = source::load(&cli, &ui, &Stats::default()).unwrap();
+    let token = snapshot.token().clone();
+    let plane = pick_work_plane(&snapshot, [100., 0., 50.], [0., 1., 0.])
+        .unwrap()
+        .unwrap();
+    for (a, b) in plane.normal().into_iter().zip([0., -1., 0.]) {
+        assert!((a - b).abs() < 1e-12);
+    }
+    assert_eq!(
+        snapshot.token(),
+        &token,
+        "face plane selection cannot change the model pin"
+    );
+}

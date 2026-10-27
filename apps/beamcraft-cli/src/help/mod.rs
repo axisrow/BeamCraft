@@ -31,6 +31,7 @@ mod store;
 mod view;
 mod view_export;
 mod weld;
+mod work_plane;
 mod workspace;
 
 // Keep the established inventory order independently of the detailed section order.
@@ -41,6 +42,7 @@ const COMMAND_GROUPS: &[&[&str]] = &[
     definitions::COMMANDS,
     library::COMMANDS,
     member::COMMANDS,
+    work_plane::COMMANDS,
     edit::COMMANDS,
     delete::COMMANDS,
     copy::COMMANDS,
@@ -76,6 +78,7 @@ const SECTIONS: &[&str] = &[
     definitions::HELP,
     library::HELP,
     member::HELP,
+    work_plane::HELP,
     edit::HELP,
     delete::HELP,
     copy::HELP,
