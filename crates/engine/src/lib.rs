@@ -45,6 +45,7 @@ pub mod scene;
 pub mod solid;
 pub mod synthetic;
 pub mod transaction;
+pub mod transform;
 pub mod update;
 pub mod weld;
 pub mod work_plane;

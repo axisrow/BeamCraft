@@ -35,6 +35,7 @@ mod project_cmd;
 mod rebase_cmd;
 mod reference_cmd;
 mod resolve_cmd;
+mod transform_cmd;
 mod view;
 mod view_export;
 mod weld_cmd;
@@ -137,6 +138,8 @@ fn main() -> std::process::ExitCode {
         project_cmd::execute(&args)
     } else if args.first().is_some_and(grid_cmd::handles) {
         grid_cmd::execute(&args)
+    } else if args.first().is_some_and(transform_cmd::handles) {
+        transform_cmd::execute(&args)
     } else if args.first().is_some_and(helper_cmd::handles) {
         helper_cmd::execute(&args)
     } else if args.first().is_some_and(level_cmd::handles) {
