@@ -166,6 +166,29 @@ pub fn transform_elements(
     request: &TransformRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<Transformed, PlateError> {
+    transform_with_mirror(store, request, None, hook)
+}
+/// Reflect a group as independent copies. The supplied rigid delta must be identity.
+pub fn mirror_elements(
+    store: &RevisionStore,
+    request: &TransformRequest,
+    plane: beamcraft_engine::mirror::MirrorPlane,
+    hook: &mut dyn CommitHook,
+) -> Result<Transformed, PlateError> {
+    if !request.copy || request.instance || request.delta != RigidDelta::translation([0.; 3])? {
+        return Err(error(
+            ErrorCode::InvalidArgument,
+            "mirror needs independent copies and an identity rigid delta",
+        ));
+    }
+    transform_with_mirror(store, request, Some(plane), hook)
+}
+fn transform_with_mirror(
+    store: &RevisionStore,
+    request: &TransformRequest,
+    mirror: Option<beamcraft_engine::mirror::MirrorPlane>,
+    hook: &mut dyn CommitHook,
+) -> Result<Transformed, PlateError> {
     validate_ids(&request.ids)?;
     if request.instance && !request.copy {
         return Err(error(
@@ -173,9 +196,23 @@ pub fn transform_elements(
             "instance mode requires copying",
         ));
     }
-    let fingerprint = request
-        .delta
-        .fingerprint(&request.ids, request.copy, request.instance)?;
+    let mut fingerprint =
+        request
+            .delta
+            .fingerprint(&request.ids, request.copy, request.instance)?;
+    if let Some(plane) = mirror {
+        let mut bytes = b"BeamCraft/T03/MirrorGroup/v1\0".to_vec();
+        bytes.extend(fingerprint.as_bytes());
+        for v in plane.parameters() {
+            bytes.extend(if v == 0.0 {
+                0.0_f64.to_le_bytes()
+            } else {
+                v.to_le_bytes()
+            });
+        }
+        fingerprint = plate::digest_of(&bytes)?;
+    }
+
     let elements = request
         .ids
         .iter()
@@ -318,6 +355,30 @@ pub fn transform_elements(
                 }
             };
             set_pose(&mut next, transformed);
+            if let Some(plane) = mirror {
+                let materials = crate::definition::material_lookup(&decoded.definitions);
+                match &mut next {
+                    CopiedElement::Plate(r) => {
+                        r.authored = plane.plate(&r.authored)?;
+                        r.body = beamcraft_engine::command::evaluate_plate(&r.authored)?;
+                        r.quantities = r.body.quantities_for(
+                            r.authored.material.as_ref().map(&materials).transpose()?,
+                        )?;
+                    }
+                    CopiedElement::Member(r) => {
+                        r.authored = plane.member(&r.authored)?;
+                        let profiles = crate::definition::profile_lookup(&decoded.definitions);
+                        r.body = beamcraft_engine::member::evaluate_member(
+                            &r.authored,
+                            profiles(&r.authored.profile)?,
+                        )?;
+                        r.quantities = beamcraft_engine::member::member_quantities(
+                            &r.body,
+                            r.authored.material.as_ref().map(&materials).transpose()?,
+                        )?;
+                    }
+                }
+            }
             let (profile, material) = match &next {
                 CopiedElement::Plate(r) => (None, r.authored.material),
                 CopiedElement::Member(r) => (Some(r.authored.profile), r.authored.material),

@@ -7,7 +7,7 @@ use crate::{
 };
 use beamcraft_cli::{
     plate::PlateError,
-    transform::{TransformRequest, transform_elements},
+    transform::{TransformRequest, mirror_elements, transform_elements},
 };
 use beamcraft_engine::{transform::RigidDelta, work_plane::WorkPlane};
 use beamcraft_host::{
@@ -29,7 +29,7 @@ fn invalid(message: &'static str) -> PlateError {
     error(ErrorCode::InvalidArgument, message)
 }
 pub fn handles(c: &OsString) -> bool {
-    c == "move-elements" || c == "rotate-elements" || c == "copy-elements"
+    c == "mirror-elements" || c == "move-elements" || c == "rotate-elements" || c == "copy-elements"
 }
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))
@@ -51,6 +51,7 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
     }
     let common = ["--store", "--ids", "--plane"];
     let own: &[&str] = match *command {
+        "mirror-elements" => &["--point", "--normal"],
         "move-elements" => &["--vector", "--from", "--to"],
         "copy-elements" => &["--vector", "--from", "--to", "--instance"],
         "rotate-elements" => &["--center", "--axis", "--angle"],
@@ -89,7 +90,9 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
         let [a, b, c] = plane.origin();
         Ok([x - a, y - b, z - c])
     };
-    let delta = if *command == "rotate-elements" {
+    let delta = if *command == "mirror-elements" {
+        RigidDelta::translation([0.; 3])?
+    } else if *command == "rotate-elements" {
         let center = plane.to_world(point(need("--center")?, [0.; 3])?)?;
         let axis = world_vector(point(need("--axis")?, [0.; 3])?)?;
         let angle = need("--angle")?
@@ -129,21 +132,29 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             )
         })
     })?;
-    let result = transform_elements(
-        &store,
-        &TransformRequest {
-            op_id: context.op_id,
-            revision_id: context.revision_id,
-            actor: context.actor,
-            project: context.project,
-            workspace: context.workspace,
-            ids,
-            delta,
-            copy: *command == "copy-elements",
-            instance,
-        },
-        &mut NoFault,
-    )?;
+    let request = TransformRequest {
+        op_id: context.op_id,
+        revision_id: context.revision_id,
+        actor: context.actor,
+        project: context.project,
+        workspace: context.workspace,
+        ids,
+        delta,
+        copy: *command == "copy-elements" || *command == "mirror-elements",
+        instance,
+    };
+    let result = if *command == "mirror-elements" {
+        let point = plane.to_world(point(need("--point")?, [0.; 3])?)?;
+        let normal = world_vector(beamcraft_engine::helper::parse_point(need("--normal")?)?)?;
+        mirror_elements(
+            &store,
+            &request,
+            beamcraft_engine::mirror::MirrorPlane::new(point, normal)?,
+            &mut NoFault,
+        )?
+    } else {
+        transform_elements(&store, &request, &mut NoFault)?
+    };
     Ok(Json::object([
         (
             "outcome",
