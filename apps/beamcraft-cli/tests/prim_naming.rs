@@ -21,6 +21,10 @@ use std::{
 
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000139001";
 const BEAM: &str = "019a7bf0-0000-7000-8000-000000139002";
+const FASTENERS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
 const COLUMN: &str = "019a7bf0-0000-7000-8000-000000139003";
 const ASSEMBLY: &str = "019a7bf0-0000-7000-8000-000000139004";
 const LEVEL: &str = "019a7bf0-0000-7000-8000-000000139005";
@@ -225,20 +229,26 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
         &[
             "--name",
             "Bolts",
-            "--main",
-            PLATE,
-            "--secondary",
-            BEAM,
-            "--origin",
-            "100,0,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
+            "--parts",
+            &format!("{PLATE},{BEAM}"),
+            "--fastener",
+            "SYN-BOLT-12x50",
+            "--fastener-library",
+            FASTENERS,
+            "--point1",
+            "100,0,30",
+            "--point2",
+            "900,0,30",
+            "--plane-normal",
+            "0,0,-1",
+            "--length-mode",
+            "fixed",
+            "--fixed-length",
+            "30",
+            "--spacings",
             "80",
-            "--diameter",
-            "16",
+            "--hole-mode",
+            "none",
             "--new-id",
             BOLT,
         ],

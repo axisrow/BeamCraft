@@ -7,6 +7,7 @@
 
 pub mod assembly;
 pub mod bolt;
+pub mod bolt_group;
 pub mod bom;
 pub mod changeset;
 pub mod command_evidence;

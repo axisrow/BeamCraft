@@ -145,7 +145,9 @@ pub fn delete_element(
         Some(DeletedKind::Assembly)
     } else if crate::weld::is_weld(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Weld)
-    } else if crate::bolt::is_bolt(&base_request, &command.target_id, &control)? {
+    } else if crate::bolt::is_bolt(&base_request, &command.target_id, &control)?
+        || crate::bolt_group::is_group(&base_request, &command.target_id, &control)?
+    {
         Some(DeletedKind::Bolt)
     } else if crate::grid::is_grid(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Grid)

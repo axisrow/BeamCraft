@@ -14,6 +14,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const USER: &str = "019a7bf0-0000-7000-8000-000000009001";
+const FASTENERS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
 const PARTS: [&str; 5] = [
     "019a7bf0-0000-7000-8000-000000009010",
     "019a7bf0-0000-7000-8000-000000009011",
@@ -207,20 +211,26 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
         &[
             "--name",
             "Q01 bolts",
-            "--main",
-            PARTS[3],
-            "--secondary",
-            PARTS[0],
-            "--origin",
-            "-25,0,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
+            "--parts",
+            &format!("{},{}", PARTS[3], PARTS[0]),
+            "--fastener",
+            "SYN-BOLT-12x50",
+            "--fastener-library",
+            FASTENERS,
+            "--point1",
+            "-25,0,30",
+            "--point2",
+            "400,0,30",
+            "--plane-normal",
+            "0,0,-1",
+            "--length-mode",
+            "fixed",
+            "--fixed-length",
+            "30",
+            "--spacings",
             "50",
-            "--diameter",
-            "16",
+            "--hole-mode",
+            "none",
         ],
     );
     s.ok(
@@ -242,8 +252,8 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
         ],
     );
     assert_eq!(
-        s.ok("draft", "bolts", &[])
-            .get("bolts")
+        s.ok("draft", "bolt-groups", &[])
+            .get("groups")
             .unwrap()
             .array()
             .unwrap()

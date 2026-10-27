@@ -12,6 +12,7 @@
 
 pub mod assembly;
 pub mod bolt;
+pub mod bolt_group;
 pub mod bom;
 pub mod class_palette;
 pub mod command;

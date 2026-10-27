@@ -151,7 +151,7 @@ fn bolt_of(
 /// contour extruded by its thickness, a member its two world axis points expanded by half the
 /// section's bounding-box diagonal in every axis (which contains it under any roll). A part with
 /// a non-identity placement rotation is refused as unsupported rather than bounded wrongly.
-fn world_bounds(
+pub(crate) fn world_bounds(
     decoded: &crate::plate::Decoded,
 ) -> Result<BTreeMap<ElementId, Bounds>, PlateError> {
     let unsupported = || {

@@ -307,6 +307,33 @@ impl Footprint {
         Self::for_weld(id, parts)
     }
 
+    /// The footprint of `CreateBoltGroup` (A14.3): what [`Self::for_bolt`] writes for 2 to 1024
+    /// parts, plus the pinned fastener definition: a read always, and a write too when the
+    /// adapter pins the definition in the same transaction (`pins_fastener`; a definition is
+    /// immutable and is never rewritten).
+    pub fn for_bolt_group(
+        id: ElementId,
+        parts: &[ElementId],
+        fastener: ContentDigest,
+        pins_fastener: bool,
+    ) -> Result<Self, CommandError> {
+        let mut footprint = Self::for_create_with(id, Some(fastener), None)?;
+        for part in parts {
+            footprint.reads.insert(Entry {
+                target: Target::Element(*part),
+                group: Group::Lifecycle,
+            });
+        }
+        if pins_fastener {
+            footprint.writes.insert(Entry {
+                target: Target::Definition(fastener),
+                group: Group::Relationship,
+            });
+        }
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of `AttachToAssembly` and `DetachFromAssembly` (A01): the `part-of` record
     /// lives with its source, so only the part's relationship group is written. It reads the
     /// part's lifecycle and relationships and, for an attach, the lifecycle and relationships of
