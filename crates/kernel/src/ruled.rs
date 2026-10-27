@@ -190,7 +190,7 @@ impl RuledContour {
             return Err(LoftFailure::Contour(LoftCode::AboveLimit));
         }
         let deviation = checked_deviation(max_sagitta_mm)?;
-        if !sweep_rad.is_finite() || !(sweep_rad > 0.0 && sweep_rad <= TAU) {
+        if !(sweep_rad.is_finite() && sweep_rad > 0.0 && sweep_rad <= TAU) {
             return Err(LoftFailure::Contour(LoftCode::BadDeviation));
         }
         let frame = frame_of(centre, x_axis, y_axis)?;
