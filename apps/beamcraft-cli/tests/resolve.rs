@@ -10,7 +10,10 @@ use beamcraft_cli::{
     workspace::resolve::{ResolveRequest, resolve_workspace},
 };
 use beamcraft_host::{
-    revision::{CommitPoint, Injected, RevisionInfo, RevisionStore, Uuid7},
+    revision::{
+        CommitPoint, ExpectedBase, Injected, LayerEntry, RevisionDraft, RevisionInfo,
+        RevisionStore, Uuid7,
+    },
     storage::BlobStore,
 };
 use beamcraft_json::{Json, Limits};
@@ -215,6 +218,36 @@ fn pending(status: &Json) -> Vec<Json> {
         .array()
         .unwrap()
         .to_vec()
+}
+
+/// Commits a draft revision that duplicates the current head's layers with no operation
+/// evidence and no verifier: the shape of a legacy evidence-less undo revision.
+fn commit_without_evidence(path: &Path, revision: &str, op: &str) {
+    let s = store(path);
+    let head = s.open().unwrap();
+    let content = head.manifest().content();
+    let mut entries = Vec::new();
+    for entry in content.entries() {
+        let bytes = head.layer_bytes(entry.name()).unwrap();
+        entries.push(LayerEntry::from_bytes(entry.name(), entry.role(), &bytes).unwrap());
+    }
+    s.commit_with_evidence(
+        &RevisionDraft {
+            project: content.project().clone(),
+            workspace: content.workspace().clone(),
+            revision: Uuid7::parse(revision).unwrap(),
+            op: Uuid7::parse(op).unwrap(),
+            workspace_generation: content.workspace_generation() + 1,
+            schema: content.schema(),
+            root_layer: content.root_layer().to_owned(),
+            entries,
+        },
+        &ExpectedBase::Revision(head.info().revision().clone()),
+        None,
+        None,
+        &mut |_: CommitPoint| Ok(()),
+    )
+    .unwrap();
 }
 
 // C04-01: the discard resolves the recorded conflict, the gate lifts and the published value
@@ -473,24 +506,24 @@ fn mid_interval_renunciation_works_and_unsuitable_targets_are_refused() {
     assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
     assert_eq!(f.head("b").manifest_digest(), before);
 
-    // An evidence-less undo revision cannot be renounced either.
+    // A legacy revision without command evidence inside the renounced range is refused up
+    // front: recording the resolution would look like a fix while the interval stays
+    // unverifiable.
     let g = Fixture::new();
     g.update("b", 10, &["--name", "temporary"]);
-    g.ok(&["undo-workspace", "--workspace-dir", g.s("b")]);
-    let undone = g.head("b");
-    let undo_op = g.op_at("b", undone.sequence());
-    let (code, refused) = g.resolve("b", 620, &undo_op, &undone);
-    assert_eq!(code, 2);
+    let edit_sequence = g.head("b").sequence();
+    commit_without_evidence(&g.path("b"), &id(604), &id(605));
+    let legacy = g.head("b");
+    let edit_op = g.op_at("b", edit_sequence);
+    let (code, refused) = g.resolve("b", 620, &edit_op, &legacy);
+    assert_eq!(code, 2, "{refused:?}");
     assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
-    // The edited state remains renounceable, but the missing undo evidence still refuses rebase.
-    let edit_op = g.op_at("b", undone.sequence() - 1);
-    let (code, resolved) = g.resolve("b", 621, &edit_op, &undone);
-    assert_eq!(code, 0, "{resolved:?}");
+    assert_eq!(g.head("b").manifest_digest(), legacy.manifest_digest());
+    // The incomplete interval stays guarded downstream as well.
     g.update("a", 11, &["--name", "remote"]);
     g.publish("a");
     let g_accepted = g.head("published");
-    let resolved_head = g.head("b");
-    let (code, result) = g.rebase("b", 622, &g_accepted, &resolved_head);
+    let (code, result) = g.rebase("b", 622, &g_accepted, &g.head("b"));
     assert_eq!(code, 2, "{result:?}");
     assert_eq!(text(&result, "code"), "DEPENDENCY_UNAVAILABLE");
 
@@ -523,5 +556,106 @@ fn mid_interval_renunciation_works_and_unsuitable_targets_are_refused() {
             .changeset_claim(&Uuid7::parse(&id(631)).unwrap())
             .unwrap()
             .is_none()
+    );
+}
+
+// C04 follow-up: a resolution revision is an undo boundary. Neither direction crosses it:
+// undoing or redoing across the boundary would restore the renounced layers while the receipt
+// keeps excluding that work, which a later rebase could only refuse as an integrity error.
+#[test]
+fn a_resolution_revision_is_an_undo_boundary() {
+    let f = Fixture::new();
+    let fork_name = name_of(&plate::inspect(&store(&f.path("b"))).unwrap(), 10);
+    f.update("b", 10, &["--name", "first"]);
+    f.update("b", 11, &["--name", "second"]);
+    let draft = f.head("b");
+    let first = f.op_at("b", draft.sequence() - 1);
+    let (code, resolved) = f.resolve("b", 600, &first, &draft);
+    assert_eq!(code, 0, "{resolved:?}");
+    let boundary = f.head("b");
+    let (code, refused) = f.run(&["undo-workspace", "--workspace-dir", f.s("b")]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    let (code, refused) = f.run(&["redo-workspace", "--workspace-dir", f.s("b")]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    assert_eq!(f.head("b").manifest_digest(), boundary.manifest_digest());
+
+    // Edits after the boundary stay undoable, and their undo stops at the boundary with the
+    // renounced work still gone.
+    f.update("b", 10, &["--name", "after"]);
+    let (code, undone) = f.run(&["undo-workspace", "--workspace-dir", f.s("b")]);
+    assert_eq!(code, 0, "{undone:?}");
+    assert_eq!(text(&undone, "outcome"), "workspace_undone");
+    let report = plate::inspect(&store(&f.path("b"))).unwrap();
+    assert_eq!(
+        name_of(&report, 10),
+        fork_name,
+        "no renounced value returned"
+    );
+    assert_eq!(name_of(&report, 11), fork_name);
+    let undone_head = f.head("b");
+    let (code, refused) = f.run(&["undo-workspace", "--workspace-dir", f.s("b")]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    assert_eq!(f.head("b").manifest_digest(), undone_head.manifest_digest());
+
+    // A pending redo cannot resurrect the renounced work either: the resolution clears the
+    // redo stack with the boundary.
+    let g = Fixture::new();
+    let g_fork = name_of(&plate::inspect(&store(&g.path("b"))).unwrap(), 10);
+    g.update("b", 10, &["--name", "first"]);
+    g.ok(&["undo-workspace", "--workspace-dir", g.s("b")]);
+    let undone = g.head("b");
+    let first = g.op_at("b", undone.sequence() - 1);
+    let (code, resolved) = g.resolve("b", 610, &first, &undone);
+    assert_eq!(code, 0, "{resolved:?}");
+    let (code, refused) = g.run(&["redo-workspace", "--workspace-dir", g.s("b")]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    let report = plate::inspect(&store(&g.path("b"))).unwrap();
+    assert_eq!(name_of(&report, 10), g_fork);
+}
+
+// C04 follow-up: undo and redo revisions carry the moved unit's footprint, so a renounced
+// range across undo noise stays complete: the resolve succeeds, the rebase plans, and the
+// renounced work never reappears.
+#[test]
+fn a_renounced_range_across_undo_and_redo_stays_verifiable() {
+    let f = Fixture::new();
+    f.update("a", 10, &["--name", "remote name"]);
+    f.update("b", 10, &["--name", "local name"]);
+    f.ok(&["undo-workspace", "--workspace-dir", f.s("b")]);
+    f.ok(&["redo-workspace", "--workspace-dir", f.s("b")]);
+    f.publish("a");
+    let accepted = f.head("published");
+    let draft = f.head("b");
+    // The inherited footprints participate in planning: the conflict is typed, not an
+    // unavailable-interval refusal.
+    let (code, result) = f.rebase("b", 640, &accepted, &draft);
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(text(&result, "code"), "DEPENDENCY_CONFLICT");
+    let discarded = f.op_at("b", draft.sequence() - 2);
+    let (code, resolved) = f.resolve("b", 641, &discarded, &draft);
+    assert_eq!(code, 0, "{resolved:?}");
+    assert_eq!(
+        resolved
+            .get("renounced_operations")
+            .unwrap()
+            .array()
+            .unwrap()
+            .len(),
+        3,
+        "the edit and both history steps are renounced"
+    );
+    let resolved_head = f.head("b");
+    let (code, rebased) = f.rebase("b", 642, &accepted, &resolved_head);
+    assert_eq!(code, 0, "{rebased:?}");
+    assert_eq!(text(&rebased, "outcome"), "workspace_rebased");
+    let report = plate::inspect(&store(&f.path("b"))).unwrap();
+    assert_eq!(
+        name_of(&report, 10),
+        "remote name",
+        "the merged draft holds the accepted state"
     );
 }

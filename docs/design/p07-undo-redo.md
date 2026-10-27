@@ -31,10 +31,14 @@ beamcraft inspect-workspace-history --workspace-dir DIR
   in one verified commit, or nothing changes. The log stays linear, so publish, status and every
   verifier work unchanged. Redo commits the layers of the state that was undone.
 - The stacks are derived, not stored: walking the draft log, a revision listed in `undo.log` as an
-  undo or redo moves an entry between the stacks; any other revision is an edit that pushes the
-  previous state and clears redo. An intent is appended and synced before its commit, and a
-  revision is classified by its identity, so a crash between the intent and the commit leaves the
-  derivation consistent (an intent without a revision is ignored).
+  undo or redo moves an entry between the stacks; a resolution revision (also listed there, C04
+  follow-up) and a rebase candidate clear both stacks as undo boundaries; any other revision is an
+  edit that pushes the previous state and clears redo. An intent is appended and synced before its
+  commit, and a revision is classified by its identity, so a crash between the intent and the
+  commit leaves the derivation consistent (an intent without a revision is ignored).
+- A step pins the moved unit's recorded footprint as its own operation evidence (C04 follow-up),
+  so a plain undo or redo keeps the draft's command interval complete; a source without usable
+  evidence keeps the step evidence-less, and later planning refuses the interval conservatively.
 - The commit is expected against the draft head, so an edit that lands concurrently wins and the
   step fails with `BASE_REVISION_MISMATCH` without writing a revision.
 - The same `--op-id` replays a committed step, finishes an intent that has no revision (when the

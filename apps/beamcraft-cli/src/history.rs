@@ -10,33 +10,47 @@
 //! commits the layers of the state that was undone.
 //!
 //! The stacks are never stored. They are derived from the revision log plus one append-only file,
-//! `undo.log`, that lists the revisions that were produced by an undo or a redo (an intent is
-//! synced to the file **before** its commit, and a revision is classified by its identity):
+//! `undo.log`, that lists the revisions that were produced by an undo or a redo, and the recorded
+//! resolution revisions (C04.2) that are undo boundaries (an entry is synced to the file **before**
+//! its commit, and a revision is classified by its identity):
 //!
 //! ```text
 //! for each revision after the first
-//!   undo or redo (listed in undo.log)  -> move one entry between the stacks
-//!   any other revision (an edit)       -> push the previous state on the undo stack, clear redo
+//!   undo or redo (listed in undo.log)         -> move one entry between the stacks
+//!   a resolution (listed in undo.log) or a
+//!   rebase candidate (metadata boundary)      -> clear both stacks
+//!   any other revision (an edit)              -> push the previous state on the undo stack,
+//!                                                clear redo
 //! ```
 //!
 //! So an edit made by any command (`update-element`, `copy-element`, ...) is an undo unit without
 //! that command knowing about undo, a new edit after an undo discards the redo stack, and a
-//! process restart or a crash between the intent and the commit leaves a consistent state: an
-//! intent without a revision is ignored, and repeating it with the same `op_id` finishes it.
+//! process restart or a crash between the entry and the commit leaves a consistent state: an
+//! entry without a revision is ignored, and repeating it with the same `op_id` finishes it.
+//! A resolution renounces the work before it, so its revision is a boundary the stacks never
+//! cross: undoing past it would resurrect renounced layers while the discard receipt keeps
+//! excluding them, which a later rebase can only refuse as an integrity error.
 //!
-//! Limits: snapshot undo stops at the latest rebase candidate (or the fork point), preserving
-//! the combined accepted basis; later edits remain undo/redo units. History is read from the log
-//! (bounded to [`MAX_REVISIONS`] revisions and [`LOG_CAP`] bytes); undo does not touch the
-//! published store (a later publish sends the draft head as it is).
+//! A step inherits the recorded footprint of the unit it moves as its own operation evidence:
+//! undoing or redoing a command rewrites exactly that command's semantic groups. A source without
+//! usable evidence keeps the step revision evidence-less (legacy history); the interval then
+//! stays incomplete and later planning refuses it conservatively.
+//!
+//! Limits: snapshot undo stops at the latest rebase candidate or resolution boundary (or the fork
+//! point); later edits remain undo/redo units. History is read from the log (bounded to
+//! [`MAX_REVISIONS`] revisions and [`LOG_CAP`] bytes); undo does not touch the published store (a
+//! later publish sends the draft head as it is).
 
+use crate::command_evidence as evidence;
 use crate::plate::{PlateError, RevisionSummary, host_uuid, integrity, summarize};
-use crate::publication::commit_verified;
+use crate::publication::{commit_verified, commit_verified_with_evidence};
 use crate::workspace::WorkspaceState;
 use beamcraft_host::revision::{
     CommitHook, ExpectedBase, LayerEntry, RevisionDraft, RevisionInfo, RevisionStore, Uuid7,
 };
+use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -81,11 +95,19 @@ struct Intent {
     base: Uuid7,
 }
 
+/// One classified `undo.log` entry: an undo/redo step intent, or a committed resolution
+/// revision that is an undo boundary.
+#[derive(Debug, Clone)]
+enum Logged {
+    Step(Intent),
+    Resolved(Uuid7),
+}
+
 fn log_path(dir: &Path) -> PathBuf {
     dir.join(LOG_FILE)
 }
 
-fn read_log(dir: &Path) -> Result<Vec<Intent>, PlateError> {
+fn read_log(dir: &Path) -> Result<Vec<Logged>, PlateError> {
     let path = log_path(dir);
     // A link is never followed: the log is a regular file inside the workspace.
     let length = match fs::symlink_metadata(&path) {
@@ -105,35 +127,37 @@ fn read_log(dir: &Path) -> Result<Vec<Intent>, PlateError> {
     text.lines()
         .map(|line| {
             let mut words = line.split(' ');
-            let direction = match words.next() {
-                Some("undo") => Direction::Undo,
-                Some("redo") => Direction::Redo,
+            let kind = words.next();
+            let mut next = || words.next().ok_or_else(unusable).and_then(host_uuid);
+            let logged = match kind {
+                Some(kind @ ("undo" | "redo")) => {
+                    let direction = if kind == "undo" {
+                        Direction::Undo
+                    } else {
+                        Direction::Redo
+                    };
+                    let (revision, op, base) = (next()?, next()?, next()?);
+                    Logged::Step(Intent {
+                        direction,
+                        revision,
+                        op,
+                        base,
+                    })
+                }
+                Some("resolved") => Logged::Resolved(next()?),
                 _ => return Err(unusable()),
             };
-            let mut next = || words.next().ok_or_else(unusable).and_then(host_uuid);
-            let (revision, op, base) = (next()?, next()?, next()?);
             if words.next().is_some() {
                 return Err(unusable());
             }
-            Ok(Intent {
-                direction,
-                revision,
-                op,
-                base,
-            })
+            Ok(logged)
         })
         .collect()
 }
 
-/// Appends one intent and syncs it. The caller commits the revision afterwards.
-fn append_intent(dir: &Path, intent: &Intent) -> Result<(), PlateError> {
-    let line = format!(
-        "{} {} {} {}\n",
-        intent.direction.word(),
-        intent.revision.as_str(),
-        intent.op.as_str(),
-        intent.base.as_str()
-    );
+/// Appends one bounded line and syncs it. The caller commits the revision afterwards; an
+/// entry without its revision is ignored by the derivation.
+fn append_line(dir: &Path, line: &str) -> Result<(), PlateError> {
     let path = log_path(dir);
     let used = match fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.is_file() => metadata.len(),
@@ -156,6 +180,26 @@ fn append_intent(dir: &Path, intent: &Intent) -> Result<(), PlateError> {
     file.write_all(line.as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|_| unusable())
+}
+
+/// Appends one intent and syncs it. The caller commits the revision afterwards.
+fn append_intent(dir: &Path, intent: &Intent) -> Result<(), PlateError> {
+    append_line(
+        dir,
+        &format!(
+            "{} {} {} {}\n",
+            intent.direction.word(),
+            intent.revision.as_str(),
+            intent.op.as_str(),
+            intent.base.as_str()
+        ),
+    )
+}
+
+/// Records the boundary a committed resolution revision poses. The caller commits the
+/// resolution afterwards; a marker without its revision is ignored.
+pub(crate) fn append_resolved(dir: &Path, revision: &Uuid7) -> Result<(), PlateError> {
+    append_line(dir, &format!("resolved {}\n", revision.as_str()))
 }
 
 /// The undo and redo stacks of a draft, derived from its revision log.
@@ -200,16 +244,26 @@ pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, Plate
             message: "the draft history is too long to derive",
         });
     }
-    let kinds: BTreeMap<String, Direction> = read_log(dir)?
-        .into_iter()
-        .map(|i| (i.revision.as_str().to_owned(), i.direction))
-        .collect();
+    let mut kinds: BTreeMap<String, Direction> = BTreeMap::new();
+    let mut resolved: BTreeSet<String> = BTreeSet::new();
+    for logged in read_log(dir)? {
+        match logged {
+            Logged::Step(intent) => {
+                kinds.insert(intent.revision.as_str().to_owned(), intent.direction);
+            }
+            Logged::Resolved(revision) => {
+                resolved.insert(revision.as_str().to_owned());
+            }
+        }
+    }
     let (mut undo, mut redo) = (Vec::new(), Vec::new());
     let mut revisions = Vec::new();
     for sequence in 1..=head.sequence() {
         let info = workspace.info_at(sequence)?;
         let before = sequence.saturating_sub(1);
-        if sequence == meta.rebase_sequence {
+        // A rebase candidate and a resolution revision are boundaries: the states before them
+        // cannot be restored onto the retained work.
+        if sequence == meta.rebase_sequence || resolved.contains(info.revision().as_str()) {
             undo.clear();
             redo.clear();
         } else if sequence > 1 {
@@ -266,9 +320,11 @@ pub struct Stepped {
 
 /// Undoes or redoes one unit of the draft by committing the restored layers as a new revision.
 ///
-/// `INVALID_ARGUMENT` when there is nothing to undo or redo; the same `op_id` with the other
-/// direction (or recorded against an older head) is `OP_ID_REUSE`. The commit is expected against
-/// the draft head, so a concurrent edit loses with `BASE_REVISION_MISMATCH`.
+/// The step pins the moved unit's recorded footprint as its own operation evidence, so a plain
+/// undo or redo keeps the draft's command interval complete for later planning. `INVALID_ARGUMENT`
+/// when there is nothing to undo or redo; the same `op_id` with the other direction (or recorded
+/// against an older head) is `OP_ID_REUSE`. The commit is expected against the draft head, so a
+/// concurrent edit loses with `BASE_REVISION_MISMATCH`.
 pub fn step(
     workspace: &RevisionStore,
     dir: &Path,
@@ -277,7 +333,10 @@ pub fn step(
     hook: &mut dyn CommitHook,
 ) -> Result<Stepped, PlateError> {
     let line = timeline(workspace, dir)?;
-    let known = read_log(dir)?.into_iter().find(|i| i.op == request.op_id);
+    let known = read_log(dir)?.into_iter().find_map(|logged| match logged {
+        Logged::Step(intent) if intent.op == request.op_id => Some(intent),
+        _ => None,
+    });
     let revision_id = match &known {
         Some(intent) => {
             if intent.direction != direction {
@@ -335,6 +394,38 @@ pub fn step(
         )?;
     }
     let restored = workspace.open_at(target)?;
+    // The step rewrites exactly the semantic groups of the unit it moves: undo restores the
+    // state before the revision at `target + 1`, redo re-applies the revision at `target`. That
+    // unit's recorded footprint is the step's own operation evidence. A source without usable
+    // evidence (legacy history) keeps the step evidence-less; the interval then stays
+    // incomplete and later planning refuses it conservatively.
+    let source_sequence = match direction {
+        Direction::Undo => target.saturating_add(1),
+        Direction::Redo => target,
+    };
+    let source = workspace.open_at(source_sequence)?;
+    let inherited = match source.operation_evidence()? {
+        Some(bytes) if !bytes.starts_with(b"beamcraft-workspace-discard ") => {
+            evidence::read(&source)?.map(|captured| captured.footprint)
+        }
+        _ => None,
+    };
+    let pin = match &inherited {
+        Some(footprint) => {
+            let descriptor = format!(
+                "beamcraft-history-step 1\ndirection {}\nrestored {target}\nsource {source_sequence}\n",
+                direction.word()
+            );
+            let fingerprint = Sha256::digest(descriptor.as_bytes()).map_err(|_| unusable())?;
+            Some(evidence::store(
+                workspace,
+                &request.op_id,
+                fingerprint,
+                footprint,
+            )?)
+        }
+        None => None,
+    };
     let content = restored.manifest().content();
     let mut entries = Vec::new();
     for entry in content.entries() {
@@ -360,12 +451,11 @@ pub fn step(
         root_layer: content.root_layer().to_owned(),
         entries,
     };
-    let committed = commit_verified(
-        workspace,
-        &draft,
-        &ExpectedBase::Revision(line.head.revision().clone()),
-        hook,
-    )?;
+    let expected = ExpectedBase::Revision(line.head.revision().clone());
+    let committed = match pin {
+        Some(pin) => commit_verified_with_evidence(workspace, &draft, &expected, Some(pin), hook)?,
+        None => commit_verified(workspace, &draft, &expected, hook)?,
+    };
     let after = timeline(workspace, dir)?;
     Ok(Stepped {
         replayed: false,

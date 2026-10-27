@@ -241,11 +241,15 @@ fn replay(
 /// The resolution commits a new draft revision that restores the exact layers of the state
 /// before the named operation and carries the discard receipt as its evidence, so later
 /// planning, packaging and publication exclude the renounced work while accepted history and
-/// other actors' edits stay untouched. Every input is bounded and checked: the named operation
-/// must be recorded unsent command work of this workspace's actor, and the observed draft head
-/// must still be current (`BASE_REVISION_MISMATCH` otherwise), so a concurrent local edit loses
-/// the draft CAS with the same code. The pending-conflict record resolves when the head moves.
-/// No metadata, accepted store or published revision is touched.
+/// other actors' edits stay untouched. The resolution revision is an undo boundary: the derived
+/// undo and redo stacks never reach across it, so no later step can resurrect the renounced
+/// layers. Every input is bounded and checked: the named operation must be recorded unsent
+/// command work of this workspace's actor, and the observed draft head must still be current
+/// (`BASE_REVISION_MISMATCH` otherwise), so a concurrent local edit loses the draft CAS with the
+/// same code. The renounced range must contain no evidence-less revision (`INVALID_ARGUMENT`);
+/// the pending-conflict record resolves when the head moves. The only local writes are the
+/// receipt blob, the undo-log boundary marker, the resolution revision and its intent; no
+/// metadata, accepted store or published revision is touched.
 pub fn resolve_workspace(
     workspace: &RevisionStore,
     dir: &Path,
@@ -298,10 +302,19 @@ pub fn resolve_workspace(
         ));
     }
     // An earlier resolution already renounces this operation and everything after it; a second
-    // receipt for the same work has no retained operation to name, so refuse it up front.
+    // receipt for the same work has no retained operation to name, so refuse it up front. A
+    // renounced range must also stay complete: an evidence-less revision inside it (a legacy
+    // undo or redo) leaves the interval unverifiable later, so refuse before anything is
+    // written instead of recording a resolution that cannot keep its promise.
     for sequence in meta.synced_sequence.saturating_add(1)..=info.sequence() {
         let revision = workspace.open_at(sequence)?;
         let Some(bytes) = revision.operation_evidence()? else {
+            if sequence >= at {
+                return Err(PlateError::new(
+                    ErrorCode::InvalidArgument,
+                    "the renounced range contains a revision without command evidence; redo or recommit it first",
+                ));
+            }
             continue;
         };
         if bytes.starts_with(b"beamcraft-workspace-discard ")
@@ -343,6 +356,11 @@ pub fn resolve_workspace(
         .map_err(|e| PlateError::new(e.code(), "discard receipt blob could not be stored"))?;
     let pin = EvidencePin::new(digest, bytes.len() as u64)?;
     let restored = workspace.open_at(at.saturating_sub(1))?;
+    // The resolution revision is an undo boundary: the marker lands in the undo log before the
+    // commit, so the stacks derived after it never reach across the renounced work. A marker
+    // without its revision (a crash here) is ignored by the derivation, and the retry with the
+    // same identity appends it again harmlessly.
+    crate::history::append_resolved(dir, &op)?;
     let restored_content = restored.manifest().content();
     let mut entries = Vec::new();
     for entry in restored_content.entries() {
