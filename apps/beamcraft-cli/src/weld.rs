@@ -21,22 +21,25 @@
 use crate::assembly::read_prims;
 use crate::plate::{
     AUTHORED_LAYER, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint, control,
-    digest_of, host_uuid, integrity, load_base, number, open_base, prior_op_with, property,
-    replay_summary, summarize, text,
+    digest_of, host_uuid, integrity, load_base, mesh_change, number, numbers, open_base,
+    prior_op_with, property, replay_summary, summarize, text,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
+use beamcraft_engine::quantity::QuantityRecord;
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::weld::{PartKind, Parts};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape, Weld,
-    schema_identity, validate_layers,
+    WeldPath, schema_identity, validate_layers,
 };
-use beamcraft_layer_engine::{Control, OpenRequest, Reader};
+use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader, Value};
 use beamcraft_model::command::{
-    CommandError, CreateWeld, WeldLocation, WeldSide, WeldSpec, WeldType,
+    CommandError, CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec,
+    WeldSymbol, WeldType,
 };
+use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use std::collections::BTreeMap;
@@ -69,6 +72,20 @@ pub struct WeldView {
     pub secondary: ElementId,
     /// The authored properties.
     pub spec: WeldSpec,
+    /// The authored geometry and the stored solid facts (A15); `None` for an A06 weld without
+    /// a path.
+    pub solid: Option<WeldSolidView>,
+}
+
+/// The path, symbol data and stored volume of one geometric weld (A15).
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeldSolidView {
+    /// The authored path and symbol data.
+    pub geometry: WeldGeometry,
+    /// World length of the path in millimetres.
+    pub length_mm: f64,
+    /// The stored analytic volume of the weld solid in mm3.
+    pub volume_mm3: f64,
 }
 
 /// Result of `create_weld`.
@@ -93,9 +110,10 @@ struct Model {
 }
 
 fn weld_of(
-    prim: &beamcraft_layer_engine::Prim,
+    prim: &Prim,
     id: ElementId,
     by_path: &BTreeMap<&str, ElementId>,
+    prims: &[Prim],
 ) -> Result<WeldView, PlateError> {
     let damaged = || integrity("weld record is not readable");
     let token = |name| property(prim, name).and_then(text).ok_or_else(damaged);
@@ -106,6 +124,48 @@ fn weld_of(
             .ok_or_else(damaged)?,
         location: WeldLocation::parse(token("steel:weld:location")?).ok_or_else(damaged)?,
         side: WeldSide::parse(token("steel:weld:side")?).ok_or_else(damaged)?,
+    };
+    // The optional A15 geometry: the path, the symbol flag and token, and the stored volume of
+    // the derived solid. An absent symbol attribute reads as its authored absence (unset flag,
+    // no contour symbol); a path weld without a stored volume is a damaged record.
+    let solid = match property(prim, "steel:weld:pathMm") {
+        None => None,
+        Some(Value::Array(items)) => {
+            let path_mm = items
+                .iter()
+                .map(numbers::<3>)
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(damaged)?;
+            let all_around = matches!(
+                property(prim, "steel:weld:allAround").and_then(text),
+                Some("true")
+            );
+            let contour = WeldContour::parse(
+                property(prim, "steel:weld:contour")
+                    .and_then(text)
+                    .unwrap_or("none"),
+            )
+            .ok_or_else(damaged)?;
+            let geometry_path = format!("{}/Geometry", prim.path);
+            let volume_mm3 = prims
+                .iter()
+                .find(|p| p.path == geometry_path)
+                .and_then(|g| property(g, "bim:volumeMm3"))
+                .and_then(number)
+                .ok_or_else(damaged)?;
+            Some(WeldSolidView {
+                length_mm: beamcraft_engine::weld::path_length(&path_mm),
+                volume_mm3,
+                geometry: WeldGeometry {
+                    path_mm,
+                    symbol: WeldSymbol {
+                        all_around,
+                        contour,
+                    },
+                },
+            })
+        }
+        Some(_) => return Err(damaged()),
     };
     let targets = prim
         .relationships
@@ -123,6 +183,7 @@ fn weld_of(
         main: part(main)?,
         secondary: part(secondary)?,
         spec,
+        solid,
     })
 }
 
@@ -166,7 +227,7 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
                 PartKind::Other
             }
             Some("connection") => {
-                model.welds.push(weld_of(prim, id, &by_path)?);
+                model.welds.push(weld_of(prim, id, &by_path, &prims)?);
                 PartKind::Other
             }
             _ => PartKind::Other,
@@ -214,6 +275,35 @@ pub(crate) fn is_weld(
         .welds
         .iter()
         .any(|w| w.id == *id))
+}
+
+/// The quantity record of a weld solid (A15): the analytic volume with its shape signature; a
+/// weld has no material, so its mass is unknown and that absence is part of the mass inputs.
+fn weld_record(solid: &beamcraft_engine::weld::WeldSolid) -> Result<QuantityRecord, PlateError> {
+    let damaged = || integrity("the weld solid signature could not be extended");
+    let shape = solid.shape_signature();
+    let mass = |tag: &[u8]| {
+        let mut bytes = tag.to_vec();
+        bytes.extend_from_slice(shape.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| damaged())
+    };
+    let volume = solid.volume_mm3();
+    Ok(QuantityRecord {
+        volume_mm3: volume,
+        volume_gross_mm3: volume,
+        removed_volume_mm3: 0.0,
+        volume_status: "current",
+        mass_kg: None,
+        mass_gross_kg: None,
+        mass_status: "unknown",
+        shape_signature: shape,
+        gross_signature: shape,
+        mass_signature: mass(b"BeamCraft/A15/WeldMass/v1\0")?,
+        mass_gross_signature: mass(b"BeamCraft/A15/WeldMass/v1\0")?,
+        algorithm: "weld-fillet-prism-v1".into(),
+        section_area_mm2: None,
+        area_source: None,
+    })
 }
 
 /// The welds of the verified head (empty for a store without a revision).
@@ -272,6 +362,7 @@ pub fn create_weld(
             && w.main == command.main_id
             && w.secondary == command.secondary_id
             && w.spec == command.weld
+            && w.solid.as_ref().map(|s| &s.geometry) == command.geometry.as_ref()
     });
     match prior {
         PriorOp::Accepted { .. } if same => {
@@ -294,6 +385,15 @@ pub fn create_weld(
         PriorOp::Unseen => {}
     }
     let footprint = model.parts.create(command)?;
+    // The optional A15 solid: built by the engine from the same authored inputs, so a segment
+    // the kernel refuses refuses the command before anything is written.
+    let solid = match &command.geometry {
+        Some(geometry) => Some(beamcraft_engine::weld::solid(
+            command.weld.size_mm,
+            geometry,
+        )?),
+        None => None,
+    };
     let schema = schema_identity()?;
     let (mut author, opened) = Author::open(
         base_request,
@@ -304,6 +404,37 @@ pub fn create_weld(
         schema,
         &control,
     )?;
+    let mut changes = vec![Change::Create(Element {
+        id: command.new_id.to_string(),
+        name: command.name.clone(),
+        shape: Shape::Weld(Weld {
+            connects: [
+                command.main_id.to_string(),
+                command.secondary_id.to_string(),
+            ],
+            weld_type: command.weld.weld_type.as_token().into(),
+            size_mm: command.weld.size_mm,
+            location: command.weld.location.as_token().into(),
+            side: command.weld.side.as_token().into(),
+            geometry: command.geometry.as_ref().map(|g| WeldPath {
+                points_mm: g.path_mm.clone(),
+                all_around: g.symbol.all_around,
+                contour: g.symbol.contour.as_token().into(),
+            }),
+        }),
+        placement: LayerPlacement {
+            translation_mm: [0.0; 3],
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        },
+        material: None,
+    })];
+    if let Some(solid) = &solid {
+        changes.push(mesh_change(
+            &command.new_id,
+            solid.mesh(),
+            &weld_record(solid)?,
+        )?);
+    }
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -311,25 +442,7 @@ pub fn create_weld(
             actor: context.actor.to_string(),
             schema,
             resources: Vec::new(),
-            changes: vec![Change::Create(Element {
-                id: command.new_id.to_string(),
-                name: command.name.clone(),
-                shape: Shape::Weld(Weld {
-                    connects: [
-                        command.main_id.to_string(),
-                        command.secondary_id.to_string(),
-                    ],
-                    weld_type: command.weld.weld_type.as_token().into(),
-                    size_mm: command.weld.size_mm,
-                    location: command.weld.location.as_token().into(),
-                    side: command.weld.side.as_token().into(),
-                }),
-                placement: LayerPlacement {
-                    translation_mm: [0.0; 3],
-                    orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
-                },
-                material: None,
-            })],
+            changes,
         },
         &control,
     )?;

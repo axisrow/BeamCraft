@@ -412,7 +412,7 @@ fn integer(value: &Value) -> Option<i64> {
     }
 }
 
-fn numbers<const N: usize>(value: &Value) -> Option<[f64; N]> {
+pub(crate) fn numbers<const N: usize>(value: &Value) -> Option<[f64; N]> {
     let Value::Array(items) = value else {
         return None;
     };

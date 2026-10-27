@@ -2281,6 +2281,7 @@ fn weld(main: &str, secondary: &str) -> Weld {
         size_mm: 6.0,
         location: "workshop".into(),
         side: "both".into(),
+        geometry: None,
     }
 }
 fn create_weld(id: &str, w: Weld) -> Change {
@@ -2543,6 +2544,95 @@ fn wrong_weld_inputs_targets_and_loaded_records_are_refused() {
             .map(|e| e.code),
         Some(ErrorCode::InvalidArgument)
     );
+}
+
+#[test]
+fn a_path_weld_authors_its_geometry_and_carries_a_derived_solid() {
+    let (mut a, o) = populated();
+    let mut w = weld(PLATE, MEMBER);
+    w.geometry = Some(WeldPath {
+        points_mm: vec![[0.0; 3], [100.0, 0.0, 0.0]],
+        all_around: true,
+        contour: "concave".into(),
+    });
+    // The derived solid is authored in the same batch as the weld, as every create does.
+    let mut body = mesh();
+    body.id = WELD.into();
+    let (_, o) = installed(&mut a, &o, vec![create_weld(WELD, w), Change::Mesh(body)]);
+    let prims = snapshot(&a, &o.context);
+    assert_eq!(
+        value(&prims, WELD, "steel:weld:allAround"),
+        Some(&Value::Text("true".into()))
+    );
+    assert_eq!(
+        value(&prims, WELD, "steel:weld:contour"),
+        Some(&Value::Text("concave".into()))
+    );
+    match value(&prims, WELD, "steel:weld:pathMm") {
+        Some(Value::Array(points)) => {
+            assert_eq!(points.len(), 2);
+        }
+        other => panic!("pathMm is not a point array: {other:?}"),
+    }
+    assert!(
+        snapshot(&a, &o.context)
+            .iter()
+            .any(|p| p.path == format!("{}/Geometry", path(WELD)))
+    );
+
+    // Refusals, against a fresh state so no identity is taken: bad paths and a contour token,
+    // symbol data without a path, and a mesh under a weld without one.
+    let (mut a, o) = populated();
+    let with = |f: &dyn Fn(&mut Weld)| {
+        let mut w = weld(PLATE, MEMBER);
+        f(&mut w);
+        vec![create_weld(WELD, w)]
+    };
+    let path_of = |points: Vec<[f64; 3]>| WeldPath {
+        points_mm: points,
+        all_around: false,
+        contour: "none".into(),
+    };
+    let cases: Vec<(Vec<Change>, ErrorCode)> = vec![
+        (
+            with(&|w| w.geometry = Some(path_of(vec![[0.0; 3]]))),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|w| w.geometry = Some(path_of(vec![[0.0; 3], [0.0, 0.0, 0.0]]))),
+            ErrorCode::InvalidArgument,
+        ),
+        (
+            with(&|w| w.geometry = Some(path_of(vec![[0.0; 3], [f64::NAN, 0.0, 0.0]]))),
+            ErrorCode::NonFiniteNumber,
+        ),
+        (
+            with(&|w| w.geometry = Some(path_of(vec![[2.0e10, 0.0, 0.0], [0.0; 3]]))),
+            ErrorCode::LimitExceeded,
+        ),
+        (
+            with(&|w| {
+                let mut g = path_of(vec![[0.0; 3], [100.0, 0.0, 0.0]]);
+                g.contour = "round".into();
+                w.geometry = Some(g);
+            }),
+            ErrorCode::InvalidArgument,
+        ),
+        (with(&|_w| ()), ErrorCode::UnsupportedProperty), // a mesh under this plain weld, added below
+    ];
+    // The last case pairs the plain weld with a mesh change (no path, so no body).
+    for (i, (changes, code)) in cases.iter().enumerate() {
+        let changes = if i + 1 == cases.len() {
+            let mut body = mesh();
+            body.id = WELD.into();
+            let mut changes = changes.clone();
+            changes.push(Change::Mesh(body));
+            changes
+        } else {
+            changes.clone()
+        };
+        assert_eq!(refused_code(&mut a, &o, changes), Some(*code), "case {i}");
+    }
 }
 
 const BOLT: &str = "0199e7a0-0000-7000-8000-000000000301";

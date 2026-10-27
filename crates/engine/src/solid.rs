@@ -88,6 +88,22 @@ impl SolidMesh {
         }
     }
 
+    /// The mesh of an engine-composed solid (A15): an admitted, placed triangle set the kernel
+    /// verified segment by segment, with the summed analytic volume. It has no kernel face
+    /// table; a weld solid never reaches the scene, which is the only consumer of one. `None`
+    /// when the merged mesh fails admission or the blob is too long to hash.
+    pub fn composed(mesh: &TriMesh, volume_mm3: f64) -> Option<Self> {
+        let blob = mesh.to_blob();
+        Some(Self {
+            vertices: mesh.vertices().to_vec(),
+            triangles: mesh.triangles().to_vec(),
+            face_table: Vec::new(),
+            blob: blob.clone(),
+            digest: Sha256::digest(&blob).ok()?,
+            volume_mm3,
+        })
+    }
+
     /// The mesh rotated by the rigid placement quaternion `(x, y, z, w)` about the element-local
     /// origin: the composed section frame of a placed member. The member frame is rolled first
     /// and the placement quaternion maps it, so the world map is `R_placement . (axis x up/roll)`.

@@ -15,7 +15,9 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_json::Json;
-use beamcraft_model::command::{CreateWeld, WeldLocation, WeldSide, WeldSpec, WeldType};
+use beamcraft_model::command::{
+    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
+};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use std::collections::BTreeMap;
@@ -41,6 +43,26 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))
 }
 
+/// Parses `x,y,z;x,y,z;...` world points of a weld path.
+fn path(text: &str) -> Run<Vec<[f64; 3]>> {
+    let mut points = Vec::new();
+    for triple in text.split(';') {
+        let mut coordinates = triple.split(',');
+        let mut point = [0.0; 3];
+        for slot in &mut point {
+            *slot = coordinates
+                .next()
+                .and_then(|c| c.parse::<f64>().ok())
+                .ok_or_else(|| invalid("--path is X,Y,Z;X,Y,Z;... world points"))?;
+        }
+        if coordinates.next().is_some() {
+            return Err(invalid("--path is X,Y,Z;X,Y,Z;... world points"));
+        }
+        points.push(point);
+    }
+    Ok(points)
+}
+
 fn run(args: &[OsString]) -> Run<Json> {
     let args: Vec<&str> = args
         .iter()
@@ -64,6 +86,9 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--size",
             "--location",
             "--side",
+            "--path",
+            "--all-around",
+            "--contour",
         ],
         "welds" => &["--store"],
         _ => return Err(invalid("unknown command")),
@@ -116,6 +141,32 @@ fn run(args: &[OsString]) -> Run<Json> {
         side: WeldSide::parse(required("--side", "--side is required")?)
             .ok_or_else(|| invalid("--side is arrow, other or both"))?,
     };
+    // The optional A15 geometry: a path switches the solid and its symbol data on; the symbol
+    // options alone have no supported meaning.
+    let geometry = match given("--path") {
+        Some(text) => Some(WeldGeometry {
+            path_mm: path(text)?,
+            symbol: WeldSymbol {
+                all_around: match given("--all-around") {
+                    None => false,
+                    Some("false") => false,
+                    Some("true") => true,
+                    Some(_) => return Err(invalid("--all-around is true or false")),
+                },
+                contour: match given("--contour") {
+                    None => WeldContour::None,
+                    Some(token) => WeldContour::parse(token)
+                        .ok_or_else(|| invalid("--contour is none, flush, concave or convex"))?,
+                },
+            },
+        }),
+        None => {
+            if options.contains_key("--all-around") || options.contains_key("--contour") {
+                return Err(invalid("--all-around and --contour need --path"));
+            }
+            None
+        }
+    };
     let element = |key: &str, missing: &'static str| -> Run<ElementId> {
         ElementId::parse(required(key, missing)?).map_err(id_error)
     };
@@ -150,6 +201,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         main_id,
         secondary_id,
         weld,
+        geometry,
     };
     let change = create_weld(&store, &context, &command, &mut NoFault)?;
     Ok(change_json(new_id, context.op_id, &change))
@@ -160,7 +212,7 @@ fn views_json(views: &[WeldView]) -> Json {
         views
             .iter()
             .map(|v| {
-                Json::object([
+                let mut fields = vec![
                     ("id", Json::text(v.id.to_string())),
                     ("name", Json::text(v.name.clone())),
                     ("main", Json::text(v.main.to_string())),
@@ -169,7 +221,40 @@ fn views_json(views: &[WeldView]) -> Json {
                     ("size_mm", Json::text(v.spec.size_mm.to_string())),
                     ("location", Json::text(v.spec.location.as_token())),
                     ("side", Json::text(v.spec.side.as_token())),
-                ])
+                ];
+                match &v.solid {
+                    None => fields.push(("path_mm", Json::Null)),
+                    Some(solid) => {
+                        fields.push((
+                            "path_mm",
+                            Json::Array(
+                                solid
+                                    .geometry
+                                    .path_mm
+                                    .iter()
+                                    .map(|p| {
+                                        Json::Array(
+                                            p.iter().map(|c| Json::text(c.to_string())).collect(),
+                                        )
+                                    })
+                                    .collect(),
+                            ),
+                        ));
+                        fields.push(("all_around", Json::Bool(solid.geometry.symbol.all_around)));
+                        fields.push((
+                            "contour",
+                            Json::text(solid.geometry.symbol.contour.as_token()),
+                        ));
+                        fields.push(("length_mm", Json::text(solid.length_mm.to_string())));
+                        fields.push(("volume_mm3", Json::text(solid.volume_mm3.to_string())));
+                    }
+                }
+                Json::Object(
+                    fields
+                        .into_iter()
+                        .map(|(k, v)| (k.to_string(), v))
+                        .collect(),
+                )
             })
             .collect(),
     )
