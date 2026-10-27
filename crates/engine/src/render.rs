@@ -56,9 +56,9 @@ pub struct Presentation {
     pub edges: bool,
     /// Apply lighting.
     pub lit: bool,
-    /// Base RGB in [0,1].
+    /// Base RGB in `[0,1]`.
     pub color: [f64; 3],
-    /// Base transparency in [0,1], zero means opaque.
+    /// Base transparency in `[0,1]`, zero means opaque.
     pub transparency: f64,
     /// Explicit selection, including elements hidden by filters/clipping.
     pub selected: Vec<ElementId>,
