@@ -123,7 +123,7 @@ pub(crate) fn of_prims(
             .properties
             .iter()
             .filter(|v| v.name.starts_with("user:"))
-            .take(MAX_VALUES+1)
+            .take(MAX_VALUES + 1)
             .cloned()
             .collect::<Vec<_>>();
         if properties.len() > MAX_VALUES {

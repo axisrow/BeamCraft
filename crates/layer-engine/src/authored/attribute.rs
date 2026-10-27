@@ -129,7 +129,7 @@ pub(super) fn validate_snapshot(prims: &[Prim]) -> Result<(), Diagnostic> {
             .properties
             .iter()
             .filter(|p| p.name.starts_with("user:"))
-            .take(MAX_VALUES+1)
+            .take(MAX_VALUES + 1)
             .collect::<Vec<_>>();
         if fields.len() > MAX_VALUES {
             return Err(limit());
