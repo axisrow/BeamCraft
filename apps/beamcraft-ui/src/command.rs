@@ -17,6 +17,7 @@ use crate::tools::{
     Created, Definitions, Prepared, ToolError, definitions_args, parse_created, parse_definitions,
 };
 use beamcraft_engine::ViewSnapshot;
+use beamcraft_engine::query::pick::SelectionFilter;
 use beamcraft_model::id::ElementId;
 use std::io::Read;
 use std::path::Path;
@@ -283,7 +284,8 @@ pub fn lookup(
 }
 
 /// Selects along `ray`: the engine's pick on `snapshot`, the snapshot the window shows, in this
-/// process ([`pick_in`]), then [`lookup`] of the element it hit. A click costs one CLI process
+/// process ([`pick_in`]), then [`lookup`] of the element it hit. `selection` carries the
+/// window's switches (V11); a class that is off is never selected. A click costs one CLI process
 /// and one inspection; `cancel` gives the lookup up.
 pub fn select(
     cli: &Path,
@@ -292,8 +294,9 @@ pub fn select(
     ray: &Ray,
     cancel: &AtomicBool,
     stats: &Stats,
+    selection: SelectionFilter,
 ) -> Result<Option<Selected>, ToolError> {
-    let Some(id) = pick_in(snapshot, ray)? else {
+    let Some(id) = pick_in(snapshot, ray, selection)? else {
         return Ok(None);
     };
     let (info, details) = lookup(cli, store, &id, cancel, stats);

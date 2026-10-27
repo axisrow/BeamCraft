@@ -17,8 +17,8 @@ use beamcraft_engine::query::feature::{
     FeatureGeometry, FeatureKind, FeatureLookup, list_features, lookup_feature,
 };
 use beamcraft_engine::query::pick::{
-    DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SnapKind, SnapQuery, pick,
-    snap_with_grids,
+    DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SelectionFilter, SnapKind,
+    SnapQuery, pick, snap_with_grids,
 };
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
@@ -126,6 +126,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--targets",
             "--radius",
             "--max-hits",
+            "--exclude",
         ],
         "lookup-feature" => &["--store", "--feature-id"],
         "list-feature" => &["--store", "--id"],
@@ -188,6 +189,15 @@ fn run(args: &[OsString]) -> Run<Json> {
                         .ok_or_else(|| invalid("--targets are face, edge or vertex"))
                 })
                 .collect::<Run<Vec<_>>>()?;
+            // The selection switches of the pick (V11): every listed class is off, so the
+            // query selects nothing of it. The switches change picking only.
+            let excluded = given("--exclude").unwrap_or("");
+            let selection =
+                SelectionFilter::parse_excluded(excluded).map_err(|_| {
+                    invalid(
+                        "--exclude is a comma-separated list of parts, assemblies, bolts, welds, holes, grids, construction_objects or items",
+                    )
+                })?;
             let radius_mm = number("--radius", 0.0)?;
             match (given("--origin"), given("--point")) {
                 (Some(_), None) => Request::Pick(PickQuery::Ray(RayPick {
@@ -202,6 +212,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                         Some("true") => true,
                         Some(_) => return Err(invalid("--include-backfaces is true or false")),
                     },
+                    selection,
                 })),
                 (None, Some(_)) => {
                     if given("--direction").is_some()
@@ -215,6 +226,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                         radius_mm,
                         targets,
                         max_hits,
+                        selection,
                     }))
                 }
                 _ => return Err(invalid("give either --origin and --direction, or --point")),

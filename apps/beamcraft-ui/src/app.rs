@@ -157,6 +157,8 @@ pub struct App {
     grids_visible: bool,
     grid_edit: Option<grid_panel::GridEdit>,
     grid_refresh_edit: bool,
+    /// The bottom bar's selection switches and snap panel (V11): picking-only state.
+    selection: crate::selection::Selection,
     /// Whether the Details window is open.
     details: bool,
     logo: Option<egui::TextureHandle>,
@@ -741,6 +743,7 @@ impl App {
             grids_visible: true,
             grid_edit: None,
             grid_refresh_edit: false,
+            selection: crate::selection::Selection::default(),
             details: false,
             logo: None,
             logo_tried: false,
@@ -961,11 +964,12 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = self.begin_select(rx);
         let stats = Arc::clone(&self.stats);
+        let selection = self.selection.filter();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
                 let _ = tx.send(command::select(
-                    &cli, &store, &snapshot, &ray, &cancel, &stats,
+                    &cli, &store, &snapshot, &ray, &cancel, &stats, selection,
                 ));
             });
         if spawned.is_err() {
@@ -2397,6 +2401,8 @@ impl eframe::App for App {
             self.header(ui);
             self.ribbon(ui);
             self.status_bar(ui);
+            // Registered after the status bar, so the snap strip sits directly above it.
+            self.snap_panel(ui);
             menu::show(ui, &mut self.menu_open);
             self.inspector(ui);
             let ctx = ui.ctx().clone();
@@ -2511,7 +2517,14 @@ impl eframe::App for App {
                             )
                             && let Some(ray) = ray_through(&view, ndc, l.summary.origin_mm)
                         {
-                            if !self.beam_mode && self.grids_visible {
+                            // The grids switch (V11) takes grids out of picking; the display
+                            // switch stays `grids_visible`.
+                            if !self.beam_mode
+                                && self.grids_visible
+                                && self
+                                    .selection
+                                    .is_on(beamcraft_engine::query::pick::SelectionClass::Grids)
+                            {
                                 picked_grid = self
                                     .grid_scene
                                     .hit_test(response.rect, &view, l.summary.origin_mm, pos)
@@ -2801,6 +2814,111 @@ mod tests {
         assert!(!app.beam_mode && app.beam.start().is_none() && app.ghost_end.is_none());
         assert!(app.grids_visible);
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+    }
+
+    /// The bottom bar (V11): clicking a selection switch toggles it and clicking Snap opens the
+    /// panel; nothing a switch does moves the snapshot token or the loaded scene.
+    #[test]
+    fn the_bottom_bar_toggles_switches_and_opens_the_snap_panel_without_touching_the_model() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let summary = app.loaded.as_ref().unwrap().summary;
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        fn draw(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::FullOutput {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.status_bar(ui);
+                    app.snap_panel(ui);
+                },
+            );
+            // Only layout and input are inspected; this test does not upload textures.
+            output.textures_delta.clear();
+            output
+        }
+        let position = |output: &egui::FullOutput, label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == label => {
+                        Some(text.pos + text.galley.size() / 2.0)
+                    }
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} was not drawn"))
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        use beamcraft_engine::query::pick::SelectionClass;
+        // Every switch is drawn and starts on.
+        let first = draw(&mut app, &ctx, Vec::new());
+        for label in [
+            "Parts", "Assy", "Bolts", "Welds", "Holes", "Grids", "Constr", "Items",
+        ] {
+            position(&first, label);
+        }
+        // Toggling two switches leaves the rest on and moves nothing.
+        let second = draw(&mut app, &ctx, click(position(&first, "Parts")));
+        let third = draw(&mut app, &ctx, click(position(&second, "Grids")));
+        assert_eq!(
+            app.selection.filter().off_classes(),
+            vec![SelectionClass::Parts, SelectionClass::Grids]
+        );
+        assert!(app.selection.is_on(SelectionClass::Bolts));
+        assert_eq!(app.loaded.as_ref().unwrap().summary, summary);
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        // The Snap button opens the panel with one switch per snap kind; a click on a kind
+        // toggles exactly that kind.
+        assert!(!app.selection.snap_open);
+        let fourth = draw(&mut app, &ctx, click(position(&third, "Snap")));
+        assert!(app.selection.snap_open);
+        position(&fourth, "Grid intersection");
+        assert_eq!(
+            app.selection.snap_kinds(),
+            vec![
+                beamcraft_engine::query::pick::SnapKind::Vertex,
+                beamcraft_engine::query::pick::SnapKind::AxisEnd,
+                beamcraft_engine::query::pick::SnapKind::Axis,
+            ]
+        );
+        draw(
+            &mut app,
+            &ctx,
+            click(position(&fourth, "Grid intersection")),
+        );
+        assert!(
+            app.selection
+                .snap_on(beamcraft_engine::query::pick::SnapKind::GridIntersection)
+        );
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        // A final frame over the mutated state draws without errors.
+        draw(&mut app, &ctx, Vec::new());
     }
 
     #[test]

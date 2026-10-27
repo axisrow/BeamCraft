@@ -789,6 +789,62 @@ fn bad_query_inputs_are_refused_before_any_scan() {
 }
 
 #[test]
+fn a_selection_switch_that_is_off_removes_its_class_and_writes_nothing() {
+    let f = Fixture::new();
+    f.model();
+    let head = f.head();
+    let ray = |extra: &[&str]| {
+        let mut args = vec![
+            "--origin",
+            "600,450,1000",
+            "--direction",
+            "0,0,-1",
+            "--targets",
+            "face",
+        ];
+        args.extend_from_slice(extra);
+        f.ok("pick", &args)
+    };
+    // Parts on: the plate's top face is the one hit.
+    let on = ray(&[]);
+    assert_eq!(text(&list(&on, "hits")[0], "element_id"), PLATE);
+    // Parts off: the same query over the same snapshot answers with no hit and no skip, and
+    // at exactly the same snapshot token, because a switch changes picking only.
+    let off = ray(&["--exclude", "parts"]);
+    assert!(list(&off, "hits").is_empty(), "{off:?}");
+    assert!(list(&off, "skipped").is_empty());
+    assert_eq!(text(&on, "snapshot_token"), text(&off, "snapshot_token"));
+    assert_eq!(f.head(), head);
+    // Switches that cover no registered kind yet, and the empty text, exclude nothing.
+    for switches in [
+        "bolts,welds,holes,assemblies,grids,construction_objects,items",
+        "",
+    ] {
+        assert_eq!(
+            list(&ray(&["--exclude", switches]), "hits").len(),
+            1,
+            "{switches:?}"
+        );
+    }
+    // An unknown switch is an argument error, never a silent no-op.
+    let refused = f.refused(
+        "pick",
+        &[
+            "--origin",
+            "600,450,1000",
+            "--direction",
+            "0,0,-1",
+            "--targets",
+            "face",
+            "--exclude",
+            "plates",
+        ],
+    );
+    assert_eq!(refused.0, "INVALID_ARGUMENT");
+    assert_eq!(f.head(), head);
+}
+
+#[test]
 fn a_small_member_far_from_the_origin_keeps_its_features() {
     let f = Fixture::new();
     let profile = text(

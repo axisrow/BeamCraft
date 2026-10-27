@@ -17,6 +17,7 @@
     clippy::panic
 )]
 
+use beamcraft_engine::query::pick::SelectionFilter;
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::command;
 use beamcraft_ui::edit::Ray;
@@ -284,6 +285,7 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
         &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, -1.0]),
         &cancel,
         &stats,
+        SelectionFilter::ALL,
     )
     .unwrap()
     .unwrap();
@@ -305,6 +307,7 @@ fn a_click_selects_what_is_on_screen_with_one_element_lookup() {
             &ray([centre[0], centre[1], max[2] + 1000.0], [0.0, 0.0, 1.0]),
             &cancel,
             &stats,
+            SelectionFilter::ALL,
         )
         .unwrap()
         .is_none()
