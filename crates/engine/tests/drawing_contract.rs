@@ -41,6 +41,7 @@ fn spec() -> DrawingSpec {
             paper_offset_mm: -10.0,
             decimal_places: 1,
         },
+        drafting: Vec::new(),
     }
 }
 
@@ -238,4 +239,53 @@ fn resolution_refuses_a_mismatched_snapshot_before_trying_to_find_geometry() {
             ErrorCode::StaleWorkspace
         );
     }
+}
+
+#[test]
+fn drawn_objects_are_bounded_distinct_and_never_document_object_ids() {
+    let entity = |text: &str, b: [f64; 2]| DraftingSpec {
+        id: DraftingEntityId::parse(text).unwrap(),
+        geometry: DraftingGeometry::Line { a: [0.0, 0.0], b },
+    };
+    const D: &str = "01900000-0000-7000-8000-000000000005";
+    let admitted = Drawing::admit(DrawingSpec {
+        drafting: vec![entity(D, [10.0, 0.0])],
+        ..spec()
+    })
+    .unwrap();
+    assert_eq!(admitted.drafting().len(), 1);
+    assert_eq!(admitted.drafting()[0].id.to_string(), D);
+    let emptied = admitted.clone().with_drafting(Vec::new()).unwrap();
+    assert!(emptied.drafting().is_empty());
+
+    // Identity collisions with the document objects and between entities refuse.
+    let clash = Drawing::admit(DrawingSpec {
+        drafting: vec![entity(C, [10.0, 0.0])],
+        ..spec()
+    })
+    .unwrap_err();
+    assert_eq!(clash.code, ErrorCode::DuplicateId);
+    assert!(
+        admitted
+            .clone()
+            .with_drafting(vec![entity(D, [4.0, 0.0]), entity(D, [5.0, 0.0])])
+            .is_err()
+    );
+
+    // More than the entity cap refuses without partial state.
+    let crowd = (0..=MAX_DRAFTING_ENTITIES as u64)
+        .map(|index| entity(&format!("01990000-0000-7000-8000-{index:012}"), [10.0, 0.0]))
+        .collect();
+    assert_eq!(
+        admitted.with_drafting(crowd).unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
+
+    // Geometry bounds still run through the same admission.
+    let degenerate = Drawing::admit(DrawingSpec {
+        drafting: vec![entity(D, [0.0, 0.0])],
+        ..spec()
+    })
+    .unwrap_err();
+    assert_eq!(degenerate.code, ErrorCode::InvalidArgument);
 }

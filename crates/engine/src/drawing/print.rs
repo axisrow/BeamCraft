@@ -162,6 +162,7 @@ mod tests {
                 paper_offset_mm: 10.0,
                 decimal_places: 0,
             },
+            drafting: Vec::new(),
         })
         .unwrap()
     }

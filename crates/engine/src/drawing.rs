@@ -7,10 +7,13 @@
 //! Geometry resolution, USD persistence and publication are separate operations. A storage DTO
 //! must enter through [`Drawing::admit`] before it can authorize any of them.
 
+pub mod drafting;
 pub mod pdf;
 pub mod print;
 pub mod projection;
 pub mod svg;
+
+pub use drafting::{DraftingGeometry, DraftingSpec, MAX_DRAFTING_ENTITIES};
 
 use crate::query::feature::{BodyKind, FeatureId, FeatureKind};
 use beamcraft_model::command::{CommandError, label_is_valid};
@@ -101,6 +104,8 @@ pub struct DrawingSpec {
     pub view: ViewSpec,
     /// The sole dimension.
     pub dimension: DimensionSpec,
+    /// Drawn paper-space objects owned by the document, never by the model.
+    pub drafting: Vec<DraftingSpec>,
 }
 
 /// Validated immutable intent. Admission grants no claim that the referenced geometry exists.
@@ -196,12 +201,70 @@ impl Drawing {
                 "dimension endpoints must be distinct semantic references",
             ));
         }
+        Self::validate_drafting(&spec.id, &spec.view.id, &spec.dimension.id, &spec.drafting)?;
         Ok(Self(spec))
+    }
+
+    /// Validates the drawn objects of one document: bounded count, full distinct identities and
+    /// per-entity geometry bounds. Drawn objects own no model reference of any kind.
+    fn validate_drafting(
+        drawing: &DrawingId,
+        view: &DrawingViewId,
+        dimension: &DimensionId,
+        entities: &[DraftingSpec],
+    ) -> Result<(), CommandError> {
+        if entities.len() > MAX_DRAFTING_ENTITIES {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "drafting",
+                "too many drawn objects in one document",
+            ));
+        }
+        let reserved = [drawing.uuid(), view.uuid(), dimension.uuid()];
+        for entity in entities {
+            if reserved
+                .iter()
+                .any(|reserved| *reserved == entity.id.uuid())
+            {
+                return Err(CommandError::new(
+                    ErrorCode::DuplicateId,
+                    "drafting",
+                    "drawn object UUIDs must be distinct from the document object UUIDs",
+                ));
+            }
+        }
+        for (index, entity) in entities.iter().enumerate() {
+            for other in entities.iter().skip(index + 1) {
+                if other.id == entity.id {
+                    return Err(CommandError::new(
+                        ErrorCode::DuplicateId,
+                        "drafting",
+                        "drawn object UUIDs must be pairwise distinct",
+                    ));
+                }
+            }
+            drafting::validate_geometry(&entity.geometry)?;
+        }
+        Ok(())
     }
 
     /// Borrows the validated intent; callers cannot mutate it around admission.
     pub fn spec(&self) -> &DrawingSpec {
         &self.0
+    }
+
+    /// Borrows the drawn objects of this document.
+    pub fn drafting(&self) -> &[DraftingSpec] {
+        &self.0.drafting
+    }
+
+    /// Replaces the drawn objects with a newly admitted set, retaining every other document
+    /// object, its identity and its source pin. This is a whole-document intent operation: the
+    /// engineering model is neither read nor touched.
+    pub fn with_drafting(mut self, entities: Vec<DraftingSpec>) -> Result<Self, CommandError> {
+        Self::validate_drafting(&self.0.id, &self.0.view.id, &self.0.dimension.id, &entities)?;
+        self.0.drafting = entities;
+        Ok(self)
     }
 
     /// Explicit refresh replaces only the captured source, retaining object IDs and references.

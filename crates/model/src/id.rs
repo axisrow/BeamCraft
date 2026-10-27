@@ -203,6 +203,11 @@ typed_id!(
     DimensionId
 );
 typed_id!(
+    /// Identity of one drawn object owned by a drawing document (D07). It never names anything
+    /// in the engineering model.
+    DraftingEntityId
+);
+typed_id!(
     /// Identity of an immutable published drawing version, separate from its source revision.
     DocumentVersionId
 );
