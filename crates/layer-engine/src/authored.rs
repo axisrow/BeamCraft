@@ -60,6 +60,12 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:weld:contour=token(none|flush|concave|convex,optional)\n",
     "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
     "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
+    "fastener group (A14.3)=steel:connection:type=token(fastener_group);steel:bolt-group:point1Mm=double3;steel:bolt-group:point2Mm=double3;",
+    "steel:bolt-group:planeNormal=double3;steel:bolt-group:rotationRad=double;steel:bolt-group:onPlaneMm=double;steel:bolt-group:depthMm=double;",
+    "steel:bolt-group:offsetStartMm=double;steel:bolt-group:spacingsMm=double[](1..=511,>0 each);steel:bolt-group:lengthMode=token(auto|fixed);",
+    "steel:bolt-group:fixedLengthMm=double(fixed only);steel:bolt-group:washerUnderHead=bool(optional);steel:bolt-group:washerUnderNut=bool(optional);",
+    "steel:bolt-group:holeMode=token(generate|none);steel:bolt-group:holeClearanceMm=double(optional,>=0);bim:fastener=rel(1 fastener definition);",
+    "bim:connects=rel(2..=1024 distinct ordered plate|beam|column targets, main part first)\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
     "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
@@ -269,6 +275,10 @@ pub enum Shape {
     /// `bim:connects` record towards two distinct parts. Like a weld it has no material, no
     /// derived body and the identity placement in this slice.
     Bolt(Bolt),
+    /// A14.3 bolt group: a `connection` element that is one straight row of fasteners of a
+    /// pinned definition, with 2 to 1024 connected parts. Like a weld it has no material, no
+    /// derived body and the identity placement.
+    BoltGroup(BoltGroup),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
     /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
@@ -289,6 +299,7 @@ impl Shape {
             | Self::Assembly
             | Self::Weld(_)
             | Self::Bolt(_)
+            | Self::BoltGroup(_)
             | Self::Grid(_)
             | Self::Level { .. } => &[],
         }
@@ -343,6 +354,46 @@ pub struct Bolt {
     pub origin_mm: [f64; 3],
     /// Unit world direction of the line: finite, squared norm within 1e-6 of one.
     pub direction_mm: [f64; 3],
+}
+
+/// The authored inputs of a complete bolt group (A14.3, bolt amendment sections 4 and 6): one
+/// straight row of fasteners of a pinned definition. The engine's admission (the frame, the
+/// crossings and the length) has already run; this stores exactly what was admitted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoltGroup {
+    /// Full UUIDv7 of every connected part, the main part first: 2 to 1024, distinct, each a
+    /// plate, beam or column.
+    pub connects: Vec<String>,
+    /// The pinned fastener definition the row places.
+    pub fastener: ContentDigest,
+    /// World start of the group line, each component within the coordinate cap.
+    pub point1_mm: [f64; 3],
+    /// World end of the group line.
+    pub point2_mm: [f64; 3],
+    /// The reference plane's normal: finite, non-zero.
+    pub plane_normal: [f64; 3],
+    /// Rotation about the line, in radians.
+    pub rotation_rad: f64,
+    /// Offset of the whole group along the rotated `y`, in millimetres.
+    pub on_plane_mm: f64,
+    /// Offset of the whole group along the shank axis, in millimetres.
+    pub depth_mm: f64,
+    /// Distance along the line from `point1` to the first fastener, in millimetres.
+    pub offset_start_mm: f64,
+    /// The distances between neighbouring fasteners; the group size is `len + 1`, at most 512.
+    pub spacings_mm: Vec<f64>,
+    /// `auto` or `fixed`.
+    pub length_mode: String,
+    /// The fixed standard length for `fixed`.
+    pub fixed_length_mm: Option<f64>,
+    /// `Some` stores an explicit switch; `None` takes the definition's default.
+    pub washer_under_head: Option<bool>,
+    /// See [`Self::washer_under_head`].
+    pub washer_under_nut: Option<bool>,
+    /// `generate` or `none`.
+    pub hole_mode: String,
+    /// The group's own hole clearance, overriding the definition's.
+    pub hole_clearance_mm: Option<f64>,
 }
 
 /// Closed initial member vocabulary.
@@ -1035,7 +1086,7 @@ pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String
 fn shape_category(shape: &Shape) -> ElementCategory {
     match shape {
         Shape::Assembly => ElementCategory::Assembly,
-        Shape::Weld(_) | Shape::Bolt(_) => ElementCategory::Connection,
+        Shape::Weld(_) | Shape::Bolt(_) | Shape::BoltGroup(_) => ElementCategory::Connection,
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Plate { .. } | Shape::Member { .. } | Shape::Instance { .. } => {

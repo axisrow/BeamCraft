@@ -20,7 +20,7 @@
 //! refused here.
 
 use crate::bolt::Bounds;
-use crate::footprint::{Entry, Footprint, Group, Target};
+use crate::footprint::Footprint;
 use crate::weld::PartKind;
 use beamcraft_model::command::{BoltGroupPlacement, BoltLengthMode, CommandError, CreateBoltGroup};
 use beamcraft_model::error::ErrorCode;
@@ -62,7 +62,9 @@ fn unit(v: &[f64; 3]) -> Option<[f64; 3]> {
 /// The group frame of the bolt amendment: the line direction `x`, the shank axis `z` (the
 /// plane normal's component perpendicular to `x`, rotated by `rotation_rad` about `x`) and
 /// `y = z × x`.
-pub fn frame(placement: &BoltGroupPlacement) -> Result<([f64; 3], [f64; 3], [f64; 3]), CommandError> {
+pub fn frame(
+    placement: &BoltGroupPlacement,
+) -> Result<([f64; 3], [f64; 3], [f64; 3]), CommandError> {
     let [x1, y1, z1] = placement.point1_mm;
     let [x2, y2, z2] = placement.point2_mm;
     let x = unit(&[x2 - x1, y2 - y1, z2 - z1]).ok_or_else(|| {
@@ -207,7 +209,7 @@ impl crate::weld::Parts {
                         ErrorCode::NotFound,
                         "parts",
                         "a part is not in the head revision",
-                    ))
+                    ));
                 }
                 Some(PartKind::Part) => {}
                 Some(PartKind::Assembly) => {
@@ -215,14 +217,14 @@ impl crate::weld::Parts {
                         ErrorCode::UnsupportedGeometry,
                         "parts",
                         "a bolt group joins plates, beams or columns, not assemblies",
-                    ))
+                    ));
                 }
                 Some(PartKind::Other) => {
                     return Err(error(
                         ErrorCode::InvalidArgument,
                         "parts",
                         "a bolt group joins plates, beams or columns",
-                    ))
+                    ));
                 }
             }
         }
@@ -294,7 +296,11 @@ impl crate::weld::Parts {
                     ));
                 }
                 anchors.push(anchor);
-                walked += command.spacings_mm.get(anchors.len() - 1).copied().unwrap_or(0.0);
+                walked += command
+                    .spacings_mm
+                    .get(anchors.len() - 1)
+                    .copied()
+                    .unwrap_or(0.0);
             }
             Ok(anchors)
         };
@@ -334,7 +340,8 @@ impl crate::weld::Parts {
                     ));
                 }
             }
-            let footprint = Footprint::for_bolt_group(command.new_id, &command.parts, command.fastener)?;
+            let footprint =
+                Footprint::for_bolt_group(command.new_id, &command.parts, command.fastener)?;
             Ok(BoltGroupDecision {
                 length_mm,
                 washer_under_head,
@@ -368,29 +375,266 @@ impl crate::weld::Parts {
                             "a part has no bounds to cross",
                         ));
                     };
-                    let mut longest = 0.0;
+                    let mut longest: f64 = 0.0;
                     // The largest length of the definition is the longest shank the group could
                     // lay down, so the grip never undercounts.
                     if let Some(longest_standard) = spec.lengths_mm.last() {
                         let anchors = anchors()?;
                         for (start, length) in shanks(*longest_standard, &anchors) {
                             longest = longest.max(
-                                segment_inside_length(&start, &z, length, box_bounds).unwrap_or(0.0),
+                                segment_inside_length(&start, &z, length, box_bounds)
+                                    .unwrap_or(0.0),
                             );
                         }
                     }
                     grip += longest;
                 }
                 let needed = grip + stack_over_shank + spec.thread_protrusion_mm;
-                let length = spec.lengths_mm.iter().copied().find(|l| *l >= needed).ok_or_else(|| {
-                    error(
-                        ErrorCode::UnsupportedGeometry,
-                        "length_mode",
-                        "no standard length is long enough for the grip",
-                    )
-                })?;
+                let length = spec
+                    .lengths_mm
+                    .iter()
+                    .copied()
+                    .find(|l| *l >= needed)
+                    .ok_or_else(|| {
+                        error(
+                            ErrorCode::UnsupportedGeometry,
+                            "length_mode",
+                            "no standard length is long enough for the grip",
+                        )
+                    })?;
                 resolved(length)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::footprint::{Entry, Group, Target};
+    use beamcraft_model::command::BoltGroupPlacement;
+    use beamcraft_model::digest::Sha256;
+    use beamcraft_model::fastener::{HeadKind, HoleMode, WasherSpec};
+    use beamcraft_model::id::ElementId;
+
+    fn id(n: u32) -> ElementId {
+        ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000006{n:05}")).unwrap()
+    }
+
+    fn digest(bytes: &[u8]) -> beamcraft_model::digest::ContentDigest {
+        Sha256::digest(bytes).unwrap()
+    }
+
+    fn spec() -> FastenerSpec {
+        FastenerSpec {
+            kind: FastenerKind::Bolt,
+            head_kind: HeadKind::Hex,
+            nominal_diameter_mm: 16.0,
+            head_across_flats_mm: 24.0,
+            head_height_mm: 10.0,
+            nut_across_flats_mm: Some(24.0),
+            nut_height_mm: Some(14.8),
+            washer: Some(WasherSpec {
+                outer_diameter_mm: 30.0,
+                inner_diameter_mm: 17.0,
+                thickness_mm: 3.0,
+            }),
+            hole_clearance_mm: 2.0,
+            lengths_mm: vec![45.0, 50.0, 60.0, 80.0],
+            thread_protrusion_mm: 5.0,
+            washer_under_head: true,
+            washer_under_nut: true,
+            hole_mode: HoleMode::Generate,
+            designation: None,
+            standard: None,
+            grade: None,
+            display_name: None,
+            mass_each_kg: None,
+        }
+    }
+
+    /// Two plates: one 0..500 in x, 0..500 in y, 0..10 in z; the other directly on top of it
+    /// (z 10..20), both under the group line.
+    fn parts() -> (crate::weld::Parts, BTreeMap<ElementId, Bounds>) {
+        let mut parts = crate::weld::Parts::default();
+        let mut bounds = BTreeMap::new();
+        for (n, z) in [(1u32, 0.0), (2, 10.0)] {
+            parts.insert(id(n), PartKind::Part);
+            bounds.insert(id(n), [[0.0, 0.0, z], [500.0, 500.0, z + 10.0]]);
+        }
+        (parts, bounds)
+    }
+
+    fn command() -> CreateBoltGroup {
+        CreateBoltGroup {
+            new_id: id(99),
+            name: "B".into(),
+            parts: vec![id(1), id(2)],
+            fastener: digest(b"pinned fastener"),
+            placement: BoltGroupPlacement {
+                // Along x under both plates; the plane normal +z with a half turn points the
+                // shank down (-z), so the bolt comes from above and crosses both plates.
+                point1_mm: [100.0, 100.0, 30.0],
+                point2_mm: [400.0, 100.0, 30.0],
+                plane_normal: [0.0, 0.0, 1.0],
+                rotation_rad: core::f64::consts::PI,
+                on_plane_mm: 0.0,
+                depth_mm: 0.0,
+            },
+            offset_start_mm: 0.0,
+            spacings_mm: vec![80.0, 80.0],
+            length_mode: BoltLengthMode::Auto,
+            fixed_length_mm: None,
+            washer_under_head: None,
+            washer_under_nut: None,
+            hole_mode: HoleMode::None,
+            hole_clearance_mm: None,
+        }
+    }
+
+    #[test]
+    fn the_auto_length_covers_grip_washer_nut_and_protrusion() {
+        let (parts, bounds) = parts();
+        // The shank runs -z from the bearing face at z = 30: washer 27..30, head 17..27, shank
+        // from 17 down. The grip through both plates is 20; the length must cover
+        // 20 + 3 + 14.8 + 5 = 42.8, so the smallest fitting standard length is 45.
+        let decision = parts
+            .create_bolt_group(&command(), &spec(), &bounds)
+            .unwrap();
+        assert_eq!(decision.length_mm, 45.0);
+        assert!(decision.washer_under_head && decision.washer_under_nut);
+        assert_eq!(decision.hole_clearance_mm, 2.0);
+        assert!(decision.footprint.writes().contains(&Entry {
+            target: Target::Element(id(99)),
+            group: Group::Lifecycle,
+        }));
+    }
+
+    #[test]
+    fn the_fixed_length_must_be_a_standard_one() {
+        let (parts, bounds) = parts();
+        let mut command = command();
+        command.length_mode = BoltLengthMode::Fixed;
+        command.fixed_length_mm = Some(50.0);
+        assert_eq!(
+            parts
+                .create_bolt_group(&command, &spec(), &bounds)
+                .unwrap()
+                .length_mm,
+            50.0
+        );
+        command.fixed_length_mm = Some(55.0);
+        assert_eq!(
+            parts
+                .create_bolt_group(&command, &spec(), &bounds)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn a_parallel_normal_and_an_uncrossed_part_are_refused() {
+        let (two_plates, bounds) = parts();
+        let mut parallel = command();
+        parallel.placement.plane_normal = [1.0, 0.0, 0.0];
+        assert_eq!(
+            two_plates
+                .create_bolt_group(&parallel, &spec(), &bounds)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+        // A third part far above the row: no shank crosses it.
+        let (mut parts, mut bounds) = parts();
+        parts.insert(id(3), PartKind::Part);
+        bounds.insert(id(3), [[0.0, 0.0, 400.0], [500.0, 500.0, 410.0]]);
+        let mut uncrossed = command();
+        uncrossed.parts.push(id(3));
+        assert_eq!(
+            parts
+                .create_bolt_group(&uncrossed, &spec(), &bounds)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn no_standard_length_long_enough_is_unsupported_geometry() {
+        // A stack of ten plates: the grip is 100 mm, beyond the longest standard length.
+        let mut many = crate::weld::Parts::default();
+        let mut bounds_many = BTreeMap::new();
+        for n in 1..=10u32 {
+            many.insert(id(n), PartKind::Part);
+            let z = f64::from(n - 1) * 10.0;
+            bounds_many.insert(id(n), [[0.0, 0.0, z], [500.0, 500.0, z + 10.0]]);
+        }
+        let mut command = command();
+        command.parts = (1..=10).map(|n| id(u32::try_from(n).unwrap())).collect();
+        // The row sits above the stack and points down, so the shank pierces all ten plates.
+        command.placement.point1_mm = [100.0, 100.0, 110.0];
+        command.placement.point2_mm = [400.0, 100.0, 110.0];
+        assert_eq!(
+            many.create_bolt_group(&command, &spec(), &bounds_many)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedGeometry
+        );
+    }
+
+    #[test]
+    fn generated_holes_are_refused_until_a14_4() {
+        let (parts, bounds) = parts();
+        let mut generate = command();
+        generate.hole_mode = HoleMode::Generate;
+        let error = parts
+            .create_bolt_group(&generate, &spec(), &bounds)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert_eq!(error.field, "hole_mode");
+    }
+
+    #[test]
+    fn the_rotation_turns_the_shank_about_the_line() {
+        let placement = BoltGroupPlacement {
+            point1_mm: [0.0, 0.0, 0.0],
+            point2_mm: [100.0, 0.0, 0.0],
+            plane_normal: [0.0, 0.0, 1.0],
+            rotation_rad: 0.0,
+            on_plane_mm: 0.0,
+            depth_mm: 0.0,
+        };
+        let (x, y, z) = frame(&placement).unwrap();
+        assert_eq!(x, [1.0, 0.0, 0.0]);
+        assert_eq!(z, [0.0, 0.0, 1.0]);
+        assert_eq!(y, [0.0, 1.0, 0.0]);
+        let quarter = BoltGroupPlacement {
+            rotation_rad: core::f64::consts::FRAC_PI_2,
+            ..placement
+        };
+        // A positive rotation turns the shank from +z towards -y.
+        let (_, y, z) = frame(&quarter).unwrap();
+        assert!((z[1] + 1.0).abs() < 1e-12, "{z:?}");
+        assert!((y[2] - 1.0).abs() < 1e-12, "{y:?}");
+    }
+
+    #[test]
+    fn the_on_plane_and_depth_offsets_slide_the_row() {
+        let (parts, bounds) = parts();
+        let mut slid = command();
+        slid.placement.on_plane_mm = 40.0;
+        let moved = parts.create_bolt_group(&slid, &spec(), &bounds).unwrap();
+        assert_eq!(moved.length_mm, 45.0);
+        // Sliding 400 mm along y leaves both plates: the row stops crossing them.
+        let mut away = command();
+        away.placement.on_plane_mm = 400.0;
+        assert_eq!(
+            parts
+                .create_bolt_group(&away, &spec(), &bounds)
+                .unwrap_err()
+                .code,
+            ErrorCode::InvalidArgument
+        );
     }
 }

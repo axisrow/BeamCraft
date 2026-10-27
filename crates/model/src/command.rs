@@ -2198,8 +2198,14 @@ impl CreateBoltGroup {
                 "the two points of the group line are distinct",
             ));
         }
-        if placement.point1_mm.iter().any(|v| v.abs() > COORDINATE_CAP_MM)
-            || placement.point2_mm.iter().any(|v| v.abs() > COORDINATE_CAP_MM)
+        if placement
+            .point1_mm
+            .iter()
+            .any(|v| v.abs() > COORDINATE_CAP_MM)
+            || placement
+                .point2_mm
+                .iter()
+                .any(|v| v.abs() > COORDINATE_CAP_MM)
         {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
@@ -2248,7 +2254,7 @@ impl CreateBoltGroup {
             )
             .with_rule("DV-LIM-001"));
         }
-        if !self.spacings_mm.iter().all(|v| v.is_finite()) {
+        if self.spacings_mm.iter().any(|v| !v.is_finite()) {
             return Err(CommandError::new(
                 ErrorCode::NonFiniteNumber,
                 "spacings_mm",
@@ -2256,10 +2262,10 @@ impl CreateBoltGroup {
             )
             .with_rule("DV-ATTR-003"));
         }
-        if let Some(spacing) = self
+        if self
             .spacings_mm
             .iter()
-            .find(|v| **v <= 0.0 || **v > DIMENSION_CAP_MM)
+            .any(|v| *v <= 0.0 || *v > DIMENSION_CAP_MM)
         {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
@@ -2317,7 +2323,8 @@ impl CreateBoltGroup {
             )
             .with_rule("DV-ATTR-003")
         };
-        let mut bytes = Vec::with_capacity(320 + 96 * self.parts.len() + 24 * self.spacings_mm.len());
+        let mut bytes =
+            Vec::with_capacity(320 + 96 * self.parts.len() + 24 * self.spacings_mm.len());
         bytes.extend_from_slice(b"BeamCraft/A14/CreateBoltGroup/v1\0");
         bytes.extend_from_slice(self.new_id.as_bytes());
         bytes.extend_from_slice(&(self.name.len() as u64).to_le_bytes());
