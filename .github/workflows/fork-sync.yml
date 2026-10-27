@@ -20,8 +20,15 @@ concurrency:
   group: fork-sync
   cancel-in-progress: false
 
+# `workflows: write` lets the default token push upstream commits that touch
+# .github/workflows/* (issue #234): GitHub rejects such a push from a token
+# holding only contents:write, and the merge itself was always green. The
+# default token's pushes skip CI on master (recursion protection); set the
+# optional FORK_SYNC_TOKEN secret to a PAT to push as the account and keep a
+# CI verdict on every synced master tip.
 permissions:
   contents: write
+  workflows: write
 
 jobs:
   sync:
@@ -31,10 +38,13 @@ jobs:
     steps:
       # ref: master keeps the script's current-branch guard green (a default
       # checkout detaches HEAD); the full history is needed for the merge base.
+      # The token is optional: an unset FORK_SYNC_TOKEN falls back to the
+      # default github.token, which the permissions block above suffices for.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: master
           fetch-depth: 0
+          token: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
 
       # The script guards on both remotes; checkout configures only origin.
       - name: Add the upstream remote
