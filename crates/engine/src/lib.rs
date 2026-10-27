@@ -83,3 +83,6 @@ pub mod filter;
 
 /// Headless display modes, independent of engineering state (V16).
 pub mod render;
+
+/// Ordered, transient display appearances (V17).
+pub mod representation;

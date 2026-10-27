@@ -391,6 +391,15 @@ pub fn delete(views: &mut Views, id: ElementId) -> Result<(), PlateError> {
             ));
         }
     }
+    if crate::representations::list(views)?
+        .iter()
+        .any(|s| s.rules.iter().any(|(f, _)| *f == id))
+    {
+        return Err(PlateError::new(
+            ErrorCode::DependencyConflict,
+            "saved filter is used by a representation set",
+        ));
+    }
     views.document.records.remove(&key(id));
     Ok(())
 }

@@ -20,9 +20,14 @@ pub(super) const COMMANDS: &[&str] = &[
     "list-filters",
     "inspect-filter",
     "delete-filter",
+    "save-representation-set",
+    "list-representation-sets",
+    "inspect-representation-set",
+    "delete-representation-set",
 ];
 
 pub(super) const HELP: &str = concat!(
+    "Representation sets (V17): save-representation-set --workspace-dir DIR --name TEXT --rules FILE.json [--id UUID] [--expected-views DIGEST|none]; list-representation-sets --workspace-dir DIR; inspect-representation-set|delete-representation-set --workspace-dir DIR --id UUID. Body: {by_class:BOOL,rules:[{filter:UUID,color:[R,G,B],transparency:0..1}]}. First match wins. update-view --representation UUID|none binds a set. Referenced filters/sets cannot be deleted.\n",
     "Filters (V14): query-elements --store ROOT (--rule FILE.json | --filter UUID) [--limit 1..1024] [--after UUID] [--expected-model DIGEST]; save-filter --workspace-dir DIR --name TEXT --rule FILE.json [--id UUID] [--expected-views DIGEST|none]; list-filters --workspace-dir DIR; inspect-filter|delete-filter --workspace-dir DIR --id UUID. Rules use all/any arrays or {field:type|name|class|attribute, attribute:NAME_OR_UUID, op:eq|ne|lt|le|gt|ge|contains|starts-with, value:...}. Unknown fields/attributes and incompatible types refuse; missing values never match comparisons. update-view --filter UUID|none binds the same evaluator to export-view.\n",
     "View clipping (V15): set-view-clipping --workspace-dir DIR --id UUID [--planes PX,PY,PZ,NX,NY,NZ;...|none] [--work-area MINX,MINY,MINZ,MAXX,MAXY,MAXZ|none] [--depth-enabled true|false]; clear-view-clipping --workspace-dir DIR --id UUID disables all planes, depth and work area. Both accept --expected-views DIGEST|none. Positive half-spaces remain visible; engineering geometry and measurements are unchanged.\n",
     "Plane views (V09): create-view --workspace-dir DIR --kind 3d|plane|two-points|level|grid-line --name TEXT [--id UUID] [--plane ORIGIN,XDIR,YDIR] [--start X,Y,Z --end X,Y,Z] [--level UUID] [--grid ID_OR_NAME --axis AXIS_UUID] [--side positive|negative] [--depth MM] [--width MM] [--aspect F] [--comment TEXT] [--work-area MINX,MINY,MINZ,MAXX,MAXY,MAXZ] [--expected-views DIGEST|none]. Persistent grid/axis and level identities re-resolve on restore; absent anchors return status unresolved. Two points define a vertical plane; view state never edits the model.\n",

@@ -114,7 +114,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 24 {
+    if !args.len().is_multiple_of(2) || args.len() > 28 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
@@ -131,6 +131,8 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 | "--render-mode"
                 | "--select"
                 | "--select-file"
+                | "--representation"
+                | "--overlay"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated option"));
@@ -176,7 +178,24 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         (None, Some(path)) => beamcraft_cli::display::selection_file(path)?,
         _ => Vec::new(),
     };
-    let display_requested = selected_view.is_some()
+    let representation = options
+        .get("--representation")
+        .map(|s| ElementId::parse(s).map_err(id_error))
+        .transpose()?;
+    let overlay = options
+        .get("--overlay")
+        .map(|path| {
+            let bytes = beamcraft_cli::source_file::read_file(path, 1024 * 1024)
+                .map_err(|c| display_error(c, "overlay file is not usable"))?;
+            let j = beamcraft_json::decode(&bytes, &beamcraft_cli::display::LIMITS)
+                .map_err(|_| invalid("invalid overlay JSON"))?;
+            beamcraft_cli::representations::overlay(&j)
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let display_requested = representation.is_some()
+        || options.contains_key("--overlay")
+        || selected_view.is_some()
         || options.contains_key("--render-mode")
         || options.contains_key("--select")
         || options.contains_key("--select-file");
@@ -204,6 +223,8 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 selected_view,
                 mode,
                 &selected,
+                representation,
+                &overlay,
             )
         })
         .transpose()?;
@@ -285,7 +306,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
     if let (Some(p), Json::Object(fields)) = (presentation, &mut reply) {
         let mut p = p;
         if let Json::Object(f) = &mut p {
-            for key in ["visible_elements", "selected_elements"] {
+            for key in ["visible_elements", "selected_elements", "appearances"] {
                 if let Some(Json::Array(a)) = f.remove(key) {
                     f.insert(format!("{key}_count"), Json::uint(a.len() as u64));
                 }
@@ -302,12 +323,16 @@ fn presentation_json(
     id: Option<ElementId>,
     mode: beamcraft_engine::render::Mode,
     selected: &[ElementId],
+    representation: Option<ElementId>,
+    overlay: &BTreeMap<ElementId, beamcraft_engine::representation::Appearance>,
 ) -> Result<Json, PlateError> {
     let mut ids = beamcraft_engine::view_clipping::visible_elements(&inspection.snapshot, &[])?;
     let mut view_json = Json::Null;
     let mut version = Json::Null;
     let mut filter_id = None;
     let mut planes = Vec::new();
+    let mut personal = None;
+    let mut representation_id = representation;
     if let Some(id) = id {
         let views = beamcraft_cli::saved_views::read(dir)?;
         let view = views
@@ -331,15 +356,83 @@ fn presentation_json(
                 beamcraft_cli::filters::matching(&views, f, &inspection.user_attributes)?;
             ids.retain(|id| matching.binary_search(id).is_ok());
         }
+        if representation_id.is_none() {
+            representation_id = beamcraft_cli::representations::binding(&views, id)?;
+        }
         view_json = crate::saved_views_cmd::view_json(&restored.view)?;
         version = views
             .version
             .map_or(Json::Null, |v| Json::text(v.to_string()));
+        personal = Some(views);
     }
     let render = beamcraft_engine::render::query(&inspection.snapshot, mode, selected, &ids)
         .map_err(|e| display_error(e.f04_code(), "render selection is invalid"))?;
+    for id in overlay.keys() {
+        if inspection.snapshot.element(id).is_none() {
+            return Err(display_error(
+                ErrorCode::NotFound,
+                "overlay element is not in the snapshot",
+            ));
+        }
+    }
+    let (by_class, rules) = if let Some(id) = representation_id {
+        if personal.is_none() {
+            personal = Some(beamcraft_cli::saved_views::read(dir)?);
+        }
+        let views = personal
+            .as_ref()
+            .ok_or_else(|| invalid("personal views unavailable"))?;
+        version = views
+            .version
+            .map_or(Json::Null, |v| Json::text(v.to_string()));
+        let set = beamcraft_cli::representations::saved(views, id)?;
+        (
+            set.by_class,
+            beamcraft_cli::representations::compile(views, &set, &inspection.user_attributes)?,
+        )
+    } else {
+        (false, Vec::new())
+    };
+    let classes = inspection
+        .user_attributes
+        .elements
+        .iter()
+        .filter_map(|(id, r)| r.class.map(|c| (*id, c)))
+        .collect();
+    let appearances = beamcraft_engine::representation::query(
+        &beamcraft_cli::filters::dataset(&inspection.user_attributes)?,
+        &render.visible,
+        &classes,
+        beamcraft_engine::representation::Appearance {
+            color: render.color,
+            transparency: render.transparency,
+        },
+        by_class,
+        &rules,
+        overlay,
+    )?;
     Ok(Json::object([
-        ("version", Json::uint(2)),
+        ("version", Json::uint(3)),
+        (
+            "representation_id",
+            representation_id.map_or(Json::Null, |id| Json::text(id.to_string())),
+        ),
+        ("overlay_count", Json::uint(overlay.len() as u64)),
+        (
+            "appearances",
+            Json::Array(
+                appearances
+                    .into_iter()
+                    .map(|(id, a)| {
+                        let mut j = beamcraft_cli::representations::appearance_json(a);
+                        if let Json::Object(f) = &mut j {
+                            f.insert("id".into(), Json::text(id.to_string()));
+                        }
+                        j
+                    })
+                    .collect(),
+            ),
+        ),
         ("render", beamcraft_cli::display::settings(&render)),
         (
             "selected_elements",

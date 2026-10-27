@@ -6,6 +6,7 @@
 pub(super) const COMMANDS: &[&str] = &["export-view"];
 
 pub(super) const HELP: &str = concat!(
+    "Display options (V16/V17): --render-mode wireframe|transparent|grey|shaded|selected-only [--select UUID,... | --select-file FILE.json] [--representation SET_UUID] [--overlay FILE.json]. Display options emit BCVXFRM3 JSON v3 plus the unchanged engineering bundle. Empty selection hides all in selected-only. Overlay is an array of {id:UUID,color:[R,G,B],transparency:0..1}, has final priority and is never saved.\n",
     "View export (V03, input of the native viewport): export-view --store ROOT --out FILE|- ",
     "[--with-definitions true|false] [--with-element UUID] [--with-grids true|false] [--view UUID] (the verified head's pinned view ",
     "snapshot as one engine bundle; --view UUID requires a personal workspace store and emits BCVXFRM3 with four length-prefixed JSON sections (definitions, element, grids, presentation), then the unchanged engineering bundle. Presentation supplies the resolved camera, effective clip planes and visible-ID mask. FILE output also retains that frame. Legacy exports keep their existing protocol. ",

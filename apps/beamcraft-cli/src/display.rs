@@ -10,7 +10,7 @@ pub const LIMITS: Limits = Limits {
     tokens: 2_097_152,
     depth: 16,
     string_bytes: 4096,
-    scratch_bytes: 128 * 1024 * 1024,
+    scratch_bytes: 512 * 1024 * 1024,
 };
 /// Read a large explicit selection without unbounded command-line arguments.
 pub fn selection_file(path: &str) -> Result<Vec<ElementId>, PlateError> {

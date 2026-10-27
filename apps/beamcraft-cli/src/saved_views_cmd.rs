@@ -115,6 +115,7 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                         | "--depth"
                         | "--side"
                         | "--filter"
+                        | "--representation"
                 )))
             || options.insert(*key, *value).is_some()
         {
@@ -302,6 +303,22 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             )?;
         }
 
+        if let Some(set) = given("--representation") {
+            let set = if set == "none" {
+                None
+            } else {
+                Some(ElementId::parse(set).map_err(crate::plate_cmd::id_error)?)
+            };
+            if let Some(set) = set {
+                let m = beamcraft_cli::plane_views::current(dir)?;
+                beamcraft_cli::representations::compile(
+                    &views,
+                    &beamcraft_cli::representations::saved(&views, set)?,
+                    &m.user_attributes,
+                )?;
+            }
+            beamcraft_cli::representations::bind(&mut views, id, set)?;
+        }
         if let Some(filter) = given("--filter") {
             let filter = if filter == "none" {
                 None
@@ -351,6 +368,10 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             "filter_binding_{}",
             id.to_string().replace('-', "")
         ));
+        views.document.records.remove(&format!(
+            "representation_binding_{}",
+            id.to_string().replace('-', "")
+        ));
         let version = saved_views::write(dir, &views)?;
         return Ok(Json::object([
             ("outcome", Json::text("view_deleted")),
@@ -381,6 +402,11 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
                 .map_or(Json::Null, |d| Json::text(d.to_string())),
         ),
         ("model_changed", Json::Bool(changed)),
+        (
+            "representation_id",
+            beamcraft_cli::representations::binding(&views, id)?
+                .map_or(Json::Null, |id| Json::text(id.to_string())),
+        ),
         (
             "filter_id",
             beamcraft_cli::filters::binding(&views, id)?

@@ -38,6 +38,7 @@ mod plate_cmd;
 mod project_cmd;
 mod rebase_cmd;
 mod reference_cmd;
+mod representations_cmd;
 mod resolve_cmd;
 mod saved_views_cmd;
 mod transform_cmd;
@@ -143,6 +144,8 @@ fn main() -> std::process::ExitCode {
         project_cmd::execute(&args)
     } else if args.first().is_some_and(grid_cmd::handles) {
         grid_cmd::execute(&args)
+    } else if args.first().is_some_and(representations_cmd::handles) {
+        representations_cmd::execute(&args)
     } else if args.first().is_some_and(filters_cmd::handles) {
         filters_cmd::execute(&args)
     } else if args.first().is_some_and(attributes_cmd::handles) {
