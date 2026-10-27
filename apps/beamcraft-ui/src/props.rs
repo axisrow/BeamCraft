@@ -897,7 +897,8 @@ mod tests {
         let Some(State::Unknown { reason }) = q.state() else {
             panic!("expected unknown");
         };
-        assert!(reason.contains("size limit") && reason.contains("CLI_FAILED"));
+        assert!(reason.contains("size limit"));
+        assert!(!reason.contains("CLI_FAILED"));
         assert!(q.details().is_none());
         assert_eq!(q.form, Form::default());
         let unsupported = ToolError {

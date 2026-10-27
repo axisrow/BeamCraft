@@ -143,6 +143,13 @@ pub fn is_store(dir: &Path) -> bool {
     dir.join("revisions").is_dir()
 }
 
+/// Whether a remembered project has definitely disappeared. Read errors do not prove absence.
+pub fn project_is_missing(dir: &Path) -> bool {
+    [dir.to_path_buf(), dir.join("revisions")]
+        .iter()
+        .any(|path| fs::metadata(path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound))
+}
+
 fn absolute(path: &Path) -> Result<PathBuf, PlateError> {
     std::path::absolute(path).map_err(|_| invalid("the path cannot be made absolute"))
 }
@@ -229,6 +236,64 @@ pub fn create_project(
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
 ) -> Result<ProjectInfo, PlateError> {
+    create_named_project(parent, name, false, context, hook)
+}
+
+/// Create with the first free name: `name`, `name 1`, `name 2`, up to 10,000 candidates.
+/// Directory reservation is atomic; an existing file, directory or link is never overwritten.
+pub fn create_project_unique(
+    parent: &Path,
+    name: &str,
+    context: &ProjectContext,
+    hook: &mut dyn CommitHook,
+) -> Result<ProjectInfo, PlateError> {
+    create_named_project(parent, name, true, context, hook)
+}
+
+fn numbered_name(name: &str, index: u32) -> String {
+    if index == 0 {
+        name.into()
+    } else {
+        format!("{name} {index}")
+    }
+}
+
+/// Suggest a free folder name without writing anything. Creation still reserves it atomically.
+pub fn next_project_name(parent: &Path, name: &str) -> Result<String, PlateError> {
+    check_project_name(name)?;
+    if !parent.is_dir() {
+        return Err(refuse(
+            ErrorCode::NotFound,
+            "the parent folder does not exist",
+        ));
+    }
+    for index in 0..10_000 {
+        let candidate = numbered_name(name, index);
+        check_project_name(&candidate)?;
+        match fs::symlink_metadata(parent.join(&candidate)) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(candidate),
+            Ok(_) => {}
+            Err(_) => {
+                return Err(refuse(
+                    ErrorCode::PermissionDenied,
+                    "the parent folder cannot be inspected",
+                ));
+            }
+        }
+    }
+    Err(refuse(
+        ErrorCode::LimitExceeded,
+        "no free project name within the candidate limit",
+    ))
+}
+
+fn create_named_project(
+    parent: &Path,
+    name: &str,
+    unique: bool,
+    context: &ProjectContext,
+    hook: &mut dyn CommitHook,
+) -> Result<ProjectInfo, PlateError> {
     check_project_name(name)?;
     let parent = absolute(parent)?;
     if !parent.is_dir() {
@@ -237,16 +302,36 @@ pub fn create_project(
             "the parent folder does not exist",
         ));
     }
-    let dir = parent.join(name);
-    fs::create_dir(&dir).map_err(|e| match e.kind() {
-        std::io::ErrorKind::AlreadyExists => refuse(
-            ErrorCode::DuplicateId,
-            "a file or folder of that name already exists",
-        ),
-        std::io::ErrorKind::PermissionDenied => {
-            refuse(ErrorCode::PermissionDenied, "the folder cannot be created")
+    let mut reserved = None;
+    for index in 0..if unique { 10_000 } else { 1 } {
+        let candidate = numbered_name(name, index);
+        check_project_name(&candidate)?;
+        let dir = parent.join(&candidate);
+        match fs::create_dir(&dir) {
+            Ok(()) => {
+                reserved = Some(dir);
+                break;
+            }
+            Err(error) if unique && error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(match e.kind() {
+                    std::io::ErrorKind::AlreadyExists => refuse(
+                        ErrorCode::DuplicateId,
+                        "a file or folder of that name already exists",
+                    ),
+                    std::io::ErrorKind::PermissionDenied => {
+                        refuse(ErrorCode::PermissionDenied, "the folder cannot be created")
+                    }
+                    _ => invalid("the folder cannot be created"),
+                });
+            }
         }
-        _ => invalid("the folder cannot be created"),
+    }
+    let dir = reserved.ok_or_else(|| {
+        refuse(
+            ErrorCode::LimitExceeded,
+            "no free project name within the candidate limit",
+        )
     })?;
     match first_revision(&dir, context, hook) {
         Ok(()) => project_info(&dir),

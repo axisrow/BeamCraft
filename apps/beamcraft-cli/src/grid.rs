@@ -39,6 +39,17 @@ pub struct GridChange {
     /// The verified grids at the resulting head.
     pub grids: Vec<Grid>,
 }
+fn guide_change(grid: &Grid) -> Result<Change, PlateError> {
+    let mesh = beamcraft_engine::grid_geometry::guide_mesh(grid)?;
+    Ok(Change::Mesh(beamcraft_layer_engine::authored::Mesh {
+        id: grid.id.to_string(),
+        shape_key: mesh.digest,
+        points_mm: mesh.points_mm,
+        face_counts: mesh.face_counts,
+        indices: mesh.indices,
+        quantities: None,
+    }))
+}
 fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, PlateError> {
     validate_layers(request.clone(), schema_identity()?, c)?;
     let mut reader = Reader::default();
@@ -200,13 +211,16 @@ fn commit_grid(
             actor: context.actor.to_string(),
             schema,
             resources: Vec::new(),
-            changes: vec![Change::Create(Element {
-                id: command.grid.id.to_string(),
-                name: command.grid.name.clone(),
-                shape: Shape::Grid(command.grid.clone()),
-                placement: storage::placement(&command.grid),
-                material: None,
-            })],
+            changes: vec![
+                Change::Create(Element {
+                    id: command.grid.id.to_string(),
+                    name: command.grid.name.clone(),
+                    shape: Shape::Grid(command.grid.clone()),
+                    placement: storage::placement(&command.grid),
+                    material: None,
+                }),
+                guide_change(&command.grid)?,
+            ],
         },
         &c,
     )?;
@@ -406,10 +420,13 @@ fn mutate_grid(
     attributes.name = source.name.clone();
     attributes.translation_mm = source.translation_mm;
     attributes.orientation_zw = source.orientation_zw;
-    let mut changes = vec![Change::Grid {
-        id: target_id.to_string(),
-        grid: attributes,
-    }];
+    let mut changes = vec![
+        Change::Grid {
+            id: target_id.to_string(),
+            grid: attributes,
+        },
+        guide_change(&edited.grid)?,
+    ];
     if source.name != edited.grid.name {
         changes.push(Change::Label {
             id: target_id.to_string(),

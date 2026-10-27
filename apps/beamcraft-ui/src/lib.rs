@@ -30,6 +30,7 @@ pub mod camera;
 pub mod command;
 pub mod dialog;
 pub mod edit;
+pub mod grid;
 pub mod metrics;
 pub mod perf;
 pub mod props;

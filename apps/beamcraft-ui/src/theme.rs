@@ -345,6 +345,8 @@ pub enum Icon {
     Redo,
     /// An outlined block: wireframe display.
     Wire,
+    /// Two families of straight construction axes.
+    Grid,
 }
 
 #[derive(Clone, Copy)]
@@ -576,6 +578,12 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             ];
             polyline(&arc.map(flip));
             polyline(&[[9.0, 4.0], [4.0, 9.0], [9.0, 14.0]].map(flip));
+        }
+        Icon::Grid => {
+            for offset in [6.0, 12.0, 18.0] {
+                polyline(&[[offset, 3.0], [offset, 21.0]]);
+                polyline(&[[3.0, offset], [21.0, offset]]);
+            }
         }
         Icon::Wire => {
             painter.add(egui::Shape::closed_line(

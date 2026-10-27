@@ -43,6 +43,7 @@ fn request(expression: &str, labels: &[&str]) -> UpdateGrid {
             span_mm: None,
         }),
         v: None,
+        fit_spans: false,
     }
 }
 #[test]
@@ -92,4 +93,48 @@ fn only_removed_referenced_axes_block_the_update() {
     )
     .unwrap();
     assert_eq!(kept.grid.axis_ids().collect::<Vec<_>>(), [id(2), id(4)]);
+}
+
+#[test]
+fn fitting_regular_spans_covers_the_complete_new_rectangle_without_changing_axes() {
+    let mut source = source();
+    source.v = GridFamily::Regular(RegularGridFamily {
+        expression: "0 2*5000".into(),
+        labels: vec!["1".into(), "2".into(), "3".into()],
+        axis_ids: vec![id(5), id(6), id(7)],
+        span_mm: [-2000.0, 14000.0],
+        positions_mm: vec![0.0, 5000.0, 10000.0],
+    });
+    let before = source.clone();
+    let mut edit = request("0 2*15000", &["A", "B", "C"]);
+    edit.v = Some(RegularGridPatch {
+        expression: Some("0 2*25000".into()),
+        labels: Some(vec!["1".into(), "2".into(), "3".into()]),
+        ..Default::default()
+    });
+    let old_fingerprint = edit.content_fingerprint().unwrap();
+    edit.fit_spans = true;
+    assert_ne!(old_fingerprint, edit.content_fingerprint().unwrap());
+    let fitted = update(&edit, &source, &BTreeSet::new(), &BTreeSet::new())
+        .unwrap()
+        .grid;
+    assert_eq!(source, before);
+    assert_eq!(
+        fitted.axis_ids().collect::<Vec<_>>(),
+        source.axis_ids().collect::<Vec<_>>()
+    );
+    let (GridFamily::Regular(u), GridFamily::Regular(v)) = (&fitted.u, &fitted.v) else {
+        panic!()
+    };
+    assert_eq!(u.span_mm, [-2000.0, 52000.0]);
+    assert_eq!(v.span_mm, [-2000.0, 32000.0]);
+    // Advanced explicit limits remain an intentional override.
+    edit.u.as_mut().unwrap().span_mm = Some([-1000.0, 60000.0]);
+    let explicit = update(&edit, &source, &BTreeSet::new(), &BTreeSet::new())
+        .unwrap()
+        .grid;
+    let GridFamily::Regular(u) = explicit.u else {
+        panic!()
+    };
+    assert_eq!(u.span_mm, [-1000.0, 60000.0]);
 }

@@ -9,7 +9,7 @@
 //! The UI never computes engineering geometry. It checks only that a number is a finite decimal
 //! and that required choices are made, then forwards the text. Every rule about shapes, limits,
 //! profiles and materials stays in the engine, and its refusal (a stable code and a message) is
-//! shown as it is.
+//! kept intact; the UI shows the message without its technical code prefix.
 
 use beamcraft_json::{Json, Limits};
 use std::fmt;
@@ -392,7 +392,7 @@ pub struct ToolError {
 
 impl fmt::Display for ToolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.code, self.message)
+        f.write_str(&self.message)
     }
 }
 
@@ -1034,7 +1034,7 @@ mod tests {
             message: "boom".into(),
         };
         let problem = tools.apply_definitions(Err(failure)).unwrap();
-        assert_eq!(problem, "definitions: CLI_FAILED: boom");
+        assert_eq!(problem, "definitions: boom");
         assert!(tools.definitions.profiles.is_empty());
         assert_eq!(tools.member.profile, None);
         // A store with no revision yet simply has no definitions.
@@ -1095,10 +1095,7 @@ mod tests {
         let error = parse_created(ToolKind::Plate, Some(2), reply.as_bytes()).unwrap_err();
         assert_eq!(error.code, "INVALID_ARGUMENT");
         assert_eq!(error.message, "dimension is not positive");
-        assert_eq!(
-            error.to_string(),
-            "INVALID_ARGUMENT: dimension is not positive"
-        );
+        assert_eq!(error.to_string(), "dimension is not positive");
         // Even a zero exit status cannot turn a rejection into a success.
         assert!(parse_created(ToolKind::Plate, Some(0), reply.as_bytes()).is_err());
     }

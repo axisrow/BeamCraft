@@ -951,11 +951,11 @@ pub(super) fn snapshot(
         else {
             continue;
         };
-        // An assembly, a level, a grid or a weld without a path has no body: a Geometry mesh
-        // under one is refused, authored or loaded. Only the A15 weld with an authored path
-        // carries a derived solid.
+        // An assembly, a level or a weld without a path has no body: a Geometry mesh under one
+        // is refused, authored or loaded. A grid carries only derived guide meshes (T01.7);
+        // only the A15 weld with an authored path carries a derived solid.
         let kind = supported_kind(element);
-        let bodyless = matches!(kind, Some("assembly" | "level" | "grid"))
+        let bodyless = matches!(kind, Some("assembly" | "level"))
             || (kind == Some("connection")
                 && !element
                     .properties
@@ -1708,6 +1708,7 @@ pub(super) fn changes(
                     }
                     Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
                     Change::Grid { .. } => kind == "grid",
+                    Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
@@ -2170,6 +2171,9 @@ pub(super) fn changes(
                 });
             }
             Change::Mesh(m) => {
+                if grid::guide_target(input, prims, &m.id) && m.quantities.is_some() {
+                    return Err(unsupported());
+                }
                 mesh(m, b)?;
                 if let Some(q) = &m.quantities {
                     quantities(q)?;

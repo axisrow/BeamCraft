@@ -65,6 +65,35 @@ fn family(
     }
     Ok(())
 }
+
+fn fitted_span(other: &GridFamily, u: bool) -> [f64; 2] {
+    let mut bounds: Option<[f64; 2]> = None;
+    let mut include = |value: f64| {
+        bounds = Some(match bounds {
+            Some([low, high]) => [low.min(value), high.max(value)],
+            None => [value, value],
+        });
+    };
+    match other {
+        GridFamily::Regular(f) => {
+            for position in &f.positions_mm {
+                include(*position);
+            }
+        }
+        GridFamily::Drawn(lines) => {
+            for line in lines {
+                for point in [line.start_mm, line.end_mm] {
+                    if let Some(value) = point.get(if u { 1 } else { 0 }) {
+                        include(*value);
+                    }
+                }
+            }
+        }
+    }
+    let [low, high] = bounds.unwrap_or([0.0, 0.0]);
+    [low - 2000.0, high + 2000.0]
+}
+
 /// Decide a full grid update without mutating the source or moving any placed element.
 pub fn update(
     request: &UpdateGrid,
@@ -96,6 +125,26 @@ pub fn update(
     if let Some(orientation) = request.orientation_zw {
         grid.orientation_zw = orientation;
     }
+    if request.fit_spans {
+        let u_span = fitted_span(&grid.v, true);
+        let v_span = fitted_span(&grid.u, false);
+        if request
+            .u
+            .as_ref()
+            .is_none_or(|patch| patch.span_mm.is_none())
+            && let GridFamily::Regular(family) = &mut grid.u
+        {
+            family.span_mm = u_span;
+        }
+        if request
+            .v
+            .as_ref()
+            .is_none_or(|patch| patch.span_mm.is_none())
+            && let GridFamily::Regular(family) = &mut grid.v
+        {
+            family.span_mm = v_span;
+        }
+    }
     grid.validate()?;
     let retained = grid.axis_ids().collect::<BTreeSet<_>>();
     if source
@@ -126,6 +175,10 @@ pub fn update(
         target,
         group: Group::ShapeInputs,
     }];
+    writes.push(Entry {
+        target,
+        group: Group::Derived,
+    });
     if request.name.is_some() {
         writes.push(Entry {
             target,

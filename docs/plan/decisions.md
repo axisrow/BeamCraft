@@ -27,6 +27,14 @@ Open questions are at the end.
 
 ## 2026-10-24
 
+- **Windows CI runs on merge to master only.** Owner decision on
+  [issue #180](https://github.com/Apibim-com/BeamCraft/issues/180): the Windows legs of CI (the
+  Windows quality job and the Windows test archive with its shards) run on pushes to `master` and
+  on manual runs, not on pull requests. This reduces demand instead of buying capacity: pull
+  request bursts no longer queue for the account's scarce Windows runners. Linux and macOS still
+  gate every pull request. A Windows-only failure is found after the merge and fixed in a
+  follow-up; a pull request that touches Windows-specific code can run the full matrix by hand
+  with `workflow_dispatch` on its branch.
 - **Gates K1 and K2 are passed.** Owner decision on [issue #125](https://github.com/Apibim-com/BeamCraft/issues/125):
   the per-gate verdicts of [the K1 and K2 evidence](k1-k2-acceptance-evidence.md) are accepted
   together with the fixes merged since (#174 for the K1 plate contours, #222 for rigid member

@@ -1304,6 +1304,15 @@ pub(super) fn apply(
             // stale quantity attributes never survive it, unknown content stays.
             clear_quantities(&mut derived, &parent)?;
             mesh(&mut derived, m, &parent)?;
+            if grid::guide_target(input, prims, &m.id) {
+                attr(
+                    &mut derived,
+                    &format!("{parent}/Geometry"),
+                    "purpose",
+                    "token",
+                    sdf::Value::token("guide"),
+                )?;
+            }
         }
     }
     let opinions = capture(input, prims, &authored, &derived, original.budgets)?;
@@ -1560,7 +1569,10 @@ fn capture(
                     add(name, ty, 0);
                 }
             }
-            Change::Mesh(_) => {
+            Change::Mesh(m) => {
+                if grid::guide_target(input, prims, &m.id) {
+                    add("purpose", "token", 1);
+                }
                 for &(name, ty) in MESH {
                     add(name, ty, 1);
                 }

@@ -39,6 +39,9 @@ pub struct UpdateGrid {
     pub u: Option<RegularGridPatch>,
     /// Optional regular V-family update.
     pub v: Option<RegularGridPatch>,
+    /// Fit regular line spans to the opposite family's bounds with 2000 mm extensions.
+    /// Explicit span patches take precedence. False retains the existing span behaviour.
+    pub fit_spans: bool,
 }
 fn bad(code: ErrorCode, msg: &'static str) -> CommandError {
     CommandError::new(code, "grid.update", msg).with_rule("T01-V01")
@@ -51,6 +54,7 @@ impl UpdateGrid {
             && self.orientation_zw.is_none()
             && self.u.is_none()
             && self.v.is_none()
+            && !self.fit_spans
         {
             return Err(bad(ErrorCode::InvalidArgument, "empty grid update"));
         }
@@ -142,7 +146,14 @@ impl UpdateGrid {
     /// Deterministic commitment to the request, independent of the current grid state.
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
         self.validate_arguments()?;
-        let mut out = b"BeamCraft/T01/UpdateGrid/v1\0".to_vec();
+        // Preserve legacy fingerprints for ordinary updates and give the opt-in behaviour
+        // its own domain so an older accepted operation can never replay as a span fit.
+        let domain: &[u8] = if self.fit_spans {
+            b"BeamCraft/T01/UpdateGridFit/v1\0"
+        } else {
+            b"BeamCraft/T01/UpdateGrid/v1\0"
+        };
+        let mut out = domain.to_vec();
         out.extend_from_slice(self.target_id.as_bytes());
         let string = |out: &mut Vec<u8>, s: &str| {
             out.extend_from_slice(&(s.len() as u64).to_le_bytes());

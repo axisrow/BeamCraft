@@ -93,7 +93,8 @@ fn regular_grids_are_explicit_usd_and_reopen_with_exact_expressions_and_endpoint
     assert!(authored.contains("bim:grid:u:pointsMm"));
     assert!(!authored.contains("def Mesh"));
     let derived = String::from_utf8(revision.layer_bytes("derived.usda").unwrap()).unwrap();
-    assert!(!derived.contains("Geometry"));
+    assert!(derived.contains("Geometry"));
+    assert!(derived.contains("purpose = \"guide\""));
     let inspected = ok(&f, "inspect-elements", &[]);
     assert!(format!("{inspected:?}").contains("grid"));
 }

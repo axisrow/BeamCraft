@@ -175,10 +175,16 @@ pub fn edit(
     }
     let footprint = Footprint::from_entries(
         &reads,
-        &[Entry {
-            target,
-            group: Group::ShapeInputs,
-        }],
+        &[
+            Entry {
+                target,
+                group: Group::ShapeInputs,
+            },
+            Entry {
+                target,
+                group: Group::Derived,
+            },
+        ],
     )?;
     Ok(EditedGrid { grid, footprint })
 }

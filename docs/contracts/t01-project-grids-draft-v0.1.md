@@ -104,7 +104,13 @@ Every GridLine has one **label**, the name the user sees and types.
 
 **How labels are given.** The user types a **list of words separated by spaces** (a comma is also
 accepted), one word per line, in line order: `1 2 3 4`, `A B C`, `А Б В Г Г-1 Г-2 Д`, `1/2 2/3`. The
-number of words must equal the number of lines (`INVALID_ARGUMENT`, `GRID_LABEL_COUNT`). Two
+input adapter uses the first word for the first line and so on; surplus trailing words are unused
+and are not stored or validated as axis labels. Missing labels continue from the last supplied
+label: Latin or Cyrillic letters continue in their alphabet and case, using multiple letters after
+the alphabet ends; a trailing number increments, retaining its minimum width; other names gain
+an incrementing `-1` suffix. Continuation skips labels already supplied in that family. A nonempty
+explicit list needs a starting label (`INVALID_ARGUMENT`, `GRID_LABEL_COUNT`). The canonical
+command and stored grid still carry exactly one label per line. Two
 helpers write the list for the user: `numeric` (`start` default 1, `step` default 1) and `alpha`
 (the Latin letters A to Z, then AA, AB, ...; `start` default `A`), each with `order` `ascending`
 (the first label goes to the lowest position, default) or `descending` (the first goes to the

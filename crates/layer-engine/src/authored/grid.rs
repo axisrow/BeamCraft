@@ -306,13 +306,25 @@ pub fn read_grids(prims: &[Prim]) -> Result<Vec<Grid>, Diagnostic> {
         if out.len() >= MAX_GRIDS {
             return Err(limit());
         }
-        if prims.iter().any(|child| {
+        for child in prims.iter().filter(|child| {
             child
                 .path
                 .strip_prefix(&p.path)
                 .is_some_and(|suffix| suffix == "/Geometry" || suffix.starts_with("/Geometry/"))
         }) {
-            return Err(unsupported());
+            if child.path != format!("{}/Geometry", p.path)
+                || child.type_name.as_deref() != Some("Mesh")
+                || text(child, "purpose", "token")? != "guide"
+                || child.element_id.is_some()
+                || child.properties.iter().any(|v| {
+                    v.name.starts_with("bim:mass")
+                        || v.name.starts_with("bim:volume")
+                        || v.name == "bim:quantityAlgorithm"
+                })
+            {
+                return Err(unsupported());
+            }
+            // Engineering grids have no body; only this explicitly tagged display guide is admitted.
         }
         let g = read(p)?;
         for id in g.axis_ids() {
@@ -327,4 +339,15 @@ pub fn read_grids(prims: &[Prim]) -> Result<Vec<Grid>, Diagnostic> {
     }
     out.sort_by_key(|g| g.id);
     Ok(out)
+}
+
+pub(super) fn guide_target(input: &Prepare, prims: &[Prim], id: &str) -> bool {
+    input
+        .changes
+        .iter()
+        .any(|c| matches!(c,Change::Create(e) if e.id==id && matches!(e.shape,Shape::Grid(_))))
+        || prims.iter().any(|p| {
+            p.element_id.as_deref() == Some(id)
+                && text(p, "bim:elementKind", "token").ok() == Some("grid")
+        })
 }

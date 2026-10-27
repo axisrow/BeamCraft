@@ -135,8 +135,11 @@ reference-machine acceptance still needs the Apple M5 run described above.
 
 ## Everything CI checks
 
-CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `master`, on Windows
-and Linux. To run the same checks locally:
+CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `master`. Pull
+requests run on Linux and macOS; the Windows quality and test jobs run on pushes to `master` and on
+manual runs only (owner decision 2026-10-24, #180). For a change to Windows-specific code, start the
+workflow by hand on the branch (`gh workflow run ci.yml --ref <branch>`) before merging. To run the
+same checks locally:
 
 ```sh
 cargo fmt --all -- --check
@@ -169,9 +172,8 @@ deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 
 ## CI wall time and Windows runner queues
 
-CI wall time is about 15 minutes today (14–17 minutes across the runs of 2026-10-22). The critical
-path is the `test (windows)` job at roughly 13–14 minutes; every other job finishes in under
-3 minutes. Each job carries an explicit `timeout-minutes` sized at about three times the longest
+CI wall time on `master` was about 15 minutes (14–17 minutes across the runs of 2026-10-22), with
+the Windows test path as the critical path; pull requests skip the Windows jobs and finish sooner. Each job carries an explicit `timeout-minutes` sized at about three times the longest
 observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour
 per-job default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
 
@@ -197,6 +199,13 @@ account quota:
 When CI looks stuck, first check whether the Windows job is queued rather than running, then look
 for a burst across the account's Actions runs, cancel superseded runs and re-run the starved job
 once the burst subsides.
+
+The scheduled `CI runner queue alert` workflow checks queued jobs every 15 minutes, including
+jobs waiting inside workflows that have already started. If any job has waited for at least 15
+minutes, it opens one issue labelled `ci-queue` with the affected refs, jobs and run links. While
+that issue remains open, later checks do not create duplicates. Close it after the queue drains; a
+later incident then opens a new alert. The workflow uses the repository's `GITHUB_TOKEN` with
+Actions read, Contents read (for checkout) and Issues write permissions.
 
 ## Releases
 

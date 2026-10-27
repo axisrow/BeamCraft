@@ -165,6 +165,8 @@ fn rejected(stdout: &[u8]) -> Error {
 
 /// The first bytes of a framed `export-view` reply (the CLI defines the frame).
 pub const FRAME_MAGIC: &[u8; 8] = b"BCVXFRM1";
+/// Version 2 carries grids from the same pinned inspection.
+pub const GRID_FRAME_MAGIC: &[u8; 8] = b"BCVXFRM2";
 
 /// The parts of a framed `export-view` reply, split but not yet read.
 #[derive(Debug, PartialEq, Eq)]
@@ -173,6 +175,8 @@ pub struct Frame<'a> {
     pub definitions: &'a [u8],
     /// The `inspect-elements --element ID` reply; empty when it was not asked for.
     pub element: &'a [u8],
+    /// The pinned grid display reply, empty in version 1 frames.
+    pub grids: &'a [u8],
     /// The engine bundle.
     pub bundle: &'a [u8],
 }
@@ -190,12 +194,25 @@ pub fn split_frame(bytes: &[u8]) -> Result<Frame<'_>, Error> {
         rest.split_at_checked(length)
     }
     let bad = || Error::Cli("export-view returned an unreadable frame".into());
-    let rest = bytes.strip_prefix(FRAME_MAGIC.as_slice()).ok_or_else(bad)?;
+    let grid_frame = bytes.starts_with(GRID_FRAME_MAGIC);
+    let rest = bytes
+        .strip_prefix(if grid_frame {
+            GRID_FRAME_MAGIC.as_slice()
+        } else {
+            FRAME_MAGIC.as_slice()
+        })
+        .ok_or_else(bad)?;
     let (definitions, rest) = section(rest).ok_or_else(bad)?;
-    let (element, bundle) = section(rest).ok_or_else(bad)?;
+    let (element, rest) = section(rest).ok_or_else(bad)?;
+    let (grids, bundle) = if grid_frame {
+        section(rest).ok_or_else(bad)?
+    } else {
+        (&[][..], rest)
+    };
     Ok(Frame {
         definitions,
         element,
+        grids,
         bundle,
     })
 }
@@ -211,7 +228,7 @@ fn export_framed(
 ) -> Result<Vec<u8>, Error> {
     let cap = FRAME_MAGIC
         .len()
-        .saturating_add(2 * (4 + command::MAX_OUTPUT))
+        .saturating_add(3 * (4 + command::MAX_OUTPUT))
         .saturating_add(max_bundle_bytes(&Limits::default()));
     let mut args = vec![
         "export-view".to_owned(),
@@ -220,6 +237,8 @@ fn export_framed(
         "--out".into(),
         "-".into(),
         "--with-definitions".into(),
+        "true".into(),
+        "--with-grids".into(),
         "true".into(),
     ];
     // An id the CLI would refuse is not asked for, so it cannot fail the snapshot with it.
@@ -255,7 +274,11 @@ pub enum Refreshed {
 
 /// What one refresh reads about the model: the snapshot as far as it differs from what the
 /// window shows, and the definitions.
-type Parts = (Result<Refreshed, Error>, Result<Definitions, ToolError>);
+type Parts = (
+    Result<Refreshed, Error>,
+    Result<Definitions, ToolError>,
+    Result<crate::grid::GridScene, ToolError>,
+);
 
 fn frame_parts(frame: &Frame<'_>, known: &Known) -> Parts {
     let definitions = parse_definitions(Some(0), frame.definitions);
@@ -270,7 +293,11 @@ fn frame_parts(frame: &Frame<'_>, known: &Known) -> Parts {
                 Scene::from_snapshot_reusing(&snapshot, Representation::Full, &known.resident)?;
             Ok(Refreshed::New(Box::new((snapshot, scene))))
         });
-    (scene, definitions)
+    (
+        scene,
+        definitions,
+        crate::grid::GridScene::from_reply(frame.grids),
+    )
 }
 
 /// A runner failure (no CLI, deadline, oversize output) as the viewport's typed error.
@@ -300,6 +327,8 @@ pub struct Reloaded {
     pub scene: Result<Refreshed, Error>,
     /// The profile and material definitions of the same store.
     pub definitions: Result<Definitions, ToolError>,
+    /// Grid guides from the same pinned revision as the snapshot.
+    pub grids: Result<crate::grid::GridScene, ToolError>,
     /// The CLI processes this refresh started and its wall time on the worker.
     pub timing: RefreshTiming,
 }
@@ -315,16 +344,21 @@ pub fn reload(cli: &Path, store: &Path, known: &Known, stats: &Stats) -> Reloade
     let mut processes = 1;
     let framed = export_framed(cli, store, None, command::DEADLINE, stats)
         .and_then(|bytes| Ok(frame_parts(&split_frame(&bytes)?, known)));
-    let (scene, definitions) = match framed {
+    let (scene, definitions, grids) = match framed {
         Ok(parts) => parts,
         Err(e) => {
             processes += 1;
-            (Err(e), command::definitions(cli, store, stats))
+            (
+                Err(e),
+                command::definitions(cli, store, stats),
+                Ok(crate::grid::GridScene::default()),
+            )
         }
     };
     Reloaded {
         scene,
         definitions,
+        grids,
         timing: RefreshTiming {
             processes,
             total_ms: started.elapsed().as_secs_f64() * 1000.0,
@@ -385,6 +419,31 @@ mod tests {
     }
 
     #[test]
+    fn grid_frames_preserve_the_bundle_and_bound_the_third_section() {
+        let grids = br#"{"outcome":"grids","grids":[]}"#;
+        let mut bytes = GRID_FRAME_MAGIC.to_vec();
+        for section in [&b"{}"[..], &b""[..], &grids[..]] {
+            bytes.extend_from_slice(&u32::try_from(section.len()).unwrap().to_le_bytes());
+            bytes.extend_from_slice(section);
+        }
+        let end = bytes.len();
+        bytes.extend_from_slice(b"engine bundle");
+        let frame = split_frame(&bytes).unwrap();
+        assert_eq!(frame.grids, grids);
+        assert_eq!(frame.bundle, b"engine bundle");
+        assert_eq!(
+            crate::grid::GridScene::from_reply(frame.grids)
+                .unwrap()
+                .lines
+                .len(),
+            0
+        );
+        for cut in 0..end {
+            assert!(split_frame(&bytes[..cut]).is_err());
+        }
+    }
+
+    #[test]
     fn a_frame_splits_into_its_replies_and_bundle() {
         let bytes = frame(b"{}", b"{\"a\":1}", b"BCVIEW02rest");
         assert_eq!(
@@ -392,6 +451,7 @@ mod tests {
             Frame {
                 definitions: b"{}",
                 element: b"{\"a\":1}",
+                grids: b"",
                 bundle: b"BCVIEW02rest",
             }
         );
@@ -401,6 +461,7 @@ mod tests {
             Frame {
                 definitions: b"",
                 element: b"",
+                grids: b"",
                 bundle: b"",
             }
         );
@@ -487,7 +548,7 @@ mod tests {
         let definitions = br#"{"outcome":"definitions","definitions":[]}"#;
         let bytes = frame(definitions, b"", b"not a bundle");
         let frame = split_frame(&bytes).unwrap();
-        let (scene, definitions) = frame_parts(&frame, &Known::default());
+        let (scene, definitions, _) = frame_parts(&frame, &Known::default());
         // A bundle the engine refuses fails the scene alone.
         assert!(scene.is_err());
         assert!(definitions.is_ok());

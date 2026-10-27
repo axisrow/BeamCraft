@@ -78,6 +78,136 @@ fn text(json: &Json, key: &str) -> String {
     json.get(key).unwrap().string().unwrap().to_owned()
 }
 
+#[test]
+fn default_project_names_skip_existing_files_and_reserve_free_folders() {
+    let f = Fixture::new();
+    let parent = f.path("models");
+    let suggest = || {
+        f.raw(&[
+            "suggest-project-name",
+            "--parent",
+            &parent,
+            "--name",
+            "New Model",
+        ])
+    };
+    assert_eq!(text(&suggest().1, "name"), "New Model");
+    assert!(!f.root.join("models/New Model").exists());
+    let create = || {
+        f.ok(&[
+            "create-project",
+            "--parent",
+            &parent,
+            "--name",
+            "New Model",
+            "--unique-name",
+            "true",
+            "--actor-id",
+            ACTOR,
+        ])
+    };
+    assert_eq!(text(at(&create(), &["project"]), "name"), "New Model");
+    assert_eq!(text(&suggest().1, "name"), "New Model 1");
+    fs::write(
+        f.root.join("models/New Model 1"),
+        b"keep this existing file",
+    )
+    .unwrap();
+    assert_eq!(text(at(&create(), &["project"]), "name"), "New Model 2");
+    assert_eq!(text(at(&create(), &["project"]), "name"), "New Model 3");
+    let mut concurrent = std::thread::scope(|scope| {
+        let first = scope.spawn(create);
+        let second = scope.spawn(create);
+        [first.join().unwrap(), second.join().unwrap()]
+            .map(|created| text(at(&created, &["project"]), "name"))
+    });
+    concurrent.sort();
+    assert_eq!(concurrent, ["New Model 4", "New Model 5"]);
+    assert_eq!(
+        fs::read(f.root.join("models/New Model 1")).unwrap(),
+        b"keep this existing file"
+    );
+    assert_eq!(
+        f.code(&[
+            "create-project",
+            "--parent",
+            &parent,
+            "--name",
+            "New Model",
+            "--actor-id",
+            ACTOR
+        ]),
+        "DUPLICATE_ID"
+    );
+    assert_eq!(
+        f.raw(&[
+            "suggest-project-name",
+            "--parent",
+            &parent,
+            "--name",
+            "../bad"
+        ])
+        .0,
+        2
+    );
+}
+
+#[test]
+fn listing_recents_persists_removal_of_missing_models_and_keeps_unreadable_models() {
+    use beamcraft_host::settings::Settings;
+    let f = Fixture::new();
+    let config = f.root.join("config");
+    let models = f.path("models");
+    let created = f.ok(&[
+        "create-project",
+        "--parent",
+        &models,
+        "--name",
+        "Ready",
+        "--actor-id",
+        ACTOR,
+    ]);
+    let ready = PathBuf::from(text(at(&created, &["project"]), "path"));
+    let unreadable = f.root.join("models/unreadable");
+    fs::create_dir_all(unreadable.join("revisions")).unwrap();
+    fs::write(
+        unreadable.join("revisions/corrupt-record"),
+        b"not a revision",
+    )
+    .unwrap();
+    let missing = f.root.join("models/removed");
+    let no_store = f.root.join("models/removed-store");
+    fs::create_dir_all(&no_store).unwrap();
+    let mut settings = Settings::load(&config).unwrap();
+    for path in [&unreadable, &missing, &no_store] {
+        settings.touch_recent(path.clone(), 1).unwrap();
+    }
+    settings.save(&config).unwrap();
+    let listed = f.ok(&["list-recent"]);
+    let entries = at(&listed, &["recent"]).array().unwrap();
+    assert_eq!(entries.len(), 2, "{listed:?}");
+    let saved = Settings::load(&config).unwrap();
+    assert_eq!(
+        saved
+            .recent
+            .iter()
+            .map(|entry| &entry.path)
+            .collect::<Vec<_>>(),
+        [&unreadable, &ready]
+    );
+    assert!(
+        !at(&entries[0], &["project", "state"])
+            .get("unreadable")
+            .unwrap()
+            .string()
+            .unwrap()
+            .is_empty()
+    );
+    let before = fs::read(config.join("settings.json")).unwrap();
+    assert_eq!(listed, f.ok(&["list-recent"]));
+    assert_eq!(before, fs::read(config.join("settings.json")).unwrap());
+}
+
 fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
     path.iter().fold(json, |j, k| j.get(k).unwrap())
 }

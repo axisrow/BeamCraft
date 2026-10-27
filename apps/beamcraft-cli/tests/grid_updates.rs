@@ -180,7 +180,7 @@ fn malformed_order_labels_modes_and_identities_refuse_without_publication() {
     );
     rejected(
         &f,
-        &["--id", GRID, "--u-expression", "0 6000", "--u-labels", "1"],
+        &["--id", GRID, "--u-expression", "0 6000", "--u-labels", ","],
         "INVALID_ARGUMENT",
     );
     rejected(
@@ -273,4 +273,91 @@ fn a_regular_family_edit_and_frame_move_are_one_undo_unit() {
     assert_eq!(original.get("grids"), run("list-grids", &[]).get("grids"));
     history("redo-workspace");
     assert_eq!(updated.get("grids"), run("list-grids", &[]).get("grids"));
+}
+
+#[test]
+fn fitting_repairs_a_disconnected_grid_and_replays_without_growing_it_again() {
+    let f = support::StoreFixture::new("t01-grid-fit");
+    ok(
+        &f,
+        "create-grid",
+        &[
+            "--name",
+            "Fit",
+            "--new-id",
+            GRID,
+            "--u-expression",
+            "0 2*6000",
+            "--v-expression",
+            "0 2*5000",
+        ],
+    );
+    // Reproduce an older edit which enlarged both families but retained their short spans.
+    ok(
+        &f,
+        "update-grid",
+        &[
+            "--id",
+            GRID,
+            "--u-expression",
+            "0 5*6000",
+            "--u-labels",
+            "1",
+            "--v-expression",
+            "0 9*5000",
+            "--v-labels",
+            "A",
+        ],
+    );
+    let disconnected = grid(&f);
+    let fit = [
+        "--id",
+        GRID,
+        "--fit-spans",
+        "true",
+        "--op-id",
+        "01990000-0000-7000-8000-000000002200",
+    ];
+    ok(&f, "update-grid", &fit);
+    let fitted = grid(&f);
+    assert_eq!(list(fitted.get("u").unwrap(), "lines").len(), 6);
+    assert_eq!(list(fitted.get("v").unwrap(), "lines").len(), 10);
+    for (family, end, dimension) in [("u", 47000.0, 1), ("v", 32000.0, 0)] {
+        let before = list(disconnected.get(family).unwrap(), "lines");
+        for (old, new) in before
+            .iter()
+            .zip(list(fitted.get(family).unwrap(), "lines"))
+        {
+            assert_eq!(old.get("axis_id"), new.get("axis_id"));
+            assert_eq!(old.get("label"), new.get("label"));
+            assert_eq!(
+                new.get("start_mm").unwrap().array().unwrap()[dimension]
+                    .float()
+                    .unwrap(),
+                -2000.0
+            );
+            assert_eq!(
+                new.get("end_mm").unwrap().array().unwrap()[dimension]
+                    .float()
+                    .unwrap(),
+                end
+            );
+        }
+    }
+    let head = ok(&f, "open-revision", &[]);
+    assert_eq!(
+        text(&ok(&f, "update-grid", &fit), "outcome"),
+        "grid_update_replayed"
+    );
+    assert_eq!(head, ok(&f, "open-revision", &[]));
+    rejected(
+        &f,
+        &["--id", GRID, "--fit-spans", "false"],
+        "INVALID_ARGUMENT",
+    );
+    rejected(
+        &f,
+        &["--id", GRID, "--fit-spans", "yes"],
+        "INVALID_ARGUMENT",
+    );
 }

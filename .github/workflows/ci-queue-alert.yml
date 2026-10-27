@@ -1,0 +1,50 @@
+name: CI runner queue alert
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/ci-queue-alert.yml
+      - tools/ci-queue-alert.sh
+      - tools/test-ci-queue-alert.sh
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: ci-queue-alert
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test queue alert logic
+        run: bash tools/test-ci-queue-alert.sh
+
+  detect:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_API_URL: ${{ github.api_url }}
+      QUEUE_THRESHOLD_MINUTES: "15"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check queued jobs and open one deduplicated alert
+        run: bash tools/ci-queue-alert.sh

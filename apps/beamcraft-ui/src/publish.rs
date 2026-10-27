@@ -350,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_is_displayed_with_the_engines_code_and_changes_nothing_else() {
+    fn a_refusal_shows_the_message_without_the_code_and_changes_nothing_else() {
         let refusal = br#"{"outcome":"rejected","code":"BASE_REVISION_MISMATCH","message":"the published head moved since the workspace was forked"}"#;
         let error = parse_published(Some(2), refusal).unwrap_err();
         assert_eq!(error.code, "BASE_REVISION_MISMATCH");
@@ -366,8 +366,9 @@ mod tests {
         assert_eq!(p.phase(), Phase::Idle);
         let shown = p.note.clone().unwrap().unwrap_err();
         assert!(
-            shown.contains("BASE_REVISION_MISMATCH") && shown.contains("nothing was published")
+            shown.contains("the published head moved") && shown.contains("nothing was published")
         );
+        assert!(!shown.contains("BASE_REVISION_MISMATCH"));
         // The dialog can be opened again: there is no conflict resolution to run instead.
         assert!(p.request().is_ok());
     }

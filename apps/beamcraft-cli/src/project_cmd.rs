@@ -14,8 +14,8 @@ use crate::plate_cmd::{id_error, revision_json};
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::project::{
     ENVIRONMENTS_DIR, EnvironmentEntry, EnvironmentState, ProjectContext, ProjectInfo,
-    ProjectState, builtin_environment_dirs, create_project, list_environments, list_projects,
-    project_info,
+    ProjectState, builtin_environment_dirs, create_project, create_project_unique,
+    list_environments, list_projects, next_project_name, project_info, project_is_missing,
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::NoFault;
@@ -53,6 +53,7 @@ pub fn handles(command: &OsString) -> bool {
         "set-settings",
         "list-environment",
         "create-project",
+        "suggest-project-name",
         "list-project",
         "list-recent",
         "add-recent",
@@ -92,12 +93,14 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--config-dir",
             "--parent",
             "--name",
+            "--unique-name",
             "--op-id",
             "--revision-id",
             "--actor-id",
             "--project-id",
             "--workspace-id",
         ],
+        "suggest-project-name" => &["--parent", "--name"],
         "list-project" => &["--dir"],
         "add-recent" => &["--config-dir", "--store"],
         _ => return Err(invalid("unknown command")),
@@ -181,6 +184,17 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ),
             ]))
         }
+        "suggest-project-name" => {
+            let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
+            let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
+            Ok(Json::object([
+                ("outcome", Json::text("project_name")),
+                (
+                    "name",
+                    Json::text(next_project_name(Path::new(parent), name)?),
+                ),
+            ]))
+        }
         "create-project" => {
             let parent = given("--parent").ok_or_else(|| invalid("--parent is required"))?;
             let name = given("--name").ok_or_else(|| invalid("--name is required"))?;
@@ -216,7 +230,16 @@ fn run(args: &[OsString]) -> Run<Json> {
                     None => WorkspaceId::from_uuid(fresh_id()?),
                 },
             };
-            let info = create_project(Path::new(parent), name, &context, &mut NoFault)?;
+            let unique = given("--unique-name")
+                .map(boolean)
+                .transpose()?
+                .unwrap_or(false);
+            let create = if unique {
+                create_project_unique
+            } else {
+                create_project
+            };
+            let info = create(Path::new(parent), name, &context, &mut NoFault)?;
             let recorded = dir.is_ok_and(|dir| remember(&dir, &info.path).is_ok());
             Ok(Json::object([
                 ("outcome", Json::text("project_created")),
@@ -242,7 +265,13 @@ fn run(args: &[OsString]) -> Run<Json> {
             ]))
         }
         "list-recent" => {
-            let settings = Settings::load(&config_dir()?).map_err(settings_error)?;
+            let dir = config_dir()?;
+            let mut settings = Settings::load(&dir).map_err(settings_error)?;
+            let previous_count = settings.recent.len();
+            settings.recent.retain(|r| !project_is_missing(&r.path));
+            if settings.recent.len() != previous_count {
+                settings.save(&dir).map_err(settings_error)?;
+            }
             let mut recent = Vec::with_capacity(settings.recent.len());
             for r in &settings.recent {
                 let project = project_info(&r.path)?;

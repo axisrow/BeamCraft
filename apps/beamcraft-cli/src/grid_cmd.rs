@@ -315,6 +315,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--v-labels",
             "--v-new-axis-ids",
             "--v-span",
+            "--fit-spans",
         ],
         "draw-grid-line" => &[
             "--store",
@@ -525,6 +526,19 @@ pub(crate) fn views_json(grids: &[Grid]) -> Run<Json> {
                     Ok(Json::object([
                         ("mode", Json::text(mode)),
                         ("expression", expression),
+                        (
+                            "span_mm",
+                            match f {
+                                GridFamily::Regular(f) => Json::Array(
+                                    f.span_mm
+                                        .iter()
+                                        .copied()
+                                        .map(num)
+                                        .collect::<Run<Vec<_>>>()?,
+                                ),
+                                GridFamily::Drawn(_) => Json::Null,
+                            },
+                        ),
                         (
                             "lines",
                             Json::Array(
@@ -880,6 +894,11 @@ fn update_command(
         orientation_zw,
         u: regular_patch(store, target_id, options, true, fresh)?,
         v: regular_patch(store, target_id, options, false, fresh)?,
+        fit_spans: match options.get("--fit-spans").copied() {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => return Err(invalid("--fit-spans is true or false")),
+        },
     };
     let change = beamcraft_cli::grid::update_grid(store, context, &request, &mut NoFault)?;
     Ok(Json::object([

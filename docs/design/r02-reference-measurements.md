@@ -2,8 +2,7 @@
 
 Date: 2026-10-26. Status: **experimental vertical slice; the R02 acceptance criteria are
 demonstrated for the supported profile below, and K3 is not claimed** (it also needs R03 and the
-rest of G08). Branch `feat/r02-r03-reference-measurements`, based on `origin/master` at
-`42c6296` (rebased over the F04 command rename; the command is `measure-reference`).
+rest of G08). The command is `measure-reference`, per the F04 naming rule.
 
 Plan row: R02 / M, depends on R01 (merged), P04 and G08. Result: measurements of a foreign
 reference's composed surface as separate result objects, never written into the model and never

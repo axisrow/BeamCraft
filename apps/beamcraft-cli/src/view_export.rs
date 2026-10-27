@@ -14,6 +14,8 @@
 //! little-endian `u32` and that reply byte for byte as `beamcraft definitions --store ROOT`
 //! prints it; the length and the reply of `beamcraft inspect-elements --store ROOT --element ID`
 //! the same way; then the bundle. A length of zero is a reply that was not asked for.
+//! `--with-grids true` selects [`GRID_FRAME_MAGIC`] and adds a third length-prefixed reply,
+//! containing `list-grids` display data from that same inspection, before the bundle.
 
 use crate::plate_cmd::{definitions_json, id_error, inspection_json};
 use crate::report::report;
@@ -28,6 +30,8 @@ use std::io::Write;
 
 /// The first bytes of a framed reply (`--with-definitions true` or `--with-element ID`).
 pub const FRAME_MAGIC: &[u8; 8] = b"BCVXFRM1";
+/// Version 2 adds pinned grid display data as a third length-prefixed reply.
+pub const GRID_FRAME_MAGIC: &[u8; 8] = b"BCVXFRM2";
 
 /// What `execute` produced.
 pub enum Output {
@@ -35,8 +39,7 @@ pub enum Output {
     Json(Json, u8),
     /// Raw bundle bytes for standard output.
     Raw(Vec<u8>),
-    /// A frame: the magic and the two length-prefixed replies, then the bundle, written one
-    /// after the other.
+    /// A frame: the magic and bounded length-prefixed replies, then the bundle.
     Framed {
         /// Magic, lengths and replies.
         head: Vec<u8>,
@@ -109,7 +112,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 8 {
+    if !args.len().is_multiple_of(2) || args.len() > 10 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
@@ -117,7 +120,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         let [key, value] = pair;
         if !matches!(
             *key,
-            "--store" | "--out" | "--with-definitions" | "--with-element"
+            "--store" | "--out" | "--with-definitions" | "--with-element" | "--with-grids"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated option"));
@@ -138,7 +141,12 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         Some(text) => Some(ElementId::parse(text).map_err(id_error)?),
         None => None,
     };
-    let framed = with_definitions || with_element.is_some();
+    let with_grids = match options.get("--with-grids") {
+        None | Some(&"false") => false,
+        Some(&"true") => true,
+        Some(_) => return Err(invalid("--with-grids is true or false")),
+    };
+    let framed = with_definitions || with_element.is_some() || with_grids;
     // Checked before the store is opened, so a refused request never creates the file.
     if framed && *out != "-" {
         return Err(invalid("a framed reply needs --out -"));
@@ -163,9 +171,21 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         let definitions =
             with_definitions.then(|| printed(definitions_json(&inspection, &BTreeMap::new())));
         let element = with_element.map(|id| printed(inspection_json(&inspection, Some(id))));
-        let mut head = FRAME_MAGIC.to_vec();
+        let mut head = if with_grids {
+            GRID_FRAME_MAGIC
+        } else {
+            FRAME_MAGIC
+        }
+        .to_vec();
         section(&mut head, definitions.as_deref())?;
         section(&mut head, element.as_deref())?;
+        if with_grids {
+            let grids =
+                printed(crate::grid_cmd::views_json(&inspection.grids).map(|grids| {
+                    Json::object([("outcome", Json::text("grids")), ("grids", grids)])
+                }));
+            section(&mut head, Some(&grids))?;
+        }
         return Ok(Output::Framed { head, bundle });
     }
     if *out == "-" {

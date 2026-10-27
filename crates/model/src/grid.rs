@@ -373,27 +373,104 @@ pub enum GridLabelError {
     Invalid,
     /// The generated list or a label exceeds a contract cap.
     Limit,
-    /// The label count disagrees with the number of lines.
+    /// A nonempty family has no starting label.
     Count,
     /// A label occurs more than once in the grid.
     Duplicate,
 }
 
-/// Validate a whitespace or comma separated explicit label list.
+/// Read one whitespace or comma separated label per line, ignoring unused trailing labels.
+///
+/// Missing labels continue from the last supplied label. Numeric suffixes increment; Latin and
+/// Cyrillic letters use spreadsheet-style sequences, preserving case. Other labels gain `-1`.
+/// Already-used labels are skipped. Unused trailing words are not stored or validated.
 pub fn parse_grid_labels(text: &str, expected: usize) -> Result<Vec<String>, GridLabelError> {
     if text.len() > 16_384 || expected > MAX_GRID_LINES_PER_FAMILY * 2 {
         return Err(GridLabelError::Limit);
     }
-    let labels: Vec<String> = text
+    let mut labels: Vec<String> = text
         .split(|c: char| c.is_ascii_whitespace() || c == ',')
         .filter(|word| !word.is_empty())
+        .take(expected)
         .map(str::to_owned)
         .collect();
-    if labels.len() != expected {
-        return Err(GridLabelError::Count);
-    }
     validate_grid_labels(&labels)?;
+    if labels.len() < expected {
+        let mut seed = labels.last().cloned().ok_or(GridLabelError::Count)?;
+        let mut used: BTreeSet<_> = labels.iter().cloned().collect();
+        for _ in labels.len()..expected {
+            let mut added = false;
+            // At most `expected` labels are occupied; one more candidate must be free.
+            for _ in 0..=expected {
+                seed = next_grid_label(&seed)?;
+                validate_grid_labels(std::slice::from_ref(&seed))?;
+                if used.insert(seed.clone()) {
+                    labels.push(seed.clone());
+                    added = true;
+                    break;
+                }
+            }
+            if !added {
+                return Err(GridLabelError::Duplicate);
+            }
+        }
+    }
     Ok(labels)
+}
+
+fn next_grid_label(seed: &str) -> Result<String, GridLabelError> {
+    const ALPHABETS: [&str; 4] = [
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "abcdefghijklmnopqrstuvwxyz",
+        "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ",
+        "абвгдеёжзийклмнопрстуфхцчшщъыьэюя",
+    ];
+    if let Some(alphabet) = ALPHABETS
+        .iter()
+        .find(|alphabet| seed.chars().all(|c| alphabet.contains(c)))
+    {
+        let first = alphabet.chars().next().ok_or(GridLabelError::Invalid)?;
+        let mut reversed = String::new();
+        let mut carry = true;
+        for c in seed.chars().rev() {
+            if carry {
+                let index = alphabet
+                    .chars()
+                    .position(|a| a == c)
+                    .ok_or(GridLabelError::Invalid)?;
+                if let Some(next) = alphabet.chars().nth(index.saturating_add(1)) {
+                    reversed.push(next);
+                    carry = false;
+                } else {
+                    reversed.push(first);
+                }
+            } else {
+                reversed.push(c);
+            }
+        }
+        if carry {
+            reversed.push(first);
+        }
+        return Ok(reversed.chars().rev().collect());
+    }
+    let digit_start = seed
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_ascii_digit())
+        .last()
+        .map(|(i, _)| i);
+    if let Some(start) = digit_start {
+        let (prefix, digits) = seed
+            .split_at_checked(start)
+            .ok_or(GridLabelError::Invalid)?;
+        let next = digits
+            .parse::<u64>()
+            .ok()
+            .and_then(|n| n.checked_add(1))
+            .ok_or(GridLabelError::Limit)?;
+        return Ok(format!("{prefix}{next:0width$}", width = digits.len()));
+    }
+    Ok(format!("{seed}-1"))
 }
 
 /// Expand the `numeric` or `alpha` helper to the explicit labels carried by a command.
@@ -611,6 +688,20 @@ mod tests {
         assert!(parse_grid_labels("A a", 2).is_ok());
         assert!(parse_grid_labels("A A", 2).is_err());
         assert_eq!(
+            parse_grid_labels("A, B C C ? unused", 3).unwrap(),
+            ["A", "B", "C"]
+        );
+        assert_eq!(parse_grid_labels("A B", 3).unwrap(), ["A", "B", "C"]);
+        assert_eq!(parse_grid_labels("", 3), Err(GridLabelError::Count));
+        assert_eq!(
+            parse_grid_labels("A A C D", 3),
+            Err(GridLabelError::Duplicate)
+        );
+        assert_eq!(
+            parse_grid_labels(&"A ".repeat(8193), 1),
+            Err(GridLabelError::Limit)
+        );
+        assert_eq!(
             generate_grid_labels("alpha", 4, None, None, GridLabelOrder::Ascending).unwrap(),
             ["A", "B", "C", "D"]
         );
@@ -623,6 +714,28 @@ mod tests {
                 .unwrap(),
             ["6", "4", "2"]
         );
+    }
+
+    #[test]
+    fn incomplete_labels_continue_without_renaming_explicit_axes() {
+        for (input, expected) in [
+            ("1 2", vec!["1", "2", "3", "4"]),
+            ("009", vec!["009", "010", "011", "012"]),
+            ("Y Z", vec!["Y", "Z", "AA", "AB"]),
+            ("y z", vec!["y", "z", "aa", "ab"]),
+            ("А Б", vec!["А", "Б", "В", "Г"]),
+            ("Э Ю Я", vec!["Э", "Ю", "Я", "АА"]),
+            ("а б", vec!["а", "б", "в", "г"]),
+            ("Г-1", vec!["Г-1", "Г-2", "Г-3", "Г-4"]),
+            ("A C B", vec!["A", "C", "B", "D"]),
+            ("中", vec!["中", "中-1", "中-2", "中-3"]),
+        ] {
+            assert_eq!(parse_grid_labels(input, 4).unwrap(), expected, "{input}");
+        }
+        assert!(parse_grid_labels("9999999999999999", 2).is_err());
+        assert!(parse_grid_labels("ZZZZZZZZZZZZZZZZ", 2).is_err());
+        assert_eq!(parse_grid_labels("1", 400).unwrap().len(), 400);
+        assert_eq!(parse_grid_labels("1", 401), Err(GridLabelError::Limit));
     }
 }
 

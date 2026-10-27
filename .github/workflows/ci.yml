@@ -38,7 +38,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        # Owner decision 2026-10-24 (#180): Windows legs run on pushes to master and on manual
+        # runs, not on pull requests, so pull request bursts do not queue for Windows runners.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest", "macos-latest"]') || fromJSON('["windows-latest", "ubuntu-latest", "macos-latest"]') }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -133,6 +135,8 @@ jobs:
 
   test-archive-windows:
     name: build test archive (windows-latest)
+    # Not on pull requests (owner decision 2026-10-24, #180); the shards below skip with it.
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     env:
       # Keep the debug test profile and assertions, but omit bulky debug symbols from the archive.
