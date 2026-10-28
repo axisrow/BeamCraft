@@ -44,6 +44,11 @@ Thanks for helping. Humans and AI agents follow the same rules.
    stops the run for manual resolution — the mirror never auto-merges. The same workflow runs
    automatically when a PR merges into fork `master` and on `workflow_dispatch` with a PR
    number. Direct pushes to fork `master` bypass the PR trigger: mirror those by hand.
+8. Gate a branch before it becomes an upstream PR: `bash tools/upstream-pr-gate.sh <head-branch>`
+   fails when the branch is based on a stale `upstream/master` (it prints how many upstream commits
+   are missed) or when its diff deletes files that exist in `upstream/master` — rerun with
+   `--allow-delete <path> ...` listing every path meant to be deleted. On success it prints a short
+   diff summary. The script is read-only: it checks and never pushes, merges or rewrites anything.
 
 Mirrors (forks) of this repository keep their own `master` aligned with this one. This
 repository ships only [`tools/sync.schema.example`](tools/sync.schema.example) — the schema
