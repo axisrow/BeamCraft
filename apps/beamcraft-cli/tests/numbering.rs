@@ -478,3 +478,154 @@ fn a_store_without_parts_has_an_empty_preview() {
     assert!(list(&p, "groups").is_empty());
     assert_eq!(number(at(&p, &["counts"]), "parts"), 0);
 }
+
+#[test]
+fn numbering_binds_evaluated_shapes_and_stales_even_when_group_membership_does_not_change() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let bent = f.ok(
+        "create-polybeam",
+        &[
+            "--points",
+            "0,0,0;3000,0,0;3000,4000,0",
+            "--profile-digest",
+            &profile,
+        ],
+    );
+    let id = text(at(&bent, &["member"]), "element_id");
+    f.ok(
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "7000,0,0",
+            "--profile-digest",
+            &profile,
+        ],
+    );
+    assert_eq!(
+        groups(&f.preview(&[])),
+        [
+            ("beam".into(), "B1".into(), 1),
+            ("beam".into(), "B2".into(), 1)
+        ]
+    );
+    let before = f.preview(&[]);
+    let token = text(&before, "preview_token");
+    f.ok("approve-numbering", &["--preview-token", &token]);
+    // Moving and rotating the scene instance do not change its normalized geometry.
+    f.ok(
+        "update-element",
+        &[
+            "--id",
+            &id,
+            "--translation",
+            "1200,800,300",
+            "--orientation-xyzw",
+            "0,0,0.7071067811865476,0.7071067811865476",
+        ],
+    );
+    let moved = f.preview(&["--previous", &token]);
+    assert!(matches!(moved.get("stale").unwrap(), Json::Bool(false)));
+    assert_eq!(text(at(&moved, &["approval"]), "state"), "current");
+    // The total length and the B1/B2 membership stay the same, but the finished body changes.
+    f.ok(
+        "update-element",
+        &["--id", &id, "--axis-point", "0,0,0;4000,0,0;4000,3000,0"],
+    );
+    let changed = f.preview(&["--previous", &token]);
+    assert_eq!(groups(&changed), groups(&before));
+    assert!(matches!(changed.get("stale").unwrap(), Json::Bool(true)));
+    assert_eq!(text(at(&changed, &["approval"]), "state"), "stale");
+    let head = f.head();
+    let (code, refusal) = f.run("approve-numbering", &["--preview-token", &token]);
+    assert_eq!(code, 2, "{refusal:?}");
+    assert_eq!(text(&refusal, "code"), "STALE_WORKSPACE");
+    assert_eq!(f.head(), head);
+    f.ok("copy-element", &["--id", &id, "--offset", "0,1000,0"]);
+    assert_eq!(
+        groups(&f.preview(&[])),
+        [
+            ("beam".into(), "B1".into(), 2),
+            ("beam".into(), "B2".into(), 1)
+        ]
+    );
+    let token = text(&f.preview(&[]), "preview_token");
+    // Straightening at the same length now joins the straight part's group.
+    f.ok(
+        "update-element",
+        &["--id", &id, "--axis-point", "0,0,0;7000,0,0"],
+    );
+    let straightened = f.preview(&["--previous", &token]);
+    assert!(matches!(
+        straightened.get("stale").unwrap(),
+        Json::Bool(true)
+    ));
+    assert_eq!(
+        groups(&straightened),
+        [
+            ("beam".into(), "B1".into(), 2),
+            ("beam".into(), "B2".into(), 1)
+        ]
+    );
+}
+
+#[test]
+fn a_member_cut_changes_numbering_without_changing_the_axis_length() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let member = f.ok(
+            "create-member",
+            &[
+                "--start",
+                "0,0,0",
+                "--end",
+                "7000,0,0",
+                "--profile-digest",
+                &profile,
+            ],
+        );
+        ids.push(text(at(&member, &["member"]), "element_id"));
+    }
+    let token = text(&f.preview(&[]), "preview_token");
+    assert_eq!(groups(&f.preview(&[])), [("beam".into(), "B1".into(), 2)]);
+    f.ok(
+        "cut-by-plane",
+        &[
+            "--id",
+            &ids[1],
+            "--operation-id",
+            "01900000-0000-7000-8000-000000000501",
+            "--point",
+            "3500,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    let after = f.preview(&["--previous", &token]);
+    assert!(matches!(after.get("stale").unwrap(), Json::Bool(true)));
+    assert_eq!(
+        groups(&after),
+        [
+            ("beam".into(), "B1".into(), 1),
+            ("beam".into(), "B2".into(), 1)
+        ]
+    );
+}

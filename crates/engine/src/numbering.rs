@@ -8,8 +8,8 @@
 //! numbering requirements 24.1 to 24.4 and the observation that identical parts share one
 //! number):
 //!
-//! * Parts are identical when kind, pinned profile, pinned material, dimensions (within the
-//!   tolerance) and holes (compared in the part's own frame, within the tolerance) agree. The
+//! * Parts are identical when kind, pinned profile, pinned material, evaluated geometry,
+//!   dimensions and holes (compared in the part's own frame, within the tolerance) agree. The
 //!   name is compared only when asked. Placement, level and assembly membership never matter.
 //! * The oldest part of a group (the smallest, i.e. earliest, ElementId) is its reference; groups
 //!   are numbered in the order of their references, so adding a copy of an existing part never
@@ -19,13 +19,16 @@
 //!   all parts they hold (nested assemblies included) and marked `prefix-number`.
 //! * If two groups would get the same position, only the first (in series order plate, beam,
 //!   column, assembly) is numbered; the other is `overlapping` and its parts stay unnumbered.
-//! * The preview token covers every fact that influences a position, so it changes exactly when
-//!   an edit would change the proposed numbering (a thickness, a material, a hole, a new or
-//!   deleted part) and not for a move or, unless the name is compared, a rename.
+//! * The preview token binds the fabrication facts as well as the proposed groups, so a shape
+//!   edit invalidates approval even when the part stays alone in B1. A move or, unless the
+//!   name is compared, a rename does not invalidate it.
 
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::id::ElementId;
 use std::collections::{BTreeMap, BTreeSet};
+
+mod geometry;
+pub use geometry::PartGeometry;
 
 /// Parts and assemblies the preview handles at most.
 pub const MAX_ITEMS: usize = 65_536;
@@ -92,6 +95,9 @@ pub struct PartFact {
     /// the tolerance; empty for every other part. Two plates are identical only if their
     /// outlines match, not merely their bounding boxes.
     pub outline: Vec<[f64; 2]>,
+    /// Evaluated geometry in a placement-independent part frame. Legacy fact producers may
+    /// omit it; committed model adapters supply it so cuts and swept shapes enter numbering.
+    pub geometry: Option<PartGeometry>,
     /// The assembly the part belongs to.
     pub assembly: Option<ElementId>,
 }
@@ -282,6 +288,11 @@ fn same_part(
     a.kind == b.kind
         && a.profile == b.profile
         && a.material == b.material
+        && match (&a.geometry, &b.geometry) {
+            (Some(a), Some(b)) => a.equivalent(b, s.tolerance_mm),
+            (None, None) => true,
+            _ => false,
+        }
         && (!s.compare_name || a.name == b.name)
         && a.dimensions.len() == b.dimensions.len()
         && a.dimensions
@@ -578,7 +589,7 @@ pub fn preview(
             group.overlaps_with = Some(group.position.clone());
         }
     }
-    let token = token_of(&groups, settings);
+    let token = token_of(&groups, settings, &ordered);
     Ok(Preview { groups, token })
 }
 
@@ -601,8 +612,8 @@ fn describe(part: &PartFact, s: &Settings) -> String {
     text
 }
 
-fn token_of(groups: &[Group], s: &Settings) -> ContentDigest {
-    let mut text = String::from("BCNUM1\n");
+fn token_of(groups: &[Group], s: &Settings, parts: &[&PartFact]) -> ContentDigest {
+    let mut text = String::from("BCNUM2\n");
     for (name, series) in [
         ("plate", &s.plate),
         ("beam", &s.beam),
@@ -630,6 +641,31 @@ fn token_of(groups: &[Group], s: &Settings) -> ContentDigest {
             text.push_str(&format!(" {member}"));
         }
         text.push('\n');
+    }
+    // Group membership alone does not bind a shape: a single part can change its geometry
+    // and still occupy B1. Include every part, including non-reference members of a group.
+    for part in parts {
+        text.push_str(&format!(
+            "part {} {} {:?} {:?}\n",
+            part.id,
+            part.kind.as_str(),
+            part.profile,
+            part.material
+        ));
+        for value in part.dimensions.iter().chain(&part.angles_rad) {
+            text.push_str(&format!(" {}", float_key(*value)));
+        }
+        text.push_str(&format!(
+            " outline {:?} holes {:?}\n",
+            part.outline,
+            canonical_holes(&part.holes)
+        ));
+        if s.compare_name {
+            text.push_str(&format!("name {:?}\n", part.name));
+        }
+        if let Some(geometry) = &part.geometry {
+            text.push_str(&format!("geometry {} {}\n", part.id, geometry.digest()));
+        }
     }
     Sha256::digest(text.as_bytes()).unwrap_or_else(|_| ContentDigest::from_bytes([0; 32]))
 }
@@ -667,6 +703,7 @@ mod tests {
             angles_rad: Vec::new(),
             holes: Vec::new(),
             outline: Vec::new(),
+            geometry: None,
             assembly: None,
         }
     }
@@ -682,6 +719,7 @@ mod tests {
             angles_rad: vec![0.0],
             holes: Vec::new(),
             outline: Vec::new(),
+            geometry: None,
             assembly: None,
         }
     }

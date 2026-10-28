@@ -11,7 +11,9 @@
 use crate::assembly::assemblies;
 use crate::numbering_approval::head_marks;
 use crate::plate::{PlateError, inspect};
-use beamcraft_engine::numbering::{AssemblyFact, PartFact, PartKind, Preview, Settings, preview};
+use beamcraft_engine::numbering::{
+    AssemblyFact, PartFact, PartGeometry, PartKind, Preview, Settings, preview,
+};
 use beamcraft_engine::numbering_approval::{Mark, Report, StoredMark, assess};
 use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::RevisionStore;
@@ -134,6 +136,10 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
                 angles_rad: Vec::new(),
                 holes: holes_of(record),
                 outline: outline_of(record),
+                geometry: Some(
+                    PartGeometry::plate(&record.body.solid)
+                        .map_err(|e| error(ErrorCode::InvalidArgument, e.0))?,
+                ),
                 assembly: holder.get(&a.id).copied(),
             });
         }
@@ -155,6 +161,10 @@ pub(crate) fn state(store: &RevisionStore) -> Result<State, PlateError> {
                 angles_rad: vec![a.roll_rad.unwrap_or(0.0)],
                 holes: Vec::new(),
                 outline: Vec::new(),
+                geometry: Some(
+                    PartGeometry::member(a, &record.body)
+                        .map_err(|e| error(ErrorCode::InvalidArgument, e.0))?,
+                ),
                 assembly: holder.get(&a.id).copied(),
             });
         }

@@ -557,6 +557,7 @@ mod tests {
             angles_rad: Vec::new(),
             holes: Vec::new(),
             outline: Vec::new(),
+            geometry: None,
             assembly: None,
         }
     }
