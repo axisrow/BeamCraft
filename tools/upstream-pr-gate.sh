@@ -65,8 +65,10 @@ if [ "$base" != "$tip" ]; then
 fi
 
 # 2. Upstream files must not be deleted: with a fresh base every path shown
-# as deleted exists in upstream/master.
-deleted=$(git diff --diff-filter=D --name-only "$base" "$branch")
+# as deleted exists in upstream/master. --no-renames: git detects renames by
+# default, and a moved upstream file would surface as R instead of a deletion
+# of its old path.
+deleted=$(git diff --no-renames --diff-filter=D --name-only "$base" "$branch")
 if [ -n "$deleted" ]; then
     if [ "$allow_delete" -eq 0 ]; then
         echo "upstream-pr-gate: the branch deletes files that exist in upstream/master:" >&2
