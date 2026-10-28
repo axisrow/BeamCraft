@@ -1389,6 +1389,7 @@ fn created_element(state: &AuthoredState) -> Result<Element, PlateError> {
                 axis_mm: authored.axis_points_mm.clone(),
                 profile: authored.profile,
                 roll_rad: authored.roll_rad,
+                curved: authored.curved,
                 placement: authored.section_placement,
                 cuts: authored.cuts.clone(),
             },
