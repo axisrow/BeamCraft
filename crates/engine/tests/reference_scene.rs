@@ -178,16 +178,10 @@ fn triangle_winding_is_preserved_or_reversed_only_when_requested() {
 }
 
 #[test]
-fn malformed_or_unsupported_foreign_geometry_never_becomes_a_partial_mesh() {
+fn malformed_foreign_geometry_never_becomes_a_partial_mesh() {
     let record = attached();
     let cube = ReferenceGeometry::cube(2.0, [0.0; 3]).unwrap();
     let mut cases = Vec::new();
-    let mut bad = cube.clone();
-    bad.points[0][0] = f64::NAN;
-    cases.push((bad, ErrorCode::NonFiniteNumber));
-    let mut bad = cube.clone();
-    bad.points[0][0] = f64::MAX;
-    cases.push((bad, ErrorCode::LimitExceeded));
     let mut bad = cube.clone();
     bad.face_vertex_indices[0] = u32::MAX;
     cases.push((bad, ErrorCode::InvalidArgument));
@@ -197,28 +191,6 @@ fn malformed_or_unsupported_foreign_geometry_never_becomes_a_partial_mesh() {
     let mut bad = cube.clone();
     bad.face_vertex_indices.push(0);
     cases.push((bad, ErrorCode::InvalidArgument));
-    let mut bad = cube.clone();
-    bad.face_vertex_counts[0] = 5;
-    cases.push((bad, ErrorCode::UnsupportedGeometry));
-    let mut bad = cube.clone();
-    bad.points[0][2] += 0.5;
-    cases.push((bad, ErrorCode::UnsupportedGeometry));
-    let mut bad = cube.clone();
-    bad.face_vertex_indices.swap(1, 2);
-    cases.push((bad, ErrorCode::UnsupportedGeometry));
-    let concave = ReferenceGeometry {
-        points: vec![
-            [0.0, 0.0, 0.0],
-            [2.0, 0.0, 0.0],
-            [0.5, 0.5, 0.0],
-            [0.0, 2.0, 0.0],
-        ],
-        face_vertex_counts: vec![4],
-        face_vertex_indices: vec![0, 1, 2, 3],
-        translation: [0.0; 3],
-        left_handed: false,
-    };
-    cases.push((concave, ErrorCode::UnsupportedGeometry));
     let mut bad = cube.clone();
     bad.points.resize(MAX_VERTICES + 1, [0.0; 3]);
     cases.push((bad, ErrorCode::LimitExceeded));
@@ -242,11 +214,79 @@ fn malformed_or_unsupported_foreign_geometry_never_becomes_a_partial_mesh() {
         ErrorCode::LimitExceeded,
         "the aggregate face budget is checked before scanning faces"
     );
+    assert!(reference_element(&record, &[]).unwrap().is_none());
+}
+
+#[test]
+fn a_display_approximates_or_leaves_out_what_the_measurement_would_refuse() {
+    let record = attached();
+    let cube = ReferenceGeometry::cube(2.0, [0.0; 3]).unwrap();
+    let triangles = |geometry: &[ReferenceGeometry]| {
+        let scene = snapshot(&record, geometry, 1);
+        TriMesh::from_blob(scene.meshes()[0].bytes())
+            .unwrap()
+            .triangles()
+            .len()
+    };
+    let alone = triangles(std::slice::from_ref(&cube));
+    // A pentagon is fan-triangulated; a concave or non-planar quad is too.
+    let pentagon = ReferenceGeometry {
+        points: vec![
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [3.0, 1.0, 0.0],
+            [1.0, 3.0, 0.0],
+            [-1.0, 1.0, 0.0],
+        ],
+        face_vertex_counts: vec![5],
+        face_vertex_indices: vec![0, 1, 2, 3, 4],
+        translation: [0.0; 3],
+        left_handed: false,
+    };
+    assert_eq!(triangles(&[pentagon]), 3);
+    let mut concave = concave_quad();
+    assert_eq!(triangles(&[concave.clone()]), 2);
+    concave.points[0][2] += 0.5;
+    assert_eq!(triangles(&[concave]), 2);
+    // A surface that cannot be placed is left out, the rest is drawn.
+    let mut nan = cube.clone();
+    nan.points[0][0] = f64::NAN;
+    let mut far = cube.clone();
+    far.points[0][0] = f64::MAX;
+    assert_eq!(triangles(&[cube.clone(), nan, far]), alone);
+    // The wrapper rotation is baked into the vertices instead of being refused: a half turn about
+    // Z sends the cube centred at x = 4 to x = -4, so its box spans -5..-3 before the translation.
     let mut rotated = record.clone();
     rotated.placement.orientation_xyzw = [0.0, 0.0, 1.0, 0.0];
-    assert_eq!(
-        reference_element(&rotated, &[cube]).unwrap_err().code,
-        ErrorCode::UnsupportedGeometry
+    let scene = snapshot(
+        &rotated,
+        &[ReferenceGeometry::cube(2.0, [4.0, 0.0, 0.0]).unwrap()],
+        1,
     );
-    assert!(reference_element(&record, &[]).unwrap().is_none());
+    let bounds = scene.engineering_bounds().unwrap();
+    assert!(
+        (bounds.min[0] - (10.0 - 5.0)).abs() < 1e-6,
+        "{:?}",
+        bounds.min
+    );
+    assert!(
+        (bounds.max[0] - (10.0 - 3.0)).abs() < 1e-6,
+        "{:?}",
+        bounds.max
+    );
+}
+
+fn concave_quad() -> ReferenceGeometry {
+    ReferenceGeometry {
+        points: vec![
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [0.5, 0.5, 0.0],
+            [0.0, 2.0, 0.0],
+        ],
+        face_vertex_counts: vec![4],
+        face_vertex_indices: vec![0, 1, 2, 3],
+        translation: [0.0; 3],
+        left_handed: false,
+    }
 }

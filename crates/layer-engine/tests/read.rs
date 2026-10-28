@@ -753,6 +753,56 @@ fn kind_and_display_name_are_charged_to_the_snapshot_budget() {
 }
 
 #[test]
+fn raw_usd_text_has_an_inclusive_tightenable_budget_in_both_formats() {
+    for cap in [1024, Budgets::MODEL.text_bytes] {
+        for size in [cap, cap + 1] {
+            let expected = "n".repeat(size);
+            let text = layer(&format!(
+                "def Xform \"A\" {{ custom string note = \"{expected}\" }}"
+            ));
+            let data = openusd::usda::parse(&text).unwrap();
+            let mut binary = IoCursor::new(Vec::new());
+            openusd::usdc::CrateWriter::write(&data, &mut binary).unwrap();
+            for (name, bytes) in [
+                ("root.usda", text.as_bytes().to_vec()),
+                ("root.usdc", binary.into_inner()),
+            ] {
+                let mut req = request(vec![asset(name, bytes)]);
+                req.budgets = Budgets::MODEL;
+                req.budgets.text_bytes = cap;
+                reseal(&mut req);
+                let mut reader = Reader::default();
+                let result = reader.open(req, &control());
+                if size > cap {
+                    assert_eq!(result.unwrap_err().code, ErrorCode::LimitExceeded);
+                    continue;
+                }
+                let opened = result.unwrap();
+                let page = reader.read(&opened.context, None, &control()).unwrap();
+                assert_eq!(
+                    page.items[0]
+                        .properties
+                        .iter()
+                        .find(|p| p.name == "note")
+                        .unwrap()
+                        .value,
+                    Some(Value::Text(expected.clone())),
+                    "{name}, cap {cap}"
+                );
+            }
+        }
+    }
+    for cap in [0, Budgets::MODEL.text_bytes + 1] {
+        let mut req = request(vec![asset("root.usda", model())]);
+        req.budgets.text_bytes = cap;
+        assert_eq!(
+            req.manifest_digest().unwrap_err().code,
+            ErrorCode::LimitExceeded
+        );
+    }
+}
+
+#[test]
 fn the_model_profile_is_the_default_ceiling_and_its_caps_hold_at_plus_one() {
     // The default ceiling is the model profile; nothing may be raised above it.
     let (d, m) = (Budgets::default(), Budgets::MODEL);

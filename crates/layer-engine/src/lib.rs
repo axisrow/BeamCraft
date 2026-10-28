@@ -107,6 +107,9 @@ pub struct Budgets {
     pub values: usize,
     /// Maximum scalar entries per array or structural vector.
     pub array_items: usize,
+    /// Maximum bytes in one raw USD string/token value. Domain labels and identifiers have
+    /// their own tighter limits; this also bounds imported metadata and foreign attributes.
+    pub text_bytes: usize,
     /// Maximum estimated aggregate binary structural/value expansion, not total heap.
     pub decoded_bytes: usize,
     /// Maximum retained typed snapshot bytes (conservative accounting).
@@ -128,6 +131,8 @@ impl Budgets {
     /// * `values` 4,194,304: 64 fields per element at the same cap.
     /// * `array_items` 1,572,864: one element mesh at the engine blob caps (524,288 triangles
     ///   are 1,572,864 indices; 262,144 vertices are 786,432 scalars).
+    /// * `text_bytes` 64 KiB: a bounded allowance for imported USD string/token values, including
+    ///   metadata. Engineering fields and identifiers retain their own tighter validation.
     /// * `decoded_bytes` 256 MiB and `snapshot_bytes` 512 MiB: four and eight times the 64 MiB
     ///   stage, a conservative allowance for the binary expansion and the per-value accounting of
     ///   the typed snapshot (not measured at the cap).
@@ -142,14 +147,15 @@ impl Budgets {
         prims: 262_144,
         values: 4_194_304,
         array_items: 1_572_864,
+        text_bytes: 64 * 1024,
         decoded_bytes: 256 * 1024 * 1024,
         snapshot_bytes: 512 * 1024 * 1024,
         page_items: 64,
     };
 
     /// The first-slice profile of U01 (64 KiB per layer, 256 prims, 1024 array items): the
-    /// tightened profile for small untrusted inputs that are not a project stage, such as the
-    /// source layer of a read-only reference (R01).
+    /// tightened profile retained for callers that explicitly need the original small-input
+    /// limits. Reference attachment (R01) uses [`Self::MODEL`].
     pub const FIRST_SLICE: Self = Self {
         layer_bytes: 65536,
         total_bytes: 262144,
@@ -158,6 +164,7 @@ impl Budgets {
         prims: 256,
         values: 4096,
         array_items: 1024,
+        text_bytes: 1024,
         decoded_bytes: 4 * 1024 * 1024,
         snapshot_bytes: 1024 * 1024,
         page_items: 64,
@@ -179,6 +186,7 @@ impl Budgets {
             (self.prims, ceiling.prims),
             (self.values, ceiling.values),
             (self.array_items, ceiling.array_items),
+            (self.text_bytes, ceiling.text_bytes),
             (self.decoded_bytes, ceiling.decoded_bytes),
             (self.snapshot_bytes, ceiling.snapshot_bytes),
             (self.page_items, ceiling.page_items),
@@ -462,7 +470,6 @@ pub struct Opened {
 }
 
 struct Installed {
-    _stage: openusd::usd::Stage,
     context: Context,
     prims: Vec<Prim>,
     budgets: Budgets,
@@ -526,7 +533,6 @@ impl Reader {
             prim_count: candidate.prims.len(),
         };
         self.live = Some(Installed {
-            _stage: candidate.stage,
             context,
             prims: candidate.prims,
             budgets: candidate.budgets,

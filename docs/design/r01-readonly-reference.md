@@ -1,5 +1,80 @@
 # R01 read-only USD reference
 
+## Update 2026-10-27: a reference is displayed, not validated
+
+By the owner's instruction following the N08 run on a third-party Omniverse scene (#478): a
+reference exists to be looked at and snapped to, so only its geometry matters and no property
+needs support. A foreign (non-owned) layer is therefore admitted without being validated. The
+project's own layers keep the strict profile.
+
+For a foreign layer the reader no longer refuses, and instead leaves out of the snapshot:
+
+- properties whose value the snapshot cannot hold (asset paths, dictionaries, list-ops, unknown
+  types, numbers beyond the scalar budget, non-finite numbers); a `matrix4d` and a float `quatf`
+  are now held (an array of 16 and of 4 numbers), so a placement stays readable;
+- encodings and metadata of any kind (USDC value types and compression, `apiSchemas`,
+  `customData`, `instanceable`, time samples), single-quoted and triple-quoted strings, relationships
+  that are not defined, `interpolation` and `displayName` of another type;
+- arcs the profile cannot use. Payloads, variants, inherits, specializes, relocates, sublayers
+  and references to assets that were not supplied, URLs and escaping identifiers are inert: the
+  composer drops the arc and composes the rest of the prim. The resolver is still a virtual byte
+  map, so nothing is opened or fetched, and `check_source_path` still refuses a URL or device path
+  given as the `--source` argument. What an inert arc would have contributed is absent, so a scene
+  that is a root of payloads to other files shows only what its own layer holds; multi-file
+  sources are not supported;
+- composition diagnostics raised by a foreign layer's own arcs. A diagnostic raised by an owned
+  layer, such as a wrapper whose source was not supplied, still refuses the stage;
+- a prim path deeper than 16 levels (up to 128 are admitted).
+
+The decoded-size estimate of a foreign USDC layer is 16 bytes per table entry or array scalar
+instead of 1,024, so the size of a real model is bounded by its memory use and not by the old
+estimate. The byte, prim, value, array and snapshot ceilings of the previous update still bind, and
+a layer the upstream parser cannot decode (an 18 MB sample with a non-UTF-8 token table is one)
+is `INTEGRITY_ERROR`.
+
+Parsing and composing a foreign source now run on one short-lived scoped thread with 256 MiB of
+reserved stack. The upstream text parser recurses once per escape sequence in a string literal, so
+a 50 KB string full of escapes (an Omniverse baked preview) overflowed the 1 MiB stack of a
+Windows main thread: an abort on untrusted input. The upstream stage is no longer retained after
+the snapshot is built.
+
+A reply of `attach-reference` and `inspect-reference` lists at most 512 foreign prims per wrapper
+(`foreign_prims_truncated` says when more exist; `foreign_prim_count` is always the total): a real
+scene composes tens of thousands of prims and the reply is bounded by the JSON token ceiling.
+
+The display no longer refuses a source. `apps/beamcraft-cli/src/reference_view/display.rs` applies the
+full USD transform stack of every ancestor (translate, scale, `rotateX/Y/Z` and the six
+`rotateXYZ` orders, `orient`, `transform`, `!invert!`, `!resetXformStack!`), draws any `Mesh` as its
+polygon cage whatever its `subdivisionScheme` (holes and creases are ignored), fan-triangulates a
+polygon of more than four corners or a concave or non-planar quad, bakes the wrapper rotation
+and the explicit units correction into the drawn vertices, and leaves out what it cannot draw (other
+gprims, a mesh without usable points or faces, a surface that cannot be placed or lies beyond
+the coordinate bound, anything over the 262,144-vertex and 524,288-triangle blob budgets). The
+picture is an approximation, never a quantity: the R02 measurement keeps the strict
+translated Cube and triangle/convex-quad profile and refuses what the display approximates, so
+a drawn reference may still have no measurement. Without a units correction a source in centimetres is
+drawn at one hundredth of its size; the correction stays explicit (`correct-reference-units`).
+
+## Update 2026-10-27: reference input budgets
+
+By the owner's instruction following the N08 external-scene check (#478), R01 now admits
+sources up to **32 MiB**, matching the host blob cap. Source inspection uses `Budgets::MODEL`
+instead of the original `FIRST_SLICE` profile: 262,144 prims, 1,572,864 scalars per array and the
+existing decoded/snapshot ceilings. Raw USD string/token values have an explicit tightenable
+64 KiB ceiling; paths, identifiers, engineering labels and the dedicated library/drawing
+profiles retain their tighter limits. The complete project still has its 64 MiB and eight-layer
+ceilings. The original small-input profile remains available to callers that select it explicitly.
+
+The CLI regression covers a source over 64 KiB with 303 prims, a 2,048-value array and a
+48,854-byte foreign string. It checks reopening, unchanged source bytes/digest and viewport
+export. An oversized sparse source is
+refused before publication and leaves the accepted revision unchanged; model admission checks
+the inclusive source-size boundary. Reader tests round-trip USDA/USDC strings at their exact
+text cap, reject cap-plus-one, and exercise a tighter caller-selected text budget.
+This does not establish hard containment of the upstream parser or support for multi-file
+scenes, payloads, variants or textures. The historical
+first-slice limits below describe the original delivery and are superseded by this update.
+
 Date: 2026-10-17. Status: **experimental vertical slice; the R01 acceptance criteria are demonstrated
 for the supported profile below, and K3 is not claimed** (it also needs R02, R03 and G08).
 Branch `feat/r01-readonly-reference`, based on `origin/master` at `43026e2`.
@@ -79,9 +154,9 @@ rewrites.
   must re-confirm it when the source changes (a statement made for another digest is
   `INTEGRITY_ERROR`).
 - **Network paths.** `check_source_path` runs before the store, the file or a resolver is touched
-  (the CLI runs it before opening the store root). Inside a source, the U01 preflight refuses every
-  URL or escaping asset identifier with `PERMISSION_DENIED` before composition, and the stage
-  resolver is a virtual byte map that cannot open a file or a socket anyway.
+  (the CLI runs it before opening the store root). Inside a source a URL or escaping asset
+  identifier is inert (see the 2026-10-27 update): the stage resolver is a virtual byte map that
+  cannot open a file or a socket.
 - **Footprints.** For a reference the F04 group `shape_inputs` means the source pin and its units
   interpretation. Attach writes lifecycle, label, shape inputs and placement; a move writes
   placement and derived (world measurements); a correction writes shape inputs and derived. No
@@ -152,13 +227,13 @@ generated-fixture entry in `ATTRIBUTION.md` covers the test sources.
 | Case | Result |
 |---|---|
 | `http`, `https`, `ftp`, `file`, `s3`, `omniverse`, `anon`, `data` scheme; `\\server\share`, `//server/share`; padded and upper-case forms | `PERMISSION_DENIED`, store root not touched (a non-existent store root gives the same answer and is not created) |
-| Source file naming a URL in a reference, payload or sublayer | `PERMISSION_DENIED`, nothing stored |
+| Source file naming a URL in a reference, payload or sublayer | attached; the arc is inert, nothing is resolved (the 2026-10-27 update) |
 | Write to the source layer, to a foreign prim, to an attribute of one, to a prim that does not exist yet below the root | `FOREIGN_READ_ONLY`, exit 2, store listing and head unchanged |
 | Path outside the source namespace, unknown wrapper, malformed path or attribute | `NOT_FOUND`, `NOT_FOUND`, `INVALID_ARGUMENT` |
 | Hand-edited layer: override, new child, property, type or kind opinion on `Source`, in authored, derived or root layer | `FOREIGN_READ_ONLY` at validation (the commit verifier uses it) |
 | Hand-edited scale, pin that names other bytes, correction made for another digest, extra prim under the wrapper, arc removed | `INVALID_ARGUMENT`, `INTEGRITY_ERROR`, `INTEGRITY_ERROR`, `INVALID_ARGUMENT`, `DEPENDENCY_UNAVAILABLE` |
 | Source layer owned, absent, wrong size; duplicate wrapper id | `FOREIGN_READ_ONLY`, `DEPENDENCY_UNAVAILABLE`, `INTEGRITY_ERROR`, `DUPLICATE_ID` |
-| Payload, variants, sublayer, no default prim, undefined default prim, up axis X, non-finite or zero units, element-like prim name, over 65536 bytes, not a layer, truncated, usdz | `UNSUPPORTED_PROPERTY`, `UNSUPPORTED_PROPERTY`, `DEPENDENCY_UNAVAILABLE`, `UNSUPPORTED_PROPERTY`, `NOT_FOUND`, `UNSUPPORTED_PROPERTY`, `NON_FINITE_NUMBER` / `INVALID_ARGUMENT`, `INVALID_ID`, `LIMIT_EXCEEDED`, `INTEGRITY_ERROR`, `INTEGRITY_ERROR`, `UNSUPPORTED_PROPERTY`; no revision created |
+| No default prim, undefined default prim, up axis X, non-finite or zero units, element-like prim name, over 65536 bytes, not a layer, truncated, usdz | `UNSUPPORTED_PROPERTY`, `NOT_FOUND`, `UNSUPPORTED_PROPERTY`, `NON_FINITE_NUMBER` / `INVALID_ARGUMENT`, `INVALID_ID`, `LIMIT_EXCEEDED`, `INTEGRITY_ERROR`, `INTEGRITY_ERROR`, `UNSUPPORTED_PROPERTY`; no revision created |
 | Corrupted stored foreign blob | `INTEGRITY_ERROR` on every open |
 | Units: NaN, infinity, zero, negative, above 1e6, up axis X, missing values | `NON_FINITE_NUMBER`, `INVALID_ARGUMENT`, `LIMIT_EXCEEDED`, `INVALID_ARGUMENT` |
 | Same op id again; same op id with other content; used wrapper id | replay, `OP_ID_REUSE`, `DUPLICATE_ID` |
@@ -195,7 +270,8 @@ generated-fixture entry in `ATTRIBUTION.md` covers the test sources.
   65536 bytes. These are the experimental U01 stage budgets (65536 bytes per layer, 262144 in
   total, 8 layers, 256 prims); a real CAD export exceeds them. No sublayer, payload, variant set,
   inherit, specialize, instanceable, time sample, asset-valued attribute (textures) or `matrix4d`.
-  Raising the budgets needs the LEW-03 containment evidence.
+  Raising the budgets needs the LEW-03 containment evidence. The 2026-10-27 updates supersede this
+  bullet except for multi-file sources, which remain unsupported.
 - **A foreign prim may not carry an element identity.** A foreign `bim:id`, or a prim named `E_...`
   without one, makes the stage fail with `INVALID_ID`: the identity namespace is ours.
 - **Parser containment.** The layer engine runs in this process (as in P01); a hostile foreign file

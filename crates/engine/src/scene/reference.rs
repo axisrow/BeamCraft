@@ -92,6 +92,11 @@ pub(crate) type ForeignSurface = (Vec<[f64; 3]>, Vec<[u32; 3]>);
 /// build on it; a caller adds what it alone needs (the rotation guard and the translation
 /// instance for the view, kernel certification for the measurement).
 ///
+/// `display` selects the display rules: a polygon with more than four corners or a concave or
+/// non-planar quad is fan-triangulated, and a surface that cannot be placed or lies beyond the
+/// coordinate bound is left out, so the picture is an approximation and never a quantity. The
+/// measurement passes `false` and keeps the triangle/convex-quad rules, which it can certify.
+///
 /// `record` is the mapping (the display path passes a placement-identity copy so only the
 /// correction reaches the vertices); `bound_translation` is the second bound of the coordinate
 /// check `v` and `v + t`. A caller whose mapping already includes the placement translation
@@ -102,6 +107,7 @@ pub(crate) fn foreign_surface(
     record: &ReferenceRecord,
     bound_translation: [f64; 3],
     geometry: &[ReferenceGeometry],
+    display: bool,
 ) -> Result<ForeignSurface, CommandError> {
     record.placement.validate()?;
     record.source.validate()?;
@@ -142,30 +148,53 @@ pub(crate) fn foreign_surface(
             return Err(error(ErrorCode::InvalidArgument));
         }
         let base = u32::try_from(points.len()).map_err(|_| error(ErrorCode::LimitExceeded))?;
+        let mut mapped = Vec::with_capacity(g.points.len());
+        let mut usable = true;
         for p in &g.points {
-            let p = record.source_point_to_world([
+            let world = record.source_point_to_world([
                 p[0] + g.translation[0],
                 p[1] + g.translation[1],
                 p[2] + g.translation[2],
-            ])?;
-            if p.iter().zip(bound_translation).any(|(v, t)| {
+            ]);
+            let world = match world {
+                Ok(world) => world,
+                // A display leaves out a surface it cannot place; the measurement refuses.
+                Err(_) if display => {
+                    usable = false;
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
+            if world.iter().zip(bound_translation).any(|(v, t)| {
                 v.abs() > beamcraft_kernel::trimesh::MAX_COORDINATE_MM
                     || (v + t).abs() > beamcraft_kernel::trimesh::MAX_COORDINATE_MM
             }) {
+                if display {
+                    usable = false;
+                    break;
+                }
                 return Err(error(ErrorCode::LimitExceeded));
             }
-            points.push(p);
+            mapped.push(world);
         }
+        if !usable {
+            continue;
+        }
+        points.extend(mapped);
         let mut remaining = g.face_vertex_indices.as_slice();
         for count in &g.face_vertex_counts {
-            // shortcut: triangle/convex-quad cages only, add bounded tessellation with a larger USD profile.
-            if !matches!(count, 3 | 4) {
+            // The measurement keeps to triangles and convex quads, which it can certify. A display
+            // fan-triangulates any other polygon: the picture is an approximation, never a quantity.
+            if !display && !matches!(count, 3 | 4) {
                 return Err(error(ErrorCode::UnsupportedGeometry));
             }
             let (face, rest) = remaining
                 .split_at_checked(*count as usize)
                 .ok_or_else(|| error(ErrorCode::InvalidArgument))?;
             remaining = rest;
+            if *count < 3 {
+                continue;
+            }
             let mut corners = Vec::with_capacity(face.len());
             for i in face {
                 if usize::try_from(*i).ok().is_none_or(|i| i >= g.points.len()) {
@@ -176,7 +205,7 @@ pub(crate) fn foreign_surface(
                         .ok_or_else(|| error(ErrorCode::LimitExceeded))?,
                 );
             }
-            if let [a, b, c, d] = corners.as_slice() {
+            if let ([a, b, c, d], false) = (corners.as_slice(), display) {
                 let mut quad = [[0.0; 3]; 4];
                 for (p, i) in quad.iter_mut().zip([a, b, c, d]) {
                     *p = *points
@@ -204,14 +233,17 @@ pub(crate) fn foreign_surface(
             return Err(error(ErrorCode::InvalidArgument));
         }
     }
+    if indices.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
     Ok((points, indices))
 }
 
 /// Combines a wrapper's visible foreign surfaces into one reference-kind scene element.
 ///
-/// The wrapper placement remains a translation instance. Explicit R01 units/up-axis correction
-/// is baked into its local display vertices, never into the foreign content. Declared source
-/// units alone change nothing. A rotated wrapper is `UNSUPPORTED_GEOMETRY`, not drawn unrotated.
+/// The wrapper translation remains a translation instance; its rotation and the explicit R01
+/// units/up-axis correction are baked into the display vertices, never into the foreign content.
+/// Declared source units alone change nothing.
 /// An empty group has no display representation. Foreign surfaces are not engineering solids;
 /// picking/measurement support is not added by this conversion.
 pub fn reference_element(
@@ -223,14 +255,16 @@ pub fn reference_element(
     if let Some(units) = record.units {
         units.validate()?;
     }
-    if !record.placement.is_identity_rotation() {
-        return Err(error(ErrorCode::UnsupportedGeometry));
-    }
+    // The rotation is baked into the display vertices; only the translation stays an instance.
     let local = ReferenceRecord {
-        placement: Placement::IDENTITY,
+        placement: Placement {
+            translation_mm: [0.0; 3],
+            ..record.placement
+        },
         ..record.clone()
     };
-    let (points, indices) = foreign_surface(&local, record.placement.translation_mm, geometry)?;
+    let (points, indices) =
+        foreign_surface(&local, record.placement.translation_mm, geometry, true)?;
     if points.is_empty() {
         return Ok(None);
     }

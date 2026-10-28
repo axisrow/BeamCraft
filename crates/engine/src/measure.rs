@@ -93,7 +93,7 @@ pub fn measure_reference(
     // coordinates and the |v| half of the core's bound is the real one; a second translation
     // here would refuse legal far placements the kernel itself accepts (TriMesh re-checks
     // MAX_COORDINATE_MM on the world vertices anyway).
-    let (points, indices) = foreign_surface(record, [0.0; 3], geometry)?;
+    let (points, indices) = foreign_surface(record, [0.0; 3], geometry, false)?;
     let no_surface = || ReferenceMeasurement {
         reference: record.id,
         source_digest: record.source.digest,
@@ -300,6 +300,44 @@ mod tests {
         assert_eq!(reading.status, ShellStatus::Certified);
         assert_eq!(reading.bounds_mm.min, [3.0, -2.0, -2.0]);
         assert_eq!(reading.bounds_mm.max, [7.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn the_measurement_refuses_what_only_the_display_approximates() {
+        let polygon =
+            |counts: Vec<u32>, points: Vec<[f64; 3]>, indices: Vec<u32>| ReferenceGeometry {
+                points,
+                face_vertex_counts: counts,
+                face_vertex_indices: indices,
+                translation: [0.0; 3],
+                left_handed: false,
+            };
+        // A pentagon and a concave quad are drawn by the display but never certified.
+        let pentagon = polygon(
+            vec![5],
+            vec![
+                [0.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [3.0, 1.0, 0.0],
+                [1.0, 3.0, 0.0],
+                [-1.0, 1.0, 0.0],
+            ],
+            vec![0, 1, 2, 3, 4],
+        );
+        let concave = polygon(
+            vec![4],
+            vec![
+                [0.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+                [0.5, 0.5, 0.0],
+                [0.0, 2.0, 0.0],
+            ],
+            vec![0, 1, 2, 3],
+        );
+        for bad in [pentagon, concave] {
+            let error = measured(&record(Placement::IDENTITY, None), &[bad]).unwrap_err();
+            assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        }
     }
 
     #[test]

@@ -3,6 +3,8 @@
 
 //! Read-only adapter from composed foreign USD prims to the engine's display geometry.
 
+mod display;
+
 use crate::plate::{PlateError, property, text};
 use crate::reference::wrapper_of;
 use beamcraft_engine::SceneElement;
@@ -11,6 +13,7 @@ use beamcraft_engine::scene::{ReferenceGeometry, reference_element};
 use beamcraft_layer_engine::authored::{ReferenceView, read_references};
 use beamcraft_layer_engine::{Prim, Value};
 use beamcraft_model::error::ErrorCode;
+use display::display_meshes;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn invalid() -> PlateError {
@@ -139,15 +142,30 @@ fn geometry(p: &Prim, translation: [f64; 3]) -> Result<Option<ReferenceGeometry>
     Ok(Some(mesh))
 }
 
-/// The composed display geometry of every wrapper, in wrapper id order: the validated views and,
-/// for each, the foreign surfaces the view and the R02 measurement both consume.
+/// The composed surfaces of every wrapper, in wrapper id order, under the strict profile the R02
+/// measurement certifies: translated Cube and Mesh cages only, anything else a refusal. The
+/// display uses [`scene_elements`] and its own rules (`display_meshes`).
 pub(crate) fn reference_surfaces(
     prims: &[Prim],
+) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, PlateError> {
+    surfaces(prims, false)
+}
+
+fn surfaces(
+    prims: &[Prim],
+    display: bool,
 ) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, PlateError> {
     let by_path: BTreeMap<_, _> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     read_references(prims)?
         .iter()
-        .map(|view| Ok((view.clone(), wrapper_meshes(view, &by_path)?)))
+        .map(|view| {
+            let meshes = if display {
+                display_meshes(view, &by_path)
+            } else {
+                wrapper_meshes(view, &by_path)?
+            };
+            Ok((view.clone(), meshes))
+        })
         .collect()
 }
 
@@ -206,7 +224,7 @@ fn wrapper_meshes(
 /// Converts a complete, validated composed snapshot; it does not reopen or write a source file.
 pub(crate) fn scene_elements(prims: &[Prim]) -> Result<Vec<SceneElement>, PlateError> {
     let mut elements = Vec::new();
-    for (view, meshes) in reference_surfaces(prims)? {
+    for (view, meshes) in surfaces(prims, true)? {
         let wrapper = wrapper_of(&view)?;
         if let Some(element) = reference_element(&wrapper.record, &meshes)? {
             elements.push(element);

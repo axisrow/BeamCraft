@@ -972,47 +972,22 @@ fn foreign_layer_inspection_reports_declarations_and_refuses_unsafe_content() {
         let error = inspect_foreign_layer(text.as_bytes(), Budgets::FIRST_SLICE, &ctl).unwrap_err();
         assert_eq!(error.code, code, "{text:?}: {error}");
     };
-    // URLs and escaping identifiers are refused before anything is resolved.
-    for url in [
-        "https://example.invalid/model.usd",
-        "http://example.invalid/model.usd",
-        "omniverse://server/model.usd",
-        "file:///tmp/model.usd",
-        "../up/model.usd",
-        "/abs/model.usd",
+    // URLs, escaping identifiers and arcs outside the static profile are inert in a displayed
+    // source: nothing is resolved, and the rest of the layer is admitted.
+    for text in [
+        "#usda 1.0\ndef \"A\" (references = @https://example.invalid/model.usd@</X>)\n{\n}\n",
+        "#usda 1.0\n(subLayers = [@omniverse://server/model.usd@])\n",
+        "#usda 1.0\ndef \"A\" (payload = @https://example.invalid/m.usd@</X>)\n{\n}\n",
+        "#usda 1.0\ndef \"A\" (payload = @local.usda@</X>)\n{\n}\n",
+        "#usda 1.0\ndef \"A\" (variantSets = [\"v\"])\n{\n}\n",
+        "#usda 1.0\n(subLayers = [@other.usda@])\n",
+        "#usda 1.0\ndef \"A\" (references = @other.usda@</X>)\n{\n}\n",
     ] {
-        check(
-            &format!("#usda 1.0\ndef \"A\" (references = @{url}@</X>)\n{{\n}}\n"),
-            ErrorCode::PermissionDenied,
-        );
-        check(
-            &format!("#usda 1.0\n(subLayers = [@{url}@])\n"),
-            ErrorCode::PermissionDenied,
+        assert!(
+            inspect_foreign_layer(text.as_bytes(), Budgets::FIRST_SLICE, &ctl).is_ok(),
+            "{text:?}"
         );
     }
-    // A network payload is refused as a network path before it is refused as an unsupported arc.
-    check(
-        "#usda 1.0\ndef \"A\" (payload = @https://example.invalid/m.usd@</X>)\n{\n}\n",
-        ErrorCode::PermissionDenied,
-    );
-    // Arcs outside the static profile are explicit diagnostics.
-    check(
-        "#usda 1.0\ndef \"A\" (payload = @local.usda@</X>)\n{\n}\n",
-        ErrorCode::UnsupportedProperty,
-    );
-    check(
-        "#usda 1.0\ndef \"A\" (variantSets = [\"v\"])\n{\n}\n",
-        ErrorCode::UnsupportedProperty,
-    );
-    // A local dependency is not part of a single-layer source.
-    check(
-        "#usda 1.0\n(subLayers = [@other.usda@])\n",
-        ErrorCode::DependencyUnavailable,
-    );
-    check(
-        "#usda 1.0\ndef \"A\" (references = @other.usda@</X>)\n{\n}\n",
-        ErrorCode::DependencyUnavailable,
-    );
     // Numbers and the default prim.
     check(
         "#usda 1.0\n(metersPerUnit = inf)\ndef Scope \"A\" {}\n",

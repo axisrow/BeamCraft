@@ -72,6 +72,7 @@ const LIBRARY_BUDGETS: Budgets = Budgets {
     prims: 2 * MAX_LIBRARY_ENTRIES + 16,
     values: 262_144,
     array_items: 8192,
+    text_bytes: 1024,
     decoded_bytes: 64 * 1024 * 1024,
     snapshot_bytes: 64 * 1024 * 1024,
     page_items: 64,

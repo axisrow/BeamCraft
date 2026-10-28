@@ -28,9 +28,9 @@
 //! # Limits
 //!
 //! The foreign layer must be one self-contained USDA or restricted USDC layer within the U01
-//! stage budgets (65536 bytes, 256 prims in total); its own sublayers, payloads, variants and
-//! network references are refused. Replay of an `op_id` is decided from the head state, as in
-//! the other commands. One implicit workspace, in-process layer engine, as in `plate`.
+//! model-profile stage budgets (32 MiB per layer, 64 MiB total); its own sublayers, payloads,
+//! variants and network references are refused. Replay of an `op_id` is decided from the head state,
+//! as in the other commands. One implicit workspace, in-process layer engine, as in `plate`.
 
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
@@ -147,7 +147,7 @@ fn command_error(error: CommandError) -> PlateError {
 fn io_error(code: ErrorCode) -> PlateError {
     let message = match code {
         ErrorCode::NotFound => "the source file could not be opened",
-        ErrorCode::LimitExceeded => "the source file is larger than 65536 bytes",
+        ErrorCode::LimitExceeded => "the source file is larger than 32 MiB",
         _ => "the source path is not a readable regular local file",
     };
     PlateError::new(code, message)
@@ -251,7 +251,7 @@ fn pin_source(
     })?;
     let cap = usize::try_from(MAX_SOURCE_BYTES).map_err(|_| integrity("source cap"))?;
     let bytes = read_file(path, cap).map_err(io_error)?;
-    let info = inspect_foreign_layer(&bytes, Budgets::FIRST_SLICE, control)?;
+    let info = inspect_foreign_layer(&bytes, Budgets::MODEL, control)?;
     let default_prim = info.default_prim.ok_or(PlateError {
         rule_id: None,
         code: ErrorCode::UnsupportedProperty,

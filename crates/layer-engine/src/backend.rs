@@ -19,7 +19,6 @@ use std::{
 };
 
 pub(crate) struct Candidate {
-    pub stage: usd::Stage,
     pub identity: Identity,
     pub prims: Vec<Prim>,
     pub budgets: Budgets,
@@ -83,7 +82,41 @@ impl ar::Resolver for Resolver {
     }
 }
 
+/// Stack reserved for the upstream parser and composer. The text parser recurses once per escape
+/// sequence in a string literal, so a long escaped string (a baked preview, a serialised blob)
+/// needs far more than a default thread stack, in unoptimised builds above all. Reserving address
+/// space costs nothing until it is used, and the string ceiling bounds the recursion.
+const PARSER_STACK_BYTES: usize = 256 * 1024 * 1024;
+
+/// Runs one parse-and-compose call on a short-lived thread with [`PARSER_STACK_BYTES`] of stack.
+fn on_parser_stack<T: Send>(
+    work: impl FnOnce() -> Result<T, Diagnostic> + Send,
+) -> Result<T, Diagnostic> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(PARSER_STACK_BYTES)
+            .spawn_scoped(scope, work)
+            .map_err(|_| {
+                fail(
+                    ErrorCode::BackendUnavailable,
+                    "parser thread could not be started",
+                )
+            })?
+            .join()
+            .map_err(|_| {
+                fail(
+                    ErrorCode::BackendUnavailable,
+                    "backend unwound while preparing read view",
+                )
+            })?
+    })
+}
+
 pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate, Diagnostic> {
+    on_parser_stack(|| open_on_stack(request, control))
+}
+
+fn open_on_stack(request: OpenRequest, control: &Control) -> Result<Candidate, Diagnostic> {
     let b = request.budgets;
     b.validate()?;
     if request.backend != BACKEND {
@@ -132,7 +165,12 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
     let mut graph = BTreeMap::new();
     let mut counters = Counters::default();
     for (name, asset) in &assets {
-        let (data, dependencies) = load_asset(name, asset, b, control, &mut counters)?;
+        let foreign = displayed(name, &request.owned_layers);
+        let (data, mut dependencies) = load_asset(name, asset, b, control, &mut counters, foreign)?;
+        if foreign {
+            // An arc to a layer that was not supplied is inert: nothing is ever resolved.
+            dependencies.retain(|dependency| assets.contains_key(dependency));
+        }
         graph.insert((*name).clone(), dependencies);
         parsed.insert((*name).clone(), data);
     }
@@ -218,7 +256,11 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
     if excess {
         return Err(limit());
     }
-    if !stage.composition_errors().is_empty() {
+    if stage
+        .composition_errors()
+        .iter()
+        .any(|error| !tolerated_composition_error(error, &request.owned_layers))
+    {
         return Err(fail(
             ErrorCode::DependencyUnavailable,
             "composition dependency is unavailable",
@@ -261,6 +303,10 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                 "missing composition provenance",
             ));
         }
+        // The arc holder of a reference wrapper has an owned site too, but never a property of its own.
+        let foreign_prim = sources
+            .iter()
+            .any(|source| !source.owned && is_external(&source.layer));
         let mut properties = Vec::new();
         let mut relationships = Vec::new();
         for property in prim.property_names().map_err(|_| corrupt())? {
@@ -278,6 +324,9 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             let Some(type_name) = ty else {
                 let relationship = stage.relationship(full.as_str()).map_err(|_| corrupt())?;
                 if !relationship.is_defined().map_err(|_| corrupt())? {
+                    if foreign_prim {
+                        continue;
+                    }
                     return Err(unsupported());
                 }
                 let targets = relationship.targets().map_err(|_| corrupt())?;
@@ -316,10 +365,20 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             {
                 Some(Value::Block)
             } else {
-                attr.get::<sdf::Value>()
+                match attr
+                    .get::<sdf::Value>()
                     .map_err(|_| corrupt())?
                     .map(|v| typed_depth(&v, b, 0, scalar_budget(&property)))
-                    .transpose()?
+                    .transpose()
+                {
+                    Ok(value) => value,
+                    // A displayed source may hold values the snapshot cannot represent; the
+                    // property is left out of it, never the whole source refused.
+                    Err(error) if foreign_prim && droppable(&error) => {
+                        continue;
+                    }
+                    Err(error) => return Err(error),
+                }
             };
             if let Some(v) = &value {
                 value_size(v, &mut output_bytes, b.snapshot_bytes)?;
@@ -329,8 +388,8 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
                 .map_err(|_| corrupt())?
             {
                 Some(sdf::Value::Token(s)) => Some(s.to_string()),
-                Some(_) => return Err(unsupported()),
-                None => None,
+                Some(_) if !foreign_prim => return Err(unsupported()),
+                _ => None,
             };
             charge(
                 &mut output_bytes,
@@ -416,8 +475,8 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             .map_err(|_| corrupt())?
         {
             Some(sdf::Value::String(s)) => Some(s),
-            Some(_) => return Err(unsupported()),
-            None => None,
+            Some(_) if !foreign_prim => return Err(unsupported()),
+            _ => None,
         };
         if let Some(name) = &display_name {
             charge(
@@ -456,7 +515,6 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
     }
     control.check()?;
     Ok(Candidate {
-        stage,
         identity: request.identity,
         prims,
         budgets: b,
@@ -468,6 +526,43 @@ pub(crate) fn open(request: OpenRequest, control: &Control) -> Result<Candidate,
             .map(|n| (n.clone(), request.owned_layers.contains(n)))
             .collect(),
     })
+}
+
+fn is_external(name: &str) -> bool {
+    name.starts_with(beamcraft_model::reference::EXTERNAL_LAYER_PREFIX)
+}
+
+/// A layer is a displayed source when the host did not select it as owned and it is stored as a
+/// foreign reference source. Every other layer, owned or not, keeps the strict profile.
+fn displayed(name: &str, owned: &BTreeSet<String>) -> bool {
+    !owned.contains(name) && is_external(name)
+}
+
+/// A value of a displayed source that the snapshot cannot represent (an unknown type, a number
+/// outside the stage scalar budget, a non-finite number) costs that property, not the source.
+fn droppable(error: &Diagnostic) -> bool {
+    matches!(
+        error.code,
+        ErrorCode::UnsupportedProperty | ErrorCode::LimitExceeded | ErrorCode::NonFiniteNumber
+    )
+}
+
+/// A foreign layer is displayed, not validated: an arc of its own that cannot be composed (a
+/// layer that was not supplied, a missing prim) is dropped by the composer and the rest of the
+/// prim still composes. An arc authored by an owned layer stays a refusal.
+fn tolerated_composition_error(
+    error: &openusd::pcp::CompositionDiagnostic,
+    owned: &BTreeSet<String>,
+) -> bool {
+    use openusd::pcp::CompositionDiagnostic as D;
+    match error {
+        D::UnresolvedLayer { introduced_by, .. }
+        | D::MalformedLayer { introduced_by, .. }
+        | D::MutedAssetPath { introduced_by, .. }
+        | D::UnresolvedPrimPath { introduced_by, .. }
+        | D::UnresolvedSublayer { introduced_by, .. } => displayed(introduced_by, owned),
+        _ => false,
+    }
 }
 
 /// Running totals charged against the stage budgets while layers are loaded.
@@ -487,22 +582,23 @@ pub(crate) fn load_asset(
     b: Budgets,
     control: &Control,
     counters: &mut Counters,
+    foreign: bool,
 ) -> Result<(Box<dyn AbstractData>, Vec<String>), Diagnostic> {
     control.check()?;
     let data: Box<dyn AbstractData> = if name.ends_with(".usda") {
-        preflight::text(&asset.bytes, b, control)?;
+        preflight::text(&asset.bytes, b, control, foreign)?;
         Box::new(
             openusd::usda::parse(std::str::from_utf8(&asset.bytes).map_err(|_| corrupt())?)
                 .map_err(|_| corrupt())?,
         )
     } else {
-        preflight::binary(&asset.bytes, b, &mut counters.decoded)?;
+        preflight::binary(&asset.bytes, b, &mut counters.decoded, foreign)?;
         let file = openusd::usdc::CrateFile::open(asset.bytes.clone()).map_err(|_| corrupt())?;
         file.validate().map_err(|_| corrupt())?;
-        if file.tokens.iter().any(|s| s.len() > 1024) {
+        if file.tokens.iter().any(|s| s.len() > b.text_bytes) {
             return Err(limit());
         }
-        preflight::binary_values(&file, &asset.bytes, b, &mut counters.decoded)?;
+        preflight::binary_values(&file, &asset.bytes, b, &mut counters.decoded, foreign)?;
         Box::new(openusd::usdc::CrateData::from_file(file, true).map_err(|_| corrupt())?)
     };
     control.check()?;
@@ -515,7 +611,11 @@ pub(crate) fn load_asset(
                 .split('/')
                 .filter(|p| !p.is_empty())
                 .count()
-                > b.depth
+                > if foreign {
+                    preflight::FOREIGN_PRIM_DEPTH
+                } else {
+                    b.depth
+                }
         {
             return Err(limit());
         }
@@ -527,6 +627,7 @@ pub(crate) fn load_asset(
                 | sdf::SpecType::Relationship
                 | sdf::SpecType::RelationshipTarget,
             ) => (),
+            _ if foreign => continue,
             _ => return Err(unsupported()),
         }
         for field in data.list_fields(&path).ok_or_else(corrupt)? {
@@ -543,7 +644,11 @@ pub(crate) fn load_asset(
                 | "instanceable"
                 | "clips"
                 | "timeSamples"
-                | "expressionVariables" => return Err(unsupported()),
+                | "expressionVariables" => {
+                    if !foreign {
+                        return Err(unsupported());
+                    }
+                }
                 "subLayerOffsets" => {
                     let sdf::Value::LayerOffsetVec(offsets) = value.as_ref() else {
                         return Err(corrupt());
@@ -554,7 +659,7 @@ pub(crate) fn load_asset(
                     for offset in offsets {
                         number(offset.offset, SCALAR_MAX)?;
                         number(offset.scale, SCALAR_MAX)?;
-                        if *offset != sdf::LayerOffset::IDENTITY {
+                        if *offset != sdf::LayerOffset::IDENTITY && !foreign {
                             return Err(unsupported());
                         }
                     }
@@ -564,7 +669,11 @@ pub(crate) fn load_asset(
                         return Err(corrupt());
                     };
                     for target in names {
-                        dependencies.push(preflight::anchored(target, name)?);
+                        match preflight::anchored(target, name) {
+                            Ok(dependency) => dependencies.push(dependency),
+                            Err(_) if foreign => (),
+                            Err(error) => return Err(error),
+                        }
                     }
                 }
                 "references" => {
@@ -572,7 +681,9 @@ pub(crate) fn load_asset(
                         return Err(corrupt());
                     };
                     // No deleted/reordered references or internal arcs in this read profile.
-                    if !list.deleted_items.is_empty() || !list.ordered_items.is_empty() {
+                    if (!list.deleted_items.is_empty() || !list.ordered_items.is_empty())
+                        && !foreign
+                    {
                         return Err(unsupported());
                     }
                     for reference in list
@@ -582,13 +693,18 @@ pub(crate) fn load_asset(
                         .chain(&list.prepended_items)
                         .chain(&list.appended_items)
                     {
-                        if reference.layer_offset != sdf::LayerOffset::IDENTITY
+                        if (reference.layer_offset != sdf::LayerOffset::IDENTITY
                             || !reference.custom_data.is_empty()
-                            || reference.prim_path.is_empty()
+                            || reference.prim_path.is_empty())
+                            && !foreign
                         {
                             return Err(unsupported());
                         }
-                        dependencies.push(preflight::anchored(&reference.asset_path, name)?);
+                        match preflight::anchored(&reference.asset_path, name) {
+                            Ok(dependency) => dependencies.push(dependency),
+                            Err(_) if foreign => (),
+                            Err(error) => return Err(error),
+                        }
                     }
                 }
                 _ => {
@@ -600,7 +716,12 @@ pub(crate) fn load_asset(
                     } else {
                         SCALAR_MAX
                     };
-                    validate_as(value.as_ref(), b, 0, max)?
+                    match validate_as(value.as_ref(), b, 0, max) {
+                        // A displayed source may hold values the snapshot cannot represent;
+                        // they are left out of it, not refused.
+                        Err(error) if foreign && droppable(&error) => (),
+                        other => other?,
+                    }
                 }
             }
         }
@@ -778,13 +899,13 @@ fn typed_depth(
         V::Float(v) => number((*v).into(), max),
         V::Double(v) => number(*v, max),
         V::String(v) => {
-            if v.len() > 1024 {
+            if v.len() > b.text_bytes {
                 return Err(limit());
             }
             Ok(Value::Text(v.clone()))
         }
         V::Token(v) => {
-            if v.len() > 1024 {
+            if v.len() > b.text_bytes {
                 return Err(limit());
             }
             Ok(Value::Text(v.to_string()))
@@ -816,13 +937,13 @@ fn typed_depth(
             array(v.iter().map(|n| Value::Int((*n).into())).collect())
         }
         V::StringVec(v) => {
-            if v.len() > b.array_items || v.iter().any(|s| s.len() > 1024) {
+            if v.len() > b.array_items || v.iter().any(|s| s.len() > b.text_bytes) {
                 return Err(limit());
             }
             array(v.iter().map(|s| Value::Text(s.clone())).collect())
         }
         V::TokenVec(v) => {
-            if v.len() > b.array_items || v.iter().any(|s| s.len() > 1024) {
+            if v.len() > b.array_items || v.iter().any(|s| s.len() > b.text_bytes) {
                 return Err(limit());
             }
             array(v.iter().map(|s| Value::Text(s.to_string())).collect())
@@ -837,6 +958,18 @@ fn typed_depth(
             [v.w, v.x, v.y, v.z]
                 .into_iter()
                 .map(|n| number(n, max))
+                .collect::<Result<_, _>>()?,
+        ),
+        V::Quatf(v) => array(
+            [v.w, v.x, v.y, v.z]
+                .into_iter()
+                .map(|n| number(n.into(), max))
+                .collect::<Result<_, _>>()?,
+        ),
+        // Row-major, as USD stores it: the translation is the last row.
+        V::Matrix4d(m) => array(
+            m.0.iter()
+                .map(|n| number(*n, max))
                 .collect::<Result<_, _>>()?,
         ),
         V::Vec3f(v) => array(
@@ -903,13 +1036,22 @@ pub struct ForeignLayer {
     pub prim_count: usize,
 }
 
-/// Admits a foreign layer under the same byte, field and budget rules as every stage asset and
-/// reports what it declares. Nothing is composed and nothing is resolved: a layer that names
-/// another asset (a sublayer or an external reference) is `DEPENDENCY_UNAVAILABLE`, a URL or an
-/// escaping asset identifier is `PERMISSION_DENIED`, and an arc outside the static profile is
-/// `UNSUPPORTED_PROPERTY`, all before any stage exists. The layer's own units are reported, not
-/// required: only the project's root layer must be millimetres and Z up.
+/// Admits a foreign layer under the byte and budget rules of a displayed source and reports what
+/// it declares. Nothing is composed and nothing is resolved. The layer is displayed, not
+/// validated: encodings, metadata and arcs the profile cannot use (payloads, variants, sublayers,
+/// references to other assets, URLs and escaping identifiers) are inert, never refused, because
+/// the resolver only ever serves the supplied layers; what such an arc would have contributed is
+/// absent from the composed view. The layer's own units are reported, not required: only the
+/// project's root layer must be millimetres and Z up.
 pub(crate) fn inspect_foreign(
+    bytes: &[u8],
+    b: Budgets,
+    control: &Control,
+) -> Result<ForeignLayer, Diagnostic> {
+    on_parser_stack(|| inspect_foreign_on_stack(bytes, b, control))
+}
+
+fn inspect_foreign_on_stack(
     bytes: &[u8],
     b: Budgets,
     control: &Control,
@@ -934,13 +1076,7 @@ pub(crate) fn inspect_foreign(
         digest: Sha256::digest(bytes).map_err(|_| limit())?,
         bytes: bytes.to_vec(),
     };
-    let (data, dependencies) = load_asset(name, &asset, b, control, &mut Counters::default())?;
-    if !dependencies.is_empty() {
-        return Err(fail(
-            ErrorCode::DependencyUnavailable,
-            "foreign layer names other assets; only a single self-contained layer is supported",
-        ));
-    }
+    let (data, _) = load_asset(name, &asset, b, control, &mut Counters::default(), true)?;
     let root = sdf::Path::abs_root();
     let field = |key: &str| -> Result<Option<sdf::Value>, Diagnostic> {
         Ok(data

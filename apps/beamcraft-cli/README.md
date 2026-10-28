@@ -481,13 +481,17 @@ beamcraft write-reference         --store ROOT --id UUID (--target source | --pr
 beamcraft inspect-reference       --store ROOT
 ```
 
-`attach-reference` reads a local USDA or restricted USDC layer (at most 65536 bytes, one
-self-contained layer with a `defaultPrim`) and publishes a revision in which its bytes are an
+`attach-reference` reads a local USDA or USDC layer (at most 32 MiB, one layer with a
+`defaultPrim`, under the model-profile stage budgets) and publishes
+a revision in which its bytes are an
 `external` layer named by their SHA-256, composed below an owned wrapper element. The file is only
 read; its path is never stored (only its file name, as a label). A URL, a network share or a device
 path (any `scheme:` of two or more characters, or a path starting with two slashes or two
 backslashes) is `PERMISSION_DENIED` on the text alone,
-before the store or the file system is touched. The wrapper has its own placement
+before the store or the file system is touched. The layer is displayed, not validated: values and
+encodings it uses that the snapshot cannot hold, and arcs to other assets (payloads, variants,
+sublayers, references, URLs), are left out and never resolved, so a source made of payloads to other
+files shows only what its own layer holds. The wrapper has its own placement
 (`move-reference`, absolute, stored apart from the foreign content) and, only when the owner asks,
 an explicit units and up-axis interpretation (`correct-reference-units`; `--clear true` removes
 it). The source keeps declaring what it declares; `units_status` in the output says whether it

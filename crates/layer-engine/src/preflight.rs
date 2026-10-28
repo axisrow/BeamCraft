@@ -6,6 +6,9 @@
 use crate::{Budgets, Control, Diagnostic, corrupt, fail, limit, unsupported};
 use beamcraft_model::error::ErrorCode;
 
+/// Deepest prim path of a displayed source: real scenes nest far deeper than a project stage.
+pub(crate) const FOREIGN_PRIM_DEPTH: usize = 128;
+
 pub(crate) fn name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 256
@@ -39,7 +42,15 @@ pub(crate) fn anchored(asset: &str, parent: &str) -> Result<String, Diagnostic> 
     Ok(result)
 }
 
-pub(crate) fn text(bytes: &[u8], b: Budgets, control: &Control) -> Result<(), Diagnostic> {
+/// `foreign` admits a source the project only displays: syntax the project's own layers never
+/// contain (single-quoted and triple-quoted strings, asset paths outside the contained set) is
+/// scanned past instead of refused, because no asset path is ever resolved.
+pub(crate) fn text(
+    bytes: &[u8],
+    b: Budgets,
+    control: &Control,
+    foreign: bool,
+) -> Result<(), Diagnostic> {
     let text = std::str::from_utf8(bytes).map_err(|_| corrupt())?;
     if !text.starts_with("#usda 1.0\n") && !text.starts_with("#usda 1.0\r\n") {
         return Err(corrupt());
@@ -89,45 +100,60 @@ pub(crate) fn text(bytes: &[u8], b: Budgets, control: &Control) -> Result<(), Di
             }
         }
         match ch {
-            b'\'' => return Err(unsupported()),
-            b'"' | b'@' | b'<' => {
+            b'\'' if !foreign => return Err(unsupported()),
+            b'"' | b'\'' | b'@' | b'<' => {
                 let close = if ch == b'<' { b'>' } else { ch };
                 i += 1;
-                let start = i;
-                if ch == b'"' && bytes.get(i..i.saturating_add(2)) == Some(b"\"\"") {
+                let triple = bytes.get(i..i.saturating_add(2)) == Some(&[ch, ch][..])
+                    && matches!(ch, b'"' | b'\'');
+                if triple && !foreign {
                     return Err(unsupported());
                 }
+                if triple {
+                    i += 2;
+                }
+                let start = i;
+                let text_like = matches!(ch, b'"' | b'\'');
                 loop {
                     let c = bytes.get(i).copied().ok_or_else(corrupt)?;
-                    if c == close {
+                    if c == close
+                        && (!triple || bytes.get(i..i.saturating_add(3)) == Some(&[ch, ch, ch][..]))
+                    {
                         break;
                     }
-                    if c == b'\\' && ch == b'"' {
+                    if c == b'\\' && text_like {
                         i = i.checked_add(1).ok_or_else(limit)?;
                     }
                     i = i.checked_add(1).ok_or_else(limit)?;
-                    if i.saturating_sub(start) > 1024 {
+                    let max_bytes = if text_like { b.text_bytes } else { 1024 };
+                    if i.saturating_sub(start) > max_bytes {
                         return Err(limit());
                     }
                 }
                 // The backend converts quoted text in numeric positions, so numeric-looking
                 // strings get the same checks; ordinary strings are untouched.
-                if ch == b'"' {
+                if ch == b'"' && !triple && !foreign {
                     let quoted = text.get(start..i).ok_or_else(corrupt)?;
                     if quoted.parse::<f64>().is_ok() {
                         numeric(quoted)?;
                     }
                 }
-                if ch == b'@' && !name(text.get(start..i).ok_or_else(corrupt)?) {
+                if ch == b'@' && !foreign && !name(text.get(start..i).ok_or_else(corrupt)?) {
                     return Err(fail(
                         ErrorCode::PermissionDenied,
                         "asset identifier is not contained",
                     ));
                 }
-                i += 1;
+                i += if triple { 3 } else { 1 };
             }
             b'{' | b'[' | b'(' => {
-                if delimiters.len() >= b.depth {
+                if delimiters.len()
+                    >= if foreign {
+                        FOREIGN_PRIM_DEPTH + b.depth
+                    } else {
+                        b.depth
+                    }
+                {
                     return Err(limit());
                 }
                 delimiters.push(ch);
@@ -171,16 +197,21 @@ pub(crate) fn text(bytes: &[u8], b: Budgets, control: &Control) -> Result<(), Di
                 if token.len() > 256 {
                     return Err(limit());
                 }
-                if matches!(
-                    token,
-                    "nan" | "NaN" | "inf" | "-inf" | "+inf" | "Infinity" | "-Infinity"
-                ) {
+                // A displayed source may hold non-finite or unrepresentable numbers; the
+                // backend leaves such a property out of the snapshot.
+                if !foreign
+                    && matches!(
+                        token,
+                        "nan" | "NaN" | "inf" | "-inf" | "+inf" | "Infinity" | "-Infinity"
+                    )
+                {
                     return Err(fail(ErrorCode::NonFiniteNumber, "non-finite numeric value"));
                 }
-                if token
-                    .bytes()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_digit() || matches!(c, b'+' | b'-' | b'.'))
+                if !foreign
+                    && token
+                        .bytes()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_digit() || matches!(c, b'+' | b'-' | b'.'))
                 {
                     numeric(token)?;
                 }
@@ -242,8 +273,21 @@ pub(crate) fn charge(total: &mut usize, n: usize, max: usize) -> Result<(), Diag
     Ok(())
 }
 
+/// Estimated bytes one decoded table entry or array scalar expands to. The project's own layers
+/// keep the conservative allowance; a displayed source is charged a realistic one, so that the
+/// size of a real model is bounded by its memory and not by an arbitrary estimate.
+fn decoded_unit(foreign: bool) -> usize {
+    if foreign { 16 } else { 1024 }
+}
+
 /// Before CrateFile::open: table bounds, counts and decompression destination estimates.
-pub(crate) fn binary(bytes: &[u8], b: Budgets, decoded: &mut usize) -> Result<(), Diagnostic> {
+pub(crate) fn binary(
+    bytes: &[u8],
+    b: Budgets,
+    decoded: &mut usize,
+    foreign: bool,
+) -> Result<(), Diagnostic> {
+    let unit = decoded_unit(foreign);
     if bytes.get(..8) != Some(b"PXR-USDC") {
         return Err(corrupt());
     }
@@ -288,7 +332,7 @@ pub(crate) fn binary(bytes: &[u8], b: Budgets, decoded: &mut usize) -> Result<()
         }
         charge(
             decoded,
-            count.checked_mul(1024).ok_or_else(limit)?,
+            count.checked_mul(unit).ok_or_else(limit)?,
             b.decoded_bytes,
         )?;
         match label {
@@ -337,17 +381,20 @@ pub(crate) fn binary(bytes: &[u8], b: Budgets, decoded: &mut usize) -> Result<()
 }
 
 /// Before any lazy value decode: refuse opaque nested/compressed encodings in this profile.
+/// A `foreign` layer is only displayed: value encodings it uses are admitted without being
+/// interpreted, and only the bounded array sizes that can be read directly are charged.
 pub(crate) fn binary_values(
     file: &openusd::usdc::CrateFile,
     bytes: &[u8],
     b: Budgets,
     decoded: &mut usize,
+    foreign: bool,
 ) -> Result<(), Diagnostic> {
     for field in &file.fields {
         let rep = field.value_rep;
         let ty = rep.ty().map_err(|_| corrupt())? as u32;
         // No container recursion or reference custom dictionaries are decoded from USDC yet.
-        if rep.is_compressed() {
+        if rep.is_compressed() && !foreign {
             return Err(unsupported());
         }
         let vector = rep.is_array() || matches!(ty, 40 | 41 | 50);
@@ -356,6 +403,9 @@ pub(crate) fn binary_values(
                 return Err(corrupt());
             }
             if !matches!(ty, 1..=12 | 19..=30 | 40 | 41 | 50) {
+                if foreign {
+                    continue;
+                }
                 return Err(unsupported());
             }
             let offset = usize::try_from(rep.payload()).map_err(|_| limit())?;
@@ -383,12 +433,14 @@ pub(crate) fn binary_values(
             }
             charge(
                 decoded,
-                scalars.checked_mul(1024).ok_or_else(limit)?,
+                scalars
+                    .checked_mul(decoded_unit(foreign))
+                    .ok_or_else(limit)?,
                 b.decoded_bytes,
             )?;
         } else if !matches!(ty, 1..=30 | 42..=44 | 51) {
             // Empty inline dictionary is bounded and used by some independent writers.
-            if !(ty == 31 && rep.is_inlined()) {
+            if !(foreign || ty == 31 && rep.is_inlined()) {
                 return Err(unsupported());
             }
         }
@@ -414,7 +466,9 @@ mod tests {
             .unwrap()
             .copy_from_slice(&u64::MAX.to_le_bytes());
         assert_eq!(
-            binary(&bytes, Budgets::default(), &mut 0).unwrap_err().code,
+            binary(&bytes, Budgets::default(), &mut 0, false)
+                .unwrap_err()
+                .code,
             ErrorCode::LimitExceeded
         );
     }

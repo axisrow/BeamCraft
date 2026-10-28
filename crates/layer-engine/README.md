@@ -1,7 +1,8 @@
 # BeamCraft layer engine
 
 Native, experimental U01/U02/U03 layer adapter for exactly `openusd =0.8.0`, without optional
-features. This library performs no file or network I/O, starts no process, and exposes
+features. This library performs no file or network I/O, starts no process (parsing and
+composition run on one short-lived scoped thread with a large reserved stack), and exposes
 no upstream handles. This is a desktop-native library, not a domain/WASM crate.
 
 `Reader::open` accepts an explicit manifest of local bytes, exact digests, owned layer
@@ -11,7 +12,14 @@ relative asset identifiers are accepted; they never name files on the host.
 
 The static profile supports USDA sublayers and external references with identity layer
 offsets and explicit reference targets, plus a restricted USDC scalar/vector profile.
-Unsupported composition and binary value encodings fail explicitly. Snapshots expose
+Unsupported composition and binary value encodings of the project's own layers fail explicitly.
+A foreign (non-owned) layer is a *displayed source*: it is admitted without being validated.
+Encodings, metadata, value types, numbers outside the scalar budget, single/triple-quoted
+strings, prim paths up to 128 levels deep, and arcs the profile cannot use (payloads, variants,
+inherits, sublayers or references to assets that were not supplied, URLs, escaping identifiers) are
+inert: the property or arc is left out of the snapshot or dropped by the composer, never a reason to
+refuse the source. The resolver still serves only the supplied layers, so nothing is ever opened
+or fetched. Prim, value, array, byte and decoded-size ceilings still bind. Snapshots expose
 bounded typed static attributes and contributing prim sites. They are read results,
 not engineering validation or authorization. `Reader` remains read-only; the separate
 `authored::Author` API accepts closed engine-produced change items. Static relationships,
@@ -19,8 +27,8 @@ including unknown names and list-edit composition, are returned explicitly.
 
 An open is built privately and installed only after complete validation and a final
 cancellation check. Failed opens leave the previous context intact. Reopen/close invalidate
-all earlier contexts/cursors, including across reader instances. Pages read a frozen result
-over one retained stage; they never reopen or recompose it.
+all earlier contexts/cursors, including across reader instances. Pages read a frozen result;
+they never reopen or recompose it, and the upstream stage is released as soon as the snapshot exists.
 
 Cancellation is cooperative before/after upstream synchronous calls and during wrapper
 loops. Upstream allocation, panic-abort, stack overflow, and hard deadlines cannot be
@@ -130,9 +138,8 @@ below it (`FOREIGN_READ_ONLY`). The composed provenance of every prim below `Sou
 foreign only, with the pinned digest, layer name and default prim. `Reader::refuse_layer_write`
 answers `FOREIGN_READ_ONLY` for a layer the host did not select as owned. `inspect_foreign_layer`
 examines a candidate source (format, default prim, declared units, up axis) under the same byte,
-field and budget rules as every stage asset, without composing or resolving it; a URL or escaping
-identifier in it is `PERMISSION_DENIED`, an arc outside the static profile
-`UNSUPPORTED_PROPERTY`, another local asset `DEPENDENCY_UNAVAILABLE`. `authored::read_references`
+field and displayed-source rules, without composing or resolving it; the arcs and values listed
+above are inert there too. `authored::read_references`
 reads the wrappers back (after the same validation). A foreign prim that carries an element
 identity (`bim:id`, or a reserved element prefix) makes the stage fail with `INVALID_ID`. The schema
 descriptor lists the wrapper; pre-U16 schema pins are refused. See the

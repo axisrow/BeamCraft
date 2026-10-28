@@ -58,6 +58,10 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     report(run(args))
 }
 
+/// Foreign prims a reply lists per wrapper. Every reply is bounded by the JSON token ceiling, and a
+/// real scene composes tens of thousands of prims; `foreign_prim_count` always carries the total.
+const MAX_LISTED_FOREIGN_PRIMS: usize = 512;
+
 const IDS: [&str; 5] = [
     "--op-id",
     "--revision-id",
@@ -442,11 +446,16 @@ fn wrapper_json(wrapper: &Wrapper) -> Run<Json> {
             Json::uint(wrapper.foreign.len() as u64),
         ),
         (
+            "foreign_prims_truncated",
+            Json::Bool(wrapper.foreign.len() > MAX_LISTED_FOREIGN_PRIMS),
+        ),
+        (
             "foreign_prims",
             Json::Array(
                 wrapper
                     .foreign
                     .iter()
+                    .take(MAX_LISTED_FOREIGN_PRIMS)
                     .map(|f| {
                         Json::object([
                             ("path", Json::text(f.path.clone())),

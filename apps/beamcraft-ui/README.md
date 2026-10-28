@@ -25,9 +25,9 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   an app may not depend on an app). The CLI is looked up next to the UI executable unless `--cli`
   names it.
 - Each distinct mesh is uploaded once and drawn with one instance per element placement.
-  Attached read-only references in the [R01 translation-only display profile](../../docs/design/r01-readonly-reference.md#translation-only-viewport-path-issue-137)
-  use the same path and contribute to camera fit; unsupported foreign transforms are explicit
-  export-view refusals, not invisible or incorrectly placed geometry.
+  Attached read-only references (see the [R01 note](../../docs/design/r01-readonly-reference.md))
+  use the same path and contribute to camera fit; their full transform stacks are applied, any
+  mesh is drawn as its cage, and what cannot be drawn is left out, not a refusal.
   Coordinates are millimetres, re-centred on the engineering bounds in f64 before f32 conversion.
   Once a scene is on the device the window keeps only its origin, framing and counts, not the
   expanded vertex buffers. A refresh of an unchanged snapshot builds, uploads and draws nothing,

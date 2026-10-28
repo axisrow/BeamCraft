@@ -207,33 +207,46 @@ def Xform "Site" {
 }
 
 #[test]
-fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_file() {
-    for (kind, properties, expected) in [
+fn a_reference_is_displayed_whatever_it_holds_and_only_what_cannot_be_drawn_is_left_out() {
+    for (kind, properties, elements) in [
         (
             "Cube",
             "double xformOp:rotateZ = 30\nuniform token[] xformOpOrder = [\"xformOp:rotateZ\"]",
-            "UNSUPPORTED_GEOMETRY",
+            1,
         ),
         (
             "Cube",
             "double3 xformOp:scale = (2, 2, 2)\nuniform token[] xformOpOrder = [\"xformOp:scale\"]",
-            "UNSUPPORTED_GEOMETRY",
+            1,
+        ),
+        (
+            "Cube",
+            "matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (5, 6, 7, 1) )\nuniform token[] xformOpOrder = [\"xformOp:transform\"]",
+            1,
         ),
         (
             "Cube",
             "uniform token[] xformOpOrder = [\"!resetXformStack!\"]",
-            "UNSUPPORTED_GEOMETRY",
+            1,
         ),
-        ("Sphere", "double radius = 3", "UNSUPPORTED_GEOMETRY"),
+        // Not a surface the display can draw: left out, the reference still opens.
+        ("Sphere", "double radius = 3", 0),
         (
             "Mesh",
             "uniform token subdivisionScheme = \"none\"\npoint3f[] points = [(0, 0, 0), (2, 0, 0), (0, 2, 0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [-1, 1, 2]",
-            "INVALID_ARGUMENT",
+            0,
         ),
+        // A subdivision surface is drawn as its cage.
         (
             "Mesh",
             "point3f[] points = [(0, 0, 0), (2, 0, 0), (0, 2, 0)]\nint[] faceVertexCounts = [3]\nint[] faceVertexIndices = [0, 1, 2]",
-            "UNSUPPORTED_GEOMETRY",
+            1,
+        ),
+        // Any polygon is drawn, not only triangles and convex quads.
+        (
+            "Mesh",
+            "point3f[] points = [(0, 0, 0), (2, 0, 0), (3, 1, 0), (1, 3, 0), (-1, 1, 0)]\nint[] faceVertexCounts = [5]\nint[] faceVertexIndices = [0, 1, 2, 3, 4]",
+            1,
         ),
     ] {
         let f = Fixture::new();
@@ -246,13 +259,15 @@ fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_fi
         f.ok("attach-reference", &["--source", &source]);
         f.ok("inspect-reference", &[]);
         f.ok("inspect-elements", &[]);
-        let out = f.root.join("refused.bundle");
+        let out = f.root.join("shown.bundle");
+        let shown = f.ok("export-view", &["--out", out.to_str().unwrap()]);
         assert_eq!(
-            f.rejected("export-view", &["--out", out.to_str().unwrap()]),
-            expected
+            at(&shown, &["elements"]).string().unwrap(),
+            elements.to_string(),
+            "{kind}: {properties}"
         );
-        assert!(!out.exists());
     }
+    // The wrapper may be rotated: the rotation is baked into the drawn vertices.
     let f = Fixture::new();
     let source = f.source("site.usda", SITE);
     let id = "019a7bf0-0000-7000-8000-000000000137";
@@ -267,18 +282,9 @@ fn unsupported_views_are_explicit_refusals_without_breaking_r01_or_creating_a_fi
             "90",
         ],
     );
-    assert_eq!(
-        f.rejected("export-view", &["--out", "-"]),
-        "UNSUPPORTED_GEOMETRY"
-    );
+    assert_eq!(view(&f).len(), 1);
     f.ok("inspect-reference", &[]);
     f.ok("inspect-elements", &[]);
-    f.ok("move-reference", &["--id", id, "--translation", "0,0,0"]);
-    assert_eq!(
-        view(&f).len(),
-        1,
-        "an identity placement restores the supported view"
-    );
 }
 
 struct Fixture {
@@ -955,44 +961,55 @@ fn network_urls_and_device_paths_are_refused_before_any_io() {
         (2, "PERMISSION_DENIED".to_owned())
     );
     assert!(f.listing().is_empty());
-    // A local file that itself names a network asset is refused as soon as it is examined, before
-    // anything is resolved or stored.
-    for text_body in [
+    // A local file that itself names network assets is admitted: the arcs are inert because
+    // nothing is ever resolved, and the stored bytes are the file's, unchanged.
+    for (n, text_body) in [
         "#usda 1.0\n(defaultPrim = \"A\")\ndef \"A\" (references = @https://example.invalid/x.usd@</X>)\n{\n}\n",
         "#usda 1.0\n(defaultPrim = \"A\")\ndef \"A\" (payload = @http://example.invalid/x.usd@</X>)\n{\n}\n",
         "#usda 1.0\n(defaultPrim = \"A\" subLayers = [@omniverse://server/x.usd@])\ndef Scope \"A\" {}\n",
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let f = Fixture::new();
         let source = f.source("net.usda", text_body);
-        let (code, body) = f.run("attach-reference", &["--source", &source]);
-        assert_eq!(code, 2, "{text_body}: {body:?}");
-        assert_eq!(text(&body, "code"), "PERMISSION_DENIED", "{text_body}");
+        let body = f.attach(&source, &[]);
+        let reference = at(&body, &["reference"]);
+        assert_eq!(
+            at(reference, &["foreign_prim_count"]).unsigned().unwrap(),
+            1,
+            "{n}: {text_body}"
+        );
+        assert_eq!(
+            text(at(reference, &["source"]), "digest"),
+            sha(text_body.as_bytes())
+        );
     }
-    assert!(f.listing().is_empty());
+}
+
+#[test]
+fn a_source_with_content_the_profile_cannot_represent_is_attached_with_its_geometry() {
+    let f = Fixture::new();
+    let bytes = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = { string note = 'single quoted' }\n)\ndef Xform \"Site\" (\n    apiSchemas = [\"MaterialBindingAPI\"]\n    customData = { string kind = \"scene\" }\n    variantSets = [\"look\"]\n    prepend payload = @./SubUSDs/missing.usd@\n)\n{\n    matrix4d xformOp:transform = ( (1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (5, 6, 7, 1) )\n    uniform token[] xformOpOrder = [\"xformOp:transform\"]\n    custom asset texture = @https://example.invalid/t.png@\n    custom double beyond = 1e300\n    def Cube \"Body\"\n    {\n        double size = 2\n    }\n}\n";
+    let source = f.source("scene.usda", bytes);
+    f.attach(&source, &[]);
+    let inspected = f.inspect();
+    let reference = at(&inspected, &["references"])
+        .array()
+        .unwrap()
+        .first()
+        .unwrap();
+    assert_eq!(
+        at(reference, &["foreign_prim_count"]).unsigned().unwrap(),
+        2
+    );
+    assert_eq!(fs::read(&source).unwrap(), bytes.as_bytes());
 }
 
 #[test]
 fn sources_outside_the_static_profile_are_refused_with_an_explicit_diagnostic() {
     let f = Fixture::new();
-    let big = format!(
-        "#usda 1.0\n(defaultPrim = \"A\")\ndef Scope \"A\" {{}}\n# {}\n",
-        "x".repeat(70_000)
-    );
     let cases: Vec<(&str, Vec<u8>, &str)> = vec![
-        (
-            "payload",
-            b"#usda 1.0\n(defaultPrim = \"A\")\ndef \"A\" (payload = @local.usda@</X>)\n{\n}\n".to_vec(),
-            "UNSUPPORTED_PROPERTY",
-        ),
-        (
-            "variants",
-            b"#usda 1.0\n(defaultPrim = \"A\")\ndef \"A\" (variantSets = [\"v\"])\n{\n}\n".to_vec(),
-            "UNSUPPORTED_PROPERTY",
-        ),
-        (
-            "sublayer",
-            b"#usda 1.0\n(defaultPrim = \"A\" subLayers = [@other.usda@])\ndef Scope \"A\" {}\n".to_vec(),
-            "DEPENDENCY_UNAVAILABLE",
-        ),
         (
             "no default prim",
             b"#usda 1.0\ndef Scope \"A\" {}\n".to_vec(),
@@ -1023,7 +1040,6 @@ fn sources_outside_the_static_profile_are_refused_with_an_explicit_diagnostic() 
             b"#usda 1.0\n(defaultPrim = \"A\")\ndef Scope \"A\"\n{\n    def Scope \"PRT_beam\" {}\n}\n".to_vec(),
             "INVALID_ID",
         ),
-        ("too large", big.into_bytes(), "LIMIT_EXCEEDED"),
         ("not a layer", b"hello".to_vec(), "INTEGRITY_ERROR"),
         ("empty", Vec::new(), "INTEGRITY_ERROR"),
         ("usdz", b"PK\x03\x04zip".to_vec(), "UNSUPPORTED_PROPERTY"),
@@ -1278,6 +1294,118 @@ fn a_revision_edited_outside_beamcraft_to_override_foreign_content_is_refused_on
             "{what}: create-plate {body:?}"
         );
     }
+}
+
+#[test]
+fn references_larger_than_the_first_slice_reopen_and_reach_the_view() {
+    use std::fmt::Write;
+
+    let f = Fixture::new();
+    let mut extra = String::new();
+    for n in 0..300 {
+        writeln!(extra, "    def Scope \"Node{n}\" {{}}").unwrap();
+    }
+    let scalars = std::iter::repeat_n("0", 2048)
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(extra, "    custom float[] weights = [{scalars}]").unwrap();
+    writeln!(
+        extra,
+        "    custom string sourceNotes = \"{}\"",
+        "n".repeat(48_854)
+    )
+    .unwrap();
+    let mut bytes = SITE.replacen(
+        "    def Xform \"Block\"",
+        &format!("{extra}    def Xform \"Block\""),
+        1,
+    );
+    writeln!(bytes, "# {}", "padding".repeat(12_000)).unwrap();
+    assert!(bytes.len() > 65_536);
+    let source = f.source("larger-reference.usda", &bytes);
+
+    f.attach(&source, &[]);
+    let inspected = f.inspect();
+    let reference = at(&inspected, &["references"])
+        .array()
+        .unwrap()
+        .first()
+        .unwrap();
+    assert_eq!(
+        at(reference, &["foreign_prim_count"]).unsigned().unwrap(),
+        303
+    );
+    assert_eq!(
+        text(at(reference, &["source"]), "digest"),
+        sha(bytes.as_bytes())
+    );
+    assert_eq!(fs::read(&source).unwrap(), bytes.as_bytes());
+    let snapshot = view(&f);
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(snapshot.meshes()[0].triangle_count(), 12);
+}
+
+#[test]
+fn a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has() {
+    use std::fmt::Write;
+
+    let f = Fixture::new();
+    let mut bytes =
+        String::from("#usda 1.0\n(\n    defaultPrim = \"Site\"\n)\ndef Xform \"Site\"\n{\n");
+    for n in 0..9_500 {
+        writeln!(bytes, "    def Scope \"Node{n}\" {{}}").unwrap();
+    }
+    bytes.push_str("}\n");
+    let source = f.source("large-scene.usda", &bytes);
+    let attached = f.attach(&source, &[]);
+    for body in [at(&attached, &["reference"]).clone(), {
+        let inspected = f.inspect();
+        at(&inspected, &["references"]).array().unwrap()[0].clone()
+    }] {
+        assert_eq!(
+            at(&body, &["foreign_prim_count"]).unsigned().unwrap(),
+            9_501
+        );
+        assert_eq!(at(&body, &["foreign_prims"]).array().unwrap().len(), 512);
+        assert!(at(&body, &["foreign_prims_truncated"]).boolean().unwrap());
+    }
+}
+
+#[test]
+fn a_source_above_the_blob_cap_is_refused_without_changing_the_revision() {
+    let f = Fixture::new();
+    let source = f.source("control.usda", SITE);
+    f.attach(&source, &[]);
+    let before = f.listing();
+    let oversized = f.root.join("sources").join("oversized.usda");
+    fs::File::create(&oversized)
+        .unwrap()
+        .set_len(beamcraft_model::reference::MAX_SOURCE_BYTES + 1)
+        .unwrap();
+    assert_eq!(
+        f.rejected(
+            "attach-reference",
+            &["--source", oversized.to_str().unwrap()]
+        ),
+        "LIMIT_EXCEEDED"
+    );
+    assert_eq!(f.listing(), before);
+    assert_eq!(at(&f.inspect(), &["references"]).array().unwrap().len(), 1);
+
+    let too_long = SITE.replacen(
+        "    def Xform \"Block\"",
+        &format!(
+            "    custom string sourceNotes = \"{}\"\n    def Xform \"Block\"",
+            "n".repeat(beamcraft_layer_engine::Budgets::MODEL.text_bytes + 1)
+        ),
+        1,
+    );
+    let source = f.source("oversized-text.usda", &too_long);
+    assert_eq!(
+        f.rejected("attach-reference", &["--source", &source]),
+        "LIMIT_EXCEEDED"
+    );
+    assert_eq!(f.listing(), before);
 }
 
 #[test]
