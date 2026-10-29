@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 
 mod state;
 pub use state::WorkspaceState;
+pub mod compensation;
 pub mod conflicts;
 mod pending;
 pub mod rebase;

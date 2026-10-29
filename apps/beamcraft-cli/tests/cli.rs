@@ -19,6 +19,7 @@ mod bom;
 mod changeset;
 mod changeset_base;
 mod command_evidence;
+mod compensation;
 mod contour_plates;
 mod coordinator;
 mod copy;
