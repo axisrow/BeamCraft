@@ -4187,3 +4187,63 @@ fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
     input.manifest = input.manifest_digest().unwrap();
     assert!(validate_layers(input, schema_identity().unwrap(), &control()).is_err());
 }
+
+#[test]
+fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
+    use beamcraft_model::command::{CornerTreatment, PlateCorner};
+    let (mut a, o) = populated();
+    let corner = |vertex| PlateCorner {
+        vertex,
+        treatment: CornerTreatment::Round { radius_mm: 1. },
+    };
+    for (id, corners) in [
+        (PLATE, vec![corner(999)]),
+        (MEMBER, vec![corner(0)]),
+        (PLATE, vec![corner(0), corner(0)]),
+    ] {
+        assert!(
+            a.prepare(
+                batch(
+                    &o.context,
+                    vec![Change::Corners {
+                        id: id.into(),
+                        corners
+                    }]
+                ),
+                &control()
+            )
+            .is_err()
+        );
+    }
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Corners {
+                    id: PLATE.into(),
+                    corners: vec![corner(0)],
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let installed = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let mut input = batch(
+        &installed.context,
+        vec![Change::Corners {
+            id: PLATE.into(),
+            corners: vec![],
+        }],
+    );
+    input.op_id = "0199e7a0-0000-7000-8000-000000000099".into();
+    let clear = a.prepare(input, &control()).unwrap();
+    assert!(!clear.opinions.is_empty());
+}

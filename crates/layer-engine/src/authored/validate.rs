@@ -936,6 +936,7 @@ pub(super) fn snapshot(
                         &points(p, "steel:plate:contourPointsMm")?,
                         number(p, "steel:plate:thicknessMm")?,
                     )?;
+                    plate_corner_records(p)?;
                     plate_holes(p)?;
                     plate_hole_records(p)?;
                     element_cut(p)?;
@@ -1836,7 +1837,9 @@ pub(super) fn changes(
                     return Err(unsupported());
                 }
                 let valid = match change {
-                    Change::Contour { .. } | Change::Thickness { .. } => kind == "plate",
+                    Change::Contour { .. } | Change::Thickness { .. } | Change::Corners { .. } => {
+                        kind == "plate"
+                    }
                     Change::HoleRecords { .. } => kind == "plate",
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
@@ -2362,6 +2365,19 @@ pub(super) fn changes(
                 count_points(points_mm, b)?;
                 cap(points_mm.iter().flatten().copied(), 1e9)?;
             }
+            Change::Corners { corners, .. } => {
+                if corners.len() > 1024 {
+                    return Err(limit());
+                }
+                let mut seen = Vec::new();
+                for corner in corners {
+                    if corner.vertex >= 1024 || seen.contains(&corner.vertex) {
+                        return Err(invalid());
+                    }
+                    seen.push(corner.vertex);
+                    corner.validate().map_err(|_| invalid())?;
+                }
+            }
             Change::Thickness { mm, .. } => cap([*mm], 1e6)?,
             Change::Cuts { cuts, .. } => cut_values(cuts)?,
             Change::Axis { points_mm, .. } => cap(points_mm.iter().flatten().copied(), 1e9)?,
@@ -2591,6 +2607,86 @@ fn mesh(m: &Mesh, b: Budgets) -> Result<(), Diagnostic> {
             .any(|&n| usize::try_from(n).map_or(true, |i| i >= m.points_mm.len()))
     {
         return Err(invalid());
+    }
+    Ok(())
+}
+
+fn plate_corner_records(p: &Prim) -> Result<(), Diagnostic> {
+    let fields = [
+        ("steel:plate:cornerVertex", "int[]"),
+        ("steel:plate:cornerKind", "token[]"),
+        ("steel:plate:cornerD1Mm", "double[]"),
+        ("steel:plate:cornerD2Mm", "double[]"),
+        ("steel:plate:cornerRadiusMm", "double[]"),
+    ];
+    let mut arrays = Vec::new();
+    let mut absent = 0usize;
+    for (name, ty) in fields {
+        match optional(p, name, ty)? {
+            None => absent += 1,
+            Some(Value::Array(a)) => arrays.push(a),
+            _ => return Err(invalid()),
+        }
+    }
+    if absent == 5 {
+        return Ok(());
+    }
+    if absent != 0 {
+        return Err(invalid());
+    }
+    let [vertices, kinds, d1s, d2s, radii] = arrays.as_slice() else {
+        return Err(invalid());
+    };
+    if vertices.len() > 1024 {
+        return Err(limit());
+    }
+    if [kinds.len(), d1s.len(), d2s.len(), radii.len()]
+        .iter()
+        .any(|n| *n != vertices.len())
+    {
+        return Err(invalid());
+    }
+    let count = points(p, "steel:plate:contourPointsMm")?.len();
+    let mut seen = Vec::new();
+    for ((((v, k), d1), d2), r) in vertices
+        .iter()
+        .zip(kinds.iter())
+        .zip(d1s.iter())
+        .zip(d2s.iter())
+        .zip(radii.iter())
+    {
+        let Value::Int(v) = v else {
+            return Err(invalid());
+        };
+        let v = usize::try_from(*v).map_err(|_| invalid())?;
+        if v >= count || seen.contains(&v) {
+            return Err(invalid());
+        }
+        seen.push(v);
+        let number = |n: &Value| match n {
+            Value::Number(n) => Ok(*n),
+            Value::Int(n) => Ok(*n as f64),
+            _ => Err(invalid()),
+        };
+        let (d1, d2, r) = (number(d1)?, number(d2)?, number(r)?);
+        let treatment = match k {
+            Value::Text(k) if k == "chamfer" && r == 0. => {
+                beamcraft_model::command::CornerTreatment::Chamfer {
+                    d1_mm: d1,
+                    d2_mm: d2,
+                }
+            }
+            Value::Text(k) if k == "round" && d1 == 0. && d2 == 0. => {
+                beamcraft_model::command::CornerTreatment::Round { radius_mm: r }
+            }
+            _ => return Err(invalid()),
+        };
+        PlateCorner {
+            vertex: v,
+            treatment,
+        }
+        .validate()
+        .map_err(|_| invalid())?;
     }
     Ok(())
 }

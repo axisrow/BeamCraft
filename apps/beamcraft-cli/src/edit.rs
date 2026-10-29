@@ -277,6 +277,7 @@ pub fn update_element(
         let patch = beamcraft_model::command::ElementPatch {
             material: command.patch.material,
             thickness_mm: command.patch.thickness_mm,
+            corners: command.patch.corners.clone(),
             thickness_side: command.patch.thickness_side,
             axis_points_mm: command.patch.axis_points_mm.clone(),
             ..Default::default()
@@ -375,6 +376,12 @@ pub fn update_element(
         changes.push(Change::Thickness {
             id: definition_text.clone(),
             mm,
+        });
+    }
+    if let Some(corners) = &command.patch.corners {
+        changes.push(Change::Corners {
+            id: definition_text.clone(),
+            corners: corners.clone(),
         });
     }
     if let Some(side) = command.patch.thickness_side {

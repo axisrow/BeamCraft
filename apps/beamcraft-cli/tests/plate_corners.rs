@@ -340,3 +340,95 @@ fn create_treated_in(store: &str, name: &str, corners: &str) -> Json {
 fn plates_in(store: &str) -> Vec<Json> {
     list(&ok_in(store, "inspect-elements", &[]), "plates").to_vec()
 }
+
+#[test]
+fn corner_updates_replace_clear_and_rebuild_the_linked_group_atomically() {
+    let f = support::StoreFixture::new("a12-3-corner-update");
+    let created = create_treated(&f, "source", "0=chamfer:100");
+    let id = text(at(&created, &["plate"]), "element_id");
+    let instance = ok(&f, "copy-instance", &["--id", &id, "--offset", "2000,0,0"]);
+    let instance_id = text(at(&instance, &["element"]), "element_id");
+    let op = "019a7bf0-0000-7000-8000-000000ce0301";
+    let args = ["--id", &id, "--corners", "0=chamfer:100,50", "--op-id", op];
+    let updated = ok(&f, "update-element", &args);
+    assert!(at(&updated, &["effect", "shape"]) == &Json::Bool(true));
+    assert_eq!(
+        num(at(&updated, &["element"]), &["quantities", "volume", "mm3"]),
+        9_975_000.
+    );
+    let after = plates(&f);
+    let definition = by_id(&after, &id);
+    let linked = by_id(&after, &instance_id);
+    assert_eq!(definition.get("corners"), linked.get("corners"));
+    assert_eq!(definition.get("mesh_digest"), linked.get("mesh_digest"));
+    let head = ok(&f, "open-revision", &[]);
+    let replay = ok(&f, "update-element", &args);
+    assert_eq!(text(&replay, "outcome"), "element_update_replayed");
+    assert_eq!(ok(&f, "open-revision", &[]), head);
+    for treatment in [
+        "4=round:5",
+        "0=round:0",
+        "0=round:NaN",
+        "0=chamfer:1000",
+        "0=round:2;0=round:3",
+        "0=bogus:5",
+    ] {
+        refused(&f, "update-element", &["--id", &id, "--corners", treatment]);
+    }
+    // Raw CLI byte bounds precede parsing. The short form reaches the record-count bound.
+    for (over_cap, expected) in [
+        (vec!["0=round:1"; 1025].join(";"), "INVALID_ARGUMENT"),
+        (";".repeat(1024), "LIMIT_EXCEEDED"),
+    ] {
+        let (code, error) = f.run("update-element", &["--id", &id, "--corners", &over_cap]);
+        assert_eq!(code, 2);
+        assert_eq!(text(&error, "code"), expected);
+        assert_eq!(ok(&f, "open-revision", &[]), head);
+    }
+    let cleared = ok(
+        &f,
+        "update-element",
+        &["--id", &instance_id, "--corners", "none"],
+    );
+    assert!(list(at(&cleared, &["element"]), "corners").is_empty());
+    for plate in plates(&f) {
+        assert!(list(&plate, "corners").is_empty());
+        assert_eq!(num(&plate, &["quantities", "volume", "mm3"]), 10_000_000.);
+    }
+}
+#[test]
+fn corner_replacement_and_clearing_each_undo_as_one_revision() {
+    let f = support::StoreFixture::new("a12-3-corner-undo");
+    create_treated(&f, "base", "");
+    let dir = f.root.join("ws").to_str().unwrap().to_owned();
+    ok(
+        &f,
+        "create-workspace",
+        &["--workspace-dir", &dir, "--user-id", USER],
+    );
+    let created = create_treated_in(&dir, "draft", "0=round:100");
+    let id = text(at(&created, &["plate"]), "element_id");
+    let before = by_id(&plates_in(&dir), &id).clone();
+    let edited = ok_in(
+        &dir,
+        "update-element",
+        &["--id", &id, "--corners", "2=chamfer:100"],
+    );
+    let expected = at(&edited, &["element"]);
+    ok_raw(&["undo-workspace", "--workspace-dir", &dir]);
+    assert_eq!(
+        by_id(&plates_in(&dir), &id).get("mesh_digest"),
+        before.get("mesh_digest")
+    );
+    ok_raw(&["redo-workspace", "--workspace-dir", &dir]);
+    assert_eq!(
+        by_id(&plates_in(&dir), &id).get("corners"),
+        expected.get("corners")
+    );
+    ok_in(&dir, "update-element", &["--id", &id, "--corners", "none"]);
+    ok_raw(&["undo-workspace", "--workspace-dir", &dir]);
+    assert_eq!(
+        by_id(&plates_in(&dir), &id).get("corners"),
+        expected.get("corners")
+    );
+}

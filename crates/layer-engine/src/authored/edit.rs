@@ -721,63 +721,7 @@ fn create(
                 )?;
             }
             if !corners.is_empty() {
-                // The five parallel corner attributes (A12.2), always together; a value that
-                // its treatment does not use is written as zero.
-                let mut vertices = Vec::with_capacity(corners.len());
-                let mut kinds: Vec<&str> = Vec::with_capacity(corners.len());
-                let mut d1s = Vec::with_capacity(corners.len());
-                let mut d2s = Vec::with_capacity(corners.len());
-                let mut radii = Vec::with_capacity(corners.len());
-                for corner in corners {
-                    vertices.push(i32::try_from(corner.vertex).map_err(|_| limit())?);
-                    kinds.push(corner.treatment.kind());
-                    let (d1, d2, radius) = match corner.treatment {
-                        beamcraft_model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => {
-                            (d1_mm, d2_mm, 0.0)
-                        }
-                        beamcraft_model::command::CornerTreatment::Round { radius_mm } => {
-                            (0.0, 0.0, radius_mm)
-                        }
-                    };
-                    d1s.push(d1);
-                    d2s.push(d2);
-                    radii.push(radius);
-                }
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerVertex",
-                    "int[]",
-                    sdf::Value::IntVec(vertices),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerKind",
-                    "token[]",
-                    sdf::Value::token_vec(kinds),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerD1Mm",
-                    "double[]",
-                    sdf::Value::DoubleVec(d1s),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerD2Mm",
-                    "double[]",
-                    sdf::Value::DoubleVec(d2s),
-                )?;
-                attr(
-                    data,
-                    &p,
-                    "steel:plate:cornerRadiusMm",
-                    "double[]",
-                    sdf::Value::DoubleVec(radii),
-                )?;
+                author_corners(data, &p, corners)?;
             }
             if !holes.is_empty() {
                 let flat: Vec<[f64; 3]> = holes.iter().flatten().copied().collect();
@@ -1420,6 +1364,7 @@ pub(super) fn apply(
                 "double",
                 sdf::Value::Double(*mm),
             )?,
+            Change::Corners { corners, .. } => author_corners(&mut authored, &p, corners)?,
             Change::ThicknessSide { side, .. } => attr(
                 &mut authored,
                 &p,
@@ -1613,6 +1558,7 @@ pub(super) fn apply(
             Change::Contour { .. }
                 | Change::Thickness { .. }
                 | Change::ThicknessSide { .. }
+                | Change::Corners { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
@@ -1939,6 +1885,17 @@ fn capture(
             }
             Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", 0),
             Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", 0),
+            Change::Corners { .. } => {
+                for (name, ty) in [
+                    ("steel:plate:cornerVertex", "int[]"),
+                    ("steel:plate:cornerKind", "token[]"),
+                    ("steel:plate:cornerD1Mm", "double[]"),
+                    ("steel:plate:cornerD2Mm", "double[]"),
+                    ("steel:plate:cornerRadiusMm", "double[]"),
+                ] {
+                    add(name, ty, 0);
+                }
+            }
             Change::ThicknessSide { .. } => add("steel:plate:thicknessSide", "token", 0),
             Change::Cuts { .. } => {
                 for &(name, ty) in CUT_FIELDS {
@@ -1980,6 +1937,7 @@ fn capture(
             Change::Contour { .. }
                 | Change::Thickness { .. }
                 | Change::ThicknessSide { .. }
+                | Change::Corners { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
@@ -2036,4 +1994,68 @@ fn capture(
         });
     }
     Ok(result)
+}
+
+fn author_corners(
+    data: &mut sdf::Data,
+    p: &str,
+    corners: &[PlateCorner],
+) -> Result<(), Diagnostic> {
+    // The five parallel corner attributes (A12.2), always together; a value that
+    // its treatment does not use is written as zero.
+    let mut vertices = Vec::with_capacity(corners.len());
+    let mut kinds: Vec<&str> = Vec::with_capacity(corners.len());
+    let mut d1s = Vec::with_capacity(corners.len());
+    let mut d2s = Vec::with_capacity(corners.len());
+    let mut radii = Vec::with_capacity(corners.len());
+    for corner in corners {
+        vertices.push(i32::try_from(corner.vertex).map_err(|_| limit())?);
+        kinds.push(corner.treatment.kind());
+        let (d1, d2, radius) = match corner.treatment {
+            beamcraft_model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => {
+                (d1_mm, d2_mm, 0.0)
+            }
+            beamcraft_model::command::CornerTreatment::Round { radius_mm } => (0.0, 0.0, radius_mm),
+        };
+        d1s.push(d1);
+        d2s.push(d2);
+        radii.push(radius);
+    }
+    attr(
+        data,
+        p,
+        "steel:plate:cornerVertex",
+        "int[]",
+        sdf::Value::IntVec(vertices),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:cornerKind",
+        "token[]",
+        sdf::Value::token_vec(kinds),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:cornerD1Mm",
+        "double[]",
+        sdf::Value::DoubleVec(d1s),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:cornerD2Mm",
+        "double[]",
+        sdf::Value::DoubleVec(d2s),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:cornerRadiusMm",
+        "double[]",
+        sdf::Value::DoubleVec(radii),
+    )?;
+
+    Ok(())
 }
