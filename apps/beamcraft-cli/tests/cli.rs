@@ -28,6 +28,7 @@ mod cut_updates;
 mod cuts;
 mod definitions;
 mod drawing_codec;
+mod drawing_drafting;
 mod environments;
 mod export_ifc;
 mod f04_cases;

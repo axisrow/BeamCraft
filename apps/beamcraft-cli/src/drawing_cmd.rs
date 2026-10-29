@@ -443,10 +443,13 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let actor = ActorId::parse(required("--actor-id")?)
                 .map_err(|_| invalid("actor id must be UUIDv7"))?;
             let drafting = drafting_specs(&drafting_values)?;
-            // Replaying the exact accepted operation stays safe after later revisions.
+            // Replaying the exact accepted operation stays safe after later revisions. The
+            // fingerprint binds the incoming drafting too: a retry that drops or changes the
+            // geometry is a different request, never a replay.
             if let Some(previous) = documents.query(&op)? {
+                let candidate = previous.drawing.clone().with_drafting(drafting)?;
                 let request = request_fingerprint(
-                    &previous.drawing,
+                    &candidate,
                     State::Draft,
                     None,
                     previous.latest_published,

@@ -753,3 +753,223 @@ fn a_combine_extends_the_survivor_and_undo_restores_both() {
         "{volumes:?}"
     );
 }
+
+#[test]
+fn an_a13_cut_rides_the_instance_group_with_the_fresh_body() {
+    let f = Fixture::new();
+    let steel = {
+        let reply = f.ok("define-material", &["--density", "7850"]);
+        text(at(&reply, &["definition"]), "digest")
+    };
+    let created = f.plate(&[
+        "--material-digest",
+        &steel,
+        "--name",
+        "Definition",
+        "--new-id",
+        "019a7bf0-0000-7000-8000-00000000b001",
+    ]);
+    let definition = text(at(&created, &["plate"]), "element_id");
+    for (n, offset) in [
+        ("019a7bf0-0000-7000-8000-00000000b002", "1100,0,0"),
+        ("019a7bf0-0000-7000-8000-00000000b003", "2200,0,0"),
+    ] {
+        let copied = f.ok(
+            "copy-instance",
+            &[
+                "--id",
+                &definition,
+                "--new-id",
+                n,
+                "--name",
+                "Instance",
+                "--offset",
+                offset,
+            ],
+        );
+        assert_eq!(text(&copied, "outcome"), "element_copied");
+    }
+    let group = [
+        "019a7bf0-0000-7000-8000-00000000b001",
+        "019a7bf0-0000-7000-8000-00000000b002",
+        "019a7bf0-0000-7000-8000-00000000b003",
+    ];
+    // The line cut halves every member of the group: the fresh body and quantities ride with
+    // the shared records, so no instance keeps the stale pre-cut mesh or volume.
+    let cut = f.ok(
+        "cut-by-line",
+        &[
+            "--id",
+            &definition,
+            "--operation-id",
+            OP_A,
+            "--op-id",
+            OP_A,
+            "--point-a",
+            "0,250,0",
+            "--point-b",
+            "1000,250,0",
+            "--axis",
+            "0,0,1",
+            "--keep",
+            "positive",
+        ],
+    );
+    assert_eq!(text(&cut, "outcome"), "a13_applied");
+    let inspected = f.inspected();
+    let plates = at(&inspected, &["plates"]).array().unwrap();
+    assert_eq!(plates.len(), 3);
+    for id in group {
+        let member = plates.iter().find(|p| text(p, "element_id") == id).unwrap();
+        let volume = num(member, &["quantities", "volume", "mm3"]);
+        assert!((volume - 2_500_000.0).abs() <= 1e-6, "{id}: {volume}");
+    }
+    let mesh = text(&plates[0], "mesh_digest");
+    for member in &plates[1..] {
+        assert_eq!(text(member, "mesh_digest"), mesh);
+    }
+}
+
+#[test]
+fn retired_a13_cut_identities_are_never_reused_across_removal() {
+    let f = Fixture::new();
+    let created = f.plate(&[]);
+    let element = text(at(&created, &["plate"]), "element_id");
+    let first = f.ok(
+        "cut-by-line",
+        &[
+            "--id",
+            &element,
+            "--operation-id",
+            OP_A,
+            "--op-id",
+            OP_A,
+            "--point-a",
+            "0,250,0",
+            "--point-b",
+            "1000,250,0",
+            "--axis",
+            "0,0,1",
+            "--keep",
+            "positive",
+        ],
+    );
+    assert_eq!(num(&first, &["record", "ordinal"]), 0.0);
+    // Removing the record retires its identity and its ordinal.
+    let removal_op = "01b00000-0000-7000-8000-0000000000b1";
+    let removed = f.ok(
+        "remove-cut",
+        &[
+            "--id",
+            &element,
+            "--operation-id",
+            OP_A,
+            "--op-id",
+            removal_op,
+        ],
+    );
+    assert!(
+        (f.volume_of(&removed, "element") - 5_000_000.0).abs() <= 1e-6,
+        "{removed:?}"
+    );
+    // The retired record id is refused for a fresh A13 record...
+    let kind = f.rejected(
+        "cut-by-line",
+        &[
+            "--id",
+            &element,
+            "--operation-id",
+            OP_A,
+            "--point-a",
+            "0,100,0",
+            "--point-b",
+            "1000,100,0",
+            "--axis",
+            "0,0,1",
+            "--keep",
+            "positive",
+        ],
+    );
+    assert_eq!(kind, "DUPLICATE_ID");
+    // ...and the new record takes the next ordinal of the persistent counter, never a reuse.
+    let next = f.ok(
+        "cut-by-line",
+        &[
+            "--id",
+            &element,
+            "--operation-id",
+            OP_B,
+            "--op-id",
+            OP_B,
+            "--point-a",
+            "0,100,0",
+            "--point-b",
+            "1000,100,0",
+            "--axis",
+            "0,0,1",
+            "--keep",
+            "positive",
+        ],
+    );
+    assert_eq!(num(&next, &["record", "ordinal"]), 1.0);
+}
+
+#[test]
+fn a_polygon_cut_takes_the_persistent_hole_counter_and_refuses_retired_ids() {
+    let f = Fixture::new();
+    let created = f.plate(&[]);
+    let element = text(at(&created, &["plate"]), "element_id");
+    let hole_op = "01b00000-0000-7000-8000-0000000000c1";
+    f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &element,
+            "--operation-id",
+            hole_op,
+            "--hole-rect",
+            "100,100,100,100",
+        ],
+    );
+    let remove_op = "01b00000-0000-7000-8000-0000000000c2";
+    f.ok(
+        "remove-hole",
+        &[
+            "--id",
+            &element,
+            "--operation-id",
+            hole_op,
+            "--op-id",
+            remove_op,
+        ],
+    );
+    // The retired hole identity is refused to a polygon cut as well: one record vocabulary,
+    // one identity space.
+    let kind = f.rejected(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &element,
+            "--operation-id",
+            hole_op,
+            "--polygon",
+            "100,100;100,200;200,200;200,100",
+        ],
+    );
+    assert_eq!(kind, "DUPLICATE_ID");
+    // ...and the polygon cut takes the next ordinal of the persistent hole counter, so no
+    // wall id of a removed record ever comes back.
+    let cut = f.ok(
+        "cut-by-polygon",
+        &[
+            "--id",
+            &element,
+            "--operation-id",
+            OP_A,
+            "--polygon",
+            "100,100;100,200;200,200;200,100",
+        ],
+    );
+    let authored = f.authored_text(&cut);
+    assert!(authored.contains("steel:hole:ordinals = [1]"), "{authored}");
+}

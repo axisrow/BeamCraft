@@ -194,7 +194,17 @@ pub fn cut_by_plane_after(
             "cut ordinal capacity exhausted",
         ));
     }
-    let mut result = cut_by_plane(command, plate, member, operation_used)?;
+    let result = cut_by_plane(command, plate, member, operation_used)?;
+    pin_next_ordinal(result, next_ordinal)
+}
+
+/// Pins the appended record's ordinal to the persistent counter and refuses a counter that
+/// regressed behind the live-derived one (see `cut_by_plane_after`). The shared postlude of
+/// every adapter that allocates from retirement metadata.
+pub(crate) fn pin_next_ordinal(
+    mut result: CutByPlaneOutcome,
+    next_ordinal: u16,
+) -> Result<CutByPlaneOutcome, CommandError> {
     if next_ordinal < result.ordinal {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,

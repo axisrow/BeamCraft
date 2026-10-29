@@ -244,3 +244,65 @@ fn drawn_objects_live_in_the_document_only_and_published_versions_survive_edits(
         fs::read(&after_out).unwrap()
     );
 }
+
+#[test]
+fn drafting_replay_binds_the_incoming_geometry_even_after_later_edits() {
+    let f = Fixture::new();
+    f.model();
+    let document_dir = f
+        .shared
+        .root
+        .join("replay-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut create = vec![
+        "--document-dir".to_owned(),
+        document_dir.clone(),
+        "--op-id".to_owned(),
+        OP_CREATE.to_owned(),
+        "--revision-id".to_owned(),
+        REV_CREATE.to_owned(),
+        "--actor-id".to_owned(),
+        ACTOR.to_owned(),
+    ];
+    create.extend(intent());
+    let head = text(&f.ok("create-drawing", &argv(&create)), "revision_id");
+    let original = vec!["--drafting".to_owned(), format!("{LINE}:line:0,0,10,0")];
+    let changed = vec!["--drafting".to_owned(), format!("{LINE}:line:0,0,20,0")];
+    let (code, accepted) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &original);
+    assert_eq!(code, 0, "{accepted:?}");
+    let edited_head = text(&accepted, "revision_id");
+    let (code, replayed) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &original);
+    assert_eq!(code, 0, "{replayed:?}");
+    assert_eq!(replayed, accepted);
+    let (code, refused) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &changed);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "OP_ID_REUSE");
+    assert_eq!(
+        text(
+            &f.ok("inspect-drawing", &["--document-dir", &document_dir]),
+            "revision_id"
+        ),
+        edited_head
+    );
+
+    let (code, later) = edit(&document_dir, &edited_head, OP_AFTER, REV_AFTER, &changed);
+    assert_eq!(code, 0, "{later:?}");
+    let later_head = text(&later, "revision_id");
+    let (code, replayed) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &original);
+    assert_eq!(code, 0, "{replayed:?}");
+    assert_eq!(replayed, accepted);
+    for entities in [&changed[..], &[][..]] {
+        let (code, refused) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, entities);
+        assert_eq!(code, 2, "{refused:?}");
+        assert_eq!(text(&refused, "code"), "OP_ID_REUSE");
+    }
+    assert_eq!(
+        text(
+            &f.ok("inspect-drawing", &["--document-dir", &document_dir]),
+            "revision_id"
+        ),
+        later_head
+    );
+}

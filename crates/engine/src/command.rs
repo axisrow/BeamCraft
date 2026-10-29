@@ -1122,6 +1122,15 @@ pub fn update_hole(
                 "hole record not found on target",
             )
         })?;
+    // An A13 polygon cut shares the record list but is not an A04 hole: the adapter refuses
+    // it with a typed result instead of editing one.
+    if record.kind != beamcraft_model::command::HoleKind::Hole {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "operation_id",
+            "the record is a polygon cut, not a hole",
+        ));
+    }
     record.polygon_mm = command.hole.polygon()?;
     let body = evaluate_plate(&next).map_err(|e| {
         if e.field == "holes_mm" {
@@ -1145,15 +1154,23 @@ pub fn remove_hole(
             "hole target not found",
         ));
     }
-    if !head
+    let record = head
         .hole_records
         .iter()
-        .any(|r| r.operation_id == command.operation_id)
-    {
+        .find(|r| r.operation_id == command.operation_id)
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::NotFound,
+                "operation_id",
+                "hole record not found on target",
+            )
+        })?;
+    // The same kind guard as `update_hole`: retiring a polygon cut is not an A04 removal.
+    if record.kind != beamcraft_model::command::HoleKind::Hole {
         return Err(CommandError::new(
-            ErrorCode::NotFound,
+            ErrorCode::InvalidArgument,
             "operation_id",
-            "hole record not found on target",
+            "the record is a polygon cut, not a hole",
         ));
     }
     let mut next = head.clone();
@@ -2094,5 +2111,48 @@ mod tests {
         let mut extreme = p;
         extreme.hole_records.first_mut().unwrap().ordinal = usize::MAX;
         assert!(add_hole(&extreme, &c, &|_| false).is_err());
+    }
+    #[test]
+    fn the_a04_adapter_refuses_an_a13_polygon_cut_record_with_a_typed_result() {
+        // A polygon cut lives in the same record list with kind PolygonCut; update-hole and
+        // remove-hole must never edit or retire one through the hole vocabulary.
+        let head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        let id = OpId::parse("019a7bf0-0000-7000-8000-00000000af11").unwrap();
+        let mut with_cut = head.clone();
+        with_cut.hole_records.push(HoleRecord {
+            operation_id: id,
+            ordinal: 0,
+            polygon_mm: vec![
+                [100.0, 100.0],
+                [200.0, 100.0],
+                [200.0, 200.0],
+                [100.0, 200.0],
+            ],
+            kind: beamcraft_model::command::HoleKind::PolygonCut,
+        });
+        let edit = beamcraft_model::command::UpdateHole {
+            hole: AddHole {
+                target_id: with_cut.id,
+                operation_id: id,
+                hole: HoleSpec::Rectangle {
+                    corner_mm: [100.0, 100.0],
+                    width_mm: 50.0,
+                    height_mm: 50.0,
+                },
+            },
+        };
+        assert_eq!(
+            update_hole(&with_cut, &edit).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let removal = beamcraft_model::command::RemoveHole {
+            target_id: with_cut.id,
+            operation_id: id,
+        };
+        assert_eq!(
+            remove_hole(&with_cut, &removal).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(with_cut.hole_records.len(), 1);
     }
 }

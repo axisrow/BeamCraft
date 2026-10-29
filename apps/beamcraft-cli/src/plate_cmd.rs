@@ -1596,10 +1596,19 @@ fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>
         CutElement::Member(record) => member_json(record),
     };
     match result.elements.as_slice() {
-        [single] => fields.push(("element", element_json(single)?)),
         [kept, created] => {
             fields.push(("kept", element_json(kept)?));
             fields.push(("created", element_json(created)?));
+        }
+        [single] => fields.push(("element", element_json(single)?)),
+        // The canonical element first, then the instance group members it re-authored.
+        [single, instances @ ..] => {
+            fields.push(("element", element_json(single)?));
+            let instances = instances
+                .iter()
+                .map(element_json)
+                .collect::<Result<Vec<_>, _>>()?;
+            fields.push(("instances", Json::Array(instances)));
         }
         _ => return Err(invalid("the command produced no element")),
     }

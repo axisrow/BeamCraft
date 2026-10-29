@@ -101,6 +101,7 @@ pub fn cut_by_line(
     plate: Option<&AuthoredPlate>,
     member: Option<&AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
 ) -> Result<CutByPlaneOutcome, CommandError> {
     let (point_mm, normal) = command.plane()?;
     append_plane_record(
@@ -113,6 +114,7 @@ pub fn cut_by_line(
         plate,
         member,
         operation_used,
+        next_ordinal,
     )
 }
 
@@ -128,7 +130,15 @@ fn append_plane_record(
     plate: Option<&AuthoredPlate>,
     member: Option<&AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
 ) -> Result<CutByPlaneOutcome, CommandError> {
+    if next_ordinal > 999 {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "kernel_capacity",
+            "cut ordinal capacity exhausted",
+        ));
+    }
     let (found, ordinal) = admit_record(target_id, operation_id, plate, member, operation_used)?;
     let record = CutRecord {
         operation_id,
@@ -137,17 +147,19 @@ fn append_plane_record(
         normal,
         keep,
     };
-    Ok(CutByPlaneOutcome {
+    let outcome = CutByPlaneOutcome {
         target: found.appended(record),
         ordinal,
         footprint: Footprint::for_update(target_id, false, false, true, false, None)?,
         fingerprint,
-    })
+    };
+    crate::cut::pin_next_ordinal(outcome, next_ordinal)
 }
 
 /// Admits a through-cut polygon on a plate: the shared record identity, the `MAX_HOLES`
-/// capacity of the element, the next ordinal of the shared through-cut counter and the declared
-/// footprint (the shape rewrite plus the read of a tool element when there is one).
+/// capacity of the element, the admitted persistent next ordinal of the shared through-cut
+/// counter and the declared footprint (the shape rewrite plus the read of a tool element when
+/// there is one).
 fn admit_through_polygon(
     head: &AuthoredPlate,
     operation_id: OpId,
@@ -155,7 +167,15 @@ fn admit_through_polygon(
     kind: HoleKind,
     tool_id: Option<ElementId>,
     operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
 ) -> Result<(AuthoredPlate, usize, Footprint), CommandError> {
+    if next_ordinal > 999 {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "kernel_capacity",
+            "cut ordinal capacity exhausted",
+        ));
+    }
     if operation_used(&operation_id) {
         return Err(CommandError::new(
             ErrorCode::DuplicateId,
@@ -171,11 +191,18 @@ fn admit_through_polygon(
         )
         .with_rule("DV-LIM-001"));
     }
-    let ordinal = head
+    let derived = head
         .hole_records
         .last()
         .and_then(|last| last.ordinal.checked_add(1))
         .unwrap_or(0);
+    if usize::from(next_ordinal) < derived {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "next_ordinal",
+            "cut counter regressed",
+        ));
+    }
     let mut footprint = Footprint::for_update(head.id, false, false, true, false, None)?;
     if let Some(tool_id) = tool_id {
         let read = Footprint::from_entries(
@@ -190,11 +217,11 @@ fn admit_through_polygon(
     let mut next = head.clone();
     next.hole_records.push(HoleRecord {
         operation_id,
-        ordinal,
+        ordinal: usize::from(next_ordinal),
         polygon_mm: polygon,
         kind,
     });
-    Ok((next, ordinal, footprint))
+    Ok((next, usize::from(next_ordinal), footprint))
 }
 
 /// Applies `CutByPolygon` to the plate's authored state in memory: the polygon is appended as a
@@ -206,6 +233,7 @@ pub fn cut_by_polygon(
     plate: Option<&AuthoredPlate>,
     member: Option<&AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
 ) -> Result<PolygonCutOutcome, CommandError> {
     command.validate_arguments()?;
     let head = found_plate(plate, member, command.target_id)?;
@@ -216,6 +244,7 @@ pub fn cut_by_polygon(
         HoleKind::PolygonCut,
         None,
         operation_used,
+        next_ordinal,
     )?;
     Ok(PolygonCutOutcome {
         authored,
@@ -258,6 +287,7 @@ pub fn cut_by_part(
     member: Option<&AuthoredMember>,
     tool: Option<&AuthoredPlate>,
     operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
 ) -> Result<PolygonCutOutcome, CommandError> {
     command.validate_arguments()?;
     let head = found_plate(plate, member, command.target_id)?;
@@ -292,6 +322,7 @@ pub fn cut_by_part(
         HoleKind::PolygonCut,
         Some(command.tool_id),
         operation_used,
+        next_ordinal,
     )?;
     Ok(PolygonCutOutcome {
         authored,
@@ -365,6 +396,7 @@ pub fn fit_end_to_part(
     member: Option<&AuthoredMember>,
     tool: Option<&AuthoredPlate>,
     operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
 ) -> Result<CutByPlaneOutcome, CommandError> {
     command.validate_arguments()?;
     if plate.filter(|p| p.id == command.target_id).is_none()
@@ -449,6 +481,7 @@ pub fn fit_end_to_part(
         plate,
         member,
         operation_used,
+        next_ordinal,
     )
     .map(|mut outcome| {
         outcome.footprint = footprint;
@@ -535,6 +568,7 @@ pub fn chamfer_part(
     plate: Option<&AuthoredPlate>,
     member: Option<&AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
 ) -> Result<CutByPlaneOutcome, CommandError> {
     command.validate_arguments()?;
     let head = found_plate(plate, member, command.target_id)?;
@@ -637,6 +671,7 @@ pub fn chamfer_part(
         plate,
         None,
         operation_used,
+        next_ordinal,
     )
 }
 
@@ -650,8 +685,16 @@ pub fn split_part(
     member: Option<&AuthoredMember>,
     operation_used: &dyn Fn(&OpId) -> bool,
     id_used: &dyn Fn(&ElementId) -> bool,
+    next_ordinal: u16,
 ) -> Result<SplitOutcome, CommandError> {
     command.validate_arguments()?;
+    if next_ordinal > 999 {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "kernel_capacity",
+            "cut ordinal capacity exhausted",
+        ));
+    }
     if id_used(&command.new_id) {
         return Err(CommandError::new(
             ErrorCode::DuplicateId,
@@ -666,6 +709,14 @@ pub fn split_part(
         member,
         operation_used,
     )?;
+    if next_ordinal < ordinal {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "next_ordinal",
+            "cut counter regressed",
+        ));
+    }
+    let ordinal = next_ordinal;
     let kept_record = CutRecord {
         operation_id: command.operation_id,
         ordinal,
@@ -1105,7 +1156,7 @@ mod tests {
             axis: [0.0, 0.0, 1.0],
             keep: KeepSide::Positive,
         };
-        let outcome = cut_by_line(&command, Some(&source), None, &none).unwrap();
+        let outcome = cut_by_line(&command, Some(&source), None, &none, 0).unwrap();
         let CutTarget::Plate(authored) = &outcome.target else {
             panic!("expected the plate target");
         };
@@ -1120,13 +1171,13 @@ mod tests {
             ..command
         };
         assert_eq!(
-            cut_by_line(&parallel, Some(&source), None, &none)
+            cut_by_line(&parallel, Some(&source), None, &none, 0)
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
         );
         assert_eq!(
-            cut_by_line(&command, Some(&source), None, &|o: &OpId| *o == op(200))
+            cut_by_line(&command, Some(&source), None, &|o: &OpId| *o == op(200), 0)
                 .unwrap_err()
                 .code,
             ErrorCode::DuplicateId
@@ -1141,7 +1192,7 @@ mod tests {
             operation_id: op(201),
             polygon_mm: square(100.0, 100.0, 100.0),
         };
-        let outcome = cut_by_polygon(&command, Some(&source), None, &none).unwrap();
+        let outcome = cut_by_polygon(&command, Some(&source), None, &none, 0).unwrap();
         assert_eq!(outcome.ordinal, 0);
         // A member target is the documented unsupported geometry, never a missing element.
         let beam = member(6, 6000.0, [0.0; 3], digest(b"profile"));
@@ -1150,7 +1201,7 @@ mod tests {
             ..command.clone()
         };
         assert_eq!(
-            cut_by_polygon(&on_member, Some(&source), Some(&beam), &none)
+            cut_by_polygon(&on_member, Some(&source), Some(&beam), &none, 0)
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1165,7 +1216,7 @@ mod tests {
             ..command.clone()
         };
         assert_eq!(
-            cut_by_polygon(&next, Some(&outcome.authored), None, &none)
+            cut_by_polygon(&next, Some(&outcome.authored), None, &none, 1)
                 .unwrap()
                 .ordinal,
             1
@@ -1176,7 +1227,7 @@ mod tests {
             polygon_mm: square(900.0, 100.0, 200.0),
             ..command.clone()
         };
-        let attempted = cut_by_polygon(&crossing, Some(&source), None, &none).unwrap();
+        let attempted = cut_by_polygon(&crossing, Some(&source), None, &none, 0).unwrap();
         assert!(evaluate_plate(&attempted.authored).is_err());
     }
 
@@ -1198,7 +1249,7 @@ mod tests {
             operation_id: op(204),
             tool_id: id(6),
         };
-        let outcome = cut_by_part(&command, Some(&source), None, Some(&cutter), &none).unwrap();
+        let outcome = cut_by_part(&command, Some(&source), None, Some(&cutter), &none, 0).unwrap();
         assert_eq!(outcome.ordinal, 0);
         let body = evaluate_plate(&outcome.authored).unwrap();
         assert!((body.quantities().volume_mm3 - 4_900_000.0).abs() <= 1e-6);
@@ -1222,7 +1273,7 @@ mod tests {
             },
         );
         assert_eq!(
-            cut_by_part(&command, Some(&source), None, Some(&shallow), &none)
+            cut_by_part(&command, Some(&source), None, Some(&shallow), &none, 0)
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1241,7 +1292,7 @@ mod tests {
             ..cutter.clone()
         };
         assert_eq!(
-            cut_by_part(&command, Some(&source), None, Some(&sideways), &none)
+            cut_by_part(&command, Some(&source), None, Some(&sideways), &none, 0)
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1267,7 +1318,7 @@ mod tests {
             tool_id: id(6),
         };
         let outcome =
-            fit_end_to_part(&command, Some(&source), None, Some(&stiffener), &none).unwrap();
+            fit_end_to_part(&command, Some(&source), None, Some(&stiffener), &none, 0).unwrap();
         let CutTarget::Plate(authored) = &outcome.target else {
             panic!("expected the plate target");
         };
@@ -1276,7 +1327,7 @@ mod tests {
         assert!((body.quantities().volume_mm3 - 2_500_000.0).abs() <= 1e-6);
         // Without the tool there is nothing to fit to.
         assert_eq!(
-            fit_end_to_part(&command, Some(&source), None, None, &none)
+            fit_end_to_part(&command, Some(&source), None, None, &none, 0)
                 .unwrap_err()
                 .code,
             ErrorCode::NotFound
@@ -1293,7 +1344,7 @@ mod tests {
             first_distance_mm: 100.0,
             second_distance_mm: 100.0,
         };
-        let outcome = chamfer_part(&command, Some(&source), None, &none).unwrap();
+        let outcome = chamfer_part(&command, Some(&source), None, &none, 0).unwrap();
         let CutTarget::Plate(authored) = &outcome.target else {
             panic!("expected the plate target");
         };
@@ -1305,7 +1356,7 @@ mod tests {
             ..command
         };
         assert_eq!(
-            chamfer_part(&long, Some(&source), None, &none)
+            chamfer_part(&long, Some(&source), None, &none, 0)
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
@@ -1316,7 +1367,7 @@ mod tests {
             ..command
         };
         assert_eq!(
-            chamfer_part(&missing, Some(&source), None, &none)
+            chamfer_part(&missing, Some(&source), None, &none, 0)
                 .unwrap_err()
                 .code,
             ErrorCode::NotFound
@@ -1335,7 +1386,7 @@ mod tests {
             normal: [1.0, 0.0, 0.0],
             keep: KeepSide::Negative,
         };
-        let outcome = split_part(&command, Some(&source), None, &none, &no_id).unwrap();
+        let outcome = split_part(&command, Some(&source), None, &none, &no_id, 0).unwrap();
         let AuthoredPart::Plate(kept) = &outcome.kept else {
             panic!("expected the kept plate");
         };
@@ -1354,7 +1405,7 @@ mod tests {
         assert_eq!(created.cuts[0].ordinal, 0);
         // The new identity must be unused.
         assert_eq!(
-            split_part(&command, Some(&source), None, &none, &|_| true)
+            split_part(&command, Some(&source), None, &none, &|_| true, 0)
                 .unwrap_err()
                 .code,
             ErrorCode::DuplicateId

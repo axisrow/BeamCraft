@@ -48,7 +48,7 @@ use beamcraft_layer_engine::authored::{
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{
     ChamferPart, CombineParts, CommandError, CutByLine, CutByPart, CutByPlane, CutByPolygon,
-    CutRecord, FitEndToPart, HoleRecord, SplitPart,
+    CutRecord, FitEndToPart, SplitPart,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -638,12 +638,19 @@ pub fn a13_record(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances) = {
+    let (plates, members, definitions, instances, history, hole_history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, members) = evaluate_decoded(&decoded)?;
-        (plates, members, decoded.definitions, decoded.instances)
+        (
+            plates,
+            members,
+            decoded.definitions,
+            decoded.instances,
+            decoded.cut_history,
+            decoded.hole_history,
+        )
     };
     let find = |id: ElementId| -> Option<CutElement> {
         plates
@@ -680,7 +687,8 @@ pub fn a13_record(
         A13Command::Split(c) => (c.target_id,),
         A13Command::Combine(c) => (c.survivor_id,),
     };
-    // Every operation id of the project, from both record vocabularies.
+    // Every operation id of the project, from both record vocabularies and their retirement
+    // histories: a retired identity is never reusable, as in `apply_cut`.
     let used: Vec<OpId> = plates
         .iter()
         .flat_map(|r| {
@@ -695,6 +703,12 @@ pub fn a13_record(
                 .iter()
                 .flat_map(|r| r.authored.cuts.iter().map(|c| c.operation_id)),
         )
+        .chain(
+            hole_history
+                .values()
+                .flat_map(|h| h.retired.iter().copied()),
+        )
+        .chain(history.values().flat_map(|h| h.retired.iter().copied()))
         .collect();
     let used_contains = |id: &OpId| used.contains(id);
     let no_used = |_: &OpId| false;
@@ -710,6 +724,33 @@ pub fn a13_record(
         A13Command::Split(c) => Some(c.operation_id),
         A13Command::Combine(_) => None,
     };
+    // The ordinal a retry must rebuild exactly: the head record carrying this command's
+    // identity, whose ordinal the live records alone do not imply (the persistent counter may
+    // hold retired gaps). A fresh command's probe discards its result anyway.
+    let probe_next = record_op
+        .and_then(|operation| match head_primary.as_ref() {
+            Some(CutElement::Plate(r)) => r
+                .authored
+                .cuts
+                .iter()
+                .find(|c| c.operation_id == operation)
+                .map(|c| c.ordinal)
+                .or_else(|| {
+                    r.authored
+                        .hole_records
+                        .iter()
+                        .find(|c| c.operation_id == operation)
+                        .and_then(|c| u16::try_from(c.ordinal).ok())
+                }),
+            Some(CutElement::Member(r)) => r
+                .authored
+                .cuts
+                .iter()
+                .find(|c| c.operation_id == operation)
+                .map(|c| c.ordinal),
+            None => None,
+        })
+        .unwrap_or(0);
     // The head states for the probe: on a retry the primary element's own last record carries
     // the command's identity, and the probe must rebuild exactly it, so that record is removed
     // from the probe's input first.
@@ -797,6 +838,7 @@ pub fn a13_record(
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
                     &no_used,
+                    probe_next,
                 ) {
                     Ok(outcome) => state_of_target(outcome.target),
                     Err(_) => return None,
@@ -809,6 +851,7 @@ pub fn a13_record(
                     probe_member_of(c.target_id).as_ref(),
                     plate_of(c.tool_id).as_ref(),
                     &no_used,
+                    probe_next,
                 ) {
                     Ok(outcome) => state_of_target(outcome.target),
                     Err(_) => return None,
@@ -820,6 +863,7 @@ pub fn a13_record(
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
                     &no_used,
+                    probe_next,
                 ) {
                     Ok(outcome) => state_of_target(outcome.target),
                     Err(_) => return None,
@@ -831,6 +875,7 @@ pub fn a13_record(
                     probe_plate_of(c.target_id).as_ref(),
                     probe_member_of(c.target_id).as_ref(),
                     &no_used,
+                    probe_next,
                 ) {
                     Ok(outcome) => AuthoredState::Plate(outcome.authored),
                     Err(_) => return None,
@@ -843,6 +888,7 @@ pub fn a13_record(
                     probe_member_of(c.target_id).as_ref(),
                     plate_of(c.tool_id).as_ref(),
                     &no_used,
+                    probe_next,
                 ) {
                     Ok(outcome) => AuthoredState::Plate(outcome.authored),
                     Err(_) => return None,
@@ -855,6 +901,7 @@ pub fn a13_record(
                     probe_member_of(c.target_id).as_ref(),
                     &no_used,
                     &no_id_used,
+                    probe_next,
                 )
                 .ok()?;
                 Probe::Split(state_of_part(outcome.kept), state_of_part(outcome.created))
@@ -967,6 +1014,7 @@ pub fn a13_record(
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
                 &used_contains,
+                history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
             )?;
             let (id_text, cuts, authored) = match &outcome.target {
                 CutTarget::Plate(a) => (
@@ -991,14 +1039,16 @@ pub fn a13_record(
                 cuts: cuts.clone(),
             });
             changes.push(mesh_change_of(&element)?);
+            let group = instances.group(c.target_id)?;
+            let others: Vec<CutElement> = group
+                .iter()
+                .filter(|id| **id != c.target_id)
+                .map(|id| shared_with_cuts(&plates, &members, *id, &element))
+                .collect::<Result<_, _>>()?;
             elements.push(element);
-            for id in instances.group(c.target_id)? {
-                if id == c.target_id {
-                    continue;
-                }
-                footprint =
-                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
-                let other = shared_with_cuts(&plates, &members, id, &cuts)?;
+            for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
+                footprint = footprint
+                    .union(Footprint::for_update(*id, false, false, true, false, None)?)?;
                 changes.push(mesh_change_of(&other)?);
                 elements.push(other);
             }
@@ -1010,6 +1060,7 @@ pub fn a13_record(
                 member_of(c.target_id).as_ref(),
                 plate_of(c.tool_id).as_ref(),
                 &used_contains,
+                history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
             )?;
             let (id_text, cuts, authored) = match &outcome.target {
                 CutTarget::Plate(a) => (
@@ -1034,14 +1085,16 @@ pub fn a13_record(
                 cuts: cuts.clone(),
             });
             changes.push(mesh_change_of(&element)?);
+            let group = instances.group(c.target_id)?;
+            let others: Vec<CutElement> = group
+                .iter()
+                .filter(|id| **id != c.target_id)
+                .map(|id| shared_with_cuts(&plates, &members, *id, &element))
+                .collect::<Result<_, _>>()?;
             elements.push(element);
-            for id in instances.group(c.target_id)? {
-                if id == c.target_id {
-                    continue;
-                }
-                footprint =
-                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
-                let other = shared_with_cuts(&plates, &members, id, &cuts)?;
+            for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
+                footprint = footprint
+                    .union(Footprint::for_update(*id, false, false, true, false, None)?)?;
                 changes.push(mesh_change_of(&other)?);
                 elements.push(other);
             }
@@ -1052,6 +1105,7 @@ pub fn a13_record(
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
                 &used_contains,
+                history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
             )?;
             let (id_text, cuts, authored) = match &outcome.target {
                 CutTarget::Plate(a) => (
@@ -1076,14 +1130,16 @@ pub fn a13_record(
                 cuts: cuts.clone(),
             });
             changes.push(mesh_change_of(&element)?);
+            let group = instances.group(c.target_id)?;
+            let others: Vec<CutElement> = group
+                .iter()
+                .filter(|id| **id != c.target_id)
+                .map(|id| shared_with_cuts(&plates, &members, *id, &element))
+                .collect::<Result<_, _>>()?;
             elements.push(element);
-            for id in instances.group(c.target_id)? {
-                if id == c.target_id {
-                    continue;
-                }
-                footprint =
-                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
-                let other = shared_with_cuts(&plates, &members, id, &cuts)?;
+            for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
+                footprint = footprint
+                    .union(Footprint::for_update(*id, false, false, true, false, None)?)?;
                 changes.push(mesh_change_of(&other)?);
                 elements.push(other);
             }
@@ -1094,6 +1150,7 @@ pub fn a13_record(
                 plate_of(c.target_id).as_ref(),
                 member_of(c.target_id).as_ref(),
                 &used_contains,
+                hole_history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
             )?;
             let authored = outcome.authored.clone();
             let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
@@ -1107,14 +1164,16 @@ pub fn a13_record(
                 records: authored.hole_records.clone(),
             });
             changes.push(mesh_change_of(&element)?);
+            let group = instances.group(c.target_id)?;
+            let others: Vec<CutElement> = group
+                .iter()
+                .filter(|id| **id != c.target_id)
+                .map(|id| shared_with_holes(&plates, *id, &element))
+                .collect::<Result<_, _>>()?;
             elements.push(element);
-            for id in instances.group(c.target_id)? {
-                if id == c.target_id {
-                    continue;
-                }
-                footprint =
-                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
-                let other = shared_with_holes(&plates, id, &authored.hole_records)?;
+            for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
+                footprint = footprint
+                    .union(Footprint::for_update(*id, false, false, true, false, None)?)?;
                 changes.push(mesh_change_of(&other)?);
                 elements.push(other);
             }
@@ -1126,6 +1185,7 @@ pub fn a13_record(
                 member_of(c.target_id).as_ref(),
                 plate_of(c.tool_id).as_ref(),
                 &used_contains,
+                hole_history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
             )?;
             let authored = outcome.authored.clone();
             let element = evaluate_state(AuthoredState::Plate(authored.clone()))?;
@@ -1138,14 +1198,16 @@ pub fn a13_record(
                 records: authored.hole_records.clone(),
             });
             changes.push(mesh_change_of(&element)?);
+            let group = instances.group(c.target_id)?;
+            let others: Vec<CutElement> = group
+                .iter()
+                .filter(|id| **id != c.target_id)
+                .map(|id| shared_with_holes(&plates, *id, &element))
+                .collect::<Result<_, _>>()?;
             elements.push(element);
-            for id in instances.group(c.target_id)? {
-                if id == c.target_id {
-                    continue;
-                }
-                footprint =
-                    footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
-                let other = shared_with_holes(&plates, id, &authored.hole_records)?;
+            for (id, other) in group.iter().filter(|id| **id != c.target_id).zip(others) {
+                footprint = footprint
+                    .union(Footprint::for_update(*id, false, false, true, false, None)?)?;
                 changes.push(mesh_change_of(&other)?);
                 elements.push(other);
             }
@@ -1164,6 +1226,7 @@ pub fn a13_record(
                 member_of(c.target_id).as_ref(),
                 &used_contains,
                 &|id: &ElementId| present(*id),
+                history.get(&c.target_id).map_or(0, |h| h.next_ordinal),
             )?;
             footprint = outcome.footprint.clone();
             ordinal = Some(outcome.ordinal);
@@ -1304,50 +1367,68 @@ fn mesh_change_of(element: &CutElement) -> Result<Change, PlateError> {
     }
 }
 
-/// A shared-instance group member re-authored with the canonical part's cut records.
+/// A shared-instance group member re-authored with the canonical part's cut records, carrying
+/// the canonical's fresh body and quantities, exactly as `apply_cut` re-authors its own groups.
 fn shared_with_cuts(
     plates: &[beamcraft_engine::query::committed::PlateRecord],
     members: &[beamcraft_engine::query::committed::MemberRecord],
     id: ElementId,
-    cuts: &[CutRecord],
+    canonical: &CutElement,
 ) -> Result<CutElement, PlateError> {
-    if let Some(found) = plates.iter().find(|p| p.authored.id == id) {
-        let mut authored = found.authored.clone();
-        authored.cuts = cuts.to_vec();
-        return Ok(CutElement::Plate(Box::new(PlateRecord {
-            authored,
-            body: found.body.clone(),
-            quantities: found.quantities,
-        })));
+    match canonical {
+        CutElement::Plate(r) => {
+            let mut authored = plates
+                .iter()
+                .find(|p| p.authored.id == id)
+                .ok_or_else(|| integrity("shared instance plate is not evaluated"))?
+                .authored
+                .clone();
+            authored.cuts = r.authored.cuts.clone();
+            Ok(CutElement::Plate(Box::new(PlateRecord {
+                authored,
+                body: r.body.clone(),
+                quantities: r.quantities,
+            })))
+        }
+        CutElement::Member(r) => {
+            let mut authored = members
+                .iter()
+                .find(|m| m.authored.id == id)
+                .ok_or_else(|| integrity("shared instance member is not evaluated"))?
+                .authored
+                .clone();
+            authored.cuts = r.authored.cuts.clone();
+            Ok(CutElement::Member(Box::new(MemberRecord {
+                authored,
+                body: r.body.clone(),
+                quantities: r.quantities,
+            })))
+        }
     }
-    if let Some(found) = members.iter().find(|m| m.authored.id == id) {
-        let mut authored = found.authored.clone();
-        authored.cuts = cuts.to_vec();
-        return Ok(CutElement::Member(Box::new(MemberRecord {
-            authored,
-            body: found.body.clone(),
-            quantities: found.quantities,
-        })));
-    }
-    Err(integrity("shared instance member is not evaluated"))
 }
 
-/// A shared-instance group member re-authored with the canonical plate's through-cut records.
+/// The same re-authoring for the through-cut vocabulary of a polygon or part cut: a polygon
+/// cut always targets a plate, so the canonical element is one.
 fn shared_with_holes(
     plates: &[beamcraft_engine::query::committed::PlateRecord],
     id: ElementId,
-    records: &[HoleRecord],
+    canonical: &CutElement,
 ) -> Result<CutElement, PlateError> {
-    if let Some(found) = plates.iter().find(|p| p.authored.id == id) {
-        let mut authored = found.authored.clone();
-        authored.hole_records = records.to_vec();
-        return Ok(CutElement::Plate(Box::new(PlateRecord {
-            authored,
-            body: found.body.clone(),
-            quantities: found.quantities,
-        })));
-    }
-    Err(integrity("shared instance plate is not evaluated"))
+    let CutElement::Plate(r) = canonical else {
+        return Err(integrity("a polygon cut canonical is not a plate"));
+    };
+    let mut authored = plates
+        .iter()
+        .find(|p| p.authored.id == id)
+        .ok_or_else(|| integrity("shared instance plate is not evaluated"))?
+        .authored
+        .clone();
+    authored.hole_records = r.authored.hole_records.clone();
+    Ok(CutElement::Plate(Box::new(PlateRecord {
+        authored,
+        body: r.body.clone(),
+        quantities: r.quantities,
+    })))
 }
 
 /// The layer-engine `Create` element of a split's created half.
