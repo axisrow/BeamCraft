@@ -30,9 +30,14 @@ their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 ```sh
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo nextest run --workspace
+cargo test --workspace --doc
 cargo run -p beamcraft-cli -- --version
 ```
+
+`cargo nextest` is the local test runner, matching CI; install it once with
+`cargo install cargo-nextest --locked`. nextest never runs doctests, so they stay a separate
+line. `cargo test --workspace` runs the same full set in one command.
 
 CI (`.github/workflows/ci.yml`) runs the same on Windows and Linux, plus a wasm32 check of the
 three pure crates (`beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`) and `cargo deny`.

@@ -177,8 +177,11 @@ run_triple() {
     cargo fmt --check || return $?
     echo "fork-sync: gate 2/3: cargo clippy --workspace --all-targets -- -D warnings"
     cargo clippy --workspace --all-targets -- -D warnings || return $?
-    echo "fork-sync: gate 3/3: cargo test --workspace"
-    cargo test --workspace
+    echo "fork-sync: gate 3/3: cargo nextest run --workspace"
+    cargo nextest run --workspace || return $?
+    # nextest never runs doctests; keep them in the gate, exactly like CI.
+    echo "fork-sync: doctests: cargo test --workspace --doc"
+    cargo test --workspace --doc
 }
 
 # Merged sync branches accumulate one per sync; -d never loses unmerged work.
