@@ -1491,6 +1491,31 @@ pub struct HoleRecord {
     pub kind: HoleKind,
 }
 
+/// Replace one existing hole's authoritative polygon, preserving its identity and ordinal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateHole {
+    /// Target, existing record UUID and replacement hole specification.
+    pub hole: AddHole,
+}
+impl UpdateHole {
+    /// Admit the shape arguments independently of model state.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.hole.validate_arguments()
+    }
+    /// Stable typed request identity, separate from creation.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut b = b"BeamCraft/A04/UpdateHole/v1\0".to_vec();
+        b.extend_from_slice(self.hole.content_fingerprint()?.as_bytes());
+        Sha256::digest(&b).map_err(|_| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "content",
+                "hole request exceeds its bound",
+            )
+        })
+    }
+}
+
 /// F04 section 7 `AddHole`: one through-hole operation record on a valid plate (A04). The
 /// record's `operation_id` is also the logical command id: a retry with identical content
 /// replays the recorded result, different content under an accepted id is `OP_ID_REUSE`, and

@@ -1046,6 +1046,43 @@ pub fn add_hole(
     Ok((next, body))
 }
 
+/// Replace an owned hole in memory and replay all holes/cuts before any publication.
+/// The original authored state is unchanged on every refusal.
+pub fn update_hole(
+    head: &AuthoredPlate,
+    command: &beamcraft_model::command::UpdateHole,
+) -> Result<(AuthoredPlate, PlateBody), CommandError> {
+    command.validate_arguments()?;
+    if head.id != command.hole.target_id {
+        return Err(CommandError::new(
+            ErrorCode::NotFound,
+            "target_id",
+            "hole target not found",
+        ));
+    }
+    let mut next = head.clone();
+    let record = next
+        .hole_records
+        .iter_mut()
+        .find(|r| r.operation_id == command.hole.operation_id)
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::NotFound,
+                "operation_id",
+                "hole record not found on target",
+            )
+        })?;
+    record.polygon_mm = command.hole.polygon()?;
+    let body = evaluate_plate(&next).map_err(|e| {
+        if e.field == "holes_mm" {
+            CommandError::new(e.code, "hole", e.message)
+        } else {
+            e
+        }
+    })?;
+    Ok((next, body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1913,5 +1950,42 @@ mod tests {
             out.fingerprint,
             out.authored.to_command().content_fingerprint().unwrap()
         );
+    }
+    #[test]
+    fn hole_updates_keep_record_order_and_identity_and_reject_bad_geometry() {
+        let head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        let id = OpId::parse("019a7bf0-0000-7000-8000-00000000ad01").unwrap();
+        let c = AddHole {
+            target_id: head.id,
+            operation_id: id,
+            hole: HoleSpec::Rectangle {
+                corner_mm: [100.0, 100.0],
+                width_mm: 100.0,
+                height_mm: 100.0,
+            },
+        };
+        let (head, _) = add_hole(&head, &c, &|_| false).unwrap();
+        let edit = beamcraft_model::command::UpdateHole {
+            hole: AddHole {
+                hole: HoleSpec::Rectangle {
+                    corner_mm: [100.0, 100.0],
+                    width_mm: 200.0,
+                    height_mm: 100.0,
+                },
+                ..c
+            },
+        };
+        let (next, body) = update_hole(&head, &edit).unwrap();
+        assert_eq!(next.hole_records.first().unwrap().ordinal, 0);
+        assert_eq!(next.hole_records.first().unwrap().operation_id, id);
+        assert_eq!(body.quantities_for(None).unwrap().volume_mm3, 4_800_000.0);
+        assert_ne!(
+            edit.content_fingerprint().unwrap(),
+            edit.hole.content_fingerprint().unwrap()
+        );
+        let mut bad = edit.clone();
+        bad.hole.operation_id = OpId::parse("019a7bf0-0000-7000-8000-00000000ad02").unwrap();
+        assert!(update_hole(&head, &bad).is_err());
+        assert_eq!(head.hole_records.first().unwrap().polygon_mm.len(), 4);
     }
 }

@@ -1,22 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! A04 adapter: `AddHole` on a plate, committed as the next revision.
+//! A04 adapter: `AddHole` and `UpdateHole` on a plate, committed as one revision.
 //!
 //! The command appends one operation record (F04 section 4) to the target plate's authored
 //! state; the engine replays the base shape with every hole in ordinal order and re-certifies
 //! the body. The adapter writes the complete record set with U02, rewrites the derived mesh,
 //! checks the layer engine's writes against the declared footprint and commits through U06/U07
-//! with the strict verifier. Honesty limits: replay of an `operation_id` is decided from the
-//! head model (the command is a replay when the head already holds the identical record), not
-//! from a stored canonical request; a record edited by a later command turns a retry into
-//! `OP_ID_REUSE`. A stored canonical request (F04 section 3) replaces this, as in `edit`. One
+//! with the strict verifier. Replay of an `operation_id` is decided from
+//! immutable committed evidence. A later record edit or deletion cannot turn an accepted
+//! request into a second mutation. The explicit source revision is returned on replay. One
 //! implicit workspace, in-process layer engine, as in `plate`.
 
 use crate::definition::material_lookup;
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, mesh_change, open_base,
+    decode, evaluate_decoded, host_uuid, integrity, load_base, mesh_change, open_base,
     plate_record, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
@@ -33,7 +32,7 @@ use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use std::collections::BTreeMap;
 
 /// Inputs of one `add_hole` call beyond the command itself. The `op_id` is the record's
-/// `operation_id`: the logical operation of this command.
+/// `operation_id` for creation; an update uses a separate logical operation identity.
 #[derive(Debug, Clone)]
 pub struct AddHoleRequest {
     /// The logical operation and the record identity.
@@ -55,7 +54,7 @@ pub struct AddHoleRequest {
 pub struct AddedHole {
     /// True when the same operation was already committed and nothing was written.
     pub replayed: bool,
-    /// The plate after the operation (the head's plate for a replay).
+    /// The plate from the accepted revision, including on replay.
     pub plate: PlateRecord,
     /// The revision that holds the result.
     pub revision: RevisionSummary,
@@ -88,9 +87,56 @@ pub fn add_hole_command(
     request: &AddHoleRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<AddedHole, PlateError> {
+    apply_hole(store, request, hook, false)
+}
+/// Replace one hole record in a canonical instance group, in one atomic revision.
+/// `request.op_id` is a new logical request identity; command.operation_id names the record.
+pub fn update_hole_command(
+    store: &RevisionStore,
+    request: &AddHoleRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<AddedHole, PlateError> {
+    apply_hole(store, request, hook, true)
+}
+fn apply_hole(
+    store: &RevisionStore,
+    request: &AddHoleRequest,
+    hook: &mut dyn CommitHook,
+    update: bool,
+) -> Result<AddedHole, PlateError> {
     let command = &request.command;
     command.validate_arguments()?;
-    let polygon = command.polygon()?;
+    let _ = command.polygon()?;
+    let edit = beamcraft_model::command::UpdateHole {
+        hole: command.clone(),
+    };
+    let fingerprint = if update {
+        edit.content_fingerprint()?
+    } else {
+        command.content_fingerprint()?
+    };
+    let op = host_uuid(&request.op_id.to_string())?;
+    if let Some((captured, revision)) = crate::command_evidence::accepted(store, &op)? {
+        if captured.fingerprint != fingerprint {
+            return Err(PlateError::new(
+                ErrorCode::OpIdReuse,
+                "operation identity was accepted with different arguments",
+            ));
+        }
+        let inspected = crate::plate::inspect_revision(&revision)?;
+        let plate = inspected
+            .plates
+            .into_iter()
+            .find(|p| p.authored.id == command.target_id)
+            .ok_or_else(|| integrity("accepted hole target missing from its revision"))?;
+        return Ok(AddedHole {
+            replayed: true,
+            plate,
+            revision: inspected.revision,
+            footprint: None,
+            changed_layers: Vec::new(),
+        });
+    }
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     if head.is_none() {
@@ -158,18 +204,11 @@ pub fn add_hole_command(
 
     // Replay and reuse, decided from the head model as in `edit`: the head holds the identical
     // record exactly when the retry is the same request.
-    let fingerprint = command.content_fingerprint()?;
     let op_host = host_uuid(&request.op_id.to_string())?;
     let (prior, recorded) = prior_op_with(store, &op_host, || {
-        match head_plate
-            .authored
-            .hole_records
-            .iter()
-            .find(|r| r.operation_id == command.operation_id)
-        {
-            Some(record) if record.polygon_mm == polygon => Ok(fingerprint),
-            _ => digest_of(b"no accepted request matches the head state"),
-        }
+        let (evidence, _) = crate::command_evidence::accepted(store, &op_host)?
+            .ok_or_else(|| integrity("accepted hole operation has no evidence"))?;
+        Ok(evidence.fingerprint)
     })?;
     match prior {
         PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
@@ -212,7 +251,11 @@ pub fn add_hole_command(
         .as_ref()
         .map(&materials)
         .transpose()?;
-    let (authored, body) = add_hole(&head_plate.authored, command, &used)?;
+    let (authored, body) = if update {
+        beamcraft_engine::command::update_hole(&head_plate.authored, &edit)?
+    } else {
+        add_hole(&head_plate.authored, command, &used)?
+    };
     let quantities = body.quantities_for(material)?;
     let next = PlateRecord {
         authored,
