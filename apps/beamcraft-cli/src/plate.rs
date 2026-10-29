@@ -387,6 +387,8 @@ fn element_meta(
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Decoded {
+    pub(crate) hole_history:
+        BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::HoleHistory>,
     pub(crate) cut_history:
         BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::CutHistory>,
     pub(crate) plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
@@ -500,7 +502,6 @@ fn decode_hole_records(prim: &Prim) -> Result<Vec<HoleRecord>, PlateError> {
     if polygons.len() != ids.len()
         || polygons.len() != ordinals.len()
         || polygons.len() != kinds.len()
-        || polygons.is_empty()
     {
         return Err(bad());
     }
@@ -1148,7 +1149,24 @@ pub(crate) fn decode(
         })
         .map(|(id, p)| Ok((id, beamcraft_layer_engine::authored::cut_history::read(p)?)))
         .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
+    let hole_history = prims
+        .iter()
+        .filter_map(|p| {
+            p.element_id
+                .as_deref()
+                .and_then(|id| ElementId::parse(id).ok())
+                .map(|id| (id, p))
+        })
+        .filter(|(id, _)| cut_history.contains_key(id))
+        .map(|(id, p)| {
+            Ok((
+                id,
+                beamcraft_layer_engine::authored::cut_history::read_holes(p)?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
     Ok(Decoded {
+        hole_history,
         cut_history,
         plates,
         members,

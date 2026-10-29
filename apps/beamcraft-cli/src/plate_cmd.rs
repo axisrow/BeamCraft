@@ -398,6 +398,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "create-polybeam" => CREATE_POLYBEAM_OPTIONS,
         "add-hole" => ADD_HOLE_OPTIONS,
         "update-hole" => UPDATE_HOLE_OPTIONS,
+        "remove-hole" => REMOVE_CUT_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" | "copy-instance" => COPY_OPTIONS,
@@ -455,8 +456,9 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "create-plate" => create(&store, &options, candidates),
         "create-member" => create_member_command(&store, &options, candidates),
         "create-polybeam" => create_polybeam_command(&store, &options, candidates),
-        "add-hole" => add_hole_cli(&store, &options, false),
-        "update-hole" => add_hole_cli(&store, &options, true),
+        "add-hole" => add_hole_cli(&store, &options, false, false),
+        "update-hole" => add_hole_cli(&store, &options, true, false),
+        "remove-hole" => add_hole_cli(&store, &options, false, true),
         "update-element" => update_command(&store, &options),
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options, false),
@@ -1661,7 +1663,12 @@ fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
 /// The `add-hole` command (A04): one through-hole operation record on a plate, committed as
 /// the next revision. The `--operation-id` is the record's identity and the logical operation
 /// of the command; absent, a fresh id is generated.
-fn add_hole_cli(store: &RevisionStore, options: &BTreeMap<&str, &str>, update: bool) -> Run<Json> {
+fn add_hole_cli(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    update: bool,
+    remove: bool,
+) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
@@ -1675,10 +1682,10 @@ fn add_hole_cli(store: &RevisionStore, options: &BTreeMap<&str, &str>, update: b
         .map_err(id_error)?;
     let operation_id = match given("--operation-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-        None if update => return Err(invalid("--operation-id is required")),
+        None if update || remove => return Err(invalid("--operation-id is required")),
         None => OpId::from_uuid(fresh()?),
     };
-    let op_id = if update {
+    let op_id = if update || remove {
         match given("--op-id") {
             Some(id) => OpId::parse(id).map_err(id_error)?,
             None => OpId::from_uuid(fresh()?),
@@ -1702,6 +1709,38 @@ fn add_hole_cli(store: &RevisionStore, options: &BTreeMap<&str, &str>, update: b
         Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
+    if remove {
+        let r = beamcraft_cli::hole::remove_hole_command(
+            store,
+            &beamcraft_cli::hole::RemoveHoleRequest {
+                op_id,
+                revision_id,
+                actor,
+                project,
+                workspace,
+                command: beamcraft_model::command::RemoveHole {
+                    target_id,
+                    operation_id,
+                },
+            },
+            &mut NoFault,
+        )?;
+        return Ok(Json::object([
+            (
+                "outcome",
+                Json::text(if r.replayed {
+                    "hole_removal_replayed"
+                } else {
+                    "hole_removed"
+                }),
+            ),
+            ("op_id", Json::text(op_id.to_string())),
+            ("removed_record", Json::text(operation_id.to_string())),
+            ("element", plate_json(&r.plate)?),
+            ("revision", revision_json(&r.revision)),
+            ("footprint", footprint_json(r.footprint.as_ref())),
+        ]));
+    }
     let apply = if update {
         beamcraft_cli::hole::update_hole_command
     } else {

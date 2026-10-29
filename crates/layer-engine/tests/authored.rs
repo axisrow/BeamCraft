@@ -4029,3 +4029,87 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
         h
     );
 }
+
+#[test]
+fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
+    use beamcraft_model::id::OpId;
+    let record = HoleRecord {
+        operation_id: OpId::parse("019a7bf0-0000-7000-8000-00000000af01").unwrap(),
+        ordinal: 7,
+        polygon_mm: vec![[10.0, 10.0], [10.0, 20.0], [20.0, 20.0], [20.0, 10.0]],
+        kind: beamcraft_model::command::HoleKind::Hole,
+    };
+    let (mut a, o) = Author::open(
+        initial(),
+        EditTargets {
+            authored: "weak.usda".into(),
+            derived: "derived.usda".into(),
+        },
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap();
+    let mut changes = elements();
+    let Change::Create(e) = changes.first_mut().unwrap() else {
+        panic!("create");
+    };
+    let Shape::Plate { hole_records, .. } = &mut e.shape else {
+        panic!("plate");
+    };
+    hole_records.push(record.clone());
+    let mut b = batch(&o.context, changes);
+    b.resources = resources();
+    let prepared = a.prepare(b, &control()).unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &prepared.token,
+            &prepared.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let mut input = initial();
+    input.assets = a.export(&o.context, &control()).unwrap();
+    input.manifest = input.manifest_digest().unwrap();
+    let (mut a, o) = open(input);
+    let mut b = batch(
+        &o.context,
+        vec![Change::HoleRecords {
+            id: PLATE.into(),
+            records: Vec::new(),
+        }],
+    );
+    b.op_id = "019a7bf0-0000-7000-8000-00000000af02".into();
+    let prepared = a.prepare(b, &control()).unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &prepared.token,
+            &prepared.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    let p = prims
+        .iter()
+        .find(|p| p.element_id.as_deref() == Some(PLATE))
+        .unwrap();
+    let history = cut_history::read_holes(p).unwrap();
+    assert_eq!(history.next_ordinal, 8);
+    assert_eq!(history.retired, vec![record.operation_id]);
+    assert_eq!(
+        value(&prims, PLATE, "steel:hole:operationIds"),
+        Some(&Value::Array(Vec::new()))
+    );
+    let mut b = batch(
+        &o.context,
+        vec![Change::HoleRecords {
+            id: PLATE.into(),
+            records: vec![record],
+        }],
+    );
+    b.op_id = "019a7bf0-0000-7000-8000-00000000af03".into();
+    assert!(a.prepare(b, &control()).is_err());
+}

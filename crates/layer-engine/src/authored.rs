@@ -57,6 +57,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
     "steel:hole:kinds=token[](hole|polygon_cut);all five steel:hole attributes or none,",
     "ordinals are engine-assigned and never reused\n",
+    "steel:hole:nextOrdinal=int(optional,0..1000);steel:hole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
     "bim:axisPointsMm=double3[];steel:member:rollRad=double(optional);\n",
     "steel:member:planePosition=token(left|centre|right);steel:member:planeOffsetMm=double;\n",
     "steel:member:depthPosition=token(front|centre|back);steel:member:depthOffsetMm=double;\n",
