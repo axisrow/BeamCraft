@@ -1131,10 +1131,11 @@ fn corner_treatments(options: &BTreeMap<&str, &str>) -> Run<Vec<PlateCorner>> {
         return Ok(Vec::new());
     }
     if text.split(';').take(1025).count() > 1024 {
-        return Err(PlateError::new(
-            ErrorCode::LimitExceeded,
-            "too many corner treatments",
-        ));
+        return Err(PlateError {
+            rule_id: None,
+            code: ErrorCode::LimitExceeded,
+            message: "too many corner treatments",
+        });
     }
     text.split(';')
         .map(|entry| {

@@ -375,6 +375,16 @@ fn corner_updates_replace_clear_and_rebuild_the_linked_group_atomically() {
     ] {
         refused(&f, "update-element", &["--id", &id, "--corners", treatment]);
     }
+    // Raw CLI byte bounds precede parsing. The short form reaches the record-count bound.
+    for (over_cap, expected) in [
+        (vec!["0=round:1"; 1025].join(";"), "INVALID_ARGUMENT"),
+        (";".repeat(1024), "LIMIT_EXCEEDED"),
+    ] {
+        let (code, error) = f.run("update-element", &["--id", &id, "--corners", &over_cap]);
+        assert_eq!(code, 2);
+        assert_eq!(text(&error, "code"), expected);
+        assert_eq!(ok(&f, "open-revision", &[]), head);
+    }
     let cleared = ok(
         &f,
         "update-element",
