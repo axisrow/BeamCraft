@@ -4,6 +4,8 @@
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
+/// Persistent cut ordinal and retired-record identities.
+pub mod cut_history;
 mod derive;
 mod edit;
 pub mod grid;
@@ -50,6 +52,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
     "steel:cut:keep=token[](optional,positive|negative);all five or none,equal lengths,ascending ordinals\n",
+    "steel:cut:nextOrdinal=int(optional,0..1000);steel:cut:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000);retired ids never reactivate\n",
     "steel:hole:pointsMm=double3[](optional,z=0);steel:hole:vertexCounts=int[](optional,>=3 each);",
     "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
     "steel:hole:kinds=token[](hole|polygon_cut);all five steel:hole attributes or none,",

@@ -7,6 +7,7 @@ pub(super) const COMMANDS: &[&str] = &[
     "update-element",
     "cut-by-plane",
     "update-cut",
+    "remove-cut",
     "cut-by-line",
     "cut-by-polygon",
     "cut-by-part",
@@ -17,6 +18,7 @@ pub(super) const COMMANDS: &[&str] = &[
 ];
 
 pub(super) const HELP: &str = concat!(
+    "Remove cut: remove-cut --store ROOT --id PART_UUID --operation-id RECORD_UUID [common request identity options]. Rebuilds the linked group in one revision; retired record UUIDs and cap ordinals are never reused on that model-history branch. Undo restores the complete previous state.\n",
     "Update cut: update-cut uses the same target/record and plane options as cut-by-plane, replacing an existing record in place. --op-id is a new logical request identity; record UUID and ordinal remain unchanged. Linked instances update atomically; replay returns the original accepted revision even after later edits.\n",
     "Update (P04, P08): update-element --store ROOT --id UUID [--name TEXT] [--class INT32] ",
     "[--material-digest SHA256|none] [--thickness MM] [--thickness-side top|middle|bottom] [--translation X,Y,Z] ",

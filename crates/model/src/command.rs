@@ -456,6 +456,30 @@ impl UpdateCut {
     }
 }
 
+/// Delete one owned cut record. The logical request identity is separate from the record UUID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoveCut {
+    /// Part whose operation list is edited.
+    pub target_id: ElementId,
+    /// Existing cut record; never interpreted as this request's operation identity.
+    pub operation_id: OpId,
+}
+impl RemoveCut {
+    /// Stable typed request digest, distinct from cut creation and replacement.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut bytes = b"BeamCraft/A03/RemoveCut/v1\0".to_vec();
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.operation_id.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "content",
+                "cut request exceeds its bound",
+            )
+        })
+    }
+}
+
 /// F04 section 7 `CreatePlate`. `material_digest` pins an existing immutable material definition;
 /// whether the digest resolves (`NOT_FOUND`) is the engine's decision, not an argument check.
 #[derive(Debug, Clone, PartialEq)]

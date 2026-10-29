@@ -615,7 +615,7 @@ const MAX_HOLE_POINTS: usize = 1024;
 /// 999; each point is finite and within the coordinate cap and each normal is not the zero
 /// vector. Whether a plane crosses its element is the engine's decision on replay, never
 /// re-derived here. A damaged or half-authored list is invalid, never a default.
-fn element_cut(prim: &Prim) -> Result<Vec<CutRecord>, Diagnostic> {
+pub(super) fn element_cut(prim: &Prim) -> Result<Vec<CutRecord>, Diagnostic> {
     const FIELDS: [&str; 5] = [
         "steel:cut:operationId",
         "steel:cut:ordinal",
@@ -837,6 +837,7 @@ pub(super) fn snapshot(
         ));
     }
     project_record(metadata)?;
+    let mut operation_ids = std::collections::BTreeSet::new();
     for p in prims.iter().filter(|p| p.element_id.is_some()) {
         let id = p.element_id.as_deref().ok_or_else(invalid)?;
         // Foreign content is preserved inertly, not interpreted as engineering input.
@@ -915,6 +916,19 @@ pub(super) fn snapshot(
             return Err(invalid());
         }
         if instance::definition(p, prims)?.is_none() {
+            if matches!(kind, "plate" | "beam" | "column") {
+                let history = cut_history::read(p)?;
+                for id in history
+                    .retired
+                    .into_iter()
+                    .chain(cut_history::ids(p, "steel:cut:operationId")?)
+                    .chain(cut_history::ids(p, "steel:hole:operationIds")?)
+                {
+                    if !operation_ids.insert(id) {
+                        return Err(invalid());
+                    }
+                }
+            }
             match kind {
                 "plate" => {
                     plate(

@@ -66,6 +66,8 @@ pub fn shared_property(name: &str) -> bool {
             | "steel:cut:pointMm"
             | "steel:cut:normal"
             | "steel:cut:keep"
+            | "steel:cut:nextOrdinal"
+            | "steel:cut:retiredOperationIds"
     )
 }
 /// Whether a relationship belongs to the shared definition.

@@ -1029,32 +1029,75 @@ fn create(
     // The owned plane-cut records of a plate, beam or column (A03, amendment A-2), as five
     // parallel attributes in ascending ordinal order.
     if !e.shape.cuts().is_empty() {
-        author_cuts(data, &p, e.shape.cuts())?;
+        author_cuts(data, &p, e.shape.cuts(), None)?;
     }
     pose(data, &p, &e.placement)
 }
 
 /// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
-/// the attributes instead, so a "no records" element authors nothing about cuts.
+/// typed empty arrays, masking weaker opinions; fresh uncut elements still author no cuts.
 pub(super) fn author_cuts(
     data: &mut sdf::Data,
     p: &str,
     cuts: &[CutRecord],
+    source: Option<&Prim>,
 ) -> Result<(), Diagnostic> {
-    if cuts.is_empty() {
-        for name in [
-            "steel:cut:operationId",
-            "steel:cut:ordinal",
-            "steel:cut:pointMm",
-            "steel:cut:normal",
-            "steel:cut:keep",
-        ] {
-            let full = path(&format!("{p}.{name}"))?;
-            if data.has_spec(&full) {
-                data.erase_spec(&full);
+    // Read composed source opinions, including weaker owned layers, before replacing records.
+    let old = source
+        .map(cut_history::read)
+        .transpose()?
+        .unwrap_or_default();
+    let old_records = source
+        .map(validate::element_cut)
+        .transpose()?
+        .unwrap_or_default();
+    let mut next = old.next_ordinal;
+    let mut retired = old
+        .retired
+        .into_iter()
+        .map(|id| id.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    if let Some(source) = source {
+        for id in cut_history::ids(source, "steel:cut:operationId")? {
+            if !cuts.iter().any(|c| c.operation_id == id) {
+                retired.insert(id.to_string());
             }
         }
-        return Ok(());
+    }
+    for c in cuts {
+        match old_records
+            .iter()
+            .find(|old| old.operation_id == c.operation_id)
+        {
+            Some(old) if old.ordinal != c.ordinal => return Err(invalid()),
+            None if c.ordinal < old.next_ordinal => return Err(invalid()),
+            _ => {}
+        }
+        next = next.max(c.ordinal.checked_add(1).ok_or_else(invalid)?);
+        if retired.contains(&c.operation_id.to_string()) {
+            return Err(invalid());
+        }
+    }
+    if next > 1000 || retired.len() > 1000 {
+        return Err(limit());
+    }
+    if next > 0 {
+        attr(
+            data,
+            p,
+            cut_history::NEXT,
+            "int",
+            sdf::Value::Int(i32::from(next)),
+        )?;
+    }
+    if !retired.is_empty() {
+        attr(
+            data,
+            p,
+            cut_history::RETIRED,
+            "string[]",
+            sdf::Value::StringVec(retired.into_iter().collect()),
+        )?;
     }
     let ids: Vec<String> = cuts.iter().map(|c| c.operation_id.to_string()).collect();
     let ordinals = cuts.iter().map(|c| i32::from(c.ordinal)).collect();
@@ -1340,7 +1383,12 @@ pub(super) fn apply(
                 "token",
                 sdf::Value::token(side.as_str()),
             )?,
-            Change::Cuts { cuts, .. } => author_cuts(&mut authored, &p, cuts)?,
+            Change::Cuts { cuts, .. } => author_cuts(
+                &mut authored,
+                &p,
+                cuts,
+                prims.iter().find(|old| old.path == p),
+            )?,
             Change::HoleRecords { records, .. } => {
                 // The five record attributes, always together: the authoritative polygons of
                 // every record, replayed from the base shape in ordinal order, with the id,
@@ -1616,6 +1664,8 @@ fn capture(
         ("steel:cut:pointMm", "double3[]"),
         ("steel:cut:normal", "double3[]"),
         ("steel:cut:keep", "token[]"),
+        (cut_history::NEXT, "int"),
+        (cut_history::RETIRED, "string[]"),
     ];
     /// The P14 section-placement attributes of a member, in storage order.
     const MEMBER_PLACEMENT: &[(&str, &str)] = &[
@@ -1780,6 +1830,8 @@ fn capture(
                     ("steel:cut:pointMm", "double3[]"),
                     ("steel:cut:normal", "double3[]"),
                     ("steel:cut:keep", "token[]"),
+                    (cut_history::NEXT, "int"),
+                    (cut_history::RETIRED, "string[]"),
                     ("steel:hole:pointsMm", "double3[]"),
                     ("steel:hole:vertexCounts", "int[]"),
                     ("steel:hole:operationIds", "string[]"),
@@ -1823,7 +1875,7 @@ fn capture(
             Change::Contour { .. } => add("steel:plate:contourPointsMm", "double3[]", 0),
             Change::Thickness { .. } => add("steel:plate:thicknessMm", "double", 0),
             Change::ThicknessSide { .. } => add("steel:plate:thicknessSide", "token", 0),
-            Change::Cuts { cuts, .. } if !cuts.is_empty() => {
+            Change::Cuts { .. } => {
                 for &(name, ty) in CUT_FIELDS {
                     add(name, ty, 0);
                 }
@@ -1857,8 +1909,6 @@ fn capture(
                     add(name, ty, 1);
                 }
             }
-            // An empty replacement removes the attributes, so there is nothing to report.
-            Change::Cuts { .. } => (),
         }
         if matches!(
             change,

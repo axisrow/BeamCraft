@@ -31,7 +31,7 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
-use beamcraft_engine::cut::{CutByPlaneOutcome, CutTarget, cut_by_plane};
+use beamcraft_engine::cut::{CutByPlaneOutcome, CutTarget};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::member::{evaluate_member, member_quantities};
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
@@ -131,7 +131,7 @@ pub fn cut_by_plane_record(
     request: &CutRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<Cut, PlateError> {
-    apply_cut(store, request, hook, false)
+    apply_cut(store, request, hook, Action::Create)
 }
 /// Replace an existing cut with immutable retry evidence and one atomic linked-group update.
 pub fn update_cut_record(
@@ -139,23 +139,96 @@ pub fn update_cut_record(
     request: &CutRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<Cut, PlateError> {
-    apply_cut(store, request, hook, true)
+    apply_cut(store, request, hook, Action::Update)
+}
+/// Context and typed arguments for removal of one existing cut record.
+#[derive(Debug, Clone)]
+pub struct RemoveCutRequest {
+    /// Logical operation identity, independent of the retired record identity.
+    pub op_id: OpId,
+    /// Next revision identity.
+    pub revision_id: RevisionId,
+    /// Trusted actor.
+    pub actor: Uuid7,
+    /// Store project context.
+    pub project: ProjectId,
+    /// Store workspace context.
+    pub workspace: WorkspaceId,
+    /// Target and owned record.
+    pub command: beamcraft_model::command::RemoveCut,
+}
+/// Removal response: there is no live ordinal to return for a deleted record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemovedCut {
+    /// True for an accepted immutable request replay.
+    pub replayed: bool,
+    /// Part after removal, from the accepted revision on replay.
+    pub element: CutElement,
+    /// Accepted revision.
+    pub revision: RevisionSummary,
+    /// Actual admitted footprint, absent for a replay.
+    pub footprint: Option<Footprint>,
+    /// Written layers, empty for a replay.
+    pub changed_layers: Vec<String>,
+}
+/// Remove, rebuild and publish the full canonical instance group atomically.
+pub fn remove_cut_record(
+    store: &RevisionStore,
+    request: &RemoveCutRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<RemovedCut, PlateError> {
+    let context = CutRequest {
+        op_id: request.op_id,
+        revision_id: request.revision_id,
+        actor: request.actor.clone(),
+        project: request.project,
+        workspace: request.workspace,
+        command: CutByPlane {
+            target_id: request.command.target_id,
+            operation_id: request.command.operation_id,
+            point_mm: [0.0; 3],
+            normal: [1.0, 0.0, 0.0],
+            keep: beamcraft_model::command::KeepSide::Negative,
+        },
+    };
+    let r = apply_cut(store, &context, hook, Action::Remove)?;
+    Ok(RemovedCut {
+        replayed: r.replayed,
+        element: r.element,
+        revision: r.revision,
+        footprint: r.footprint,
+        changed_layers: r.changed_layers,
+    })
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Action {
+    Create,
+    Update,
+    Remove,
 }
 fn apply_cut(
     store: &RevisionStore,
     request: &CutRequest,
     hook: &mut dyn CommitHook,
-    update: bool,
+    action: Action,
 ) -> Result<Cut, PlateError> {
+    let update = action == Action::Update;
+    let remove = action == Action::Remove;
     let command = &request.command;
     command.validate_arguments()?;
     let updated = beamcraft_model::command::UpdateCut { cut: *command };
-    let fingerprint = if update {
+    let removal = beamcraft_model::command::RemoveCut {
+        target_id: command.target_id,
+        operation_id: command.operation_id,
+    };
+    let fingerprint = if remove {
+        removal.content_fingerprint()?
+    } else if update {
         updated.content_fingerprint()?
     } else {
         command.content_fingerprint()?
     };
-    if update {
+    if update || remove {
         let op = host_uuid(&request.op_id.to_string())?;
         match store.query_outcome(&op)? {
             beamcraft_host::ledger::Outcome::Committed { sequence, .. } => {
@@ -183,12 +256,16 @@ fn apply_cut(
                         "accepted cut target is missing from its revision",
                     ));
                 };
-                let ordinal = element
-                    .cuts()
-                    .iter()
-                    .find(|r| r.operation_id == command.operation_id)
-                    .ok_or_else(|| integrity("accepted cut record is missing"))?
-                    .ordinal;
+                let ordinal = if remove {
+                    0
+                } else {
+                    element
+                        .cuts()
+                        .iter()
+                        .find(|r| r.operation_id == command.operation_id)
+                        .ok_or_else(|| integrity("accepted cut record is missing"))?
+                        .ordinal
+                };
                 return Ok(Cut {
                     replayed: true,
                     element,
@@ -225,7 +302,7 @@ fn apply_cut(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances) = {
+    let (plates, members, definitions, instances, history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -241,7 +318,13 @@ fn apply_cut(
         {
             return Err(unsupported_target());
         }
-        (plates, members, decoded.definitions, decoded.instances)
+        (
+            plates,
+            members,
+            decoded.definitions,
+            decoded.instances,
+            decoded.cut_history,
+        )
     };
     let head_plate = plates.iter().find(|r| r.authored.id == command.target_id);
     let head_member = members.iter().find(|r| r.authored.id == command.target_id);
@@ -255,6 +338,7 @@ fn apply_cut(
         .flat_map(|r| r.authored.cuts.iter())
         .chain(members.iter().flat_map(|r| r.authored.cuts.iter()))
         .map(|c| c.operation_id)
+        .chain(history.values().flat_map(|h| h.retired.iter().copied()))
         .collect();
     // The op-id decision runs before the record admission (F04 section 8 order): the head holds
     // this cut exactly when its last record is this command's record, which is how a retried
@@ -298,10 +382,20 @@ fn apply_cut(
         CutElement::Plate(record) => (Some(&record.authored), None),
         CutElement::Member(record) => (None, Some(&record.authored)),
     };
-    let outcome: CutByPlaneOutcome = if update {
+    let outcome: CutByPlaneOutcome = if remove {
+        beamcraft_engine::cut::remove_cut(&removal, plate, member)?
+    } else if update {
         beamcraft_engine::cut::update_cut(&updated, plate, member)?
     } else {
-        cut_by_plane(command, plate, member, &|id: &OpId| used.contains(id))?
+        beamcraft_engine::cut::cut_by_plane_after(
+            command,
+            plate,
+            member,
+            &|id: &OpId| used.contains(id),
+            history
+                .get(&command.target_id)
+                .map_or(0, |h| h.next_ordinal),
+        )?
     };
     // The element after the replay, with fresh quantities from the same evaluation.
     let materials = material_lookup(&definitions);

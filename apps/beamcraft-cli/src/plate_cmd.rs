@@ -235,6 +235,17 @@ const CREATE_POLYBEAM_OPTIONS: &[&str] = &[
     "--workspace-id",
 ];
 
+const REMOVE_CUT_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--operation-id",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
 const CUT_OPTIONS: &[&str] = &[
     "--store",
     "--id",
@@ -384,6 +395,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "chamfer-part" => A13_CHAMFER_OPTIONS_ALL,
         "split-part" => A13_SPLIT_OPTIONS_ALL,
         "combine-parts" => A13_COMBINE_OPTIONS_ALL,
+        "remove-cut" => REMOVE_CUT_OPTIONS,
         "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
         "inspect-workspace-history" => &["--workspace-dir"],
@@ -434,8 +446,9 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options, false),
         "copy-instance" => copy_command(&store, &options, true),
-        "cut-by-plane" => cut_command(&store, &options, false),
-        "update-cut" => cut_command(&store, &options, true),
+        "cut-by-plane" => cut_command(&store, &options, false, false),
+        "update-cut" => cut_command(&store, &options, true, false),
+        "remove-cut" => cut_command(&store, &options, false, true),
         "cut-by-line" => a13_command(&store, "cut-by-line", &options),
         "cut-by-polygon" => a13_command(&store, "cut-by-polygon", &options),
         "cut-by-part" => a13_command(&store, "cut-by-part", &options),
@@ -1250,7 +1263,12 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
 
 /// The engine's `CutByPlane` (A03, amendment A-2) through the real adapter: appends one
 /// `plane_cut` record, rebuilds the mesh and the quantities, and publishes the revision.
-fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, update: bool) -> Run<Json> {
+fn cut_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    update: bool,
+    remove: bool,
+) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
@@ -1288,10 +1306,58 @@ fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, update: bo
     let command = CutByPlane {
         target_id,
         operation_id,
-        point_mm: translation(given("--point").ok_or_else(|| invalid("--point is required"))?)?,
-        normal: translation(given("--normal").ok_or_else(|| invalid("--normal is required"))?)?,
-        keep: keep_side(options)?,
+        point_mm: if remove {
+            [0.0; 3]
+        } else {
+            translation(given("--point").ok_or_else(|| invalid("--point is required"))?)?
+        },
+        normal: if remove {
+            [1.0, 0.0, 0.0]
+        } else {
+            translation(given("--normal").ok_or_else(|| invalid("--normal is required"))?)?
+        },
+        keep: if remove {
+            KeepSide::Negative
+        } else {
+            keep_side(options)?
+        },
     };
+    if remove {
+        let r = beamcraft_cli::cut::remove_cut_record(
+            store,
+            &beamcraft_cli::cut::RemoveCutRequest {
+                op_id,
+                revision_id,
+                actor,
+                project,
+                workspace,
+                command: beamcraft_model::command::RemoveCut {
+                    target_id,
+                    operation_id,
+                },
+            },
+            &mut NoFault,
+        )?;
+        let element = match &r.element {
+            CutElement::Plate(p) => plate_json(p)?,
+            CutElement::Member(m) => member_json(m)?,
+        };
+        return Ok(Json::object([
+            (
+                "outcome",
+                Json::text(if r.replayed {
+                    "cut_removal_replayed"
+                } else {
+                    "cut_removed"
+                }),
+            ),
+            ("op_id", Json::text(op_id.to_string())),
+            ("removed_record", Json::text(operation_id.to_string())),
+            ("element", element),
+            ("revision", revision_json(&r.revision)),
+            ("footprint", footprint_json(r.footprint.as_ref())),
+        ]));
+    }
     let apply = if update {
         beamcraft_cli::cut::update_cut_record
     } else {

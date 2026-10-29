@@ -163,6 +163,7 @@ fn main() -> std::process::ExitCode {
             || c == "split-part"
             || c == "combine-parts"
             || c == "update-cut"
+            || c == "remove-cut"
             || c == "create-workspace"
             || c == "inspect-workspace"
             || c == "publish-workspace"

@@ -70,6 +70,8 @@ fn property_group(name: &str) -> Option<G> {
         | "steel:cut:pointMm"
         | "steel:cut:normal"
         | "steel:cut:keep"
+        | "steel:cut:nextOrdinal"
+        | "steel:cut:retiredOperationIds"
         | "bim:axisPointsMm"
         | "steel:member:rollRad"
         | "steel:member:planePosition"

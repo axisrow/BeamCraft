@@ -176,6 +176,44 @@ pub fn cut_by_plane(
     })
 }
 
+/// Append using the admitted persistent next ordinal, including explicitly retired records.
+/// The legacy API derives its first counter from live records; adapters with retirement metadata
+/// use this API so deletion never reuses a semantic cap FeatureId.
+pub fn cut_by_plane_after(
+    command: &CutByPlane,
+    plate: Option<&AuthoredPlate>,
+    member: Option<&crate::member::AuthoredMember>,
+    operation_used: &dyn Fn(&OpId) -> bool,
+    next_ordinal: u16,
+) -> Result<CutByPlaneOutcome, CommandError> {
+    command.validate_arguments()?;
+    if next_ordinal > 999 {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "kernel_capacity",
+            "cut ordinal capacity exhausted",
+        ));
+    }
+    let mut result = cut_by_plane(command, plate, member, operation_used)?;
+    if next_ordinal < result.ordinal {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "next_ordinal",
+            "cut counter regressed",
+        ));
+    }
+    let cuts = match &mut result.target {
+        CutTarget::Plate(p) => &mut p.cuts,
+        CutTarget::Member(m) => &mut m.cuts,
+    };
+    let last = cuts.last_mut().ok_or_else(|| {
+        CommandError::new(ErrorCode::InvalidArgument, "record", "appended cut missing")
+    })?;
+    last.ordinal = next_ordinal;
+    result.ordinal = next_ordinal;
+    Ok(result)
+}
+
 /// Replace a cut in memory without changing its record UUID, ordinal or placement. The
 /// adapter evaluates the complete replay before publication, including all linked instances.
 pub fn update_cut(
@@ -218,6 +256,48 @@ pub fn update_cut(
         target,
         ordinal,
         footprint: Footprint::for_update(c.target_id, false, false, true, false, None)?,
+        fingerprint: command.content_fingerprint()?,
+    })
+}
+
+/// Remove one cut while preserving all surviving record IDs/ordinals and the placement.
+/// The layer adapter retires its ID and advances/preserves the lifetime counter atomically.
+pub fn remove_cut(
+    command: &beamcraft_model::command::RemoveCut,
+    plate: Option<&AuthoredPlate>,
+    member: Option<&crate::member::AuthoredMember>,
+) -> Result<CutByPlaneOutcome, CommandError> {
+    let mut target = match (plate, member) {
+        (Some(p), _) if p.id == command.target_id => CutTarget::Plate(p.clone()),
+        (_, Some(m)) if m.id == command.target_id => CutTarget::Member(m.clone()),
+        _ => {
+            return Err(CommandError::new(
+                ErrorCode::NotFound,
+                "target_id",
+                "cut target not found",
+            ));
+        }
+    };
+    let cuts = match &mut target {
+        CutTarget::Plate(p) => &mut p.cuts,
+        CutTarget::Member(m) => &mut m.cuts,
+    };
+    let ordinal = cuts
+        .iter()
+        .find(|r| r.operation_id == command.operation_id)
+        .ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::NotFound,
+                "operation_id",
+                "cut record not found on target",
+            )
+        })?
+        .ordinal;
+    cuts.retain(|r| r.operation_id != command.operation_id);
+    Ok(CutByPlaneOutcome {
+        target,
+        ordinal,
+        footprint: Footprint::for_update(command.target_id, false, false, true, false, None)?,
         fingerprint: command.content_fingerprint()?,
     })
 }
@@ -378,5 +458,44 @@ mod tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn removal_keeps_surviving_ordinals_and_append_honors_retirement_capacity() {
+        let p = plate();
+        let c = CutByPlane {
+            target_id: p.id,
+            operation_id: op(70),
+            point_mm: [800.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+            keep: KeepSide::Negative,
+        };
+        let CutTarget::Plate(p) = cut_by_plane(&c, Some(&p), None, &|_| false).unwrap().target
+        else {
+            panic!("plate");
+        };
+        let second = CutByPlane {
+            operation_id: op(71),
+            ..c
+        };
+        let CutTarget::Plate(p) = cut_by_plane_after(&second, Some(&p), None, &|_| false, 3)
+            .unwrap()
+            .target
+        else {
+            panic!("plate");
+        };
+        let r = remove_cut(
+            &beamcraft_model::command::RemoveCut {
+                target_id: p.id,
+                operation_id: op(70),
+            },
+            Some(&p),
+            None,
+        )
+        .unwrap();
+        assert_eq!(r.ordinal, 0);
+        assert_eq!(r.target.cuts().len(), 1);
+        assert_eq!(r.target.cuts().first().unwrap().ordinal, 3);
+        assert!(cut_by_plane_after(&second, Some(&p), None, &|_| false, 1000).is_err());
+        assert!(cut_by_plane_after(&second, Some(&p), None, &|_| false, 0).is_err());
     }
 }

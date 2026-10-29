@@ -109,7 +109,7 @@ pub fn add_hole_command(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances) = {
+    let (plates, members, definitions, instances, history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -127,7 +127,13 @@ pub fn add_hole_command(
             )
             .into());
         }
-        (plates, members, decoded.definitions, decoded.instances)
+        (
+            plates,
+            members,
+            decoded.definitions,
+            decoded.instances,
+            decoded.cut_history,
+        )
     };
     let head_plate = plates
         .iter()
@@ -190,12 +196,14 @@ pub fn add_hole_command(
     // id namespaces of the A04 hole records and of the A03 cut records are one project-wide
     // space, so a cut record on any plate or member also refuses the id here.
     let used = |id: OpId| {
-        plates.iter().any(|p| {
-            p.authored.hole_records.iter().any(|r| r.operation_id == id)
-                || p.authored.cuts.iter().any(|c| c.operation_id == id)
-        }) || members
-            .iter()
-            .any(|m| m.authored.cuts.iter().any(|c| c.operation_id == id))
+        history.values().any(|h| h.retired.contains(&id))
+            || plates.iter().any(|p| {
+                p.authored.hole_records.iter().any(|r| r.operation_id == id)
+                    || p.authored.cuts.iter().any(|c| c.operation_id == id)
+            })
+            || members
+                .iter()
+                .any(|m| m.authored.cuts.iter().any(|c| c.operation_id == id))
     };
     let materials = material_lookup(&definitions);
     let material = head_plate
