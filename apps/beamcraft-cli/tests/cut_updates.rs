@@ -314,3 +314,52 @@ fn updating_a_rotated_member_cut_preserves_other_records_and_placement() {
     assert_eq!(old.get("cut_count"), new.get("cut_count"));
     assert_ne!(before, ok(&f, "inspect-elements", &[]));
 }
+
+#[test]
+fn original_cut_creation_retries_stay_immutable_after_record_update_removal_and_delete() {
+    let f = StoreFixture::new("immutable-cut-create");
+    let p = ok(
+        &f,
+        "create-plate",
+        &["--width", "100", "--length", "50", "--thickness", "10"],
+    );
+    let id = text(p.get("plate").unwrap(), "element_id");
+    let create_op = "019a7bf0-0000-7000-8000-000000ab0101";
+    let args = [
+        "--id",
+        &id,
+        "--operation-id",
+        RECORD,
+        "--point",
+        "80,0,0",
+        "--normal",
+        "1,0,0",
+        "--keep",
+        "negative",
+        "--op-id",
+        create_op,
+    ];
+    let first = ok(&f, "cut-by-plane", &args);
+    assert_eq!(volume(&first), 40000.0);
+    let (code, j) = update(&f, &id, RECORD, "60,0,0", EDIT);
+    assert_eq!(code, 0, "{j:?}");
+    let head = ok(&f, "inspect-elements", &[]);
+    let replay = ok(&f, "cut-by-plane", &args);
+    assert_eq!(replay.get("revision"), first.get("revision"));
+    assert_eq!(volume(&replay), 40000.0);
+    assert_eq!(ok(&f, "inspect-elements", &[]), head);
+    ok(&f, "remove-cut", &["--id", &id, "--operation-id", RECORD]);
+    let head = ok(&f, "inspect-elements", &[]);
+    assert_eq!(
+        ok(&f, "cut-by-plane", &args).get("revision"),
+        first.get("revision")
+    );
+    assert_eq!(ok(&f, "inspect-elements", &[]), head);
+    ok(&f, "delete-element", &["--id", &id]);
+    let head = ok(&f, "inspect-elements", &[]);
+    assert_eq!(
+        ok(&f, "cut-by-plane", &args).get("revision"),
+        first.get("revision")
+    );
+    assert_eq!(ok(&f, "inspect-elements", &[]), head);
+}

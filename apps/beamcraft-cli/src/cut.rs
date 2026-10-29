@@ -22,6 +22,10 @@
 //! its record or state change at admission through `beamcraft_engine::fabricate`; a split
 //! creates the second element in the same transaction and a combine deletes the consumed
 //! member, and each is one revision and one undo unit.
+//!
+//! Replay reads immutable accepted request evidence and its exact source revision before
+//! consulting the live target. Later edits, record removal or target deletion cannot make
+//! the original command mutate again.
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
@@ -106,7 +110,7 @@ pub enum CutElement {
 pub struct Cut {
     /// True when the same operation was already committed and nothing was written.
     pub replayed: bool,
-    /// The element after the cut (the head's element for a replay).
+    /// The element from the accepted revision, including on replay.
     pub element: CutElement,
     /// The ordinal the record took.
     pub ordinal: u16,
@@ -206,6 +210,55 @@ enum Action {
     Update,
     Remove,
 }
+fn replay_cut(
+    store: &RevisionStore,
+    request: &CutRequest,
+    fingerprint: ContentDigest,
+    remove: bool,
+) -> Result<Option<Cut>, PlateError> {
+    let op = host_uuid(&request.op_id.to_string())?;
+    let Some((evidence, revision)) = crate::command_evidence::accepted(store, &op)? else {
+        return Ok(None);
+    };
+    if evidence.fingerprint != fingerprint {
+        return Err(reuse());
+    }
+    let old = crate::plate::inspect_revision(&revision)?;
+    let element = if let Some(p) = old
+        .plates
+        .iter()
+        .find(|p| p.authored.id == request.command.target_id)
+    {
+        CutElement::Plate(Box::new(p.clone()))
+    } else if let Some(m) = old
+        .members
+        .iter()
+        .find(|m| m.authored.id == request.command.target_id)
+    {
+        CutElement::Member(Box::new(m.clone()))
+    } else {
+        return Err(integrity("accepted cut target missing from its revision"));
+    };
+    // Removal exposes no ordinal; its public response only names the retired UUID.
+    let ordinal = if remove {
+        0
+    } else {
+        element
+            .cuts()
+            .iter()
+            .find(|r| r.operation_id == request.command.operation_id)
+            .ok_or_else(|| integrity("accepted cut record missing from its revision"))?
+            .ordinal
+    };
+    Ok(Some(Cut {
+        replayed: true,
+        element,
+        ordinal,
+        revision: old.revision,
+        footprint: None,
+        changed_layers: Vec::new(),
+    }))
+}
 fn apply_cut(
     store: &RevisionStore,
     request: &CutRequest,
@@ -228,64 +281,14 @@ fn apply_cut(
     } else {
         command.content_fingerprint()?
     };
-    if update || remove {
-        let op = host_uuid(&request.op_id.to_string())?;
-        match store.query_outcome(&op)? {
-            beamcraft_host::ledger::Outcome::Committed { sequence, .. } => {
-                let revision = store.open_at(sequence)?;
-                let evidence = crate::command_evidence::read(&revision)?
-                    .ok_or_else(|| integrity("cut update has no request evidence"))?;
-                if evidence.fingerprint != fingerprint {
-                    return Err(reuse());
-                }
-                let old = crate::plate::inspect_revision(&revision)?;
-                let element = if let Some(p) = old
-                    .plates
-                    .iter()
-                    .find(|p| p.authored.id == command.target_id)
-                {
-                    CutElement::Plate(Box::new(p.clone()))
-                } else if let Some(m) = old
-                    .members
-                    .iter()
-                    .find(|m| m.authored.id == command.target_id)
-                {
-                    CutElement::Member(Box::new(m.clone()))
-                } else {
-                    return Err(integrity(
-                        "accepted cut target is missing from its revision",
-                    ));
-                };
-                let ordinal = if remove {
-                    0
-                } else {
-                    element
-                        .cuts()
-                        .iter()
-                        .find(|r| r.operation_id == command.operation_id)
-                        .ok_or_else(|| integrity("accepted cut record is missing"))?
-                        .ordinal
-                };
-                return Ok(Cut {
-                    replayed: true,
-                    element,
-                    ordinal,
-                    revision: old.revision,
-                    footprint: None,
-                    changed_layers: Vec::new(),
-                });
-            }
-            beamcraft_host::ledger::Outcome::Unknown => {
-                return Err(PlateError::new(
-                    ErrorCode::OutcomeUnknown,
-                    "operation outcome requires recovery",
-                ));
-            }
-            _ => {}
-        }
+    if let Some(replayed) = replay_cut(store, request, fingerprint, remove)? {
+        return Ok(replayed);
     }
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
+    if let Some(replayed) = replay_cut(store, request, fingerprint, remove)? {
+        return Ok(replayed);
+    }
     if head.is_none() {
         return Err(not_found());
     }
@@ -351,43 +354,7 @@ fn apply_cut(
         )
         .chain(history.values().flat_map(|h| h.retired.iter().copied()))
         .collect();
-    // The op-id decision runs before the record admission (F04 section 8 order): the head holds
-    // this cut exactly when its last record is this command's record, which is how a retried
-    // request differs from a second cut reusing a record identity.
     let op_host = host_uuid(&request.op_id.to_string())?;
-    let holds = |head: &CutElement| match head.cuts().last() {
-        Some(record) => {
-            record.operation_id == command.operation_id
-                && record.point_mm == command.point_mm
-                && record.normal == command.normal
-                && record.keep == command.keep
-        }
-        None => false,
-    };
-    let (prior, recorded) = prior_op_with(store, &op_host, || {
-        if holds(&head_element) {
-            Ok(fingerprint)
-        } else {
-            digest_of(b"no accepted request matches the head state")
-        }
-    })?;
-    match prior {
-        PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
-            let ordinal = head_element.cuts().last().map_or(0, |c| c.ordinal);
-            return Ok(Cut {
-                replayed: true,
-                element: head_element,
-                ordinal,
-                revision: replay_summary(&head, recorded)?,
-                footprint: None,
-                changed_layers: Vec::new(),
-            });
-        }
-        PriorOp::Accepted { .. } => {
-            return Err(reuse());
-        }
-        PriorOp::Unseen => {}
-    }
 
     let (plate, member) = match &head_element {
         CutElement::Plate(record) => (Some(&record.authored), None),

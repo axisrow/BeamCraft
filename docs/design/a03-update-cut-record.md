@@ -9,6 +9,7 @@ A refused plane or failed certification writes no revision. One workspace undo
 restores the complete group; redo reapplies it.
 
 Immutable command evidence from the accepted revision decides retry identity.
+Create, update and remove requests use the same immutable evidence lookup.
 A matching retry returns the original accepted revision and element, even after
 later edits or deletion; it does not reapply the plane. Reusing an op ID with
 other parameters refuses. Missing or malformed evidence fails closed.
