@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 //! Explicit cut retirement prevents semantic identity reuse; real process/undo regressions.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_json::Json;
 use support::StoreFixture;
 const RECORD: &str = "019a7bf0-0000-7000-8000-000000ac0001";

@@ -19,7 +19,7 @@ const USER: &str = "019a7bf0-0000-7000-8000-00000000c201";
 const STRANGER: &str = "019a7bf0-0000-7000-8000-00000000c202";
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000000210";
 
-mod support;
+use crate::support;
 
 use support::{at, text};
 

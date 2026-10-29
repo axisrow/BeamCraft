@@ -43,7 +43,7 @@ const IBEAM: &str = "019a7bf0-0000-7000-8000-000000700005";
 const REFERENCE: &str = "019a7bf0-0000-7000-8000-000000700006";
 const SITE: &str = "#usda 1.0\n(\n    defaultPrim = \"Site\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\ndef Xform \"Site\"\n{\n    def Mesh \"Body\"\n    {\n        point3f[] points = [(0, 0, 0), (1, 0, 0), (1, 1, 0)]\n        int[] faceVertexCounts = [3]\n        int[] faceVertexIndices = [0, 1, 2]\n        uniform token subdivisionScheme = \"none\"\n    }\n}\n";
 
-mod support;
+use crate::support;
 
 use support::{at, text};
 

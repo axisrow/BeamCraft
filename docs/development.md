@@ -170,7 +170,7 @@ cargo deny check
   `Cargo.lock` as a side effect.
 
 The independent-reader gate runs in every `cargo test`: run
-`cargo test -p beamcraft-cli --test independent_reader --test reference_reader -- --nocapture`.
+`cargo test -p beamcraft-cli --test cli -- independent_reader:: reference_reader:: --nocapture`.
 The `beamcraft-usd-oracle` process re-reads the committed layer text with its own parser,
 composition and vector algebra and cross-checks the closed forms; a failure fails the tests, and
 no SDK or interpreter is needed. The exact contract case inventory, asserted fields and remaining

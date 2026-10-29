@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 //! A03 in-place cut updates: immutable retry evidence, atomic refusal and workspace history.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_json::Json;
 use support::StoreFixture;
 fn ok(f: &StoreFixture, c: &str, a: &[&str]) -> Json {

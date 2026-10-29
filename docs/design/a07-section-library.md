@@ -287,7 +287,7 @@ Evidence: `cargo test -p beamcraft-model section`, `cargo test -p beamcraft-kern
 (closed-form areas of every family in both representations, bounding-box centring, member bounds
 in the F06 frame, divergence-theorem volume, determinism, custom and refusal codes), the
 layer-engine round trip and tamper test, the engine unit test, and `cargo test -p beamcraft-cli
---test sections` (real binary: define, idempotent redefine, build, reopen in a fresh process,
+--test cli -- sections::` (real binary: define, idempotent redefine, build, reopen in a fresh process,
 world bounds, `definitions`, saved text, cold-formed, CHS and custom members in one revision,
 refusal codes).
 
@@ -371,7 +371,7 @@ beamcraft create-plate   --store ROOT ... [--material-digest SHA256 | --material
   The declared areas of its three entries that carry one (5,153, 2,000 and 2,400 mm2) agree
   with the exact area, so none warns.
 
-Evidence: `cargo test -p beamcraft-cli --test libraries` (real binary: list and filter, show,
+Evidence: `cargo test -p beamcraft-cli --test cli -- libraries::` (real binary: list and filter, show,
 self-contained definition with the library deleted, digest equal to the predicted one, every
 shipped entry builds a member, unknown designation `NOT_FOUND` with nothing published, duplicate,
 oversized, garbage, fake binary, sublayer, wrong units, missing id, directory, missing file and
@@ -453,7 +453,7 @@ beamcraft add-library    --library FILE [--library-id ID [--title TEXT]] --desig
 * The layer engine runs in the CLI process (no LEW-03 containment); a hostile library or
   environment is bounded by the budgets, not isolated.
 
-Evidence: `cargo test -p beamcraft-cli --test environments` (real binary: ordered lookup and shadow
+Evidence: `cargo test -p beamcraft-cli --test cli -- environments::` (real binary: ordered lookup and shadow
 report, the digest predicted by `show-library` equals the pinned one, user library first, a refused
 stronger entry not replaced by a weaker one, hostile environments (escaping, absolute, drive,
 scheme, backslash, empty and repeated paths, 33 libraries, no libraries, numbers, missing file,

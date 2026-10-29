@@ -101,7 +101,7 @@ capacity is an implementation limit), but there is still no `UpdateCut`/`RemoveC
 * Layer-engine test: the five parallel attributes are authored for a plate and a member, the
   exported layers pass the structural validator, and invalid or half-authored records are
   refused before anything is written.
-* `cargo test -p beamcraft-cli --test cuts` (real binary): a cut plate and a cut beam with
+* `cargo test -p beamcraft-cli --test cli -- cuts::` (real binary): a cut plate and a cut beam with
   exact volume and mass, a second record taking the next ordinal, fresh-process reopen and
   re-verification, the saved layer text read by plain string matching, every rejection code
   (`INVALID_ARGUMENT`, `UNSUPPORTED_GEOMETRY`, `NON_FINITE_NUMBER`, `LIMIT_EXCEEDED`,

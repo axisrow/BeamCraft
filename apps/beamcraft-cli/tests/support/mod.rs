@@ -3,8 +3,9 @@
 
 //! Mechanical real-binary fixtures; domain expectations stay in each integration suite.
 
-// Suites that share only the JSON accessors never touch the fixture.
-#![allow(dead_code, clippy::panic)]
+// Suites that share only the JSON accessors never touch the fixture. Test-only setup code fails
+// the calling test on any setup error, as each suite's own helpers do.
+#![allow(dead_code, clippy::panic, clippy::unwrap_used)]
 
 use beamcraft_json::{Json, Limits};
 use std::sync::atomic::{AtomicU64, Ordering};

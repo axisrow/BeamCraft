@@ -8,10 +8,22 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 authors.workspace = true
+# The integration suites build into one `cli` test binary (`tests/cli.rs`): one link instead of
+# one per suite, and `cargo test` schedules every case on one thread pool instead of running
+# the suites one after another. `macos_icon` checks the desktop app's icon and stays separate.
+autotests = false
 
 [[bin]]
 name = "beamcraft"
 path = "src/main.rs"
+
+[[test]]
+name = "cli"
+path = "tests/cli.rs"
+
+[[test]]
+name = "macos_icon"
+path = "tests/macos_icon.rs"
 
 [dependencies]
 beamcraft-model.workspace = true

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 //! T01.4 grid query and placement regression scenarios.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_json::Json;
 use support::text;
 const G: &str = "01990000-0000-7000-8000-000000003001";

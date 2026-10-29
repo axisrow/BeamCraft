@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 //! A04 explicit hole retirement, immutable retries, cross-kind UUIDs and shared undo.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_json::Json;
 use support::StoreFixture;
 const FIRST: &str = "019a7bf0-0000-7000-8000-000000ae0001";

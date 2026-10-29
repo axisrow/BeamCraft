@@ -27,7 +27,7 @@ const SHIPPED: &str = concat!(
     "/../../assets/libraries/synthetic-sections.usda"
 );
 
-mod support;
+use crate::support;
 
 use support::{at, text};
 

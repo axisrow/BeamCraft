@@ -109,8 +109,8 @@ Recorded on 2026-10-21, Windows 10 build 19045, Rust/Cargo 1.96.0. All test mode
 covered by the test-data entry in `ATTRIBUTION.md`. No network, runtime dependency or asset is added.
 
 ```powershell
-cargo test --offline --locked -p beamcraft-cli --test f04_cases --test f06_cases -- --nocapture
-cargo test --offline --locked -p beamcraft-cli --test independent_reader -- --nocapture
+cargo test --offline --locked -p beamcraft-cli --test cli -- f04_cases:: f06_cases:: --nocapture
+cargo test --offline --locked -p beamcraft-cli --test cli -- independent_reader:: --nocapture
 cargo test --offline --locked --workspace --no-fail-fast
 cargo fmt --all -- --check
 cargo clippy --offline --locked --workspace --all-targets -- -D warnings

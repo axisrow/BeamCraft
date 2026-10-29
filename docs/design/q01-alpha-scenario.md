@@ -3,7 +3,7 @@
 Run the original five-part detailing story with one command on Windows, Linux or macOS:
 
 ```sh
-cargo test --locked -p beamcraft-cli --test alpha_scenario -- --nocapture
+cargo test --locked -p beamcraft-cli --test cli -- alpha_scenario:: --nocapture
 ```
 
 The test runs the real CLI in a new process for every step, against a fresh published store and
@@ -41,7 +41,7 @@ of the earlier numbered source revision.
 Keep the generated stores and output files for the manual portion:
 
 ```sh
-BEAMCRAFT_Q01_KEEP=1 cargo test --locked -p beamcraft-cli --test alpha_scenario -- --nocapture
+BEAMCRAFT_Q01_KEEP=1 cargo test --locked -p beamcraft-cli --test cli -- alpha_scenario:: --nocapture
 ```
 
 In PowerShell, set `$env:BEAMCRAFT_Q01_KEEP = '1'` before the same Cargo command. The test prints

@@ -170,7 +170,7 @@ the finished part weighs). Both are available now; the BOM chooses by use.
   refused, rectangle, custom, the warning against the exact area, gross and net of a 1000 x 500 x
   10 plate with two holes (5,000,000 and 4,875,000 mm3, removed 125,000, 39.25 and 38.26875 kg),
   signature and freshness tests (declared area, future operation, hole edit, superseded label).
-- `cargo test -p beamcraft-cli --test pmass` (real binary, 9 tests): the 30B1-like member computed
+- `cargo test -p beamcraft-cli --test cli -- pmass::` (real binary, 9 tests): the 30B1-like member computed
   (volume = 4080.0708 x 6000 to 1e-9, mass 192.168 within 0.01 kg, display 192.2, gross equals
   net), the same with `--area-mm2 4080` (catalogue, 192.168),
   the warning against the exact area, no density (mass null, volumes present), custom polygon,
