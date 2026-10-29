@@ -44,7 +44,7 @@
 //! symbolic link or name that leaves it).
 
 use crate::changeset::{apply_changeset, read_changeset};
-use crate::plate::{PlateError, RevisionSummary};
+use crate::plate::{PlateError, revision_json};
 use crate::workspace::{
     compensation::{CompensationRequest, CompensationResult, compensate_workspace},
     conflicts::conflict_json,
@@ -287,12 +287,9 @@ impl PublishHandler {
                     "expected_draft is not a revision id",
                 )
             })?;
-            let actor = Uuid7::parse(&request.actor.to_string()).map_err(|_| {
-                refused(
-                    ErrorCode::InvalidArgument,
-                    "the authenticated actor is not a canonical id",
-                )
-            })?;
+            // The token authenticated this actor; the typed id already carries the validated
+            // UUIDv7, so the rebase actor needs no parsing.
+            let actor = Uuid7::from_bytes(request.actor.uuid().as_bytes());
             let dir = self.workspace(text("workspace")?)?;
             let blobs = BlobStore::new(&dir).map_err(|e| PlateError {
                 rule_id: None,
@@ -430,51 +427,4 @@ impl Handler for PublishHandler {
         self.dispatch(request)
             .unwrap_or_else(|e| rejection(e.code, e.message))
     }
-}
-
-/// A revision summary in the same shape the `rebase-workspace` command prints, so the wire
-/// answer carries the local operation's typed result unchanged.
-fn revision_json(revision: &RevisionSummary) -> Json {
-    let details = revision.details.as_ref().map_or(Json::Null, |d| {
-        Json::object([
-            ("project_id", Json::text(d.project.clone())),
-            ("workspace_id", Json::text(d.workspace.clone())),
-            ("op_id", Json::text(d.op.clone())),
-            ("workspace_generation", Json::text(d.generation.to_string())),
-            (
-                "index",
-                d.index.map_or(Json::Null, |(structure, prims)| {
-                    Json::object([
-                        ("structure_digest", Json::text(structure.to_string())),
-                        ("prim_count", Json::text(prims.to_string())),
-                    ])
-                }),
-            ),
-            (
-                "layers",
-                Json::Array(
-                    d.layers
-                        .iter()
-                        .map(|l| {
-                            Json::object([
-                                ("role", Json::text(l.role)),
-                                ("name", Json::text(l.name.clone())),
-                                ("digest", Json::text(l.digest.to_string())),
-                                ("size", Json::text(l.size.to_string())),
-                            ])
-                        })
-                        .collect(),
-                ),
-            ),
-        ])
-    });
-    Json::object([
-        ("revision_id", Json::text(revision.revision_id.clone())),
-        ("sequence", Json::text(revision.sequence.to_string())),
-        (
-            "manifest_digest",
-            Json::text(revision.manifest_digest.to_string()),
-        ),
-        ("manifest", details),
-    ])
 }

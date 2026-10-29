@@ -110,6 +110,19 @@ impl Uuid7 {
         }
     }
 
+    /// The id of 16 raw big-endian bytes, as a typed model id already validated them; the
+    /// canonical text is derived, so this cannot fail.
+    pub fn from_bytes(bytes: &[u8; 16]) -> Self {
+        let mut text = String::with_capacity(36);
+        for (i, b) in bytes.iter().enumerate() {
+            if matches!(i, 4 | 6 | 8 | 10) {
+                text.push('-');
+            }
+            text.push_str(&format!("{b:02x}"));
+        }
+        Self(text)
+    }
+
     /// The canonical text.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -306,5 +319,23 @@ impl From<LeaseError> for RevisionError {
             LeaseError::Busy => Self::StoreBusy,
             LeaseError::Storage(error) => Self::Storage(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    #[test]
+    fn from_bytes_formats_the_canonical_text() {
+        let bytes = [
+            0x01, 0x9a, 0x7b, 0xf0, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0xc2, 0x01,
+        ];
+        let id = Uuid7::from_bytes(&bytes);
+        assert_eq!(id.as_str(), "019a7bf0-0000-7000-8000-00000000c201");
+        assert_eq!(Uuid7::parse(id.as_str()), Ok(id));
     }
 }

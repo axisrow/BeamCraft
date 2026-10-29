@@ -57,6 +57,7 @@ use beamcraft_host::revision::{
     LayerRole, Manifest, Revision, RevisionError, RevisionInfo, RevisionStore, Uuid7,
     VerifyRequest,
 };
+use beamcraft_json::Json;
 use beamcraft_layer_engine::Property;
 use beamcraft_layer_engine::authored::{
     Author, Change, EditTargets, Element, Group as LayerGroup, PROJECT_RECORD_KEY,
@@ -179,6 +180,53 @@ pub(crate) fn digest_of(bytes: &[u8]) -> Result<ContentDigest, PlateError> {
 
 pub(crate) fn host_uuid(text: &str) -> Result<Uuid7, PlateError> {
     Uuid7::parse(text).map_err(PlateError::from)
+}
+
+/// The revision summary as JSON, in the shape every revision-printing command and the
+/// coordinator's rebase answer share.
+pub fn revision_json(revision: &RevisionSummary) -> Json {
+    let details = revision.details.as_ref().map_or(Json::Null, |d| {
+        Json::object([
+            ("project_id", Json::text(d.project.clone())),
+            ("workspace_id", Json::text(d.workspace.clone())),
+            ("op_id", Json::text(d.op.clone())),
+            ("workspace_generation", Json::text(d.generation.to_string())),
+            (
+                "index",
+                d.index.map_or(Json::Null, |(structure, prims)| {
+                    Json::object([
+                        ("structure_digest", Json::text(structure.to_string())),
+                        ("prim_count", Json::text(prims.to_string())),
+                    ])
+                }),
+            ),
+            (
+                "layers",
+                Json::Array(
+                    d.layers
+                        .iter()
+                        .map(|l| {
+                            Json::object([
+                                ("role", Json::text(l.role)),
+                                ("name", Json::text(l.name.clone())),
+                                ("digest", Json::text(l.digest.to_string())),
+                                ("size", Json::text(l.size.to_string())),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ])
+    });
+    Json::object([
+        ("revision_id", Json::text(revision.revision_id.clone())),
+        ("sequence", Json::text(revision.sequence.to_string())),
+        (
+            "manifest_digest",
+            Json::text(revision.manifest_digest.to_string()),
+        ),
+        ("manifest", details),
+    ])
 }
 
 /// The pin of the context that has no base revision.

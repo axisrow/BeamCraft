@@ -799,7 +799,7 @@ fn a_coordinator_rebase_keeps_both_edits_and_replays_across_entry_points() {
     let stranger = f.token("stranger", TOKEN_STRANGER);
     let server = f.serve(
         &[(USER, &token), (USER_B, &token_b), (STRANGER, &stranger)],
-        5,
+        6,
     );
     let address = server.address.clone();
     let op = "019a7bf0-0000-7000-8000-00000000d601";
@@ -872,6 +872,14 @@ fn a_coordinator_rebase_keeps_both_edits_and_replays_across_entry_points() {
     // The rebased draft ships through the ordinary wire publish against its new base.
     let cs = package(&f, &b_dir);
     assert_eq!(cs.1, moved);
+    // C03-R02: the changeset keeps the workspace actor as its author, so a stranger's token
+    // cannot publish it while B's own token can.
+    let (code, stolen) = publish(&f, &address, &stranger, "b", &cs);
+    assert_eq!(
+        (code, text(&stolen, "code").as_str()),
+        (2, "PERMISSION_DENIED")
+    );
+    assert_eq!(f.head(), moved);
     let (code, applied) = publish(&f, &address, &token_b, "b", &cs);
     assert_eq!(
         (code, text(&applied, "outcome").as_str()),

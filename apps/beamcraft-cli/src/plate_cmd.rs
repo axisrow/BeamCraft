@@ -25,7 +25,7 @@ use beamcraft_cli::member::{
 };
 use beamcraft_cli::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport,
-    RevisionSummary, accepted_binding, claim_project, ensure_project, inspect,
+    accepted_binding, claim_project, ensure_project, inspect,
 };
 use beamcraft_cli::plate_draft::{CreatedDraft, create_plate_draft};
 use beamcraft_cli::workspace::{
@@ -3358,50 +3358,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
     ]))
 }
 
-pub(crate) fn revision_json(revision: &RevisionSummary) -> Json {
-    let details = revision.details.as_ref().map_or(Json::Null, |d| {
-        Json::object([
-            ("project_id", Json::text(d.project.clone())),
-            ("workspace_id", Json::text(d.workspace.clone())),
-            ("op_id", Json::text(d.op.clone())),
-            ("workspace_generation", Json::text(d.generation.to_string())),
-            (
-                "index",
-                d.index.map_or(Json::Null, |(structure, prims)| {
-                    Json::object([
-                        ("structure_digest", Json::text(structure.to_string())),
-                        ("prim_count", Json::text(prims.to_string())),
-                    ])
-                }),
-            ),
-            (
-                "layers",
-                Json::Array(
-                    d.layers
-                        .iter()
-                        .map(|l| {
-                            Json::object([
-                                ("role", Json::text(l.role)),
-                                ("name", Json::text(l.name.clone())),
-                                ("digest", Json::text(l.digest.to_string())),
-                                ("size", Json::text(l.size.to_string())),
-                            ])
-                        })
-                        .collect(),
-                ),
-            ),
-        ])
-    });
-    Json::object([
-        ("revision_id", Json::text(revision.revision_id.clone())),
-        ("sequence", Json::text(revision.sequence.to_string())),
-        (
-            "manifest_digest",
-            Json::text(revision.manifest_digest.to_string()),
-        ),
-        ("manifest", details),
-    ])
-}
+pub(crate) use beamcraft_cli::plate::revision_json;
 
 pub(crate) fn footprint_json(footprint: Option<&Footprint>) -> Json {
     let entries = |set: &std::collections::BTreeSet<Entry>| {
