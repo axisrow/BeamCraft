@@ -429,7 +429,11 @@ fn groups_are_paged() {
 #[test]
 fn bad_input_is_refused_without_a_preview() {
     let f = Fixture::new();
-    f.scene();
+    // Argument refusals need a nonempty model, not the eight-part grouping scene.
+    f.ok(
+        "create-plate",
+        &["--width", "400", "--length", "300", "--thickness", "20"],
+    );
     for extra in [
         vec!["--plate-series", "PL"],
         vec!["--plate-series", "PL:x"],

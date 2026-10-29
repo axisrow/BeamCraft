@@ -93,6 +93,23 @@ impl Fixture {
             .map(|l| (text(l, "name"), text(l, "digest")))
             .collect()
     }
+    /// File-destination checks need a valid, nonempty revision, not the mixed geometry scene.
+    /// Keep authoring through the real CLI, with the same explicit project as the full scene.
+    fn exportable_plate(&self) {
+        self.ok(
+            "create-plate",
+            &[
+                "--project-id",
+                PROJECT,
+                "--width",
+                "400",
+                "--length",
+                "300",
+                "--thickness",
+                "20",
+            ],
+        );
+    }
     /// The whole scene: a plate with a hole and a level, a beam and a column of an I section, an
     /// assembly with the beam in it and a weld between beam and column.
     fn scene(&self) -> Scene {
@@ -924,7 +941,7 @@ fn refusals_leave_no_file() {
         text(&list(&body, "diagnostics")[0], "ifc_code"),
         "IFC_INPUT_UNAVAILABLE"
     );
-    f.scene();
+    f.exportable_plate();
     for (extra, expected, ifc) in [
         (
             vec!["--out", &out, "--schema", "IFC4X3"],
@@ -996,7 +1013,7 @@ fn refusals_leave_no_file() {
 #[test]
 fn an_existing_output_is_kept_unless_overwrite_is_asked() {
     let f = Fixture::new();
-    f.scene();
+    f.exportable_plate();
     let out = f.path("a.ifc");
     fs::write(&out, "keep me").unwrap();
     let (code, rejected, _) = f.export_rejected(&["--out", &out]);
@@ -1017,7 +1034,7 @@ fn an_existing_output_is_kept_unless_overwrite_is_asked() {
 #[test]
 fn an_output_inside_the_source_store_is_refused() {
     let f = Fixture::new();
-    f.scene();
+    f.exportable_plate();
     let store = f.shared.root.join("store");
     let (head, layers) = (f.head(), f.layer_digests());
     for inside in [
@@ -1049,7 +1066,7 @@ fn an_output_inside_the_source_store_is_refused() {
 #[test]
 fn the_ifc_and_the_report_cannot_be_the_same_file() {
     let f = Fixture::new();
-    f.scene();
+    f.exportable_plate();
     fs::create_dir(f.path("sub")).unwrap();
     let out = f.path("model.ifc");
     for report in [
@@ -1071,7 +1088,7 @@ fn the_ifc_and_the_report_cannot_be_the_same_file() {
 #[test]
 fn a_refused_report_leaves_the_ifc_destination_as_it_was() {
     let f = Fixture::new();
-    f.scene();
+    f.exportable_plate();
     let (out, report) = (f.path("model.ifc"), f.path("report.json"));
     fs::write(&report, "keep").unwrap();
     // The report exists and may not be replaced: no IFC file appears.
@@ -1098,7 +1115,7 @@ fn a_refused_report_leaves_the_ifc_destination_as_it_was() {
 #[test]
 fn a_link_above_the_output_directory_is_refused() {
     let f = Fixture::new();
-    f.scene();
+    f.exportable_plate();
     fs::create_dir_all(f.path("real/child")).unwrap();
     std::os::unix::fs::symlink(f.path("real"), f.path("alias")).unwrap();
     let through = f.path("alias/child/a.ifc");
@@ -1133,7 +1150,7 @@ fn a_revision_is_found_by_id_among_many() {
 #[test]
 fn a_link_at_the_output_name_or_its_parent_is_refused() {
     let f = Fixture::new();
-    f.scene();
+    f.exportable_plate();
     let real = f.path("real.ifc");
     fs::write(&real, "keep").unwrap();
     let link = f.path("link.ifc");
@@ -1157,7 +1174,7 @@ fn a_link_at_the_output_name_or_its_parent_is_refused() {
 #[test]
 fn a_store_without_a_recorded_project_is_refused() {
     let f = Fixture::new();
-    f.scene();
+    f.exportable_plate();
     f.tamper(|name, layer| {
         if name == "root.usda" {
             layer
