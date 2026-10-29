@@ -2113,6 +2113,8 @@ fn push_f64(bytes: &mut Vec<u8>, value: f64) -> Result<(), CommandError> {
 /// (`Some(None)`) and pinning a definition (`Some(Some(digest))`). There is no raw USD setter.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ElementPatch {
+    /// Complete replacement of a plate's sparse corner treatment list; empty clears it.
+    pub corners: Option<Vec<PlateCorner>>,
     /// New label.
     pub name: Option<String>,
     /// New authored integer part class (P15).
@@ -2154,7 +2156,29 @@ impl UpdateElement {
     /// target's kind and the geometry are the engine's decisions.
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
         let patch = &self.patch;
-        if patch.class.is_none()
+        if let Some(corners) = &patch.corners {
+            if corners.len() > CONTOUR_POINT_CAP {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "corner",
+                    "too many corner treatments",
+                ));
+            }
+            let mut seen = Vec::new();
+            for corner in corners {
+                corner.validate()?;
+                if corner.vertex >= CONTOUR_POINT_CAP || seen.contains(&corner.vertex) {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "corner",
+                        "duplicate or out-of-range corner vertex",
+                    ));
+                }
+                seen.push(corner.vertex);
+            }
+        }
+        if patch.corners.is_none()
+            && patch.class.is_none()
             && patch.name.is_none()
             && patch.material.is_none()
             && patch.thickness_mm.is_none()
@@ -2348,6 +2372,24 @@ impl UpdateElement {
                     )
                     .with_rule("DV-ATTR-003")
                 })?);
+            }
+        }
+        if let Some(corners) = &self.patch.corners {
+            bytes.extend_from_slice(b"A12.3/corner-patch/v1\0");
+            bytes.extend_from_slice(&(corners.len() as u64).to_le_bytes());
+            for corner in corners {
+                bytes.extend_from_slice(&(corner.vertex as u64).to_le_bytes());
+                bytes.push(match corner.treatment {
+                    CornerTreatment::Chamfer { .. } => 1,
+                    CornerTreatment::Round { .. } => 2,
+                });
+                let values = match corner.treatment {
+                    CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
+                    CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
+                };
+                for v in values {
+                    bytes.extend_from_slice(&v.to_le_bytes());
+                }
             }
         }
         Sha256::digest(&bytes).map_err(|_| {

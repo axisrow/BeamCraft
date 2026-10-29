@@ -56,7 +56,8 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         name: patch.name.is_some(),
         class: patch.class.is_some(),
         material: patch.material.is_some(),
-        shape: patch.thickness_mm.is_some()
+        shape: patch.corners.is_some()
+            || patch.thickness_mm.is_some()
             || patch.thickness_side.is_some()
             || patch.axis_points_mm.is_some(),
         placement: patch.translation_mm.is_some(),
@@ -79,6 +80,10 @@ pub fn patch_plate(
         ));
     }
     let mut next = plate.clone();
+    if let Some(corners) = &patch.corners {
+        next.corners.clone_from(corners);
+        next.to_command().validate_arguments()?;
+    }
     if let Some(name) = &patch.name {
         next.name.clone_from(name);
     }
@@ -106,6 +111,13 @@ pub fn patch_member(
     member: &AuthoredMember,
     patch: &ElementPatch,
 ) -> Result<AuthoredMember, CommandError> {
+    if patch.corners.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "corner",
+            "only plates have contour corners",
+        ));
+    }
     if patch.thickness_mm.is_some() {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,
@@ -539,6 +551,47 @@ mod tests {
             .unwrap_err()
             .code,
             ErrorCode::UnsupportedProperty
+        );
+    }
+    #[test]
+    fn corner_replacement_is_a_shape_patch_and_preserves_the_sharp_contour() {
+        use beamcraft_model::command::{CornerTreatment, PlateCorner};
+        let before = plate();
+        let corners = vec![PlateCorner {
+            vertex: 0,
+            treatment: CornerTreatment::Round { radius_mm: 10. },
+        }];
+        let patch = ElementPatch {
+            corners: Some(corners.clone()),
+            ..Default::default()
+        };
+        assert!(effect(&patch).shape);
+        let after = patch_plate(&before, &patch).unwrap();
+        assert_eq!(after.corners, corners);
+        assert_eq!(after.contour_points_mm, before.contour_points_mm);
+        assert!(before.corners.is_empty());
+        assert!(patch_member(&member(), &patch).is_err());
+        let cleared = patch_plate(
+            &after,
+            &ElementPatch {
+                corners: Some(vec![]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(cleared.corners.is_empty());
+        assert!(
+            patch_plate(
+                &before,
+                &ElementPatch {
+                    corners: Some(vec![PlateCorner {
+                        vertex: 999,
+                        treatment: CornerTreatment::Round { radius_mm: 1. }
+                    }]),
+                    ..Default::default()
+                }
+            )
+            .is_err()
         );
     }
 }

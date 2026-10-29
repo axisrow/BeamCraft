@@ -124,7 +124,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|ThicknessSide|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
+    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -541,6 +541,14 @@ pub enum Change {
         /// New thickness.
         mm: f64,
     },
+    /// Complete sparse replacement of the plate's corner treatments (A12.2): the list authors
+    /// every treated contour vertex as a whole, an empty list clears them all back to sharp.
+    Corners {
+        /// Canonical plate identity.
+        id: String,
+        /// Complete sparse replacement; empty clears every treatment.
+        corners: Vec<PlateCorner>,
+    },
     /// Replace the thickness side of a plate (A12.1). A plate always has a side (absence is the
     /// `top` default), so the change authors the exact token, `top` included.
     ThicknessSide {
@@ -669,6 +677,7 @@ impl Change {
             Self::Grid { id, .. } => (id, "bim:grid"),
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
+            Self::Corners { id, .. } => (id, "steel:plate:cornerVertex"),
             Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
             Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
@@ -1140,6 +1149,15 @@ mod pin_tests {
             SCHEMA_DESCRIPTOR.replace("steel:member:pathType=token(arc,optional);", "");
         assert!(
             !pin_accepted(&Sha256::digest(before_p13.as_bytes()).unwrap().to_string()).unwrap()
+        );
+        let before_corner_edits = SCHEMA_DESCRIPTOR.replace("|Corners|", "|");
+        assert!(
+            !pin_accepted(
+                &Sha256::digest(before_corner_edits.as_bytes())
+                    .unwrap()
+                    .to_string()
+            )
+            .unwrap()
         );
         let before_f10 = SCHEMA_DESCRIPTOR
             .replace("bim:isDeactivated=bool(optional,default=false);", "")

@@ -336,6 +336,7 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--name",
     "--material-digest",
     "--thickness",
+    "--corners",
     "--thickness-side",
     "--axis-point",
     "--translation",
@@ -1126,6 +1127,15 @@ fn corner_treatments(options: &BTreeMap<&str, &str>) -> Run<Vec<PlateCorner>> {
     let Some(text) = options.get("--corners") else {
         return Ok(Vec::new());
     };
+    if *text == "none" {
+        return Ok(Vec::new());
+    }
+    if text.split(';').take(1025).count() > 1024 {
+        return Err(PlateError::new(
+            ErrorCode::LimitExceeded,
+            "too many corner treatments",
+        ));
+    }
     text.split(';')
         .map(|entry| {
             let bad =
@@ -1135,6 +1145,7 @@ fn corner_treatments(options: &BTreeMap<&str, &str>) -> Run<Vec<PlateCorner>> {
             let (kind, params) = rest.split_once(':').ok_or_else(bad)?;
             let values: Vec<f64> = params
                 .split(',')
+                .take(3)
                 .map(|v| v.trim().parse::<f64>())
                 .collect::<Result<_, _>>()
                 .map_err(|_| bad())?;
@@ -1204,6 +1215,11 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let patch = ElementPatch {
+        corners: if given("--corners").is_some() {
+            Some(corner_treatments(options)?)
+        } else {
+            None
+        },
         class: given("--class")
             .map(|v| {
                 v.parse::<i32>()
