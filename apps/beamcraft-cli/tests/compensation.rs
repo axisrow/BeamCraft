@@ -485,21 +485,25 @@ fn a_conflicting_compensation_names_the_later_operation_and_refuses() {
     f.workspace("b", USER_B);
     f.edit("b", PLATE, &["--thickness", "20"]);
     let head2 = f.publish_local("b"); // B's later edit on the same groups.
-    // A moves its workspace onto B's head with one disjoint unsent plate.
+    // A moves its workspace onto B's head with one disjoint unsent plate and publishes it:
+    // the compensation requires a clean draft.
     f.create_plate("a", "019a7bf0-0000-7000-8000-000000000330", "From A");
     let draft = f.draft_head("a");
     f.rebase("a", &op(1), &head2, &draft);
-    let (code, answer) = f.compensate("a", &op(2), &head1, &head2);
+    let head3 = f.publish_local("a");
+    let (code, answer) = f.compensate("a", &op(2), &head1, &head3);
     assert_eq!(code, 2, "{answer:?}");
     assert_eq!(text(&answer, "code"), "DEPENDENCY_CONFLICT");
     let report = at(&answer, &["diagnostics"]).array().unwrap();
-    assert!(!report.is_empty(), "{answer:?}");
-    assert_eq!(text(&report[0], "accepted_op"), head2);
-    assert_eq!(text(&report[0], "kind"), "write_write");
-    // Nothing moved: B's value stands, A's unsent plate is still there.
+    let named = report
+        .iter()
+        .find(|d| text(d, "accepted_op") == head2)
+        .unwrap_or_else(|| panic!("no diagnostic names B's operation: {answer:?}"));
+    assert_eq!(text(named, "kind"), "write_write");
+    // Nothing moved: B's value stands, A's published plate is still there.
     let (name, thickness) = f.plate(&f.path("published"), PLATE);
     assert_eq!((name.as_str(), thickness), ("Seed", 20.0));
-    assert_eq!(f.head(), head2);
+    assert_eq!(f.head(), head3);
     assert_eq!(f.plate_count(&f.path("workspaces/a")), 3);
 }
 
@@ -514,29 +518,60 @@ fn a_disjoint_later_edit_survives_a_compensation() {
     f.workspace("b", USER_B);
     f.edit("b", PLATE, &["--name", "Renamed by B"]);
     let head2 = f.publish_local("b");
+    // A moves onto B's head with one unsent plate and publishes it first: the compensation
+    // requires a clean draft, so the unsent work goes through the ordinary path, never an
+    // implicit drop.
     f.create_plate("a", "019a7bf0-0000-7000-8000-000000000330", "From A");
     let draft = f.draft_head("a");
     f.rebase("a", &op(1), &head2, &draft);
-    let (code, answer) = f.compensate("a", &op(2), &head1, &head2);
+    let head3 = f.publish_local("a");
+    let (code, answer) = f.compensate("a", &op(2), &head1, &head3);
     assert_eq!(code, 0, "{answer:?}");
     assert_eq!(text(&answer, "outcome"), "compensated");
-    // B's rename and A's reversal sit together in the draft.
+    // B's rename and the published plate sit in the draft next to the reversal.
     let (name, thickness) = f.plate(&f.path("workspaces/a"), PLATE);
     assert_eq!((name.as_str(), thickness), ("Renamed by B", 10.0));
-    // Publishing keeps both edits in the accepted store.
+    assert_eq!(f.plate_count(&f.path("workspaces/a")), 3);
+    // Publishing keeps every edit in the accepted store.
     let (digest, base) = f.package("a");
-    assert_eq!(base, head2);
+    assert_eq!(base, head3);
     let token_a = f.token("token-a", TOKEN_A);
     let server = f.serve(&[(USER_A, &token_a)], 1);
-    let (code, published) = wire_publish(&f, &server.address, &token_a, "a", &digest, &head2);
+    let (code, published) = wire_publish(&f, &server.address, &token_a, "a", &digest, &head3);
     assert_eq!(code, 0, "{published:?}");
     let (name, thickness) = f.plate(&f.path("published"), PLATE);
     assert_eq!((name.as_str(), thickness), ("Renamed by B", 10.0));
-    // The two seed plates, A's target operation, B's rename and A's publication.
+    assert_eq!(f.plate_count(&f.path("published")), 3);
+    // The two seed plates, A's target, B's rename, A's plate and the compensation.
     let store = RevisionStore::new(BlobStore::new(f.path("published")).unwrap());
-    assert_eq!(store.head().unwrap().unwrap().sequence(), 5);
+    assert_eq!(store.head().unwrap().unwrap().sequence(), 6);
     let (code, _) = server.finish();
     assert_eq!(code, 0);
+}
+
+/// A draft with unsent operations refuses the compensation with a typed remedy instead of
+/// dropping the unsent work: the candidate would replace the whole draft content.
+#[test]
+fn a_dirty_draft_refuses_the_compensation_and_keeps_its_unsent_work() {
+    let f = Fixture::new();
+    f.edit("a", PLATE, &["--thickness", "12"]);
+    let head1 = f.publish_local("a");
+    f.create_plate("a", "019a7bf0-0000-7000-8000-000000000330", "From A");
+    let draft = f.draft_head("a");
+    let (code, answer) = f.compensate("a", &op(1), &head1, &head1);
+    assert_eq!(code, 2, "{answer:?}");
+    assert_eq!(text(&answer, "code"), "INVALID_ARGUMENT");
+    // Nothing was written and the unsent plate is still there.
+    assert_eq!(f.draft_head("a"), draft);
+    assert_eq!(f.plate_count(&f.path("workspaces/a")), 3);
+    assert_eq!(f.head(), head1);
+    // The published plate keeps flowing: publish the unsent work, then compensate.
+    let head2 = f.publish_local("a");
+    let (code, answer) = f.compensate("a", &op(2), &head1, &head2);
+    assert_eq!(code, 0, "{answer:?}");
+    assert_eq!(text(&answer, "outcome"), "compensated");
+    let (name, thickness) = f.plate(&f.path("workspaces/a"), PLATE);
+    assert_eq!((name.as_str(), thickness), ("Seed", 10.0));
 }
 
 /// C06-03/C06-07: a target whose effect later accepted operations already changed refuses and

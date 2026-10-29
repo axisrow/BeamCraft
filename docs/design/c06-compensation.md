@@ -30,10 +30,14 @@ Two independent nets, both against the **current** published head:
    planner, so a moved state is never silently overwritten. The candidate then passes the
    kernel/quantity verifier before the commit, exactly like a rebase candidate.
 
-The workspace must sit on the current accepted head (`INVALID_ARGUMENT` names the remedy:
-rebase first). A moved published head after planning surfaces later at packaging/publishing
-through the ordinary base checks; a compensation holds no accepted-store lease because it
-never writes the accepted store.
+The workspace must sit on the current accepted head, and the draft must be clean
+(`draft_pin.sequence == synced_sequence`): the compensation's candidate replaces the whole
+draft content, so unsent work is never implicitly dropped — it is published, undone or
+renounced through an explicit recorded resolution first, like the C03/C04 discipline demands
+(`INVALID_ARGUMENT` names the remedy; merging the unsent delta onto the candidate like C03
+is a follow-up, not an implicit loss). A moved published head after planning surfaces later
+at packaging/publishing through the ordinary base checks; a compensation holds no
+accepted-store lease because it never writes the accepted store.
 
 ## Identity and recovery
 

@@ -281,6 +281,17 @@ pub fn compensate_workspace(
             "compensation requires the workspace at the current accepted head; rebase first",
         ));
     }
+    // The candidate replaces the whole draft content, so a dirty draft would silently drop
+    // its unsent operations. Unsent work is either published, undone or renounced through an
+    // explicit recorded resolution first — the C03/C04 discipline; merging it here is a
+    // follow-up, not an implicit loss.
+    if draft_pin.sequence > meta.synced_sequence {
+        return Err(PlateError::new(
+            ErrorCode::InvalidArgument,
+            "compensation requires a clean draft; publish, undo or explicitly resolve the \
+             unsent operations first",
+        ));
+    }
     let target_base = published.open_at(target_sequence - 1)?;
     let a = accepted.manifest().content();
     let t = target.manifest().content();
