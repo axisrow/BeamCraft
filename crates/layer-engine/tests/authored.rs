@@ -178,11 +178,192 @@ fn batch(context: &Context, changes: Vec<Change>) -> Prepare {
         changes,
     }
 }
+
+#[test]
+fn f10_prepare_keeps_exact_rules_and_leaves_envelope_errors_unclassified() {
+    let (mut author, opened) = populated();
+    let (_, opened) = installed(&mut author, &opened, vec![assembly(FRAME, "Frame")]);
+    let exported = |author: &Author| {
+        author
+            .export(&opened.context, &control())
+            .unwrap()
+            .into_iter()
+            .map(|a| (a.name, a.digest, a.bytes))
+            .collect::<Vec<_>>()
+    };
+    let unchanged = exported(&author);
+    let invalid_id = "not-a-uuid";
+    let cases = [
+        (
+            assembly(invalid_id, "New"),
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            Change::Label {
+                id: invalid_id.into(),
+                name: "New".into(),
+            },
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            part_of(PLATE, Some(invalid_id)),
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            Change::Level {
+                id: PLATE.into(),
+                level: Some(invalid_id.into()),
+            },
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            Change::MainPart {
+                id: FRAME.into(),
+                part: invalid_id.into(),
+            },
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            create_weld(WELD, weld(invalid_id, MEMBER)),
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            create_bolt(BOLT, bolt(PLATE, invalid_id)),
+            ErrorCode::InvalidId,
+            "DV-BASE-001",
+        ),
+        (
+            assembly(PLATE, "Duplicate"),
+            ErrorCode::DuplicateId,
+            "DV-BASE-002",
+        ),
+        (
+            Change::Label {
+                id: PLATE.into(),
+                name: "".into(),
+            },
+            ErrorCode::InvalidArgument,
+            "DV-BASE-003",
+        ),
+        (
+            Change::Label {
+                id: PLATE.into(),
+                name: "x".repeat(257),
+            },
+            ErrorCode::LimitExceeded,
+            "DV-BASE-003",
+        ),
+        (
+            create_weld(WELD, weld(WELD, MEMBER)),
+            ErrorCode::InvalidArgument,
+            "DV-REL-006",
+        ),
+        (
+            create_weld(WELD, weld(PLATE, PLATE)),
+            ErrorCode::InvalidArgument,
+            "DV-REL-007",
+        ),
+        (
+            create_bolt(BOLT, bolt(BOLT, MEMBER)),
+            ErrorCode::InvalidArgument,
+            "DV-REL-006",
+        ),
+        (
+            create_bolt(BOLT, bolt(PLATE, PLATE)),
+            ErrorCode::InvalidArgument,
+            "DV-REL-007",
+        ),
+        (
+            Change::Level {
+                id: PLATE.into(),
+                level: Some(MEMBER.into()),
+            },
+            ErrorCode::InvalidArgument,
+            "DV-REL-003",
+        ),
+    ];
+    for (change, code, rule) in cases {
+        let error = author
+            .prepare(batch(&opened.context, vec![change]), &control())
+            .unwrap_err();
+        assert_eq!(error.code, code, "{rule}: {error:?}");
+        assert_eq!(error.rule_id, Some(rule), "{error:?}");
+    }
+    for actor in [false, true] {
+        let mut input = batch(
+            &opened.context,
+            vec![Change::Label {
+                id: PLATE.into(),
+                name: "Valid".into(),
+            }],
+        );
+        if actor {
+            input.actor = invalid_id.into();
+        } else {
+            input.op_id = invalid_id.into();
+        }
+        let error = author.prepare(input, &control()).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidId);
+        assert_eq!(error.rule_id, None, "envelope identities are not bim:id");
+    }
+    assert_eq!(exported(&author), unchanged);
+}
 fn prepare_initial(author: &mut Author, context: &Context) -> Prepared {
     let mut input = batch(context, elements());
     input.resources = resources();
     input.changes.push(Change::Mesh(mesh()));
     author.prepare(input, &control()).unwrap()
+}
+
+#[test]
+fn f10_definition_admission_preserves_model_rules() {
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        for definition in [
+            Definition::Material {
+                density_kg_m3: Some(value),
+                grade: None,
+                standard: None,
+                display_name: None,
+            },
+            Definition::RectangleProfile {
+                width_mm: value,
+                height_mm: 50.0,
+                section: SectionProperties::default(),
+            },
+            Definition::RectangleProfile {
+                width_mm: 100.0,
+                height_mm: 50.0,
+                section: SectionProperties {
+                    area_mm2: Some(value),
+                    ..SectionProperties::default()
+                },
+            },
+        ] {
+            let error = Resource::new(definition).unwrap_err();
+            assert_eq!(error.code, ErrorCode::NonFiniteNumber);
+            assert_eq!(error.rule_id, Some("DV-ATTR-003"));
+        }
+    }
+    let error = Resource::new(Definition::RectangleProfile {
+        width_mm: 1_000_001.0,
+        height_mm: 50.0,
+        section: SectionProperties::default(),
+    })
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::LimitExceeded);
+    assert_eq!(error.rule_id, Some("DV-LIM-001"));
+    // A pinned resource with a mismatched digest is integrity failure, not a domain finding.
+    let mut resource = resources().remove(0);
+    resource.digest = digest(b"different definition");
+    let error = resource.bytes().unwrap_err();
+    assert_eq!(error.code, ErrorCode::IntegrityError);
+    assert_eq!(error.rule_id, None);
 }
 fn populated() -> (Author, Opened) {
     let (mut a, o) = open(initial());

@@ -34,6 +34,12 @@ measured fast enough to stay in the inner loop. Nothing is removed or permanentl
 unfiltered `default` profile and CI always run everything, and an explicit command-line filter
 overrides the profile's `default-filter`.
 
+The drawn-grid viewport controller test requires a native wgpu adapter and fails explicitly if
+none is available. On a headless Linux worker, Mesa's software Vulkan driver (`mesa-vulkan-drivers`)
+can provide it; a physical GPU or display server is not required. The Vulkan loader must be able
+to find the driver and its ICD configuration. Build `beamcraft-cli` before running the UI's
+real-binary grid integration tests, which also fail when that executable is missing.
+
 ## Faster test execution
 
 The test profile optimizes only `beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel` and

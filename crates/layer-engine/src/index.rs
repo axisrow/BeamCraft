@@ -42,9 +42,10 @@ impl ElementId {
     /// Short, truncated, upper-case, unhyphenated and padded text is `INVALID_ID`.
     pub fn parse(text: &str) -> Result<Self, Diagnostic> {
         if !uuid7(text) {
-            return Err(invalid_id(
-                "element identity is not a full canonical UUIDv7",
-            ));
+            return Err(
+                invalid_id("element identity is not a full canonical UUIDv7")
+                    .with_rule("DV-BASE-001"),
+            );
         }
         let mut value = 0u128;
         for byte in text.bytes().filter(|b| *b != b'-') {
@@ -404,10 +405,10 @@ impl ElementIndex {
             ));
         }
         if fresh == source || self.elements.contains_key(fresh) {
-            return Err(fail(
-                ErrorCode::DuplicateId,
-                "copy identity is already in use",
-            ));
+            return Err(
+                fail(ErrorCode::DuplicateId, "copy identity is already in use")
+                    .with_rule("DV-BASE-002"),
+            );
         }
         let mut links = Vec::new();
         for link in self

@@ -294,6 +294,56 @@ fn kinds_cardinality_self_links_and_cycles_are_refused_with_nothing_written() {
 }
 
 #[test]
+fn f10_rules_reach_cli_diagnostics_without_reclassifying_operational_errors() {
+    let f = Fixture::new();
+    let plate = f.plate();
+    f.assembly(FRAME, "Frame");
+    f.assembly(OUTER, "Outer");
+    f.attach(&plate, FRAME);
+    f.attach(FRAME, OUTER);
+    let before = f.head();
+    for (part, target, code, rule) in [
+        (&plate[..], &plate[..], "INVALID_ARGUMENT", "DV-REL-006"),
+        (OUTER, FRAME, "DEPENDENCY_CONFLICT", "DV-REL-005"),
+        (&plate[..], OUTER, "DEPENDENCY_CONFLICT", "DV-REL-004"),
+        (&plate[..], FRAME, "INVALID_ARGUMENT", "DV-REL-007"),
+        (OUTER, &plate[..], "INVALID_ARGUMENT", "DV-REL-003"),
+        ("invalid-id", FRAME, "INVALID_ID", "DV-BASE-001"),
+    ] {
+        let (exit, body) = f.run(
+            "attach-to-assembly",
+            &["--id", part, "--assembly-id", target],
+        );
+        assert_eq!(exit, 2, "{body:?}");
+        assert_eq!(text(&body, "code"), code);
+        let diagnostics = body.get("diagnostics").unwrap().array().unwrap();
+        assert_eq!(diagnostics.len(), 1, "{body:?}");
+        assert_eq!(text(&diagnostics[0], "rule_id"), rule);
+        assert_eq!(text(&diagnostics[0], "code"), code);
+        assert_eq!(f.head(), before);
+    }
+    for option in [
+        "--op-id",
+        "--revision-id",
+        "--actor-id",
+        "--project-id",
+        "--workspace-id",
+    ] {
+        let (exit, body) = f.run(
+            "attach-to-assembly",
+            &["--id", &plate, "--assembly-id", FRAME, option, "invalid-id"],
+        );
+        assert_eq!(exit, 2, "{option}: {body:?}");
+        assert_eq!(text(&body, "code"), "INVALID_ID");
+        assert!(
+            body.get("diagnostics").unwrap().array().unwrap().is_empty(),
+            "{option}: {body:?}"
+        );
+        assert_eq!(f.head(), before);
+    }
+}
+
+#[test]
 fn replay_reuse_delete_and_copy_follow_the_part_of_records() {
     let f = Fixture::new();
     let plate = f.plate();

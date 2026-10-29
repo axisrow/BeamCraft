@@ -3,7 +3,7 @@
 
 //! Explicit C03 rebase; all engineering/storage decisions stay in the application API.
 
-use crate::plate_cmd::{id_error, revision_json};
+use crate::plate_cmd::revision_json;
 use beamcraft_cli::{
     plate::PlateError,
     workspace::{
@@ -70,7 +70,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
             .copied()
             .ok_or_else(|| invalid("a required rebase option is missing"))
     };
-    let op_id = OpId::parse(required("--op-id")?).map_err(id_error)?;
+    let op_id = OpId::parse(required("--op-id")?).map_err(crate::plate_cmd::context_id_error)?;
     let expected_head = Uuid7::parse(required("--expected-head")?)?;
     let expected_draft = Uuid7::parse(required("--expected-draft")?)?;
     let actor = options

@@ -26,6 +26,7 @@
 //! precision on the GPU.
 
 pub mod app;
+pub mod appearance;
 pub mod camera;
 pub mod command;
 pub mod dialog;
@@ -33,6 +34,7 @@ pub mod edit;
 pub mod grid;
 pub mod metrics;
 pub mod perf;
+pub mod preview;
 pub mod props;
 pub mod publish;
 pub mod render;

@@ -138,6 +138,32 @@ fn reader_pages(r: &Reader, context: &Context) -> Vec<Page> {
 }
 
 #[test]
+fn f10_identity_and_copy_rules_survive_reader_and_index_validation() {
+    for invalid in [
+        "invalid",
+        "0199e7a0-0000-4000-8000-000000000003",
+        "0199E7A0-0000-7000-8000-000000000003",
+    ] {
+        let error = ElementId::parse(invalid).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidId);
+        assert_eq!(error.rule_id, Some("DV-BASE-001"));
+        let body = el(PLATE, "").replace(
+            &format!("bim:id = \"{PLATE}\""),
+            &format!("bim:id = \"{invalid}\""),
+        );
+        let error = built(world(&body, "", "")).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidId);
+        assert_eq!(error.rule_id, Some("DV-BASE-001"));
+    }
+    let index = built(world(&(el(PLATE, "") + &el(MEMBER, "")), "", "")).unwrap();
+    for used in [PLATE, MEMBER] {
+        let error = index.copy_plan(&eid(PLATE), &eid(used)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::DuplicateId);
+        assert_eq!(error.rule_id, Some("DV-BASE-002"));
+    }
+}
+
+#[test]
 fn category_paths_are_checked_against_kinds_and_relationships_resolve_exact_paths() {
     let id = seq(0x139);
     let index = built(world(

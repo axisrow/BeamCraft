@@ -2394,7 +2394,8 @@ impl AttachToAssembly {
                 ErrorCode::InvalidArgument,
                 "assembly_id",
                 "an element cannot be a part of itself",
-            ));
+            )
+            .with_rule("DV-REL-006"));
         }
         Ok(())
     }

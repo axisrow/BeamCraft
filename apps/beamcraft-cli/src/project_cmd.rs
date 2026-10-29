@@ -10,7 +10,7 @@
 //! records the new project as recently opened; a project is created even when that record cannot
 //! be written (`recent_recorded` is then false).
 
-use crate::plate_cmd::{id_error, revision_json};
+use crate::plate_cmd::revision_json;
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::project::{
     ENVIRONMENTS_DIR, EnvironmentEntry, EnvironmentState, ProjectContext, ProjectInfo,
@@ -19,7 +19,7 @@ use beamcraft_cli::project::{
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::NoFault;
-use beamcraft_host::settings::{Settings, SettingsError, default_dir};
+use beamcraft_host::settings::{Settings, SettingsError, ThemePreference, default_dir};
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
@@ -88,6 +88,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--environment",
             "--skip-launcher",
             "--models-dir",
+            "--theme",
         ],
         "create-project" => &[
             "--config-dir",
@@ -156,6 +157,9 @@ fn run(args: &[OsString]) -> Run<Json> {
             if let Some(dir) = given("--models-dir") {
                 settings.models_dir = (dir != "none").then(|| PathBuf::from(dir));
             }
+            if let Some(theme) = given("--theme") {
+                settings.theme = ThemePreference::parse(theme).map_err(settings_error)?;
+            }
             settings.save(&dir).map_err(settings_error)?;
             settings_json("settings_saved", &dir, &settings)
         }
@@ -202,7 +206,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             // the project. A damaged settings file never blocks a creation that names its actor.
             let dir = config_dir();
             let actor = match given("--actor-id") {
-                Some(text) => Uuid7::parse(text).map_err(id_error)?,
+                Some(text) => Uuid7::parse(text).map_err(crate::plate_cmd::context_id_error)?,
                 None => {
                     let settings = Settings::load(&dir.clone()?).map_err(settings_error)?;
                     match settings.profile {
@@ -213,20 +217,26 @@ fn run(args: &[OsString]) -> Run<Json> {
             };
             let context = ProjectContext {
                 op_id: match given("--op-id") {
-                    Some(text) => OpId::parse(text).map_err(id_error)?,
+                    Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
                     None => OpId::from_uuid(fresh_id()?),
                 },
                 revision_id: match given("--revision-id") {
-                    Some(text) => RevisionId::parse(text).map_err(id_error)?,
+                    Some(text) => {
+                        RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?
+                    }
                     None => RevisionId::from_uuid(fresh_id()?),
                 },
                 actor,
                 project: match given("--project-id") {
-                    Some(text) => ProjectId::parse(text).map_err(id_error)?,
+                    Some(text) => {
+                        ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?
+                    }
                     None => ProjectId::from_uuid(fresh_id()?),
                 },
                 workspace: match given("--workspace-id") {
-                    Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+                    Some(text) => {
+                        WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?
+                    }
                     None => WorkspaceId::from_uuid(fresh_id()?),
                 },
             };

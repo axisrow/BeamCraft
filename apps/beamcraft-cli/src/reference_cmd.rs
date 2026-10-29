@@ -160,11 +160,11 @@ fn ids(options: &BTreeMap<&str, &str>) -> Run<Ids> {
     let given = |key: &str| options.get(key).copied();
     Ok(Ids {
         op_id: match given("--op-id") {
-            Some(text) => OpId::parse(text).map_err(id_error)?,
+            Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
             None => OpId::from_uuid(fresh()?),
         },
         revision_id: match given("--revision-id") {
-            Some(text) => RevisionId::parse(text).map_err(id_error)?,
+            Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
             None => RevisionId::from_uuid(fresh()?),
         },
         actor: match given("--actor-id") {
@@ -172,11 +172,11 @@ fn ids(options: &BTreeMap<&str, &str>) -> Run<Ids> {
             None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
         },
         project: match given("--project-id") {
-            Some(text) => ProjectId::parse(text).map_err(id_error)?,
+            Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
             None => ProjectId::from_uuid(fresh()?),
         },
         workspace: match given("--workspace-id") {
-            Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+            Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
             None => WorkspaceId::from_uuid(fresh()?),
         },
     })

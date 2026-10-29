@@ -19,6 +19,12 @@ only composes the inventory and sections in their established order; register a 
 there without adding help text to `main.rs`. Parsing and execution stay in the existing
 command adapters. No arguments, `--help` and `-h` print the same help.
 
+Application appearance is also headless: `beamcraft show-settings [--config-dir DIR]` reports
+`settings.theme`; `beamcraft set-settings --theme system|light|dark [--config-dir DIR]` saves it
+without changing the author, environment or recent models. The default is `system`. Existing
+version-1 settings without the optional theme field remain readable; unknown theme values are
+refused without overwriting the settings.
+
 Modelling commits also pin the admitted command's exact read/write footprint and typed request
 fingerprint as operation evidence in the revision manifest. This includes unchanged copy sources,
 linked parts and immutable definitions, which a state diff cannot recover. The public

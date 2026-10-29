@@ -414,7 +414,8 @@ fn open_on_stack(request: OpenRequest, control: &Control) -> Result<Candidate, D
             .find(|p| p.name == "bim:id")
             .map(|p| match &p.value {
                 Some(Value::Text(s)) if uuid7(s) => Ok(s.clone()),
-                _ => Err(fail(ErrorCode::InvalidId, "invalid full element identity")),
+                _ => Err(fail(ErrorCode::InvalidId, "invalid full element identity")
+                    .with_rule("DV-BASE-001")),
             })
             .transpose()?;
         let leaf = path.rsplit('/').next().ok_or_else(corrupt)?;

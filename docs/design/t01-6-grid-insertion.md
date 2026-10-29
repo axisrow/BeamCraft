@@ -1,6 +1,7 @@
-# T01.6 regular-grid insertion
+# T01.6 grid insertion and line tools
 
-Experimental insertion slice, not completion of T01.6 or the parent T01 acceptance gate.
+Local grid UI on the existing engine and CLI commands. Parent T01 acceptance still requires
+the separately scheduled T01.5/U19 rights and pinned coordination grids.
 
 ## Dependencies and merge order
 
@@ -33,7 +34,7 @@ model. The accepted labels retain their validation and grid-wide uniqueness requ
 
 The creation and cancel buttons stay below the scrollable fields. The inspector can be resized
 horizontally and wraps its contents at the chosen width. Grid visibility is session view state;
-it has no control in grid properties and is reserved for view properties. Levels remain separate
+the View ribbon's Grid guides switch hides guides and labels without publishing or reloading. Levels remain separate
 from plan grids.
 
 ## Selection and properties
@@ -50,7 +51,7 @@ their exact stored values. Retained labels preserve AxisIds according to T01.3; 
 is one workspace undo unit. Cancel discards the draft and selection. A background reload refreshes
 untouched forms; a dirty form whose grid changed is disabled until the grid is selected again.
 A removed grid clears its selection. Empty space or Esc clears selection;
-hidden grids cannot be picked. Drawn families can be selected but are read-only in this panel.
+hidden grids cannot be picked or snapped to. Drawn families use the line tools below.
 
 The form shows the start limit as a nonnegative distance; an edited start is negated for the
 existing signed CLI coordinate. Rotation is shown to at most three decimal places, with no
@@ -90,8 +91,38 @@ frame readers remain bounded. A combined regression edits a rotated rectangular 
 the form, resolves and snaps its four outer intersections through the T01.4 CLI, preserves the
 query height, and checks that already placed parts stay unchanged and queries publish nothing.
 
-This UI slice does not add drawn-line editing, drawn-line gestures, UI snap controls or
-interactive intersection placement, magnetic behaviour, radial grids, or derived USD guide tubes
-(T01.7). New preview builds use the prerequisite grid schema; older stores are not silently
+## Drawn lines and interactive snaps
+
+Choose Drawn grid to create a grid with one labelled line in U or V. After selecting a grid,
+Line tools add a drawn line, reshape its endpoints, relabel or remove an existing AxisId using
+`draw-grid-line`, `reshape-grid-line`, `relabel-grid-line` and `remove-grid-line`. The axis selector
+shows stored labels; the engine admits family modes, duplicates, lengths, limits and dependencies.
+Common grid properties use `update-grid`; untouched frame fields retain their exact stored values.
+A regular family is never converted to drawn implicitly. A mixed grid can be created with one
+regular family and an empty opposite family, then extended using the line tools.
+
+Endpoints may be entered numerically in world XY or filled by two clicks on the horizontal plane.
+Clicks only change the draft. Apply publishes one command; Cancel and Esc publish nothing.
+Esc or changing tools cancels point picking. A changed source grid disables a pending line edit
+until it is selected again, including changes to endpoints that leave the regular form unchanged.
+
+Line drawing and member placement ask `snap_with_grids` on the displayed snapshot and grid records.
+The bottom snap panel controls vertex, axis and grid snap kinds; disabling all kinds disables
+snapping. The acceptance radius is 100 mm. Hidden grids are excluded. Grid line inputs remain
+plan-only XY; member snaps preserve the engine's resolved height. Axis locks and the active work
+plane still constrain member placement after snapping. Snapping never creates a stored magnetic link.
+
+The pinned grid reply adds `start_local_mm` and `end_local_mm` alongside world endpoints. This
+avoids reversing a world transform at the local coordinate limit. The UI validates the bounded
+local records, identities and agreement with the displayed world segments. Older replies without
+these additive fields use the existing inverse-frame calculation.
+
+The real-binary drawn-line regression covers a rotated frame, an independently expected crossing,
+read-only hidden-grid snapping, stable AxisIds after reshape/relabel, duplicate-label refusal without
+publication, removal and reopening. A native-adapter test drives the two-click controller, checks
+engine snapping and hidden-grid exclusion, and confirms no command starts before Apply.
+
+Magnetic following, curved/radial grids and shared-scope rights/pinned coordination grids remain
+separate. New preview builds use the prerequisite grid schema; older stores are not silently
 migrated. No new dependency or asset is introduced. Code and synthetic tests are contributor
 original under MPL-2.0; no commercial screenshot or UI asset is included or traced.

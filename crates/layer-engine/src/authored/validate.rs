@@ -22,7 +22,8 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
     let mut bytes = 0usize;
     for change in &input.changes {
         if !uuid7(change.key().0) {
-            return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
+            return Err(fail(ErrorCode::InvalidId, "invalid full element identity")
+                .with_rule("DV-BASE-001"));
         }
         preflight::charge(&mut bytes, 256, 1024 * 1024)?;
         let mut count = |n: usize, size: usize| -> Result<(), Diagnostic> {
@@ -38,7 +39,7 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
         match change {
             Change::Create(e) => {
                 if e.name.len() > 256 {
-                    return Err(limit());
+                    return Err(limit().with_rule("DV-BASE-003"));
                 }
                 if let Shape::Plate {
                     contour_mm, holes, ..
@@ -50,9 +51,13 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                     count(holes.len(), 4)?;
                 }
             }
-            Change::Label { name, .. } if name.len() > 256 => return Err(limit()),
+            Change::Label { name, .. } if name.len() > 256 => {
+                return Err(limit().with_rule("DV-BASE-003"));
+            }
             Change::Mark { mark: m, .. } => mark(m)?,
-            Change::AttachReference(r) if r.name.len() > 256 => return Err(limit()),
+            Change::AttachReference(r) if r.name.len() > 256 => {
+                return Err(limit().with_rule("DV-BASE-003"));
+            }
             Change::Contour { points_mm, .. } => {
                 count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
             }
@@ -100,11 +105,10 @@ pub(super) fn pose(p: &Placement) -> Result<(), Diagnostic> {
     Ok(())
 }
 pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
-    let refused = |e: beamcraft_model::command::CommandError| {
-        fail(
-            e.code,
-            "definition value refused by the F04 admission rules",
-        )
+    let refused = |e: beamcraft_model::command::CommandError| Diagnostic {
+        code: e.code,
+        message: "definition value refused by the F04 admission rules",
+        rule_id: e.rule_id,
     };
     match d {
         Definition::RectangleProfile {
@@ -1253,7 +1257,8 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                     return Err(fail(
                         ErrorCode::InvalidArgument,
                         "a level carries no element or definition links",
-                    ));
+                    )
+                    .with_rule("DV-REL-003"));
                 }
             }
         }
@@ -1267,7 +1272,8 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::DependencyConflict,
                     "an element is assigned to at most one level",
-                ));
+                )
+                .with_rule("DV-REL-004"));
             }
         };
         if !matches!(kind, "plate" | "beam" | "column") {
@@ -1283,13 +1289,14 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::DanglingRelationship,
                     "level target is not active",
-                ));
+                )
+                .with_rule("DV-REL-001"));
             }
             Some(_) => {
-                return Err(fail(
-                    ErrorCode::InvalidArgument,
-                    "level target is not a level",
-                ));
+                return Err(
+                    fail(ErrorCode::InvalidArgument, "level target is not a level")
+                        .with_rule("DV-REL-003"),
+                );
             }
             None if prims
                 .iter()
@@ -1298,7 +1305,8 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                 return Err(fail(
                     ErrorCode::InvalidArgument,
                     "level target is not a supported owned level",
-                ));
+                )
+                .with_rule("DV-REL-003"));
             }
             None => {
                 return Err(
@@ -1760,7 +1768,9 @@ pub(super) fn changes(
         }
         match change {
             Change::Create(_) | Change::AttachReference(_) if existing.is_some() => {
-                return Err(fail(ErrorCode::DuplicateId, "element already exists"));
+                return Err(
+                    fail(ErrorCode::DuplicateId, "element already exists").with_rule("DV-BASE-002")
+                );
             }
             Change::Create(_) | Change::AttachReference(_) => (),
             // A mesh or part-of record of an element created in the same batch; the candidate
@@ -1928,7 +1938,8 @@ pub(super) fn changes(
         } = change
         {
             if !uuid7(target) {
-                return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
+                return Err(fail(ErrorCode::InvalidId, "invalid full element identity")
+                    .with_rule("DV-BASE-001"));
             }
             // The target's existence and kind and its whole chain decide acceptance (cycle check),
             // so every assembly on the chain is read, with this batch's own records applied.
@@ -1947,7 +1958,8 @@ pub(super) fn changes(
         } = change
         {
             if !uuid7(target) {
-                return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
+                return Err(fail(ErrorCode::InvalidId, "invalid full element identity")
+                    .with_rule("DV-BASE-001"));
             }
             // The level's existence and kind decide acceptance; it is only read.
             reads.insert(Footprint {
@@ -1957,7 +1969,8 @@ pub(super) fn changes(
         }
         if let Change::MainPart { part, .. } = change {
             if !uuid7(part) {
-                return Err(fail(ErrorCode::InvalidId, "invalid full element identity"));
+                return Err(fail(ErrorCode::InvalidId, "invalid full element identity")
+                    .with_rule("DV-BASE-001"));
             }
             // The part's existence and its membership decide acceptance: only a direct part of
             // the assembly can be its main part, so its relationships are read too.
@@ -2160,13 +2173,19 @@ pub(super) fn changes(
                             return Err(fail(
                                 ErrorCode::InvalidId,
                                 "invalid full element identity",
-                            ));
+                            )
+                            .with_rule("DV-BASE-001"));
                         }
                         if main == secondary || main == &e.id || secondary == &e.id {
                             return Err(fail(
                                 ErrorCode::InvalidArgument,
                                 "a weld connects two distinct other parts",
-                            ));
+                            )
+                            .with_rule(if main == secondary {
+                                "DV-REL-007"
+                            } else {
+                                "DV-REL-006"
+                            }));
                         }
                         // The parts' existence and kinds decide acceptance; they are only read.
                         for part in [main, secondary] {
@@ -2208,13 +2227,19 @@ pub(super) fn changes(
                             return Err(fail(
                                 ErrorCode::InvalidId,
                                 "invalid full element identity",
-                            ));
+                            )
+                            .with_rule("DV-BASE-001"));
                         }
                         if main == secondary || main == &e.id || secondary == &e.id {
                             return Err(fail(
                                 ErrorCode::InvalidArgument,
                                 "a bolt group connects two distinct other parts",
-                            ));
+                            )
+                            .with_rule(if main == secondary {
+                                "DV-REL-007"
+                            } else {
+                                "DV-REL-006"
+                            }));
                         }
                         // The parts' existence and kinds decide acceptance; they are only read.
                         for part in [main, secondary] {

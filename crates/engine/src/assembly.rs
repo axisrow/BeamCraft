@@ -160,7 +160,8 @@ impl Membership {
                     ErrorCode::InvalidArgument,
                     "assembly_id",
                     "the target is not an assembly",
-                ));
+                )
+                .with_rule("DV-REL-003"));
             }
         }
         match self.parent(&command.part_id) {
@@ -169,14 +170,16 @@ impl Membership {
                     ErrorCode::InvalidArgument,
                     "assembly_id",
                     "the element is already a part of this assembly",
-                ));
+                )
+                .with_rule("DV-REL-007"));
             }
             Some(_) => {
                 return Err(error(
                     ErrorCode::DependencyConflict,
                     "part_id",
                     "the element is a part of another assembly; detach it first",
-                ));
+                )
+                .with_rule("DV-REL-004"));
             }
             None => {}
         }
@@ -188,7 +191,8 @@ impl Membership {
                     ErrorCode::DependencyConflict,
                     "assembly_id",
                     "the attach would make a part-of cycle",
-                ));
+                )
+                .with_rule("DV-REL-005"));
             }
             // A chain longer than the element count can only be a cycle already in the model.
             if chain.len() >= self.kinds.len() {
@@ -196,7 +200,8 @@ impl Membership {
                     ErrorCode::DependencyConflict,
                     "assembly_id",
                     "the model already holds a part-of cycle",
-                ));
+                )
+                .with_rule("DV-REL-005"));
             }
             chain.push(node);
             at = self.parent(&node);

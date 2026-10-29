@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The BeamCraft look, taken from the logo: brand cyan with a lighter blueprint grid, cream faces,
-//! grey-teal sides and a heavy ink outline. Widgets get a 2 px ink border, 10 px corners and a hard
-//! offset shadow; the light and the dark theme follow the operating system.
+//! Native desktop surfaces: cool neutrals, thin separators, compact Inter typography and cyan
+//! reserved for actions and selection. Both palettes follow the user's appearance preference.
 //!
-//! Icons are contributor-original isometric glyphs in the same manner (cream top, teal sides, ink
-//! outline), painted from convex polygons so no icon file is shipped. The logo itself is shown
+//! Icons are contributor-original outline glyphs, painted from convex polygons so no icon file
+//! is shipped. The logo itself is shown
 //! unmodified from the official `assets/icons/beamcraft-1024.png`, read at run time like the font.
 
 use egui::{
     Color32, CornerRadius, FontFamily, FontId, Painter, Pos2, Rect, Response, RichText, Sense,
-    Shadow, Stroke, StrokeKind, Theme, Ui, Vec2, pos2, vec2,
+    Shadow, Stroke, Theme, Ui, Vec2, pos2, vec2,
 };
 use std::path::{Path, PathBuf};
 
@@ -39,7 +38,7 @@ pub struct Palette {
     pub surface: Color32,
     /// Table heads and summary boxes.
     pub head: Color32,
-    /// Borders and hard shadows.
+    /// Dark ink for illustrations.
     pub ink: Color32,
     /// Outline of icons drawn on the page.
     pub line: Color32,
@@ -49,6 +48,8 @@ pub struct Palette {
     pub muted: Color32,
     /// Thin separators.
     pub rule: Color32,
+    /// Input outlines, distinct from subtle panel separators.
+    pub control: Color32,
     /// Side panel ground and its grid.
     pub side: Color32,
     /// Grid lines of the side panel.
@@ -67,33 +68,35 @@ impl Palette {
         match theme {
             Theme::Light => Self {
                 dark: false,
-                page: CREAM,
-                surface: Color32::from_rgb(0xFF, 0xFD, 0xF6),
-                head: Color32::from_rgb(0xED, 0xE5, 0xCF),
+                page: Color32::from_rgb(0xF5, 0xF7, 0xF9),
+                surface: Color32::from_rgb(0xFB, 0xFD, 0xFF),
+                head: Color32::from_rgb(0xE9, 0xED, 0xF0),
                 ink: INK,
                 line: INK,
-                text: INK,
-                muted: Color32::from_rgb(0x4D, 0x5A, 0x60),
-                rule: Color32::from_rgb(0xE0, 0xD7, 0xC0),
-                side: BRAND,
-                side_grid: BRAND_LIGHT,
-                select: Color32::from_rgb(0xD3, 0xF1, 0xF8),
+                text: Color32::from_rgb(0x23, 0x2D, 0x36),
+                muted: Color32::from_rgb(0x5C, 0x68, 0x73),
+                rule: Color32::from_rgb(0xCB, 0xD5, 0xDC),
+                control: Color32::from_rgb(0x82, 0x91, 0x9C),
+                side: Color32::from_rgb(0x20, 0x2A, 0x33),
+                side_grid: Color32::from_rgb(0x36, 0x44, 0x4F),
+                select: Color32::from_rgb(0xE7, 0xEE, 0xF2),
                 link: Color32::from_rgb(0x00, 0x6F, 0x87),
                 error: Color32::from_rgb(0xA8, 0x1E, 0x12),
             },
             Theme::Dark => Self {
                 dark: true,
-                page: Color32::from_rgb(0x0E, 0x15, 0x17),
-                surface: Color32::from_rgb(0x17, 0x22, 0x26),
-                head: Color32::from_rgb(0x1D, 0x2B, 0x30),
+                page: Color32::from_rgb(0x14, 0x1C, 0x24),
+                surface: Color32::from_rgb(0x1C, 0x26, 0x31),
+                head: Color32::from_rgb(0x19, 0x23, 0x2D),
                 ink: Color32::BLACK,
-                line: CREAM,
-                text: CREAM,
-                muted: Color32::from_rgb(0xA9, 0xB8, 0xBD),
-                rule: Color32::from_rgb(0x2A, 0x3A, 0x40),
-                side: Color32::from_rgb(0x0B, 0x34, 0x40),
-                side_grid: Color32::from_rgb(0x12, 0x4B, 0x59),
-                select: Color32::from_rgb(0x0E, 0x3B, 0x46),
+                line: Color32::from_rgb(0xE6, 0xEB, 0xF0),
+                text: Color32::from_rgb(0xE6, 0xEB, 0xF0),
+                muted: Color32::from_rgb(0xAA, 0xB5, 0xC0),
+                rule: Color32::from_rgb(0x37, 0x47, 0x55),
+                control: Color32::from_rgb(0x63, 0x7B, 0x8F),
+                side: Color32::from_rgb(0x10, 0x18, 0x21),
+                side_grid: Color32::from_rgb(0x2B, 0x3F, 0x50),
+                select: Color32::from_rgb(0x2B, 0x40, 0x51),
                 link: BRAND_LIGHT,
                 error: Color32::from_rgb(0xFF, 0x8A, 0x7A),
             },
@@ -107,7 +110,7 @@ impl Palette {
 
     /// The text colour on a side panel.
     pub const fn side_text(&self) -> Color32 {
-        if self.dark { CREAM } else { INK }
+        Color32::from_rgb(0xE3, 0xEC, 0xF2)
     }
 }
 
@@ -117,23 +120,23 @@ fn visuals(palette: Palette) -> egui::Visuals {
     } else {
         egui::Visuals::light()
     };
-    let radius = CornerRadius::same(10);
-    let border = Stroke::new(2.0, palette.ink);
+    let radius = CornerRadius::same(5);
+    let border = Stroke::new(1.0, palette.rule);
     v.panel_fill = palette.page;
     v.window_fill = palette.surface;
     v.window_stroke = border;
-    v.window_corner_radius = CornerRadius::same(14);
+    v.window_corner_radius = CornerRadius::same(6);
     v.window_shadow = Shadow {
-        offset: [6, 6],
-        blur: 0,
+        offset: [0, 4],
+        blur: 16,
         spread: 0,
-        color: palette.ink,
+        color: Color32::from_black_alpha(35),
     };
     v.popup_shadow = Shadow {
-        offset: [3, 3],
-        blur: 0,
+        offset: [0, 2],
+        blur: 8,
         spread: 0,
-        color: palette.ink,
+        color: Color32::from_black_alpha(30),
     };
     v.menu_corner_radius = radius;
     v.extreme_bg_color = palette.surface;
@@ -141,30 +144,30 @@ fn visuals(palette: Palette) -> egui::Visuals {
     v.hyperlink_color = palette.link;
     v.error_fg_color = palette.error;
     v.override_text_color = Some(palette.text);
-    v.selection.bg_fill = BRAND;
-    v.selection.stroke = Stroke::new(1.5, INK);
+    v.selection.bg_fill = palette.select;
+    v.selection.stroke = Stroke::new(1.0, palette.text);
     let w = &mut v.widgets;
     w.noninteractive.bg_fill = palette.surface;
     w.noninteractive.weak_bg_fill = palette.surface;
-    w.noninteractive.bg_stroke = Stroke::new(1.5, palette.rule);
+    w.noninteractive.bg_stroke = Stroke::new(1.0, palette.rule);
     w.noninteractive.fg_stroke = Stroke::new(1.0, palette.text);
     w.noninteractive.corner_radius = radius;
     for (state, fill) in [
         (&mut w.inactive, palette.surface),
         (&mut w.hovered, palette.head),
-        (&mut w.active, BRAND),
+        (&mut w.active, palette.select),
         (&mut w.open, palette.head),
     ] {
         state.bg_fill = fill;
         state.weak_bg_fill = fill;
-        state.bg_stroke = border;
+        state.bg_stroke = Stroke::new(1.0, palette.control);
         state.corner_radius = radius;
         state.expansion = 0.0;
     }
     w.inactive.fg_stroke = Stroke::new(1.5, palette.text);
     w.hovered.fg_stroke = Stroke::new(1.5, palette.text);
     w.open.fg_stroke = Stroke::new(1.5, palette.text);
-    w.active.fg_stroke = Stroke::new(1.5, INK);
+    w.active.fg_stroke = Stroke::new(1.5, palette.text);
     v
 }
 
@@ -179,22 +182,27 @@ pub fn install(ctx: &egui::Context) {
         Ok("dark") => egui::ThemePreference::Dark,
         _ => egui::ThemePreference::System,
     };
-    ctx.set_theme(preference);
+    let installed = egui::Id::unique("beamcraft-style-installed");
+    if !ctx.data(|data| data.get_temp::<bool>(installed).unwrap_or(false)) {
+        ctx.set_theme(preference);
+        ctx.data_mut(|data| data.insert_temp(installed, true));
+    }
     ctx.all_styles_mut(|style| {
-        style.spacing.item_spacing = vec2(10.0, 10.0);
-        style.spacing.button_padding = vec2(14.0, 8.0);
-        style.spacing.interact_size.y = 36.0;
+        style.animation_time = 0.0;
+        style.spacing.item_spacing = vec2(8.0, 6.0);
+        style.spacing.button_padding = vec2(10.0, 5.0);
+        style.spacing.interact_size.y = 28.0;
         style.text_styles.insert(
             egui::TextStyle::Body,
-            FontId::new(14.0, FontFamily::Proportional),
+            FontId::new(13.0, FontFamily::Proportional),
         );
         style.text_styles.insert(
             egui::TextStyle::Button,
-            FontId::new(14.0, FontFamily::Proportional),
+            FontId::new(12.0, FontFamily::Proportional),
         );
         style.text_styles.insert(
             egui::TextStyle::Small,
-            FontId::new(12.0, FontFamily::Proportional),
+            FontId::new(11.0, FontFamily::Proportional),
         );
         style
             .text_styles
@@ -212,18 +220,12 @@ pub fn bold(text: impl Into<String>, size: f32) -> RichText {
     RichText::new(text).family(bold_family()).size(size)
 }
 
-/// A frame with an ink border and a hard offset shadow of `offset` points.
-pub fn card(palette: Palette, offset: i8) -> egui::Frame {
+/// A flat panel with a one-point separator.
+pub fn card(palette: Palette) -> egui::Frame {
     egui::Frame::new()
         .fill(palette.surface)
-        .stroke(Stroke::new(2.0, palette.ink))
-        .corner_radius(CornerRadius::same(12))
-        .shadow(Shadow {
-            offset: [offset, offset],
-            blur: 0,
-            spread: 0,
-            color: palette.ink,
-        })
+        .stroke(Stroke::new(1.0, palette.control))
+        .corner_radius(CornerRadius::same(5))
 }
 
 /// How a painted button looks.
@@ -231,61 +233,200 @@ pub fn card(palette: Palette, offset: i8) -> egui::Frame {
 pub enum Kind {
     /// Brand cyan with ink text: the one main action of a view.
     Primary,
-    /// Surface fill with an ink border.
+    /// Surface fill with a neutral border.
     Secondary,
 }
 
-/// A button in the BeamCraft style: ink border, hard shadow that the button sinks into when
-/// pressed. Disabled buttons lose the shadow and dim.
+/// A native, keyboard-accessible desktop button with a visible focus outline.
 pub fn button(ui: &mut Ui, kind: Kind, text: &str, enabled: bool) -> Response {
     let palette = Palette::current(ui);
-    let galley = ui.painter().layout_no_wrap(
-        text.to_owned(),
-        FontId::new(14.0, bold_family()),
-        Color32::PLACEHOLDER,
-    );
-    let size = vec2((galley.size().x + 36.0).max(64.0), 42.0);
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(size + vec2(3.0, 3.0), sense);
-    let face = Rect::from_min_size(rect.min, size);
-    let pressed = enabled && response.is_pointer_button_down_on();
-    let face = if pressed {
-        face.translate(vec2(2.0, 2.0))
-    } else {
-        face
-    };
     let (fill, ink) = match kind {
         Kind::Primary => (BRAND, INK),
-        Kind::Secondary if response.hovered() && enabled => (palette.head, palette.text),
         Kind::Secondary => (palette.surface, palette.text),
     };
-    let painter = ui.painter();
-    let radius = CornerRadius::same(10);
-    if enabled && !pressed {
-        painter.rect_filled(face.translate(vec2(3.0, 3.0)), radius, palette.ink);
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(RichText::new(text).size(12.0).color(ink))
+            .fill(fill)
+            .stroke(Stroke::new(1.0, palette.rule))
+            .corner_radius(5)
+            .min_size(vec2(64.0, 36.0)),
+    )
+}
+
+/// A labeled desktop button with a centered original line icon and text.
+pub fn icon_text_button(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    enabled: bool,
+    width: f32,
+) -> Response {
+    let palette = Palette::current(ui);
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new("")
+            .fill(palette.surface)
+            .stroke(Stroke::new(1.0, palette.rule))
+            .corner_radius(5)
+            .min_size(vec2(width, 36.0)),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    let mut painter = ui.painter().clone();
+    if !enabled {
+        painter.multiply_opacity(0.35);
     }
-    let alpha = if enabled { 1.0 } else { 0.45 };
-    painter.rect_filled(face, radius, fill.gamma_multiply(alpha));
-    painter.rect_stroke(
-        face,
-        radius,
-        Stroke::new(2.0, palette.ink.gamma_multiply(alpha)),
-        StrokeKind::Inside,
+    let text = painter.layout_no_wrap(label.to_owned(), FontId::proportional(12.0), palette.text);
+    let left = response.rect.center().x - (16.0 + 8.0 + text.size().x) / 2.0;
+    paint_icon(
+        &painter,
+        Rect::from_min_size(pos2(left, response.rect.center().y - 8.0), vec2(16.0, 16.0)),
+        icon,
+        palette.text,
     );
-    painter.galley_with_override_text_color(
-        face.center() - galley.size() / 2.0,
-        galley,
-        ink.gamma_multiply(alpha),
+    painter.galley(
+        pos2(left + 24.0, response.rect.center().y - text.size().y / 2.0),
+        text,
+        palette.text,
     );
-    if enabled {
-        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    response
+}
+
+/// Native title-bar dragging and double-click maximization, without an extra OS title bar.
+pub fn titlebar_drag(ui: &mut Ui) {
+    titlebar_drag_with_maximize(ui, true);
+}
+
+/// Draggable title bar that cannot maximize a fixed-size welcome window.
+pub fn titlebar_drag_with_maximize(ui: &mut Ui, maximize: bool) {
+    let response = ui.interact(
+        ui.max_rect(),
+        ui.scope_id().with("title-drag"),
+        Sense::click_and_drag(),
+    );
+    if response.drag_started() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+    if maximize && response.double_clicked() {
+        let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    }
+}
+
+/// Window controls, laid out right-to-left like a native desktop title bar.
+pub fn window_controls(ui: &mut Ui) {
+    window_controls_with_maximize(ui, true);
+}
+
+/// Equal-sized window controls, omitting maximize for the fixed-size welcome window.
+pub fn window_controls_with_maximize(ui: &mut Ui, maximize: bool) {
+    let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+    let size = vec2(if maximize { 40.0 } else { 28.0 }, 28.0);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.spacing_mut().interact_size = size;
+        for (tip, command) in [
+            ("Close", egui::ViewportCommand::Close),
+            (
+                if maximized { "Restore" } else { "Maximize" },
+                egui::ViewportCommand::Maximized(!maximized),
+            ),
+            ("Minimize", egui::ViewportCommand::Minimized(true)),
+        ] {
+            if matches!(command, egui::ViewportCommand::Maximized(_)) && !maximize {
+                continue;
+            }
+            window_control(ui, tip, command, size);
+        }
+    });
+}
+
+fn window_control(ui: &mut Ui, label: &str, command: egui::ViewportCommand, size: Vec2) {
+    let response = ui.add_sized(size, egui::Button::new("").frame(false));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let palette = Palette::current(ui);
+    let highlighted = response.hovered() || response.is_pointer_button_down_on();
+    let close = matches!(command, egui::ViewportCommand::Close);
+    let fill = if highlighted && close {
+        Color32::from_rgb(0xC4, 0x2B, 0x36)
+    } else if highlighted || response.has_focus() {
+        palette.select
     } else {
-        response
+        palette.head
+    };
+    let painter = ui.painter();
+    painter.rect_filled(response.rect, 2, fill);
+    if response.has_focus() {
+        painter.rect_stroke(
+            response.rect.shrink(1.0),
+            2,
+            Stroke::new(1.0, palette.control),
+            egui::StrokeKind::Inside,
+        );
     }
+    let color = if highlighted && close {
+        Color32::WHITE
+    } else {
+        palette.muted
+    };
+    let stroke = Stroke::new(1.0, color);
+    let icon = Rect::from_center_size(response.rect.center(), Vec2::splat(10.0));
+    match &command {
+        egui::ViewportCommand::Close => {
+            painter.line_segment([icon.left_top(), icon.right_bottom()], stroke);
+            painter.line_segment([icon.right_top(), icon.left_bottom()], stroke);
+        }
+        egui::ViewportCommand::Minimized(_) => {
+            painter.line_segment([icon.left_center(), icon.right_center()], stroke);
+        }
+        egui::ViewportCommand::Maximized(true) => {
+            painter.rect_stroke(icon, 0, stroke, egui::StrokeKind::Inside);
+        }
+        egui::ViewportCommand::Maximized(false) => {
+            painter.add(egui::Shape::line(
+                vec![
+                    icon.left_top() + vec2(2.0, 2.0),
+                    icon.left_top() + vec2(2.0, 0.0),
+                    icon.right_top(),
+                    icon.right_bottom() - vec2(0.0, 2.0),
+                    icon.right_bottom() - vec2(2.0, 2.0),
+                ],
+                stroke,
+            ));
+            painter.rect_stroke(
+                Rect::from_min_max(
+                    icon.left_top() + vec2(0.0, 2.0),
+                    icon.right_bottom() - vec2(2.0, 0.0),
+                ),
+                0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        _ => {}
+    }
+    if response.on_hover_text(label).clicked() {
+        ui.ctx().send_viewport_cmd(command);
+    }
+}
+
+/// A compact, keyboard-accessible original line-icon control.
+pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> Response {
+    let response = ui.add_enabled(
+        enabled,
+        egui::Button::new("")
+            .frame(false)
+            .min_size(vec2(26.0, 26.0)),
+    );
+    let palette = Palette::current(ui);
+    let mut painter = ui.painter().clone();
+    if !enabled {
+        painter.multiply_opacity(0.35);
+    }
+    paint_icon(&painter, response.rect.shrink(5.0), icon, palette.text);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    response.on_hover_text(label)
 }
 
 /// Paints the blueprint grid of `spacing` points over `rect`.
@@ -347,6 +488,14 @@ pub enum Icon {
     Wire,
     /// Two families of straight construction axes.
     Grid,
+    /// Four corners framing the current model.
+    Fit,
+    /// The square endpoint snap marker.
+    End,
+    /// The triangular midpoint snap marker.
+    Middle,
+    /// The circular nearest-point snap marker.
+    Nearest,
 }
 
 #[derive(Clone, Copy)]
@@ -507,16 +656,10 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
     let at = |p: [f32; 2]| origin + vec2(p[0], p[1]) * scale;
     let stroke = Stroke::new((1.5 * scale).max(1.2), line);
     let faces = |polygons: &[Polygon]| {
-        for (points, face) in polygons {
-            let fill = match face {
-                Face::Cream => CREAM,
-                Face::Teal => TEAL,
-                Face::TealDark => TEAL_DARK,
-                Face::Brand => BRAND,
-            };
+        for (points, _) in polygons {
             painter.add(egui::Shape::convex_polygon(
                 points.iter().map(|p| at(*p)).collect(),
-                fill,
+                Color32::TRANSPARENT,
                 stroke,
             ));
         }
@@ -528,13 +671,40 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
         ));
     };
     match icon {
+        Icon::End => {
+            painter.rect_stroke(
+                Rect::from_min_max(at([6.0, 6.0]), at([18.0, 18.0])),
+                0,
+                stroke,
+                egui::StrokeKind::Inside,
+            );
+        }
+        Icon::Middle => {
+            painter.add(egui::Shape::closed_line(
+                [[12.0, 4.0], [21.0, 20.0], [3.0, 20.0]].map(at).to_vec(),
+                stroke,
+            ));
+        }
+        Icon::Nearest => {
+            painter.circle_stroke(at([12.0, 12.0]), 8.0 * scale, stroke);
+        }
+        Icon::Fit => {
+            for corner in [
+                [[4.0, 9.0], [4.0, 4.0], [9.0, 4.0]],
+                [[15.0, 4.0], [20.0, 4.0], [20.0, 9.0]],
+                [[20.0, 15.0], [20.0, 20.0], [15.0, 20.0]],
+                [[9.0, 20.0], [4.0, 20.0], [4.0, 15.0]],
+            ] {
+                polyline(&corner);
+            }
+        }
         Icon::Select => {
             // Star-shaped from its tip: a fan of two triangles, then the outline.
             let [a, b, c, d] = [[5.0, 3.0], [18.0, 11.0], [12.0, 12.5], [9.0, 19.0]];
             for triangle in [[a, b, c], [a, c, d]] {
                 painter.add(egui::Shape::convex_polygon(
                     triangle.map(at).to_vec(),
-                    CREAM,
+                    Color32::TRANSPARENT,
                     Stroke::NONE,
                 ));
             }
@@ -608,11 +778,11 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
         Icon::Column => faces(COLUMN),
         Icon::Folder => faces(FOLDER),
         Icon::Recent => {
-            painter.circle(at([12.0, 12.0]), 9.0 * scale, CREAM, stroke);
+            painter.circle(at([12.0, 12.0]), 9.0 * scale, Color32::TRANSPARENT, stroke);
             polyline(&[[12.0, 7.0], [12.0, 12.0], [15.0, 14.0]]);
         }
         Icon::Shared => {
-            painter.circle(at([12.0, 12.5]), 8.5 * scale, CREAM, stroke);
+            painter.circle(at([12.0, 12.5]), 8.5 * scale, Color32::TRANSPARENT, stroke);
             polyline(&[[8.5, 13.0], [12.0, 9.5], [15.5, 13.0]]);
             polyline(&[[12.0, 9.5], [12.0, 16.5]]);
         }
@@ -646,32 +816,12 @@ pub fn icon(ui: &mut Ui, icon: Icon, size: f32, line: Color32) -> Response {
     response
 }
 
-/// Paints the preview tile of a model: brand cyan, blueprint grid, an isometric block.
+/// Paints a generic template symbol, not a thumbnail of project geometry.
 pub fn paint_preview(painter: &Painter, rect: Rect) {
-    let radius = CornerRadius::same(10);
-    painter.rect_filled(rect, radius, BRAND);
-    let inner = rect.shrink(2.0);
-    let clip = painter.with_clip_rect(inner);
-    let step = rect.height() / 5.0;
-    let mut x = rect.left() + step;
-    while x < rect.right() {
-        clip.line_segment(
-            [pos2(x, rect.top()), pos2(x, rect.bottom())],
-            Stroke::new(1.2, BRAND_LIGHT),
-        );
-        x += step;
-    }
-    let mut y = rect.top() + step;
-    while y < rect.bottom() {
-        clip.line_segment(
-            [pos2(rect.left(), y), pos2(rect.right(), y)],
-            Stroke::new(1.2, BRAND_LIGHT),
-        );
-        y += step;
-    }
-    let block = Rect::from_center_size(rect.center(), Vec2::splat(rect.height() * 0.85));
-    paint_icon(painter, block, Icon::Plate, INK);
-    painter.rect_stroke(rect, radius, Stroke::new(2.0, INK), StrokeKind::Inside);
+    let palette = Palette::of(painter.ctx().theme());
+    painter.rect_filled(rect, 4, palette.head);
+    let block = Rect::from_center_size(rect.center(), Vec2::splat(rect.height() * 0.55));
+    paint_icon(painter, block, Icon::Block, palette.line);
 }
 
 /// Where a PNG asset under `assets/icons/` may be: the working directory (an extracted
@@ -767,25 +917,17 @@ pub fn load_logo(ctx: &egui::Context, side: usize) -> Option<egui::TextureHandle
     Some(ctx.load_texture("beamcraft-logo", image, egui::TextureOptions::LINEAR))
 }
 
-/// Shows the logo at `size` points with an ink border and a hard shadow, or nothing when it
+/// Shows the unmodified logo at `size` points, or nothing when it
 /// could not be loaded.
 pub fn logo(ui: &mut Ui, texture: Option<&egui::TextureHandle>, size: f32) {
     let Some(texture) = texture else { return };
-    let palette = Palette::current(ui);
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size + 3.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
     let face = Rect::from_min_size(rect.min, Vec2::splat(size));
     let radius = CornerRadius::same(u8::try_from((size * 0.2) as i32).unwrap_or(10));
     let painter = ui.painter();
-    painter.rect_filled(face.translate(vec2(3.0, 3.0)), radius, palette.ink);
     painter.add(
         egui::epaint::RectShape::filled(face, radius, Color32::WHITE)
             .with_texture(texture.id(), Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0))),
-    );
-    painter.rect_stroke(
-        face,
-        radius,
-        Stroke::new(2.0, palette.ink),
-        StrokeKind::Inside,
     );
 }
 
@@ -794,6 +936,95 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
     use super::*;
+
+    fn controls_frame(
+        ctx: &egui::Context,
+        maximize: bool,
+        maximized: bool,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let mut input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .maximized = Some(maximized);
+        ctx.run_ui(input, |ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                window_controls_with_maximize(ui, maximize);
+            });
+        })
+    }
+
+    #[test]
+    fn window_controls_have_equal_hit_areas_and_send_native_commands() {
+        for theme in [Theme::Light, Theme::Dark] {
+            for maximize in [false, true] {
+                for maximized in [false, true] {
+                    let ctx = egui::Context::default();
+                    install(&ctx);
+                    ctx.set_theme(theme);
+                    let output = controls_frame(&ctx, maximize, maximized, vec![]);
+                    let size = vec2(if maximize { 40.0 } else { 28.0 }, 28.0);
+                    let rects: Vec<_> = output
+                        .shapes
+                        .iter()
+                        .filter_map(|shape| match &shape.shape {
+                            egui::Shape::Rect(rect)
+                                if rect.rect.size() == size
+                                    && rect.fill == Palette::of(theme).head =>
+                            {
+                                Some(rect.rect)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    output.drop_without_applying_deltas();
+                    assert_eq!(rects.len(), if maximize { 3 } else { 2 });
+                    for pair in rects.windows(2) {
+                        assert_eq!(pair[0].left(), pair[1].right());
+                        assert_eq!(pair[0].center().y, pair[1].center().y);
+                    }
+                    for (index, rect) in rects.iter().enumerate() {
+                        let pointer = |pressed| egui::Event::PointerButton {
+                            pos: rect.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        };
+                        let output = controls_frame(
+                            &ctx,
+                            maximize,
+                            maximized,
+                            vec![egui::Event::PointerMoved(rect.center()), pointer(true)],
+                        );
+                        let close_highlight = output.shapes.iter().any(|shape| matches!(
+                            &shape.shape, egui::Shape::Rect(shape)
+                            if shape.rect == *rect && shape.fill == Color32::from_rgb(0xC4, 0x2B, 0x36)
+                        ));
+                        output.drop_without_applying_deltas();
+                        assert_eq!(close_highlight, index == 0);
+                        let output =
+                            controls_frame(&ctx, maximize, maximized, vec![pointer(false)]);
+                        let expected = match index {
+                            0 => egui::ViewportCommand::Close,
+                            1 if maximize => egui::ViewportCommand::Maximized(!maximized),
+                            _ => egui::ViewportCommand::Minimized(true),
+                        };
+                        let sent = output
+                            .viewport_output
+                            .values()
+                            .any(|viewport| viewport.commands.contains(&expected));
+                        output.drop_without_applying_deltas();
+                        assert!(sent, "missing command: {expected:?}");
+                    }
+                }
+            }
+        }
+    }
 
     fn luminance(c: Color32) -> f64 {
         let lin = |v: u8| {
@@ -825,6 +1056,57 @@ mod tests {
             assert!(contrast(p.error, p.page) >= 4.5, "{theme:?} error");
         }
         assert!(contrast(INK, BRAND) >= 4.5, "text on the brand colour");
+    }
+
+    #[test]
+    fn reinstalling_chrome_preserves_the_users_theme() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        for preference in [
+            egui::ThemePreference::Dark,
+            egui::ThemePreference::Light,
+            egui::ThemePreference::System,
+        ] {
+            ctx.set_theme(preference);
+            install(&ctx);
+            assert_eq!(ctx.options(|options| options.theme_preference), preference);
+        }
+        for theme in [Theme::Light, Theme::Dark] {
+            let palette = Palette::of(theme);
+            let panel = card(palette);
+            assert_eq!(panel.stroke.width, 1.0);
+            assert_eq!(panel.shadow, Shadow::NONE);
+            assert_eq!(
+                visuals(palette).widgets.inactive.corner_radius,
+                CornerRadius::same(5)
+            );
+        }
+    }
+
+    #[test]
+    fn system_preference_tracks_os_changes_but_explicit_preferences_do_not() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        for (preference, system, expected) in [
+            (egui::ThemePreference::System, Theme::Light, Theme::Light),
+            (egui::ThemePreference::System, Theme::Dark, Theme::Dark),
+            (egui::ThemePreference::Light, Theme::Dark, Theme::Light),
+            (egui::ThemePreference::Dark, Theme::Light, Theme::Dark),
+        ] {
+            ctx.set_theme(preference);
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    system_theme: Some(system),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.label("Inter");
+                },
+            );
+            assert_eq!(ctx.theme(), expected);
+            output.drop_without_applying_deltas();
+        }
     }
 
     #[test]

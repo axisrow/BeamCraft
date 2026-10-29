@@ -96,9 +96,44 @@ pub struct Recent {
     pub opened_ms: u64,
 }
 
+/// The application appearance preference.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ThemePreference {
+    /// Follow the operating system, including changes while the application is open.
+    #[default]
+    System,
+    /// Always use light surfaces.
+    Light,
+    /// Always use dark surfaces.
+    Dark,
+}
+
+impl ThemePreference {
+    /// The stable settings and CLI spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    /// Parses an explicit preference; unknown values are refused.
+    pub fn parse(value: &str) -> Result<Self, SettingsError> {
+        match value {
+            "system" => Ok(Self::System),
+            "light" => Ok(Self::Light),
+            "dark" => Ok(Self::Dark),
+            _ => Err(invalid("the theme must be system, light or dark")),
+        }
+    }
+}
+
 /// The settings of one user.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
+    /// Appearance; older settings files without this field follow the system.
+    pub theme: ThemePreference,
     /// The author profile, once entered.
     pub profile: Option<Profile>,
     /// The identifier of the environment chosen at start.
@@ -266,6 +301,7 @@ impl Settings {
         };
         Ok(Json::object([
             ("version", Json::uint(VERSION)),
+            ("theme", Json::text(self.theme.as_str())),
             ("profile", profile),
             ("environment", text_or_null(self.environment.as_deref())),
             ("skip_launcher", Json::Bool(self.skip_launcher)),
@@ -286,15 +322,18 @@ impl Settings {
     pub fn decode(bytes: &[u8]) -> Result<Self, SettingsError> {
         let shape = |_| damaged("the settings file is not valid");
         let json = beamcraft_json::decode(bytes, &limits()).map_err(shape)?;
-        json.closed(&[
+        let mut keys = vec![
             "version",
             "profile",
             "environment",
             "skip_launcher",
             "models_dir",
             "recent",
-        ])
-        .map_err(shape)?;
+        ];
+        if json.get("theme").is_ok() {
+            keys.push("theme");
+        }
+        json.closed(&keys).map_err(shape)?;
         if json
             .get("version")
             .and_then(Json::unsigned)
@@ -334,6 +373,11 @@ impl Settings {
             });
         }
         let settings = Self {
+            theme: match json.get("theme") {
+                Ok(value) => ThemePreference::parse(value.string().map_err(shape)?)
+                    .map_err(|_| damaged("the settings theme is not valid"))?,
+                Err(_) => ThemePreference::System,
+            },
             profile,
             environment: optional_text("environment")?,
             skip_launcher: json
@@ -452,6 +496,38 @@ mod tests {
         assert_eq!(Settings::decode(&s.encode().unwrap()).unwrap(), s);
         let empty = Settings::default();
         assert_eq!(Settings::decode(&empty.encode().unwrap()).unwrap(), empty);
+    }
+
+    #[test]
+    fn appearance_is_optional_for_old_files_and_strict_when_present() {
+        let legacy = br#"{"version":1,"profile":null,"environment":null,"skip_launcher":false,"models_dir":null,"recent":[]}"#;
+        assert_eq!(
+            Settings::decode(legacy).unwrap().theme,
+            ThemePreference::System
+        );
+        for theme in [
+            ThemePreference::System,
+            ThemePreference::Light,
+            ThemePreference::Dark,
+        ] {
+            let settings = Settings {
+                theme,
+                ..Settings::default()
+            };
+            assert_eq!(
+                Settings::decode(&settings.encode().unwrap()).unwrap(),
+                settings
+            );
+        }
+        let unknown = String::from_utf8(legacy.to_vec())
+            .unwrap()
+            .replace("\"version\":1", "\"version\":1,\"theme\":\"automatic\"");
+        assert_eq!(
+            Settings::decode(unknown.as_bytes()).unwrap_err().code,
+            ErrorCode::IntegrityError
+        );
+        let wrong_type = unknown.replace("\"automatic\"", "null");
+        assert!(Settings::decode(wrong_type.as_bytes()).is_err());
     }
 
     #[test]

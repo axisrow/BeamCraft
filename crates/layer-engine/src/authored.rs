@@ -1062,7 +1062,9 @@ impl Reader {
 pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String, Diagnostic> {
     beamcraft_model::id::ElementId::parse(id)
         .map(|id| id.prim_path(category))
-        .map_err(|_| fail(ErrorCode::InvalidId, "invalid full element identity"))
+        .map_err(|_| {
+            fail(ErrorCode::InvalidId, "invalid full element identity").with_rule("DV-BASE-001")
+        })
 }
 fn shape_category(shape: &Shape) -> ElementCategory {
     match shape {

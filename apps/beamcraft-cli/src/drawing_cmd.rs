@@ -758,8 +758,10 @@ fn run(args: &[OsString]) -> Run<Json> {
     let revision = RevisionStore::new(blobs).open()?;
     let content = revision.manifest().content();
     let source = SourceModelPin {
-        project: ProjectId::parse(content.project().as_str()).map_err(id_error)?,
-        revision: RevisionId::parse(revision.info().revision().as_str()).map_err(id_error)?,
+        project: ProjectId::parse(content.project().as_str())
+            .map_err(crate::plate_cmd::context_id_error)?,
+        revision: RevisionId::parse(revision.info().revision().as_str())
+            .map_err(crate::plate_cmd::context_id_error)?,
         manifest: revision.info().manifest_digest(),
         schema: content.schema(),
         generation: content.workspace_generation(),

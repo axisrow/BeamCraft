@@ -495,6 +495,14 @@ pub(crate) fn id_error(error: beamcraft_model::id::IdError) -> PlateError {
     }
 }
 
+/// Command-envelope identities are not the F10 element attribute `bim:id`.
+pub(crate) fn context_id_error(error: beamcraft_model::id::IdError) -> PlateError {
+    PlateError {
+        rule_id: None,
+        ..id_error(error)
+    }
+}
+
 /// D1: an explicit `--project-id` must be the project the store records (a store without a
 /// revision takes it). The early check runs here; the returned claim binds the command's base
 /// loading to that project until it is dropped, so a store initialised by another writer in
@@ -505,7 +513,7 @@ pub(crate) fn check_project_option(
 ) -> Run<Option<ProjectClaim>> {
     match options.get("--project-id") {
         Some(text) => {
-            let project = ProjectId::parse(text).map_err(id_error)?;
+            let project = ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?;
             ensure_project(store, &project)?;
             Ok(Some(claim_project(project)))
         }
@@ -845,7 +853,7 @@ fn define_command(
         profile_record(options)?.named(given("--name"))
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -853,11 +861,11 @@ fn define_command(
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let defined = define(
@@ -895,11 +903,11 @@ fn create(
         None => ElementId::from_uuid(fresh()?),
     };
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -907,11 +915,11 @@ fn create(
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let replay = if options.contains_key("--op-id") && options.contains_key("--material") {
@@ -1138,11 +1146,11 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
         .map_err(id_error)?;
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -1150,11 +1158,11 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let patch = ElementPatch {
@@ -1257,11 +1265,11 @@ fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Jso
         OpId::parse(given("--operation-id").ok_or_else(|| invalid("--operation-id is required"))?)
             .map_err(id_error)?;
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -1269,11 +1277,11 @@ fn cut_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Jso
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let command = CutByPlane {
@@ -1577,11 +1585,11 @@ fn add_hole_cli(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
     let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
         .map_err(id_error)?;
     let operation_id = match given("--operation-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -1589,11 +1597,11 @@ fn add_hole_cli(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Js
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let added = add_hole_command(
@@ -1646,11 +1654,11 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
     let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
         .map_err(id_error)?;
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -1658,11 +1666,11 @@ fn delete_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let deleted = delete_element(
@@ -1749,11 +1757,11 @@ fn copy_command(
         None => ElementId::from_uuid(fresh()?),
     };
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -1761,11 +1769,11 @@ fn copy_command(
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let copy = if instance {
@@ -2062,11 +2070,11 @@ fn create_member_command(
         None => ElementId::from_uuid(fresh()?),
     };
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -2074,11 +2082,11 @@ fn create_member_command(
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let kind = match given("--kind") {
@@ -2242,11 +2250,11 @@ fn create_polybeam_command(
         None => ElementId::from_uuid(fresh()?),
     };
     let op_id = match given("--op-id") {
-        Some(text) => OpId::parse(text).map_err(id_error)?,
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => OpId::from_uuid(fresh()?),
     };
     let revision_id = match given("--revision-id") {
-        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => RevisionId::from_uuid(fresh()?),
     };
     let actor = match given("--actor-id") {
@@ -2254,11 +2262,11 @@ fn create_polybeam_command(
         None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
     };
     let project = match given("--project-id") {
-        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => ProjectId::from_uuid(fresh()?),
     };
     let workspace = match given("--workspace-id") {
-        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
     let kind = match given("--kind") {

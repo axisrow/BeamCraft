@@ -4,7 +4,7 @@
 //! Explicit C04 conflict resolution; all engineering/storage decisions stay in the application
 //! API.
 
-use crate::plate_cmd::{id_error, revision_json};
+use crate::plate_cmd::revision_json;
 use beamcraft_cli::{
     plate::PlateError,
     workspace::resolve::{ResolveRequest, resolve_workspace},
@@ -66,8 +66,9 @@ fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
             .copied()
             .ok_or_else(|| invalid("a required resolve option is missing"))
     };
-    let op_id = OpId::parse(required("--op-id")?).map_err(id_error)?;
-    let discarded = OpId::parse(required("--discard")?).map_err(id_error)?;
+    let op_id = OpId::parse(required("--op-id")?).map_err(crate::plate_cmd::context_id_error)?;
+    let discarded =
+        OpId::parse(required("--discard")?).map_err(crate::plate_cmd::context_id_error)?;
     let expected_draft = Uuid7::parse(required("--expected-draft")?)?;
     let dir = Path::new(required("--workspace-dir")?);
     let workspace = BlobStore::new(dir)

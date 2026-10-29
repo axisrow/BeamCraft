@@ -226,6 +226,7 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
     });
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size(size)
+        .with_decorations(false)
         .with_title("BeamCraft")
         .with_icon(load_icon());
     // The Wayland app ID and X11 window class match the desktop entry `install-linux.sh`

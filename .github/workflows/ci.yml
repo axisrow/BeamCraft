@@ -129,6 +129,11 @@ jobs:
           name: nextest-archive-ubuntu-latest
           path: nextest-archive
 
+      - name: Install software Vulkan for native UI tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends mesa-vulkan-drivers
+
       - name: Run archived test partition
         shell: bash
         run: mkdir -p target/tmp && cargo nextest run --archive-file nextest-archive/nextest-archive.tar.zst --extract-to . --extract-overwrite --no-fail-fast --partition hash:${{ matrix.shard }}/4

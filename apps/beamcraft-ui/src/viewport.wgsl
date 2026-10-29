@@ -33,10 +33,10 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     o.normal = rotate(n, q);
     return o;
 }
-// The colours of the BeamCraft logo: faces turned up are cream, sides grey-teal.
+// Cool steel faces keep the engineering model distinct from the application chrome.
 @fragment fn shade(o: Out) -> @location(0) vec4f {
     let n = normalize(o.normal);
-    let base = mix(vec3f(0.47, 0.71, 0.77), vec3f(0.96, 0.94, 0.88), clamp(n.z, 0.0, 1.0));
+    let base = mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return vec4f(base * light, 1.0);
 }

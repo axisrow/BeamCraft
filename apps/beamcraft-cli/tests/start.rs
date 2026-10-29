@@ -194,6 +194,29 @@ fn listing_recents_persists_removal_of_missing_models_and_keeps_unreadable_model
 }
 
 #[test]
+fn appearance_defaults_to_system_and_persists_without_changing_other_settings() {
+    let f = Fixture::new();
+    assert_eq!(
+        text(at(&f.ok(&["show-settings"]), &["settings"]), "theme"),
+        "system"
+    );
+    f.ok(&["set-settings", "--name", "Ana", "--email", "ana@example.cl"]);
+    for theme in ["dark", "light", "system"] {
+        let saved = f.ok(&["set-settings", "--theme", theme]);
+        assert_eq!(text(at(&saved, &["settings"]), "theme"), theme);
+        let read = f.ok(&["show-settings"]);
+        assert_eq!(text(at(&read, &["settings"]), "theme"), theme);
+        assert_eq!(text(at(&read, &["settings", "profile"]), "name"), "Ana");
+    }
+    let before = fs::read(f.path("config/settings.json")).unwrap();
+    assert_eq!(
+        f.code(&["set-settings", "--theme", "automatic"]),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(fs::read(f.path("config/settings.json")).unwrap(), before);
+}
+
+#[test]
 fn the_profile_keeps_its_author_identity() {
     let f = Fixture::new();
     let empty = f.ok(&["show-settings"]);

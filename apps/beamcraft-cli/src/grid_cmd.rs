@@ -550,6 +550,22 @@ pub(crate) fn views_json(grids: &[Grid]) -> Run<Json> {
                                             ("label", Json::text(label)),
                                             ("start_mm", world(a)?),
                                             ("end_mm", world(b)?),
+                                            (
+                                                "start_local_mm",
+                                                Json::Array(
+                                                    a.into_iter()
+                                                        .map(num)
+                                                        .collect::<Run<Vec<_>>>()?,
+                                                ),
+                                            ),
+                                            (
+                                                "end_local_mm",
+                                                Json::Array(
+                                                    b.into_iter()
+                                                        .map(num)
+                                                        .collect::<Run<Vec<_>>>()?,
+                                                ),
+                                            ),
                                         ]))
                                     })
                                     .collect::<Run<Vec<_>>>()?,

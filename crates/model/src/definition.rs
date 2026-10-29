@@ -60,7 +60,8 @@ impl MaterialSpec {
                 ErrorCode::NonFiniteNumber,
                 "density_kg_m3",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if density.abs() > MAX_DENSITY_KG_M3 {
             return Err(CommandError::new(
@@ -128,7 +129,8 @@ impl SectionProperties {
                     ErrorCode::NonFiniteNumber,
                     field,
                     "value is not finite",
-                ));
+                )
+                .with_rule("DV-ATTR-003"));
             }
             if value > cap {
                 return Err(CommandError::new(
@@ -174,7 +176,8 @@ impl RectangleProfileSpec {
                 ErrorCode::NonFiniteNumber,
                 "profile",
                 "value is not finite",
-            ));
+            )
+            .with_rule("DV-ATTR-003"));
         }
         if dimensions.iter().any(|v| *v < ABSOLUTE_FLOOR_MM) {
             return Err(CommandError::new(
@@ -188,7 +191,8 @@ impl RectangleProfileSpec {
                 ErrorCode::LimitExceeded,
                 "profile",
                 "section dimension exceeds the dimension cap",
-            ));
+            )
+            .with_rule("DV-LIM-001"));
         }
         self.section.validate()?;
         let agrees = |declared: f64, formula: f64| {

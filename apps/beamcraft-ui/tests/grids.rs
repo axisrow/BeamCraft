@@ -577,3 +577,182 @@ fn invalid_input_and_engine_refusals_publish_no_grid() {
     assert_eq!(f.head(&store), before);
     assert!(GridScene::from_reply(br#"{"outcome":"grids","grids":[{"u":{"lines":[{"label":"A","start_mm":[0,1],"end_mm":[0,1,0]}]},"v":{"lines":[]}}]}"#).is_err());
 }
+
+#[test]
+fn drawn_line_forms_round_trip_through_the_real_cli_and_engine_snaps() {
+    use beamcraft_engine::query::pick::{SnapKind, SnapQuery, snap_with_grids};
+    use beamcraft_ui::grid::{DrawLineForm, commit};
+    let f = Fixture::new();
+    let store = f.root.join("ui");
+    let stats = Stats::default();
+    let form = GridForm {
+        rotation: "12.3456789".into(),
+        origin: ["1000".into(), "2000".into()],
+        ..GridForm::default()
+    };
+    let mut line = DrawLineForm {
+        label: "D1".into(),
+        points: [["0".into(), "0".into()], ["3000".into(), "4000".into()]],
+        ..DrawLineForm::default()
+    };
+    let before = f.head(&store);
+    let args = line.prepare(None, &form, &store, Some(ACTOR)).unwrap();
+    // Preparing and abandoning a draft publishes nothing.
+    assert_eq!(before, f.head(&store));
+    let created = commit(&f.cli, &args, &stats).unwrap();
+    let id = created.id;
+    let properties = source::reload(&f.cli, &store, &Known::default(), &stats)
+        .grids
+        .unwrap();
+    let original = &properties.get(&id).unwrap().form;
+    let mut renamed_form = original.clone();
+    renamed_form.name = "Renamed drawn grid".into();
+    commit(
+        &f.cli,
+        &renamed_form
+            .prepare_properties(original, &id, &store, Some(ACTOR))
+            .unwrap(),
+        &stats,
+    )
+    .unwrap();
+    let after = f.ok(&["list-grids", "--store", store.to_str().unwrap()]);
+    let rotation = after.get("grids").unwrap().array().unwrap()[0]
+        .get("rotation_rad")
+        .unwrap()
+        .float()
+        .unwrap();
+    assert!((rotation.to_degrees() - 12.3456789).abs() < 1e-10);
+    line.family = "v".into();
+    line.label = "D2".into();
+    line.points = [["3000".into(), "0".into()], ["0".into(), "4000".into()]];
+    commit(
+        &f.cli,
+        &line.prepare(Some(&id), &form, &store, Some(ACTOR)).unwrap(),
+        &stats,
+    )
+    .unwrap();
+    let inspect = || f.ok(&["list-grids", "--store", store.to_str().unwrap()]);
+    let initial = inspect();
+    // The additive local endpoints must agree with what the user sees.
+    fn corrupt_local(json: &mut Json) {
+        match json {
+            Json::Object(fields) => {
+                if fields.contains_key("start_local_mm") {
+                    fields.insert(
+                        "start_local_mm".into(),
+                        Json::Array(vec![Json::uint(999), Json::uint(999)]),
+                    );
+                }
+                for value in fields.values_mut() {
+                    corrupt_local(value);
+                }
+            }
+            Json::Array(values) => {
+                for value in values {
+                    corrupt_local(value);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut corrupt = initial.clone();
+    corrupt_local(&mut corrupt);
+    assert!(GridScene::from_reply(&corrupt.encode(&Limits::DEFAULT).unwrap()).is_err());
+    let v = &at(&initial, &["grids"]).array().unwrap()[0]
+        .get("v")
+        .unwrap()
+        .get("lines")
+        .unwrap()
+        .array()
+        .unwrap()[0];
+    line.axis = v.get("axis_id").unwrap().string().unwrap().into();
+    let read = source::reload(&f.cli, &store, &Known::default(), &stats);
+    let guides = read.grids.unwrap();
+    assert_eq!(guides.query_grids.len(), 1);
+    assert!(!guides.get(&id).unwrap().editable);
+    let Refreshed::New(scene) = read.scene.unwrap() else {
+        panic!("expected snapshot")
+    };
+    let head = f.head(&store);
+    let query = SnapQuery {
+        point_mm: [1503.0, 2002.0, 3000.0],
+        radius_mm: 10.0,
+        kinds: vec![SnapKind::GridIntersection],
+        max_hits: 10,
+    };
+    let hit = snap_with_grids(&scene.0, &query, &guides.query_grids, None).unwrap();
+    let point = hit.candidates[0].point_world_mm;
+    assert!((point[0] - 1500.0).abs() < 1e-6 && (point[1] - 2000.0).abs() < 1e-6);
+    assert_eq!(point[2], 3000.0);
+    let hidden = std::collections::BTreeSet::new();
+    assert!(
+        snap_with_grids(&scene.0, &query, &guides.query_grids, Some(&hidden))
+            .unwrap()
+            .candidates
+            .is_empty()
+    );
+    assert_eq!(head, f.head(&store));
+    line.action = "reshape-grid-line".into();
+    line.points = [["3000".into(), "0".into()], ["3000".into(), "4000".into()]];
+    commit(
+        &f.cli,
+        &line.prepare(Some(&id), &form, &store, Some(ACTOR)).unwrap(),
+        &stats,
+    )
+    .unwrap();
+    line.action = "relabel-grid-line".into();
+    line.label = "Б/1".into();
+    commit(
+        &f.cli,
+        &line.prepare(Some(&id), &form, &store, Some(ACTOR)).unwrap(),
+        &stats,
+    )
+    .unwrap();
+    let renamed = inspect();
+    let v = &at(&renamed, &["grids"]).array().unwrap()[0]
+        .get("v")
+        .unwrap()
+        .get("lines")
+        .unwrap()
+        .array()
+        .unwrap()[0];
+    assert_eq!(v.get("axis_id").unwrap().string().unwrap(), line.axis);
+    assert_eq!(v.get("label").unwrap().string().unwrap(), "Б/1");
+    line.label = "D1".into();
+    let before = f.head(&store);
+    let refused = commit(
+        &f.cli,
+        &line.prepare(Some(&id), &form, &store, Some(ACTOR)).unwrap(),
+        &stats,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, "INVALID_ARGUMENT");
+    assert_eq!(before, f.head(&store));
+    line.action = "remove-grid-line".into();
+    commit(
+        &f.cli,
+        &line.prepare(Some(&id), &form, &store, Some(ACTOR)).unwrap(),
+        &stats,
+    )
+    .unwrap();
+    let removed = inspect();
+    assert!(
+        at(&removed, &["grids"]).array().unwrap()[0]
+            .get("v")
+            .unwrap()
+            .get("lines")
+            .unwrap()
+            .array()
+            .unwrap()
+            .is_empty()
+    );
+    // New data remains available after a fresh pinned reload.
+    assert_eq!(
+        source::reload(&f.cli, &store, &Known::default(), &stats)
+            .grids
+            .unwrap()
+            .lines
+            .len(),
+        1
+    );
+}

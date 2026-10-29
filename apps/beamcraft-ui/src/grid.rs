@@ -107,6 +107,147 @@ fn decimal(field: &'static str, value: &str) -> Result<String, FormError> {
     Ok(value.to_owned())
 }
 
+/// Draft of one drawn-line command. Clicks only fill these fields; Apply publishes once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrawLineForm {
+    /// Draw, reshape, relabel or remove, using the existing headless command.
+    pub action: String,
+    /// U or V for a new line.
+    pub family: String,
+    /// Existing AxisId for an edit.
+    pub axis: String,
+    /// Explicit new label.
+    pub label: String,
+    /// World XY endpoints in millimetres.
+    pub points: [[String; 2]; 2],
+    /// Next click fills the first or second endpoint; absent when not drawing.
+    pub click: Option<bool>,
+}
+
+impl Default for DrawLineForm {
+    fn default() -> Self {
+        Self {
+            action: "draw-grid-line".into(),
+            family: "u".into(),
+            axis: String::new(),
+            label: "D1".into(),
+            points: [["0".into(), "0".into()], ["3000".into(), "4000".into()]],
+            click: None,
+        }
+    }
+}
+
+impl DrawLineForm {
+    /// Build one command against an existing grid, or create a grid with one drawn line.
+    /// All engineering admission remains in the engine.
+    pub fn prepare(
+        &self,
+        grid: Option<&str>,
+        form: &GridForm,
+        store: &Path,
+        actor: Option<&str>,
+    ) -> Result<Vec<String>, FormError> {
+        let store = store
+            .to_str()
+            .ok_or_else(|| form_error("Model", "The model path must be UTF-8."))?;
+        if !matches!(self.family.as_str(), "u" | "v") {
+            return Err(form_error("Family", "Choose U or V."));
+        }
+        let drawing = self.action == "draw-grid-line";
+        if !matches!(
+            self.action.as_str(),
+            "draw-grid-line"
+                | "reshape-grid-line"
+                | "relabel-grid-line"
+                | "remove-grid-line"
+                | "update-grid"
+        ) || grid.is_none() && !drawing
+        {
+            return Err(form_error("Line", "Choose a supported line operation."));
+        }
+        let mut args = vec![
+            if grid.is_some() {
+                self.action.clone()
+            } else {
+                "create-grid".into()
+            },
+            "--store".into(),
+            store.into(),
+        ];
+        if let Some(id) = grid {
+            ElementId::parse(id).map_err(|_| form_error("Grid", "Select a grid."))?;
+            args.extend(["--id".into(), id.into()]);
+            if self.action == "update-grid" {
+                if form.name.trim().is_empty() || form.name.len() > 256 {
+                    return Err(form_error(
+                        "Name",
+                        "Enter a grid name of at most 256 UTF-8 bytes.",
+                    ));
+                }
+                args.extend([
+                    "--name".into(),
+                    form.name.trim().into(),
+                    "--origin".into(),
+                    [
+                        decimal("Origin X", &form.origin[0])?,
+                        decimal("Origin Y", &form.origin[1])?,
+                    ]
+                    .join(","),
+                    "--rotation".into(),
+                    decimal("Rotation", &form.rotation)?,
+                ]);
+            } else if drawing {
+                args.extend(["--family".into(), self.family.clone()]);
+            } else {
+                ElementId::parse(&self.axis)
+                    .map_err(|_| form_error("Axis", "Select an existing axis."))?;
+                args.extend(["--axis-id".into(), self.axis.clone()]);
+            }
+        } else {
+            if form.name.trim().is_empty() || form.name.len() > 256 {
+                return Err(form_error(
+                    "Name",
+                    "Enter a grid name of at most 256 UTF-8 bytes.",
+                ));
+            }
+            args.extend([
+                "--name".into(),
+                form.name.trim().into(),
+                "--origin".into(),
+                [
+                    decimal("Origin X", &form.origin[0])?,
+                    decimal("Origin Y", &form.origin[1])?,
+                ]
+                .join(","),
+                "--rotation".into(),
+                decimal("Rotation", &form.rotation)?,
+            ]);
+        }
+        let key = |suffix| {
+            if grid.is_none() {
+                format!("--{}-{suffix}", self.family)
+            } else {
+                format!("--{suffix}")
+            }
+        };
+        if drawing || self.action == "relabel-grid-line" {
+            beamcraft_model::grid::validate_grid_labels(std::slice::from_ref(&self.label))
+                .map_err(|_| form_error("Label", "Enter a valid unique axis label."))?;
+            args.extend([key("label"), self.label.clone()]);
+        }
+        if drawing || self.action == "reshape-grid-line" {
+            for (suffix, point) in ["from", "to"].into_iter().zip(&self.points) {
+                args.extend([
+                    key(suffix),
+                    [decimal("X", &point[0])?, decimal("Y", &point[1])?].join(","),
+                ]);
+            }
+        }
+        push_actor(&mut args, actor);
+        Ok(args)
+    }
+}
+
 fn start_coordinate(value: &str) -> Result<String, FormError> {
     let value = decimal("Line start", value)?;
     let distance = value
@@ -132,6 +273,39 @@ fn display_rotation(radians: f64) -> String {
 }
 
 impl GridForm {
+    /// Prepare only changed common properties, including for a fully drawn grid.
+    pub fn prepare_properties(
+        &self,
+        original: &Self,
+        id: &str,
+        store: &Path,
+        actor: Option<&str>,
+    ) -> Result<Vec<String>, FormError> {
+        let prepared = DrawLineForm {
+            action: "update-grid".into(),
+            ..DrawLineForm::default()
+        }
+        .prepare(Some(id), self, store, actor)?;
+        let mut args = vec!["update-grid".into()];
+        let mut changed = false;
+        for [key, value] in prepared.get(1..).unwrap_or_default().as_chunks::<2>().0 {
+            let include = match key.as_str() {
+                "--name" => self.name.trim() != original.name.trim(),
+                "--origin" => self.origin != original.origin,
+                "--rotation" => self.rotation != original.rotation,
+                _ => true,
+            };
+            if include {
+                changed |= matches!(key.as_str(), "--name" | "--origin" | "--rotation");
+                args.extend([key.clone(), value.clone()]);
+            }
+        }
+        if !changed {
+            return Err(form_error("Grid", "No properties have changed."));
+        }
+        Ok(args)
+    }
+
     /// Prepares a regular-grid update, sending only fields changed in the properties panel.
     /// Unchanged frames and labels retain their exact engine-authored values.
     pub fn prepare_update(
@@ -381,7 +555,20 @@ pub fn parse_created(exit: Option<i32>, bytes: &[u8]) -> Result<CreatedGrid, Too
     };
     if !matches!(
         text(&json, "outcome").as_deref(),
-        Some("grid_created" | "grid_created_replayed" | "grid_updated" | "grid_update_replayed")
+        Some(
+            "grid_created"
+                | "grid_created_replayed"
+                | "grid_updated"
+                | "grid_update_replayed"
+                | "grid_line_drawn"
+                | "grid_line_drawn_replayed"
+                | "grid_line_reshaped"
+                | "grid_line_reshaped_replayed"
+                | "grid_line_removed"
+                | "grid_line_removed_replayed"
+                | "grid_line_relabelled"
+                | "grid_line_relabelled_replayed"
+        )
     ) {
         return Err(bad());
     }
@@ -418,6 +605,8 @@ pub struct GridScene {
     pub lines: Vec<GridLine>,
     /// Grid identities and the source properties belonging to those guide segments.
     pub grids: Vec<GridProperties>,
+    /// Bounded grid records for the engine's snap query, pinned with the displayed scene.
+    pub query_grids: Vec<beamcraft_model::grid::Grid>,
 }
 
 /// Properties read from the same engine inspection as the displayed guides.
@@ -458,6 +647,7 @@ impl GridScene {
         }
         let mut lines = Vec::new();
         let mut properties = Vec::new();
+        let mut query_grids = Vec::new();
         let mut identities = std::collections::BTreeSet::new();
         for grid in grids {
             let initial_count = lines.len();
@@ -486,6 +676,14 @@ impl GridScene {
             };
             let mut editable = true;
             let mut labels = Vec::new();
+            let mut query_grid = beamcraft_model::grid::Grid {
+                id: ElementId::parse(&id).map_err(|_| bad())?,
+                name: form.name.clone(),
+                translation_mm: origin,
+                orientation_zw: [(rotation / 2.0).sin(), (rotation / 2.0).cos()],
+                u: beamcraft_model::grid::GridFamily::Drawn(Vec::new()),
+                v: beamcraft_model::grid::GridFamily::Drawn(Vec::new()),
+            };
             for family in ["u", "v"] {
                 let family_start = labels.len();
                 let family_json = grid.get(family).map_err(|_| bad())?;
@@ -497,6 +695,7 @@ impl GridScene {
                 if axes.len() > MAX_GRID_LINES_PER_FAMILY {
                     return Err(bad());
                 }
+                let mut query_lines = Vec::new();
                 for axis in axes {
                     let label = text(axis, "label")
                         .filter(|s| s.len() <= 64 && s.chars().count() <= 16 && !s.is_empty())
@@ -518,10 +717,28 @@ impl GridScene {
                         }
                         Ok(point)
                     };
-                    lines.push(GridLine {
-                        label,
-                        points: [point("start_mm")?, point("end_mm")?],
+                    let points = [point("start_mm")?, point("end_mm")?];
+                    let local = |key, p: [f64; 3]| {
+                        let result = if axis.get(key).is_ok() {
+                            pair(axis, key).ok_or_else(bad)?
+                        } else {
+                            beamcraft_engine::grid_edit::world_to_local(&query_grid, [p[0], p[1]])
+                        };
+                        let world =
+                            beamcraft_engine::grid_query::local_to_world(&query_grid, result);
+                        if (world[0] - p[0]).abs() > 1e-6 || (world[1] - p[1]).abs() > 1e-6 {
+                            return Err(bad());
+                        }
+                        Ok(result)
+                    };
+                    query_lines.push(beamcraft_model::grid::DrawnGridLine {
+                        axis_id: ElementId::parse(&text(axis, "axis_id").ok_or_else(bad)?)
+                            .map_err(|_| bad())?,
+                        label: label.clone(),
+                        start_mm: local("start_local_mm", points[0])?,
+                        end_mm: local("end_local_mm", points[1])?,
                     });
+                    lines.push(GridLine { label, points });
                 }
                 let family_form = match text(family_json, "mode").as_deref() {
                     Some("regular") => {
@@ -553,8 +770,10 @@ impl GridScene {
                 };
                 if family == "u" {
                     form.u = family_form;
+                    query_grid.u = beamcraft_model::grid::GridFamily::Drawn(query_lines);
                 } else {
                     form.v = family_form;
+                    query_grid.v = beamcraft_model::grid::GridFamily::Drawn(query_lines);
                 }
             }
             if lines.len() == initial_count
@@ -562,6 +781,7 @@ impl GridScene {
             {
                 return Err(bad());
             }
+            query_grids.push(query_grid);
             properties.push(GridProperties {
                 id,
                 form,
@@ -569,9 +789,11 @@ impl GridScene {
                 lines: initial_count..lines.len(),
             });
         }
+        beamcraft_engine::grid_query::validate(&query_grids).map_err(|_| bad())?;
         Ok(Self {
             lines,
             grids: properties,
+            query_grids,
         })
     }
 
@@ -747,5 +969,39 @@ mod form_tests {
         assert_eq!(display_rotation(45.00000000000001_f64.to_radians()), "45");
         assert_eq!(display_rotation(12.3456789_f64.to_radians()), "12.346");
         assert_eq!(display_rotation(-0.00001_f64.to_radians()), "0");
+    }
+
+    #[test]
+    fn drawn_grid_name_edit_preserves_the_unedited_precise_frame() {
+        let original = GridForm {
+            rotation: "12.346".into(),
+            ..GridForm::default()
+        };
+        let mut form = original.clone();
+        form.name = "Renamed".into();
+        let args = form
+            .prepare_properties(
+                &original,
+                "01990000-0000-7000-8000-000000001001",
+                Path::new("model"),
+                None,
+            )
+            .unwrap();
+        assert!(args.windows(2).any(|p| p == ["--name", "Renamed"]));
+        assert!(
+            !args
+                .iter()
+                .any(|p| matches!(p.as_str(), "--origin" | "--rotation"))
+        );
+        assert!(
+            original
+                .prepare_properties(
+                    &original,
+                    "01990000-0000-7000-8000-000000001001",
+                    Path::new("model"),
+                    None
+                )
+                .is_err()
+        );
     }
 }

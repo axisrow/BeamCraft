@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 /// The start page, then the window of the opened model.
 pub struct Shell {
+    appearance: Option<crate::appearance::Appearance>,
     start: StartPage,
     app: Option<App>,
     cli: PathBuf,
@@ -33,6 +34,11 @@ impl Shell {
         crate::app::inter(&cc.egui_ctx);
         crate::theme::install(&cc.egui_ctx);
         Self {
+            appearance: Some(crate::appearance::Appearance::new(
+                cli.clone(),
+                config_dir.clone(),
+                Arc::clone(&stats),
+            )),
             start: StartPage::new(cli.clone(), config_dir, Arc::clone(&stats)),
             app: None,
             cli,
@@ -47,12 +53,33 @@ impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if let Some(app) = &mut self.app {
             app.ui(ui, frame);
+            if app.return_to_library {
+                let create = app.return_to_create;
+                self.appearance = app.appearance.take();
+                self.app = None;
+                self.start.return_to_models();
+                if create {
+                    self.start.show_create();
+                }
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Title("BeamCraft".into()));
+            }
             return;
+        }
+        if let Some(appearance) = &mut self.appearance {
+            appearance.titlebar(ui, !self.start.busy(), self.start.resizable());
         }
         if let Some(error) = &self.error {
             egui::Panel::bottom("start-error").show(ui, |ui| {
                 ui.colored_label(egui::Color32::from_rgb(230, 80, 60), error);
             });
+        }
+        if self
+            .appearance
+            .as_ref()
+            .is_some_and(crate::appearance::Appearance::busy)
+        {
+            ui.disable();
         }
         let Some(store) = self.start.ui(ui) else {
             return;
@@ -79,7 +106,9 @@ impl eframe::App for Shell {
             None,
             Arc::clone(&self.stats),
         ) {
-            Ok(app) => {
+            Ok(mut app) => {
+                app.appearance = self.appearance.take();
+                app.from_library = true;
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Title(title));
                 self.error = None;
