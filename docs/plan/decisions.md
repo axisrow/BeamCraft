@@ -398,6 +398,17 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   ordered arithmetic of F06 are BeamCraft's own.
 - **MSRV 1.96** (required by `openusd`).
 
+## M5 CLI delivery decisions (2026-10-27)
+
+The owner approved implementation of M5 with all missing engine/API and CLI dependencies
+from M1 through M4, with a matrix of scenarios rather than only the five-part frame.
+The current plate, fastener and member-hole amendments are accepted with their stated MVP
+limits (including the 0.05 mm curve rule and the restricted generated-hole scope).
+Schedule templates (I05) are shared, owned model USD entities with revisions, footprints,
+commit and undo. Items/import, IFC certification, deferred collaboration, native UI/GPU
+acceptance and release publication are not added to this scope. No automatic merges.
+See [M5 CLI delivery](m5-cli-delivery.md) for dependencies and acceptance.
+
 ## Open questions
 
 | # | Question | Blocks |
