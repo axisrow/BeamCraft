@@ -162,6 +162,7 @@ fn main() -> std::process::ExitCode {
             || c == "chamfer-part"
             || c == "split-part"
             || c == "combine-parts"
+            || c == "update-cut"
             || c == "create-workspace"
             || c == "inspect-workspace"
             || c == "publish-workspace"

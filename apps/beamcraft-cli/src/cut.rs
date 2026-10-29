@@ -131,8 +131,82 @@ pub fn cut_by_plane_record(
     request: &CutRequest,
     hook: &mut dyn CommitHook,
 ) -> Result<Cut, PlateError> {
+    apply_cut(store, request, hook, false)
+}
+/// Replace an existing cut with immutable retry evidence and one atomic linked-group update.
+pub fn update_cut_record(
+    store: &RevisionStore,
+    request: &CutRequest,
+    hook: &mut dyn CommitHook,
+) -> Result<Cut, PlateError> {
+    apply_cut(store, request, hook, true)
+}
+fn apply_cut(
+    store: &RevisionStore,
+    request: &CutRequest,
+    hook: &mut dyn CommitHook,
+    update: bool,
+) -> Result<Cut, PlateError> {
     let command = &request.command;
     command.validate_arguments()?;
+    let updated = beamcraft_model::command::UpdateCut { cut: *command };
+    let fingerprint = if update {
+        updated.content_fingerprint()?
+    } else {
+        command.content_fingerprint()?
+    };
+    if update {
+        let op = host_uuid(&request.op_id.to_string())?;
+        match store.query_outcome(&op)? {
+            beamcraft_host::ledger::Outcome::Committed { sequence, .. } => {
+                let revision = store.open_at(sequence)?;
+                let evidence = crate::command_evidence::read(&revision)?
+                    .ok_or_else(|| integrity("cut update has no request evidence"))?;
+                if evidence.fingerprint != fingerprint {
+                    return Err(reuse());
+                }
+                let old = crate::plate::inspect_revision(&revision)?;
+                let element = if let Some(p) = old
+                    .plates
+                    .iter()
+                    .find(|p| p.authored.id == command.target_id)
+                {
+                    CutElement::Plate(Box::new(p.clone()))
+                } else if let Some(m) = old
+                    .members
+                    .iter()
+                    .find(|m| m.authored.id == command.target_id)
+                {
+                    CutElement::Member(Box::new(m.clone()))
+                } else {
+                    return Err(integrity(
+                        "accepted cut target is missing from its revision",
+                    ));
+                };
+                let ordinal = element
+                    .cuts()
+                    .iter()
+                    .find(|r| r.operation_id == command.operation_id)
+                    .ok_or_else(|| integrity("accepted cut record is missing"))?
+                    .ordinal;
+                return Ok(Cut {
+                    replayed: true,
+                    element,
+                    ordinal,
+                    revision: old.revision,
+                    footprint: None,
+                    changed_layers: Vec::new(),
+                });
+            }
+            beamcraft_host::ledger::Outcome::Unknown => {
+                return Err(PlateError::new(
+                    ErrorCode::OutcomeUnknown,
+                    "operation outcome requires recovery",
+                ));
+            }
+            _ => {}
+        }
+    }
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     if head.is_none() {
@@ -186,7 +260,6 @@ pub fn cut_by_plane_record(
     // this cut exactly when its last record is this command's record, which is how a retried
     // request differs from a second cut reusing a record identity.
     let op_host = host_uuid(&request.op_id.to_string())?;
-    let fingerprint = command.content_fingerprint()?;
     let holds = |head: &CutElement| match head.cuts().last() {
         Some(record) => {
             record.operation_id == command.operation_id
@@ -225,8 +298,11 @@ pub fn cut_by_plane_record(
         CutElement::Plate(record) => (Some(&record.authored), None),
         CutElement::Member(record) => (None, Some(&record.authored)),
     };
-    let outcome: CutByPlaneOutcome =
-        cut_by_plane(command, plate, member, &|id: &OpId| used.contains(id))?;
+    let outcome: CutByPlaneOutcome = if update {
+        beamcraft_engine::cut::update_cut(&updated, plate, member)?
+    } else {
+        cut_by_plane(command, plate, member, &|id: &OpId| used.contains(id))?
+    };
     // The element after the replay, with fresh quantities from the same evaluation.
     let materials = material_lookup(&definitions);
     let element = match &outcome.target {

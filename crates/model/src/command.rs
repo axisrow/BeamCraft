@@ -431,6 +431,31 @@ impl PlateCorner {
     }
 }
 
+/// Replace the parameters of an existing cut record, preserving its identity and ordinal.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UpdateCut {
+    /// Target, record identity and replacement plane in element-local millimetres.
+    pub cut: CutByPlane,
+}
+impl UpdateCut {
+    /// Validate the replacement independently of the target's geometry.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.cut.validate_arguments()
+    }
+    /// Versioned request identity, distinct from creating the same plane.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        let mut bytes = b"BeamCraft/A03/UpdateCut/v1\0".to_vec();
+        bytes.extend_from_slice(self.cut.content_fingerprint()?.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "content",
+                "cut request exceeds its bound",
+            )
+        })
+    }
+}
+
 /// F04 section 7 `CreatePlate`. `material_digest` pins an existing immutable material definition;
 /// whether the digest resolves (`NOT_FOUND`) is the engine's decision, not an argument check.
 #[derive(Debug, Clone, PartialEq)]
