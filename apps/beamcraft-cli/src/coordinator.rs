@@ -25,6 +25,14 @@
 //!   `BASE_REVISION_MISMATCH` with the current head, and nothing is written. The same payload
 //!   replays. The current head in an answer is re-read after the decision and marked `known` or
 //!   `unavailable`; a failed re-read never changes the decision itself.
+//! - `rebase` with `workspace`, `op_id`, `expected_head` and `expected_draft`: the C03 rebase of
+//!   the workspace's unsent draft onto the published head ([`crate::workspace::rebase`]). The
+//!   authenticated actor is the rebase actor and must own the workspace (`PERMISSION_DENIED`
+//!   otherwise); a request cannot name an actor. A rebase never publishes: the published head is
+//!   an input, never a result, so the client still needs an explicit `publish` to move it. The
+//!   same request identity replays its recorded outcome exactly once, also after a crash between
+//!   the draft commit and the answer; a moved head is `BASE_REVISION_MISMATCH` with the current
+//!   head, and a conflicted draft is answered with the complete semantic diagnostics.
 //!
 //! The queue makes publications of one coordinator strictly sequential, so two concurrent
 //! publications from the same base accept exactly one; a commit to the published store from
@@ -36,10 +44,11 @@
 //! symbolic link or name that leaves it).
 
 use crate::changeset::{apply_changeset, read_changeset};
-use crate::plate::PlateError;
+use crate::plate::{PlateError, RevisionSummary};
 use crate::workspace::{
     compensation::{CompensationRequest, CompensationResult, compensate_workspace},
     conflicts::conflict_json,
+    rebase::{RebaseRequest, RebaseResult, rebase_workspace},
 };
 use beamcraft_host::coordinator::{Handler, Request, rejection};
 use beamcraft_host::revision::{NoFault, RevisionError, RevisionStore, Uuid7};
@@ -144,6 +153,7 @@ impl PublishHandler {
             "head" => &[],
             "compensate" => &["workspace", "op_id", "target_revision", "expected_head"],
             "publish" => &["workspace", "changeset", "expected_head"],
+            "rebase" => &["workspace", "op_id", "expected_head", "expected_draft"],
             _ => {
                 return Err(refused(
                     ErrorCode::UnsupportedCommand,
@@ -262,6 +272,100 @@ impl PublishHandler {
                 Err(e) => Err(e),
             };
         }
+        if request.op == "rebase" {
+            let op_id = OpId::parse(text("op_id")?)
+                .map_err(|_| refused(ErrorCode::InvalidArgument, "op_id is not an operation id"))?;
+            let expected_head = Uuid7::parse(text("expected_head")?).map_err(|_| {
+                refused(
+                    ErrorCode::InvalidArgument,
+                    "expected_head is not a revision id",
+                )
+            })?;
+            let expected_draft = Uuid7::parse(text("expected_draft")?).map_err(|_| {
+                refused(
+                    ErrorCode::InvalidArgument,
+                    "expected_draft is not a revision id",
+                )
+            })?;
+            let actor = Uuid7::parse(&request.actor.to_string()).map_err(|_| {
+                refused(
+                    ErrorCode::InvalidArgument,
+                    "the authenticated actor is not a canonical id",
+                )
+            })?;
+            let dir = self.workspace(text("workspace")?)?;
+            let blobs = BlobStore::new(&dir).map_err(|e| PlateError {
+                rule_id: None,
+                code: e.code(),
+                message: "workspace store is not usable",
+            })?;
+            let workspace = RevisionStore::new(blobs);
+            let rebase = RebaseRequest {
+                op_id,
+                actor,
+                expected_head,
+                expected_draft,
+            };
+            return match rebase_workspace(&self.published, &workspace, &dir, &rebase, &mut NoFault)
+            {
+                Ok(RebaseResult::Rebased(rebased)) => {
+                    let (head, status) = current(self);
+                    Ok(Json::object([
+                        (
+                            "outcome",
+                            Json::text(if rebased.replayed {
+                                "workspace_rebase_replayed"
+                            } else {
+                                "workspace_rebased"
+                            }),
+                        ),
+                        ("revision", revision_json(&rebased.revision)),
+                        (
+                            "base_revision",
+                            Json::text(rebased.accepted.revision.as_str()),
+                        ),
+                        (
+                            "base_manifest",
+                            Json::text(rebased.accepted.manifest.to_string()),
+                        ),
+                        (
+                            "retained_operations",
+                            Json::text(rebased.retained_operations.to_string()),
+                        ),
+                        ("current_head", head),
+                        ("current_head_status", status),
+                    ]))
+                }
+                Ok(RebaseResult::Conflicted(conflicts)) => {
+                    let (head, status) = current(self);
+                    Ok(Json::object([
+                        ("outcome", Json::text("rejected")),
+                        ("code", Json::text(ErrorCode::DependencyConflict.as_str())),
+                        (
+                            "message",
+                            Json::text("rebase requires explicit resolution of semantic conflicts"),
+                        ),
+                        (
+                            "diagnostics",
+                            Json::Array(conflicts.iter().map(conflict_json).collect()),
+                        ),
+                        ("current_head", head),
+                        ("current_head_status", status),
+                    ]))
+                }
+                Err(e) if e.code == ErrorCode::BaseRevisionMismatch => {
+                    let (head, status) = current(self);
+                    Ok(Json::object([
+                        ("outcome", Json::text("rejected")),
+                        ("code", Json::text(e.code.as_str())),
+                        ("message", Json::text(e.message)),
+                        ("current_head", head),
+                        ("current_head_status", status),
+                    ]))
+                }
+                Err(e) => Err(e),
+            };
+        }
         let dir = self.workspace(text("workspace")?)?;
         let digest = text("changeset")?
             .parse::<ContentDigest>()
@@ -326,4 +430,51 @@ impl Handler for PublishHandler {
         self.dispatch(request)
             .unwrap_or_else(|e| rejection(e.code, e.message))
     }
+}
+
+/// A revision summary in the same shape the `rebase-workspace` command prints, so the wire
+/// answer carries the local operation's typed result unchanged.
+fn revision_json(revision: &RevisionSummary) -> Json {
+    let details = revision.details.as_ref().map_or(Json::Null, |d| {
+        Json::object([
+            ("project_id", Json::text(d.project.clone())),
+            ("workspace_id", Json::text(d.workspace.clone())),
+            ("op_id", Json::text(d.op.clone())),
+            ("workspace_generation", Json::text(d.generation.to_string())),
+            (
+                "index",
+                d.index.map_or(Json::Null, |(structure, prims)| {
+                    Json::object([
+                        ("structure_digest", Json::text(structure.to_string())),
+                        ("prim_count", Json::text(prims.to_string())),
+                    ])
+                }),
+            ),
+            (
+                "layers",
+                Json::Array(
+                    d.layers
+                        .iter()
+                        .map(|l| {
+                            Json::object([
+                                ("role", Json::text(l.role)),
+                                ("name", Json::text(l.name.clone())),
+                                ("digest", Json::text(l.digest.to_string())),
+                                ("size", Json::text(l.size.to_string())),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ])
+    });
+    Json::object([
+        ("revision_id", Json::text(revision.revision_id.clone())),
+        ("sequence", Json::text(revision.sequence.to_string())),
+        (
+            "manifest_digest",
+            Json::text(revision.manifest_digest.to_string()),
+        ),
+        ("manifest", details),
+    ])
 }

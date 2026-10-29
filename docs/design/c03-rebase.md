@@ -1,9 +1,9 @@
 # C03: rebase of independent workspace edits
 
-Status: design and executable-acceptance specification; runtime implementation is not present.
-Scope: C03 from fork issue #12 / upstream #126. C04 conflict-resolution UI, C05 offline stress
-and C06 compensation retain their own packages and PRs. This document does not complete any
-of those packages or change the deferred implementation-plan statuses.
+Status: **implemented**: the local rebase (upstream #219) and, as of 2026-10-30, the
+authenticated coordinator rebase ("Rebase through the coordinator" below). The acceptance below
+stays required. C04 conflict-resolution UI, C05 offline stress and C06 compensation retain their
+own packages and PRs. This document does not change any deferred implementation-plan statuses.
 
 Baseline inspected: fork `master` `dae17846453b0e18d58b9fad55f3acbd6c22100d`.
 
@@ -132,6 +132,25 @@ draft CAS. The guard also holds a shared maintenance lease, so a serving coordin
 and compaction is excluded. A conflicting writer/pinner receives `BACKEND_UNAVAILABLE` before a
 commit intent; reads and edits of another draft remain available. This primitive does not itself
 plan, merge or recover a rebase, and the runtime still needs to use it with the metadata guard.
+
+## Rebase through the coordinator
+
+The coordinator's `rebase` operation (`apps/beamcraft-cli/src/coordinator.rs`) runs the same
+`rebase_workspace` engine path with the token-derived actor: the authenticated client must own
+the workspace (`PERMISSION_DENIED`, checked before the replay decision as C01 requires), and a
+request cannot name an actor. The client supplies the full request identity — `workspace`,
+`op_id`, `expected_head`, `expected_draft` — through the `rebase-coordinator` CLI command. The
+answers mirror the local operation: `workspace_rebased` / `workspace_rebase_replayed` with the
+revision summary, the accepted basis and the retained operation count, `BASE_REVISION_MISMATCH`
+with the current head when an input pin moved, and the complete conflict diagnostics for a
+conflicted plan. A rebase never publishes: the head in an answer is informational.
+
+Recovery runs before any state is interpreted (`WorkspaceState::open` resolves a pending
+intent), so a retry after a crash between the draft commit and the answer finalizes the
+metadata and replays the recorded outcome exactly once; a kill before the commit is closed by
+`recover-revision` and the retry commits exactly once. The acceptance rows C03-R01..C03-R08 of
+`docs/design/c03-c06-acceptance.md` are executable in `apps/beamcraft-cli/tests/coordinator.rs`,
+including the entry-point replay row R08 across the local CLI and the wire.
 
 ## Executable acceptance required before completion
 

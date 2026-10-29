@@ -4,7 +4,8 @@ Date: 2026-10-25. Status: **acceptance specification; the runtime is deferred af
 owner decision. The C05 rows below are executable tests as of 2026-10-27
 (`apps/beamcraft-cli/tests/offline_clients.rs`), at the largest scale the default suite carries —
 the per-commit verification is O(revisions), so the full 1000 + 1000 sweep stays out of it. The
-authenticated coordinator rebase (C03) and compensation (C06) remain specified only.**
+authenticated coordinator rebase rows (C03-R01..R08) are executable as of 2026-10-30
+(`apps/beamcraft-cli/tests/coordinator.rs`); compensation (C06) remains specified only.**
 Scope: fork issue #12 and fork issue #160 (upstream #331). The local rebase acceptance cases
 C03-01 to C03-14 in `docs/design/c03-rebase.md` stay required unchanged. This document specifies
 the remaining per-slice acceptance: the authenticated coordinator rebase (C03), the
