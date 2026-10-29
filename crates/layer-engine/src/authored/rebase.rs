@@ -78,6 +78,7 @@ fn property_group(name: &str) -> Option<G> {
         | "steel:hole:vertexCounts"
         | "steel:hole:operationIds"
         | "steel:hole:ordinals"
+        | "steel:member:pathType"
         | "bim:axisPointsMm"
         | "steel:member:rollRad"
         | "steel:member:planePosition"

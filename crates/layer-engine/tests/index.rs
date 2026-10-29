@@ -914,6 +914,7 @@ fn member(id: &str, name: &str) -> Change {
         name: name.into(),
         shape: Shape::Member {
             kind: MemberKind::Beam,
+            curved: false,
             axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
             profile: resources()[0].digest,
             roll_rad: Some(0.125),

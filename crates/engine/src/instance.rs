@@ -284,6 +284,7 @@ mod tests {
     #[test]
     fn a_member_instance_copy_retains_the_canonical_cuts() {
         let source = AuthoredMember {
+            curved: false,
             id: id(1),
             kind: beamcraft_model::command::MemberKind::Beam,
             name: "Beam".into(),

@@ -942,6 +942,24 @@ pub(super) fn snapshot(
                 }
                 "beam" | "column" => {
                     let axis = points(p, "bim:axisPointsMm")?;
+                    if let Some(prop) = p
+                        .properties
+                        .iter()
+                        .find(|v| v.name == "steel:member:pathType")
+                    {
+                        if prop.type_name != "token"
+                            || text(p, "steel:member:pathType", "token")? != "arc"
+                            || axis.len() != 3
+                        {
+                            return Err(invalid());
+                        }
+                        if p.properties
+                            .iter()
+                            .any(|v| v.name == "steel:member:rollRad")
+                        {
+                            return Err(invalid());
+                        }
+                    }
                     if axis.len() < 2 || axis.len() > MAX_MEMBER_PATH_POINTS {
                         return Err(invalid());
                     }
@@ -2126,6 +2144,7 @@ pub(super) fn changes(
                         cut_values(cuts)?;
                     }
                     Shape::Member {
+                        curved,
                         axis_mm,
                         roll_rad,
                         profile,
@@ -2134,6 +2153,9 @@ pub(super) fn changes(
                         ..
                     } => {
                         if axis_mm.len() < 2 || axis_mm.len() > MAX_MEMBER_PATH_POINTS {
+                            return Err(invalid());
+                        }
+                        if *curved && (axis_mm.len() != 3 || roll_rad.is_some()) {
                             return Err(invalid());
                         }
                         cap(axis_mm.iter().flatten().copied(), 1e9)?;

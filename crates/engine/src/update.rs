@@ -385,6 +385,7 @@ mod tests {
 
     fn member() -> AuthoredMember {
         AuthoredMember {
+            curved: false,
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),
@@ -420,6 +421,7 @@ mod tests {
     fn a_member_has_no_thickness() {
         let profile = Sha256::digest(b"profile").unwrap();
         let member = AuthoredMember {
+            curved: false,
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000006").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),

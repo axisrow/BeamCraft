@@ -181,6 +181,7 @@ pub struct SweepResult {
     approximated: bool,
     segments: u32,
     deviation_bound_mm: Option<f64>,
+    arc_length_mm: Option<f64>,
 }
 
 impl SweepResult {
@@ -230,8 +231,12 @@ impl SweepResult {
         self.segments
     }
 
-    /// Proven upper bound of the distance between the swept surface and the true arc, in
-    /// millimetres; `None` for a polyline path.
+    /// True circular path length; absent for a polyline.
+    pub const fn arc_length_mm(&self) -> Option<f64> {
+        self.arc_length_mm
+    }
+
+    /// Achieved upper bound for the faceted swept surface.
     pub const fn chord_deviation_bound_mm(&self) -> Option<f64> {
         self.deviation_bound_mm
     }
@@ -269,6 +274,7 @@ struct Chords {
     start_tangent: Option<Vec3>,
     end_tangent: Option<Vec3>,
     deviation_bound_mm: Option<f64>,
+    arc_length_mm: Option<f64>,
 }
 
 /// The welded rings of a traversal: placed vertices, each ring's plane normal, the chord
@@ -480,6 +486,7 @@ fn chord_polyline(points: &[Point3]) -> Result<Chords, SweepFailure> {
         start_tangent: None,
         end_tangent: None,
         deviation_bound_mm: None,
+        arc_length_mm: None,
     })
 }
 
@@ -569,6 +576,9 @@ fn chord_arc(
     if !facets.is_finite() || facets > 1021.0 {
         return Err(SweepFailure::Path(PathCode::DeviationUnreachable));
     }
+    if radius * sweep > DIMENSION_CAP_MM {
+        return Err(SweepFailure::Path(PathCode::AboveLimit));
+    }
     let facet_angle = sweep / facets;
     let tangent = |phi: f64| -> Result<Vec3, SweepFailure> {
         e1.scaled(-phi.sin() * sign)
@@ -591,6 +601,7 @@ fn chord_arc(
         start_tangent: Some(tangent(a0)?),
         end_tangent: Some(tangent(a0 + sign * sweep)?),
         deviation_bound_mm: Some(radius_out * facet_angle * facet_angle / 8.0),
+        arc_length_mm: Some(radius * sweep),
     })
 }
 
@@ -906,5 +917,6 @@ pub fn sweep(input: &Sweep) -> Result<SweepResult, SweepFailure> {
         net_area_mm2: profile.net_area_mm2(),
         approximated: shape.approximated || is_arc,
         deviation_bound_mm: chords.deviation_bound_mm,
+        arc_length_mm: chords.arc_length_mm,
     })
 }

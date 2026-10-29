@@ -3,7 +3,7 @@
 
 //! Help owned by the member command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-member", "create-polybeam"];
+pub(super) const COMMANDS: &[&str] = &["create-member", "create-polybeam", "create-curved-beam"];
 
 pub(super) const HELP: &str = concat!(
     "Member (P03): create-member --store ROOT --start X,Y,Z --end X,Y,Z (--profile-digest ",
@@ -28,6 +28,7 @@ pub(super) const HELP: &str = concat!(
     "section frame is rolled by --roll about the axis first and then mapped by the ",
     "quaternion, so both compose; rigid placement leaves the local mesh and quantities ",
     "unchanged; inspect-elements lists plates and members)\n",
+    "Curved beam (P13): create-curved-beam with --points \"START;ON;END\" or --start X,Y,Z --end X,Y,Z --radius MM --normal X,Y,Z; shared profile/material/identity/placement options as create-polybeam. Surface chord bound is 0.05 mm; lengths are true arcs, uncut volumes use effective section area times true arc length. ",
     "Polybeam (P12): create-polybeam --store ROOT --points \"X,Y,Z;X,Y,Z[;...]\" ",
     "(--profile-digest SHA256 | --profile NAME) [--kind beam|column] [--material-digest ",
     "SHA256 | --material NAME] [--name TEXT] [--class INT32] [--translation X,Y,Z] ",

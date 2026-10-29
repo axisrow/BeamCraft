@@ -1068,6 +1068,7 @@ mod tests {
             name: "Member".into(),
             class: 0,
             axis_points_mm: vec![[0.0, 0.0, 0.0], [length, 0.0, 0.0]],
+            curved: false,
             profile,
             roll_rad: None,
             section_placement: None,

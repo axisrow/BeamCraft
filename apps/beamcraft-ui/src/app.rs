@@ -2206,6 +2206,7 @@ impl App {
         // way, so the preview never disagrees with what Commit would build.
         let orientation = crate::tools::orientation_or_identity(&self.tools.member.orientation)?;
         let authored = AuthoredMember {
+            curved: false,
             id: ElementId::parse("01990000-0000-7000-8000-00000000e347").ok()?,
             kind: match self.tools.member.kind {
                 crate::tools::MemberKind::Beam => ModelMemberKind::Beam,

@@ -329,6 +329,9 @@ pub fn member_gross_signature(
         None => bytes.push(0),
     }
     float(&mut bytes, area);
+    if member.curved {
+        bytes.extend_from_slice(b"P13/circular-path\0");
+    }
     digest(&bytes)
 }
 
@@ -524,6 +527,7 @@ mod tests {
     fn member() -> AuthoredMember {
         use beamcraft_model::command::MemberKind;
         AuthoredMember {
+            curved: false,
             id: ElementId::parse("019a7bf0-0000-7000-8000-000000000009").unwrap(),
             kind: MemberKind::Beam,
             name: "Beam".into(),

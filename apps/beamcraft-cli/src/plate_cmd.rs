@@ -20,7 +20,8 @@ use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::hole::{AddHoleRequest, add_hole_command};
 use beamcraft_cli::library::open_lookup;
 use beamcraft_cli::member::{
-    CreateMemberRequest, CreatePolybeamRequest, create_member, create_polybeam,
+    CreateCurvedBeamRequest, CreateMemberRequest, CreatePolybeamRequest, create_curved_beam,
+    create_member, create_polybeam,
 };
 use beamcraft_cli::plate::{
     AcceptedBinding, CreateRequest, Created, Inspection, PlateError, ProjectClaim, QuantityReport,
@@ -228,6 +229,8 @@ const CREATE_MEMBER_OPTIONS: &[&str] = &[
     "--end-at-grid",
 ];
 
+const CREATE_CURVED_OPTIONS: &[&str] = &["--start", "--end", "--radius", "--normal"];
+
 const CREATE_POLYBEAM_OPTIONS: &[&str] = &[
     "--class",
     "--store",
@@ -395,7 +398,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let allowed: &[&str] = match *command {
         "create-plate" => CREATE_OPTIONS,
         "create-member" => CREATE_MEMBER_OPTIONS,
-        "create-polybeam" => CREATE_POLYBEAM_OPTIONS,
+        "create-polybeam" | "create-curved-beam" => CREATE_POLYBEAM_OPTIONS,
         "add-hole" => ADD_HOLE_OPTIONS,
         "update-hole" => UPDATE_HOLE_OPTIONS,
         "remove-hole" => REMOVE_CUT_OPTIONS,
@@ -427,7 +430,10 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let mut options = BTreeMap::new();
     for pair in tail.as_chunks::<2>().0 {
         let [key, value] = pair;
-        if !allowed.contains(key) || options.insert(*key, *value).is_some() {
+        if !(allowed.contains(key)
+            || *command == "create-curved-beam" && CREATE_CURVED_OPTIONS.contains(key))
+            || options.insert(*key, *value).is_some()
+        {
             return Err(invalid("unknown or repeated option"));
         }
     }
@@ -455,7 +461,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     match *command {
         "create-plate" => create(&store, &options, candidates),
         "create-member" => create_member_command(&store, &options, candidates),
-        "create-polybeam" => create_polybeam_command(&store, &options, candidates),
+        "create-polybeam" => create_polybeam_command(&store, &options, candidates, false),
+        "create-curved-beam" => create_polybeam_command(&store, &options, candidates, true),
         "add-hole" => add_hole_cli(&store, &options, false, false),
         "update-hole" => add_hole_cli(&store, &options, true, false),
         "remove-hole" => add_hole_cli(&store, &options, false, true),
@@ -2383,6 +2390,7 @@ fn create_polybeam_command(
     store: &RevisionStore,
     options: &BTreeMap<&str, &str>,
     candidates: &mut Vec<Json>,
+    curved: bool,
 ) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
@@ -2422,7 +2430,30 @@ fn create_polybeam_command(
         Some("column") => MemberKind::Column,
         Some(_) => return Err(invalid("--kind is beam or column")),
     };
-    let points = path_points(given("--points").ok_or_else(|| invalid("--points is required"))?)?;
+    let radius_mode = ["--start", "--end", "--radius", "--normal"]
+        .iter()
+        .any(|key| options.contains_key(key));
+    let points = if curved && radius_mode {
+        if given("--points").is_some() {
+            return Err(invalid(
+                "use either --points or --start/--end/--radius/--normal",
+            ));
+        }
+        let required = |k| {
+            given(k).ok_or_else(|| {
+                invalid("radius mode requires --start, --end, --radius and --normal")
+            })
+        };
+        beamcraft_engine::member::arc_from_radius(
+            translation(required("--start")?)?,
+            translation(required("--end")?)?,
+            float(options, "--radius")?,
+            translation(required("--normal")?)?,
+        )?
+        .to_vec()
+    } else {
+        path_points(given("--points").ok_or_else(|| invalid("--points is required"))?)?
+    };
     let replay = if options.contains_key("--op-id")
         && (options.contains_key("--profile") || options.contains_key("--material"))
     {
@@ -2467,25 +2498,48 @@ fn create_polybeam_command(
         },
         material_digest,
     };
-    let created = create_polybeam(
-        store,
-        &CreatePolybeamRequest {
-            op_id,
-            revision_id,
-            actor,
-            project,
-            workspace,
-            command,
-        },
-        &mut NoFault,
-    )?;
+    let created = if curved {
+        create_curved_beam(
+            store,
+            &CreateCurvedBeamRequest {
+                op_id,
+                revision_id,
+                actor,
+                project,
+                workspace,
+                command: beamcraft_model::command::CreateCurvedBeam { member: command },
+            },
+            &mut NoFault,
+        )?
+    } else {
+        create_polybeam(
+            store,
+            &CreatePolybeamRequest {
+                op_id,
+                revision_id,
+                actor,
+                project,
+                workspace,
+                command,
+            },
+            &mut NoFault,
+        )?
+    };
     Ok(Json::object([
         (
             "outcome",
             Json::text(if created.replayed {
-                "polybeam_replayed"
+                if curved {
+                    "curved_beam_replayed"
+                } else {
+                    "polybeam_replayed"
+                }
             } else {
-                "polybeam_created"
+                if curved {
+                    "curved_beam_created"
+                } else {
+                    "polybeam_created"
+                }
             }),
         ),
         ("op_id", Json::text(op_id.to_string())),
@@ -2630,6 +2684,15 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
                     .map(|point| triple(*point))
                     .collect::<Run<Vec<_>>>()?,
             ),
+        ),
+        (
+            "path_type",
+            Json::text(if a.curved { "arc" } else { "polyline" }),
+        ),
+        ("axis_length_mm", num(record.body.axis_length_mm)?),
+        (
+            "arc_deviation_mm",
+            record.body.arc_deviation_mm.map_or(Ok(Json::Null), num)?,
         ),
         ("roll_rad", a.roll_rad.map_or(Ok(Json::Null), num)?),
         (
