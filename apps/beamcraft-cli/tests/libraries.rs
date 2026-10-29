@@ -200,6 +200,9 @@ fn every_family_of_the_shipped_library_builds_a_member() {
     let f = Fixture::new();
     let listed = f.raw(&["list-library", "--library", SHIPPED]).1;
     for entry in at(&listed, &["entries"]).array().unwrap() {
+        // Each entry is an independent admission/placement case. A growing model would
+        // re-evaluate all earlier families on every command without checking a new property.
+        let f = Fixture::new();
         let designation = text(entry, "designation");
         let created = f.ok(
             "define-profile",
