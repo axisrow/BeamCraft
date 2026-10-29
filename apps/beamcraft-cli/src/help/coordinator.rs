@@ -8,6 +8,7 @@ pub(super) const COMMANDS: &[&str] = &[
     "publish-changeset",
     "inspect-coordinator-head",
     "coordinator-compensate",
+    "coordinator-rebase",
 ];
 
 pub(super) const HELP: &str = concat!(
@@ -27,5 +28,11 @@ pub(super) const HELP: &str = concat!(
     "against the current head and every intersecting later accepted operation is named in a ",
     "DEPENDENCY_CONFLICT report; the published head never moves: package and publish ",
     "explicitly afterwards; the same request identity replays across this wire and the local ",
-    "CLI)",
+    "CLI); coordinator-rebase --address 127.0.0.1:PORT ",
+    "--token-file FILE --workspace NAME --op-id UUID --expected-head REVISION_UUID ",
+    "--expected-draft DRAFT_UUID (rebases NAME's unsent draft onto the published head with the ",
+    "token actor, the local rebase-workspace semantics; the answer is the typed result plus ",
+    "the current head, and the published head never moves: publish explicitly afterwards; ",
+    "DEPENDENCY_CONFLICT carries the bounded report until an explicit resolution; the same ",
+    "request identity replays across this wire and the local CLI)",
 );
