@@ -17,8 +17,9 @@ Usage: bash tools/fork-sync.sh [sync] [--dry-run] [--yes]
 Modes:
   sync     (default) fetch upstream, merge upstream/master into the local fork
            master, run the local triple (fmt --check, clippy -D warnings,
-           test --workspace) BEFORE committing, push origin/master, then delete
-           merged sync/* branches. No PR: master is the integration branch.
+           nextest run --workspace plus the doctests) BEFORE committing, push
+           origin/master, then delete merged sync/* branches. No PR: master is
+           the integration branch.
            Conflicting files keep their entire fork version; other files merge
            normally. Skipped upstream changes require manual integration.
            An unresolved conflict stops the run with exit 2.
