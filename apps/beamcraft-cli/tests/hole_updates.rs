@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 //! A04 in-place hole edits preserve record identities, legacy holes and request evidence.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_json::Json;
 use support::StoreFixture;
 const RECORD: &str = "019a7bf0-0000-7000-8000-000000ad0001";

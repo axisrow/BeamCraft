@@ -16,7 +16,7 @@
     clippy::panic
 )]
 
-mod support;
+use crate::support;
 
 use beamcraft_json::Json;
 

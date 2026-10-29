@@ -46,9 +46,9 @@ dimension deviations respectively. The negative-width error also reproduces thro
 ## Reproduce
 
 ```sh
-cargo test --locked -p beamcraft-cli --test f04_cases --test f06_cases --test f06_member_cases -- --nocapture
-cargo test --locked -p beamcraft-cli --test plate --test recovery --test history_compact --test prim_naming --test independent_reader
-cargo test --locked -p beamcraft-cli --test members --test copy --test workspace --test undo
+cargo test --locked -p beamcraft-cli --test cli -- f04_cases:: f06_cases:: f06_member_cases:: --nocapture
+cargo test --locked -p beamcraft-cli --test cli -- plate:: recovery:: history_compact:: prim_naming:: independent_reader::
+cargo test --locked -p beamcraft-cli --test cli -- members:: copy:: workspace:: undo::
 ```
 
 These execute the actual frozen JSON fixtures, public engine functions and real CLI processes.

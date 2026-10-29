@@ -13,7 +13,7 @@
     clippy::panic
 )]
 
-mod support;
+use crate::support;
 
 use support::{at, text};
 

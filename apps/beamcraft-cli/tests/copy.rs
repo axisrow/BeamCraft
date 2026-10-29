@@ -8,12 +8,12 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
+use crate::support;
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},
     storage::BlobStore,
 };
-mod support;
 
 use support::{at, text};
 

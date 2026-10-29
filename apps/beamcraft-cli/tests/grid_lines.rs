@@ -3,7 +3,7 @@
 
 //! T01.2 line editing through the real CLI and atomic revisions.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_json::Json;
 use support::text;
 const GRID: &str = "01990000-0000-7000-8000-000000001001";

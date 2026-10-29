@@ -483,26 +483,28 @@ fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
     let f = Fixture::new();
     let mut created: Vec<(String, String, f64, f64)> =
         vec![(eid(SEED), "Seed".to_owned(), 500.0, 1_200_000.0)];
-    for n in 1..=N {
-        let reply = f.create("a", n, 400, &format!("A-{n}"));
-        let plate = reply.get("plate").unwrap();
-        created.push((
-            text(plate, "element_id").to_owned(),
-            format!("A-{n}"),
-            400.0,
-            num(plate, &["quantities", "volume", "mm3"]),
-        ));
-    }
-    for n in 1..=N {
-        let reply = f.create("b", B + n, 600, &format!("B-{n}"));
-        let plate = reply.get("plate").unwrap();
-        created.push((
-            text(plate, "element_id").to_owned(),
-            format!("B-{n}"),
-            600.0,
-            num(plate, &["quantities", "volume", "mm3"]),
-        ));
-    }
+    let author = |workspace: &str, first: usize, width: usize, prefix: &str| {
+        (1..=N)
+            .map(|n| {
+                let reply = f.create(workspace, first + n, width, &format!("{prefix}-{n}"));
+                let plate = reply.get("plate").unwrap();
+                (
+                    text(plate, "element_id").to_owned(),
+                    format!("{prefix}-{n}"),
+                    width as f64,
+                    num(plate, &["quantities", "volume", "mm3"]),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    // The two clients are offline from each other: each workspace is its own store, so their
+    // drafts are authored side by side, as two machines would.
+    let (a, b) = std::thread::scope(|scope| {
+        let b = scope.spawn(|| author("b", B, 600, "B"));
+        (author("a", 0, 400, "A"), b.join().unwrap())
+    });
+    created.extend(a);
+    created.extend(b);
 
     let (code, published) = f.publish("a");
     assert_eq!(code, 0, "{published:?}");
@@ -641,77 +643,102 @@ fn after_a_base_mismatch_only_rebase_repackage_publish_moves_forward() {
 }
 
 // C05-03 and C05-05: the same changeset identity publishes exactly once across every
-// commit crash window. The delivery is injected-dead at each point, recovery closes the
-// interrupted commit, a fresh attempt finishes it exactly once, later submissions replay
-// whatever the current head is, and a different payload under the identity is refused.
+// commit crash window, one test per window. The delivery is injected-dead at the point,
+// recovery closes the interrupted commit, a fresh attempt finishes it exactly once, later
+// submissions replay whatever the current head is, and a different payload under the
+// identity is refused.
+fn a_changeset_identity_publishes_exactly_once_after_a_crash_at(point: CommitPoint) {
+    let f = Fixture::new();
+    // B's changeset names the head it was packaged against, so the crash windows run
+    // before anyone else publishes.
+    f.create("b", B + 1, 600, "B-one");
+    let (digest, _) = f.package("b", Some(CHANGESET));
+
+    // The apply dies at `point`, after the durable claim binding.
+    assert!(
+        f.crashed_delivery(&digest, point),
+        "{point:?}: the injected crash did not happen"
+    );
+    let (code, recovered) = f.recover();
+    assert_eq!(code, 0, "{point:?}: {recovered:?}");
+
+    // A fresh process finishes the publication exactly once: a crash before the root
+    // switch is finished by the retry, a crash after it is answered from the record.
+    let finishes = !matches!(point, CommitPoint::Switched | CommitPoint::Recorded);
+    let applied = f.deliver_in_process(&digest).unwrap();
+    assert_eq!(applied.replayed, !finishes, "{point:?}");
+    // No lost writes and no double publication, whatever the window was.
+    let plates = f.plates("published");
+    assert_eq!(plates.len(), 2, "{point:?}");
+    assert!(
+        plates
+            .iter()
+            .any(|(element, _, width, _)| element == &eid(B + 1) && width == &600.0),
+        "{point:?}: B's element is lost"
+    );
+
+    // Every submission replays the recorded answer whatever the current head is.
+    // A publishes next: its base moved too, so it rebases before its own publication.
+    f.create("a", 1, 400, "A-one");
+    let accepted = f.head("published");
+    let a_draft = f.head("workspaces/a");
+    let (code, a_rebased) = f.rebase("a", 907, &accepted, &a_draft);
+    assert_eq!(code, 0, "{point:?}: {a_rebased:?}");
+    let (code, published) = f.publish("a");
+    assert_eq!(code, 0, "{published:?}");
+    let head = f.head("published");
+    let later = f.deliver_in_process(&digest).unwrap();
+    assert!(later.replayed, "{point:?}");
+    assert_eq!(f.head("published").revision(), head.revision());
+
+    // A different payload under that identity is refused forever; packaging it needs
+    // B's own rebase onto the head that moved meanwhile.
+    f.create("b", B + 2, 700, "B-two");
+    let accepted = f.head("published");
+    let draft = f.head("workspaces/b");
+    let (code, rebased) = f.rebase("b", 906, &accepted, &draft);
+    assert_eq!(code, 0, "{point:?}: {rebased:?}");
+    let (other, _) = f.package("b", Some(CHANGESET));
+    assert_ne!(other, digest);
+    let (code, reused) = f.deliver(&other);
+    assert_eq!(code, 2, "{reused:?}");
+    assert_eq!(text(&reused, "code"), "OP_ID_REUSE");
+    assert_eq!(f.head("published").revision(), head.revision());
+}
+
 #[test]
-fn a_changeset_identity_publishes_exactly_once_across_crash_windows() {
-    for point in [
-        CommitPoint::Checked,
-        CommitPoint::IntentRecorded,
-        CommitPoint::BlobsVerified,
-        CommitPoint::ManifestStored,
-        CommitPoint::RecordStaged,
-        CommitPoint::Switched,
-        CommitPoint::Recorded,
-    ] {
-        let f = Fixture::new();
-        // B's changeset names the head it was packaged against, so the crash windows run
-        // before anyone else publishes.
-        f.create("b", B + 1, 600, "B-one");
-        let (digest, _) = f.package("b", Some(CHANGESET));
+fn a_changeset_identity_publishes_exactly_once_after_a_crash_at_checked() {
+    a_changeset_identity_publishes_exactly_once_after_a_crash_at(CommitPoint::Checked);
+}
 
-        // The apply dies at `point`, after the durable claim binding.
-        assert!(
-            f.crashed_delivery(&digest, point),
-            "{point:?}: the injected crash did not happen"
-        );
-        let (code, recovered) = f.recover();
-        assert_eq!(code, 0, "{point:?}: {recovered:?}");
+#[test]
+fn a_changeset_identity_publishes_exactly_once_after_a_crash_at_intent_recorded() {
+    a_changeset_identity_publishes_exactly_once_after_a_crash_at(CommitPoint::IntentRecorded);
+}
 
-        // A fresh process finishes the publication exactly once: a crash before the root
-        // switch is finished by the retry, a crash after it is answered from the record.
-        let finishes = !matches!(point, CommitPoint::Switched | CommitPoint::Recorded);
-        let applied = f.deliver_in_process(&digest).unwrap();
-        assert_eq!(applied.replayed, !finishes, "{point:?}");
-        // No lost writes and no double publication, whatever the window was.
-        let plates = f.plates("published");
-        assert_eq!(plates.len(), 2, "{point:?}");
-        assert!(
-            plates
-                .iter()
-                .any(|(element, _, width, _)| element == &eid(B + 1) && width == &600.0),
-            "{point:?}: B's element is lost"
-        );
+#[test]
+fn a_changeset_identity_publishes_exactly_once_after_a_crash_at_blobs_verified() {
+    a_changeset_identity_publishes_exactly_once_after_a_crash_at(CommitPoint::BlobsVerified);
+}
 
-        // Every submission replays the recorded answer whatever the current head is.
-        // A publishes next: its base moved too, so it rebases before its own publication.
-        f.create("a", 1, 400, "A-one");
-        let accepted = f.head("published");
-        let a_draft = f.head("workspaces/a");
-        let (code, a_rebased) = f.rebase("a", 907, &accepted, &a_draft);
-        assert_eq!(code, 0, "{point:?}: {a_rebased:?}");
-        let (code, published) = f.publish("a");
-        assert_eq!(code, 0, "{published:?}");
-        let head = f.head("published");
-        let later = f.deliver_in_process(&digest).unwrap();
-        assert!(later.replayed, "{point:?}");
-        assert_eq!(f.head("published").revision(), head.revision());
+#[test]
+fn a_changeset_identity_publishes_exactly_once_after_a_crash_at_manifest_stored() {
+    a_changeset_identity_publishes_exactly_once_after_a_crash_at(CommitPoint::ManifestStored);
+}
 
-        // A different payload under that identity is refused forever; packaging it needs
-        // B's own rebase onto the head that moved meanwhile.
-        f.create("b", B + 2, 700, "B-two");
-        let accepted = f.head("published");
-        let draft = f.head("workspaces/b");
-        let (code, rebased) = f.rebase("b", 906, &accepted, &draft);
-        assert_eq!(code, 0, "{point:?}: {rebased:?}");
-        let (other, _) = f.package("b", Some(CHANGESET));
-        assert_ne!(other, digest);
-        let (code, reused) = f.deliver(&other);
-        assert_eq!(code, 2, "{reused:?}");
-        assert_eq!(text(&reused, "code"), "OP_ID_REUSE");
-        assert_eq!(f.head("published").revision(), head.revision());
-    }
+#[test]
+fn a_changeset_identity_publishes_exactly_once_after_a_crash_at_record_staged() {
+    a_changeset_identity_publishes_exactly_once_after_a_crash_at(CommitPoint::RecordStaged);
+}
+
+#[test]
+fn a_changeset_identity_publishes_exactly_once_after_a_crash_at_switched() {
+    a_changeset_identity_publishes_exactly_once_after_a_crash_at(CommitPoint::Switched);
+}
+
+#[test]
+fn a_changeset_identity_publishes_exactly_once_after_a_crash_at_recorded() {
+    a_changeset_identity_publishes_exactly_once_after_a_crash_at(CommitPoint::Recorded);
 }
 
 // C05-04: A and B both fail and retry through a real coordinator; per base exactly one

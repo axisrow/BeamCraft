@@ -65,7 +65,7 @@ beamcraft definitions --store ROOT   (fresh process: verified head, every defini
 
 ## Evidence
 
-* `cargo test -p beamcraft-cli --test definitions` (real binary, six tests): created and existing
+* `cargo test -p beamcraft-cli --test cli -- definitions::` (real binary, six tests): created and existing
   definitions, the digest equal to the layer engine's `Resource` digest, closed-form mass
   `0.005 m3 * 7850 kg/m3 = 39.25 kg` and `13.5 kg` at 2700, unknown density with no value, the same
   mesh digest for every material, F04 codes for hostile densities and sizes, `NOT_FOUND` and

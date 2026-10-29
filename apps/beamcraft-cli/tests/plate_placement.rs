@@ -3,7 +3,7 @@
 
 //! P10 plate slice: rigid placement leaves the body local and reaches snapshot, pick and IFC.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_json::Json;
 use support::StoreFixture;
 fn ok(f: &StoreFixture, cmd: &str, args: &[&str]) -> Json {

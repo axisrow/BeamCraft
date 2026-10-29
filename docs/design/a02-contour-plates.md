@@ -89,12 +89,12 @@ certified hole operation, as for the box, and the removed volume is the differen
   100,000 mm3) and a hole through the notch is refused with nothing applied.
 * `cargo test -p beamcraft-engine numbering`: equal bounding boxes with different outlines are not
   one group.
-* `cargo test -p beamcraft-cli --test contour_plates` (real binary): create, save, reopen in a fresh
+* `cargo test -p beamcraft-cli --test cli -- contour_plates::` (real binary): create, save, reopen in a fresh
   process, closed-form volume and mass, 12 vertices and 20 triangles, deterministic digest across
   stores, the origin rectangle by size or by contour is the same box, a moved rectangle is a
   contour, holes, thickness edit, move, copy and delete, numbering by outline, IFC export of four
   plates, and every refusal leaving the store empty.
-* `cargo test -p beamcraft-cli --test f04_cases`: the declared deviations shrink from nine to four.
+* `cargo test -p beamcraft-cli --test cli -- f04_cases::`: the declared deviations shrink from nine to four.
 
 ## Provenance
 

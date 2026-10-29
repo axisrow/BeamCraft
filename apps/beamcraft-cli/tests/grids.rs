@@ -3,7 +3,7 @@
 
 //! T01.1 acceptance through the actual binary, revision store and readable USD layers.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},

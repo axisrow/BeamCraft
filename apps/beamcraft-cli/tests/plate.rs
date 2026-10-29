@@ -16,7 +16,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-mod support;
+use crate::support;
 
 use support::{at, text};
 
@@ -792,7 +792,12 @@ fn spawn_crash(fx: &Fixture, point: CommitPoint, op: &str, element: &str, revisi
         point_name(point)
     );
     let status = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "crash_child", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "plate::crash_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env(CRASH_ENV, spec)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

@@ -9,14 +9,15 @@
 # Inner-loop default: everything except the integration suites that each measure
 # at least ~40 s of serial time on the reference Mac (baseline 2026-10-25):
 # cli export_ifc, numbering_approval, numbering, libraries,
-# environments and pick; host recovery, revision and compaction; kernel
-# g09_budget_fuzz and g05_profile_extrusion. Nothing is removed: the skipped
-# suites run in the default profile and in CI. Re-measure and move the line when
-# a suite outgrows this list; an explicit filter on the command line overrides
-# default-filter, so any skipped test stays reachable in this profile.
+# environments and pick (modules of the one `cli` test binary); host recovery,
+# revision and compaction; kernel g09_budget_fuzz and g05_profile_extrusion.
+# Nothing is removed: the skipped suites run in the default profile and in CI.
+# Re-measure and move the line when a suite outgrows this list; an explicit
+# filter on the command line overrides default-filter, so any skipped test stays
+# reachable in this profile.
 default-filter = '''not (
-    (package(beamcraft-cli) and (binary(export_ifc) or binary(numbering_approval)
-        or binary(numbering) or binary(libraries) or binary(environments) or binary(pick)))
+    (package(beamcraft-cli) and binary(cli) and test(
+        /^(export_ifc|numbering_approval|numbering|libraries|environments|pick)::/))
     or (package(beamcraft-host) and (binary(recovery) or binary(revision) or binary(compaction)))
     or (package(beamcraft-kernel) and (binary(g09_budget_fuzz) or binary(g05_profile_extrusion)))
 )'''

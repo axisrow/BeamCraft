@@ -76,6 +76,6 @@ deadline and R01's 64 KiB source limit.
 `cargo test -p beamcraft-layer-engine` (new `the_model_profile_is_the_default_ceiling_and_its_caps_hold_at_plus_one`,
 the existing hostile-input tests on the first-slice profile, the authored input bound one point
 above the array cap, 524,289 points since the 2026-10-21 amendment),
-`cargo test -p beamcraft-cli --test sections`
+`cargo test -p beamcraft-cli --test cli -- sections::`
 (`more_detailed_members_fit_one_revision_than_the_first_slice_allowed`: 12 detailed I-sections in
 one revision through the real binary), and the probe above.

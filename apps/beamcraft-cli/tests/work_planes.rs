@@ -3,7 +3,7 @@
 
 //! V08 synthetic frames through the real CLI. Expected world positions are elementary axes.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-mod support;
+use crate::support;
 use beamcraft_json::{Json, Limits};
 use std::process::Command;
 use support::{StoreFixture, text};

@@ -144,7 +144,7 @@ beamcraft export-bom --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV]
 ## 3. Evidence
 
 `cargo test -p beamcraft-engine bom` (sort order, grouping, unknown mass, derived areas, CSV
-quoting), `cargo test -p beamcraft-cli --test bom` (real binary: a store with a material, an
+quoting), `cargo test -p beamcraft-cli --test cli -- bom::` (real binary: a store with a material, an
 I-section with designation, plates and members exports both files; the rows match
 `inspect-elements`; the mass of an element without a material is an empty cell, counted in
 `mass_unknown`, and excluded from totals; a beam numbered by `approve-numbering` reports its mark,
