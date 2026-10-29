@@ -12,11 +12,12 @@ Thanks for helping. Humans and AI agents follow the same rules.
    Use `<type>/<short-description>` with lowercase hyphenated words: `feat/`, `bug/`, `docs/`,
    `chore/`, `refactor/` or `test/`, as defined in `AGENTS.md` section 6. Include the task ID when
    applicable (for example `feat/f07-fixtures`); do not use agent/provider prefixes.
-3. Run before you push:
+3. Run before you push (install the runner once: `cargo install cargo-nextest --locked`):
    ```sh
    cargo fmt --all
    cargo clippy --workspace --all-targets -- -D warnings
-   cargo test --workspace
+   cargo nextest run --workspace
+   cargo test --workspace --doc
    ```
    The full list of CI checks is in [`docs/development.md`](docs/development.md).
 4. Add a test for new behaviour. For a bug fix, confirm the test fails without the fix.

@@ -14,7 +14,8 @@ completing a slice does not accept its parent gate. Record delivery evidence in 
 
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo test --workspace`
+- [ ] `cargo nextest run --workspace`
+- [ ] `cargo test --workspace --doc`
 
 New behaviour needs a test. For a bug fix, check that the test fails before your fix.
 

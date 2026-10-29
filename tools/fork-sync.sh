@@ -17,8 +17,9 @@ Usage: bash tools/fork-sync.sh [sync] [--dry-run] [--yes]
 Modes:
   sync     (default) fetch upstream, merge upstream/master into the local fork
            master, run the local triple (fmt --check, clippy -D warnings,
-           test --workspace) BEFORE committing, push origin/master, then delete
-           merged sync/* branches. No PR: master is the integration branch.
+           nextest run --workspace plus the doctests) BEFORE committing, push
+           origin/master, then delete merged sync/* branches. No PR: master is
+           the integration branch.
            Conflicting files keep their entire fork version; other files merge
            normally. Skipped upstream changes require manual integration.
            An unresolved conflict stops the run with exit 2.
@@ -177,8 +178,11 @@ run_triple() {
     cargo fmt --check || return $?
     echo "fork-sync: gate 2/3: cargo clippy --workspace --all-targets -- -D warnings"
     cargo clippy --workspace --all-targets -- -D warnings || return $?
-    echo "fork-sync: gate 3/3: cargo test --workspace"
-    cargo test --workspace
+    echo "fork-sync: gate 3/3: cargo nextest run --workspace"
+    cargo nextest run --workspace || return $?
+    # nextest never runs doctests; keep them in the gate, exactly like CI.
+    echo "fork-sync: doctests: cargo test --workspace --doc"
+    cargo test --workspace --doc
 }
 
 # Merged sync branches accumulate one per sync; -d never loses unmerged work.
