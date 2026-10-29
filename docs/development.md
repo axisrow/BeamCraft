@@ -34,6 +34,12 @@ measured fast enough to stay in the inner loop. Nothing is removed or permanentl
 unfiltered `default` profile and CI always run everything, and an explicit command-line filter
 overrides the profile's `default-filter`.
 
+The `beamcraft-cli` integration suites build into one `cli` test binary (`tests/cli.rs`, one
+module per suite file), so they link once and `cargo test` runs all their cases on one thread
+pool. Run one suite with `cargo test -p beamcraft-cli --test cli -- <suite>::` or
+`cargo nextest run -p beamcraft-cli -E 'test(/^<suite>::/)'`; list a new suite file in
+`tests/cli.rs`. `macos_icon` checks the desktop app's icon and stays its own target.
+
 The drawn-grid viewport controller test requires a native wgpu adapter and fails explicitly if
 none is available. On a headless Linux worker, Mesa's software Vulkan driver (`mesa-vulkan-drivers`)
 can provide it; a physical GPU or display server is not required. The Vulkan loader must be able

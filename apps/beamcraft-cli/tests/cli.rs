@@ -86,3 +86,31 @@ mod welds;
 mod work_planes;
 mod workspace;
 mod workspace_state;
+
+/// With `autotests = false` a suite file missing from the list above would never build or run,
+/// so every `tests/*.rs` file must be one of its modules (or the separate `macos_icon` target).
+#[test]
+fn every_suite_file_is_a_module_of_this_binary() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let listing = std::fs::read_to_string(dir.join("cli.rs")).unwrap();
+    let mut suites = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let Some(name) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_suffix(".rs"))
+        else {
+            continue;
+        };
+        if name == "cli" || name == "macos_icon" {
+            continue;
+        }
+        assert!(
+            listing.contains(&format!("\nmod {name};\n")),
+            "tests/{name}.rs is not a module of tests/cli.rs"
+        );
+        suites += 1;
+    }
+    assert!(suites > 0, "no suite file found in {}", dir.display());
+}
