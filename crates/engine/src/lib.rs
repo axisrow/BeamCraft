@@ -24,6 +24,7 @@ pub mod drawing;
 pub mod element;
 pub mod error;
 pub mod fabricate;
+pub mod fastener;
 pub mod footprint;
 pub mod grid;
 pub mod grid_edit;

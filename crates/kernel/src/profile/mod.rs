@@ -37,7 +37,7 @@ mod triangulate;
 pub mod diagnostic;
 
 pub use curve::CurveSpec;
-pub(crate) use curve::{choose_segments, unit_direction};
+pub(crate) use curve::{SEGMENT_CAP, SEGMENT_FLOOR, choose_segments, unit_direction};
 pub use extrude::{
     Extrusion, ExtrusionMesh, FaceRole, VolumeStatus, extrude, extrude_profile, extrude_with_cancel,
 };
