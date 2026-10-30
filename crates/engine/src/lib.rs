@@ -54,6 +54,7 @@ pub mod scene;
 pub mod solid;
 pub mod synthetic;
 pub mod transaction;
+pub mod transform;
 pub mod update;
 pub mod view_clipping;
 pub mod weld;

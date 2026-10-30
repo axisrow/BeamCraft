@@ -18,11 +18,16 @@
 //! | `axis_points_mm` | yes | yes | mesh and quantity record (a member path, P12) |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
 //! | `orientation_xyzw` | no | no | untouched (the body is element-local) |
+//! | `rotate` (T03) | no | no | untouched (a placement-only rigid rotation) |
+//! | `mirror` (T03) | yes | yes | mesh and quantity record (the side and the cuts flip) |
 //! | `level` | no | no | untouched (a relationship of the element only) |
 //!
 //! A move keeps the rotation and never touches the shape, the body or the stored quantities, so
 //! no geometry is copied or rebuilt. An orientation change replaces the stored quaternion as a
-//! whole; local meshes and quantities are unchanged. Fields
+//! whole; local meshes and quantities are unchanged. A `rotate` patch composes a world-axis
+//! rotation with the current placement and stays placement-only. A `mirror` patch re-encodes the
+//! element through a symmetry of its local body (see `transform`): the world result is the exact
+//! mirror image, and the re-encoded fields are a shape change, so the body is rebuilt. Fields
 //! outside this list (contour, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to later
 //! tasks.
 
@@ -48,6 +53,13 @@ pub struct UpdateEffect {
     pub orientation: bool,
     /// The level assignment changes (D2), including its removal; no geometry is touched.
     pub level: bool,
+    /// The element is rotated about a world axis (T03): a placement-only rigid rotation.
+    pub rotate: bool,
+    /// The element is mirrored about a world plane (T03): the placement and the local shape
+    /// records are re-encoded, so the body is rebuilt.
+    pub mirror: bool,
+    /// The element is translated by a relative world offset (T03): a placement-only move.
+    pub move_mm: bool,
 }
 
 /// The effect of a patch on the element it targets, ignoring whether a value really differs:
@@ -61,10 +73,17 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
             || patch.contour_points_mm.is_some()
             || patch.thickness_mm.is_some()
             || patch.thickness_side.is_some()
-            || patch.axis_points_mm.is_some(),
-        placement: patch.translation_mm.is_some(),
-        orientation: patch.orientation_xyzw.is_some(),
+            || patch.axis_points_mm.is_some()
+            || patch.mirror.is_some(),
+        placement: patch.translation_mm.is_some()
+            || patch.rotate.is_some()
+            || patch.mirror.is_some()
+            || patch.move_mm.is_some(),
+        orientation: patch.orientation_xyzw.is_some() || patch.rotate.is_some(),
         level: patch.level.is_some(),
+        rotate: patch.rotate.is_some(),
+        mirror: patch.mirror.is_some(),
+        move_mm: patch.move_mm.is_some(),
     }
 }
 
@@ -108,7 +127,16 @@ pub fn patch_plate(
     if let Some(side) = patch.thickness_side {
         next.thickness_side = Some(side);
     }
-    next.placement = placement_after(&plate.placement, patch)?;
+    next.placement = if let Some(mirror) = &patch.mirror {
+        crate::transform::mirror_plate_local(&mut next)?;
+        crate::transform::mirror_placement(
+            &plate.placement,
+            mirror,
+            &crate::transform::PLATE_SYMMETRY,
+        )?
+    } else {
+        placement_after(&plate.placement, patch)?
+    };
     Ok(next)
 }
 
@@ -174,15 +202,45 @@ pub fn patch_member(
             next.roll_rad = None;
         }
     }
-    next.placement = placement_after(&member.placement, patch)?;
+    if let Some(mirror) = &patch.mirror {
+        crate::transform::mirror_member_local(&mut next)?;
+        // The placement absorbs the world mirror through the same local symmetry the path
+        // reflects by, computed from the original (unmirrored) axis.
+        let symmetry =
+            crate::transform::member_symmetry(&member.axis_points_mm).ok_or_else(|| {
+                CommandError::new(
+                    ErrorCode::UnsupportedGeometry,
+                    "mirror",
+                    "a polybeam or curved member has no expressible mirrored path",
+                )
+            })?;
+        next.placement = crate::transform::mirror_placement(&member.placement, mirror, &symmetry)?;
+    } else {
+        next.placement = placement_after(&member.placement, patch)?;
+    }
     Ok(next)
 }
 
-/// The placement after the patch: the translation is replaced when the patch names one, the
-/// rotation is replaced when the patch names one, and the result is validated
-/// (`LIMIT_EXCEEDED` outside the coordinate range, `NON_FINITE_NUMBER` or `INVALID_ARGUMENT`
-/// for a hostile quaternion).
+/// The placement after the patch: a `rotate` patch composes a world-axis rotation with the
+/// current placement (T03), the translation is replaced when the patch names one, the rotation
+/// is replaced when the patch names one, and the result is validated (`LIMIT_EXCEEDED` outside
+/// the coordinate range, `NON_FINITE_NUMBER` or `INVALID_ARGUMENT` for a hostile quaternion).
 fn placement_after(placement: &Placement, patch: &ElementPatch) -> Result<Placement, CommandError> {
+    if let Some(rotate) = &patch.rotate {
+        return crate::transform::rotate_placement(placement, rotate);
+    }
+    if let Some(move_mm) = patch.move_mm {
+        let next = Placement {
+            translation_mm: [
+                placement.translation_mm[0] + move_mm[0],
+                placement.translation_mm[1] + move_mm[1],
+                placement.translation_mm[2] + move_mm[2],
+            ],
+            orientation_xyzw: placement.orientation_xyzw,
+        };
+        next.validate()?;
+        return Ok(next);
+    }
     if patch.translation_mm.is_none() && patch.orientation_xyzw.is_none() {
         return Ok(*placement);
     }
@@ -239,7 +297,10 @@ mod tests {
                 shape: false,
                 placement: false,
                 orientation: false,
-                level: false
+                level: false,
+                rotate: false,
+                mirror: false,
+                move_mm: false
             }
         );
         let clear = ElementPatch {
@@ -555,6 +616,77 @@ mod tests {
         )
         .unwrap();
         assert_eq!(straight.roll_rad, None);
+    }
+
+    #[test]
+    fn a_rotate_patch_turns_the_placement_and_keeps_the_shape() {
+        use beamcraft_model::command::ElementRotate;
+        let quarter = ElementRotate {
+            pivot_mm: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            angle_rad: core::f64::consts::FRAC_PI_2,
+        };
+        let patch = ElementPatch {
+            rotate: Some(quarter),
+            ..ElementPatch::default()
+        };
+        let effects = effect(&patch);
+        assert!(effects.rotate && effects.placement && effects.orientation);
+        assert!(!effects.shape && !effects.mirror);
+        let turned = patch_member(&member(), &patch).unwrap();
+        // The placement translation sits on the pivot and stays; the world pose carries the
+        // quarter turn; the shape stays element-local and untouched.
+        assert_eq!(turned.placement.translation_mm, [0.0; 3]);
+        let [x, y, z, w] = turned.placement.orientation_xyzw;
+        assert!(z.abs() - core::f64::consts::FRAC_1_SQRT_2 < 1e-9);
+        assert!(w.abs() - core::f64::consts::FRAC_1_SQRT_2 < 1e-9);
+        assert!(x.abs() < 1e-9 && y.abs() < 1e-9);
+        assert_eq!(turned.axis_points_mm, member().axis_points_mm);
+        // Absolute placement fields are refused beside a rotate (the model validates this, the
+        // engine honours the rotate alone).
+        let model = beamcraft_model::command::UpdateElement {
+            target_id: turned.id,
+            patch: ElementPatch {
+                rotate: Some(quarter),
+                translation_mm: Some([1.0; 3]),
+                ..ElementPatch::default()
+            },
+        };
+        assert_eq!(
+            model.validate_arguments().unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+    }
+
+    #[test]
+    fn a_mirror_patch_reencodes_a_plate_and_rebuilds_the_body() {
+        use beamcraft_model::command::{ElementMirror, PlateSide};
+        let patch = ElementPatch {
+            mirror: Some(ElementMirror {
+                point_mm: [0.0; 3],
+                normal: [1.0, 0.0, 0.0],
+            }),
+            ..ElementPatch::default()
+        };
+        let effects = effect(&patch);
+        assert!(effects.mirror && effects.shape && effects.placement);
+        assert!(!effects.orientation);
+        let mirrored = patch_plate(&plate(), &patch).unwrap();
+        // The default (top) side flips to the explicit bottom; the contour stays.
+        assert_eq!(mirrored.thickness_side, Some(PlateSide::Bottom));
+        assert_eq!(mirrored.contour_points_mm, plate().contour_points_mm);
+        // The mirrored translation of the identity placement stays the identity here.
+        assert_eq!(mirrored.placement.translation_mm, [0.0; 3]);
+        // A member mirror is refused for a polybeam path.
+        let bent = ElementPatch {
+            mirror: patch.mirror,
+            axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0], [0.0, 500.0, 0.0]]),
+            ..ElementPatch::default()
+        };
+        assert_eq!(
+            patch_member(&member(), &bent).unwrap_err().code,
+            ErrorCode::UnsupportedGeometry
+        );
     }
 
     #[test]

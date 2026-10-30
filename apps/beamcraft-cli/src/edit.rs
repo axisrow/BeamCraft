@@ -232,6 +232,14 @@ pub fn update_element(
 
     let op_host = host_uuid(&request.op_id.to_string())?;
     let fingerprint = command.content_fingerprint()?;
+    // A relative transform (T03) cannot recompute its would-be result from the head it already
+    // turned or mirrored, so the state comparison below never holds for one. Its replay is
+    // decided from history instead: the head must still be the revision the operation itself
+    // committed; any later edit makes the retry `OP_ID_REUSE`.
+    let relative = patch_effect.rotate || patch_effect.mirror || patch_effect.move_mm;
+    let head_revision = head
+        .as_ref()
+        .map(|revision| revision.info().revision().as_str().to_owned());
     let (prior, recorded) = prior_op_with(store, &op_host, || {
         // The head already holds the patched state exactly when the retry is the same request.
         if same_state(&head_element, &next) {
@@ -240,26 +248,33 @@ pub fn update_element(
             digest_of(b"no accepted request matches the head state")
         }
     })?;
-    match prior {
-        PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
-            return Ok(Updated {
-                replayed: true,
-                element: head_element,
-                effect: patch_effect,
-                revision: replay_summary(&head, recorded)?,
-                footprint: None,
-                changed_layers: Vec::new(),
-            });
+    let replayed = match prior {
+        PriorOp::Accepted { fingerprint: seen } => {
+            seen == fingerprint
+                || (relative
+                    && recorded.as_ref().is_some_and(|(revision, ..)| {
+                        head_revision.as_deref() == Some(revision.as_str())
+                    }))
         }
-        PriorOp::Accepted { .. } => {
-            return Err(CommandError::new(
-                ErrorCode::OpIdReuse,
-                "op_id",
-                "operation id was accepted with different content",
-            )
-            .into());
-        }
-        PriorOp::Unseen => {}
+        PriorOp::Unseen => false,
+    };
+    if replayed {
+        return Ok(Updated {
+            replayed: true,
+            element: head_element,
+            effect: patch_effect,
+            revision: replay_summary(&head, recorded)?,
+            footprint: None,
+            changed_layers: Vec::new(),
+        });
+    }
+    if let PriorOp::Accepted { .. } = prior {
+        return Err(CommandError::new(
+            ErrorCode::OpIdReuse,
+            "op_id",
+            "operation id was accepted with different content",
+        )
+        .into());
     }
     if same_state(&head_element, &next) {
         return Err(CommandError::new(
@@ -414,6 +429,25 @@ pub fn update_element(
                 opinion: Opinion::Remove,
             });
         }
+    }
+    // A mirror (T03) re-encodes the local body: the plate's side flips and the cuts of either
+    // part kind reflect, both authored on the canonical part.
+    if patch_effect.mirror {
+        if let UpdatedElement::Plate(record) = &next
+            && let Some(side) = record.authored.thickness_side
+        {
+            changes.push(Change::ThicknessSide {
+                id: definition_text.clone(),
+                side,
+            });
+        }
+        changes.push(Change::Cuts {
+            id: definition_text.clone(),
+            cuts: match &next {
+                UpdatedElement::Plate(r) => r.authored.cuts.clone(),
+                UpdatedElement::Member(r) => r.authored.cuts.clone(),
+            },
+        });
     }
     if patch_effect.placement || patch_effect.orientation {
         let placement = match &next {
