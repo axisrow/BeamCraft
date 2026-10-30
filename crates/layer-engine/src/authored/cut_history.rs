@@ -11,6 +11,10 @@ pub const RETIRED: &str = "steel:cut:retiredOperationIds";
 pub const HOLE_NEXT: &str = "steel:hole:nextOrdinal";
 /// Sorted identities of explicitly removed hole records.
 pub const HOLE_RETIRED: &str = "steel:hole:retiredOperationIds";
+/// Next ordinal for an owned member-hole record (A04.2).
+pub const MHOLE_NEXT: &str = "steel:mhole:nextOrdinal";
+/// Sorted identities of explicitly removed member-hole records.
+pub const MHOLE_RETIRED: &str = "steel:mhole:retiredOperationIds";
 /// Bounded cut history, separate from live shape inputs and geometric signatures.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CutHistory {
@@ -41,16 +45,33 @@ pub(super) fn ids(p: &Prim, name: &str) -> Result<Vec<OpId>, Diagnostic> {
 }
 /// The same bounded history type for hole records.
 pub type HoleHistory = CutHistory;
-pub(super) fn fields(hole: bool) -> (&'static str, &'static str, &'static str, &'static str) {
-    if hole {
-        (
+/// Which record family a counter, a retired list and a record list belong to: the fields stay
+/// parallel within one family, so a member hole (A04.2) never mixes with a plate hole (A04) or
+/// a plane cut (A03) even though the history shape is one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Family {
+    /// The owned plane cuts of a plate, beam or column.
+    Cut,
+    /// The hole and polygon-cut records of a plate.
+    PlateHole,
+    /// The member-hole records of a beam or column.
+    MemberHole,
+}
+pub(super) fn fields(family: Family) -> (&'static str, &'static str, &'static str, &'static str) {
+    match family {
+        Family::Cut => (NEXT, RETIRED, "steel:cut:operationId", "steel:cut:ordinal"),
+        Family::PlateHole => (
             HOLE_NEXT,
             HOLE_RETIRED,
             "steel:hole:operationIds",
             "steel:hole:ordinals",
-        )
-    } else {
-        (NEXT, RETIRED, "steel:cut:operationId", "steel:cut:ordinal")
+        ),
+        Family::MemberHole => (
+            MHOLE_NEXT,
+            MHOLE_RETIRED,
+            "steel:mhole:operationIds",
+            "steel:mhole:ordinals",
+        ),
     }
 }
 pub(super) fn ordinals(p: &Prim, name: &str) -> Result<Vec<u16>, Diagnostic> {
@@ -83,14 +104,18 @@ pub(super) fn ordinals(p: &Prim, name: &str) -> Result<Vec<u16>, Diagnostic> {
 }
 /// Read explicit cut history or derive the initial counter from the live records.
 pub fn read(p: &Prim) -> Result<CutHistory, Diagnostic> {
-    read_for(p, false)
+    read_for(p, Family::Cut)
 }
 /// Read bounded hole history. Unsupported or malformed metadata is never repaired on read.
 pub fn read_holes(p: &Prim) -> Result<HoleHistory, Diagnostic> {
-    read_for(p, true)
+    read_for(p, Family::PlateHole)
 }
-fn read_for(p: &Prim, hole: bool) -> Result<CutHistory, Diagnostic> {
-    let (next_name, retired_name, id_name, ordinal_name) = fields(hole);
+/// Read bounded member-hole history (A04.2).
+pub fn read_member_holes(p: &Prim) -> Result<HoleHistory, Diagnostic> {
+    read_for(p, Family::MemberHole)
+}
+fn read_for(p: &Prim, family: Family) -> Result<CutHistory, Diagnostic> {
+    let (next_name, retired_name, id_name, ordinal_name) = fields(family);
     let ordinals = ordinals(p, ordinal_name)?;
     let mut next = ordinals.last().map_or(0, |n| n + 1);
     if let Some(v) = validate::optional(p, next_name, "int")? {

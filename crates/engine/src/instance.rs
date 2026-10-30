@@ -306,6 +306,7 @@ mod tests {
                 normal: [1., 0., 0.],
                 keep: KeepSide::Negative,
             }],
+            hole_records: Vec::new(),
         };
         let copy = copy_member_instance(&source, &command()).unwrap();
         assert_eq!(copy.id, id(2));

@@ -1131,6 +1131,7 @@ mod tests {
             },
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         }
     }
 

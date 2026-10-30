@@ -2235,6 +2235,7 @@ impl App {
             },
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         };
         let body = beamcraft_engine::member::evaluate_member(
             &authored,

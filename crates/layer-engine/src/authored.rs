@@ -24,8 +24,9 @@ pub use reference::{
 
 use crate::*;
 pub use beamcraft_model::command::{
-    BendRecord, BendSpec, CornerTreatment, CutRecord, HoleRecord, KeepSide, MAX_BENDS, PlateCorner,
-    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
+    BendRecord, BendSpec, CornerTreatment, CutRecord, HoleExtent, HoleRecord, KeepSide, MAX_BENDS,
+    MemberHoleRecord, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
+    SectionPlanePosition,
 };
 pub use beamcraft_model::definition::SectionProperties;
 pub use beamcraft_model::fastener::FastenerSpec;
@@ -65,6 +66,12 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:hole:kinds=token[](hole|polygon_cut);all five steel:hole attributes or none,",
     "ordinals are engine-assigned and never reused\n",
     "steel:hole:nextOrdinal=int(optional,0..1000);steel:hole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
+    "steel:mhole:pointsMm=double3[](optional,z=0);steel:mhole:vertexCounts=int[](optional,>=3 each);",
+    "steel:mhole:operationIds=string[](uuid7 each);steel:mhole:ordinals=int[](strictly increasing);",
+    "steel:mhole:axisPointsMm=double3[](member frame);steel:mhole:axisDirections=double3[](unit each);",
+    "steel:mhole:extents=token[](through|range);steel:mhole:extentFromMm=double[];steel:mhole:extentToMm=double[];",
+    "all nine steel:mhole attributes or none, equal lengths, ordinals are engine-assigned and never reused (A04.2)\n",
+    "steel:mhole:nextOrdinal=int(optional,0..1000);steel:mhole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
     "bim:axisPointsMm=double3[];steel:member:pathType=token(arc,optional);steel:member:rollRad=double(optional);\n",
     "steel:member:planePosition=token(left|centre|right);steel:member:planeOffsetMm=double;\n",
     "steel:member:depthPosition=token(front|centre|back);steel:member:depthOffsetMm=double;\n",
@@ -716,6 +723,16 @@ pub enum Change {
         /// Every record of the plate, ordered by ordinal; at least one.
         records: Vec<HoleRecord>,
     },
+    /// Replace the complete set of member-hole operation records of a beam or column (A04.2):
+    /// the `steel:mhole:*` attributes, replaced as a whole and always together. The engine has
+    /// already replayed every record against the base shape and certified the body; this writes
+    /// the authoritative member-frame records with their operation ids and ordinals.
+    MemberHoles {
+        /// Full target UUIDv7 of the member.
+        id: String,
+        /// Every record of the member, ordered by ordinal; at least one.
+        records: Vec<MemberHoleRecord>,
+    },
     /// Define one user attribute in the schema scope (I04): the complete definition prim
     /// `/World/Definitions/Attributes/<name>`. The engine has refused a duplicate name.
     AttrDefine {
@@ -754,6 +771,7 @@ impl Change {
             Self::Bends { id, .. } => (id, "steel:plate:bendOperationId"),
             Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
             Self::Cuts { id, .. } => (id, "steel:cut"),
+            Self::MemberHoles { id, .. } => (id, "steel:mhole"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
             Self::Roll { id, .. } => (id, "steel:member:rollRad"),
             Self::Profile { id, .. } => (id, "bim:profile"),

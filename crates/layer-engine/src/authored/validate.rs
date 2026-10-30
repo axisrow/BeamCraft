@@ -722,6 +722,142 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
 const MAX_HOLES: usize = 64;
 const MAX_HOLE_POINTS: usize = 1024;
 
+/// The optional member-hole operation records of a loaded beam or column (A04.2): all nine
+/// attributes or none, the counts add up to the points, every polygon has at least three
+/// in-cap points with every `z` zero, there is one full UUIDv7 and one strictly increasing
+/// non-negative ordinal per polygon, each axis point is finite and in cap, each axis direction
+/// is a signed unit token, and each extent is `through` (zero range) or a `from < to` range.
+/// Winding, placement and fit are the engine's decision on replay, never re-derived here.
+fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
+    let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let names = [
+        "steel:mhole:pointsMm",
+        "steel:mhole:vertexCounts",
+        "steel:mhole:operationIds",
+        "steel:mhole:ordinals",
+        "steel:mhole:axisPointsMm",
+        "steel:mhole:axisDirections",
+        "steel:mhole:extents",
+        "steel:mhole:extentFromMm",
+        "steel:mhole:extentToMm",
+    ];
+    let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
+    if declared.iter().all(|seen| !seen) {
+        return Ok(());
+    }
+    if !declared.iter().all(|seen| *seen) {
+        return Err(invalid());
+    }
+    let Value::Array(counts) = required(prim, "steel:mhole:vertexCounts", "int[]")? else {
+        return Err(invalid());
+    };
+    let Value::Array(ids) = required(prim, "steel:mhole:operationIds", "string[]")? else {
+        return Err(invalid());
+    };
+    let Value::Array(ordinals) = required(prim, "steel:mhole:ordinals", "int[]")? else {
+        return Err(invalid());
+    };
+    let Value::Array(extents) = required(prim, "steel:mhole:extents", "token[]")? else {
+        return Err(invalid());
+    };
+    let Value::Array(from) = required(prim, "steel:mhole:extentFromMm", "double[]")? else {
+        return Err(invalid());
+    };
+    let Value::Array(to) = required(prim, "steel:mhole:extentToMm", "double[]")? else {
+        return Err(invalid());
+    };
+    if counts.len() > MAX_HOLES
+        || counts.len() != ids.len()
+        || counts.len() != ordinals.len()
+        || counts.len() != extents.len()
+        || counts.len() != from.len()
+        || counts.len() != to.len()
+    {
+        return Err(invalid());
+    }
+    let polygons = points(prim, "steel:mhole:pointsMm")?;
+    let axis = points(prim, "steel:mhole:axisPointsMm")?;
+    let directions = points(prim, "steel:mhole:axisDirections")?;
+    if axis.len() != counts.len() || directions.len() != counts.len() {
+        return Err(invalid());
+    }
+    if polygons.len() > MAX_HOLES * MAX_HOLE_POINTS {
+        return Err(limit());
+    }
+    cap(polygons.iter().flatten().copied(), 1e9)?;
+    cap(axis.iter().flatten().copied(), 1e9)?;
+    for direction in &directions {
+        let unit = direction.iter().filter(|v| **v != 0.0).count() == 1
+            && direction.iter().all(|v| matches!(v, 1.0 | -1.0 | 0.0));
+        if !unit {
+            return Err(invalid());
+        }
+    }
+    let mut at = 0usize;
+    for count in counts {
+        let n = match count {
+            Value::Int(n) => usize::try_from(*n).map_err(|_| invalid())?,
+            _ => return Err(invalid()),
+        };
+        if !(3..=MAX_HOLE_POINTS).contains(&n) {
+            return Err(invalid());
+        }
+        let end = at.checked_add(n).ok_or_else(invalid)?;
+        let hole = polygons.get(at..end).ok_or_else(invalid)?;
+        if hole.iter().any(|p| p[2] != 0.0) {
+            return Err(invalid());
+        }
+        at = end;
+    }
+    if at != polygons.len() {
+        return Err(invalid());
+    }
+    let double = |value: &&Value| match value {
+        Value::Number(v) => Some(*v),
+        _ => None,
+    };
+    let mut last: Option<i64> = None;
+    for (((id, ordinal), extent), (start, end)) in ids
+        .iter()
+        .zip(ordinals.iter())
+        .zip(extents.iter())
+        .zip(from.iter().zip(to.iter()))
+    {
+        let Value::Text(id) = id else {
+            return Err(invalid());
+        };
+        if !uuid7(id) {
+            return Err(invalid());
+        }
+        let Value::Int(n) = ordinal else {
+            return Err(invalid());
+        };
+        if *n < 0 || last.is_some_and(|seen| *n <= seen) {
+            return Err(invalid());
+        }
+        last = Some(*n);
+        let Value::Text(extent) = extent else {
+            return Err(invalid());
+        };
+        let (Some(start), Some(end)) = (double(&start), double(&end)) else {
+            return Err(invalid());
+        };
+        if extent == "through" {
+            if start != 0.0 || end != 0.0 {
+                return Err(invalid());
+            }
+        } else if extent == "range" {
+            if start >= end {
+                return Err(invalid());
+            }
+            cap([start, end], 1e9)?;
+        } else {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
 /// The owned plane-cut records of a loaded plate, beam or column (A03, amendment A-2): five
 /// parallel attributes, all five or none, of one common length, in ascending ordinals at most
 /// 999; each point is finite and within the coordinate cap and each normal is not the zero
@@ -1031,13 +1167,16 @@ pub(super) fn snapshot(
         if instance::definition(p, prims)?.is_none() {
             if matches!(kind, "plate" | "beam" | "column") {
                 let hole_history = cut_history::read_holes(p)?;
+                let member_history = cut_history::read_member_holes(p)?;
                 let history = cut_history::read(p)?;
                 for id in history
                     .retired
                     .into_iter()
                     .chain(hole_history.retired)
+                    .chain(member_history.retired)
                     .chain(cut_history::ids(p, "steel:cut:operationId")?)
                     .chain(cut_history::ids(p, "steel:hole:operationIds")?)
+                    .chain(cut_history::ids(p, "steel:mhole:operationIds")?)
                 {
                     if !operation_ids.insert(id) {
                         return Err(invalid());
@@ -1163,6 +1302,7 @@ pub(super) fn snapshot(
                         cap([*n], std::f64::consts::TAU)?;
                     }
                     element_cut(p)?;
+                    member_hole_records(p)?;
                 }
                 // An assembly has no shape inputs and no material of its own; a connection is a weld
                 // (A06) or a bolt group (A05) with its own properties and no material either.
@@ -2006,6 +2146,7 @@ pub(super) fn changes(
                     | Change::Corners { .. }
                     | Change::Bends { .. } => kind == "plate",
                     Change::HoleRecords { .. } => kind == "plate",
+                    Change::MemberHoles { .. } => matches!(kind, "beam" | "column"),
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
                     }

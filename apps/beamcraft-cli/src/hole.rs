@@ -1,25 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! A04 adapter: `AddHole` and `UpdateHole` on a plate, committed as one revision.
+//! A04/A04.2 adapter: `AddHole`, `UpdateHole` and `RemoveHole` on a plate or member, committed
+//! as one revision.
 //!
-//! The command appends one operation record (F04 section 4) to the target plate's authored
-//! state; the engine replays the base shape with every hole in ordinal order and re-certifies
-//! the body. The adapter writes the complete record set with U02, rewrites the derived mesh,
-//! checks the layer engine's writes against the declared footprint and commits through U06/U07
-//! with the strict verifier. Replay of an `operation_id` is decided from
-//! immutable committed evidence. A later record edit or deletion cannot turn an accepted
+//! The command appends one operation record (F04 section 4, the F06 member-hole amendment) to
+//! the target's authored state; the engine replays the base shape with every record in ordinal
+//! order and re-certifies the body. The adapter writes the complete record set with U02,
+//! rewrites the derived mesh, checks the layer engine's writes against the declared footprint
+//! and commits through U06/U07 with the strict verifier. Replay of an `operation_id` is decided
+//! from immutable committed evidence. A later record edit or deletion cannot turn an accepted
 //! request into a second mutation. The explicit source revision is returned on replay. One
-//! implicit workspace, in-process layer engine, as in `plate`.
+//! implicit workspace, in-process layer engine, as in `plate`. Plate records (A04) and member
+//! records (A04.2) live on their own elements, so `update-hole`/`remove-hole` never conflate
+//! them: the record identity is checked across the whole project, and the kind guards of the
+//! engine keep the polygon cuts (A13) out of both.
 
-use crate::definition::material_lookup;
+use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, evaluate_decoded, host_uuid, integrity, load_base, mesh_change, open_base,
-    plate_record, prior_op_with, replay_summary, summarize,
+    decode, evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change,
+    open_base, plate_record, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
+use beamcraft_engine::member::{evaluate_member, member_quantities};
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
@@ -48,13 +53,22 @@ pub struct AddHoleRequest {
     pub command: AddHole,
 }
 
+/// The hole target as it is after the command.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HoleElement {
+    /// A plate with its hole records (A04).
+    Plate(Box<PlateRecord>),
+    /// A beam or a column with its member-hole records (A04.2).
+    Member(Box<MemberRecord>),
+}
+
 /// Result of `add_hole`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AddedHole {
     /// True when the same operation was already committed and nothing was written.
     pub replayed: bool,
-    /// The plate from the accepted revision, including on replay.
-    pub plate: PlateRecord,
+    /// The target from the accepted revision, including on replay.
+    pub element: HoleElement,
     /// The revision that holds the result.
     pub revision: RevisionSummary,
     /// The declared footprint; `None` for a replay.
@@ -71,16 +85,16 @@ fn not_found() -> PlateError {
     ))
 }
 
-/// Adds one through-hole record to a plate and publishes the next revision, or replays the
-/// operation.
+/// Adds one through-hole record to a plate or member and publishes the next revision, or
+/// replays the operation.
 ///
 /// Steps, each failing closed: admit the arguments; open and verify the head; find the target
-/// plate (a member target is `UNSUPPORTED_GEOMETRY`, an authored-only unsupported plate is
-/// `DEPENDENCY_UNAVAILABLE`); decide replay from the host ledger and the head's records; check
-/// the record id across every plate of the project; replay the records with the kernel and
-/// re-certify; author the records and the mesh with U02; check the layer engine's writes
-/// against the declared footprint; commit through U06/U07 with the strict verifier (the stored
-/// quantity records must match the kernel's). A refusal writes nothing.
+/// (an authored-only unsupported plate is `DEPENDENCY_UNAVAILABLE`); decide replay from the
+/// host ledger and the head's records; check the record id across every element of the project;
+/// replay the records with the kernel and re-certify; author the records and the mesh with U02;
+/// check the layer engine's writes against the declared footprint; commit through U06/U07 with
+/// the strict verifier (the stored quantity records must match the kernel's). A refusal writes
+/// nothing.
 pub fn add_hole_command(
     store: &RevisionStore,
     request: &AddHoleRequest,
@@ -172,14 +186,24 @@ fn apply_hole(
             ));
         }
         let inspected = crate::plate::inspect_revision(&revision)?;
-        let plate = inspected
+        let element = if let Some(p) = inspected
             .plates
-            .into_iter()
+            .iter()
             .find(|p| p.authored.id == command.target_id)
-            .ok_or_else(|| integrity("accepted hole target missing from its revision"))?;
+        {
+            HoleElement::Plate(Box::new(p.clone()))
+        } else if let Some(m) = inspected
+            .members
+            .iter()
+            .find(|m| m.authored.id == command.target_id)
+        {
+            HoleElement::Member(Box::new(m.clone()))
+        } else {
+            return Err(integrity("accepted hole target missing from its revision"));
+        };
         return Ok(AddedHole {
             replayed: true,
-            plate,
+            element,
             revision: inspected.revision,
             footprint: None,
             changed_layers: Vec::new(),
@@ -203,7 +227,7 @@ fn apply_hole(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, instances, history, hole_history) = {
+    let (plates, members, definitions, instances, history, hole_history, member_hole_history) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
@@ -213,6 +237,7 @@ fn apply_hole(
             .iter()
             .any(|(p, _)| p.id == command.target_id)
             && !plates.iter().any(|p| p.authored.id == command.target_id)
+            && members.iter().all(|m| m.authored.id != command.target_id)
         {
             return Err(CommandError::new(
                 ErrorCode::DependencyUnavailable,
@@ -228,28 +253,17 @@ fn apply_hole(
             decoded.instances,
             decoded.cut_history,
             decoded.hole_history,
+            decoded.member_hole_history,
         )
     };
-    let head_plate = plates
-        .iter()
-        .find(|r| r.authored.id == command.target_id)
-        .ok_or_else(|| {
-            if members
-                .iter()
-                .any(|m: &MemberRecord| m.authored.id == command.target_id)
-            {
-                // F04 section 7: a hole in a beam flange or web is unsupported until the
-                // kernel can cut a prism along the member's faces.
-                CommandError::new(
-                    ErrorCode::UnsupportedGeometry,
-                    "target_id",
-                    "a hole in a beam flange or web is not supported",
-                )
-                .into()
-            } else {
-                not_found()
-            }
-        })?;
+    let head_element =
+        if let Some(record) = plates.iter().find(|r| r.authored.id == command.target_id) {
+            HoleElement::Plate(Box::new(record.clone()))
+        } else if let Some(record) = members.iter().find(|r| r.authored.id == command.target_id) {
+            HoleElement::Member(Box::new(record.clone()))
+        } else {
+            return Err(not_found());
+        };
 
     // Replay and reuse, decided from the head model as in `edit`: the head holds the identical
     // record exactly when the retry is the same request.
@@ -263,7 +277,7 @@ fn apply_hole(
         PriorOp::Accepted { fingerprint: seen } if seen == fingerprint => {
             return Ok(AddedHole {
                 replayed: true,
-                plate: head_plate.clone(),
+                element: head_element,
                 revision: replay_summary(&head, recorded)?,
                 footprint: None,
                 changed_layers: Vec::new(),
@@ -281,68 +295,166 @@ fn apply_hole(
     }
 
     // The record id is unused in the project, not only on the target (F04 section 4): the
-    // id namespaces of the A04 hole records and of the A03 cut records are one project-wide
-    // space, so a cut record on any plate or member also refuses the id here.
+    // id namespaces of the A04/A04.2 hole records, the A13 polygon cuts and the A03 cut
+    // records are one project-wide space, so a record on any plate or member also refuses
+    // the id here.
     let used = |id: OpId| {
         hole_history.values().any(|h| h.retired.contains(&id))
+            || member_hole_history
+                .values()
+                .any(|h| h.retired.contains(&id))
             || history.values().any(|h| h.retired.contains(&id))
             || plates.iter().any(|p| {
                 p.authored.hole_records.iter().any(|r| r.operation_id == id)
                     || p.authored.cuts.iter().any(|c| c.operation_id == id)
             })
-            || members
-                .iter()
-                .any(|m| m.authored.cuts.iter().any(|c| c.operation_id == id))
+            || members.iter().any(|m| {
+                m.authored.cuts.iter().any(|c| c.operation_id == id)
+                    || m.authored.hole_records.iter().any(|r| r.operation_id == id)
+            })
     };
     let materials = material_lookup(&definitions);
-    let material = head_plate
-        .authored
-        .material
-        .as_ref()
-        .map(&materials)
-        .transpose()?;
-    let (authored, body) = if remove {
-        beamcraft_engine::command::remove_hole(&head_plate.authored, &removal)?
-    } else if update {
-        beamcraft_engine::command::update_hole(&head_plate.authored, &edit)?
-    } else {
-        beamcraft_engine::command::add_hole_after(
-            &head_plate.authored,
-            command,
-            &used,
-            hole_history
-                .get(&command.target_id)
-                .map_or(0, |h| usize::from(h.next_ordinal)),
-        )?
-    };
-    let quantities = body.quantities_for(material)?;
-    let next = PlateRecord {
-        authored,
-        body,
-        quantities,
-    };
     let canonical = instances.definition(command.target_id)?;
-    let mut footprint = Footprint::for_update(command.target_id, false, false, true, false, None)?
-        .union(instances.dependencies(command.target_id)?)?;
-    let mut others = Vec::new();
-    for id in instances.group(command.target_id)? {
-        if id == command.target_id {
-            continue;
+    let (element, changes) = match &head_element {
+        HoleElement::Plate(head_plate) => {
+            let material = head_plate
+                .authored
+                .material
+                .as_ref()
+                .map(&materials)
+                .transpose()?;
+            let (authored, body) = if remove {
+                beamcraft_engine::command::remove_hole(&head_plate.authored, &removal)?
+            } else if update {
+                beamcraft_engine::command::update_hole(&head_plate.authored, &edit)?
+            } else {
+                beamcraft_engine::command::add_hole_after(
+                    &head_plate.authored,
+                    command,
+                    &used,
+                    hole_history
+                        .get(&command.target_id)
+                        .map_or(0, |h| usize::from(h.next_ordinal)),
+                )?
+            };
+            let quantities = body.quantities_for(material)?;
+            let next = PlateRecord {
+                authored,
+                body,
+                quantities,
+            };
+            let mut others = Vec::new();
+            for id in instances.group(command.target_id)? {
+                if id == command.target_id {
+                    continue;
+                }
+                let mut authored = plates
+                    .iter()
+                    .find(|p| p.authored.id == id)
+                    .ok_or_else(|| integrity("shared hole plate is not evaluated"))?
+                    .authored
+                    .clone();
+                authored.hole_records = next.authored.hole_records.clone();
+                others.push(PlateRecord {
+                    authored,
+                    body: next.body.clone(),
+                    quantities: next.quantities,
+                });
+            }
+            let mut changes = vec![
+                Change::HoleRecords {
+                    id: canonical.to_string(),
+                    records: next.authored.hole_records.clone(),
+                },
+                mesh_change(&next.authored.id, &next.body.solid, &plate_record(&next))?,
+            ];
+            for other in &others {
+                changes.push(mesh_change(
+                    &other.authored.id,
+                    &other.body.solid,
+                    &plate_record(other),
+                )?);
+            }
+            (HoleElement::Plate(Box::new(next)), changes)
         }
-        footprint = footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
-        let mut authored = plates
-            .iter()
-            .find(|p| p.authored.id == id)
-            .ok_or_else(|| integrity("shared hole plate is not evaluated"))?
-            .authored
-            .clone();
-        authored.hole_records = next.authored.hole_records.clone();
-        others.push(PlateRecord {
-            authored,
-            body: next.body.clone(),
-            quantities: next.quantities,
-        });
-    }
+        HoleElement::Member(head_member) => {
+            // A04.2: the member records live on the member; the engine admits the record and
+            // the replay here refuses the whole command when the hole no longer fits.
+            let outcome = if remove {
+                beamcraft_engine::member_hole::remove_member_hole(&removal, &head_member.authored)?
+            } else if update {
+                beamcraft_engine::member_hole::update_member_hole(&edit, &head_member.authored)?
+            } else {
+                beamcraft_engine::member_hole::add_member_hole_after(
+                    command,
+                    &head_member.authored,
+                    &used,
+                    member_hole_history
+                        .get(&command.target_id)
+                        .map_or(0, |h| usize::from(h.next_ordinal)),
+                )?
+            };
+            let profile = profile_lookup(&definitions)(&outcome.authored.profile)?;
+            let body = evaluate_member(&outcome.authored, profile)?;
+            let quantities = member_quantities(
+                &body,
+                outcome
+                    .authored
+                    .material
+                    .as_ref()
+                    .map(&materials)
+                    .transpose()?,
+            )?;
+            let next = MemberRecord {
+                authored: outcome.authored.clone(),
+                body,
+                quantities,
+            };
+            let mut others = Vec::new();
+            for id in instances.group(command.target_id)? {
+                if id == command.target_id {
+                    continue;
+                }
+                let mut authored = members
+                    .iter()
+                    .find(|m| m.authored.id == id)
+                    .ok_or_else(|| integrity("shared hole member is not evaluated"))?
+                    .authored
+                    .clone();
+                authored.hole_records = next.authored.hole_records.clone();
+                others.push(MemberRecord {
+                    authored,
+                    body: next.body.clone(),
+                    quantities: next.quantities,
+                });
+            }
+            let mut changes = vec![
+                Change::MemberHoles {
+                    id: canonical.to_string(),
+                    records: next.authored.hole_records.clone(),
+                },
+                mesh_change(&next.authored.id, &next.body.solid, &member_record(&next))?,
+            ];
+            for other in &others {
+                changes.push(mesh_change(
+                    &other.authored.id,
+                    &other.body.solid,
+                    &member_record(other),
+                )?);
+            }
+            (HoleElement::Member(Box::new(next)), changes)
+        }
+    };
+    let footprint = {
+        let mut footprint =
+            Footprint::for_update(command.target_id, false, false, true, false, None)?
+                .union(instances.dependencies(command.target_id)?)?;
+        for id in instances.group(command.target_id)? {
+            footprint =
+                footprint.union(Footprint::for_update(id, false, false, true, false, None)?)?;
+        }
+        footprint
+    };
     let schema = schema_identity()?;
     let (mut author, opened) = Author::open(
         base_request,
@@ -353,20 +465,6 @@ fn apply_hole(
         schema,
         &control,
     )?;
-    let mut changes = vec![
-        Change::HoleRecords {
-            id: canonical.to_string(),
-            records: next.authored.hole_records.clone(),
-        },
-        mesh_change(&next.authored.id, &next.body.solid, &plate_record(&next))?,
-    ];
-    for other in &others {
-        changes.push(mesh_change(
-            &other.authored.id,
-            &other.body.solid,
-            &plate_record(other),
-        )?);
-    }
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -401,7 +499,7 @@ fn apply_hole(
     }
     Ok(AddedHole {
         replayed: false,
-        plate: next,
+        element,
         revision: summarize(&committed.info),
         footprint: Some(footprint),
         changed_layers,

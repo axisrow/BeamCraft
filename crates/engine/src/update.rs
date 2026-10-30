@@ -426,6 +426,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         }
     }
 
@@ -462,6 +463,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         };
         assert_eq!(
             patch_member(

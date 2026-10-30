@@ -764,7 +764,7 @@ fn create(
                         .iter()
                         .map(|r| (r.operation_id, r.ordinal))
                         .collect::<Vec<_>>(),
-                    true,
+                    cut_history::Family::PlateHole,
                 )?;
                 let mut flat: Vec<[f64; 3]> = Vec::new();
                 let mut counts = Vec::new();
@@ -1038,16 +1038,14 @@ fn author_record_history(
     p: &str,
     source: Option<&Prim>,
     records: &[(beamcraft_model::id::OpId, usize)],
-    hole: bool,
+    family: cut_history::Family,
 ) -> Result<(), Diagnostic> {
-    let (next_name, retired_name, id_name, ordinal_name) = cut_history::fields(hole);
+    let (next_name, retired_name, id_name, ordinal_name) = cut_history::fields(family);
     let old = source
-        .map(|p| {
-            if hole {
-                cut_history::read_holes(p)
-            } else {
-                cut_history::read(p)
-            }
+        .map(|p| match family {
+            cut_history::Family::Cut => cut_history::read(p),
+            cut_history::Family::PlateHole => cut_history::read_holes(p),
+            cut_history::Family::MemberHole => cut_history::read_member_holes(p),
         })
         .transpose()?
         .unwrap_or_default();
@@ -1120,7 +1118,7 @@ pub(super) fn author_cuts(
             .iter()
             .map(|r| (r.operation_id, usize::from(r.ordinal)))
             .collect::<Vec<_>>(),
-        false,
+        cut_history::Family::Cut,
     )?;
     let ids: Vec<String> = cuts.iter().map(|c| c.operation_id.to_string()).collect();
     let ordinals = cuts.iter().map(|c| i32::from(c.ordinal)).collect();
@@ -1494,7 +1492,7 @@ pub(super) fn apply(
                         .iter()
                         .map(|r| (r.operation_id, r.ordinal))
                         .collect::<Vec<_>>(),
-                    true,
+                    cut_history::Family::PlateHole,
                 )?;
                 // The five record attributes, always together: the authoritative polygons of
                 // every record, replayed from the base shape in ordinal order, with the id,
@@ -1546,6 +1544,90 @@ pub(super) fn apply(
                     "token[]",
                     sdf::Value::TokenVec(kinds),
                 )?;
+            }
+            Change::MemberHoles { records, .. } => {
+                author_record_history(
+                    &mut authored,
+                    &p,
+                    prims.iter().find(|old| old.path == p),
+                    &records
+                        .iter()
+                        .map(|r| (r.operation_id, r.ordinal))
+                        .collect::<Vec<_>>(),
+                    cut_history::Family::MemberHole,
+                )?;
+                // The nine record attributes, always together: the authoritative polygons of
+                // every record and their member-frame axis points, directions, extents, ids and
+                // ordinals (A04.2). A through extent stores zero range values.
+                let mut flat = Vec::new();
+                let mut counts = Vec::new();
+                let mut ids = Vec::new();
+                let mut ordinals = Vec::new();
+                let mut axis_points = Vec::new();
+                let mut directions = Vec::new();
+                let mut extents = Vec::new();
+                let mut from = Vec::new();
+                let mut to = Vec::new();
+                for record in records {
+                    flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
+                    counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
+                    ids.push(record.operation_id.to_string());
+                    ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
+                    axis_points.push(record.axis_point_mm);
+                    directions.push(record.axis_direction);
+                    extents.push(record.extent.as_str().into());
+                    let (start, end) = match record.extent {
+                        HoleExtent::Through => (0.0, 0.0),
+                        HoleExtent::Range { from_mm, to_mm } => (from_mm, to_mm),
+                    };
+                    from.push(start);
+                    to.push(end);
+                }
+                for (name, ty, v) in [
+                    ("steel:mhole:pointsMm", "double3[]", points(&flat)),
+                    (
+                        "steel:mhole:vertexCounts",
+                        "int[]",
+                        sdf::Value::IntVec(counts),
+                    ),
+                    (
+                        "steel:mhole:operationIds",
+                        "string[]",
+                        sdf::Value::StringVec(ids),
+                    ),
+                    (
+                        "steel:mhole:ordinals",
+                        "int[]",
+                        sdf::Value::IntVec(ordinals),
+                    ),
+                    (
+                        "steel:mhole:axisPointsMm",
+                        "double3[]",
+                        points(&axis_points),
+                    ),
+                    (
+                        "steel:mhole:axisDirections",
+                        "double3[]",
+                        points(&directions),
+                    ),
+                    (
+                        "steel:mhole:extents",
+                        "token[]",
+                        sdf::Value::TokenVec(extents),
+                    ),
+                    (
+                        "steel:mhole:extentFromMm",
+                        "double[]",
+                        sdf::Value::DoubleVec(from),
+                    ),
+                    (
+                        "steel:mhole:extentToMm",
+                        "double[]",
+                        sdf::Value::DoubleVec(to),
+                    ),
+                ] {
+                    attr(&mut authored, &p, name, ty, v)?;
+                }
             }
             Change::Axis { points_mm, .. } => attr(
                 &mut authored,
@@ -1706,6 +1788,7 @@ pub(super) fn apply(
                 | Change::Roll { .. }
                 | Change::Profile { .. }
                 | Change::HoleRecords { .. }
+                | Change::MemberHoles { .. }
         ) {
             // Never reveal a weaker stale result after removing the derived opinion.
             let mesh_path = format!("{p}/Geometry");
@@ -1808,6 +1891,20 @@ fn capture(
         ("steel:cut:keep", "token[]"),
         (cut_history::NEXT, "int"),
         (cut_history::RETIRED, "string[]"),
+    ];
+    /// The A04.2 member-hole record attributes of a member, in storage order.
+    const MHOLE_FIELDS: &[(&str, &str)] = &[
+        ("steel:mhole:pointsMm", "double3[]"),
+        ("steel:mhole:vertexCounts", "int[]"),
+        ("steel:mhole:operationIds", "string[]"),
+        ("steel:mhole:ordinals", "int[]"),
+        ("steel:mhole:axisPointsMm", "double3[]"),
+        ("steel:mhole:axisDirections", "double3[]"),
+        ("steel:mhole:extents", "token[]"),
+        ("steel:mhole:extentFromMm", "double[]"),
+        ("steel:mhole:extentToMm", "double[]"),
+        (cut_history::MHOLE_NEXT, "int"),
+        (cut_history::MHOLE_RETIRED, "string[]"),
     ];
     /// The P14 section-placement attributes of a member, in storage order.
     const MEMBER_PLACEMENT: &[(&str, &str)] = &[
@@ -2081,6 +2178,11 @@ fn capture(
                     add(name, ty, 0);
                 }
             }
+            Change::MemberHoles { .. } => {
+                for &(name, ty) in MHOLE_FIELDS {
+                    add(name, ty, 0);
+                }
+            }
             Change::Axis { .. } => add("bim:axisPointsMm", "double3[]", 0),
             Change::Roll { .. } => add("steel:member:rollRad", "double", 0),
             Change::Profile { .. } => add("bim:profile", "rel", 0),
@@ -2126,6 +2228,7 @@ fn capture(
                 | Change::Axis { .. }
                 | Change::Roll { .. }
                 | Change::Profile { .. }
+                | Change::MemberHoles { .. }
         ) {
             for &(name, ty) in MESH {
                 add(name, ty, 1);

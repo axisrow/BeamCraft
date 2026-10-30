@@ -49,8 +49,9 @@ use beamcraft_model::command::{
     AddHole, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts, CopyElement,
     CornerTreatment, CreateLoftedPlate, CreatePlate, CreatePolybeam, CreateStraightMember,
     CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord, DeleteElement, ElementPatch,
-    FitEndToPart, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner, PlateSide,
-    SectionDepthPosition, SectionPlacement, SectionPlanePosition, SplitPart, UpdateElement,
+    FitEndToPart, HoleExtent, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner,
+    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition, SplitPart,
+    UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -117,6 +118,11 @@ const UPDATE_HOLE_OPTIONS: &[&str] = &[
     "--polygon",
     "--hole-rect",
     "--hole-round",
+    "--axis-point",
+    "--axis-direction",
+    "--diameter",
+    "--from",
+    "--to",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -129,6 +135,11 @@ const ADD_HOLE_OPTIONS: &[&str] = &[
     "--polygon",
     "--hole-rect",
     "--hole-round",
+    "--axis-point",
+    "--axis-direction",
+    "--diameter",
+    "--from",
+    "--to",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -2075,18 +2086,60 @@ fn numbers_list(text: &str, count: usize) -> Run<Vec<f64>> {
     }
 }
 
-/// The one hole of `add-hole` (A04): `--polygon "X,Y;..."` (the clockwise polygon itself) or a
-/// generator, `--hole-rect "X,Y,W,H"` or `--hole-round "X,Y,D"`, in plate-local millimetres.
-/// Exactly one is accepted, and only the shape is parsed here: finiteness, positivity and the
-/// caps are the model's admission (`hole` field), and a round hole is the regular inscribed
-/// `N`-gon of F06 section 2 (A-2), whose `N` follows the contract's own tolerance, so
-/// `--hole-segments` does not apply.
+/// The one hole of `add-hole` (A04, A04.2): a member target, `--axis-point "U,V,W"`
+/// `--axis-direction "X,Y,Z"` `--diameter D` with an optional `--from F --to T` range (the F06
+/// member-hole amendment), or a plate generator, `--polygon "X,Y;..."` (the clockwise polygon
+/// itself), `--hole-rect "X,Y,W,H"` or `--hole-round "X,Y,D"`, in plate-local millimetres.
+/// Exactly one target kind is accepted, and only the shape is parsed here: finiteness,
+/// positivity and the caps are the model's admission (`hole` field), and a round hole is the
+/// regular inscribed `N`-gon of F06 section 2 (A-2), whose `N` follows the contract's own
+/// tolerance, so `--hole-segments` does not apply.
 fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
     let given = |key: &str| options.get(key).copied();
-    let given_count = ["--polygon", "--hole-rect", "--hole-round"]
+    let plate_flags = ["--polygon", "--hole-rect", "--hole-round"]
         .iter()
         .filter(|key| given(key).is_some())
         .count();
+    let member_flags = ["--axis-point", "--axis-direction", "--diameter"]
+        .iter()
+        .filter(|key| given(key).is_some())
+        .count();
+    if member_flags > 0 {
+        if plate_flags > 0 {
+            return Err(invalid(
+                "a member hole takes --axis-point, --axis-direction and --diameter, without the plate generators",
+            ));
+        }
+        if member_flags != 3 {
+            return Err(invalid(
+                "--axis-point, --axis-direction and --diameter are required together",
+            ));
+        }
+        let member = |text: &str, count: usize| -> Run<[f64; 3]> {
+            match numbers_list(text, count)?[..] {
+                [a, b, c] => Ok([a, b, c]),
+                _ => Err(invalid("a member hole has the wrong number of values")),
+            }
+        };
+        let axis_point_mm = member(given("--axis-point").unwrap_or_default(), 3)?;
+        let axis_direction = member(given("--axis-direction").unwrap_or_default(), 3)?;
+        let extent = match (given("--from"), given("--to")) {
+            (None, None) => HoleExtent::Through,
+            (Some(from), Some(to)) => HoleExtent::Range {
+                from_mm: numbers_list(from, 1)?.first().copied().unwrap_or(0.0),
+                to_mm: numbers_list(to, 1)?.first().copied().unwrap_or(0.0),
+            },
+            _ => return Err(invalid("--from and --to are required together")),
+        };
+        let diameter = numbers_list(given("--diameter").unwrap_or_default(), 1)?;
+        return Ok(HoleSpec::Member(beamcraft_model::command::MemberHole {
+            axis_point_mm,
+            axis_direction,
+            extent,
+            diameter_mm: diameter.first().copied().unwrap_or(0.0),
+        }));
+    }
+    let given_count = plate_flags;
     if given_count != 1 {
         return Err(invalid(
             "exactly one of --polygon, --hole-rect or --hole-round is required",
@@ -2123,6 +2176,14 @@ fn hole_spec(options: &BTreeMap<&str, &str>) -> Run<HoleSpec> {
             diameter_mm: d,
         }),
         _ => Err(invalid("a hole has the wrong number of values")),
+    }
+}
+
+/// The `add-hole` element response: a plate or a member, as the hole target decides.
+fn hole_element_json(element: &beamcraft_cli::hole::HoleElement) -> Run<Json> {
+    match element {
+        beamcraft_cli::hole::HoleElement::Plate(record) => plate_json(record),
+        beamcraft_cli::hole::HoleElement::Member(record) => member_json(record),
     }
 }
 
@@ -2202,7 +2263,7 @@ fn add_hole_cli(
             ),
             ("op_id", Json::text(op_id.to_string())),
             ("removed_record", Json::text(operation_id.to_string())),
-            ("element", plate_json(&r.plate)?),
+            ("element", hole_element_json(&r.element)?),
             ("revision", revision_json(&r.revision)),
             ("footprint", footprint_json(r.footprint.as_ref())),
         ]));
@@ -2228,7 +2289,7 @@ fn add_hole_cli(
         },
         &mut NoFault,
     )?;
-    let element = plate_json(&added.plate)?;
+    let element = hole_element_json(&added.element)?;
     Ok(Json::object([
         (
             "outcome",
@@ -3364,6 +3425,23 @@ fn member_json(record: &MemberRecord) -> Run<Json> {
         ("vertices", Json::uint(mesh.vertices().len() as u64)),
         ("triangles", Json::uint(mesh.triangles().len() as u64)),
         ("cuts", cuts_json(&record.authored.cuts)?),
+        (
+            "hole_records",
+            Json::Array(
+                record
+                    .authored
+                    .hole_records
+                    .iter()
+                    .map(|r| {
+                        Json::object([
+                            ("operation_id", Json::text(r.operation_id.to_string())),
+                            ("ordinal", Json::uint(r.ordinal as u64)),
+                            ("extent", Json::text(r.extent.as_str())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
     ]))
 }
 
