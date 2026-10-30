@@ -119,8 +119,10 @@ fn invalid(message: &'static str) -> CommandError {
     CommandError::new(ErrorCode::InvalidArgument, "filter", message)
 }
 /// Whether a value may be stored under a definition: the type matches and a choice value is one
-/// of the definition's options. Admission of the value's own form remains the caller's step.
-fn admits(def: &AttrDef, value: &AttrValue) -> bool {
+/// of the definition's options. A value that fails this check is not a filter target: readers
+/// omit it, so it never matches, instead of refusing the whole dataset. Admission of the
+/// value's own form remains the caller's step.
+pub fn admits(def: &AttrDef, value: &AttrValue) -> bool {
     if def.ty != value.attr_type() {
         return false;
     }

@@ -90,8 +90,12 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store = RevisionStore::new(blobs);
     let model = filters::read(&store)?;
     let pin = model.manifest.map(|d| d.to_string());
-    if let Some(expected) = options.get("--expected-model")
-        && Some(*expected) != pin.as_deref()
+    // `none` expects a store without a revision, whose pin is absent.
+    let expected = options
+        .get("--expected-model")
+        .map(|s| (*s != "none").then_some(*s));
+    if let Some(expected) = expected
+        && expected != pin.as_deref()
     {
         return Err(PlateError {
             rule_id: None,

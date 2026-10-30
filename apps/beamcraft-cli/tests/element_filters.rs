@@ -112,6 +112,14 @@ fn typed_rules_select_by_type_name_class_and_attribute_without_writing() {
 #[test]
 fn unknown_fields_attributes_and_incompatible_operators_refuse_with_a_pinned_page() {
     let f = StoreFixture::new("filter-refusals");
+    let empty_all = rule_file(&f, r#"{"all":[]}"#);
+    // `none` pins a store without a revision and matches its absent digest.
+    let empty = ok(
+        &f,
+        "query-elements",
+        &["--rule", &empty_all, "--expected-model", "none"],
+    );
+    assert!(ids(&empty).is_empty());
     for class in ["1", "2"] {
         ok(
             &f,
@@ -129,6 +137,11 @@ fn unknown_fields_attributes_and_incompatible_operators_refuse_with_a_pinned_pag
         );
     }
     let all = rule_file(&f, r#"{"all":[]}"#);
+    let (code, _) = f.run(
+        "query-elements",
+        &["--rule", &all, "--expected-model", "none"],
+    );
+    assert_eq!(code, 2, "a store with a revision is not pin none");
     let page = ok(&f, "query-elements", &["--rule", &all, "--limit", "1"]);
     let next = text(&page, "next");
     let pin = text(&page, "model_manifest");
@@ -193,4 +206,67 @@ fn numeric_filter_units_are_exact_against_their_definition() {
     let (code, _) = f.run("query-elements", &["--rule", &bad]);
     assert_eq!(code, 2);
     assert_eq!(ok(&f, "open-revision", &[]), before);
+}
+
+#[test]
+fn a_stale_choice_option_never_matches_and_never_refuses_the_query() {
+    let f = StoreFixture::new("filter-stale-choice");
+    let plate = ok(
+        &f,
+        "create-plate",
+        &["--width", "100", "--length", "50", "--thickness", "10"],
+    );
+    let id = text(plate.get("plate").unwrap(), "element_id");
+    ok(
+        &f,
+        "attribute-define",
+        &[
+            "--name",
+            "Status",
+            "--type",
+            "choice",
+            "--options",
+            "New,Done",
+        ],
+    );
+    ok(
+        &f,
+        "attribute-set",
+        &["--element", &id, "--name", "Status", "--value", "New"],
+    );
+    // The value outlives the undefine (I04); the redefinition declares other options, so the
+    // stored option is stale from here on.
+    ok(&f, "attribute-undefine", &["--name", "Status"]);
+    ok(
+        &f,
+        "attribute-define",
+        &[
+            "--name",
+            "Status",
+            "--type",
+            "choice",
+            "--options",
+            "Open,Done",
+        ],
+    );
+    let all = rule_file(&f, r#"{"all":[]}"#);
+    assert_eq!(ids(&ok(&f, "query-elements", &["--rule", &all])), vec![id]);
+    for option in ["Open", "Done"] {
+        let rule = rule_file(
+            &f,
+            &format!(
+                r#"{{"field":"attribute","attribute":"Status","op":"eq","value":"{option}"}}"#
+            ),
+        );
+        assert!(
+            ids(&ok(&f, "query-elements", &["--rule", &rule])).is_empty(),
+            "{option}"
+        );
+    }
+    let stale = rule_file(
+        &f,
+        r#"{"field":"attribute","attribute":"Status","op":"eq","value":"New"}"#,
+    );
+    let (code, _) = f.run("query-elements", &["--rule", &stale]);
+    assert_eq!(code, 2, "a foreign option literal refuses at admission");
 }

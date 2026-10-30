@@ -111,12 +111,13 @@ fn records_of(
             "plate" | "beam" | "column" => Some(crate::plate::decode_class(prim)?),
             _ => None,
         };
-        // Only a value whose stored type matches its definition participates: a presence left
-        // over from an earlier definition is reported as unknown, never matched.
+        // Only a value that fully admits under its definition participates: a presence left
+        // over from an earlier definition — or a stale choice option that outlived an undefine
+        // — is not a filter target, so it never matches instead of refusing the dataset.
         let mut attributes = BTreeMap::new();
         for def in attrs.schema.iter() {
             if let Some(value) = attrs.values.value_of(&raw, &def.name)
-                && value.attr_type() == def.ty
+                && beamcraft_engine::filter::admits(def, value)
             {
                 attributes.insert(def.name.clone(), value.clone());
             }
