@@ -1074,17 +1074,26 @@ pub enum SnapKind {
     GridEnd,
     /// Closest point of a grid segment.
     GridLine,
+    /// Closest point on a named physical edge of a beam or plate.
+    Edge,
+    /// Halfway along a physical edge, member reference axis or grid segment.
+    Midpoint,
+    /// Halfway along a member's authored reference axis.
+    Center,
 }
 
 impl SnapKind {
     /// Every kind, in rank order: the order the snap panel lists them in.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 9] = [
         Self::Vertex,
         Self::AxisEnd,
         Self::Axis,
         Self::GridIntersection,
         Self::GridEnd,
         Self::GridLine,
+        Self::Edge,
+        Self::Midpoint,
+        Self::Center,
     ];
 
     /// The wire token.
@@ -1096,6 +1105,9 @@ impl SnapKind {
             Self::GridIntersection => "grid_intersection",
             Self::GridEnd => "grid_end",
             Self::GridLine => "grid_line",
+            Self::Edge => "edge",
+            Self::Midpoint => "midpoint",
+            Self::Center => "center",
         }
     }
 
@@ -1108,6 +1120,9 @@ impl SnapKind {
             "grid_intersection" => Some(Self::GridIntersection),
             "grid_end" => Some(Self::GridEnd),
             "grid_line" => Some(Self::GridLine),
+            "edge" => Some(Self::Edge),
+            "midpoint" => Some(Self::Midpoint),
+            "center" => Some(Self::Center),
             _ => None,
         }
     }
@@ -1120,6 +1135,9 @@ impl SnapKind {
             Self::GridIntersection => 3,
             Self::GridEnd => 4,
             Self::GridLine => 5,
+            Self::Edge => 6,
+            Self::Midpoint => 7,
+            Self::Center => 8,
         }
     }
 }
@@ -1182,6 +1200,197 @@ pub struct SnapResult {
     pub skipped: Vec<ElementId>,
 }
 
+/// An authored member reference axis from the same verified inspection as the snapshot.
+/// This is independent of the physical section's offsets, cuts and bounding box.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberSnapAxis {
+    /// Owning beam or column.
+    pub element_id: ElementId,
+    /// Authored reference points, transformed to world millimetres.
+    pub points_mm: Vec<[f64; 3]>,
+}
+
+/// Compute reference axes from evaluated records, without inferring them from a section mesh.
+pub fn member_snap_axes(
+    records: &[crate::query::committed::MemberRecord],
+) -> Result<Vec<MemberSnapAxis>, ViewError> {
+    if records.len() > MAX_SCANNED_ELEMENTS {
+        return Err(limit());
+    }
+    let mut budget = 1_048_576usize;
+    for record in records {
+        let count = record.authored.axis_points_mm.len();
+        if !(2..=beamcraft_model::limits::CONTOUR_POINT_CAP).contains(&count) {
+            return Err(input());
+        }
+        budget = budget.checked_sub(count).ok_or_else(limit)?;
+    }
+    Ok(records
+        .iter()
+        .map(|record| {
+            let placement = &record.authored.placement;
+            MemberSnapAxis {
+                element_id: record.authored.id,
+                points_mm: record
+                    .authored
+                    .axis_points_mm
+                    .iter()
+                    .map(|p| {
+                        add(
+                            rotate_vector(*p, placement.orientation_xyzw),
+                            placement.translation_mm,
+                        )
+                    })
+                    .collect(),
+            }
+        })
+        .collect())
+}
+
+/// Source gates are independent of point kinds. Grid guides belong to reference geometry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapSources {
+    /// Authored member reference axes and their discrete points.
+    pub reference: bool,
+    /// Physical body vertices, edges and their discrete points.
+    pub geometry: bool,
+    /// Grid guides, additionally requiring the reference gate.
+    pub grids: bool,
+}
+impl Default for SnapSources {
+    fn default() -> Self {
+        Self {
+            reference: true,
+            geometry: true,
+            grids: true,
+        }
+    }
+}
+
+/// Pinned construction-coordinate context. Source/type gates apply before truncation.
+pub struct SnapContext<'a> {
+    /// Complete visible grid set; no magnetic relationship is created.
+    pub grids: &'a [beamcraft_model::grid::Grid],
+    /// Authored reference axes from the same model inspection.
+    pub member_axes: &'a [MemberSnapAxis],
+    /// Restrict candidates to this working plane, preserving their exact coordinates.
+    pub plane: Option<crate::work_plane::WorkPlane>,
+    /// Optional cursor ray: accept a cone around the pointer instead of a sphere around a point.
+    pub cursor: Option<SnapCursor>,
+    /// Which geometry families may supply candidates.
+    pub sources: SnapSources,
+    /// Permit arbitrary points on lines; does not enable endpoints, midpoints or intersections.
+    pub nearest: bool,
+}
+impl Default for SnapContext<'_> {
+    fn default() -> Self {
+        Self {
+            grids: &[],
+            member_axes: &[],
+            plane: None,
+            cursor: None,
+            sources: SnapSources::default(),
+            nearest: true,
+        }
+    }
+}
+impl SnapContext<'_> {
+    fn allows(&self, kind: SnapKind, feature: Option<&FeatureId>, grid: bool) -> bool {
+        let source = if grid {
+            self.sources.reference && self.sources.grids
+        } else if feature.is_some() {
+            self.sources.geometry
+        } else {
+            self.sources.reference
+        };
+        source
+            && (self.nearest
+                || !matches!(kind, SnapKind::Axis | SnapKind::Edge | SnapKind::GridLine))
+    }
+}
+
+/// Validated 3D cursor ray with a bounded perspective cone or constant orthographic radius.
+#[derive(Debug, Clone, Copy)]
+pub struct SnapCursor {
+    origin: V3,
+    direction: V3,
+    aperture: f64,
+    radius_mm: Option<f64>,
+}
+impl SnapCursor {
+    /// Admit and normalize a ray. Aperture is positive and at most 0.1 radians in tangent form.
+    pub fn new(origin_mm: V3, direction: V3, aperture: f64) -> Result<Self, ViewError> {
+        if !aperture.is_finite() || !(0.0..=0.1).contains(&aperture) || aperture == 0.0 {
+            return Err(input());
+        }
+        let ray = RayPick::new(origin_mm, direction, vec![FeatureKind::Vertex]);
+        Ok(Self {
+            origin: origin_mm,
+            direction: validate_ray(&ray)?,
+            aperture,
+            radius_mm: None,
+        })
+    }
+
+    /// Admit an orthographic cursor with a constant world-space aperture radius.
+    pub fn orthographic(origin_mm: V3, direction: V3, radius_mm: f64) -> Result<Self, ViewError> {
+        if !radius_mm.is_finite() || radius_mm <= 0.0 || radius_mm > MAX_RADIUS_MM {
+            return Err(input());
+        }
+        let mut cursor = Self::new(origin_mm, direction, 0.01)?;
+        cursor.radius_mm = Some(radius_mm);
+        Ok(cursor)
+    }
+}
+
+fn snap_distance(p: V3, point: V3, band: f64, context: &SnapContext<'_>) -> Option<f64> {
+    let (distance, band) = if let Some(cursor) = context.cursor {
+        let delta = sub(point, cursor.origin);
+        let t = dot(delta, cursor.direction);
+        if !(0.0..=MAX_T_MM).contains(&t) {
+            return None;
+        }
+        (
+            norm(sub(delta, scale(cursor.direction, t))),
+            cursor.radius_mm.unwrap_or(cursor.aperture * t) + EPS_PICK_MM,
+        )
+    } else {
+        (norm(sub(p, point)), band)
+    };
+    (distance <= band && on_plane(point, context.plane)).then_some(distance)
+}
+
+fn on_plane(point: V3, plane: Option<crate::work_plane::WorkPlane>) -> bool {
+    plane.is_none_or(|p| p.to_local(point).is_ok_and(|[_, _, z]| z.abs() <= 1e-6))
+}
+
+fn closest_in_plane(p: V3, a: V3, b: V3, context: &SnapContext<'_>) -> Option<(V3, f64)> {
+    if let Some(plane) = context.plane {
+        let [_, _, az] = plane.to_local(a).ok()?;
+        let [_, _, bz] = plane.to_local(b).ok()?;
+        if az.abs() > 1e-6 || bz.abs() > 1e-6 {
+            let denominator = az - bz;
+            if denominator.abs() < 1e-12 {
+                return None;
+            }
+            let t = az / denominator;
+            return (0.0..=1.0)
+                .contains(&t)
+                .then(|| (add(a, scale(sub(b, a), t)), t));
+        }
+    }
+    if let Some(cursor) = context.cursor {
+        let (_, point, _) = segment_segment(
+            cursor.origin,
+            add(cursor.origin, scale(cursor.direction, MAX_T_MM)),
+            a,
+            b,
+        );
+        return Some(closest_on_segment(point, a, b));
+    }
+    Some(closest_on_segment(p, a, b))
+}
+
 fn snap_order(a: &SnapCandidate, b: &SnapCandidate) -> Ordering {
     let local = |c: &SnapCandidate| c.feature_id.as_ref().map(FeatureId::local_id);
     quantum(a.distance_mm)
@@ -1205,6 +1414,14 @@ fn snap_order(a: &SnapCandidate, b: &SnapCandidate) -> Ordering {
 ///
 /// Inputs follow the point form of [`pick`] (same codes and caps); `kinds` replaces `targets`.
 pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, ViewError> {
+    snap_bodies(snapshot, query, &SnapContext::default())
+}
+
+fn snap_bodies(
+    snapshot: &ViewSnapshot,
+    query: &SnapQuery,
+    context: &SnapContext<'_>,
+) -> Result<SnapResult, ViewError> {
     if query
         .point_mm
         .iter()
@@ -1219,47 +1436,46 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
         return Err(limit());
     }
     let max = usize::try_from(query.max_hits).map_err(|_| limit())?;
+    if context.member_axes.len() > MAX_SCANNED_ELEMENTS {
+        return Err(limit());
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut point_budget = 1_048_576usize;
+    for axis in context.member_axes {
+        if !seen.insert(axis.element_id)
+            || !(2..=beamcraft_model::limits::CONTOUR_POINT_CAP).contains(&axis.points_mm.len())
+            || !snapshot
+                .element(&axis.element_id)
+                .is_some_and(|e| matches!(e.kind, ElementKind::Beam | ElementKind::Column))
+        {
+            return Err(input());
+        }
+        point_budget = point_budget
+            .checked_sub(axis.points_mm.len())
+            .ok_or_else(limit)?;
+        for point in &axis.points_mm {
+            check_point(*point)?;
+        }
+    }
     let p = query.point_mm;
     let band = query.radius_mm + EPS_PICK_MM;
     let mut candidates = Vec::new();
     let mut truncated = false;
     let mut skipped = Vec::new();
     for entry in snapshot.elements() {
-        if let Some(features) = NamedFeatures::world(snapshot, entry) {
-            if query.kinds.contains(&SnapKind::Vertex) {
-                for (id, point) in features.vertices {
-                    let distance = norm(sub(p, point));
-                    if !distance.is_finite() {
-                        return Err(uncertain());
-                    }
-                    if distance <= band {
-                        candidates.push(SnapCandidate {
-                            grid: None,
-                            element_id: entry.id,
-                            kind: SnapKind::Vertex,
-                            feature_id: Some(id),
-                            axis_parameter: None,
-                            point_world_mm: point,
-                            distance_mm: distance,
-                        });
-                        if candidates.len() > KEEP {
-                            truncated |= keep_best(&mut candidates, max, snap_order);
-                        }
-                    }
-                }
+        let mut push = |kind,
+                        feature_id: Option<FeatureId>,
+                        axis_parameter,
+                        point: V3|
+         -> Result<(), ViewError> {
+            if !context.allows(kind, feature_id.as_ref(), false) {
+                return Ok(());
             }
-            continue;
-        }
-        let Some(features) = BoxFeatures::world(snapshot, entry) else {
-            skipped.push(entry.id);
-            continue;
-        };
-        let mut push = |kind, feature_id, axis_parameter, point: V3| -> Result<(), ViewError> {
             let distance = norm(sub(p, point));
             if !(distance.is_finite() && finite(point)) {
                 return Err(uncertain());
             }
-            if distance <= band {
+            if let Some(distance) = snap_distance(p, point, band, context) {
                 candidates.push(SnapCandidate {
                     grid: None,
                     element_id: entry.id,
@@ -1269,8 +1485,39 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
                     point_world_mm: point,
                     distance_mm: distance,
                 });
+                if candidates.len() > KEEP {
+                    truncated |= keep_best(&mut candidates, max, snap_order);
+                }
             }
             Ok(())
+        };
+        if let Some(features) = NamedFeatures::world(snapshot, entry) {
+            if query.kinds.contains(&SnapKind::Vertex) {
+                for (id, point) in features.vertices {
+                    push(SnapKind::Vertex, Some(id), None, point)?;
+                }
+            }
+            for edge in features.edges {
+                let [a, b] = edge.ends;
+                if query.kinds.contains(&SnapKind::Midpoint) {
+                    push(
+                        SnapKind::Midpoint,
+                        Some(edge.id.clone()),
+                        Some(0.5),
+                        scale(add(a, b), 0.5),
+                    )?;
+                }
+                if query.kinds.contains(&SnapKind::Edge)
+                    && let Some((point, s)) = closest_in_plane(p, a, b, context)
+                {
+                    push(SnapKind::Edge, Some(edge.id), Some(s), point)?;
+                }
+            }
+            continue;
+        }
+        let Some(features) = BoxFeatures::world(snapshot, entry) else {
+            skipped.push(entry.id);
+            continue;
         };
         if query.kinds.contains(&SnapKind::Vertex) {
             for (role, v) in features.vertices.iter().enumerate() {
@@ -1280,7 +1527,24 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
                 push(SnapKind::Vertex, Some(id), None, *v)?;
             }
         }
-        if features.body == BodyKind::Member {
+        for role in 0..12 {
+            let [a, b] = features.edge(role).ok_or_else(uncertain)?;
+            let id = features.id(FeatureKind::Edge, role).ok_or_else(uncertain)?;
+            if query.kinds.contains(&SnapKind::Midpoint) {
+                push(
+                    SnapKind::Midpoint,
+                    Some(id.clone()),
+                    Some(0.5),
+                    scale(add(a, b), 0.5),
+                )?;
+            }
+            if query.kinds.contains(&SnapKind::Edge)
+                && let Some((point, s)) = closest_in_plane(p, a, b, context)
+            {
+                push(SnapKind::Edge, Some(id), Some(s), point)?;
+            }
+        }
+        if features.body == BodyKind::Member && !seen.contains(&entry.id) {
             // Face roles 4 and 5 are `f.z0` (at the axis start) and `f.z1` (at its end).
             let start = features.face_centre(4).ok_or_else(uncertain)?;
             let end = features.face_centre(5).ok_or_else(uncertain)?;
@@ -1288,13 +1552,61 @@ pub fn snap(snapshot: &ViewSnapshot, query: &SnapQuery) -> Result<SnapResult, Vi
                 push(SnapKind::AxisEnd, None, Some(0.0), start)?;
                 push(SnapKind::AxisEnd, None, Some(1.0), end)?;
             }
-            if query.kinds.contains(&SnapKind::Axis) {
-                let (point, s) = closest_on_segment(p, start, end);
+            if query.kinds.contains(&SnapKind::Axis)
+                && let Some((point, s)) = closest_in_plane(p, start, end, context)
+            {
                 push(SnapKind::Axis, None, Some(s), point)?;
+            }
+            if query.kinds.contains(&SnapKind::Center) || query.kinds.contains(&SnapKind::Midpoint)
+            {
+                let kind = if query.kinds.contains(&SnapKind::Center) {
+                    SnapKind::Center
+                } else {
+                    SnapKind::Midpoint
+                };
+                push(kind, None, Some(0.5), scale(add(start, end), 0.5))?;
             }
         }
         if candidates.len() > KEEP {
             truncated |= keep_best(&mut candidates, max, snap_order);
+        }
+    }
+    for axis in context.member_axes {
+        for pair in axis.points_mm.windows(2) {
+            let [a, b] = pair else { continue };
+            let mut push_axis = |kind, point, parameter| {
+                if !context.allows(kind, None, false) {
+                    return;
+                }
+                if let Some(distance) = snap_distance(p, point, band, context) {
+                    candidates.push(SnapCandidate {
+                        grid: None,
+                        element_id: axis.element_id,
+                        kind,
+                        feature_id: None,
+                        axis_parameter: Some(parameter),
+                        point_world_mm: point,
+                        distance_mm: distance,
+                    });
+                }
+            };
+            if query.kinds.contains(&SnapKind::AxisEnd) {
+                push_axis(SnapKind::AxisEnd, *a, 0.0);
+                push_axis(SnapKind::AxisEnd, *b, 1.0);
+            }
+            for kind in [SnapKind::Center, SnapKind::Midpoint] {
+                if query.kinds.contains(&kind) {
+                    push_axis(kind, scale(add(*a, *b), 0.5), 0.5);
+                }
+            }
+            if query.kinds.contains(&SnapKind::Axis)
+                && let Some((point, s)) = closest_in_plane(p, *a, *b, context)
+            {
+                push_axis(SnapKind::Axis, point, s);
+            }
+            if candidates.len() > KEEP {
+                truncated |= keep_best(&mut candidates, max, snap_order);
+            }
         }
     }
     truncated |= keep_best(&mut candidates, max, snap_order);
@@ -1313,19 +1625,39 @@ pub fn snap_with_grids(
     grids: &[beamcraft_model::grid::Grid],
     visible: Option<&std::collections::BTreeSet<ElementId>>,
 ) -> Result<SnapResult, ViewError> {
-    use crate::grid_query::{closest, intersection, local_to_world, segments};
     crate::grid_query::validate(grids).map_err(|_| input())?;
+    let grids = grids
+        .iter()
+        .filter(|g| visible.is_none_or(|v| v.contains(&g.id)))
+        .cloned()
+        .collect::<Vec<_>>();
     if visible.is_some_and(|v| v.len() > 64) {
         return Err(limit());
     }
-    let mut result = snap(snapshot, query)?;
+    snap_with_context(
+        snapshot,
+        query,
+        &SnapContext {
+            grids: &grids,
+            ..Default::default()
+        },
+    )
+}
+
+/// Resolve body, reference-axis and grid snaps at one pinned construction context.
+pub fn snap_with_context(
+    snapshot: &ViewSnapshot,
+    query: &SnapQuery,
+    context: &SnapContext<'_>,
+) -> Result<SnapResult, ViewError> {
+    use crate::grid_query::{closest, intersection, local_to_world, segments};
+    let grids = context.grids;
+    crate::grid_query::validate(grids).map_err(|_| input())?;
+    let mut result = snap_bodies(snapshot, query, context)?;
     let max = usize::try_from(query.max_hits).map_err(|_| limit())?;
     let band = query.radius_mm + EPS_PICK_MM;
     let [px, py, pz] = query.point_mm;
     for grid in grids {
-        if visible.is_some_and(|v| !v.contains(&grid.id)) {
-            continue;
-        }
         let p = crate::grid_edit::world_to_local(grid, [px, py]);
         let lines = segments(grid).map_err(|_| input())?;
         let nearby = lines
@@ -1340,15 +1672,27 @@ pub fn snap_with_grids(
                         a: &crate::grid_query::GridSegment,
                         b: Option<&crate::grid_query::GridSegment>,
                         point| {
+            if !context.allows(kind, None, true) {
+                return;
+            }
             let [x, y] = local_to_world(grid, point);
-            let distance = (x - px).hypot(y - py);
+            // Grid guides are vertical: intersect their world XY coordinate with the working
+            // plane instead of assigning the cursor height (wrong on an inclined plane).
+            let point = match context.plane {
+                Some(plane) => plane
+                    .ray_point([x, y, 0.0], [0.0, 0.0, 1.0])
+                    .or_else(|| plane.ray_point([x, y, 0.0], [0.0, 0.0, -1.0])),
+                None => Some([x, y, pz]),
+            };
+            let Some(point) = point else { return };
+            let distance = norm(sub(point, query.point_mm));
             if distance <= band {
                 result.candidates.push(SnapCandidate {
                     element_id: grid.id,
                     kind,
                     feature_id: None,
                     axis_parameter: None,
-                    point_world_mm: [x, y, pz],
+                    point_world_mm: point,
                     distance_mm: distance,
                     grid: Some(GridSnapIdentity {
                         axis_id: a.axis_id,
@@ -1364,6 +1708,37 @@ pub fn snap_with_grids(
             }
         };
         for line in &nearby {
+            if query.kinds.contains(&SnapKind::Midpoint) {
+                let [ax, ay] = line.start;
+                let [bx, by] = line.end;
+                push(
+                    SnapKind::Midpoint,
+                    line,
+                    None,
+                    [(ax + bx) * 0.5, (ay + by) * 0.5],
+                );
+                // A grid guide can cross many bays: each adjacent pair of finite crossings
+                // defines its own span midpoint, independently of the full guide midpoint.
+                let [dx, dy] = [bx - ax, by - ay];
+                let mut crossings = lines
+                    .iter()
+                    .filter(|other| other.family != line.family)
+                    .filter_map(|other| intersection(line, other))
+                    .collect::<Vec<_>>();
+                crossings.sort_by(|[x, y], [u, v]| {
+                    ((x - ax) * dx + (y - ay) * dy).total_cmp(&((u - ax) * dx + (v - ay) * dy))
+                });
+                crossings.dedup_by(|a, b| a == b);
+                for pair in crossings.windows(2) {
+                    if let [[x, y], [u, v]] = pair {
+                        let midpoint = [(x + u) * 0.5, (y + v) * 0.5];
+                        let full = [(ax + bx) * 0.5, (ay + by) * 0.5];
+                        if midpoint != full {
+                            push(SnapKind::Midpoint, line, None, midpoint);
+                        }
+                    }
+                }
+            }
             if query.kinds.contains(&SnapKind::GridLine) {
                 push(SnapKind::GridLine, line, None, closest(line, p));
             }
@@ -1618,6 +1993,33 @@ mod tests {
             snap(&s, &repeated).unwrap_err().code(),
             ViewCode::PickInputInvalid
         );
+    }
+
+    #[test]
+    fn physical_edge_crossing_is_resolved_in_the_plane_before_result_truncation() {
+        let s = snapshot(1);
+        let (min, max) = bounds(&s, 0);
+        let z = (min[2] + max[2]) * 0.5;
+        let plane = crate::work_plane::WorkPlane::parallel("xy", z).unwrap();
+        let query = SnapQuery {
+            point_mm: [min[0] + 0.1, min[1] + 0.1, z],
+            radius_mm: 1.0,
+            kinds: vec![SnapKind::Vertex, SnapKind::Edge],
+            max_hits: 1,
+        };
+        let result = snap_with_context(
+            &s,
+            &query,
+            &SnapContext {
+                plane: Some(plane),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].kind, SnapKind::Edge);
+        assert_eq!(result.candidates[0].point_world_mm, [min[0], min[1], z]);
+        assert_eq!(result.token, *s.token());
     }
 
     #[test]

@@ -18,7 +18,7 @@ use beamcraft_engine::query::feature::{
 };
 use beamcraft_engine::query::pick::{
     DEFAULT_MAX_HITS, Hit, MAX_T_MM, PickQuery, PointPick, RayPick, SelectionFilter, SnapKind,
-    SnapQuery, pick, snap_with_grids,
+    SnapQuery, pick,
 };
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
@@ -72,6 +72,7 @@ pub fn handles(command: &OsString) -> bool {
     command == "pick"
         || command == "lookup-feature"
         || command == "list-feature"
+        || command == "element-edges"
         || command == "snap"
 }
 
@@ -130,6 +131,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         ],
         "lookup-feature" => &["--store", "--feature-id"],
         "list-feature" => &["--store", "--id"],
+        "element-edges" => &["--store", "--id"],
         "snap" => &[
             "--store",
             "--point",
@@ -137,6 +139,15 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--kinds",
             "--max-hits",
             "--grids",
+            "--plane",
+            "--origin",
+            "--direction",
+            "--aperture",
+            "--cursor-radius",
+            "--reference-snaps",
+            "--geometry-snaps",
+            "--grid-snaps",
+            "--nearest",
         ],
         _ => return Err(invalid("unknown command")),
     };
@@ -177,6 +188,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         Pick(PickQuery),
         Lookup(String),
         List(beamcraft_model::id::ElementId),
+        Edges(beamcraft_model::id::ElementId),
         Snap(SnapQuery),
     }
     let request = match *command {
@@ -237,8 +249,8 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .ok_or_else(|| invalid("--feature-id is required"))?
                 .to_owned(),
         ),
-        "list-feature" => Request::List(
-            beamcraft_model::id::ElementId::parse(
+        "list-feature" | "element-edges" => {
+            let id = beamcraft_model::id::ElementId::parse(
                 given("--id").ok_or_else(|| invalid("--id is required"))?,
             )
             .map_err(|_| Failure {
@@ -246,8 +258,13 @@ fn run(args: &[OsString]) -> Run<Json> {
                 code: ErrorCode::InvalidId,
                 reason: None,
                 message: "--id must be a full canonical UUIDv7",
-            })?,
-        ),
+            })?;
+            if *command == "element-edges" {
+                Request::Edges(id)
+            } else {
+                Request::List(id)
+            }
+        }
         _ => Request::Snap(SnapQuery {
             point_mm: point("--point")?,
             radius_mm: number("--radius", 0.0)?,
@@ -255,12 +272,55 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .unwrap_or("vertex,axis_end,axis")
                 .split(',')
                 .map(|t| {
-                    SnapKind::parse(t)
-                        .ok_or_else(|| invalid("--kinds are vertex, axis_end or axis"))
+                    SnapKind::parse(t).ok_or_else(|| invalid("unknown snap kind; see snap --help"))
                 })
                 .collect::<Run<Vec<_>>>()?,
             max_hits,
         }),
+    };
+    let snap_plane = given("--plane")
+        .map(beamcraft_engine::work_plane::WorkPlane::parse)
+        .transpose()
+        .map_err(|error| invalid(error.message))?;
+    let switch = |key| match given(key) {
+        None | Some("true") => Ok(true),
+        Some("false") => Ok(false),
+        _ => Err(invalid("snap switches must be true or false")),
+    };
+    let snap_sources = beamcraft_engine::query::pick::SnapSources {
+        reference: switch("--reference-snaps")?,
+        geometry: switch("--geometry-snaps")?,
+        grids: switch("--grid-snaps")?,
+    };
+    let nearest = switch("--nearest")?;
+    let snap_cursor = if *command == "snap" {
+        match (given("--origin"), given("--direction")) {
+            (None, None) if given("--aperture").is_none() && given("--cursor-radius").is_none() => {
+                None
+            }
+            (Some(_), Some(_)) if given("--cursor-radius").is_some() => {
+                if given("--aperture").is_some() {
+                    return Err(invalid("choose aperture or cursor-radius"));
+                }
+                Some(beamcraft_engine::query::pick::SnapCursor::orthographic(
+                    point("--origin")?,
+                    point("--direction")?,
+                    number("--cursor-radius", 0.0)?,
+                )?)
+            }
+            (Some(_), Some(_)) => Some(beamcraft_engine::query::pick::SnapCursor::new(
+                point("--origin")?,
+                point("--direction")?,
+                number("--aperture", 0.01)?,
+            )?),
+            _ => {
+                return Err(invalid(
+                    "cursor snapping needs origin and direction; aperture is optional",
+                ));
+            }
+        }
+    } else {
+        None
     };
     let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
         rule_id: None,
@@ -327,6 +387,27 @@ fn run(args: &[OsString]) -> Run<Json> {
             ));
             fields
         }
+        Request::Edges(id) => {
+            let edges = beamcraft_engine::query::feature::element_edges(snapshot, &id)?;
+            let mut fields = header("element_edges");
+            fields.push(("element_id".into(), Json::text(id.to_string())));
+            fields.push((
+                "edges_world_mm".into(),
+                Json::Array(
+                    edges
+                        .into_iter()
+                        .map(|edge| {
+                            Ok(Json::Array(
+                                edge.into_iter()
+                                    .map(crate::plate_cmd::triple)
+                                    .collect::<Result<Vec<_>, _>>()?,
+                            ))
+                        })
+                        .collect::<Run<Vec<_>>>()?,
+                ),
+            ));
+            fields
+        }
         Request::Snap(query) => {
             let visible = given("--grids")
                 .map(|text| {
@@ -344,11 +425,24 @@ fn run(args: &[OsString]) -> Run<Json> {
                         .collect::<Run<std::collections::BTreeSet<_>>>()
                 })
                 .transpose()?;
-            let result = snap_with_grids(
+            let grids = inspection
+                .grids
+                .iter()
+                .filter(|g| visible.as_ref().is_none_or(|v| v.contains(&g.id)))
+                .cloned()
+                .collect::<Vec<_>>();
+            let axes = beamcraft_engine::query::pick::member_snap_axes(&inspection.members)?;
+            let result = beamcraft_engine::query::pick::snap_with_context(
                 snapshot,
                 &query,
-                &beamcraft_cli::grid::grids_at(&store, inspection.revision.sequence)?,
-                visible.as_ref(),
+                &beamcraft_engine::query::pick::SnapContext {
+                    grids: &grids,
+                    member_axes: &axes,
+                    plane: snap_plane,
+                    cursor: snap_cursor,
+                    sources: snap_sources,
+                    nearest,
+                },
             )?;
             let mut fields = header("snapped");
             let candidates = result

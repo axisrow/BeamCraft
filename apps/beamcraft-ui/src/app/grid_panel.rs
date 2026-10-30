@@ -113,31 +113,55 @@ impl App {
         if !kinds.is_empty()
             && let Some(loaded) = &self.loaded
         {
-            let query = beamcraft_engine::query::pick::SnapQuery {
-                point_mm: point,
-                radius_mm: 100.0,
-                kinds,
-                max_hits: 1,
-            };
             let grids = if self.grids_visible {
                 self.grid_scene.query_grids.as_slice()
             } else {
                 &[]
             };
-            match beamcraft_engine::query::pick::snap_with_grids(
-                &loaded.snapshot,
-                &query,
+            let context = beamcraft_engine::query::pick::SnapContext {
                 grids,
-                None,
-            ) {
-                Ok(result) => {
-                    if let Some(hit) = result.candidates.first() {
-                        point = hit.point_world_mm;
-                    }
+                member_axes: &self.grid_scene.member_axes,
+                sources: self.selection.snap_sources(),
+                nearest: self.selection.snap_nearest,
+                ..Default::default()
+            };
+            for discrete in [true, false] {
+                let kinds = kinds
+                    .iter()
+                    .copied()
+                    .filter(|kind| {
+                        matches!(
+                            kind,
+                            beamcraft_engine::query::pick::SnapKind::Axis
+                                | beamcraft_engine::query::pick::SnapKind::Edge
+                                | beamcraft_engine::query::pick::SnapKind::GridLine
+                        ) != discrete
+                    })
+                    .collect::<Vec<_>>();
+                if kinds.is_empty() {
+                    continue;
                 }
-                Err(error) => {
-                    self.grid_note = Some(Err(error.to_string()));
-                    return;
+                let query = beamcraft_engine::query::pick::SnapQuery {
+                    point_mm: point,
+                    radius_mm: 100.0,
+                    kinds,
+                    max_hits: 1,
+                };
+                match beamcraft_engine::query::pick::snap_with_context(
+                    &loaded.snapshot,
+                    &query,
+                    &context,
+                ) {
+                    Ok(result) => {
+                        if let Some(hit) = result.candidates.first() {
+                            point = hit.point_world_mm;
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        self.grid_note = Some(Err(error.to_string()));
+                        return;
+                    }
                 }
             }
         }

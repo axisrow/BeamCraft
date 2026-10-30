@@ -31,6 +31,7 @@ enum Glyph {
     Ortho,
     ReferencePoint,
     GeometryPoint,
+    OnLine,
 }
 
 const ENTITIES: &[(&str, Glyph)] = &[
@@ -59,17 +60,17 @@ const ENTITIES: &[(&str, Glyph)] = &[
 const SNAPS: &[(&str, Glyph)] = &[
     ("Snap grid intersections", Glyph::Intersection),
     ("Snap endpoints", Glyph::Existing(Icon::End)),
-    ("Snap centers", Glyph::Center),
+    ("Snap axis centers", Glyph::Center),
     ("Snap midpoints", Glyph::Existing(Icon::Middle)),
-    ("Snap nearest", Glyph::Existing(Icon::Nearest)),
+    ("Snap nearest", Glyph::OnLine),
     ("Snap perpendicular", Glyph::Perpendicular),
     ("Snap extensions", Glyph::Extension),
     ("Snap tangents", Glyph::Tangent),
     ("Snap parallel", Glyph::Parallel),
-    ("Snap grid", Glyph::Existing(Icon::Grid)),
+    ("Snap grids", Glyph::Existing(Icon::Grid)),
     ("Orthogonal constraint", Glyph::Ortho),
-    ("Snap grid endpoints", Glyph::ReferencePoint),
-    ("Snap geometry points", Glyph::GeometryPoint),
+    ("Snap reference geometry", Glyph::ReferencePoint),
+    ("Snap physical geometry", Glyph::GeometryPoint),
 ];
 
 fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32, accent: Color32) {
@@ -157,6 +158,13 @@ fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32, accent: Co
             painter.circle_stroke(at(10.0, 10.0), 6.5, stroke);
             dot(10.0, 10.0);
         }
+        Glyph::OnLine => {
+            segment([3.0, 4.0], [17.0, 4.0]);
+            segment([3.0, 4.0], [17.0, 16.0]);
+            segment([17.0, 4.0], [3.0, 16.0]);
+            segment([3.0, 16.0], [17.0, 16.0]);
+            dot(10.0, 10.0);
+        }
         Glyph::Intersection => {
             segment([3.0, 5.0], [17.0, 15.0]);
             segment([5.0, 17.0], [15.0, 3.0]);
@@ -192,10 +200,10 @@ fn paint(painter: &Painter, rect: Rect, glyph: Glyph, color: Color32, accent: Co
         Glyph::ReferencePoint | Glyph::GeometryPoint => {
             if matches!(glyph, Glyph::ReferencePoint) {
                 box_at(10.0, 10.0, 12.0);
+                segment([2.0, 18.0], [18.0, 2.0]);
             } else {
-                segment([3.0, 15.0], [7.0, 4.0]);
-                segment([7.0, 4.0], [17.0, 7.0]);
-                segment([17.0, 7.0], [3.0, 15.0]);
+                box_at(10.0, 10.0, 12.0);
+                dot(4.0, 4.0);
             }
             dot(10.0, 10.0);
         }
@@ -236,6 +244,18 @@ fn button(ui: &mut Ui, label: &str, glyph: Glyph, active: bool, enabled: bool) -
         .on_disabled_hover_text(format!("{label} — not available yet (UI only)"))
 }
 
+/// Cursor feedback uses the same original symbol vocabulary as the toolbar.
+pub(super) fn snap_marker(painter: &Painter, rect: Rect, kind: SnapKind, color: Color32) {
+    let glyph = match kind {
+        SnapKind::Midpoint => Glyph::Existing(Icon::Middle),
+        SnapKind::Center => Glyph::Center,
+        SnapKind::GridIntersection => Glyph::Intersection,
+        SnapKind::Axis | SnapKind::Edge | SnapKind::GridLine => Glyph::OnLine,
+        _ => Glyph::Existing(Icon::End),
+    };
+    paint(painter, rect, glyph, color, color);
+}
+
 fn separator(ui: &mut Ui) {
     let palette = Palette::current(ui);
     let (rect, _) = ui.allocate_exact_size(vec2(5.0, SIZE), egui::Sense::hover());
@@ -262,15 +282,14 @@ fn entity_class(label: &str) -> Option<SelectionClass> {
     }
 }
 
-fn snap_kind(label: &str) -> Option<SnapKind> {
+fn snap_kinds(label: &str) -> &'static [SnapKind] {
     match label {
-        "Snap grid intersections" => Some(SnapKind::GridIntersection),
-        "Snap endpoints" => Some(SnapKind::AxisEnd),
-        "Snap nearest" => Some(SnapKind::Axis),
-        "Snap grid" => Some(SnapKind::GridLine),
-        "Snap grid endpoints" => Some(SnapKind::GridEnd),
-        "Snap geometry points" => Some(SnapKind::Vertex),
-        _ => None,
+        "Snap grid intersections" => &[SnapKind::GridIntersection],
+        "Snap endpoints" => &[SnapKind::Vertex, SnapKind::AxisEnd, SnapKind::GridEnd],
+        "Snap axis centers" => &[SnapKind::Center],
+        "Snap midpoints" => &[SnapKind::Midpoint],
+        "Snap nearest" => &[SnapKind::Axis, SnapKind::Edge, SnapKind::GridLine],
+        _ => &[],
     }
 }
 
@@ -307,12 +326,37 @@ pub(super) fn snaps(ui: &mut Ui, selection: &mut Selection) {
             if matches!(index, 10 | 11) {
                 separator(ui);
             }
-            let kind = snap_kind(label);
-            let active = kind.is_some_and(|kind| selection.snap_on(kind));
-            if button(ui, label, *glyph, active, kind.is_some()).clicked()
-                && let Some(kind) = kind
-            {
-                selection.set_snap(kind, !active);
+            let kinds = snap_kinds(label);
+            let source = matches!(
+                *label,
+                "Snap grids"
+                    | "Snap reference geometry"
+                    | "Snap physical geometry"
+                    | "Snap nearest"
+                    | "Orthogonal constraint"
+            );
+            let active = match *label {
+                "Snap grids" => selection.snap_grids,
+                "Snap reference geometry" => selection.snap_reference,
+                "Snap physical geometry" => selection.snap_geometry,
+                "Snap nearest" => selection.snap_nearest,
+                "Orthogonal constraint" => selection.orthogonal,
+                _ => !kinds.is_empty() && kinds.iter().all(|kind| selection.snap_on(*kind)),
+            };
+            let clicked = button(ui, label, *glyph, active, source || !kinds.is_empty()).clicked();
+            if clicked {
+                match *label {
+                    "Snap grids" => selection.snap_grids = !active,
+                    "Snap reference geometry" => selection.snap_reference = !active,
+                    "Snap physical geometry" => selection.snap_geometry = !active,
+                    "Snap nearest" => selection.snap_nearest = !active,
+                    "Orthogonal constraint" => selection.orthogonal = !active,
+                    _ => {
+                        for kind in kinds {
+                            selection.set_snap(*kind, !active);
+                        }
+                    }
+                }
             }
         }
     });
@@ -349,7 +393,7 @@ mod tests {
             assert_eq!(
                 SNAPS
                     .iter()
-                    .filter(|(label, _)| snap_kind(label) == Some(kind))
+                    .filter(|(label, _)| snap_kinds(label).contains(&kind))
                     .count(),
                 1
             );

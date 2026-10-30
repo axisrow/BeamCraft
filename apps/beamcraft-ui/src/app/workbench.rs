@@ -303,6 +303,9 @@ impl App {
         }
         self.plate_mode = bench == Bench::Plate;
         self.plate_draft.clear();
+        self.tools.plate_plane = None;
+        self.distance_input.clear();
+        self.distance_aim = None;
         self.plate_hover = None;
         self.tools.plate.contour.clear();
         if self.tools.plate.thickness.is_empty() {
@@ -788,12 +791,12 @@ impl App {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .selectable_label(
-                                self.selection.snap_open,
+                                self.selection.snapping_enabled,
                                 RichText::new("Snap").size(10.0),
                             )
                             .clicked()
                         {
-                            self.selection.snap_open = !self.selection.snap_open;
+                            self.selection.snapping_enabled = !self.selection.snapping_enabled;
                         }
                         if ui
                             .selectable_label(self.details, RichText::new("Details").size(10.0))
