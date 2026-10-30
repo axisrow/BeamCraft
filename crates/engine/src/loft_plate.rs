@@ -14,8 +14,11 @@
 //! near-planar is refused rather than repaired into an exact body, as for framed plates.
 
 use crate::command::{MaterialInfo, MaterialLookup};
+use crate::element::ElementKind;
 use crate::footprint::Footprint;
+use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
+use beamcraft_geom::Translation3;
 use beamcraft_kernel::plate_contour;
 use beamcraft_kernel::profile::Point2;
 use beamcraft_kernel::ruled::{Loft, LoftFailure, RuledContour};
@@ -189,6 +192,30 @@ pub fn evaluate_lofted_plate(
         area_mm2: lofted.area_mm2().map(|area| area.midpoint()),
         solid,
     })
+}
+
+/// The snapshot-builder input for one evaluated lofted plate, in the manner of a plate scene
+/// element: the mesh stays element-local and the element carries its authored rigid pose.
+pub fn scene_element(
+    authored: &AuthoredLoftedPlate,
+    body: &LoftedPlateBody,
+) -> Result<SceneElement, CommandError> {
+    authored.placement.validate()?;
+    let [x, y, z] = authored.placement.translation_mm;
+    let translation = Translation3::new(x, y, z).map_err(|_| {
+        CommandError::new(
+            ErrorCode::NonFiniteNumber,
+            "placement.translation_mm",
+            "value is not finite",
+        )
+    })?;
+    Ok(SceneElement::new(
+        authored.id,
+        ElementKind::Plate,
+        translation,
+        body.solid.scene_mesh(),
+    )
+    .with_orientation(authored.placement.orientation_xyzw))
 }
 
 /// Maps a kernel loft refusal to its typed command error: the contour stage names the field
@@ -409,6 +436,23 @@ mod tests {
         assert_eq!(outcome.fingerprint, command.content_fingerprint().unwrap());
         let error = create_lofted_plate(&command, &|_| true, &no_materials).unwrap_err();
         assert_eq!(error.code, ErrorCode::DuplicateId);
+    }
+
+    #[test]
+    fn the_scene_element_builds_into_the_view_snapshot() {
+        let body = evaluate(rectangle(0.0, 200.0, 100.0), rectangle(50.0, 200.0, 100.0)).unwrap();
+        let element = scene_element(
+            &authored(rectangle(0.0, 200.0, 100.0), rectangle(50.0, 200.0, 100.0)),
+            &body,
+        )
+        .unwrap();
+        let pin = crate::ViewPin::new(
+            beamcraft_model::digest::Sha256::digest(b"revision").unwrap(),
+            1,
+        );
+        let snapshot = crate::ViewSnapshot::build(pin, vec![element], &crate::Limits::default())
+            .unwrap_or_else(|error| panic!("snapshot build failed: {error:?}"));
+        assert_eq!(snapshot.meshes().len(), 1);
     }
 
     #[test]

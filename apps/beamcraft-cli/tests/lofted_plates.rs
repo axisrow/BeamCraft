@@ -219,6 +219,28 @@ fn mass_is_current_with_a_density_and_unknown_without_one() {
 }
 
 #[test]
+fn the_view_snapshot_carries_the_certified_mesh() {
+    let f = Fixture::new();
+    f.ok(
+        "create-lofted-plate",
+        &f.loft_args(LOFT, SQUARE, SQUARE_AT_50),
+    );
+    let body = f.ok("inspect-elements", &[]);
+    let elements = at(&body, &["snapshot", "elements"]).array().unwrap();
+    assert_eq!(elements.len(), 1);
+    assert_eq!(text(&elements[0], "id"), LOFT);
+    let min = at(&elements[0], &["world_min_mm"]).array().unwrap();
+    let max = at(&elements[0], &["world_max_mm"]).array().unwrap();
+    assert!((min[0].float().unwrap() - 0.0).abs() < 1e-9);
+    assert!((max[0].float().unwrap() - 200.0).abs() < 1e-9);
+    assert!((max[2].float().unwrap() - 50.0).abs() < 1e-9);
+    let meshes = at(&body, &["snapshot", "meshes"]).array().unwrap();
+    assert_eq!(meshes.len(), 1);
+    // 4-point contours: 8 wall triangles plus two cap triangles per side.
+    assert_eq!(at(&meshes[0], &["triangles"]).unsigned().unwrap(), 12);
+}
+
+#[test]
 fn plain_plates_still_commit_after_a_lofted_plate() {
     let f = Fixture::new();
     f.ok(

@@ -2488,6 +2488,13 @@ pub(crate) fn inspect_manifest_assets(
     let quantities = verify_derived(&plates, &members, &decoded, false)?;
     let pin = ViewPin::new(digest, content.workspace_generation());
     let mut scene = scene_elements_with_members(&plates, &members)?;
+    for (authored, _) in &decoded.lofted {
+        let body = beamcraft_engine::loft_plate::evaluate_lofted_plate(authored)?;
+        scene.push(beamcraft_engine::loft_plate::scene_element(
+            authored, &body,
+        )?);
+    }
+    scene.sort_by_key(beamcraft_engine::SceneElement::id);
     let reference_view_error = match decoded.reference_scene {
         Ok(references) => {
             scene.extend(references);
