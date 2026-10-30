@@ -1692,7 +1692,8 @@ pub enum BendSpec {
         b_mm: [f64; 3],
         /// Inner radius at `a_mm` in millimetres.
         radius_mm: f64,
-        /// Inner radius at `b_mm` in millimetres; `None` rolls a cylinder.
+        /// Inner radius at `b_mm` in millimetres; `None` rolls a cylinder. Equal to
+        /// `radius_mm` is refused: a true cone cannot have equal radii.
         radius_b_mm: Option<f64>,
     },
 }
@@ -1781,6 +1782,22 @@ impl BendSpec {
                 ErrorCode::InvalidArgument,
                 "bend",
                 "the bend line needs two distinct points",
+            ));
+        }
+        // A cone whose two radii are equal is a cylinder: the stored encoding keeps one radius
+        // for a cylinder and two for a cone, so an equal-radius cone would read back as a
+        // cylinder on replay and refuse its own sector blank. A true cone cannot have them.
+        if let Self::Roll {
+            radius_mm,
+            radius_b_mm: Some(radius_b),
+            ..
+        } = *self
+            && radius_b == radius_mm
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "bend",
+                "a cone roll needs two distinct radii; drop radius_b to roll a cylinder",
             ));
         }
         Ok(())

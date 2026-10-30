@@ -183,6 +183,16 @@ pub fn evaluate_bent(authored: &AuthoredPlate) -> Result<PlateBody, CommandError
             "the developed blank of a bent plate lies in the plane z = 0",
         ));
     }
+    // The flat paths refuse a clockwise contour in the G05 admission and the analytic volume
+    // is the shoelace area's sign included: a bent plate refuses it too, before the body.
+    let area = shoelace(&authored.contour_points_mm);
+    if !area.is_finite() || area <= 0.0 {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "contour_points_mm",
+            "contour winding is clockwise or the contour is degenerate",
+        ));
+    }
     let mut folds: Vec<&BendSpec> = Vec::new();
     let mut rolls: Vec<&BendSpec> = Vec::new();
     for record in &authored.bends {
@@ -612,8 +622,10 @@ fn roll_loft(authored: &AuthoredPlate, spec: &BendSpec) -> Result<(LoftResult, f
             }
             let segments = facet_segments(radius + thickness, sweep);
             let section = sector_points(radius, radius + thickness, sweep, segments);
-            let anchor = along_min(&authored.contour_points_mm, axis);
-            let origin = [axis[0] * anchor, axis[1] * anchor, 0.0];
+            // The section is centred on its own origin, so the loft origin anchors on the
+            // authored axis line itself (as the cone branch anchors at `a`): a roll whose axis
+            // sits anywhere in the plane keeps its ring centred on that line.
+            let origin = a;
             let result = seal_loft(&section, origin, axis, along)?;
             let deviation = (radius + thickness) * (1.0 - (sweep / (2.0 * segments as f64)).cos());
             Ok((result, deviation))
@@ -886,6 +898,40 @@ mod tests {
         close(body.width_mm, 100.0, 1e-9);
     }
 
+    /// The cylinder ring stays centred on the authored axis line, not on the element origin:
+    /// an axis offset across the blank translates the ring by that offset.
+    #[test]
+    fn a_cylinder_roll_centres_the_ring_on_the_authored_axis() {
+        let mut authored = plate(rectangle(100.0, 20.0), 2.0);
+        authored.bends = vec![BendRecord {
+            operation_id: op(2),
+            spec: BendSpec::Roll {
+                a_mm: [0.0, 500.0, 0.0],
+                b_mm: [100.0, 500.0, 0.0],
+                radius_mm: 8.0,
+                radius_b_mm: None,
+            },
+        }];
+        let body = crate::command::evaluate_plate(&authored).unwrap();
+        // The section is centred on the axis at the loft origin `a`, so the ring's vertices
+        // sit within one outer radius of the axis line across, and along the axis the body
+        // spans the blank.
+        let mut cross_low = f64::INFINITY;
+        let mut cross_high = f64::NEG_INFINITY;
+        for v in body.solid.vertices() {
+            cross_low = cross_low.min(v[1]);
+            cross_high = cross_high.max(v[1]);
+        }
+        // The ring around (y = 500) reaches from 500 - 10 to 500 + 10; nothing else would put
+        // the body there.
+        assert!(
+            cross_low > 480.0 && cross_high < 520.0,
+            "{cross_low}..{cross_high}"
+        );
+        assert!(cross_low > 0.0, "the ring is not at the origin");
+        close(body.width_mm, 100.0, 1e-9);
+    }
+
     /// A cone roll of a sector blank about the apex: the volume matches the band closed form,
     /// which the development alone gives to machine precision.
     #[test]
@@ -1003,6 +1049,36 @@ mod tests {
         flat.bends = vec![bend(fold(50.0, 8.0, 0.0))];
         assert_eq!(
             crate::command::evaluate_plate(&flat).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        // A clockwise blank publishes a negative analytic area: refused like the flat paths
+        // refuse one.
+        let mut clockwise = plate(
+            vec![
+                [0.0, 0.0, 0.0],
+                [0.0, 200.0, 0.0],
+                [100.0, 200.0, 0.0],
+                [100.0, 0.0, 0.0],
+            ],
+            2.0,
+        );
+        clockwise.bends = vec![bend(fold(50.0, 8.0, core::f64::consts::FRAC_PI_2))];
+        let error = crate::command::evaluate_plate(&clockwise).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.field, "contour_points_mm");
+        // A cone whose two radii are equal is refused: it is a cylinder, and the stored
+        // encoding keeps one radius for a cylinder, so it would wedge its own sector blank.
+        let mut equal_radii = plate(rectangle(100.0, 20.0), 2.0);
+        equal_radii.bends = vec![bend(BendSpec::Roll {
+            a_mm: [0.0, 0.0, 0.0],
+            b_mm: [80.0, 0.0, 0.0],
+            radius_mm: 54.0,
+            radius_b_mm: Some(54.0),
+        })];
+        assert_eq!(
+            crate::command::evaluate_plate(&equal_radii)
+                .unwrap_err()
+                .code,
             ErrorCode::InvalidArgument
         );
     }

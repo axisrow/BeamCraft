@@ -1867,6 +1867,22 @@ fn a_bend_record_refuses_an_out_of_range_angle_or_radius_before_writing() {
         ),
         Some(ErrorCode::InvalidArgument)
     );
+    // A cone with equal radii is a cylinder: the stored encoding keeps one radius for a
+    // cylinder, so the equal-radius cone is refused before it can wedge its own blank.
+    assert_eq!(
+        refused_record(
+            &mut b,
+            &ob.context,
+            "019a7bf0-0000-7000-8000-0000000000d6",
+            BendSpec::Roll {
+                a_mm: [0.0, 0.0, 0.0],
+                b_mm: [80.0, 0.0, 0.0],
+                radius_mm: 54.0,
+                radius_b_mm: Some(54.0),
+            }
+        ),
+        Some(ErrorCode::InvalidArgument)
+    );
 }
 
 #[test]

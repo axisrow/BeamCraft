@@ -1928,9 +1928,10 @@ pub(super) fn changes(
                     return Err(unsupported());
                 }
                 let valid = match change {
-                    Change::Contour { .. } | Change::Thickness { .. } | Change::Corners { .. } => {
-                        kind == "plate"
-                    }
+                    Change::Contour { .. }
+                    | Change::Thickness { .. }
+                    | Change::Corners { .. }
+                    | Change::Bends { .. } => kind == "plate",
                     Change::HoleRecords { .. } => kind == "plate",
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
@@ -2279,6 +2280,18 @@ pub(super) fn changes(
                                 return Err(invalid());
                             }
                             cap(radii.iter().copied(), 1e9)?;
+                            // A cone with equal radii is a cylinder, and the stored encoding
+                            // keeps one radius for a cylinder: equal radii would read back as
+                            // a cylinder and refuse their own sector blank.
+                            if let BendSpec::Roll {
+                                radius_mm,
+                                radius_b_mm: Some(radius_b),
+                                ..
+                            } = bend.spec
+                                && radius_b == radius_mm
+                            {
+                                return Err(invalid());
+                            }
                             if let Some(angle) = angle
                                 && (!angle.is_finite()
                                     || angle == 0.0
@@ -2556,6 +2569,18 @@ pub(super) fn changes(
                         return Err(invalid());
                     }
                     cap(radii.iter().copied(), 1e9)?;
+                    // A cone with equal radii is a cylinder, and the stored encoding keeps one
+                    // radius for a cylinder: equal radii would read back as a cylinder and
+                    // refuse their own sector blank.
+                    if let BendSpec::Roll {
+                        radius_mm,
+                        radius_b_mm: Some(radius_b),
+                        ..
+                    } = bend.spec
+                        && radius_b == radius_mm
+                    {
+                        return Err(invalid());
+                    }
                     if let Some(angle) = angle
                         && (!angle.is_finite()
                             || angle == 0.0
