@@ -338,7 +338,7 @@ jobs:
     timeout-minutes: 5
     if: github.event_name == 'pull_request'
     env:
-      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_BODY: ${{ github.event.pull_request.body }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -346,8 +346,6 @@ jobs:
           fetch-depth: 0
 
       - name: Scan PR commits and description for the attribution trailer
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           fail=0
 
@@ -402,7 +400,9 @@ jobs:
             scan "commit $commit" < <(git log -1 --format=%B "$commit")
           done < <(git rev-list "origin/${GITHUB_BASE_REF}"..HEAD)
 
-          scan "PR description" < <(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          # The description comes from the pull_request event payload: no API
+          # call whose failure the process substitution could swallow.
+          scan "PR description" < <(printf '%s\n' "$PR_BODY")
 
           if [ "$fail" -ne 0 ]; then
             exit 1
