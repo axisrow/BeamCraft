@@ -60,18 +60,20 @@ impl PendingConflicts {
             self.draft_manifest
         );
         for conflict in &self.conflicts {
+            let (kind, identity) = match conflict.entry.target {
+                Target::Element(id) => ("element", id.to_string()),
+                Target::Definition(digest) => ("definition", digest.to_string()),
+                Target::AttrSchema => (
+                    "schema",
+                    beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY.to_string(),
+                ),
+            };
             out.push_str(&format!(
                 "conflict={}|{}|{}:{}|{}|{}\n",
                 conflict.draft,
                 conflict.accepted,
-                match conflict.entry.target {
-                    Target::Element(_) => "element",
-                    Target::Definition(_) => "definition",
-                },
-                match conflict.entry.target {
-                    Target::Element(id) => id.to_string(),
-                    Target::Definition(digest) => digest.to_string(),
-                },
+                kind,
+                identity,
                 conflict.entry.group.as_str(),
                 conflict.kind.as_str()
             ));
@@ -109,6 +111,11 @@ impl PendingConflicts {
                 Some(("definition", digest)) => {
                     Target::Definition(digest.parse().map_err(|_| bad())?)
                 }
+                Some(("schema", identity))
+                    if identity == beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY =>
+                {
+                    Target::AttrSchema
+                }
                 _ => return Err(bad()),
             };
             let group = match *group {
@@ -118,6 +125,7 @@ impl PendingConflicts {
                 "material_ref" => Group::MaterialRef,
                 "relationship" => Group::Relationship,
                 "mark" => Group::Mark,
+                "attributes" => Group::Attributes,
                 "lifecycle" => Group::Lifecycle,
                 "derived" => Group::Derived,
                 _ => return Err(bad()),
@@ -154,6 +162,10 @@ pub fn conflict_json(conflict: &Conflict) -> Json {
     let (kind, target) = match conflict.entry.target {
         Target::Element(id) => ("element", id.to_string()),
         Target::Definition(digest) => ("definition", digest.to_string()),
+        Target::AttrSchema => (
+            "schema",
+            beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY.to_string(),
+        ),
     };
     Json::object([
         ("draft_op", Json::text(conflict.draft.to_string())),

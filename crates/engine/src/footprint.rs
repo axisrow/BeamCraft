@@ -24,6 +24,8 @@ pub enum Target {
     Element(ElementId),
     /// An immutable definition, by full content digest.
     Definition(ContentDigest),
+    /// The mutable user-attribute schema (I04), as a whole.
+    AttrSchema,
 }
 
 /// The semantic groups of F04 section 8.
@@ -41,6 +43,8 @@ pub enum Group {
     Relationship,
     /// The element mark and its approval state (A08).
     Mark,
+    /// The user-attribute values of an element (I04).
+    Attributes,
     /// Existence and identity.
     Lifecycle,
     /// Derived geometry, quantities and their signatures.
@@ -57,6 +61,7 @@ impl Group {
             Self::MaterialRef => "material_ref",
             Self::Relationship => "relationship",
             Self::Mark => "mark",
+            Self::Attributes => "attributes",
             Self::Lifecycle => "lifecycle",
             Self::Derived => "derived",
         }
@@ -418,6 +423,43 @@ impl Footprint {
         let footprint = Self {
             reads: BTreeSet::from([entry(Group::Lifecycle), entry(Group::Mark)]),
             writes: BTreeSet::from([entry(Group::Mark)]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of an I04 schema change (define or undefine one attribute): it reads and
+    /// writes the schema as a whole (`Target::AttrSchema`), so two schema edits conflict and
+    /// neither conflicts with an element edit. Definitions are not elements and no element is
+    /// written; an undefine never touches stored values.
+    pub fn for_attr_schema() -> Result<Self, CommandError> {
+        let footprint = Self {
+            reads: BTreeSet::from([Entry {
+                target: Target::AttrSchema,
+                group: Group::Lifecycle,
+            }]),
+            writes: BTreeSet::from([Entry {
+                target: Target::AttrSchema,
+                group: Group::Lifecycle,
+            }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of an I04 value change (set or clear one attribute of one element): it reads
+    /// the element's lifecycle (existence decides acceptance) and its attributes (the current
+    /// value decides a no-op or a replay), and writes only the element's attributes group, so a
+    /// value edit conflicts with another value edit of the same element and with nothing else.
+    /// It has no geometric effect and writes no derived group.
+    pub fn for_attr_value(element: ElementId) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(element),
+            group,
+        };
+        let footprint = Self {
+            reads: BTreeSet::from([entry(Group::Lifecycle), entry(Group::Attributes)]),
+            writes: BTreeSet::from([entry(Group::Attributes)]),
         };
         footprint.check_bound()?;
         Ok(footprint)

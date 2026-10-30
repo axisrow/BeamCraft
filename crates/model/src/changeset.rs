@@ -46,6 +46,8 @@ pub const MAX_LAYER_NAME_BYTES: usize = 64;
 
 const MAGIC: &[u8] = b"BeamCraft/C01/Changeset/v1\0";
 const MAGIC_WITH_MARK: &[u8] = b"BeamCraft/C01/Changeset/v2\0";
+/// Carries the I04 attribute schema target and attributes group (tag 8) without retagging v2.
+const MAGIC_WITH_ATTRS: &[u8] = b"BeamCraft/C01/Changeset/v3\0";
 
 /// One operation the changeset carries, in draft order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +65,8 @@ pub enum DependencyTarget {
     Element(ElementId),
     /// An immutable definition.
     Definition(ContentDigest),
+    /// The mutable user-attribute schema as a whole (I04).
+    AttrSchema,
 }
 
 /// The F04 section 8 semantic groups.
@@ -84,11 +88,13 @@ pub enum DependencyGroup {
     Derived,
     /// Numbering mark and its approval state (A08/A09); added as tag 7 without retagging v1.
     Mark,
+    /// The user-attribute values of an element (I04); added as tag 8 without retagging v2.
+    Attributes,
 }
 
 impl DependencyGroup {
     /// Every group, in tag order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Label,
         Self::ShapeInputs,
         Self::Placement,
@@ -97,6 +103,7 @@ impl DependencyGroup {
         Self::Lifecycle,
         Self::Derived,
         Self::Mark,
+        Self::Attributes,
     ];
 
     /// The F04 token.
@@ -110,6 +117,7 @@ impl DependencyGroup {
             Self::Lifecycle => "lifecycle",
             Self::Derived => "derived",
             Self::Mark => "mark",
+            Self::Attributes => "attributes",
         }
     }
 
@@ -123,6 +131,7 @@ impl DependencyGroup {
             Self::Lifecycle => 5,
             Self::Derived => 6,
             Self::Mark => 7,
+            Self::Attributes => 8,
         }
     }
 }
@@ -134,6 +143,11 @@ pub enum Access {
     Read,
     /// The changeset changes the entry.
     Write,
+}
+
+/// Whether one dependency needs the I04 v3 encoding.
+fn attr_dependency(d: &Dependency) -> bool {
+    d.target == DependencyTarget::AttrSchema || d.group == DependencyGroup::Attributes
 }
 
 /// One footprint entry of the whole changeset.
@@ -371,7 +385,9 @@ impl Changeset {
     pub fn encode(&self) -> Result<Vec<u8>, CommandError> {
         self.validate()?;
         let mut out = Vec::with_capacity(512);
-        let magic = if self
+        let magic = if self.dependencies.iter().any(attr_dependency) {
+            MAGIC_WITH_ATTRS
+        } else if self
             .dependencies
             .iter()
             .any(|d| d.group == DependencyGroup::Mark)
@@ -408,6 +424,7 @@ impl Changeset {
                     out.push(1);
                     out.extend_from_slice(digest.as_bytes());
                 }
+                DependencyTarget::AttrSchema => out.push(2),
             }
             out.push(d.group.tag());
             out.push(match d.access {
@@ -459,7 +476,7 @@ impl Changeset {
         }
         let mut r = Reader { bytes, at: 0 };
         let magic = r.take(MAGIC.len())?;
-        if magic != MAGIC && magic != MAGIC_WITH_MARK {
+        if magic != MAGIC && magic != MAGIC_WITH_MARK && magic != MAGIC_WITH_ATTRS {
             return Err(error(
                 ErrorCode::UnsupportedVersion,
                 "changeset",
@@ -487,6 +504,7 @@ impl Changeset {
             let target = match r.byte()? {
                 0 => DependencyTarget::Element(ElementId::from_uuid(r.uuid()?)),
                 1 => DependencyTarget::Definition(r.digest()?),
+                2 => DependencyTarget::AttrSchema,
                 _ => return Err(malformed()),
             };
             let group = *DependencyGroup::ALL

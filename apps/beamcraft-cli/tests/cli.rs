@@ -15,6 +15,7 @@ mod add_hole;
 mod alpha_scenario;
 mod alpha_scenario_expanded;
 mod assemblies;
+mod attributes;
 mod bolts;
 mod bom;
 mod changeset;

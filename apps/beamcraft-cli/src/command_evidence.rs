@@ -53,6 +53,7 @@ fn group(text: &str) -> Result<Group, CommandError> {
         "material_ref" => Group::MaterialRef,
         "relationship" => Group::Relationship,
         "mark" => Group::Mark,
+        "attributes" => Group::Attributes,
         "lifecycle" => Group::Lifecycle,
         "derived" => Group::Derived,
         _ => return Err(invalid()),
@@ -85,6 +86,9 @@ fn entries<'a>(
         let target = match kind {
             "element" => Target::Element(ElementId::parse(id).map_err(|_| invalid())?),
             "definition" => Target::Definition(id.parse().map_err(|_| invalid())?),
+            "schema" if id == beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY => {
+                Target::AttrSchema
+            }
             _ => return Err(invalid()),
         };
         let entry = Entry {
@@ -121,6 +125,10 @@ impl CapturedFootprint {
                 let (kind, identity) = match entry.target {
                     Target::Element(id) => ("element", id.to_string()),
                     Target::Definition(digest) => ("definition", digest.to_string()),
+                    Target::AttrSchema => (
+                        "schema",
+                        beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY.to_string(),
+                    ),
                 };
                 let _ = writeln!(out, "{kind} {identity} {}", entry.group.as_str());
             }
@@ -483,6 +491,7 @@ pub(crate) fn dependencies(footprint: &Footprint) -> Vec<Dependency> {
             let target = match entry.target {
                 Target::Element(id) => DependencyTarget::Element(id),
                 Target::Definition(digest) => DependencyTarget::Definition(digest),
+                Target::AttrSchema => DependencyTarget::AttrSchema,
             };
             let group = match entry.group {
                 Group::Label => DependencyGroup::Label,
@@ -491,6 +500,7 @@ pub(crate) fn dependencies(footprint: &Footprint) -> Vec<Dependency> {
                 Group::MaterialRef => DependencyGroup::MaterialRef,
                 Group::Relationship => DependencyGroup::Relationship,
                 Group::Mark => DependencyGroup::Mark,
+                Group::Attributes => DependencyGroup::Attributes,
                 Group::Lifecycle => DependencyGroup::Lifecycle,
                 Group::Derived => DependencyGroup::Derived,
             };

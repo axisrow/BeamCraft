@@ -11,6 +11,7 @@
 //! the other commands and personal workspaces are not implemented.
 
 pub mod assembly;
+pub mod attribute;
 pub mod bolt;
 pub mod bom;
 pub mod class_palette;

@@ -218,6 +218,10 @@ fn changeset_json(stored: &StoredChangeset) -> Json {
                             DependencyTarget::Definition(digest) => {
                                 ("definition", digest.to_string())
                             }
+                            DependencyTarget::AttrSchema => (
+                                "schema",
+                                beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY.to_string(),
+                            ),
                         };
                         Json::object([
                             ("target_kind", Json::text(kind)),

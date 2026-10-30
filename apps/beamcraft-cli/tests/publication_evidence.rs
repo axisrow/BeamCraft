@@ -325,9 +325,9 @@ fn legacy_intervals_keep_conservative_reads_and_explicitly_absent_destination_ev
             d.target == DependencyTarget::Element(element(2)) && d.access == Access::Read
         }));
         if legacy_v1 {
-            changeset
-                .dependencies
-                .retain(|d| d.group != DependencyGroup::Mark);
+            changeset.dependencies.retain(|d| {
+                d.group != DependencyGroup::Mark && d.group != DependencyGroup::Attributes
+            });
             assert!(
                 changeset
                     .encode()

@@ -3411,6 +3411,10 @@ pub(crate) fn footprint_json(footprint: Option<&Footprint>) -> Json {
                     let (kind, id) = match e.target {
                         Target::Element(id) => ("element", id.to_string()),
                         Target::Definition(digest) => ("definition", digest.to_string()),
+                        Target::AttrSchema => (
+                            "schema",
+                            beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY.to_string(),
+                        ),
                     };
                     Json::object([
                         ("target_kind", Json::text(kind)),

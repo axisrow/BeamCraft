@@ -70,3 +70,20 @@ pub const MAX_BOLT_GROUP_SIZE: usize = 512;
 pub const MAX_FASTENER_LENGTHS: usize = 64;
 /// Largest declared mass of one fastener (bolt, nut and washers), in kg (A14.1).
 pub const MAX_FASTENER_MASS_KG: f64 = 10_000.0;
+/// A user-attribute name is a USD identifier, at most this many ASCII bytes (I04).
+pub const MAX_ATTR_NAME_BYTES: usize = 64;
+/// A user-attribute text value or choice option, at most this many UTF-8 bytes, the label
+/// rule (I04).
+pub const MAX_ATTR_TEXT_BYTES: usize = 256;
+/// A user-attribute unit label, at most this many bytes (I04).
+pub const MAX_ATTR_UNIT_BYTES: usize = 16;
+/// An attribute-set name, at most this many bytes (I04).
+pub const MAX_ATTR_SET_BYTES: usize = 64;
+/// At most this many options on one choice attribute (I04).
+pub const MAX_ATTR_OPTIONS: usize = 64;
+/// The magnitude cap of a number attribute value (I04).
+pub const MAX_ATTR_NUMBER: f64 = 1_000_000_000.0;
+/// At most this many values on one element (I04).
+pub const MAX_ATTRS_PER_ELEMENT: usize = 256;
+/// At most this many attribute definitions in one model (I04).
+pub const MAX_ATTRIBUTE_DEFINITIONS: usize = 1024;
