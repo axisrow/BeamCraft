@@ -3,7 +3,7 @@
 
 //! Help owned by the bolt command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-bolt", "bolts"];
+pub(super) const COMMANDS: &[&str] = &["create-bolt", "bolts", "fastener-geometry"];
 
 pub(super) const HELP: &str = concat!(
     "Bolt (A05, experimental, a connection element with no body): create-bolt --store ROOT ",
@@ -15,5 +15,10 @@ pub(super) const HELP: &str = concat!(
     "two distinct plates, beams or columns, main part first; the parts are only read; every ",
     "bolt position must lie within both parts' bounds; no default for any property); bolts ",
     "--store ROOT (verified head: bolt groups, parts, properties). delete-element refuses a ",
-    "bolted part while the group connects it and deletes a bolt group",
+    "bolted part while the group connects it and deletes a bolt group. fastener-geometry ",
+    "--fastener-library FILE --designation TEXT --length MM [--count N] [--density KG_M3] ",
+    "[--washer-under-head true|false] [--washer-under-nut true|false] (A14.2: one prototype of ",
+    "the definition as separate closed meshes — head, shank, optional nut and washers, round ",
+    "parts to the 0.05 mm chord rule — with per-component counts, volumes and the mass with ",
+    "its source declared or computed; reads the library, never a store)",
 );
