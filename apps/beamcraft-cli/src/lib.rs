@@ -11,6 +11,7 @@ pub mod bolt;
 pub mod bom;
 pub mod changeset;
 pub mod command_evidence;
+pub mod construction;
 pub mod coordinator;
 pub mod copy;
 pub mod cut;

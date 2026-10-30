@@ -67,8 +67,8 @@ const KEEP: usize = 1024;
 /// One selection switch of the bottom bar (V11): the class of objects a pick may select.
 ///
 /// The switches are view state: they change picking, never the model or the snapshot token.
-/// Bolts, welds, holes, construction objects and items have no registered snapshot kinds yet;
-/// their switches are accepted and take nothing out of a query until those kinds arrive.
+/// Bolts, welds, holes and items have no registered snapshot kinds yet; their switches are
+/// accepted and take nothing out of a query until those kinds arrive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SelectionClass {
     /// Steel parts: plates, beams, columns and the reserved part kinds.
@@ -83,7 +83,7 @@ pub enum SelectionClass {
     Holes,
     /// Plan grids.
     Grids,
-    /// Construction objects (helper points, lines and circles; no snapshot kind yet).
+    /// Construction objects: helper points, lines, circles and planes (T02).
     ConstructionObjects,
     /// Items (elements with foreign or own mesh geometry; deferred after the MVP).
     Items,
@@ -143,9 +143,8 @@ impl SelectionClass {
             ),
             Self::Assemblies => matches!(kind, ElementKind::Assembly | ElementKind::Connection),
             Self::Grids => matches!(kind, ElementKind::Grid),
-            Self::Bolts | Self::Welds | Self::Holes | Self::ConstructionObjects | Self::Items => {
-                false
-            }
+            Self::ConstructionObjects => matches!(kind, ElementKind::Construction),
+            Self::Bolts | Self::Welds | Self::Holes | Self::Items => false,
         }
     }
 }
@@ -1080,11 +1079,23 @@ pub enum SnapKind {
     Midpoint,
     /// Halfway along a member's authored reference axis.
     Center,
+    /// A construction object's helper point (T02).
+    ConstructionPoint,
+    /// An end of a construction object's helper line (T02).
+    ConstructionEnd,
+    /// The nearest point of a construction object's helper line (T02).
+    ConstructionLine,
+    /// The centre of a construction object's helper circle (T02).
+    ConstructionCenter,
+    /// The nearest point of a construction object's helper circle (T02).
+    ConstructionCircle,
+    /// The nearest point of a construction object's helper plane (T02).
+    ConstructionPlane,
 }
 
 impl SnapKind {
     /// Every kind, in rank order: the order the snap panel lists them in.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 15] = [
         Self::Vertex,
         Self::AxisEnd,
         Self::Axis,
@@ -1094,6 +1105,12 @@ impl SnapKind {
         Self::Edge,
         Self::Midpoint,
         Self::Center,
+        Self::ConstructionPoint,
+        Self::ConstructionEnd,
+        Self::ConstructionLine,
+        Self::ConstructionCenter,
+        Self::ConstructionCircle,
+        Self::ConstructionPlane,
     ];
 
     /// The wire token.
@@ -1108,6 +1125,12 @@ impl SnapKind {
             Self::Edge => "edge",
             Self::Midpoint => "midpoint",
             Self::Center => "center",
+            Self::ConstructionPoint => "construction_point",
+            Self::ConstructionEnd => "construction_end",
+            Self::ConstructionLine => "construction_line",
+            Self::ConstructionCenter => "construction_center",
+            Self::ConstructionCircle => "construction_circle",
+            Self::ConstructionPlane => "construction_plane",
         }
     }
 
@@ -1123,6 +1146,12 @@ impl SnapKind {
             "edge" => Some(Self::Edge),
             "midpoint" => Some(Self::Midpoint),
             "center" => Some(Self::Center),
+            "construction_point" => Some(Self::ConstructionPoint),
+            "construction_end" => Some(Self::ConstructionEnd),
+            "construction_line" => Some(Self::ConstructionLine),
+            "construction_center" => Some(Self::ConstructionCenter),
+            "construction_circle" => Some(Self::ConstructionCircle),
+            "construction_plane" => Some(Self::ConstructionPlane),
             _ => None,
         }
     }
@@ -1138,7 +1167,27 @@ impl SnapKind {
             Self::Edge => 6,
             Self::Midpoint => 7,
             Self::Center => 8,
+            Self::ConstructionPoint => 9,
+            Self::ConstructionEnd => 10,
+            Self::ConstructionLine => 11,
+            Self::ConstructionCenter => 12,
+            Self::ConstructionCircle => 13,
+            Self::ConstructionPlane => 14,
         }
+    }
+
+    /// Whether the kind names an arbitrary point of a continuous line or surface, so it is
+    /// admitted only under the nearest switch.
+    pub const fn is_continuous(self) -> bool {
+        matches!(
+            self,
+            Self::Axis
+                | Self::Edge
+                | Self::GridLine
+                | Self::ConstructionLine
+                | Self::ConstructionCircle
+                | Self::ConstructionPlane
+        )
     }
 }
 
@@ -1179,7 +1228,8 @@ pub struct SnapCandidate {
     pub kind: SnapKind,
     /// The vertex FeatureId of a `vertex` candidate.
     pub feature_id: Option<FeatureId>,
-    /// For axis candidates, the position along the axis from its start (0) to its end (1).
+    /// For axis and helper-line candidates, the position along the line from its start (0) to
+    /// its end (1); 0.5 names a midpoint.
     pub axis_parameter: Option<f64>,
     /// The snap point in world millimetres.
     pub point_world_mm: [f64; 3],
@@ -1247,7 +1297,8 @@ pub fn member_snap_axes(
         .collect())
 }
 
-/// Source gates are independent of point kinds. Grid guides belong to reference geometry.
+/// Source gates are independent of point kinds. Grid guides belong to reference geometry;
+/// construction objects are their own source family (T02).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapSources {
     /// Authored member reference axes and their discrete points.
@@ -1256,6 +1307,8 @@ pub struct SnapSources {
     pub geometry: bool,
     /// Grid guides, additionally requiring the reference gate.
     pub grids: bool,
+    /// Construction objects (T02): helper points, lines, circles and planes.
+    pub construction: bool,
 }
 impl Default for SnapSources {
     fn default() -> Self {
@@ -1263,8 +1316,22 @@ impl Default for SnapSources {
             reference: true,
             geometry: true,
             grids: true,
+            construction: true,
         }
     }
+}
+
+/// Where one snap candidate comes from: the source gate a candidate must pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnapOrigin {
+    /// Physical body features.
+    Geometry,
+    /// Authored member reference axes.
+    Reference,
+    /// Grid guides, gated by reference as well as grids.
+    Grid,
+    /// Construction objects (T02).
+    Construction,
 }
 
 /// Pinned construction-coordinate context. Source/type gates apply before truncation.
@@ -1273,6 +1340,8 @@ pub struct SnapContext<'a> {
     pub grids: &'a [beamcraft_model::grid::Grid],
     /// Authored reference axes from the same model inspection.
     pub member_axes: &'a [MemberSnapAxis],
+    /// Construction objects of the project (T02), in any order; each is admitted once.
+    pub construction: &'a [beamcraft_model::construction::ConstructionObject],
     /// Restrict candidates to this working plane, preserving their exact coordinates.
     pub plane: Option<crate::work_plane::WorkPlane>,
     /// Optional cursor ray: accept a cone around the pointer instead of a sphere around a point.
@@ -1287,6 +1356,7 @@ impl Default for SnapContext<'_> {
         Self {
             grids: &[],
             member_axes: &[],
+            construction: &[],
             plane: None,
             cursor: None,
             sources: SnapSources::default(),
@@ -1295,17 +1365,14 @@ impl Default for SnapContext<'_> {
     }
 }
 impl SnapContext<'_> {
-    fn allows(&self, kind: SnapKind, feature: Option<&FeatureId>, grid: bool) -> bool {
-        let source = if grid {
-            self.sources.reference && self.sources.grids
-        } else if feature.is_some() {
-            self.sources.geometry
-        } else {
-            self.sources.reference
+    fn allows(&self, kind: SnapKind, origin: SnapOrigin) -> bool {
+        let source = match origin {
+            SnapOrigin::Geometry => self.sources.geometry,
+            SnapOrigin::Reference => self.sources.reference,
+            SnapOrigin::Grid => self.sources.reference && self.sources.grids,
+            SnapOrigin::Construction => self.sources.construction,
         };
-        source
-            && (self.nearest
-                || !matches!(kind, SnapKind::Axis | SnapKind::Edge | SnapKind::GridLine))
+        source && (self.nearest || !kind.is_continuous())
     }
 }
 
@@ -1362,6 +1429,25 @@ fn snap_distance(p: V3, point: V3, band: f64, context: &SnapContext<'_>) -> Opti
 
 fn on_plane(point: V3, plane: Option<crate::work_plane::WorkPlane>) -> bool {
     plane.is_none_or(|p| p.to_local(point).is_ok_and(|[_, _, z]| z.abs() <= 1e-6))
+}
+
+/// The unit vector along `v`, or `None` when `v` is zero or the normalization is uncertain.
+fn normalized(v: V3) -> Option<V3> {
+    let length = norm(v);
+    (length > 0.0 && length.is_finite()).then(|| scale(v, 1.0 / length))
+}
+
+/// A unit vector perpendicular to the unit vector `n`, picked by the smallest-component rule so
+/// the choice is deterministic for every direction.
+fn perpendicular(n: V3) -> Option<V3> {
+    let helper = if n[0].abs() <= n[1].abs() && n[0].abs() <= n[2].abs() {
+        [1.0, 0.0, 0.0]
+    } else if n[1].abs() <= n[2].abs() {
+        [0.0, 1.0, 0.0]
+    } else {
+        [0.0, 0.0, 1.0]
+    };
+    normalized(cross(n, helper))
 }
 
 fn closest_in_plane(p: V3, a: V3, b: V3, context: &SnapContext<'_>) -> Option<(V3, f64)> {
@@ -1439,6 +1525,9 @@ fn snap_bodies(
     if context.member_axes.len() > MAX_SCANNED_ELEMENTS {
         return Err(limit());
     }
+    if context.construction.len() > beamcraft_model::construction::MAX_CONSTRUCTION_OBJECTS {
+        return Err(limit());
+    }
     let mut seen = std::collections::BTreeSet::new();
     let mut point_budget = 1_048_576usize;
     for axis in context.member_axes {
@@ -1457,6 +1546,16 @@ fn snap_bodies(
             check_point(*point)?;
         }
     }
+    let mut helper_ids = std::collections::BTreeSet::new();
+    for object in context.construction {
+        if !helper_ids.insert(object.id) {
+            return Err(input());
+        }
+        object.validate().map_err(|e| match e.code {
+            beamcraft_model::error::ErrorCode::NonFiniteNumber => non_finite(),
+            _ => input(),
+        })?;
+    }
     let p = query.point_mm;
     let band = query.radius_mm + EPS_PICK_MM;
     let mut candidates = Vec::new();
@@ -1468,7 +1567,14 @@ fn snap_bodies(
                         axis_parameter,
                         point: V3|
          -> Result<(), ViewError> {
-            if !context.allows(kind, feature_id.as_ref(), false) {
+            if !context.allows(
+                kind,
+                if feature_id.is_some() {
+                    SnapOrigin::Geometry
+                } else {
+                    SnapOrigin::Reference
+                },
+            ) {
                 return Ok(());
             }
             let distance = norm(sub(p, point));
@@ -1575,7 +1681,7 @@ fn snap_bodies(
         for pair in axis.points_mm.windows(2) {
             let [a, b] = pair else { continue };
             let mut push_axis = |kind, point, parameter| {
-                if !context.allows(kind, None, false) {
+                if !context.allows(kind, SnapOrigin::Reference) {
                     return;
                 }
                 if let Some(distance) = snap_distance(p, point, band, context) {
@@ -1606,6 +1712,96 @@ fn snap_bodies(
             }
             if candidates.len() > KEEP {
                 truncated |= keep_best(&mut candidates, max, snap_order);
+            }
+        }
+    }
+    // Construction objects (T02): helper points, lines, circles and planes as snap targets.
+    // Their geometry is authored in world millimetres, so no placement is applied.
+    for object in context.construction {
+        let mut push = |kind, point: V3, parameter: Option<f64>| -> Result<(), ViewError> {
+            if !context.allows(kind, SnapOrigin::Construction) {
+                return Ok(());
+            }
+            if !(finite(point)) {
+                return Err(uncertain());
+            }
+            if let Some(distance) = snap_distance(p, point, band, context) {
+                candidates.push(SnapCandidate {
+                    grid: None,
+                    element_id: object.id,
+                    kind,
+                    feature_id: None,
+                    axis_parameter: parameter,
+                    point_world_mm: point,
+                    distance_mm: distance,
+                });
+                if candidates.len() > KEEP {
+                    truncated |= keep_best(&mut candidates, max, snap_order);
+                }
+            }
+            Ok(())
+        };
+        match object.geometry {
+            beamcraft_model::construction::ConstructionGeometry::Point { point_mm } => {
+                if query.kinds.contains(&SnapKind::ConstructionPoint) {
+                    push(SnapKind::ConstructionPoint, point_mm, None)?;
+                }
+            }
+            beamcraft_model::construction::ConstructionGeometry::Line { start_mm, end_mm } => {
+                if query.kinds.contains(&SnapKind::ConstructionEnd) {
+                    push(SnapKind::ConstructionEnd, start_mm, Some(0.0))?;
+                    push(SnapKind::ConstructionEnd, end_mm, Some(1.0))?;
+                }
+                if query.kinds.contains(&SnapKind::Midpoint) {
+                    // The plain segment midpoint, as for physical edges; the plane filter
+                    // admits it only when it lies on the working plane.
+                    push(
+                        SnapKind::Midpoint,
+                        scale(add(start_mm, end_mm), 0.5),
+                        Some(0.5),
+                    )?;
+                }
+                if query.kinds.contains(&SnapKind::ConstructionLine)
+                    && let Some((point, s)) = closest_in_plane(p, start_mm, end_mm, context)
+                {
+                    push(SnapKind::ConstructionLine, point, Some(s))?;
+                }
+            }
+            beamcraft_model::construction::ConstructionGeometry::Circle {
+                centre_mm,
+                axis,
+                radius_mm,
+            } => {
+                if query.kinds.contains(&SnapKind::ConstructionCenter) {
+                    push(SnapKind::ConstructionCenter, centre_mm, None)?;
+                }
+                if query.kinds.contains(&SnapKind::ConstructionCircle) {
+                    let n = normalized(axis).ok_or_else(uncertain)?;
+                    let radial = sub(sub(p, centre_mm), scale(n, dot(sub(p, centre_mm), n)));
+                    let length = norm(radial);
+                    let direction = if length > PARALLEL {
+                        scale(radial, 1.0 / length)
+                    } else {
+                        // The query sits on the circle's axis: every circumference point is
+                        // equally near, and the deterministic basis below names one of them.
+                        perpendicular(n).ok_or_else(uncertain)?
+                    };
+                    push(
+                        SnapKind::ConstructionCircle,
+                        add(centre_mm, scale(direction, radius_mm)),
+                        None,
+                    )?;
+                }
+            }
+            beamcraft_model::construction::ConstructionGeometry::Plane { point_mm, normal } => {
+                if query.kinds.contains(&SnapKind::ConstructionPlane) {
+                    let n = normalized(normal).ok_or_else(uncertain)?;
+                    push(
+                        SnapKind::ConstructionPlane,
+                        sub(p, scale(n, dot(sub(p, point_mm), n))),
+                        None,
+                    )?;
+                }
             }
         }
     }
@@ -1672,7 +1868,7 @@ pub fn snap_with_context(
                         a: &crate::grid_query::GridSegment,
                         b: Option<&crate::grid_query::GridSegment>,
                         point| {
-            if !context.allows(kind, None, true) {
+            if !context.allows(kind, SnapOrigin::Grid) {
                 return;
             }
             let [x, y] = local_to_world(grid, point);
@@ -1995,6 +2191,211 @@ mod tests {
         );
     }
 
+    /// One helper of each kind, at fixed world coordinates away from the plate bodies. The
+    /// plane sits at z = 5000 so it does not underlie the other helpers.
+    fn helpers() -> Vec<beamcraft_model::construction::ConstructionObject> {
+        use beamcraft_model::construction::ConstructionGeometry as G;
+        let object =
+            |n: u32, name: &str, geometry| beamcraft_model::construction::ConstructionObject {
+                id: ElementId::parse(&format!("01990000-0000-7000-8000-{n:012x}")).unwrap(),
+                name: name.to_owned(),
+                geometry,
+            };
+        vec![
+            object(
+                1,
+                "P",
+                G::Point {
+                    point_mm: [5000.0, 0.0, 0.0],
+                },
+            ),
+            object(
+                2,
+                "L",
+                G::Line {
+                    start_mm: [10_000.0, 0.0, 0.0],
+                    end_mm: [10_000.0, 2000.0, 0.0],
+                },
+            ),
+            object(
+                3,
+                "C",
+                G::Circle {
+                    centre_mm: [20_000.0, 0.0, 0.0],
+                    axis: [0.0, 0.0, 3.0],
+                    radius_mm: 500.0,
+                },
+            ),
+            object(
+                4,
+                "F",
+                G::Plane {
+                    point_mm: [30_000.0, 0.0, 5000.0],
+                    normal: [0.0, 0.0, 2.0],
+                },
+            ),
+        ]
+    }
+
+    fn helper_context<'a>(
+        objects: &'a [beamcraft_model::construction::ConstructionObject],
+    ) -> SnapContext<'a> {
+        SnapContext {
+            construction: objects,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn helper_points_lines_circles_and_planes_supply_their_kinds() {
+        let s = snapshot(1);
+        let helpers = helpers();
+        let context = helper_context(&helpers);
+        let kinds = vec![
+            SnapKind::ConstructionPoint,
+            SnapKind::ConstructionEnd,
+            SnapKind::ConstructionLine,
+            SnapKind::ConstructionCenter,
+            SnapKind::ConstructionCircle,
+            SnapKind::ConstructionPlane,
+        ];
+        // Off the helper point: only that point is inside the band.
+        let query = SnapQuery {
+            point_mm: [5000.4, 0.0, 0.0],
+            radius_mm: 1.0,
+            kinds: kinds.clone(),
+            max_hits: 16,
+        };
+        let result = snap_with_context(&s, &query, &context).unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].kind, SnapKind::ConstructionPoint);
+        assert_eq!(result.candidates[0].point_world_mm, [5000.0, 0.0, 0.0]);
+        assert_eq!(result.candidates[0].element_id, helpers[0].id);
+        // Near the line's start: the query lies on the line, so the nearest line point is at
+        // distance zero and orders ahead of the start end at 0.4; the midpoint and the far
+        // end are out of the band.
+        let query = SnapQuery {
+            point_mm: [10_000.0, 0.4, 0.0],
+            radius_mm: 1.0,
+            kinds,
+            max_hits: 16,
+        };
+        let result = snap_with_context(&s, &query, &context).unwrap();
+        assert_eq!(result.candidates.len(), 2, "{:?}", result.candidates);
+        assert_eq!(result.candidates[0].kind, SnapKind::ConstructionLine);
+        assert_eq!(result.candidates[0].point_world_mm, [10_000.0, 0.4, 0.0]);
+        assert_eq!(result.candidates[1].kind, SnapKind::ConstructionEnd);
+        assert_eq!(result.candidates[1].axis_parameter, Some(0.0));
+        assert_eq!(result.candidates[1].point_world_mm, [10_000.0, 0.0, 0.0]);
+        // At the line's middle, the midpoint kind is available.
+        let query = SnapQuery {
+            point_mm: [10_000.0, 1000.4, 0.0],
+            radius_mm: 1.0,
+            kinds: vec![SnapKind::Midpoint],
+            max_hits: 16,
+        };
+        let result = snap_with_context(&s, &query, &context).unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].kind, SnapKind::Midpoint);
+        assert_eq!(result.candidates[0].point_world_mm, [10_000.0, 1000.0, 0.0]);
+        // The circle supplies its centre and the nearest circumference point; each is found
+        // from its own neighbourhood.
+        let query = SnapQuery {
+            point_mm: [20_000.0, 499.5, 0.0],
+            radius_mm: 1.0,
+            kinds: vec![SnapKind::ConstructionCircle],
+            max_hits: 16,
+        };
+        let result = snap_with_context(&s, &query, &context).unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].kind, SnapKind::ConstructionCircle);
+        assert_eq!(result.candidates[0].point_world_mm, [20_000.0, 500.0, 0.0]);
+        let query = SnapQuery {
+            point_mm: [20_000.4, 0.0, 0.0],
+            radius_mm: 1.0,
+            kinds: vec![SnapKind::ConstructionCenter],
+            max_hits: 16,
+        };
+        let result = snap_with_context(&s, &query, &context).unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].kind, SnapKind::ConstructionCenter);
+        assert_eq!(result.candidates[0].point_world_mm, [20_000.0, 0.0, 0.0]);
+        // The plane supplies the perpendicular foot of the query point.
+        let query = SnapQuery {
+            point_mm: [30_000.0, 0.0, 5000.4],
+            radius_mm: 1.0,
+            kinds: vec![SnapKind::ConstructionPlane],
+            max_hits: 16,
+        };
+        let result = snap_with_context(&s, &query, &context).unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].point_world_mm, [30_000.0, 0.0, 5000.0]);
+    }
+
+    #[test]
+    fn construction_source_and_nearest_gates_run_before_truncation() {
+        let s = snapshot(1);
+        let helpers = helpers();
+        // The construction source off: no helper candidate, even under a one-hit limit.
+        let sources = SnapSources {
+            construction: false,
+            ..Default::default()
+        };
+        let query = SnapQuery {
+            point_mm: [5000.4, 0.0, 0.0],
+            radius_mm: 1.0,
+            kinds: vec![SnapKind::ConstructionPoint, SnapKind::ConstructionEnd],
+            max_hits: 1,
+        };
+        let result = snap_with_context(
+            &s,
+            &query,
+            &SnapContext {
+                construction: &helpers,
+                sources,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(result.candidates.is_empty());
+        // Nearest off, near the line's start: the discrete end stays, the continuous line
+        // point is dropped before truncation can fill the page with it.
+        let query = SnapQuery {
+            point_mm: [10_000.0, 0.4, 0.0],
+            radius_mm: 1.0,
+            kinds: vec![SnapKind::ConstructionEnd, SnapKind::ConstructionLine],
+            max_hits: 2,
+        };
+        let result = snap_with_context(
+            &s,
+            &query,
+            &SnapContext {
+                construction: &helpers,
+                nearest: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(result.candidates.len(), 1);
+        assert_eq!(result.candidates[0].kind, SnapKind::ConstructionEnd);
+        // A repeated helper identity is refused, not silently doubled.
+        let mut doubled = helpers.clone();
+        doubled.push(helpers[0].clone());
+        assert_eq!(
+            snap_with_context(
+                &s,
+                &SnapQuery {
+                    kinds: vec![SnapKind::ConstructionPoint],
+                    ..query
+                },
+                &helper_context(&doubled)
+            )
+            .unwrap_err()
+            .code(),
+            ViewCode::PickInputInvalid
+        );
+    }
+
     #[test]
     fn physical_edge_crossing_is_resolved_in_the_plane_before_result_truncation() {
         let s = snapshot(1);
@@ -2209,12 +2610,16 @@ mod tests {
         assert!(grids.allows(ElementKind::Beam));
         let assemblies = SelectionFilter::ALL.with(SelectionClass::Assemblies, false);
         assert!(!assemblies.allows(ElementKind::Connection));
-        // Bolts, welds, holes, construction objects and items cover no registered kind yet.
+        // Bolts, welds, holes and items cover no registered kind yet; construction objects
+        // cover exactly the construction kind.
+        let construction = SelectionFilter::ALL.with(SelectionClass::ConstructionObjects, false);
+        assert!(!construction.allows(ElementKind::Construction));
+        assert!(construction.allows(ElementKind::Plate));
+        assert!(SelectionFilter::ALL.allows(ElementKind::Construction));
         for class in [
             SelectionClass::Bolts,
             SelectionClass::Welds,
             SelectionClass::Holes,
-            SelectionClass::ConstructionObjects,
             SelectionClass::Items,
         ] {
             let without = SelectionFilter::ALL.with(class, false);

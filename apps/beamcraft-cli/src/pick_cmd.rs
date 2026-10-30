@@ -147,6 +147,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--reference-snaps",
             "--geometry-snaps",
             "--grid-snaps",
+            "--construction-snaps",
             "--nearest",
         ],
         _ => return Err(invalid("unknown command")),
@@ -291,6 +292,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         reference: switch("--reference-snaps")?,
         geometry: switch("--geometry-snaps")?,
         grids: switch("--grid-snaps")?,
+        construction: switch("--construction-snaps")?,
     };
     let nearest = switch("--nearest")?;
     let snap_cursor = if *command == "snap" {
@@ -438,6 +440,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 &beamcraft_engine::query::pick::SnapContext {
                     grids: &grids,
                     member_axes: &axes,
+                    construction: &inspection.constructions,
                     plane: snap_plane,
                     cursor: snap_cursor,
                     sources: snap_sources,

@@ -660,6 +660,7 @@ fn create(
         Shape::Weld(_) | Shape::Bolt(_) => "connection",
         Shape::Level { .. } => "level",
         Shape::Grid(_) => "grid",
+        Shape::Construction(_) => "construction",
         Shape::Plate { .. } => "plate",
         Shape::Member {
             kind: MemberKind::Beam,
@@ -978,6 +979,7 @@ fn create(
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
         Shape::Grid(g) => grid::author(data, &p, g)?,
+        Shape::Construction(o) => construction::author(data, &p, o)?,
         Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
         Shape::Level { elevation_mm } => attr(
             data,
@@ -1885,6 +1887,11 @@ fn capture(
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
                     Shape::Grid(_) => {
                         for &(name, ty) in grid::FIELDS {
+                            add(name, ty, 0);
+                        }
+                    }
+                    Shape::Construction(_) => {
+                        for &(name, ty) in construction::FIELDS {
                             add(name, ty, 0);
                         }
                     }

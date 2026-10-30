@@ -399,6 +399,8 @@ pub(crate) struct Decoded {
     pub(crate) levels: Levels,
     pub(crate) instances: beamcraft_engine::instance::InstanceGraph,
     pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
+    /// T02: validated construction objects, without engineering bodies.
+    pub(crate) constructions: Vec<beamcraft_model::construction::ConstructionObject>,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
     /// Any geometry subtree or derived-value opinion, including malformed/non-mesh prims.
@@ -1175,6 +1177,7 @@ pub(crate) fn decode(
         levels,
         instances,
         grids: beamcraft_layer_engine::authored::grid::read_grids(&prims)?,
+        constructions: beamcraft_layer_engine::authored::construction::read_constructions(&prims)?,
         elements,
         derived_elements,
         reference_scene: crate::reference_view::scene_elements(&prims),
@@ -2208,6 +2211,8 @@ pub struct Inspection {
     pub instances: beamcraft_engine::instance::InstanceGraph,
     /// T01: validated project grids, without engineering bodies.
     pub grids: Vec<beamcraft_model::grid::Grid>,
+    /// T02: validated construction objects, without engineering bodies.
+    pub constructions: Vec<beamcraft_model::construction::ConstructionObject>,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
 }
@@ -2336,6 +2341,7 @@ pub(crate) fn inspect_manifest_assets(
         levels: decoded.levels,
         instances: decoded.instances,
         grids: decoded.grids,
+        constructions: decoded.constructions,
         elements: decoded.elements,
     })
 }

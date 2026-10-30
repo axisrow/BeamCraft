@@ -68,6 +68,7 @@ const SNAPS: &[(&str, Glyph)] = &[
     ("Snap tangents", Glyph::Tangent),
     ("Snap parallel", Glyph::Parallel),
     ("Snap grids", Glyph::Existing(Icon::Grid)),
+    ("Snap construction objects", Glyph::ReferencePoint),
     ("Orthogonal constraint", Glyph::Ortho),
     ("Snap reference geometry", Glyph::ReferencePoint),
     ("Snap physical geometry", Glyph::GeometryPoint),
@@ -289,6 +290,14 @@ fn snap_kinds(label: &str) -> &'static [SnapKind] {
         "Snap axis centers" => &[SnapKind::Center],
         "Snap midpoints" => &[SnapKind::Midpoint],
         "Snap nearest" => &[SnapKind::Axis, SnapKind::Edge, SnapKind::GridLine],
+        "Snap construction objects" => &[
+            SnapKind::ConstructionPoint,
+            SnapKind::ConstructionEnd,
+            SnapKind::ConstructionLine,
+            SnapKind::ConstructionCenter,
+            SnapKind::ConstructionCircle,
+            SnapKind::ConstructionPlane,
+        ],
         _ => &[],
     }
 }
@@ -323,13 +332,14 @@ pub(super) fn snaps(ui: &mut Ui, selection: &mut Selection) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(GAP, 0.0);
         for (index, (label, glyph)) in SNAPS.iter().enumerate() {
-            if matches!(index, 10 | 11) {
+            if matches!(index, 11 | 12) {
                 separator(ui);
             }
             let kinds = snap_kinds(label);
             let source = matches!(
                 *label,
                 "Snap grids"
+                    | "Snap construction objects"
                     | "Snap reference geometry"
                     | "Snap physical geometry"
                     | "Snap nearest"
@@ -337,6 +347,7 @@ pub(super) fn snaps(ui: &mut Ui, selection: &mut Selection) {
             );
             let active = match *label {
                 "Snap grids" => selection.snap_grids,
+                "Snap construction objects" => selection.snap_construction,
                 "Snap reference geometry" => selection.snap_reference,
                 "Snap physical geometry" => selection.snap_geometry,
                 "Snap nearest" => selection.snap_nearest,
@@ -347,6 +358,7 @@ pub(super) fn snaps(ui: &mut Ui, selection: &mut Selection) {
             if clicked {
                 match *label {
                     "Snap grids" => selection.snap_grids = !active,
+                    "Snap construction objects" => selection.snap_construction = !active,
                     "Snap reference geometry" => selection.snap_reference = !active,
                     "Snap physical geometry" => selection.snap_geometry = !active,
                     "Snap nearest" => selection.snap_nearest = !active,
@@ -376,7 +388,7 @@ mod tests {
         theme::install(&ctx);
         let mut labels = std::collections::BTreeSet::new();
         assert_eq!(ENTITIES.len(), 20);
-        assert_eq!(SNAPS.len(), 13);
+        assert_eq!(SNAPS.len(), 14);
         for (label, _) in ENTITIES.iter().chain(SNAPS) {
             assert!(labels.insert(label));
         }
@@ -425,7 +437,9 @@ mod tests {
                 let [a, b] = pair else { return false };
                 a.top() != b.top() || a.right() <= b.left()
             }));
-            assert!(snaps_width() < 360.0);
+            // Fourteen switches since T02 added the construction-objects source; the strip
+            // grows by one button and stays a single row.
+            assert!(snaps_width() < 380.0);
         }
     }
 }

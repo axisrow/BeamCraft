@@ -22,6 +22,7 @@ mod bom_cmd;
 mod changeset_cmd;
 mod command_context;
 mod compensate_cmd;
+mod construction_cmd;
 mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
@@ -151,6 +152,8 @@ fn main() -> std::process::ExitCode {
         grid_cmd::execute(&args)
     } else if args.first().is_some_and(level_cmd::handles) {
         level_cmd::execute(&args)
+    } else if args.first().is_some_and(construction_cmd::handles) {
+        construction_cmd::execute(&args)
     } else if args.first().is_some_and(attribute_cmd::handles) {
         attribute_cmd::execute(&args)
     } else if args.first().is_some_and(numbering_cmd::handles) {
