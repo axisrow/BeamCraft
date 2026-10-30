@@ -13,6 +13,7 @@ mod support;
 mod a13;
 mod add_hole;
 mod alpha_scenario;
+mod alpha_scenario_expanded;
 mod assemblies;
 mod bolts;
 mod bom;
