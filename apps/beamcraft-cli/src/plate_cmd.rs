@@ -350,6 +350,27 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--workspace-id",
 ];
 
+/// The base ledger options of the five contour-edit commands (A12.3), plus the command's own.
+macro_rules! contour_edit_options {
+    ($name:ident, $($extra:expr),+ $(,)?) => {
+        const $name: &[&str] = &[
+            "--store",
+            "--id",
+            "--op-id",
+            "--revision-id",
+            "--actor-id",
+            "--project-id",
+            "--workspace-id",
+            $($extra,)+
+        ];
+    };
+}
+contour_edit_options!(MOVE_VERTEX_OPTIONS, "--vertex", "--to");
+contour_edit_options!(MOVE_EDGE_OPTIONS, "--edge", "--delta");
+contour_edit_options!(INSERT_VERTEX_OPTIONS, "--edge", "--point");
+contour_edit_options!(DELETE_VERTEX_OPTIONS, "--vertex");
+contour_edit_options!(SET_CORNER_OPTIONS, "--vertex", "--corner");
+
 const DELETE_OPTIONS: &[&str] = &[
     "--store",
     "--id",
@@ -405,6 +426,11 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-hole" => UPDATE_HOLE_OPTIONS,
         "remove-hole" => REMOVE_CUT_OPTIONS,
         "update-element" => UPDATE_OPTIONS,
+        "move-plate-vertex" => MOVE_VERTEX_OPTIONS,
+        "move-plate-edge" => MOVE_EDGE_OPTIONS,
+        "insert-plate-vertex" => INSERT_VERTEX_OPTIONS,
+        "delete-plate-vertex" => DELETE_VERTEX_OPTIONS,
+        "set-plate-corner" => SET_CORNER_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" | "copy-instance" => COPY_OPTIONS,
         "cut-by-plane" | "update-cut" => CUT_OPTIONS,
@@ -469,6 +495,11 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "update-hole" => add_hole_cli(&store, &options, true, false),
         "remove-hole" => add_hole_cli(&store, &options, false, true),
         "update-element" => update_command(&store, &options),
+        "move-plate-vertex" => contour_edit_command(&store, &options, "move-plate-vertex"),
+        "move-plate-edge" => contour_edit_command(&store, &options, "move-plate-edge"),
+        "insert-plate-vertex" => contour_edit_command(&store, &options, "insert-plate-vertex"),
+        "delete-plate-vertex" => contour_edit_command(&store, &options, "delete-plate-vertex"),
+        "set-plate-corner" => contour_edit_command(&store, &options, "set-plate-corner"),
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options, false),
         "copy-instance" => copy_command(&store, &options, true),
@@ -1154,34 +1185,43 @@ fn corner_treatments(options: &BTreeMap<&str, &str>) -> Run<Vec<PlateCorner>> {
                 || invalid("a corner is vertex=chamfer:d1[,d2] or vertex=round:r, `;`-separated");
             let (vertex, rest) = entry.split_once('=').ok_or_else(bad)?;
             let vertex: usize = vertex.trim().parse().map_err(|_| bad())?;
-            let (kind, params) = rest.split_once(':').ok_or_else(bad)?;
-            let values: Vec<f64> = params
-                .split(',')
-                .take(3)
-                .map(|v| v.trim().parse::<f64>())
-                .collect::<Result<_, _>>()
-                .map_err(|_| bad())?;
-            let treatment = match kind.trim() {
-                "chamfer" => match values.as_slice() {
-                    [d1] => CornerTreatment::Chamfer {
-                        d1_mm: *d1,
-                        d2_mm: *d1,
-                    },
-                    [d1, d2] => CornerTreatment::Chamfer {
-                        d1_mm: *d1,
-                        d2_mm: *d2,
-                    },
-                    _ => return Err(bad()),
-                },
-                "round" => match values.as_slice() {
-                    [radius] => CornerTreatment::Round { radius_mm: *radius },
-                    _ => return Err(bad()),
-                },
-                _ => return Err(bad()),
-            };
-            Ok(PlateCorner { vertex, treatment })
+            Ok(PlateCorner {
+                vertex,
+                treatment: corner_treatment(rest)?,
+            })
         })
         .collect()
+}
+
+/// One corner treatment of the `--corners` grammar without its `vertex=` prefix, shared with
+/// the single treatment of `set-plate-corner --corner` (A12.3).
+fn corner_treatment(text: &str) -> Run<CornerTreatment> {
+    let bad = || invalid("a corner treatment is chamfer:D1[,D2] or round:R");
+    let (kind, params) = text.split_once(':').ok_or_else(bad)?;
+    let values: Vec<f64> = params
+        .split(',')
+        .take(3)
+        .map(|v| v.trim().parse::<f64>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| bad())?;
+    match kind.trim() {
+        "chamfer" => match values.as_slice() {
+            [d1] => Ok(CornerTreatment::Chamfer {
+                d1_mm: *d1,
+                d2_mm: *d1,
+            }),
+            [d1, d2] => Ok(CornerTreatment::Chamfer {
+                d1_mm: *d1,
+                d2_mm: *d2,
+            }),
+            _ => Err(bad()),
+        },
+        "round" => match values.as_slice() {
+            [radius] => Ok(CornerTreatment::Round { radius_mm: *radius }),
+            _ => Err(bad()),
+        },
+        _ => Err(bad()),
+    }
 }
 
 /// The cutting plane of `cut-by-plane`: `--point X,Y,Z --normal X,Y,Z --keep positive|negative`,
@@ -1232,6 +1272,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         } else {
             None
         },
+        contour_points_mm: None,
         class: given("--class")
             .map(|v| {
                 v.parse::<i32>()
@@ -1290,6 +1331,208 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 "element_updated"
             }),
         ),
+        ("op_id", Json::text(op_id.to_string())),
+        (
+            "effect",
+            Json::object([
+                ("name", Json::Bool(updated.effect.name)),
+                ("class", Json::Bool(updated.effect.class)),
+                ("material", Json::Bool(updated.effect.material)),
+                ("shape", Json::Bool(updated.effect.shape)),
+                ("placement", Json::Bool(updated.effect.placement)),
+                ("orientation", Json::Bool(updated.effect.orientation)),
+                ("level", Json::Bool(updated.effect.level)),
+            ]),
+        ),
+        (
+            "changed_layers",
+            Json::Array(updated.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("element", element),
+        ("revision", revision_json(&updated.revision)),
+        ("footprint", footprint_json(updated.footprint.as_ref())),
+    ]))
+}
+
+/// One contour edit of a plate (A12.3, `move-plate-vertex`, `move-plate-edge`,
+/// `insert-plate-vertex`, `delete-plate-vertex`, `set-plate-corner`). The engine's pure edit
+/// functions rewrite the authored contour and its sparse corner list, and the edit commits
+/// through `update_element` as one shape-changing patch: the kernel revalidates the new contour,
+/// every hole and cut replays, a linked definition group follows and the revision is one undo
+/// unit. Retry follows the documented `UpdateElement` contract, decided from the head state.
+fn contour_edit_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    command: &'static str,
+) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let target_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let index = |key: &'static str| -> Run<usize> {
+        options
+            .get(key)
+            .map(|text| {
+                text.trim()
+                    .parse::<usize>()
+                    .map_err(|_| invalid("the index is not a whole number"))
+            })
+            .transpose()?
+            .ok_or_else(|| invalid("a required index is missing"))
+    };
+    let xy = |key: &'static str| -> Run<[f64; 2]> {
+        let [x, y] = numbers_list(
+            given(key).ok_or_else(|| invalid("a required point is missing"))?,
+            2,
+        )?[..] else {
+            return Err(invalid("a contour edit point is two numbers"));
+        };
+        Ok([x, y])
+    };
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    // The head plate as the caller saw it: the edit names vertices and edges of this contour by
+    // position, and a stale naming is refused by the commit's base-revision rule.
+    let inspection = inspect(store)?;
+    let record = match inspection
+        .plates
+        .iter()
+        .find(|p| p.authored.id == target_id)
+    {
+        Some(record) => record,
+        None if inspection
+            .unsupported_plates
+            .iter()
+            .any(|p| p.authored.id == target_id) =>
+        {
+            return Err(PlateError {
+                rule_id: None,
+                code: ErrorCode::DependencyUnavailable,
+                message: "editing an unsupported plate is not implemented",
+            });
+        }
+        None if inspection
+            .members
+            .iter()
+            .any(|m| m.authored.id == target_id) =>
+        {
+            return Err(PlateError {
+                rule_id: None,
+                code: ErrorCode::UnsupportedProperty,
+                message: "only plates have a contour",
+            });
+        }
+        None => {
+            return Err(PlateError {
+                rule_id: None,
+                code: ErrorCode::NotFound,
+                message: "the element is not in the head revision",
+            });
+        }
+    };
+    let authored = &record.authored;
+    let (points, corners) = match command {
+        "move-plate-vertex" => beamcraft_engine::contour_edit::move_vertex(
+            &authored.contour_points_mm,
+            &authored.corners,
+            index("--vertex")?,
+            xy("--to")?,
+        )?,
+        "move-plate-edge" => beamcraft_engine::contour_edit::move_edge(
+            &authored.contour_points_mm,
+            &authored.corners,
+            index("--edge")?,
+            xy("--delta")?,
+        )?,
+        "insert-plate-vertex" => beamcraft_engine::contour_edit::insert_vertex(
+            &authored.contour_points_mm,
+            &authored.corners,
+            index("--edge")?,
+            xy("--point")?,
+        )?,
+        "delete-plate-vertex" => beamcraft_engine::contour_edit::delete_vertex(
+            &authored.contour_points_mm,
+            &authored.corners,
+            index("--vertex")?,
+        )?,
+        _ => beamcraft_engine::contour_edit::set_corner(
+            &authored.contour_points_mm,
+            &authored.corners,
+            index("--vertex")?,
+            match given("--corner")
+                .ok_or_else(|| invalid("--corner is required"))?
+                .trim()
+            {
+                "sharp" | "none" => None,
+                text => Some(corner_treatment(text)?),
+            },
+        )?,
+    };
+    let updated = update_element(
+        store,
+        &UpdateRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: UpdateElement {
+                target_id,
+                patch: ElementPatch {
+                    contour_points_mm: Some(points),
+                    corners: Some(corners),
+                    ..Default::default()
+                },
+            },
+        },
+        &mut NoFault,
+    )?;
+    let UpdatedElement::Plate(edited) = &updated.element else {
+        return Err(PlateError {
+            rule_id: None,
+            code: ErrorCode::IntegrityError,
+            message: "a contour edit reported a non-plate element",
+        });
+    };
+    let element = plate_json(edited)?;
+    let outcome = if updated.replayed {
+        "contour_edit_replayed"
+    } else {
+        match command {
+            "move-plate-vertex" => "plate_vertex_moved",
+            "move-plate-edge" => "plate_edge_moved",
+            "insert-plate-vertex" => "plate_vertex_inserted",
+            "delete-plate-vertex" => "plate_vertex_deleted",
+            _ => "plate_corner_set",
+        }
+    };
+    Ok(Json::object([
+        ("outcome", Json::text(outcome)),
         ("op_id", Json::text(op_id.to_string())),
         (
             "effect",
