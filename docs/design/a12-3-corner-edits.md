@@ -26,3 +26,18 @@ not immutable historical replay after later edits. No UI acceptance is claimed.
 Checks and their actual results are recorded in the PR. Synthetic fixtures cover replacement,
 clear, a linked group, invalid input without publication, restart, retry and undo/redo. Original
 Rust and elementary geometry using the existing A12.2 engine, MPL-2.0; no assets or dependencies.
+
+## The remainder: contour editing commands (A12.3)
+
+The editing commands of the amendment section 3 are delivered on top of the atomic replacement:
+`move-plate-vertex`, `move-plate-edge`, `insert-plate-vertex`, `delete-plate-vertex` and
+`set-plate-corner`. The engine part is the pure `contour_edit` module: each edit maps the
+authored contour and its sparse corner list to the edited pair, remapping treatment positions
+after an insertion or deletion and carrying the deleted vertex's treatment away. The CLI commits
+the result through `UpdateElement` as one shape-changing `contour_points_mm` + `corners` patch,
+so the kernel revalidates the new contour, every hole and cut replays, a linked definition group
+updates atomically and the revision is one undo unit. `delete-plate-vertex` refuses on a
+three-vertex contour whatever the caller asks. Retry follows the documented `UpdateElement`
+contract, decided from the head state: an identical retry replays, an insert or delete under an
+accepted op id with moved-on content is `OP_ID_REUSE`. keep_degenerate/recovery (P-Degenerate)
+remains outstanding: invalid geometry refuses, as for every update today.

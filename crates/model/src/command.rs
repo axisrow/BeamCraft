@@ -2115,6 +2115,10 @@ fn push_f64(bytes: &mut Vec<u8>, value: f64) -> Result<(), CommandError> {
 pub struct ElementPatch {
     /// Complete replacement of a plate's sparse corner treatment list; empty clears it.
     pub corners: Option<Vec<PlateCorner>>,
+    /// Complete replacement of a plate's authored contour (A12.3): every point, in order. A
+    /// member has no contour. Whether the new contour is a valid plate shape is the engine's
+    /// decision; the patch carries it whole, like a creation.
+    pub contour_points_mm: Option<Vec<[f64; 3]>>,
     /// New label.
     pub name: Option<String>,
     /// New authored integer part class (P15).
@@ -2177,7 +2181,42 @@ impl UpdateElement {
                 seen.push(corner.vertex);
             }
         }
+        if let Some(points) = &patch.contour_points_mm {
+            let count = points.len();
+            if count > CONTOUR_POINT_CAP {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "contour_points_mm",
+                    "contour has more than 1024 points",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+            if count < MIN_CONTOUR_POINTS {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "contour_points_mm",
+                    "contour needs at least 3 points",
+                ));
+            }
+            if points.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "contour_points_mm",
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "contour_points_mm",
+                    "coordinate exceeds the coordinate cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
         if patch.corners.is_none()
+            && patch.contour_points_mm.is_none()
             && patch.class.is_none()
             && patch.name.is_none()
             && patch.material.is_none()
@@ -2390,6 +2429,21 @@ impl UpdateElement {
                 for v in values {
                     bytes.extend_from_slice(&v.to_le_bytes());
                 }
+            }
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(points) = &self.patch.contour_points_mm {
+            bytes.extend_from_slice(b"A12.3/contour-patch/v1\0");
+            bytes.extend_from_slice(&(points.len() as u64).to_le_bytes());
+            for v in points.iter().flatten().copied() {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "contour_points_mm",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
             }
         }
         Sha256::digest(&bytes).map_err(|_| {

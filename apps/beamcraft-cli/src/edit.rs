@@ -278,6 +278,7 @@ pub fn update_element(
             material: command.patch.material,
             thickness_mm: command.patch.thickness_mm,
             corners: command.patch.corners.clone(),
+            contour_points_mm: command.patch.contour_points_mm.clone(),
             thickness_side: command.patch.thickness_side,
             axis_points_mm: command.patch.axis_points_mm.clone(),
             ..Default::default()
@@ -376,6 +377,14 @@ pub fn update_element(
         changes.push(Change::Thickness {
             id: definition_text.clone(),
             mm,
+        });
+    }
+    // The contour is a shape input of the canonical definition, like the thickness: the
+    // instances of the group read their bodies from it and take mesh updates below.
+    if let Some(points) = &command.patch.contour_points_mm {
+        changes.push(Change::Contour {
+            id: definition_text.clone(),
+            points_mm: points.clone(),
         });
     }
     if let Some(corners) = &command.patch.corners {

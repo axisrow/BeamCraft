@@ -16,6 +16,7 @@ pub mod bolt;
 pub mod bom;
 pub mod class_palette;
 pub mod command;
+pub mod contour_edit;
 pub mod coordinate;
 pub mod copy;
 pub mod corners;

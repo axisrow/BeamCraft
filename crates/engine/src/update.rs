@@ -14,6 +14,7 @@
 //! | `material` | no | yes | quantity record only (same mesh bytes) |
 //! | `thickness_mm` | yes | yes | mesh and quantity record |
 //! | `thickness_side` (A12.1) | yes | yes | mesh and quantity record |
+//! | `contour_points_mm` (A12.3) | yes | yes | mesh and quantity record (a plate contour) |
 //! | `axis_points_mm` | yes | yes | mesh and quantity record (a member path, P12) |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
 //! | `orientation_xyzw` | no | no | untouched (the body is element-local) |
@@ -57,6 +58,7 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         class: patch.class.is_some(),
         material: patch.material.is_some(),
         shape: patch.corners.is_some()
+            || patch.contour_points_mm.is_some()
             || patch.thickness_mm.is_some()
             || patch.thickness_side.is_some()
             || patch.axis_points_mm.is_some(),
@@ -80,8 +82,15 @@ pub fn patch_plate(
         ));
     }
     let mut next = plate.clone();
+    if let Some(points) = &patch.contour_points_mm {
+        next.contour_points_mm.clone_from(points);
+    }
     if let Some(corners) = &patch.corners {
         next.corners.clone_from(corners);
+    }
+    // One admission covers the pair: a contour patch is validated with the corners it arrives
+    // with (each naming a vertex of the new contour), a corner patch with the standing contour.
+    if patch.contour_points_mm.is_some() || patch.corners.is_some() {
         next.to_command().validate_arguments()?;
     }
     if let Some(name) = &patch.name {
@@ -111,6 +120,13 @@ pub fn patch_member(
     member: &AuthoredMember,
     patch: &ElementPatch,
 ) -> Result<AuthoredMember, CommandError> {
+    if patch.contour_points_mm.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "contour_points_mm",
+            "only plates have a contour",
+        ));
+    }
     if patch.corners.is_some() {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,
@@ -553,6 +569,89 @@ mod tests {
             ErrorCode::UnsupportedProperty
         );
     }
+    #[test]
+    fn a_contour_patch_replaces_the_whole_contour_and_validates_the_pair() {
+        use beamcraft_model::command::{CornerTreatment, PlateCorner};
+        let before = plate();
+        let moved = ElementPatch {
+            contour_points_mm: Some(vec![
+                [0.0, 0.0, 0.0],
+                [2000.0, 0.0, 0.0],
+                [2000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ]),
+            ..Default::default()
+        };
+        assert!(effect(&moved).shape);
+        let after = patch_plate(&before, &moved).unwrap();
+        assert_eq!(after.contour_points_mm[1], [2000.0, 0.0, 0.0]);
+        assert_eq!(after.corners, before.corners);
+        assert_eq!(after.thickness_mm, 10.0);
+        // Corners arriving with the contour are validated against the new contour: the corner
+        // names a vertex of it, and a stale index is refused before anything changes.
+        let pair = patch_plate(
+            &before,
+            &ElementPatch {
+                contour_points_mm: Some(vec![
+                    [0.0, 0.0, 0.0],
+                    [500.0, 0.0, 0.0],
+                    [0.0, 500.0, 0.0],
+                ]),
+                corners: Some(vec![PlateCorner {
+                    vertex: 0,
+                    treatment: CornerTreatment::Round { radius_mm: 10. },
+                }]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(pair.contour_points_mm.len(), 3);
+        assert_eq!(pair.corners.len(), 1);
+        assert!(
+            patch_plate(
+                &before,
+                &ElementPatch {
+                    contour_points_mm: Some(vec![
+                        [0.0, 0.0, 0.0],
+                        [500.0, 0.0, 0.0],
+                        [0.0, 500.0, 0.0]
+                    ]),
+                    corners: Some(vec![PlateCorner {
+                        vertex: 3,
+                        treatment: CornerTreatment::Round { radius_mm: 10. },
+                    }]),
+                    ..Default::default()
+                }
+            )
+            .is_err()
+        );
+        // Too few points and a member target are refused.
+        assert_eq!(
+            patch_plate(
+                &before,
+                &ElementPatch {
+                    contour_points_mm: Some(vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0]]),
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(
+            patch_member(
+                &member(),
+                &ElementPatch {
+                    contour_points_mm: Some(before.contour_points_mm.clone()),
+                    ..Default::default()
+                }
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::UnsupportedProperty
+        );
+    }
+
     #[test]
     fn corner_replacement_is_a_shape_patch_and_preserves_the_sharp_contour() {
         use beamcraft_model::command::{CornerTreatment, PlateCorner};
