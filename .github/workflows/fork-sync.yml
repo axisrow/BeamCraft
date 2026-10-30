@@ -81,6 +81,15 @@ jobs:
         with:
           tool: cargo-nextest@0.9.149
 
+      # The UI tests need a wgpu adapter; a missing one panics instead of
+      # skipping and kills the gate. Upstream CI installs software Vulkan for
+      # the same tests on ubuntu, so the sync runner gets the same package.
+      - name: Install software Vulkan for native UI tests
+        if: steps.guard.outputs.pending != '0'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends mesa-vulkan-drivers
+
       - name: Identify the committer
         if: steps.guard.outputs.pending != '0'
         run: |
