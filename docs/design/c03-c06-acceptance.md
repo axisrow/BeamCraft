@@ -6,8 +6,9 @@ owner decision. The C05 rows below are executable tests as of 2026-10-27
 the per-commit verification is O(revisions), so the full 1000 + 1000 sweep stays out of it. The
 authenticated coordinator rebase (C03) is executable as of 2026-10-30
 (`apps/beamcraft-cli/tests/coordinator_rebase.rs`), and compensation (C06) as of 2026-10-30
-(`apps/beamcraft-cli/tests/compensation.rs`). The C04 semantic-conflict workflow remains
-specified only.**
+(`apps/beamcraft-cli/tests/compensation.rs`). The C04 semantic-conflict workflow is executable as
+of 2026-10-26 (`apps/beamcraft-cli/tests/rebase.rs`, `apps/beamcraft-cli/tests/resolve.rs` and
+`apps/beamcraft-cli/tests/coordinator.rs`).**
 Scope: fork issue #12 and fork issue #160 (upstream #331). The local rebase acceptance cases
 C03-01 to C03-14 in `docs/design/c03-rebase.md` stay required unchanged. This document specifies
 the remaining per-slice acceptance: the authenticated coordinator rebase (C03), the
@@ -73,7 +74,7 @@ and the kind (write-write, read-write, lifecycle), in a deterministic order.
 | C04-06 reverted intervening edit | An intervening accepted edit that conflicts and is later reverted (final value equals the old base) still conflicts: final-value equality never hides accepted history (conflict side of C03-05) |
 | C04-07 crash windows | Kill before and after the planner at every boundary: a conflict rebase writes nothing, so after restart the same report is produced byte-stably; neither head nor either draft moved; re-reading the draft proves no half-applied plan exists |
 | C04-08 two clients resolve differently | B and C fork from one base and hit the same published conflict; B explicitly discards its own operation, C re-edits. Each resolution is a new operation identity; both final states are the predicted ones and independent of resolution timing |
-| C04-09 bounded reports | Conflicts at the 4096 cap produce the complete report; cap plus one is `LIMIT_EXCEEDED`; a report is never silently truncated |
+| C04-09 bounded reports | Conflicts at the 256-conflict cap (`MAX_REBASE_CONFLICTS`) produce the complete report; cap plus one is `LIMIT_EXCEEDED`; a report is never silently truncated |
 | C04-10 explicit discard is durable | Discarding a named own unsent operation is a recorded operation with its own identity: a crash during discard and a restart leave it done or not done exactly once; the discarded operation never reappears, the other side is untouched |
 
 ## C05 retry and two offline clients
