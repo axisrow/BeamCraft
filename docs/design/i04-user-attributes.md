@@ -49,8 +49,9 @@ with |v| <= 1e9; one element carries at most 256 values; a model defines at most
 
 Model (`model/src/attribute.rs`): `AttrType`, `AttrValue`, `AttrDef`, and the commands
 `DefineAttribute`, `UndefineAttribute`, `SetAttribute`, `ClearAttribute`, each with admission
-and a content fingerprint. Setting an undefined attribute is refused (`INVALID_ARGUMENT`);
-clearing is refused only when no value is present. Values outlive their definition.
+and a content fingerprint. Setting an undefined attribute is refused (`NOT_FOUND`);
+clearing is refused only when no value is present (`INVALID_ARGUMENT`). Values outlive their
+definition.
 
 Engine (`engine/src/attribute.rs`): pure decisions over the decoded schema and values —
 duplicate define (`DUPLICATE_ID`), missing definition or element (`NOT_FOUND`), type/option/

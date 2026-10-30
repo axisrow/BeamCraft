@@ -291,14 +291,13 @@ pub fn values_of(
         .schema
         .iter()
         .filter_map(|def| {
-            model
-                .values
-                .value_of(element, &def.name)
-                .cloned()
-                .map(|value| ValueEntry::Defined {
-                    def: def.clone(),
-                    value,
-                })
+            let value = model.values.value_of(element, &def.name)?;
+            // A value whose stored type does not match the definition (a presence left over
+            // from an earlier definition) stays in the unknown list alone.
+            (value.attr_type() == def.ty).then(|| ValueEntry::Defined {
+                def: def.clone(),
+                value: value.clone(),
+            })
         })
         .collect();
     let unknown = model

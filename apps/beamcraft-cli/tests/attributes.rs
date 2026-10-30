@@ -310,6 +310,19 @@ fn an_unknown_attribute_is_shown_and_never_dropped() {
     // It clears by name even without a definition.
     f.ok("attribute-clear", &["--element", PLATE, "--name", "Note"]);
     assert!(f.entries().is_empty());
+    // A stored value is never shown twice after the attribute is re-defined with another type:
+    // a number survives undefine, a text definition must not present it as its own.
+    f.ok("attribute-define", &["--name", "Mass", "--type", "number"]);
+    f.ok(
+        "attribute-set",
+        &["--element", PLATE, "--name", "Mass", "--value", "12.5"],
+    );
+    f.ok("attribute-undefine", &["--name", "Mass"]);
+    f.ok("attribute-define", &["--name", "Mass", "--type", "text"]);
+    let entries = f.entries();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].0, "Mass");
+    assert!(entries[0].1.starts_with("unknown:"), "{entries:?}");
 }
 
 #[test]

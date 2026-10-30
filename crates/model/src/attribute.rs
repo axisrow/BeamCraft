@@ -235,13 +235,16 @@ impl AttrDef {
     }
 }
 
-/// A unit label: 1 to 16 bytes without control characters.
+/// A unit label: 1 to 16 bytes without control characters; it is stored verbatim.
 fn short_text_unit(unit: &str) -> Result<(), CommandError> {
-    if unit.is_empty() || unit.len() > MAX_ATTR_UNIT_BYTES {
+    if unit.is_empty()
+        || unit.len() > MAX_ATTR_UNIT_BYTES
+        || unit.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}')
+    {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "unit",
-            "a unit is 1 to 16 bytes",
+            "a unit is 1 to 16 bytes without control characters",
         ));
     }
     Ok(())
@@ -454,6 +457,8 @@ mod tests {
         unit.unit = Some("mm".into());
         assert!(unit.validate().is_ok());
         unit.unit = Some(String::new());
+        assert!(unit.validate().is_err());
+        unit.unit = Some("m\u{1}m".into());
         assert!(unit.validate().is_err());
         let mut set = def("S", AttrType::Text);
         set.set = Some(String::new());
