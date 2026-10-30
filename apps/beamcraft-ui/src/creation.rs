@@ -82,6 +82,21 @@ impl ContourDraft {
         self.points.clear();
     }
 
+    /// Resolve a spatial contour through the engine without flattening it to the session plane.
+    pub fn spatial_contour(
+        &self,
+        preferred: Option<WorkPlane>,
+    ) -> Result<(String, WorkPlane), FormError> {
+        let plane =
+            beamcraft_engine::coordinate::contour_frame(&self.points, preferred).map_err(|e| {
+                FormError {
+                    field: "Contour",
+                    message: e.message.into(),
+                }
+            })?;
+        Ok((self.contour(Some(plane))?, plane))
+    }
+
     /// Convert the draft through the engine frame for the existing local-contour CLI.
     /// Preserve winding, topology and coordinates for engine validation; repair nothing.
     pub fn contour(&self, plane: Option<WorkPlane>) -> Result<String, FormError> {

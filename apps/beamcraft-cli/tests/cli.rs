@@ -22,6 +22,8 @@ mod changeset;
 mod changeset_base;
 mod command_evidence;
 mod compensation;
+mod construction_input;
+mod construction_snaps;
 mod contour_plates;
 mod coordinator;
 mod coordinator_rebase;

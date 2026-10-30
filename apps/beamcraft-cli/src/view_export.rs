@@ -180,10 +180,37 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         section(&mut head, definitions.as_deref())?;
         section(&mut head, element.as_deref())?;
         if with_grids {
-            let grids =
-                printed(crate::grid_cmd::views_json(&inspection.grids).map(|grids| {
-                    Json::object([("outcome", Json::text("grids")), ("grids", grids)])
-                }));
+            let grids = printed(
+                crate::grid_cmd::views_json(&inspection.grids).and_then(|grids| {
+                    let axes = beamcraft_engine::query::pick::member_snap_axes(&inspection.members)
+                        .map_err(|_| invalid("member snap reference limit exceeded"))?;
+                    let axes = axes
+                        .iter()
+                        .map(|axis| {
+                            let points = axis
+                                .points_mm
+                                .iter()
+                                .map(|point| {
+                                    point
+                                        .iter()
+                                        .map(|v| crate::plate_cmd::num(*v))
+                                        .collect::<Result<Vec<_>, _>>()
+                                        .map(Json::Array)
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            Ok(Json::object([
+                                ("element_id", Json::text(axis.element_id.to_string())),
+                                ("points_mm", Json::Array(points)),
+                            ]))
+                        })
+                        .collect::<Result<Vec<_>, PlateError>>()?;
+                    Ok(Json::object([
+                        ("outcome", Json::text("grids")),
+                        ("grids", grids),
+                        ("member_axes", Json::Array(axes)),
+                    ]))
+                }),
+            );
             section(&mut head, Some(&grids))?;
         }
         return Ok(Output::Framed { head, bundle });

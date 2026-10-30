@@ -650,10 +650,47 @@ pub fn list_features(
 }
 
 /// Whether the element has supported semantic engineering features.
+///
+/// This is independent of its display bounds.
 pub fn has_features(snapshot: &ViewSnapshot, id: &ElementId) -> bool {
     snapshot.element(id).is_some_and(|e| {
         BoxFeatures::world(snapshot, e).is_some() || NamedFeatures::world(snapshot, e).is_some()
     })
+}
+
+/// Actual evaluated face-boundary edges in world millimetres for a selection outline.
+/// Coplanar triangle diagonals are excluded. No bounds substitute is returned for unsupported
+/// bodies. At most 65,536 unique edges are admitted; exceeding that limit refuses the query.
+pub fn element_edges(
+    snapshot: &ViewSnapshot,
+    id: &ElementId,
+) -> Result<Vec<[[f64; 3]; 2]>, ViewError> {
+    let missing = || ViewError::new(ViewCode::FeatureNotFound);
+    let entry = snapshot.element(id).ok_or_else(missing)?;
+    let mut unique = std::collections::BTreeSet::new();
+    let mut insert = |edge: [[f64; 3]; 2]| {
+        let mut key = edge.map(|point| point.map(|v| if v == 0.0 { 0 } else { v.to_bits() }));
+        key.sort_unstable();
+        unique.insert(key);
+        if unique.len() > 65_536 {
+            return Err(ViewError::new(ViewCode::BufferLimit));
+        }
+        Ok(())
+    };
+    if let Some(features) = NamedFeatures::world(snapshot, entry) {
+        for edge in features.faces.into_iter().flat_map(|face| face.boundary) {
+            insert(edge)?;
+        }
+    } else {
+        let features = BoxFeatures::world(snapshot, entry).ok_or_else(missing)?;
+        for edge in (0..EDGE_VERTICES.len()).filter_map(|i| features.edge(i)) {
+            insert(edge)?;
+        }
+    }
+    Ok(unique
+        .into_iter()
+        .map(|edge| edge.map(|p| p.map(f64::from_bits)))
+        .collect())
 }
 
 #[cfg(test)]

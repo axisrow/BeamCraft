@@ -125,7 +125,10 @@ fn main() -> std::process::ExitCode {
         coordinator_cmd::execute(&args)
     } else if args.first().is_some_and(drawing_cmd::handles) {
         drawing_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| c == "work-plane") {
+    } else if args
+        .first()
+        .is_some_and(|c| c == "work-plane" || c == "resolve-construction-point")
+    {
         work_plane_cmd::execute(&args)
     } else if args.first().is_some_and(pick_cmd::handles) {
         pick_cmd::execute(&args)

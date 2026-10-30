@@ -607,6 +607,8 @@ pub struct GridScene {
     pub grids: Vec<GridProperties>,
     /// Bounded grid records for the engine's snap query, pinned with the displayed scene.
     pub query_grids: Vec<beamcraft_model::grid::Grid>,
+    /// Authored member axes from the same inspection, including offset and non-box sections.
+    pub member_axes: Vec<beamcraft_engine::query::pick::MemberSnapAxis>,
 }
 
 /// Properties read from the same engine inspection as the displayed guides.
@@ -648,6 +650,52 @@ impl GridScene {
         let mut lines = Vec::new();
         let mut properties = Vec::new();
         let mut query_grids = Vec::new();
+        let mut member_axes = Vec::new();
+        if let Ok(axes) = json.get("member_axes") {
+            let axes = axes.array().map_err(|_| bad())?;
+            if axes.len() > beamcraft_engine::query::pick::MAX_SCANNED_ELEMENTS {
+                return Err(bad());
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for axis in axes {
+                let id = text(axis, "element_id")
+                    .and_then(|s| ElementId::parse(&s).ok())
+                    .ok_or_else(bad)?;
+                if !seen.insert(id) {
+                    return Err(bad());
+                }
+                let points = axis
+                    .get("points_mm")
+                    .and_then(Json::array)
+                    .map_err(|_| bad())?;
+                if !(2..=beamcraft_model::limits::CONTOUR_POINT_CAP).contains(&points.len()) {
+                    return Err(bad());
+                }
+                let points_mm = points
+                    .iter()
+                    .map(|p| {
+                        let [x, y, z] = p.array().map_err(|_| bad())? else {
+                            return Err(bad());
+                        };
+                        let point = [
+                            x.float().map_err(|_| bad())?,
+                            y.float().map_err(|_| bad())?,
+                            z.float().map_err(|_| bad())?,
+                        ];
+                        if point.iter().any(|v| {
+                            !v.is_finite() || v.abs() > beamcraft_model::limits::COORDINATE_CAP_MM
+                        }) {
+                            return Err(bad());
+                        }
+                        Ok(point)
+                    })
+                    .collect::<Result<Vec<_>, ToolError>>()?;
+                member_axes.push(beamcraft_engine::query::pick::MemberSnapAxis {
+                    element_id: id,
+                    points_mm,
+                });
+            }
+        }
         let mut identities = std::collections::BTreeSet::new();
         for grid in grids {
             let initial_count = lines.len();
@@ -794,6 +842,7 @@ impl GridScene {
             lines,
             grids: properties,
             query_grids,
+            member_axes,
         })
     }
 

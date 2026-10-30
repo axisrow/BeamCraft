@@ -12,7 +12,7 @@
 //! that resolve click points through it arrive with T01.6. Nothing here is persisted: the
 //! switches are view state, like the camera.
 
-use beamcraft_engine::query::pick::{SelectionClass, SelectionFilter, SnapKind};
+use beamcraft_engine::query::pick::{SelectionClass, SelectionFilter, SnapKind, SnapSources};
 
 /// The state of the bottom bar: the eight selection switches and the active snap kinds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,25 +21,32 @@ pub struct Selection {
     switches: SelectionFilter,
     /// Which snap kinds are active, in [`SnapKind::ALL`] order.
     snap: [bool; SnapKind::ALL.len()],
-    /// Whether the snap panel is open. Display state of the panel itself.
-    pub snap_open: bool,
+    /// Global Snap switch. Individual kinds retain their settings while disabled.
+    pub snapping_enabled: bool,
+    /// Constrain construction directions to the active frame's X/Y/Z axes.
+    pub orthogonal: bool,
+    /// Source gate for authored reference geometry, including eligible grids.
+    pub snap_reference: bool,
+    /// Source gate for physical body geometry.
+    pub snap_geometry: bool,
+    /// Additional source gate for grids; never enables a point kind.
+    pub snap_grids: bool,
+    /// Point-kind gate for arbitrary positions on every eligible line family.
+    pub snap_nearest: bool,
 }
 
 impl Default for Selection {
-    /// Every switch on; the snap kinds the engine's own `snap` default names (vertex, axis end
-    /// and axis), grid kinds off until the grid tools ask for them.
+    /// Construction snaps start enabled, including grid intersections and midpoints.
     fn default() -> Self {
         Self {
             switches: SelectionFilter::ALL,
-            snap: [
-                true,  // vertex
-                true,  // axis_end
-                true,  // axis
-                false, // grid_intersection
-                false, // grid_end
-                false, // grid_line
-            ],
-            snap_open: false,
+            snap: [true; SnapKind::ALL.len()],
+            snapping_enabled: true,
+            orthogonal: false,
+            snap_reference: true,
+            snap_geometry: true,
+            snap_grids: true,
+            snap_nearest: true,
         }
     }
 }
@@ -72,12 +79,35 @@ impl Selection {
         }
     }
 
-    /// The active snap kinds, in engine order; empty means the query asks for nothing. At
-    /// least one kind stays on in the panel: with none, snapping is simply off.
+    /// Source settings for the engine, independent of selection eligibility.
+    pub fn snap_sources(&self) -> SnapSources {
+        SnapSources {
+            reference: self.snap_reference,
+            geometry: self.snap_geometry,
+            grids: self.snap_grids,
+        }
+    }
+
+    /// Effective kinds: global switch AND source AND point-kind settings.
     pub fn snap_kinds(&self) -> Vec<SnapKind> {
+        if !self.snapping_enabled {
+            return Vec::new();
+        }
         SnapKind::ALL
             .into_iter()
-            .filter(|k| self.snap_on(*k))
+            .filter(|kind| self.snap_on(*kind))
+            .filter(|kind| {
+                self.snap_nearest
+                    || !matches!(kind, SnapKind::Axis | SnapKind::Edge | SnapKind::GridLine)
+            })
+            .filter(|kind| match kind {
+                SnapKind::Vertex | SnapKind::Edge => self.snap_geometry,
+                SnapKind::AxisEnd | SnapKind::Axis | SnapKind::Center => self.snap_reference,
+                SnapKind::GridIntersection | SnapKind::GridEnd | SnapKind::GridLine => {
+                    self.snap_reference && self.snap_grids
+                }
+                SnapKind::Midpoint => self.snap_reference || self.snap_geometry,
+            })
             .collect()
     }
 
@@ -135,23 +165,23 @@ mod tests {
     }
 
     #[test]
-    fn the_snap_panel_starts_at_the_engine_default_and_keeps_kinds_in_engine_order() {
+    fn the_snap_panel_starts_enabled_and_keeps_kinds_in_engine_order() {
         let selection = Selection::default();
-        assert_eq!(
-            selection.snap_kinds(),
-            vec![SnapKind::Vertex, SnapKind::AxisEnd, SnapKind::Axis]
-        );
+        assert_eq!(selection.snap_kinds(), SnapKind::ALL.to_vec());
         let mut selection = selection;
         selection.set_snap(SnapKind::GridIntersection, true);
         selection.set_snap(SnapKind::Vertex, false);
         assert_eq!(
             selection.snap_kinds(),
-            vec![
-                SnapKind::AxisEnd,
-                SnapKind::Axis,
-                SnapKind::GridIntersection
-            ]
+            SnapKind::ALL
+                .into_iter()
+                .filter(|kind| *kind != SnapKind::Vertex)
+                .collect::<Vec<_>>()
         );
+        selection.snapping_enabled = false;
+        assert!(selection.snap_kinds().is_empty());
+        assert!(selection.snap_on(SnapKind::Midpoint));
+        selection.snapping_enabled = true;
         for kind in SnapKind::ALL {
             selection.set_snap(kind, false);
         }

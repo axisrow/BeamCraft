@@ -290,6 +290,7 @@ impl PlateForm {
                 });
             }
             args.extend(["--contour".into(), self.contour.clone()]);
+            args.extend(["--normalize-winding".into(), "true".into()]);
         }
         args.extend(["--thickness".into(), number("Thickness", &self.thickness)?]);
         push_name(&mut args, &self.name)?;
@@ -708,6 +709,8 @@ pub struct Tools {
     pub actor: Option<String>,
     /// Active session frame; no plane is authored in the model.
     pub plane: Option<beamcraft_engine::work_plane::WorkPlane>,
+    /// Per-contour frame inferred from picked world vertices; never replaces the session plane.
+    pub plate_plane: Option<beamcraft_engine::work_plane::WorkPlane>,
     staged: Option<Prepared>,
     busy: bool,
 }
@@ -721,6 +724,7 @@ impl Default for Tools {
             definitions: Definitions::default(),
             actor: None,
             plane: None,
+            plate_plane: None,
             staged: None,
             busy: false,
         }
@@ -760,7 +764,12 @@ impl Tools {
             ToolKind::Plate => self.plate.prepare(store),
             ToolKind::Member => self.member.prepare_in_plane(store, self.plane),
         }?;
-        if let Some(plane) = self.plane {
+        let plane = if self.active == ToolKind::Plate {
+            self.plate_plane.or(self.plane)
+        } else {
+            self.plane
+        };
+        if let Some(plane) = plane {
             if self.active == ToolKind::Member && !self.member.orientation.trim().is_empty() {
                 return Err(FormError {
                     field: "Work plane",

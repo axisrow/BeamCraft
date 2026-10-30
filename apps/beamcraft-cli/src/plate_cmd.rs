@@ -84,6 +84,7 @@ const CREATE_OPTIONS: &[&str] = &[
     "--width",
     "--length",
     "--contour",
+    "--normalize-winding",
     "--thickness",
     "--thickness-side",
     "--corners",
@@ -981,6 +982,16 @@ fn create(
         None => origin_rectangle_contour(float(options, "--width")?, float(options, "--length")?)
             .map_err(PlateError::from)?,
     };
+    let contour = match given("--normalize-winding") {
+        None | Some("false") => contour,
+        Some("true") => beamcraft_engine::coordinate::normalize_contour_winding(&contour)?,
+        _ => return Err(invalid("normalize-winding must be true or false")),
+    };
+    if given("--normalize-winding") == Some("true") && !corners.is_empty() {
+        return Err(invalid(
+            "normalize winding before assigning corner treatments",
+        ));
+    }
     let name = given("--name").unwrap_or("Plate").to_owned();
     let command = CreatePlate {
         class: given("--class")
