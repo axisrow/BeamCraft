@@ -328,3 +328,82 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  attribution:
+    # Issue #300: attribution is controlled by the author's local Claude Code
+    # settings, never stamped automatically; a slipped trailer must fail the
+    # PR with the exact fix instead of landing in history.
+    name: no Claude Code attribution trailer
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event_name == 'pull_request'
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The full history is needed to list commits not reachable from the base branch.
+          fetch-depth: 0
+
+      - name: Scan PR commits and description for the attribution trailer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fail=0
+
+          report() {
+            printf '%s\n' "$1"
+            cat <<'BLOCK'
+          Found "Co-Authored-By: Claude Code <noreply@anthropic.com>" in a commit message or in this PR description.
+
+          Attribution has to be disabled at the source. In your Claude Code settings enable:
+
+          {
+            "attribution": {
+              "commit": ""
+            }
+          }
+
+          or, to disable all attribution:
+
+          {
+            "attribution": false
+          }
+
+          Then rewrite the offending commits (git rebase / commit --amend) and update the PR body; this check will go green.
+          BLOCK
+            printf '\n'
+          }
+
+          # Reads candidate lines on stdin; $1 labels the offending location.
+          # The Co-Authored-By key matches case-insensitively with collapsed
+          # whitespace; the name and address must be exact.
+          scan() {
+            local line norm key value
+            while IFS= read -r line; do
+              norm="$(printf '%s\n' "$line" | tr -s '[:space:]' ' ')"
+              norm="${norm# }"
+              norm="${norm% }"
+              case "$norm" in *:*) ;; *) continue ;; esac
+              key="${norm%%:*}"
+              value="${norm#*:}"
+              # Whitespace runs are already collapsed to single spaces above.
+              value="${value# }"
+              value="${value% }"
+              key="$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')"
+              if [ "$key" = "co-authored-by" ] && [ "$value" = "Claude Code <noreply@anthropic.com>" ]; then
+                report "offending: $1, line: $line"
+                fail=1
+              fi
+            done
+          }
+
+          while read -r commit; do
+            scan "commit $commit" < <(git log -1 --format=%B "$commit")
+          done < <(git rev-list "origin/${GITHUB_BASE_REF}"..HEAD)
+
+          scan "PR description" < <(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
