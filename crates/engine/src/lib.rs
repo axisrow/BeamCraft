@@ -66,3 +66,6 @@ pub use query::snapshot::{
     ElementEntry, ElementPage, RepresentationRef, SnapshotToken, ViewPin, ViewSnapshot,
 };
 pub use scene::SceneElement;
+
+/// Schedules by attributes (I05).
+pub mod schedule;
