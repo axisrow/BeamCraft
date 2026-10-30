@@ -20,6 +20,7 @@ mod bolt_cmd;
 mod bom_cmd;
 mod changeset_cmd;
 mod command_context;
+mod compensate_cmd;
 mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
@@ -110,6 +111,8 @@ fn main() -> std::process::ExitCode {
         assembly_cmd::execute(&args)
     } else if args.first().is_some_and(|c| c == "rebase-workspace") {
         rebase_cmd::execute(&args)
+    } else if args.first().is_some_and(|c| c == "compensate-workspace") {
+        compensate_cmd::execute(&args)
     } else if args.first().is_some_and(|c| c == "resolve-workspace") {
         resolve_cmd::execute(&args)
     } else if args.first().is_some_and(|c| {

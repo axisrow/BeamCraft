@@ -7,6 +7,15 @@
 //! Operations:
 //!
 //! - `head`: the published head's revision id (or `null` for an empty store).
+//! - `compensate` with `workspace`, `op_id`, `target_revision` and `expected_head`: the C06
+//!   compensation runs with exactly the local `compensate-workspace` semantics and the
+//!   **authenticated actor** as the only trusted actor, so a token compensates only its own
+//!   actor's workspace (`PERMISSION_DENIED` otherwise, nothing written). The answer carries
+//!   the typed local result (`compensated` / `compensation_replayed`, or a rejected
+//!   `DEPENDENCY_CONFLICT` with the bounded report naming every intersecting accepted
+//!   operation) plus the current head for information; a compensation only commits the
+//!   workspace's draft, and the client still needs an explicit `publish` to move the head.
+//!   The same request identity replays across this wire and the local CLI.
 //! - `publish` with `workspace` (a directory name under the coordinator's workspaces root),
 //!   `changeset` (the digest `create-changeset` printed) and `expected_head` (the revision the
 //!   client believes is the published head). The expected head must be the changeset's base;
@@ -28,12 +37,17 @@
 
 use crate::changeset::{apply_changeset, read_changeset};
 use crate::plate::PlateError;
+use crate::workspace::{
+    compensation::{CompensationRequest, CompensationResult, compensate_workspace},
+    conflicts::conflict_json,
+};
 use beamcraft_host::coordinator::{Handler, Request, rejection};
-use beamcraft_host::revision::{NoFault, RevisionError, RevisionStore};
+use beamcraft_host::revision::{NoFault, RevisionError, RevisionStore, Uuid7};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::OpId;
 use std::path::{Path, PathBuf};
 
 /// The publish handler of one coordinator.
@@ -128,6 +142,7 @@ impl PublishHandler {
         };
         let allowed: &[&str] = match request.op.as_str() {
             "head" => &[],
+            "compensate" => &["workspace", "op_id", "target_revision", "expected_head"],
             "publish" => &["workspace", "changeset", "expected_head"],
             _ => {
                 return Err(refused(
@@ -158,6 +173,94 @@ impl PublishHandler {
                 ("outcome", Json::text("head")),
                 ("revision_id", head_json(&self.head()?)),
             ]));
+        }
+        if request.op == "compensate" {
+            let invalid = |message: &'static str| refused(ErrorCode::InvalidArgument, message);
+            let op_id = OpId::parse(text("op_id")?)
+                .map_err(|_| invalid("op_id is not a usable operation identity"))?;
+            let target_revision = Uuid7::parse(text("target_revision")?)?;
+            let expected_head = Uuid7::parse(text("expected_head")?)?;
+            let dir = self.workspace(text("workspace")?)?;
+            let blobs = BlobStore::new(&dir).map_err(|e| PlateError {
+                rule_id: None,
+                code: e.code(),
+                message: "workspace store is not usable",
+            })?;
+            let workspace = RevisionStore::new(blobs);
+            let request = CompensationRequest {
+                op_id,
+                // The token is the only trusted actor; a request cannot name one (C02).
+                actor: Uuid7::parse(&request.actor.to_string())
+                    .map_err(|_| invalid("the authenticated actor is not a canonical UUIDv7"))?,
+                target_revision,
+                expected_head,
+            };
+            return match compensate_workspace(
+                &self.published,
+                &workspace,
+                &dir,
+                &request,
+                &mut NoFault,
+            ) {
+                Ok(CompensationResult::Compensated(result)) => {
+                    let (head, status) = current(self);
+                    Ok(Json::object([
+                        (
+                            "outcome",
+                            Json::text(if result.replayed {
+                                "compensation_replayed"
+                            } else {
+                                "compensated"
+                            }),
+                        ),
+                        (
+                            "revision_id",
+                            Json::text(result.revision.revision_id.as_str()),
+                        ),
+                        (
+                            "target_revision",
+                            Json::text(result.target.revision.as_str()),
+                        ),
+                        (
+                            "accepted_revision",
+                            Json::text(result.accepted.revision.as_str()),
+                        ),
+                        ("current_head", head),
+                        ("current_head_status", status),
+                    ]))
+                }
+                Ok(CompensationResult::Conflicted(conflicts)) => {
+                    let (head, status) = current(self);
+                    Ok(Json::object([
+                        ("outcome", Json::text("rejected")),
+                        ("code", Json::text(ErrorCode::DependencyConflict.as_str())),
+                        (
+                            "message",
+                            Json::text(
+                                "compensation requires the target's state to still be current; \
+                                 every later intersecting accepted operation is named",
+                            ),
+                        ),
+                        (
+                            "diagnostics",
+                            Json::Array(conflicts.iter().map(conflict_json).collect()),
+                        ),
+                        ("current_head", head),
+                        ("current_head_status", status),
+                    ]))
+                }
+                Err(e) if e.code == ErrorCode::BaseRevisionMismatch => {
+                    let (head, status) = current(self);
+                    Ok(Json::object([
+                        ("outcome", Json::text("rejected")),
+                        ("code", Json::text(e.code.as_str())),
+                        ("message", Json::text(e.message)),
+                        ("current_head", head),
+                        ("current_head_status", status),
+                    ]))
+                }
+                Err(e) => Err(e),
+            };
         }
         let dir = self.workspace(text("workspace")?)?;
         let digest = text("changeset")?
