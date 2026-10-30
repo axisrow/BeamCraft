@@ -176,6 +176,15 @@ pub fn patch_member(
             "a member has no thickness side",
         ));
     }
+    // The mirror re-encodes through the path symmetry; a path replacement in the same patch
+    // would mirror through one path and re-encode through another (the model refuses it too).
+    if patch.mirror.is_some() && patch.axis_points_mm.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "mirror",
+            "a mirror takes no path replacement in the same patch",
+        ));
+    }
     let mut next = member.clone();
     if let Some(name) = &patch.name {
         next.name.clone_from(name);
@@ -677,15 +686,26 @@ mod tests {
         assert_eq!(mirrored.contour_points_mm, plate().contour_points_mm);
         // The mirrored translation of the identity placement stays the identity here.
         assert_eq!(mirrored.placement.translation_mm, [0.0; 3]);
-        // A member mirror is refused for a polybeam path.
+        // A member mirror is refused for a polybeam path; a path replacement beside a mirror
+        // is refused outright (one symmetry per patch).
         let bent = ElementPatch {
             mirror: patch.mirror,
-            axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0], [0.0, 500.0, 0.0]]),
+            ..ElementPatch::default()
+        };
+        let mut poly = member();
+        poly.axis_points_mm = vec![[0.0; 3], [1000.0, 0.0, 0.0], [0.0, 500.0, 0.0]];
+        assert_eq!(
+            patch_member(&poly, &bent).unwrap_err().code,
+            ErrorCode::UnsupportedGeometry
+        );
+        let with_path = ElementPatch {
+            mirror: patch.mirror,
+            axis_points_mm: Some(vec![[0.0; 3], [2000.0, 0.0, 0.0]]),
             ..ElementPatch::default()
         };
         assert_eq!(
-            patch_member(&member(), &bent).unwrap_err().code,
-            ErrorCode::UnsupportedGeometry
+            patch_member(&member(), &with_path).unwrap_err().code,
+            ErrorCode::InvalidArgument
         );
     }
 

@@ -317,9 +317,13 @@ pub fn mirror_plate_local(plate: &mut AuthoredPlate) -> Result<(), CommandError>
     Ok(())
 }
 
-/// The straight member's mirrored authored state: the path reflects, the cuts reflect and the
-/// section offsets trade ends. A polybeam or a curved member refuses: its path has no
-/// expressible mirror symmetry (`UNSUPPORTED_GEOMETRY`).
+/// The straight member's mirrored authored state: the path and the cuts reflect, and the
+/// section placement is re-encoded for the reversed sweep direction: the end offsets stay at
+/// their ends (the kernel's net length is asymmetric in them and the reflected path keeps the
+/// start anchor), the across-width position and offset negate as a pair (the sweep frame's
+/// `X_m` flips when the path direction reverses), and the roll negates (it is defined about the
+/// sweep direction). A polybeam or a curved member refuses: its path has no expressible mirror
+/// symmetry (`UNSUPPORTED_GEOMETRY`).
 pub fn mirror_member_local(member: &mut AuthoredMember) -> Result<(), CommandError> {
     if member.curved || member.axis_points_mm.len() != 2 {
         return Err(CommandError::new(
@@ -336,11 +340,21 @@ pub fn mirror_member_local(member: &mut AuthoredMember) -> Result<(), CommandErr
         .map(|p| apply(&symmetry, *p))
         .collect();
     member.cuts = reflect_cuts(&member.cuts, &symmetry);
-    // The offsets are measured from the path ends along the sweep direction, so the mirrored
-    // path carries the start offset at the end and the other way round.
     if let Some(section) = &mut member.section_placement {
-        std::mem::swap(&mut section.start_offset_mm, &mut section.end_offset_mm);
+        section.plane = match section.plane {
+            beamcraft_model::command::SectionPlanePosition::Left => {
+                beamcraft_model::command::SectionPlanePosition::Right
+            }
+            beamcraft_model::command::SectionPlanePosition::Right => {
+                beamcraft_model::command::SectionPlanePosition::Left
+            }
+            beamcraft_model::command::SectionPlanePosition::Centre => {
+                beamcraft_model::command::SectionPlanePosition::Centre
+            }
+        };
+        section.plane_offset_mm = -section.plane_offset_mm;
     }
+    member.roll_rad = member.roll_rad.map(|roll| -roll);
     Ok(())
 }
 
@@ -372,14 +386,20 @@ fn stepped_placement(
             point_mm,
             axis,
             angle_rad,
-        } => rotate_placement(
-            source,
-            &ElementRotate {
-                pivot_mm: point_mm,
-                axis,
-                angle_rad: angle_rad * distance,
-            },
-        ),
+        } => {
+            // The cumulative angle is derived, not authored input: the step cap bounds one
+            // angle, so a sweep past a full turn wraps instead of refusing a valid placement.
+            let turns = angle_rad * distance;
+            let wrapped = turns % core::f64::consts::TAU;
+            rotate_placement(
+                source,
+                &ElementRotate {
+                    pivot_mm: point_mm,
+                    axis,
+                    angle_rad: wrapped,
+                },
+            )
+        }
     }
 }
 
@@ -660,6 +680,25 @@ mod tests {
         assert!((placements[1].translation_mm[0] + 1000.0).abs() < 1e-9);
         assert!((placements[3].translation_mm[0] - 1000.0).abs() < 1e-6);
         assert!((placements[3].translation_mm[1]).abs() < 1e-6);
+        // A sweep past a full turn is valid: the cumulative angle wraps, it is not capped as
+        // authored input would be (5 x 80 degrees would refuse without the wrap).
+        let wide = ArrayStep::Polar {
+            point_mm: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            angle_rad: 80.0_f64.to_radians(),
+        };
+        let placements = array_placements(&source, &wide, 5).unwrap();
+        let fifth = &placements[4];
+        // 5 x 80 = 400 degrees = 40 degrees past the start.
+        let (x, y) = (fifth.translation_mm[0], fifth.translation_mm[1]);
+        assert!(
+            (x - 1000.0 * 40.0_f64.to_radians().cos()).abs() < 1e-6,
+            "{x}"
+        );
+        assert!(
+            (y - 1000.0 * 40.0_f64.to_radians().sin()).abs() < 1e-6,
+            "{y}"
+        );
     }
 
     fn plate() -> AuthoredPlate {
@@ -771,24 +810,33 @@ mod tests {
     }
 
     #[test]
-    fn a_member_mirror_trades_the_section_offsets() {
+    fn a_member_mirror_reencodes_the_section_for_the_reversed_sweep() {
         use beamcraft_model::command::{
             SectionDepthPosition, SectionPlacement, SectionPlanePosition,
         };
         let mut source = member();
+        source.roll_rad = Some(0.4);
         source.section_placement = Some(SectionPlacement {
-            plane: SectionPlanePosition::Centre,
+            plane: SectionPlanePosition::Left,
             plane_offset_mm: 5.0,
             depth: SectionDepthPosition::Centre,
-            depth_offset_mm: 0.0,
+            depth_offset_mm: 3.0,
             start_offset_mm: 100.0,
             end_offset_mm: -50.0,
         });
         mirror_member_local(&mut source).unwrap();
         let section = source.section_placement.unwrap();
-        assert_eq!(section.start_offset_mm, -50.0);
-        assert_eq!(section.end_offset_mm, 100.0);
-        assert_eq!(section.plane_offset_mm, 5.0);
+        // The net length is asymmetric in the end offsets and the reflected path keeps the
+        // start anchor, so the offsets stay at their ends.
+        assert_eq!(section.start_offset_mm, 100.0);
+        assert_eq!(section.end_offset_mm, -50.0);
+        // The sweep frame's X_m flips with the direction: the across-width pair negates and
+        // the depth (Y_m) stays.
+        assert_eq!(section.plane, SectionPlanePosition::Right);
+        assert_eq!(section.plane_offset_mm, -5.0);
+        assert_eq!(section.depth_offset_mm, 3.0);
+        // The roll is defined about the sweep direction, which reverses.
+        assert_eq!(source.roll_rad, Some(-0.4));
     }
 
     #[test]

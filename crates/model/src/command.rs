@@ -2914,6 +2914,15 @@ impl UpdateElement {
                 )
                 .with_rule("DV-ATTR-003"));
             }
+            // A mirror re-encodes the member through its path symmetry: replacing the path in
+            // the same patch would mirror through one path and re-encode through another.
+            if patch.mirror.is_some() && patch.axis_points_mm.is_some() {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "changes",
+                    "a mirror takes no path replacement in the same patch",
+                ));
+            }
         }
         if let Some(translation) = patch.translation_mm {
             if translation.iter().any(|v| !v.is_finite()) {

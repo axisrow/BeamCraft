@@ -40,8 +40,12 @@ beamcraft array-polar    --store ROOT --id UUID --count N --point P --axis V --a
   places, middle is its own image, the absent side reads as top and comes back explicit) and
   the plane cuts reflect; contour, holes and corner treatments are through-thickness or
   in-plane and stay. For a straight member `L` is the reflection across the plane
-  perpendicular to the axis: the path reflects, the cuts reflect, the section offsets trade
-  ends, and the record identities are untouched.
+  perpendicular to the axis: the path reflects, the cuts reflect, and the section placement is
+  re-encoded for the reversed sweep direction — the end offsets stay at their ends (the
+  kernel's net length is asymmetric in them and the reflected path keeps the start anchor),
+  the across-width position and offset negate as a pair (the sweep frame's `X_m` flips when
+  the path direction reverses) and the roll negates. Record identities are untouched. A
+  mirror never shares a patch with a path replacement: one path, one symmetry.
 - A polybeam or a curved member refuses a mirror with `UNSUPPORTED_GEOMETRY`: a bent path has
   no expressible mirror symmetry in the authored fields. A plate with bend records (A10)
   refuses for the same reason: the curl of a fold or a roll about the mid-plane reflection has
