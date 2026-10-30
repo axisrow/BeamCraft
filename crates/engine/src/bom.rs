@@ -176,8 +176,8 @@ pub fn tables(rows: &[BomRow], max_rows: usize) -> Result<Bom, CommandError> {
 }
 
 /// Appends `text` as one CSV field, quoted per RFC 4180 when it contains a separator, a quote
-/// or a line break.
-fn field(text: &str, out: &mut String) {
+/// or a line break. Shared with the schedule renderer, which writes the same dialect.
+pub(crate) fn field(text: &str, out: &mut String) {
     if text.contains([',', '"', '\n', '\r']) {
         out.push('"');
         for c in text.chars() {
@@ -192,7 +192,8 @@ fn field(text: &str, out: &mut String) {
     }
 }
 
-fn csv(header: &str, rows: impl IntoIterator<Item = Vec<String>>) -> String {
+/// One CSV table: one header line and RFC 4180 rows. Shared with the schedule renderer.
+pub(crate) fn csv(header: &str, rows: impl IntoIterator<Item = Vec<String>>) -> String {
     let mut out = String::from(header);
     out.push('\n');
     for row in rows {
@@ -252,7 +253,8 @@ pub fn summary_csv(bom: &Bom) -> String {
 }
 
 /// The shortest round-trip text of a finite number: no exponent padding, no separators.
-fn num(value: f64) -> String {
+/// Shared with the schedule renderer, which writes the same dialect.
+pub(crate) fn num(value: f64) -> String {
     format!("{value}")
 }
 

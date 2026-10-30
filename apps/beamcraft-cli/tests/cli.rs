@@ -80,6 +80,7 @@ mod reference_reader;
 mod relocate;
 mod resolve;
 mod revision;
+mod schedules;
 mod sections;
 mod start;
 mod undo;

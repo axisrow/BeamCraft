@@ -36,6 +36,7 @@ mod project_cmd;
 mod rebase_cmd;
 mod reference_cmd;
 mod resolve_cmd;
+mod schedule_cmd;
 mod view;
 mod view_export;
 mod weld_cmd;
@@ -134,6 +135,8 @@ fn main() -> std::process::ExitCode {
         bolt_cmd::execute(&args)
     } else if args.first().is_some_and(bom_cmd::handles) {
         bom_cmd::execute(&args)
+    } else if args.first().is_some_and(schedule_cmd::handles) {
+        schedule_cmd::execute(&args)
     } else if args.first().is_some_and(library_cmd::handles) {
         library_cmd::execute(&args)
     } else if args.first().is_some_and(project_cmd::handles) {
