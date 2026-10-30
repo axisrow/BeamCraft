@@ -662,6 +662,9 @@ fn create(
         Shape::Grid(_) => "grid",
         Shape::Construction(_) => "construction",
         Shape::Plate { .. } => "plate",
+        // A lofted plate is a plate: its kind token and part path are the plate's, and the
+        // shape token `steel:plate:form` discriminates the record form.
+        Shape::LoftedPlate { .. } => "plate",
         Shape::Member {
             kind: MemberKind::Beam,
             ..
@@ -685,7 +688,10 @@ fn create(
     ] {
         attr(data, &p, name, ty, v)?;
     }
-    if matches!(e.shape, Shape::Plate { .. } | Shape::Member { .. }) {
+    if matches!(
+        e.shape,
+        Shape::Plate { .. } | Shape::Member { .. } | Shape::LoftedPlate { .. }
+    ) {
         attr(data, &p, "steel:class", "int", sdf::Value::Int(0))?;
     }
     match &e.shape {
@@ -802,6 +808,29 @@ fn create(
                     sdf::Value::TokenVec(kinds),
                 )?;
             }
+        }
+        Shape::LoftedPlate { start_mm, end_mm } => {
+            attr(
+                data,
+                &p,
+                "steel:plate:form",
+                "token",
+                sdf::Value::token("lofted"),
+            )?;
+            attr(
+                data,
+                &p,
+                "steel:plate:loftStartMm",
+                "double3[]",
+                points(start_mm),
+            )?;
+            attr(
+                data,
+                &p,
+                "steel:plate:loftEndMm",
+                "double3[]",
+                points(end_mm),
+            )?;
         }
         Shape::Member {
             curved,
@@ -1886,6 +1915,11 @@ fn capture(
                                 add(name, ty, 0);
                             }
                         }
+                    }
+                    Shape::LoftedPlate { .. } => {
+                        add("steel:plate:form", "token", 0);
+                        add("steel:plate:loftStartMm", "double3[]", 0);
+                        add("steel:plate:loftEndMm", "double3[]", 0);
                     }
                     Shape::Instance { .. } => add(instance::RELATIONSHIP, "rel", 0),
                     Shape::Assembly => (),

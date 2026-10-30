@@ -62,6 +62,7 @@ mod inspection_cache;
 mod instance_group;
 mod levels;
 mod libraries;
+mod lofted_plates;
 mod members;
 mod numbering;
 mod numbering_approval;

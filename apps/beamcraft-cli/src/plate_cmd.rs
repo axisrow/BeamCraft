@@ -47,10 +47,10 @@ use beamcraft_host::{
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
     AddHole, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts, CopyElement,
-    CornerTreatment, CreatePlate, CreatePolybeam, CreateStraightMember, CutByLine, CutByPart,
-    CutByPlane, CutByPolygon, CutRecord, DeleteElement, ElementPatch, FitEndToPart, HoleSpec,
-    KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner, PlateSide, SectionDepthPosition,
-    SectionPlacement, SectionPlanePosition, SplitPart, UpdateElement,
+    CornerTreatment, CreateLoftedPlate, CreatePlate, CreatePolybeam, CreateStraightMember,
+    CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord, DeleteElement, ElementPatch,
+    FitEndToPart, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner, PlateSide,
+    SectionDepthPosition, SectionPlacement, SectionPlanePosition, SplitPart, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -190,6 +190,26 @@ const DEFINE_FASTENER_OPTIONS: &[&str] = &[
     "--fastener-library",
     "--designation",
     "--name",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
+/// The `create-lofted-plate` options (A11): two face contours of the same vertex count; there
+/// is no thickness, hole or corner input on a lofted plate.
+const CREATE_LOFTED_OPTIONS: &[&str] = &[
+    "--class",
+    "--store",
+    "--start",
+    "--end",
+    "--name",
+    "--translation",
+    "--orientation-xyzw",
+    "--material-digest",
+    "--material",
+    "--new-id",
+    "--op-id",
     "--revision-id",
     "--actor-id",
     "--project-id",
@@ -430,6 +450,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         .ok_or_else(|| invalid("missing command"))?;
     let allowed: &[&str] = match *command {
         "create-plate" => CREATE_OPTIONS,
+        "create-lofted-plate" => CREATE_LOFTED_OPTIONS,
+        "inspect-lofted-plates" => &["--store"],
         "create-member" => CREATE_MEMBER_OPTIONS,
         "create-polybeam" | "create-curved-beam" => CREATE_POLYBEAM_OPTIONS,
         "add-hole" => ADD_HOLE_OPTIONS,
@@ -499,6 +521,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     let _claim = check_project_option(&store, &options)?;
     match *command {
         "create-plate" => create(&store, &options, candidates),
+        "create-lofted-plate" => lofted_create(&store, &options, candidates),
+        "inspect-lofted-plates" => lofted_inspect(&store),
         "create-member" => create_member_command(&store, &options, candidates),
         "create-polybeam" => create_polybeam_command(&store, &options, candidates, false),
         "create-curved-beam" => create_polybeam_command(&store, &options, candidates, true),
@@ -2411,6 +2435,180 @@ fn copy_command(
         ("element", element),
         ("revision", revision_json(&copied.revision)),
         ("footprint", footprint_json(copied.footprint.as_ref())),
+    ]))
+}
+
+/// The `create-lofted-plate` command (A11): a plate between two contours that need not be
+/// coplanar. Both contours parse like `--contour` of `create-plate`; winding, planarity, the
+/// equal vertex count and the certified loft are the engine's, and a twisted or
+/// self-intersecting correspondence refuses the command before anything is written.
+fn lofted_create(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let new_id = match given("--new-id") {
+        Some(text) => ElementId::parse(text).map_err(id_error)?,
+        None => ElementId::from_uuid(fresh()?),
+    };
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let start = contour_points(given("--start").ok_or_else(|| invalid("--start is required"))?)?;
+    let end = contour_points(given("--end").ok_or_else(|| invalid("--end is required"))?)?;
+    let command = CreateLoftedPlate {
+        new_id,
+        name: given("--name").unwrap_or("Lofted plate").to_owned(),
+        class: given("--class")
+            .map(|v| {
+                v.parse::<i32>()
+                    .map_err(|_| invalid("class must be an int32"))
+            })
+            .transpose()?
+            .unwrap_or(0),
+        start_points_mm: start,
+        end_points_mm: end,
+        placement: Placement {
+            translation_mm: given("--translation").map_or(Ok([0.0; 3]), translation)?,
+            orientation_xyzw: given("--orientation-xyzw")
+                .map_or(Ok([0.0, 0.0, 0.0, 1.0]), quaternion)?,
+        },
+        material_digest: selected(
+            store,
+            options,
+            ("--material-digest", "--material"),
+            false,
+            None,
+            candidates,
+        )?,
+    };
+    let created = beamcraft_cli::loft::create_lofted(
+        store,
+        &beamcraft_cli::loft::LoftRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command,
+        },
+        &mut NoFault,
+    )?;
+    let geometry = Json::object([
+        ("volume_mm3", num(created.volume_mm3)?),
+        ("volume_m3", num(created.volume_mm3 / 1_000_000_000.0)?),
+        ("area_mm2", created.area_mm2.map_or(Ok(Json::Null), num)?),
+        ("mesh_digest", Json::text(created.mesh_digest.as_str())),
+        ("triangles", Json::uint(created.triangles as u64)),
+    ]);
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if created.replayed {
+                "lofted_plate_replayed"
+            } else {
+                "lofted_plate_created"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        (
+            "plate",
+            Json::object([
+                ("id", Json::text(created.plate.id.to_string())),
+                ("name", Json::text(created.plate.name.as_str())),
+                ("class", num(f64::from(created.plate.class))?),
+            ]),
+        ),
+        (
+            "start_points_mm",
+            Json::Array(
+                created
+                    .plate
+                    .start_points_mm
+                    .iter()
+                    .map(point_json)
+                    .collect(),
+            ),
+        ),
+        (
+            "end_points_mm",
+            Json::Array(created.plate.end_points_mm.iter().map(point_json).collect()),
+        ),
+        ("geometry", geometry),
+        ("revision", revision_json(&created.revision)),
+        ("footprint", footprint_json(created.footprint.as_ref())),
+    ]))
+}
+
+/// One authored contour point as a JSON array.
+fn point_json(point: &[f64; 3]) -> Json {
+    Json::Array(
+        point
+            .iter()
+            .map(|v| num(*v).unwrap_or(Json::Null))
+            .collect(),
+    )
+}
+
+/// The `inspect-lofted-plates` command (A11): the committed lofted plates of the verified
+/// head with their stored quantity records.
+fn lofted_inspect(store: &RevisionStore) -> Run<Json> {
+    let views = beamcraft_cli::loft::lofted_plates(store)?;
+    let plates = views
+        .iter()
+        .map(|view| {
+            Ok(Json::object([
+                ("id", Json::text(view.id.to_string())),
+                ("name", Json::text(view.name.as_str())),
+                ("class", num(f64::from(view.class))?),
+                ("volume_mm3", view.volume_mm3.map_or(Ok(Json::Null), num)?),
+                (
+                    "volume_status",
+                    view.volume_status.as_deref().map_or(Json::Null, Json::text),
+                ),
+                ("mass_kg", view.mass_kg.map_or(Ok(Json::Null), num)?),
+                (
+                    "mass_status",
+                    view.mass_status.as_deref().map_or(Json::Null, Json::text),
+                ),
+                (
+                    "algorithm",
+                    view.algorithm.as_deref().map_or(Json::Null, Json::text),
+                ),
+                ("triangles", Json::uint(view.triangles as u64)),
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::object([
+        ("outcome", Json::text("lofted_plates")),
+        ("count", Json::uint(plates.len() as u64)),
+        ("plates", Json::Array(plates)),
     ]))
 }
 

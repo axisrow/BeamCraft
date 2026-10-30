@@ -5,6 +5,8 @@
 
 pub(super) const COMMANDS: &[&str] = &[
     "create-plate",
+    "create-lofted-plate",
+    "inspect-lofted-plates",
     "add-hole",
     "update-hole",
     "remove-hole",
@@ -12,6 +14,8 @@ pub(super) const COMMANDS: &[&str] = &[
 ];
 
 pub(super) const HELP: &str = concat!(
+    "Lofted plate (A11, committed USD revision): create-lofted-plate --store ROOT --start X,Y,Z;... --end X,Y,Z;... [--name TEXT] [--class INT32] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W] [--material-digest SHA256] [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID] (a plate between two face contours that need not be coplanar; the contours take the same ordered X,Y,Z form as --contour of create-plate, in element-local millimetres, and must have the same vertex count: the rulings join start[i] to end[i] by index; the sheet thickness is the distance between the contours, so there is no --thickness and no holes or corner treatments; winding, planarity and self-intersection of each contour are the kernel's to refuse, and a renumbered (twisted) end contour is refused by the certification instead of repaired; the mesh is certified and the volume, area and mass follow it; a retry of the same --op-id needs the same arguments and is replayed).\n",
+    "List lofted plates: inspect-lofted-plates --store ROOT (the committed lofted plates of the verified head with their stored volume, mass and mesh sizes).\n",
     "Remove hole: remove-hole --store ROOT --id PLATE_UUID --operation-id RECORD_UUID [--op-id UUID] [common identities]. Retires its UUID and ordinal; explicit operations only, not legacy polygon indices. One linked-group revision and undo unit.\n",
     "Update hole: update-hole --store ROOT --id PLATE_UUID --operation-id RECORD_UUID (--polygon X,Y;... | --hole-rect X,Y,W,H | --hole-round X,Y,D) [--op-id UUID] [common identity options]. Replaces one record without changing its ordinal; linked instances update atomically and immutable replay returns the original result.\n",
     "Plate (P01, committed USD revision): create-plate --store ROOT (--width MM --length MM | ",

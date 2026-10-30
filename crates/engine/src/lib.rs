@@ -38,6 +38,7 @@ pub mod grid_update;
 pub mod instance;
 pub mod level;
 pub mod limits;
+pub mod loft_plate;
 pub mod measure;
 pub mod member;
 pub mod numbering;

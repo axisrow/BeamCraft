@@ -1244,6 +1244,139 @@ impl CreatePlate {
     }
 }
 
+/// The A11 `CreateLoftedPlate`: a plate whose body is the ruled loft between two face
+/// contours that need not be coplanar. The sheet thickness is the distance between the
+/// contours themselves (the G13 ruled primitive takes no separate thickness input), so the
+/// command has no thickness, holes, cuts or corner treatments; those operate on extruded
+/// plates and are refused on a lofted one. The two contours must have the same vertex count:
+/// the rulings join `start[i]` to `end[i]` by index, and a renumbered end contour twists the
+/// walls through the body, which the kernel's certification refuses instead of repairing.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateLoftedPlate {
+    /// The new element's full identity; creation also checks that it is unused.
+    pub new_id: ElementId,
+    /// Label, 1 to 256 UTF-8 bytes without control characters. Not an identity.
+    pub name: String,
+    /// Authored integer part class (P15); zero is the default.
+    pub class: i32,
+    /// Element-local start face contour, 3 to 1024 points, closure implicit.
+    pub start_points_mm: Vec<[f64; 3]>,
+    /// Element-local end face contour, the same vertex count as the start contour.
+    pub end_points_mm: Vec<[f64; 3]>,
+    /// Rigid placement.
+    pub placement: Placement,
+    /// Optional pinned material definition.
+    pub material_digest: Option<ContentDigest>,
+}
+
+impl CreateLoftedPlate {
+    /// Admits what does not depend on geometry: label, contour counts, finiteness and the
+    /// coordinate cap, then the placement. Floor, planarity, winding and the certified loft
+    /// are the engine's.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
+        for (field, points) in [
+            ("start_points_mm", &self.start_points_mm),
+            ("end_points_mm", &self.end_points_mm),
+        ] {
+            if points.len() > CONTOUR_POINT_CAP {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    field,
+                    "contour has more than 1024 points",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+            if points.len() < MIN_CONTOUR_POINTS {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    field,
+                    "contour needs at least 3 points",
+                ));
+            }
+            if points.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    field,
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    field,
+                    "coordinate exceeds the coordinate cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
+        if self.start_points_mm.len() != self.end_points_mm.len() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "end_points_mm",
+                "the two contours must have the same vertex count",
+            ));
+        }
+        self.placement.validate()
+    }
+
+    /// SHA-256 of a versioned, length-prefixed binary encoding of the validated arguments,
+    /// with signed zero normalized, in the manner of [`CreatePlate::content_fingerprint`].
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "start_points_mm",
+                "value cannot be encoded",
+            )
+            .with_rule("DV-ATTR-003")
+        };
+        let mut bytes =
+            Vec::with_capacity(64 + (self.start_points_mm.len() + self.end_points_mm.len()) * 24);
+        bytes.extend_from_slice(b"BeamCraft/A11/CreateLoftedPlate/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        let name = self.name.as_bytes();
+        bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(name);
+        bytes.extend_from_slice(&self.class.to_le_bytes());
+        for points in [&self.start_points_mm, &self.end_points_mm] {
+            bytes.extend_from_slice(&(points.len() as u64).to_le_bytes());
+            for v in points.iter().flatten().copied() {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+            }
+        }
+        for v in self
+            .placement
+            .translation_mm
+            .iter()
+            .copied()
+            .chain(self.placement.orientation_xyzw)
+        {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+        }
+        match &self.material_digest {
+            Some(digest) => {
+                bytes.push(1);
+                bytes.extend_from_slice(digest.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
 /// Most through holes of one plate.
 pub const MAX_HOLES: usize = 64;
 /// Most points of one hole polygon.
