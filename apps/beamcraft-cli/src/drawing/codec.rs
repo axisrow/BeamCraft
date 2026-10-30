@@ -7,7 +7,7 @@
 use crate::plate::{PlateError, integrity};
 use beamcraft_engine::drawing::{
     self, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
-    MAX_DRAFTING_ENTITIES, Plane, SourceModelPin, ViewSpec,
+    MAX_DRAFTING_ENTITIES, MAX_VIEWS, Plane, SourceModelPin, ViewSpec,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_layer_engine::{
@@ -25,7 +25,7 @@ pub const INTENT_LAYER: &str = "drawing.usda";
 /// Tight cap checked before copying or parsing a document intent.
 pub const MAX_INTENT_BYTES: usize = 16_384;
 /// Closed descriptor whose SHA-256 is the drawing schema identity.
-pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/1;root=/Drawing;view=/Drawing/View;dimension=/Drawing/Dimension;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle;drafting-cap=60;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
+pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/1;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;page-items=64;dimension=/Drawing/Dimension;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle;drafting-cap=60;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
 
 /// Independent drawing schema digest; never interchangeable with the engineering-model schema.
 pub fn schema_identity() -> Result<ContentDigest, PlateError> {
@@ -82,6 +82,16 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
     }
     text.push_str(&format!("    custom uint64 drawing:sourceGeneration = {}\n    def Scope \"View\"\n    {{\n        custom string drawing:id = {}\n        custom token drawing:plane = {}\n        custom double drawing:scale = {}\n        custom double[] drawing:origin = [{x}, {y}]\n    }}\n", source.generation, quote(&s.view.id.to_string()), quote(s.view.plane.as_str()), s.view.scale_denominator));
     text.push_str(&format!("    def Scope \"Dimension\"\n    {{\n        custom string drawing:id = {}\n        custom string[] drawing:anchors = [{}, {}]\n        custom double drawing:offset = {}\n        custom uint drawing:decimals = {}\n    }}\n", quote(&s.dimension.id.to_string()), quote(&a.to_string()), quote(&b.to_string()), s.dimension.paper_offset_mm, s.dimension.decimal_places));
+    if !s.views.is_empty() {
+        text.push_str("    def Scope \"Views\"\n    {\n");
+        for (ordinal, view) in s.views.iter().enumerate() {
+            // Canonical ordinal names, not view UUIDs: the prim name is derived state, the
+            // identity lives in the drawing:id attribute.
+            let [x, y] = view.paper_origin_mm;
+            text.push_str(&format!("        def Scope \"V{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:plane = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n        }}\n", ordinal + 1, quote(&view.id.to_string()), quote(view.plane.as_str()), view.scale_denominator));
+        }
+        text.push_str("    }\n");
+    }
     if !s.drafting.is_empty() {
         text.push_str("    def Scope \"Drafting\"\n    {\n");
         for (ordinal, entity) in s.drafting.iter().enumerate() {
@@ -152,6 +162,17 @@ fn unsigned(prim: &Prim, name: &str, kind: &str) -> Result<u64, PlateError> {
     }
 }
 
+/// Reads one view's exactly-two-component paper origin.
+fn paper_origin(prim: &Prim) -> Result<[f64; 2], PlateError> {
+    match value(prim, "drawing:origin", "double[]")? {
+        Value::Array(values) => match values.as_slice() {
+            [Value::Number(x), Value::Number(y)] => Ok([*x, *y]),
+            _ => Err(integrity("invalid drawing origin")),
+        },
+        _ => Err(integrity("invalid drawing origin")),
+    }
+}
+
 /// Verifies an externally pinned intent asset, then parses and re-admits it. `identity` must come
 /// from the authorized document manifest: project is the source project and workspace is DrawingId.
 /// Revision/generation belong to the document; they are not substituted for its source pin.
@@ -177,7 +198,8 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
             total_bytes: MAX_INTENT_BYTES,
             layers: 1,
             depth: 8,
-            // Root, view, dimension, the optional drafting scope and up to the entity cap.
+            // Root, view, dimension, the optional views and drafting scopes and up to the
+            // entity caps — the whole intent fits one reader page (engine MAX_INTENT_PAGE_ITEMS).
             prims: 3 + 1 + MAX_DRAFTING_ENTITIES,
             // Account for Sdf property-child lists and per-attribute metadata as well as values.
             // The closed semantic reader below still requires exactly two anchors/two origins.
@@ -240,13 +262,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
             "drawing identity disagrees with document manifest",
         ));
     }
-    let origin = match value(view, "drawing:origin", "double[]")? {
-        Value::Array(values) => match values.as_slice() {
-            [Value::Number(x), Value::Number(y)] => [*x, *y],
-            _ => return Err(integrity("invalid drawing origin")),
-        },
-        _ => return Err(integrity("invalid drawing origin")),
-    };
+    let origin = paper_origin(view)?;
     let anchors = match value(dim, "drawing:anchors", "string[]")? {
         Value::Array(values) => match values.as_slice() {
             [Value::Text(a), Value::Text(b)] => [FeatureId::parse(a), FeatureId::parse(b)]
@@ -316,6 +332,48 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
             }
             Some(_) => return Err(integrity("drawing prim profile disagrees")),
         };
+    let views: Vec<ViewSpec> = match page.items.iter().find(|p| p.path == "/Drawing/Views") {
+        None => Vec::new(),
+        Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
+            // Canonical ordinal children V1..Vn with no gaps; the final canonical re-encode
+            // comparison refuses any other topology or stray attribute.
+            const PREFIX: &str = "/Drawing/Views/V";
+            let mut children: BTreeMap<usize, &Prim> = BTreeMap::new();
+            for item in &page.items {
+                let Some(name) = item.path.strip_prefix(PREFIX) else {
+                    continue;
+                };
+                if item.type_name.as_deref() != Some("Scope") || !item.active {
+                    return Err(integrity("views scope holds a foreign prim"));
+                }
+                let ordinal: usize = name
+                    .parse()
+                    .map_err(|_| integrity("view prim name is not a canonical ordinal"))?;
+                if ordinal == 0 || children.insert(ordinal, item).is_some() {
+                    return Err(integrity("view ordinals must be distinct from one"));
+                }
+            }
+            if children.len() > MAX_VIEWS {
+                return Err(limit());
+            }
+            let mut views = Vec::new();
+            for (expected, (ordinal, item)) in children.iter().enumerate() {
+                if *ordinal != expected + 1 {
+                    return Err(integrity("view ordinals must be contiguous"));
+                }
+                views.push(ViewSpec {
+                    id: DrawingViewId::parse(text(item, "drawing:id", "string")?)
+                        .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?,
+                    plane: Plane::parse(text(item, "drawing:plane", "token")?)
+                        .ok_or_else(|| integrity("invalid drawing plane"))?,
+                    scale_denominator: number(item, "drawing:scale")?,
+                    paper_origin_mm: paper_origin(item)?,
+                });
+            }
+            views
+        }
+        Some(_) => return Err(integrity("drawing prim profile disagrees")),
+    };
     let drawing = Drawing::admit(DrawingSpec {
         id,
         name: text(root, "drawing:name", "string")?.to_owned(),
@@ -336,6 +394,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                 .map_err(|_| integrity("drawing numeric format is oversized"))?,
         },
         drafting,
+        views,
     })?;
     if encode(&drawing)?.bytes != asset.bytes {
         return Err(integrity(

@@ -24,6 +24,12 @@ use beamcraft_model::id::{DimensionId, DrawingId, DrawingViewId, ElementId};
 pub const CONTRACT_VERSION: &str = "beamcraft-drawing/1";
 /// Largest paper-space coordinate or signed dimension offset in millimetres.
 pub const MAX_PAPER_MM: f64 = 10_000.0;
+/// Largest number of placed views beyond the primary view in one document.
+pub const MAX_VIEWS: usize = 16;
+/// Largest prim count of the closed one-page drawing intent, equal to the layer reader's page
+/// ceiling: three fixed prims, one optional scope per non-empty collection, and every placed
+/// view and drawn object.
+pub const MAX_INTENT_PAGE_ITEMS: usize = 64;
 /// Largest scale denominator; the first slice admits scales from 1:1 through 1:10000.
 pub const MAX_SCALE_DENOMINATOR: f64 = 10_000.0;
 /// Default paper scale: one paper millimetre represents 100 model millimetres.
@@ -102,6 +108,11 @@ pub struct DrawingSpec {
     pub member: ElementId,
     /// The sole view.
     pub view: ViewSpec,
+    /// Additional placed views of the same pinned source, each with its own basis, scale and
+    /// paper origin. None is placed automatically: an admitted document starts with only the
+    /// views its caller named, and freshness marks every placed view stale together with the
+    /// document because they share one source pin.
+    pub views: Vec<ViewSpec>,
     /// The sole dimension.
     pub dimension: DimensionSpec,
     /// Drawn paper-space objects owned by the document, never by the model.
@@ -133,6 +144,21 @@ fn finite_range(value: f64, min: f64, max: f64, field: &'static str) -> Result<(
     Ok(())
 }
 
+/// Validates one view's paper settings; both the primary and every placed view obey the same
+/// bounds.
+fn validate_view(view: &ViewSpec) -> Result<(), CommandError> {
+    finite_range(
+        view.scale_denominator,
+        1.0,
+        MAX_SCALE_DENOMINATOR,
+        "scale_denominator",
+    )?;
+    for value in view.paper_origin_mm {
+        finite_range(value, -MAX_PAPER_MM, MAX_PAPER_MM, "paper_origin_mm")?;
+    }
+    Ok(())
+}
+
 impl Drawing {
     /// Admits one bounded document and its qualified semantic references without any geometry work.
     /// Duplicate drawing/view/dimension UUIDs, invalid labels, foreign/non-vertex references,
@@ -160,15 +186,7 @@ impl Drawing {
                 "drawing name must satisfy the bounded label rule",
             ));
         }
-        finite_range(
-            spec.view.scale_denominator,
-            1.0,
-            MAX_SCALE_DENOMINATOR,
-            "scale_denominator",
-        )?;
-        for value in spec.view.paper_origin_mm {
-            finite_range(value, -MAX_PAPER_MM, MAX_PAPER_MM, "paper_origin_mm")?;
-        }
+        validate_view(&spec.view)?;
         finite_range(
             spec.dimension.paper_offset_mm,
             -MAX_PAPER_MM,
@@ -201,31 +219,58 @@ impl Drawing {
                 "dimension endpoints must be distinct semantic references",
             ));
         }
-        Self::validate_drafting(&spec.id, &spec.view.id, &spec.dimension.id, &spec.drafting)?;
+        Self::validate_paper_objects(
+            &spec.id,
+            &spec.view.id,
+            &spec.dimension.id,
+            &spec.views,
+            &spec.drafting,
+        )?;
         Ok(Self(spec))
     }
 
-    /// Validates the drawn objects of one document: bounded count, full distinct identities and
-    /// per-entity geometry bounds. Drawn objects own no model reference of any kind.
-    fn validate_drafting(
+    /// Validates the document's paper objects together: bounded counts, full distinct identities
+    /// within and across both collections, and per-entity/per-view bounds. Drawn objects own no
+    /// model reference of any kind, and every placed view resolves from the document's own pin.
+    fn validate_paper_objects(
         drawing: &DrawingId,
         view: &DrawingViewId,
         dimension: &DimensionId,
-        entities: &[DraftingSpec],
+        views: &[ViewSpec],
+        drafting: &[DraftingSpec],
     ) -> Result<(), CommandError> {
-        if entities.len() > MAX_DRAFTING_ENTITIES {
+        if views.len() > MAX_VIEWS {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "views",
+                "too many placed views in one document",
+            ));
+        }
+        if drafting.len() > MAX_DRAFTING_ENTITIES {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "drafting",
                 "too many drawn objects in one document",
             ));
         }
+        // The whole intent must stay within one closed reader page: the fixed document prims,
+        // one optional scope per non-empty collection and the objects themselves.
+        let page_items = 3
+            + usize::from(!views.is_empty())
+            + usize::from(!drafting.is_empty())
+            + views.len()
+            + drafting.len();
+        if page_items > MAX_INTENT_PAGE_ITEMS {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "paper",
+                "placed views and drawn objects together exceed the one-page intent",
+            ));
+        }
         let reserved = [drawing.uuid(), view.uuid(), dimension.uuid()];
-        for entity in entities {
-            if reserved
-                .iter()
-                .any(|reserved| *reserved == entity.id.uuid())
-            {
+        for entity in drafting {
+            drafting::validate_geometry(&entity.geometry)?;
+            if reserved.contains(&entity.id.uuid()) {
                 return Err(CommandError::new(
                     ErrorCode::DuplicateId,
                     "drafting",
@@ -233,17 +278,47 @@ impl Drawing {
                 ));
             }
         }
-        for (index, entity) in entities.iter().enumerate() {
-            for other in entities.iter().skip(index + 1) {
-                if other.id == entity.id {
-                    return Err(CommandError::new(
-                        ErrorCode::DuplicateId,
-                        "drafting",
-                        "drawn object UUIDs must be pairwise distinct",
-                    ));
+        for placed in views {
+            validate_view(placed)?;
+            if reserved.contains(&placed.id.uuid()) {
+                return Err(CommandError::new(
+                    ErrorCode::DuplicateId,
+                    "views",
+                    "placed view UUIDs must be distinct from the document object UUIDs",
+                ));
+            }
+            if drafting
+                .iter()
+                .any(|entity| entity.id.uuid() == placed.id.uuid())
+            {
+                return Err(CommandError::new(
+                    ErrorCode::DuplicateId,
+                    "views",
+                    "placed view UUIDs must be distinct from the drawn object UUIDs",
+                ));
+            }
+        }
+        for (group, message) in [
+            (
+                drafting
+                    .iter()
+                    .map(|entity| entity.id.uuid())
+                    .collect::<Vec<_>>(),
+                "drawn object UUIDs must be pairwise distinct",
+            ),
+            (
+                views
+                    .iter()
+                    .map(|placed| placed.id.uuid())
+                    .collect::<Vec<_>>(),
+                "placed view UUIDs must be pairwise distinct",
+            ),
+        ] {
+            for (index, id) in group.iter().enumerate() {
+                if group.iter().skip(index + 1).any(|other| other == id) {
+                    return Err(CommandError::new(ErrorCode::DuplicateId, "paper", message));
                 }
             }
-            drafting::validate_geometry(&entity.geometry)?;
         }
         Ok(())
     }
@@ -258,12 +333,38 @@ impl Drawing {
         &self.0.drafting
     }
 
+    /// Borrows the placed views beyond the primary view, in caller order.
+    pub fn views(&self) -> &[ViewSpec] {
+        &self.0.views
+    }
+
     /// Replaces the drawn objects with a newly admitted set, retaining every other document
     /// object, its identity and its source pin. This is a whole-document intent operation: the
     /// engineering model is neither read nor touched.
     pub fn with_drafting(mut self, entities: Vec<DraftingSpec>) -> Result<Self, CommandError> {
-        Self::validate_drafting(&self.0.id, &self.0.view.id, &self.0.dimension.id, &entities)?;
+        Self::validate_paper_objects(
+            &self.0.id,
+            &self.0.view.id,
+            &self.0.dimension.id,
+            &self.0.views,
+            &entities,
+        )?;
         self.0.drafting = entities;
+        Ok(self)
+    }
+
+    /// Replaces the placed views with a newly admitted set, retaining every other document
+    /// object, its identity and its source pin. This is a whole-document intent operation: the
+    /// engineering model is neither read nor touched.
+    pub fn with_views(mut self, views: Vec<ViewSpec>) -> Result<Self, CommandError> {
+        Self::validate_paper_objects(
+            &self.0.id,
+            &self.0.view.id,
+            &self.0.dimension.id,
+            &views,
+            &self.0.drafting,
+        )?;
+        self.0.views = views;
         Ok(self)
     }
 

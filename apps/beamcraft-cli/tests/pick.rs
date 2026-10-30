@@ -17,6 +17,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
+// Every file under tests/drawing/ is compiled only through the #[path] module declarations
+// below; adding a drawing test file means adding one #[path] line here (issue #289).
 #[path = "drawing/projection.rs"]
 mod drawing_projection;
 
@@ -34,6 +36,9 @@ mod drawing_export;
 
 #[path = "drawing/drafting.rs"]
 mod drawing_drafting;
+
+#[path = "drawing/views.rs"]
+mod drawing_views;
 
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000700001";
 const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";

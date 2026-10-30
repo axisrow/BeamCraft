@@ -200,6 +200,7 @@ mod tests {
                 decimal_places: 0,
             },
             drafting: Vec::new(),
+            views: Vec::new(),
         })
         .unwrap()
     }

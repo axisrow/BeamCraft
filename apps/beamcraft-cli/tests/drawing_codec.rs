@@ -45,6 +45,7 @@ fn drawing() -> Drawing {
             decimal_places: 3,
         },
         drafting: Vec::new(),
+        views: Vec::new(),
     })
     .unwrap()
 }
@@ -168,6 +169,42 @@ fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
     assert!(codec::decode(extra, identity(), &control()).is_err());
     // A rewritten coordinate is a well-formed different document, not a decoding failure: its
     // detection is the manifest digest's job, verified at the document store layer.
+}
+
+#[test]
+fn placed_views_round_trip_exactly_and_keep_their_own_paper_settings() {
+    let view = |suffix: u64, plane: Plane, scale: f64, origin: [f64; 2]| ViewSpec {
+        id: DrawingViewId::parse(&format!("01900000-0000-7000-8000-{suffix:012}")).unwrap(),
+        plane,
+        scale_denominator: scale,
+        paper_origin_mm: origin,
+    };
+    let intent = drawing()
+        .with_views(vec![
+            view(6, Plane::Front, 50.0, [10.0, -20.0]),
+            view(
+                7,
+                Plane::Right,
+                MAX_SCALE_DENOMINATOR,
+                [-MAX_PAPER_MM, MAX_PAPER_MM],
+            ),
+        ])
+        .unwrap();
+    let asset = codec::encode(&intent).unwrap();
+    assert!(asset.bytes.len() < codec::MAX_INTENT_BYTES);
+    assert_eq!(asset.bytes, codec::encode(&intent).unwrap().bytes);
+    let decoded = codec::decode(asset.clone(), identity(), &control()).unwrap();
+    assert_eq!(decoded, intent);
+    // An empty placement encodes without the optional scope and still round-trips.
+    let emptied = intent.clone().with_views(Vec::new()).unwrap();
+    assert!(
+        !String::from_utf8(codec::encode(&emptied).unwrap().bytes)
+            .unwrap()
+            .contains("\"Views\"")
+    );
+    // Ordinals are canonical: renaming a child prim leaves the closed schema.
+    let renamed = changed(&asset, "\"V1\"", "\"V9\"");
+    assert!(codec::decode(renamed, identity(), &control()).is_err());
 }
 
 #[test]
