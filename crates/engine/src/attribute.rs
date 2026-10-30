@@ -6,9 +6,10 @@
 //!
 //! A definition is schema metadata (a name, a type, an optional unit, the options of a choice,
 //! an optional set), never an element: defining and undefining write the schema as a whole
-//! ([`Target::AttrSchema`]) and touch no element. A value lives with its element and is written
-//! in that element's attributes group alone. An undefine removes only the definition: stored
-//! values stay in the model, so an unknown attribute is shown, never dropped.
+//! ([`crate::footprint::Target::AttrSchema`]) and touch no element. A value lives with its
+//! element and is written in that element's attributes group alone. An undefine removes only
+//! the definition: stored values stay in the model, so an unknown attribute is shown, never
+//! dropped.
 //!
 //! Rules: a defined attribute is defined once (`DUPLICATE_ID`); setting requires a definition
 //! (`NOT_FOUND`) whose type matches the value (`INVALID_ARGUMENT`) and, for a choice, one of its
