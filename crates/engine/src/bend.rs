@@ -623,9 +623,11 @@ fn roll_loft(authored: &AuthoredPlate, spec: &BendSpec) -> Result<(LoftResult, f
             let segments = facet_segments(radius + thickness, sweep);
             let section = sector_points(radius, radius + thickness, sweep, segments);
             // The section is centred on its own origin, so the loft origin anchors on the
-            // authored axis line itself (as the cone branch anchors at `a`): a roll whose axis
-            // sits anywhere in the plane keeps its ring centred on that line.
-            let origin = a;
+            // authored axis line at the blank's along minimum: two records for the same axis
+            // line publish the same body wherever their endpoints sit on the line, and the
+            // body spans the blank along the axis.
+            let shift = along_min(&authored.contour_points_mm, axis) - dot2(a, axis);
+            let origin = [a[0] + axis[0] * shift, a[1] + axis[1] * shift, 0.0];
             let result = seal_loft(&section, origin, axis, along)?;
             let deviation = (radius + thickness) * (1.0 - (sweep / (2.0 * segments as f64)).cos());
             Ok((result, deviation))
@@ -930,6 +932,20 @@ mod tests {
         );
         assert!(cross_low > 0.0, "the ring is not at the origin");
         close(body.width_mm, 100.0, 1e-9);
+        // Two records for the same axis line publish the same body wherever their endpoints
+        // sit on the line: the anchor is the line point at the blank's along minimum.
+        let mut same_line = plate(rectangle(100.0, 20.0), 2.0);
+        same_line.bends = vec![BendRecord {
+            operation_id: op(2),
+            spec: BendSpec::Roll {
+                a_mm: [50.0, 500.0, 0.0],
+                b_mm: [150.0, 500.0, 0.0],
+                radius_mm: 8.0,
+                radius_b_mm: None,
+            },
+        }];
+        let other = crate::command::evaluate_plate(&same_line).unwrap();
+        assert_eq!(other.solid.blob(), body.solid.blob());
     }
 
     /// A cone roll of a sector blank about the apex: the volume matches the band closed form,
