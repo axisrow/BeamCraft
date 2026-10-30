@@ -32,7 +32,7 @@ pub(super) const HELP: &str = concat!(
     "--corner chamfer:D1[,D2]|round:R|sharp (edges join vertex N and N+1, the last back to ",
     "the first; coordinates are element-local millimetres in the plate plane). Each edit is ",
     "one revision and one undo unit, replays every hole and cut, moves the vertex's treatment ",
-    "with it, and a plate with three vertices is never reduced; invalid shapes refuse.",
+    "with it, and a plate with three vertices is never reduced; invalid shapes refuse. ",
     "Update (P04, P08): update-element --store ROOT --id UUID [--name TEXT] [--class INT32] ",
     "[--material-digest SHA256|none] [--thickness MM] [--thickness-side top|middle|bottom] [--translation X,Y,Z] ",
     "[--orientation-xyzw X,Y,Z,W|none] [--level UUID|none] [--op-id UUID] [--revision-id ",
