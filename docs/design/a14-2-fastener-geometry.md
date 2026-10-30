@@ -27,6 +27,11 @@ beamcraft fastener-geometry --fastener-library FILE --designation TEXT --length 
 
 ## Decisions
 
+- **The group totals are the union of the components.** The shank starts at the under-head
+  plane and runs through the head, so summing the component volumes would count their overlap
+  twice. The per-component rows keep the volumes of their separate closed meshes; the group
+  totals subtract the shank-section area over `min(head_height_mm, length_mm)` — the
+  definition guarantees the head clears the shank, so the overlap is exactly that prism.
 - **One prototype per group without U11.** The build returns one prototype regardless of the
   group size; `quantities` only multiplies counts, volumes and masses. A group of `n` shares
   that one mesh (identical inputs give identical sealed meshes and digests); placing it `n`

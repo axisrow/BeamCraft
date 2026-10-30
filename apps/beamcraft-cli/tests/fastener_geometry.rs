@@ -140,9 +140,12 @@ fn a_group_shares_one_prototype_and_reports_the_components() {
     assert!(is_null(
         component(&body, "head").get("approximation").unwrap()
     ));
-    // The whole-group figures are the sums of the rows.
+    // The whole-group figures are the union of the components: the shank runs through the
+    // head, so the totals sit below the sum of the rows by exactly that overlap prism.
     let each: f64 = rows.iter().map(|r| num(r, "volume_each_mm3")).sum();
-    assert!((num(&body, "volume_each_mm3") - each).abs() < 1e-9);
+    let overlap = num(&shank, "volume_each_mm3") / num(&shank, "height_mm") * 6.5;
+    assert!(num(&body, "volume_each_mm3") < each);
+    assert!((num(&body, "volume_each_mm3") - (each - overlap)).abs() < 1e-6);
     assert!((num(&body, "mass_kg") - num(&body, "volume_mm3") * 7850.0 / 1e9).abs() < 1e-9);
 }
 

@@ -5,11 +5,12 @@
 //! a group of `n` fasteners (bolt amendment section 3).
 //!
 //! The geometry itself is the kernel's G05 composition ([`beamcraft_kernel::fastener`]); the
-//! engine owns the decisions around it: it maps kernel refusals to command fields and it
-//! reports the mass with its source — `mass_each` of the definition when it declares one, the
-//! computed volume and density otherwise, unknown when no density is known. A declared mass is
-//! never split into components and a component mass is never invented, so the source is shown
-//! exactly as the P-Mass decision does for sections.
+//! engine owns the decisions around it: it maps kernel refusals to command fields, it reports
+//! the group totals as the union of the components — the shank runs through the head, so their
+//! overlap is counted once — and it reports the mass with its source: `mass_each` of the
+//! definition when it declares one, the computed volume and density otherwise, unknown when no
+//! density is known. A declared mass is never split into components and a component mass is
+//! never invented, so the source is shown exactly as the P-Mass decision does for sections.
 
 use beamcraft_kernel::fastener::FastenerFailure;
 use beamcraft_model::command::CommandError;
@@ -60,7 +61,8 @@ pub struct FastenerQuantities {
     pub fastener_count: u32,
     /// One row per component, in stack order.
     pub components: Vec<ComponentQuantity>,
-    /// Volume of one fastener in mm3.
+    /// Volume of one fastener in mm3: the union of the components (the shank-through-head
+    /// overlap counted once), below the sum of the component rows.
     pub volume_each_mm3: f64,
     /// Volume of the whole group in mm3.
     pub volume_mm3: f64,
@@ -84,8 +86,8 @@ pub fn prototype(
     beamcraft_kernel::fastener::build(spec, length_mm, washer_under_head, washer_under_nut).map_err(
         |failure| match failure {
             FastenerFailure::Input(error) => error,
-            FastenerFailure::Profile(_) => CommandError::new(
-                ErrorCode::UnsupportedGeometry,
+            profile => CommandError::new(
+                profile.f04_code(),
                 "geometry",
                 "fastener component certification failed",
             ),
@@ -95,10 +97,15 @@ pub fn prototype(
 
 /// Computes the per-component quantities of a group of `count` fasteners over one prototype.
 ///
-/// The mass follows the definition: a declared `mass_each_kg` is the mass of one fastener and
-/// is shown as `declared` (never split into components); otherwise a known density gives every
-/// component the computed mass of its volume, shown as `computed`; with no density the mass is
-/// unknown. `count` follows the A05 group cap.
+/// The component rows carry the volumes of their separate closed meshes. The totals are the
+/// **union** of the components: the shank starts at the under-head plane and runs through the
+/// head, so the group totals subtract the shank-section area over
+/// `min(head_height_mm, length_mm)` — the head clears the shank by the definition's own rule,
+/// so the overlap is exactly that prism, counted once. The mass follows the definition: a
+/// declared `mass_each_kg` is the mass of one fastener and is shown as `declared` (never split
+/// into components); otherwise a known density gives every component the computed mass of its
+/// volume, shown as `computed`; with no density the mass is unknown. `count` follows the A05
+/// group cap.
 pub fn quantities(
     spec: &FastenerSpec,
     build: &FastenerBuild,
@@ -169,7 +176,13 @@ pub fn quantities(
         .components
         .iter()
         .map(|solid| solid.solid.volume_mm3())
-        .sum();
+        .sum::<f64>()
+        - build
+            .components
+            .iter()
+            .find(|solid| solid.component == ComponentKind::Shank)
+            .map(|shank| shank.solid.net_area_mm2() * spec.head_height_mm.min(build.length_mm))
+            .unwrap_or(0.0);
     Ok(FastenerQuantities {
         fastener_count: count,
         volume_each_mm3,
@@ -259,19 +272,56 @@ mod tests {
     }
 
     #[test]
-    fn a_known_density_gives_the_computed_mass_of_every_component() {
+    fn the_totals_are_the_union_and_the_component_masses_stay_per_component() {
         let build = build();
         let computed = quantities(&spec(None), &build, 2, Some(7850.0)).unwrap();
         assert_eq!(computed.mass_source, Some(MassSource::Computed));
-        let summed: f64 = computed
+        // Analytic union: the sum of the analytic component volumes minus the shank prism the
+        // head covers (the shank clears the head, so the overlap is exactly that prism, and a
+        // polygon area stays inside its circle within the chord rule).
+        let shank = build
+            .components
+            .iter()
+            .find(|solid| solid.component == ComponentKind::Shank)
+            .unwrap();
+        let n = shank.approximation.unwrap().segments;
+        let shank_area = polygon_area(8.0, n);
+        let analytic_sum = hexagon_area(24.0) * 10.0
+            + hexagon_area(24.0) * 14.8
+            + washer_volume()
+            + washer_volume()
+            + shank_area * 50.0;
+        let overlap = shank_area * 10.0f64.min(50.0);
+        let union = analytic_sum - overlap;
+        assert!(computed.volume_each_mm3 <= union);
+        assert!(union - computed.volume_each_mm3 < union * 0.01);
+        // Every computed mass is its own row's volume times the density; the group mass is the
+        // union's, below the sum of the rows by the overlap.
+        for row in &computed.components {
+            assert!((row.mass_kg.unwrap() - row.volume_mm3 * 7850.0 / 1e9).abs() < 1e-12);
+        }
+        let rows: f64 = computed
             .components
             .iter()
             .map(|row| row.mass_kg.unwrap())
             .sum();
-        assert!((summed - computed.mass_kg.unwrap()).abs() < 1e-12);
-        for row in &computed.components {
-            assert!((row.mass_kg.unwrap() - row.volume_mm3 * 7850.0 / 1e9).abs() < 1e-12);
-        }
+        assert!((computed.mass_kg.unwrap() - computed.volume_mm3 * 7850.0 / 1e9).abs() < 1e-12);
+        assert!(computed.mass_kg.unwrap() < rows);
+    }
+
+    fn polygon_area(radius: f64, n: u32) -> f64 {
+        f64::from(n) / 2.0 * radius * radius * (core::f64::consts::TAU / f64::from(n)).sin()
+    }
+
+    fn hexagon_area(across_flats: f64) -> f64 {
+        3.0f64.sqrt() / 2.0 * across_flats * across_flats
+    }
+
+    /// Analytic washer volume of the suite washer (30/17/3) within its chord deficit.
+    fn washer_volume() -> f64 {
+        // The exact polygon values are the kernel's; the union test bounds the sum from above
+        // by the analytic circle annulus and from below with the chord tolerance.
+        core::f64::consts::PI * (15.0 * 15.0 - 8.5 * 8.5) * 3.0
     }
 
     #[test]
