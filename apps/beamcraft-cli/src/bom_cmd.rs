@@ -46,8 +46,8 @@ fn reserve(path: &str) -> Run<std::fs::File> {
         .map_err(|_| invalid("an output file exists or cannot be created"))
 }
 
-/// Writes and syncs a reserved file.
-fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
+/// Writes and syncs a reserved file. Shared with the schedule command.
+pub(crate) fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
     file.write_all(bytes.as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|_| PlateError {
@@ -59,8 +59,11 @@ fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
 
 /// Reserves every output file before any bytes are written, so a refusal on any path — an
 /// existing or uncreatable summary included, and the same path given twice — lands while
-/// nothing exists; the files reserved so far are removed again on the way out.
-fn reserve_all(outputs: Vec<(&str, String)>) -> Run<Vec<(String, std::fs::File, String)>> {
+/// nothing exists; the files reserved so far are removed again on the way out. Shared with
+/// the schedule command, which writes the same atomic discipline.
+pub(crate) fn reserve_all(
+    outputs: Vec<(&str, String)>,
+) -> Run<Vec<(String, std::fs::File, String)>> {
     let mut reserved = Vec::with_capacity(outputs.len());
     for (path, bytes) in outputs {
         match reserve(path) {
@@ -76,8 +79,14 @@ fn reserve_all(outputs: Vec<(&str, String)>) -> Run<Vec<(String, std::fs::File, 
     Ok(reserved)
 }
 
-fn run(args: &[OsString]) -> Run<Json> {
-    let args: Vec<&str> = args
+/// The KEY VALUE options of one file-exporting report command, shared by `export-bom` and
+/// `schedule-export`: bounded UTF-8 arguments, pairs only, every key known and given once.
+pub(crate) fn pairs<'a>(
+    args: &'a [OsString],
+    allowed: &[&str],
+    max: usize,
+) -> Run<Vec<(&'a str, &'a str)>> {
+    let flat: Vec<&str> = args
         .iter()
         .skip(1)
         .map(|a| {
@@ -86,18 +95,24 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Run<_>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 6 {
+    if !flat.len().is_multiple_of(2) || flat.len() > max {
         return Err(invalid("options are KEY VALUE pairs"));
     }
-    let mut options = BTreeMap::new();
-    for pair in args.as_chunks::<2>().0 {
+    let mut options = Vec::new();
+    for pair in flat.as_chunks::<2>().0 {
         let [key, value] = pair;
-        if !matches!(*key, "--store" | "--out" | "--summary")
-            || options.insert(*key, *value).is_some()
-        {
+        if !allowed.contains(key) || options.iter().any(|(k, _): &(&str, &str)| k == key) {
             return Err(invalid("unknown or repeated option"));
         }
+        options.push((*key, *value));
     }
+    Ok(options)
+}
+
+fn run(args: &[OsString]) -> Run<Json> {
+    let options: BTreeMap<&str, &str> = pairs(args, &["--store", "--out", "--summary"], 6)?
+        .into_iter()
+        .collect();
     let store = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
