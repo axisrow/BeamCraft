@@ -64,6 +64,7 @@ mod offline_clients;
 mod part_classes;
 mod pick;
 mod plate;
+mod plate_contour_edits;
 mod plate_corners;
 mod plate_placement;
 mod pmass;
