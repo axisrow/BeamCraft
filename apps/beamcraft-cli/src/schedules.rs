@@ -341,9 +341,12 @@ pub fn rows(
     Ok(out)
 }
 
+/// The template JSON bound, shared by the command's bounded file read and the decoder.
+pub const TEMPLATE_BOUND: usize = 65_536;
+
 /// The template JSON bound acknowledged by the command: bounded bytes and a closed object.
 pub fn decode(bytes: &[u8]) -> Result<Json, PlateError> {
-    if bytes.len() > 65536 {
+    if bytes.len() > TEMPLATE_BOUND {
         return Err(invalid("the schedule template exceeds its JSON bound"));
     }
     beamcraft_json::decode(bytes, &Limits::DEFAULT)

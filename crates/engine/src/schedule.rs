@@ -603,15 +603,24 @@ fn selected(template: &Template, indices: &[usize]) -> Vec<String> {
         .collect()
 }
 
+/// One CSV line of labels, quoted exactly like a body cell: a label is caller input (an
+/// unknown-attribute selector is arbitrary template text), so it carries no trust.
+fn header(labels: &[String]) -> String {
+    let mut out = String::new();
+    for (i, label) in labels.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        crate::bom::field(label, &mut out);
+    }
+    out
+}
+
 /// The element table as CSV.
 pub fn elements_csv(template: &Template, schedule: &Schedule) -> String {
+    let labels: Vec<String> = template.columns.iter().map(|c| c.label.clone()).collect();
     crate::bom::csv(
-        &template
-            .columns
-            .iter()
-            .map(|c| c.label.as_str())
-            .collect::<Vec<_>>()
-            .join(","),
+        &header(&labels),
         schedule.rows.iter().map(|row| row.to_vec()),
     )
 }
@@ -655,7 +664,7 @@ fn group_rows(template: &Template, schedule: &Schedule) -> (Vec<String>, Vec<Vec
 /// with its unknown count.
 pub fn groups_csv(template: &Template, schedule: &Schedule) -> String {
     let (labels, rows) = group_rows(template, schedule);
-    crate::bom::csv(&labels.join(","), rows)
+    crate::bom::csv(&header(&labels), rows)
 }
 
 /// One HTML-escaped text; `&` goes first so no produced entity is escaped again.
@@ -887,6 +896,17 @@ mod tests {
         );
         // The row cap lands before any rendering.
         assert_eq!(refused(&text_column, &rows, 0), ErrorCode::LimitExceeded);
+    }
+
+    #[test]
+    fn csv_headers_quote_labels_like_cells() {
+        // An unknown-attribute selector is arbitrary template text; the header quotes it.
+        let t = template(vec![
+            column("mark", Field::Standard(StandardField::Mark)),
+            column("Ghost, \"name\"", Field::Unknown),
+        ]);
+        let schedule = build(&t, &[], 10).expect("admitted");
+        assert!(elements_csv(&t, &schedule).starts_with("mark,\"Ghost, \"\"name\"\"\"\n"));
     }
 
     #[test]

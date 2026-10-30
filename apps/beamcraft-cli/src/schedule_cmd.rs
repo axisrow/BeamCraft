@@ -63,10 +63,14 @@ fn run(args: &[OsString]) -> Run<Json> {
     let out = options
         .get("--out")
         .ok_or_else(|| invalid("--out is required"))?;
-    // The template is read before the store, so a broken template refuses without opening it.
+    // The template is read bounded before the store, so a broken or oversized template
+    // refuses without opening it.
     let mut template_bytes = Vec::new();
     std::fs::File::open(template_path)
-        .and_then(|mut f| f.read_to_end(&mut template_bytes))
+        .and_then(|f| {
+            f.take(schedules::TEMPLATE_BOUND as u64 + 1)
+                .read_to_end(&mut template_bytes)
+        })
         .map_err(|_| invalid("the schedule template cannot be read"))?;
     let template_json = schedules::decode(&template_bytes)?;
     let blobs = BlobStore::new(store).map_err(|e| PlateError {
