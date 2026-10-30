@@ -3,11 +3,12 @@
 
 //! V14 adapter: strict rule JSON and the admitted query dataset of the verified head.
 //!
-//! One pinned read turns the head into engine [`Record`]s: every active element with its kind,
-//! name, part class and typed user-attribute values. Registry definitions are not objects;
-//! inactive targets and unknown or type-mismatched values acquire no defaults, so a rule can
-//! only ever match what the model actually says. The same admitted dataset is what a later
-//! saved-set or view-binding command evaluates, so a query and a bound view cannot disagree.
+//! One pinned read turns the head into engine [`Record`](beamcraft_engine::filter::Record)s:
+//! every active element with its kind, name, part class and typed user-attribute values.
+//! Registry definitions are not objects; inactive targets and values that do not admit under
+//! their definitions acquire no defaults, so a rule can only ever match what the model actually
+//! says. The same admitted dataset is what a later saved-set or view-binding command evaluates,
+//! so a query and a bound view cannot disagree.
 
 use crate::assembly::read_prims;
 use crate::plate::{PlateError, control, integrity, load_base, open_base, property, text};
