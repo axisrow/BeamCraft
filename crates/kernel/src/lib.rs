@@ -11,6 +11,7 @@
 
 pub mod build;
 pub mod diagnostic;
+pub mod fastener;
 pub mod feature_id;
 pub mod input;
 pub mod member;

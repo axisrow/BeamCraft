@@ -40,6 +40,7 @@ mod f04_cases;
 mod f06_cases;
 mod f06_member_cases;
 mod f10_vocabulary;
+mod fastener_geometry;
 mod fastener_libraries;
 mod grid_geometry;
 mod grid_lines;

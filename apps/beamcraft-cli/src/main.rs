@@ -24,6 +24,7 @@ mod command_context;
 mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
+mod fastener_cmd;
 mod grid_cmd;
 mod history_cmd;
 mod level_cmd;
@@ -139,6 +140,8 @@ fn main() -> std::process::ExitCode {
         schedule_cmd::execute(&args)
     } else if args.first().is_some_and(library_cmd::handles) {
         library_cmd::execute(&args)
+    } else if args.first().is_some_and(fastener_cmd::handles) {
+        fastener_cmd::execute(&args)
     } else if args.first().is_some_and(project_cmd::handles) {
         project_cmd::execute(&args)
     } else if args.first().is_some_and(grid_cmd::handles) {
