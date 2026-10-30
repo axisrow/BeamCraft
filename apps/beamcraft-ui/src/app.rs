@@ -7,6 +7,7 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod creation_panel;
 mod grid_panel;
 mod switches;
 mod workbench;
@@ -112,11 +113,16 @@ pub struct App {
     beam: BeamPlace,
     /// Whether viewport clicks place the beam instead of selecting.
     beam_mode: bool,
+    plate_mode: bool,
+    plate_draft: crate::creation::ContourDraft,
+    plate_hover: Option<[f64; 3]>,
+    plate_input: [String; 2],
     plane_form: crate::work_plane::Form,
     plane_pick: bool,
     /// The millimetre-quantized hover end the current ghost was built for: the buffers rebuild
     /// only when the preview actually moves.
     ghost_end: Option<[i64; 3]>,
+    beam_hover: Option<[f64; 3]>,
     /// Why the last definitions refresh failed; kept apart from `tool_note` so neither hides the other.
     refresh_error: Option<String>,
     /// The scene framing the camera was last fitted to (centre, extent, aspect): a reload that
@@ -298,6 +304,63 @@ fn navigation(
 
 const RED: egui::Color32 = egui::Color32::from_rgb(230, 80, 60);
 
+fn definition_label(label: &str) -> &str {
+    label
+        .rsplit_once(" (")
+        .filter(|(_, tail)| {
+            tail.trim_end_matches(')')
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+        })
+        .map_or(label, |(name, _)| name)
+}
+
+fn unique_suffix<'a>(id: &'a str, others: &[&str]) -> &'a str {
+    let mut length = id.len().min(8);
+    loop {
+        let suffix = id.get(id.len().saturating_sub(length)..).unwrap_or(id);
+        if length >= id.len()
+            || !others
+                .iter()
+                .any(|other| *other != id && other.ends_with(suffix))
+        {
+            return suffix;
+        }
+        length += 1;
+    }
+}
+
+fn definition_choice_label(choice: &Choice, choices: &[Choice]) -> String {
+    let label = definition_label(&choice.label);
+    let duplicates = choices
+        .iter()
+        .filter(|c| definition_label(&c.label) == label)
+        .map(|c| c.digest.as_str())
+        .collect::<Vec<_>>();
+    if duplicates.iter().any(|id| *id != choice.digest) {
+        format!("{label} · {}", unique_suffix(&choice.digest, &duplicates))
+    } else {
+        label.to_owned()
+    }
+}
+
+fn level_choice_label(id: &str, levels: &[(String, String, f64)]) -> String {
+    let Some((_, name, elevation)) = levels.iter().find(|(known, _, _)| known == id) else {
+        return "Level unavailable".into();
+    };
+    let duplicates = levels
+        .iter()
+        .filter(|(_, n, e)| n == name && e == elevation)
+        .map(|(known, _, _)| known.as_str())
+        .collect::<Vec<_>>();
+    let label = format!("{name} · {elevation} mm");
+    if duplicates.iter().any(|known| *known != id) {
+        format!("{label} · {}", unique_suffix(id, &duplicates))
+    } else {
+        label
+    }
+}
+
 /// A drop-down of store definitions; `required` removes the "none" entry.
 fn choice_combo(
     ui: &mut egui::Ui,
@@ -311,8 +374,8 @@ fn choice_combo(
         .as_ref()
         .map(|digest| {
             choices.iter().find(|c| &c.digest == digest).map_or_else(
-                || format!("unlisted definition {}", digest.get(..8).unwrap_or(digest)),
-                |c| c.label.clone(),
+                || "Definition unavailable".to_owned(),
+                |c| definition_choice_label(c, choices),
             )
         })
         .unwrap_or_else(|| if required { "choose…" } else { "none" }.to_owned());
@@ -331,7 +394,11 @@ fn choice_combo(
                     ui.selectable_value(current, None, "none");
                 }
                 for choice in choices {
-                    ui.selectable_value(current, Some(choice.digest.clone()), &choice.label);
+                    ui.selectable_value(
+                        current,
+                        Some(choice.digest.clone()),
+                        definition_choice_label(choice, choices),
+                    );
                 }
             });
     });
@@ -513,16 +580,6 @@ impl std::fmt::Display for PointText {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let [x, y, z] = self.0;
         write!(f, "({x:.1}, {y:.1}, {z:.1}) mm")
-    }
-}
-
-/// The volume part of a commit note: cubic millimetres below a thousandth of a cubic metre,
-/// cubic metres from there, so a small plate does not read as `0.000 m3`.
-fn volume_note(volume_mm3: f64) -> String {
-    if volume_mm3 < 1e6 {
-        format!(", volume {volume_mm3:.0} mm3")
-    } else {
-        format!(", volume {:.3} m3", volume_mm3 / 1e9)
     }
 }
 
@@ -758,9 +815,14 @@ impl App {
             tools: Tools::default(),
             beam: BeamPlace::default(),
             beam_mode: false,
+            plate_mode: false,
+            plate_draft: crate::creation::ContourDraft::default(),
+            plate_hover: None,
+            plate_input: ["0".into(), "0".into()],
             plane_form: crate::work_plane::Form::default(),
             plane_pick: false,
             ghost_end: None,
+            beam_hover: None,
             job: None,
             reload_job: None,
             reload_queued: false,
@@ -987,13 +1049,6 @@ impl App {
         Ok(())
     }
 
-    fn target(&self) -> Target<'_> {
-        Target {
-            store: &self.source.store,
-            workspace: self.source.workspace.as_deref(),
-        }
-    }
-
     /// Registers a lookup under a new epoch; returns the flag that gives it up.
     fn begin_select(
         &mut self,
@@ -1190,19 +1245,7 @@ impl App {
                 // A lookup that started before this edit describes the element as it was.
                 self.invalidate_select();
                 self.reload();
-                let subject = match done.kind {
-                    EditKind::Undo | EditKind::Redo => "the workspace".to_owned(),
-                    _ => done.element_id.clone().unwrap_or_default(),
-                };
-                self.edit_note = Some(Ok(format!(
-                    "{} {} (accepted revision {}, sequence {}).",
-                    done.kind.done(),
-                    subject,
-                    done.manifest_digest
-                        .get(..12)
-                        .unwrap_or(&done.manifest_digest),
-                    done.sequence
-                )));
+                self.edit_note = Some(Ok(format!("{}.", done.kind.done())));
                 match done.kind {
                     EditKind::Delete => {
                         self.editor.deselect();
@@ -1319,14 +1362,8 @@ impl App {
             Ok(done) => {
                 self.invalidate_select();
                 self.reload();
-                self.props_note = Some(Ok(format!(
-                    "Updated {} (accepted revision {}, sequence {}).",
-                    done.element_id.as_deref().unwrap_or("the element"),
-                    done.manifest_digest
-                        .get(..12)
-                        .unwrap_or(&done.manifest_digest),
-                    done.sequence
-                )));
+                let _ = done;
+                self.props_note = Some(Ok("Properties updated.".into()));
                 self.refresh_selection();
                 self.refresh_status();
             }
@@ -1437,7 +1474,7 @@ impl App {
     }
 
     fn props_panel(&mut self, ui: &mut egui::Ui) {
-        let Some(id) = self.props.selected().map(str::to_owned) else {
+        let Some(_id) = self.props.selected().map(str::to_owned) else {
             ui.label("Select a part or grid to see its properties.");
             return;
         };
@@ -1446,21 +1483,24 @@ impl App {
         match &state {
             Some(State::Current) if self.props.head_known() => {}
             Some(State::Current) => {
-                ui.label("State: current (the head revision could not be checked)");
+                ui.label("Could not check for model changes. Reload before applying edits.");
             }
             Some(other) => {
-                ui.colored_label(RED, format!("State: {}", other.label()));
+                ui.colored_label(
+                    RED,
+                    match other {
+                        State::Stale { .. } => {
+                            "The model changed. Reload properties before editing."
+                        }
+                        _ => "Properties could not be loaded. Try Reload.",
+                    },
+                );
             }
             None => {}
         }
-        let editable = matches!(state, Some(State::Current));
+        let editable = self.props.head_known() && matches!(state, Some(State::Current));
         let busy = self.props.busy() || self.other_command_running();
         if let Some(details) = self.props.details().cloned() {
-            ui.label(format!(
-                "{} read from revision {}.",
-                details.kind,
-                details.revision.label()
-            ));
             if let Some((_, count)) = &details.shared_definition {
                 ui.label(format!("Shape and material edits affect all {count} shared parts. Name, position and level affect this part."));
             }
@@ -1520,6 +1560,23 @@ impl App {
                 if details.is_plate() {
                     field(ui, "Thickness", &mut self.props.form.thickness, 80.0);
                 }
+                let level_label = self.props.form.level.as_ref().map_or_else(
+                    || "Not assigned".into(),
+                    |id| level_choice_label(id, &details.levels),
+                );
+                ui.label("Level");
+                egui::ComboBox::from_id_salt("props-level")
+                    .selected_text(level_label)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.props.form.level, None, "Not assigned");
+                        for (id, _, _) in &details.levels {
+                            ui.selectable_value(
+                                &mut self.props.form.level,
+                                Some(id.clone()),
+                                level_choice_label(id, &details.levels),
+                            );
+                        }
+                    });
                 ui.add_space(18.0);
                 ui.label(egui::RichText::new("Position / mm").size(12.0));
                 ui.add_space(8.0);
@@ -1530,41 +1587,46 @@ impl App {
                     field(ui, axis, value, 170.0);
                 }
             });
-            egui::CollapsingHeader::new("Revision and quantities").show(ui, |ui| {
-                ui.label(format!("Element {id}"));
-                ui.label(format!("Revision {}", details.revision.label()));
-                for (label, value) in details.read_only_rows() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(egui::RichText::new(label).size(11.0).color(palette.muted));
-                        ui.label(egui::RichText::new(value).size(11.0));
-                    });
-                }
-            });
+            egui::CollapsingHeader::new("Quantities")
+                .default_open(true)
+                .show(ui, |ui| {
+                    let quantities = &details.quantities;
+                    for (label, number, unit, status, stored_freshness) in [
+                        (
+                            "Volume",
+                            quantities.volume_mm3,
+                            "mm³",
+                            quantities.volume_status.as_deref(),
+                            quantities.stored_volume_freshness.as_deref(),
+                        ),
+                        (
+                            "Mass",
+                            quantities.mass_kg,
+                            "kg",
+                            quantities.mass_status.as_deref(),
+                            quantities.stored_mass_freshness.as_deref(),
+                        ),
+                    ] {
+                        let mut value = match (number, status) {
+                            (Some(value), Some("current")) => format!("{value} {unit}"),
+                            (Some(value), Some("stale")) => format!("{value} {unit} · out of date"),
+                            _ => "Not available".into(),
+                        };
+                        if stored_freshness == Some("stale") {
+                            value.push_str(" · stored value out of date");
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label(label);
+                            ui.label(value);
+                        });
+                    }
+                });
             if !editable {
                 ui.label("Editing is off until the properties are current.");
             }
         } else if matches!(state, Some(State::Unknown { .. })) {
             ui.label("No property value is shown: none could be read.");
         }
-        egui::CollapsingHeader::new("Command preview").show(ui, |ui| {
-            if ui
-                .add_enabled(editable && !busy, egui::Button::new("Preview command"))
-                .clicked()
-            {
-                match self.props.preview(&self.source.store) {
-                    Ok(_) => self.props_note = None,
-                    Err(error) => {
-                        self.props.cancel();
-                        self.props_note = Some(Err(error.to_string()));
-                    }
-                }
-            }
-            if let Some(edit) = self.props.staged() {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(edit.argument_list()).size(10.0)).wrap(),
-                );
-            }
-        });
         if self.props.busy() {
             ui.label("Running…");
         }
@@ -1580,7 +1642,8 @@ impl App {
     }
 
     fn property_actions(&mut self, ui: &mut egui::Ui) {
-        let editable = matches!(self.props.state(), Some(State::Current));
+        let editable =
+            self.props.head_known() && matches!(self.props.state(), Some(State::Current));
         let busy = self.props.busy() || self.other_command_running();
         let mut apply = false;
         let mut reset = false;
@@ -1618,14 +1681,19 @@ impl App {
             Err(why) => {
                 ui.label(why);
             }
-            Ok((published, workspace)) => {
-                ui.label(format!(
-                    "Workspace {} to published store {}.",
-                    workspace.display(),
-                    published.display()
-                ));
+            Ok(_) => {
                 if let Some(status) = &self.publisher.status {
-                    ui.label(status.summary());
+                    ui.label(if status.unsent_revisions == 0 {
+                        "All changes are published."
+                    } else {
+                        "This workspace has unpublished changes."
+                    });
+                    if !status.base_is_current {
+                        ui.colored_label(
+                            RED,
+                            "The shared model changed. Review it before publishing.",
+                        );
+                    }
                 }
                 let enabled =
                     self.publisher.phase() == Phase::Idle && !self.other_command_running();
@@ -1657,16 +1725,6 @@ impl App {
         if self.publisher.phase() != Phase::Confirming {
             return;
         }
-        let list = self
-            .publisher
-            .args()
-            .map(|args| {
-                args.iter()
-                    .map(|a| crate::json_string(a))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
         let (mut confirm, mut cancel) = (false, false);
         egui::Window::new("Publish the workspace?")
             .collapsible(false)
@@ -1674,10 +1732,8 @@ impl App {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.label(
-                    "The draft head becomes the next published revision. The engine refuses it when the published head moved since the workspace was forked or when there is nothing to publish; there is no merge or conflict resolution.",
+                    "Publish your saved workspace changes to the shared model? If the shared model has changed, publishing will stop so your work stays safe.",
                 );
-                ui.label("Runs `beamcraft` with exactly these arguments, one per line:");
-                ui.add(egui::Label::new(egui::RichText::new(list).monospace()).wrap());
                 ui.horizontal(|ui| {
                     confirm = ui.button("Publish").clicked();
                     cancel = ui.button("Cancel").clicked();
@@ -1694,10 +1750,7 @@ impl App {
         ui.label("Click an element in the view to select it. Esc clears the selection.");
         match self.editor.selected() {
             Some(info) => {
-                ui.label(format!(
-                    "Selected: {} {} ({})",
-                    info.kind, info.name, info.id
-                ));
+                ui.label(format!("Selected: {} {}", info.kind, info.name));
             }
             None => {
                 ui.label("Nothing selected.");
@@ -1723,51 +1776,38 @@ impl App {
             }
         });
         let busy = self.editor.busy();
-        let target = self.target();
-        let can_commit = self.editor.can_commit(target);
-        let staged = self.editor.staged().is_some();
-        let (mut preview, mut commit, mut cancel) = (false, false, false);
+        let busy = busy || self.other_command_running();
+        let mut apply = false;
+        let mut cancel = false;
         ui.horizontal(|ui| {
-            preview = ui
-                .add_enabled(selected && !busy, egui::Button::new("Preview"))
+            apply = ui
+                .add_enabled(
+                    selected && !busy,
+                    egui::Button::new(match action {
+                        EditKind::Move => "Move",
+                        EditKind::Copy => "Copy",
+                        _ => "Delete",
+                    }),
+                )
                 .clicked();
-            commit = ui
-                .add_enabled(can_commit, egui::Button::new("Commit"))
-                .clicked();
-            cancel = ui
-                .add_enabled(staged && !busy, egui::Button::new("Cancel"))
-                .clicked();
+            cancel = ui.add_enabled(!busy, egui::Button::new("Cancel")).clicked();
         });
-        if preview {
-            let action = self.editor.action();
+        if apply {
             let target = Target {
                 store: &self.source.store,
                 workspace: self.source.workspace.as_deref(),
             };
             match self.editor.preview(action, target) {
-                Ok(_) => self.edit_note = None,
-                Err(e) => {
+                Ok(_) => self.start_edit(None),
+                Err(error) => {
                     self.editor.cancel();
-                    self.edit_note = Some(Err(e.to_string()));
+                    self.edit_note = Some(Err(error.to_string()));
                 }
             }
         }
-        if commit {
-            self.start_edit(None);
-        }
         if cancel {
             self.editor.cancel();
-            self.edit_note = Some(Ok("Cancelled; nothing was changed.".into()));
-        }
-        if let Some(edit) = self.editor.staged() {
-            ui.label(format!(
-                "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line).",
-                edit.args.len()
-            ));
-            ui.add(egui::Label::new(egui::RichText::new(edit.argument_list()).monospace()).wrap());
-            if !self.editor.can_commit(self.target()) {
-                ui.colored_label(RED, "The parameters changed: preview again.");
-            }
+            self.set_bench(workbench::Bench::Select);
         }
         if busy {
             ui.label("Running…");
@@ -1840,21 +1880,19 @@ impl App {
                     ToolKind::Plate => "plate",
                     ToolKind::Member => "member",
                 };
-                let volume = created.volume_mm3.map_or(String::new(), volume_note);
+                if created.kind == ToolKind::Plate {
+                    self.plate_draft.clear();
+                    self.plate_hover = None;
+                    self.tools.plate.contour.clear();
+                    self.plate_mode = self.bench == workbench::Bench::Plate;
+                } else {
+                    self.beam_mode = matches!(
+                        self.bench,
+                        workbench::Bench::Beam | workbench::Bench::Column
+                    );
+                }
                 self.tool_note = Some(Ok(format!(
-                    "Created {what} {} ({}{}). Accepted revision {} (sequence {}).",
-                    created.element_id,
-                    if created.name.is_empty() {
-                        "unnamed"
-                    } else {
-                        &created.name
-                    },
-                    volume,
-                    created
-                        .manifest_digest
-                        .get(..12)
-                        .unwrap_or(&created.manifest_digest),
-                    created.sequence
+                    "Created {what}. Pick points for the next one, or press Esc to finish."
                 )));
             }
             Err(e) => {
@@ -1871,6 +1909,7 @@ impl App {
     fn perf_commit(&mut self, ordinal: u32) {
         self.tools.active = ToolKind::Plate;
         let form = &mut self.tools.plate;
+        form.contour.clear();
         form.width = (100 + ordinal % 1000).to_string();
         form.length = "200".into();
         form.thickness = "10".into();
@@ -1986,9 +2025,16 @@ impl App {
     fn install_plane(&mut self, plane: Option<beamcraft_engine::work_plane::WorkPlane>) {
         self.tools.cancel();
         self.tools.plane = plane;
+        self.plate_draft.clear();
+        self.plate_hover = None;
+        self.tools.plate.contour.clear();
         self.plane_pick = false;
-        self.beam_mode = false;
+        self.beam_mode = matches!(
+            self.bench,
+            workbench::Bench::Beam | workbench::Bench::Column
+        );
         self.beam.reset();
+        self.beam_hover = None;
         self.ghost_end = None;
         self.renderer
             .set_ghost(&self.state.device, &self.state.queue, None);
@@ -1997,86 +2043,21 @@ impl App {
         ));
     }
 
-    /// Turns viewport placement of the member on or off (issue #134).
-    fn toggle_place(&mut self) {
-        self.plane_pick = false;
-        self.beam_mode = !self.beam_mode;
-        self.beam.reset();
-        self.ghost_end = None;
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, None);
-        if self.beam_mode {
-            self.tool_note = Some(Ok(
-                "Placing: the next two clicks in the view fill Start and End; nothing is written until Commit."
-                    .into(),
-            ));
-        }
-    }
-
     /// One click of the placement: the engine's front-face point on the viewed snapshot, else
     /// the ground plane. The first click arms the start, the second fills the form's endpoints.
     /// The query is bounded by the snapshot caps and runs only while placing.
     fn place_beam(&mut self, ray: crate::edit::Ray) {
-        let snapshot = self.loaded.as_ref().map(|l| Arc::clone(&l.snapshot));
-        let resolved = match snapshot.map(|s| pick_point_in(&s, &ray)) {
-            Some(Ok(resolved)) => resolved
-                .map(|(point, _)| point)
-                .or_else(|| ground_point(&ray)),
-            Some(Err(e)) => {
-                self.tool_note = Some(Err(e.to_string()));
+        if self.other_command_running() {
+            return;
+        }
+        let point = match self.creation_point(ray, false) {
+            Ok(point) => point,
+            Err(error) => {
+                self.clear_member_preview();
+                self.tool_note = Some(Err(error.to_string()));
                 return;
             }
-            None => ground_point(&ray),
         };
-        let resolved = if let Some(plane) = self.tools.plane {
-            plane.ray_point(ray.origin, ray.direction)
-        } else {
-            resolved
-        };
-        let Some(mut point) = resolved else {
-            self.tool_note = Some(Err(
-                "the click has no world point: aim at the model or the ground plane".into(),
-            ));
-            return;
-        };
-        let kinds = self.selection.snap_kinds();
-        if !kinds.is_empty()
-            && let Some(loaded) = &self.loaded
-        {
-            let grids = if self.grids_visible {
-                self.grid_scene.query_grids.as_slice()
-            } else {
-                &[]
-            };
-            let query = beamcraft_engine::query::pick::SnapQuery {
-                point_mm: point,
-                radius_mm: 100.0,
-                kinds,
-                max_hits: 32,
-            };
-            match beamcraft_engine::query::pick::snap_with_grids(
-                &loaded.snapshot,
-                &query,
-                grids,
-                None,
-            ) {
-                Ok(result) => {
-                    if let Some(hit) = result.candidates.iter().find(|hit| {
-                        self.tools.plane.is_none_or(|plane| {
-                            plane
-                                .to_local(hit.point_world_mm)
-                                .is_ok_and(|[_, _, z]| z.abs() <= 1e-6)
-                        })
-                    }) {
-                        point = hit.point_world_mm;
-                    }
-                }
-                Err(error) => {
-                    self.tool_note = Some(Err(error.to_string()));
-                    return;
-                }
-            }
-        }
         let point = match self.beam.start() {
             Some(start) => match self.tools.plane.map_or_else(
                 || self.tools.member.axis_lock.constrain(start, point),
@@ -2084,6 +2065,7 @@ impl App {
             ) {
                 Ok(point) => point,
                 Err(e) => {
+                    self.clear_member_preview();
                     self.tool_note = Some(Err(e.to_string()));
                     return;
                 }
@@ -2092,9 +2074,9 @@ impl App {
         };
         match self.beam.click(point) {
             None => {
-                self.ghost_end = None;
+                self.clear_member_preview();
                 self.tool_note = Some(Ok(format!(
-                    "Start {} armed; the ghost follows the pointer.",
+                    "Start {}. Pick the end point.",
                     PointText(point)
                 )));
             }
@@ -2107,6 +2089,7 @@ impl App {
                 let (start, end) = match points {
                     Some(Ok(pair)) => pair,
                     Some(Err(e)) => {
+                        self.clear_member_preview();
                         self.tool_note = Some(Err(e.to_string()));
                         return;
                     }
@@ -2117,9 +2100,7 @@ impl App {
                 self.ghost_end = None;
                 self.renderer
                     .set_ghost(&self.state.device, &self.state.queue, None);
-                self.tool_note = Some(Ok(
-                    "Endpoints placed: Preview stages the create-member command; the engine builds the shape at Commit.".into(),
-                ));
+                self.create_from_form();
             }
         }
     }
@@ -2128,6 +2109,13 @@ impl App {
     /// start -> hover, where the pointer ray meets the plane through the start parallel to the
     /// view. Display only: an axis the engine refuses simply draws no ghost, and Commit still
     /// asks the engine.
+    fn clear_member_preview(&mut self) {
+        self.beam_hover = None;
+        self.ghost_end = None;
+        self.renderer
+            .set_ghost(&self.state.device, &self.state.queue, None);
+    }
+
     fn update_ghost(&mut self, view: &View, ndc: [f32; 2]) {
         let Some(start) = self.beam.start() else {
             return;
@@ -2137,50 +2125,22 @@ impl App {
             .as_ref()
             .map_or([0.0; 3], |l| l.summary.origin_mm);
         let Some(ray) = ray_through(view, ndc, origin_mm) else {
+            self.clear_member_preview();
             return;
         };
-        // The view plane through the start: every pixel off the horizon maps to a point.
-        let n = [
-            f64::from(view.back[0]),
-            f64::from(view.back[1]),
-            f64::from(view.back[2]),
-        ];
-        let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-        let denom = dot(ray.direction, n);
-        if denom.abs() < 1e-9 {
+        let Ok(end) = self.creation_point(ray, false) else {
+            self.clear_member_preview();
             return;
-        }
-        let t = dot(
-            [
-                start[0] - ray.origin[0],
-                start[1] - ray.origin[1],
-                start[2] - ray.origin[2],
-            ],
-            n,
-        ) / denom;
-        if !(t.is_finite() && t > 0.0) {
-            return;
-        }
-        let end = [
-            ray.origin[0] + t * ray.direction[0],
-            ray.origin[1] + t * ray.direction[1],
-            ray.origin[2] + t * ray.direction[2],
-        ];
-        let end = if let Some(plane) = self.tools.plane {
-            let Some(end) = plane.ray_point(ray.origin, ray.direction) else {
-                return;
-            };
-            end
-        } else {
-            end
         };
         let constrained = match self.tools.plane {
             Some(plane) => plane.constrain_world(start, end, self.tools.member.axis_lock),
             None => self.tools.member.axis_lock.constrain(start, end),
         };
         let Ok(end) = constrained else {
+            self.clear_member_preview();
             return;
         };
+        self.beam_hover = Some(end);
         let key = end.map(|v| v.round() as i64);
         if self.ghost_end == Some(key) {
             return;
@@ -2252,185 +2212,6 @@ impl App {
             .iter()
             .find(|c| &c.digest == digest)
             .and_then(|c| c.rect_mm)
-    }
-
-    fn tools_panel(&mut self, ui: &mut egui::Ui) {
-        match self.plane_form.show(ui) {
-            Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
-            Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
-            Ok(Some(crate::work_plane::Action::PickFace)) => {
-                self.install_plane(self.tools.plane);
-                self.plane_pick = true;
-                self.tool_note = Some(Ok("Click a face to set the session work plane.".into()));
-            }
-            Err(e) => self.tool_note = Some(Err(e.to_string())),
-            _ => {}
-        }
-        if let Some(plane) = self.tools.plane {
-            ui.label(format!("Plane origin: {}", PointText(plane.origin())));
-        }
-        ui.label("Dimensions in mm.");
-        // Borrowed beside the form (disjoint fields), never copied: the panel is laid out in every
-        // frame the window draws.
-        let definitions = &self.tools.definitions;
-        let placing = self.beam_mode;
-        let mut place_clicked = false;
-        match self.tools.active {
-            ToolKind::Plate => {
-                let form = &mut self.tools.plate;
-                field(ui, "Width", &mut form.width, 80.0);
-                field(ui, "Length", &mut form.length, 80.0);
-                field(ui, "Thickness", &mut form.thickness, 80.0);
-                field(ui, "Name", &mut form.name, 140.0);
-                field(ui, "Class", &mut form.class, 80.0);
-                choice_combo(
-                    ui,
-                    "plate-material",
-                    "Material",
-                    &mut form.material,
-                    &definitions.materials,
-                    false,
-                );
-            }
-            ToolKind::Member => {
-                let form = &mut self.tools.member;
-                for (label, point) in [("Start", &mut form.start), ("End", &mut form.end)] {
-                    ui.horizontal(|ui| {
-                        ui.label(label);
-                        for (axis, text) in ["X", "Y", "Z"].iter().zip(point.iter_mut()) {
-                            ui.label(*axis);
-                            ui.add(
-                                egui::TextEdit::singleline(text)
-                                    .desired_width(56.0)
-                                    .char_limit(MAX_TEXT),
-                            );
-                        }
-                    });
-                }
-                field(ui, "Start expression", &mut form.start_input, 180.0);
-                field(ui, "End expression", &mut form.end_input, 180.0);
-                ui.label("X,Y,Z | @DX,DY,DZ | @distance<angle[,DZ] (mm, rad)");
-                ui.horizontal(|ui| {
-                    ui.label("Direction lock");
-                    use beamcraft_engine::coordinate::AxisLock;
-                    for lock in [AxisLock::None, AxisLock::X, AxisLock::Y, AxisLock::Z] {
-                        ui.selectable_value(&mut form.axis_lock, lock, lock.token());
-                    }
-                });
-                field(ui, "Name", &mut form.name, 140.0);
-                field(ui, "Class", &mut form.class, 80.0);
-                choice_combo(
-                    ui,
-                    "member-profile",
-                    "Profile",
-                    &mut form.profile,
-                    &definitions.profiles,
-                    true,
-                );
-                choice_combo(
-                    ui,
-                    "member-material",
-                    "Material",
-                    &mut form.material,
-                    &definitions.materials,
-                    false,
-                );
-                // Optional orientation (issue #134): an empty field keeps the flag absent, so
-                // the planar command stays exactly what it always was; the rules are the
-                // engine's, the form only forwards text.
-                field(ui, "Roll (rad)", &mut form.roll, 80.0);
-                field(ui, "Orientation X,Y,Z,W", &mut form.orientation, 140.0);
-                place_clicked = ui.selectable_label(placing, "Place in view").clicked();
-                if placing {
-                    match self.beam.start() {
-                        Some(start) => ui.label(format!(
-                            "Placing: click the end point in the view (start {}).",
-                            PointText(start)
-                        )),
-                        None => ui.label(
-                            "Placing: click the start point in the view. A click lands on a face; in empty space it lands on the ground plane z = 0.",
-                        ),
-                    };
-                }
-                if definitions.profiles.is_empty() {
-                    ui.label("The store has no profile definition yet (beamcraft define-profile).");
-                }
-            }
-        }
-        if place_clicked {
-            self.toggle_place();
-        }
-        let busy = self.tools.busy();
-        let store = &self.source.store;
-        // Whether the staged command is still what the form produces; preparing it builds the
-        // whole argument list, so it is asked once per frame unless a button acted.
-        let mut fresh = false;
-        let (mut commit, mut cancelled) = (false, false);
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(!busy, egui::Button::new("Preview"))
-                .clicked()
-            {
-                match self.tools.preview(store) {
-                    Ok(_) => self.tool_note = None,
-                    Err(e) => {
-                        self.tools.cancel();
-                        self.tool_note = Some(Err(e.to_string()));
-                    }
-                }
-            }
-            fresh = self.tools.can_commit(store);
-            commit = ui.add_enabled(fresh, egui::Button::new("Commit")).clicked();
-            if ui
-                .add_enabled(
-                    self.tools.staged().is_some() && !busy,
-                    egui::Button::new("Cancel"),
-                )
-                .clicked()
-            {
-                self.tools.cancel();
-                self.tool_note = Some(Ok("Cancelled; nothing was published.".into()));
-                cancelled = true;
-            }
-        });
-        if commit {
-            self.start_commit();
-        }
-        if let Some(staged) = self.tools.staged() {
-            let current = if commit || cancelled {
-                self.tools.can_commit(&self.source.store)
-            } else {
-                fresh
-            };
-            ui.label(format!(
-                "Preview: Commit runs `beamcraft` with exactly these {} arguments, one per line (not a shell command line). The engine builds the shape then; there is no geometry preview.",
-                staged.args.len()
-            ));
-            ui.add(
-                egui::Label::new(egui::RichText::new(staged.argument_list()).monospace()).wrap(),
-            );
-            if !current {
-                ui.colored_label(RED, "The parameters changed: preview again.");
-            }
-        }
-        if busy {
-            ui.label("Running…");
-        }
-        if self.reload_job.is_some() {
-            ui.label("Refreshing the model and definitions…");
-        }
-        if let Some(problem) = &self.refresh_error {
-            ui.colored_label(RED, problem);
-        }
-        match &self.tool_note {
-            Some(Ok(message)) => {
-                ui.label(message);
-            }
-            Some(Err(message)) => {
-                ui.colored_label(RED, message);
-            }
-            None => {}
-        }
     }
 
     fn info(&mut self, ui: &mut egui::Ui) {
@@ -2533,9 +2314,21 @@ impl eframe::App for App {
         self.selection_shortcuts(ui.ctx());
         self.render_mode_shortcuts(ui.ctx());
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
+        if !wants_text && self.plate_mode && !self.other_command_running() {
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                self.finish_plate();
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Backspace)) {
+                self.plate_draft.back();
+                self.plate_hover = None;
+            }
+        }
         if self.menu_open && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.menu_open = false;
-        } else if !wants_text && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        } else if !wants_text
+            && !self.other_command_running()
+            && ui.input(|i| i.key_pressed(egui::Key::Escape))
+        {
             self.grid_line.click = None;
             self.plane_pick = false;
             // Esc closes the publish dialog first; it clears the selection only when none is open.
@@ -2735,34 +2528,72 @@ impl eframe::App for App {
                             let painter = ui.painter_at(response.rect);
                             draw_selection(&painter, response.rect, &view, l, &selected.id);
                         }
-                        // A click (not a drag) picks along the ray through the pixel.
-                        if response.clicked_by(egui::PointerButton::Primary)
-                            && let Some(pos) = response.interact_pointer_pos()
-                            && let Some(ndc) = ndc_of(
-                                [pos.x, pos.y],
-                                [response.rect.min.x, response.rect.min.y],
-                                [response.rect.width(), response.rect.height()],
-                            )
-                            && let Some(ray) = ray_through(&view, ndc, l.summary.origin_mm)
+                    }
+                    let finished_creation = self.finish_creation_gesture(&response, &view);
+                    // A closure gesture consumes the click before it can append another point.
+                    if !finished_creation
+                        && response.clicked_by(egui::PointerButton::Primary)
+                        && let Some(pos) = response.interact_pointer_pos()
+                        && let Some(ndc) = ndc_of(
+                            [pos.x, pos.y],
+                            [response.rect.min.x, response.rect.min.y],
+                            [response.rect.width(), response.rect.height()],
+                        )
+                        && let Some(ray) = ray_through(
+                            &view,
+                            ndc,
+                            self.loaded
+                                .as_ref()
+                                .map_or([0.0; 3], |l| l.summary.origin_mm),
+                        )
+                    {
+                        // The grids switch (V11) takes grids out of picking; the display
+                        // switch stays `grids_visible`.
+                        if !self.beam_mode
+                            && !self.plate_mode
+                            && self.grid_line.click.is_none()
+                            && self.grids_visible
+                            && self
+                                .selection
+                                .is_on(beamcraft_engine::query::pick::SelectionClass::Grids)
                         {
-                            // The grids switch (V11) takes grids out of picking; the display
-                            // switch stays `grids_visible`.
-                            if !self.beam_mode
-                                && self.grid_line.click.is_none()
-                                && self.grids_visible
-                                && self
-                                    .selection
-                                    .is_on(beamcraft_engine::query::pick::SelectionClass::Grids)
-                            {
-                                picked_grid = self
-                                    .grid_scene
-                                    .hit_test(response.rect, &view, l.summary.origin_mm, pos)
-                                    .map(|grid| grid.id.clone());
-                            }
-                            if picked_grid.is_none() {
-                                picked = Some(ray);
-                            }
+                            picked_grid = self
+                                .grid_scene
+                                .hit_test(
+                                    response.rect,
+                                    &view,
+                                    self.loaded
+                                        .as_ref()
+                                        .map_or([0.0; 3], |l| l.summary.origin_mm),
+                                    pos,
+                                )
+                                .map(|grid| grid.id.clone());
                         }
+                        if picked_grid.is_none() {
+                            picked = Some(ray);
+                        }
+                    }
+                    if self.plate_mode {
+                        self.plate_hover = response
+                            .hover_pos()
+                            .and_then(|pos| {
+                                ndc_of(
+                                    [pos.x, pos.y],
+                                    [response.rect.min.x, response.rect.min.y],
+                                    [response.rect.width(), response.rect.height()],
+                                )
+                            })
+                            .and_then(|ndc| {
+                                ray_through(
+                                    &view,
+                                    ndc,
+                                    self.loaded
+                                        .as_ref()
+                                        .map_or([0.0; 3], |l| l.summary.origin_mm),
+                                )
+                            })
+                            .and_then(|ray| self.creation_point(ray, true).ok());
+                        self.paint_plate_draft(ui, response.rect, &view);
                     }
                     // The ghost preview follows the pointer on the plane through the armed
                     // start, parallel to the view; the committed endpoint comes from the click.
@@ -2775,6 +2606,7 @@ impl eframe::App for App {
                         )
                     {
                         self.update_ghost(&view, ndc);
+                        self.paint_member_draft(ui, response.rect, &view);
                     }
                 }
                 Err(e) => self.error = Some(e.to_string()),
@@ -2804,6 +2636,8 @@ impl eframe::App for App {
                     }
                 } else if self.grid_line.click.is_some() {
                     self.place_grid_line(ray);
+                } else if self.plate_mode {
+                    self.place_plate(ray);
                 } else if self.beam_mode {
                     self.place_beam(ray);
                 } else if !self.other_command_running() {
@@ -2819,7 +2653,7 @@ impl eframe::App for App {
 mod tests {
     use super::{
         App, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
-        target_size, volume_note,
+        target_size,
     };
 
     #[test]
@@ -3250,6 +3084,394 @@ mod tests {
         tx.send(reloaded).unwrap();
         app.reload_job = Some(rx);
         app.poll_reload();
+    }
+
+    #[test]
+    fn interactive_plate_and_member_creation_use_real_commands_without_preview_steps() {
+        let mut app =
+            headless().expect("a software/native adapter is required for modelling acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let root = std::env::temp_dir().join(format!(
+            "bc-interactive-{}-{}",
+            std::process::id(),
+            beamcraft_model::digest::Sha256::digest(
+                format!("{:?}", std::time::SystemTime::now()).as_bytes()
+            )
+            .unwrap()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        app.source.store = root.join("model");
+        std::fs::create_dir_all(&app.source.store).unwrap();
+        app.source.cli = cli.clone();
+        app.loaded = None; // The first plate must work in an entirely empty model.
+        let ray = |x, y| crate::edit::Ray {
+            origin: [x, y, 5000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        let run = |store: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        let wait = |app: &mut App| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while app.job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_commit();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.job.is_none(), "creation timed out");
+            assert!(app.last_commit_ok, "{:?}", app.tool_note);
+        };
+        app.set_bench(super::workbench::Bench::Plate);
+        app.place_plate(ray(0.0, 0.0));
+        app.place_plate(ray(4000.0, 0.0));
+        assert!(app.job.is_none());
+        app.set_bench(super::workbench::Bench::Select); // Cancelling publishes nothing.
+        assert!(!app.source.store.join("revisions").exists());
+        assert!(app.plate_draft.points().is_empty());
+        app.set_bench(super::workbench::Bench::Plate);
+        for [x, y] in [[0.0, 0.0], [4000.0, 0.0], [4000.0, 3000.0], [0.0, 3000.0]] {
+            app.place_plate(ray(x, y));
+        }
+        assert!(app.job.is_none());
+        app.finish_plate();
+        assert!(app.job.is_some());
+        wait(&mut app);
+        let inspected = run(&app.source.store, &["inspect-elements"]);
+        assert_eq!(inspected.get("plates").unwrap().array().unwrap().len(), 1);
+        assert!(app.plate_draft.points().is_empty());
+        let profile = run(
+            &app.source.store,
+            &["define-profile", "--width", "100", "--height", "200"],
+        );
+        app.tools.member.profile = Some(
+            profile
+                .get("definition")
+                .unwrap()
+                .get("digest")
+                .unwrap()
+                .string()
+                .unwrap()
+                .into(),
+        );
+        app.set_bench(super::workbench::Bench::Beam);
+        app.place_beam(ray(10000.0, 10000.0));
+        assert!(app.job.is_none());
+        app.place_beam(ray(15000.0, 10000.0));
+        assert!(
+            app.job.is_some(),
+            "second point must create without Preview/Commit"
+        );
+        wait(&mut app);
+        let inspected = run(&app.source.store, &["inspect-elements"]);
+        assert_eq!(inspected.get("members").unwrap().array().unwrap().len(), 1);
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 900.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                app.tools_panel(ui);
+            },
+        );
+        let labels = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(t) = &shape.shape {
+                    Some(t.galley.text().to_owned())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert!(!labels.iter().any(|text| text.contains("create-member")
+            || text.contains("--store")
+            || text == "Commit"
+            || text == "Preview"));
+        output.drop_without_applying_deltas();
+        let member_id = inspected.get("members").unwrap().array().unwrap()[0]
+            .get("element_id")
+            .unwrap()
+            .string()
+            .unwrap();
+        let mut details = crate::command::element_details(
+            &cli,
+            &app.source.store,
+            member_id,
+            &crate::stats::Stats::default(),
+        )
+        .unwrap();
+        details.quantities.stored_volume_freshness = Some("stale".into());
+        let stamp = details.revision.clone();
+        app.props.load(member_id, Ok(details));
+        app.props.observe_head(Some(stamp));
+        app.set_bench(super::workbench::Bench::Select);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900.0, 1100.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                app.props_panel(ui);
+                app.property_actions(ui);
+            },
+        );
+        let labels = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(t) = &shape.shape {
+                    Some(t.galley.text().to_owned())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        for expected in ["Apply", "Reset", "Level", "Not available"] {
+            assert!(
+                labels.iter().any(|label| label == expected),
+                "missing {expected}: {labels:?}"
+            );
+        }
+        assert!(
+            labels
+                .iter()
+                .any(|text| text.contains("stored value out of date"))
+        );
+        assert!(!labels.iter().any(|text| text.contains("Command preview")
+            || text.contains("Preview command")
+            || text.contains("Revision and quantities")
+            || text.contains(member_id)
+            || text.contains("--")));
+        output.drop_without_applying_deltas();
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn review_triangle_and_rectangle_finish_with_right_or_wheel_click_and_drags_do_not_finish() {
+        use crate::tools::{Created, ToolError};
+        let mut app = headless().expect("software/native graphics required for input acceptance");
+        let exe = std::env::current_exe().unwrap();
+        let cli = exe
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(cli.is_file());
+        let root = std::env::temp_dir().join(format!(
+            "bc-finish-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        app.source.cli = cli.clone();
+        app.source.store = root.clone();
+        app.loaded = None;
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(20.0, 20.0), egui::vec2(600.0, 600.0));
+        let view = crate::camera::Camera::new([0.0; 3], 10_000.0, 1.0)
+            .unwrap()
+            .view(1.0)
+            .unwrap();
+        for kind in beamcraft_engine::query::pick::SnapKind::ALL {
+            app.selection.set_snap(kind, false);
+        }
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(900.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+                    app.finish_creation_gesture(&response, &view);
+                },
+            );
+            output.drop_without_applying_deltas();
+        };
+        let event = |button, pos, pressed| egui::Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut count = 0;
+        for (vertices, button, near_first) in [
+            (3, egui::PointerButton::Secondary, false),
+            (3, egui::PointerButton::Middle, false),
+            (4, egui::PointerButton::Secondary, false),
+            (4, egui::PointerButton::Middle, false),
+            (3, egui::PointerButton::Primary, true),
+        ] {
+            app.set_bench(super::workbench::Bench::Plate);
+            let points = if vertices == 3 {
+                vec![[0.0, 0.0, 0.0], [4000.0, 0.0, 0.0], [0.0, 3000.0, 0.0]]
+            } else {
+                vec![
+                    [0.0, 0.0, 0.0],
+                    [4000.0, 0.0, 0.0],
+                    [4000.0, 3000.0, 0.0],
+                    [0.0, 3000.0, 0.0],
+                ]
+            };
+            for p in points {
+                app.plate_draft.push(p).unwrap();
+            }
+            let pos = if near_first {
+                rect.center() + egui::vec2(8.0, 0.0)
+            } else {
+                rect.center() + egui::vec2(100.0, 100.0)
+            };
+            frame(&mut app, vec![egui::Event::PointerMoved(pos)]);
+            frame(&mut app, vec![event(button, pos, true)]);
+            frame(&mut app, vec![event(button, pos, false)]);
+            assert!(
+                app.job.is_some(),
+                "{vertices} vertices, {button:?} must save: {:?}",
+                app.tool_note
+            );
+            assert_eq!(app.plate_draft.points().len(), vertices);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while app.job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_commit();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(
+                app.last_commit_ok && app.job.is_none(),
+                "{:?}",
+                app.tool_note
+            );
+            count += 1;
+        }
+        let output = std::process::Command::new(&cli)
+            .args(["inspect-elements", "--store", root.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let inspected =
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        assert_eq!(
+            inspected.get("plates").unwrap().array().unwrap().len(),
+            count
+        );
+        app.set_bench(super::workbench::Bench::Plate);
+        for p in [[0.0, 0.0, 0.0], [4000.0, 0.0, 0.0], [0.0, 3000.0, 0.0]] {
+            app.plate_draft.push(p).unwrap();
+        }
+        let a = rect.center();
+        let b = a + egui::vec2(80.0, 20.0);
+        frame(&mut app, vec![egui::Event::PointerMoved(a)]);
+        frame(&mut app, vec![event(egui::PointerButton::Middle, a, true)]);
+        frame(&mut app, vec![egui::Event::PointerMoved(b)]);
+        frame(&mut app, vec![event(egui::PointerButton::Middle, b, false)]);
+        assert!(app.job.is_none(), "panning must not finish the contour");
+        assert_eq!(app.plate_draft.points().len(), 3);
+        // Tool changes may not discard the draft/evidence while saving.
+        app.tools.plate.contour = app.plate_draft.contour(None).unwrap();
+        app.tools.preview(&app.source.store).unwrap();
+        let (_tx, rx) = std::sync::mpsc::channel::<Result<Created, ToolError>>();
+        app.job = Some(rx);
+        app.set_bench(super::workbench::Bench::Select);
+        assert_eq!(app.bench, super::workbench::Bench::Plate);
+        assert!(app.tools.staged().is_some());
+        assert_eq!(app.plate_draft.points().len(), 3);
+        app.job = None;
+        // A failed point resolution must discard both visible preview and its cache.
+        app.tools.plane =
+            Some(beamcraft_engine::work_plane::WorkPlane::parallel("xy", 1e9).unwrap());
+        app.beam.click([0.0; 3]);
+        app.beam_hover = Some([1.0; 3]);
+        app.ghost_end = Some([1; 3]);
+        app.update_ghost(&view, [0.0; 2]);
+        assert!(app.beam_hover.is_none() && app.ghost_end.is_none());
+        for button in [egui::PointerButton::Secondary, egui::PointerButton::Middle] {
+            app.set_bench(super::workbench::Bench::Beam);
+            app.beam.click([0.0; 3]);
+            frame(&mut app, vec![egui::Event::PointerMoved(a)]);
+            frame(&mut app, vec![event(button, a, true)]);
+            frame(&mut app, vec![event(button, a, false)]);
+            assert_eq!(app.bench, super::workbench::Bench::Select);
+            assert!(app.beam.start().is_none() && app.job.is_none());
+        }
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn review_duplicate_choices_have_distinct_labels_without_changing_unique_labels() {
+        let levels: Vec<(String, String, f64)> = vec![
+            (
+                "01990000-0000-7000-8000-000000000001".into(),
+                "Floor".into(),
+                3000.0,
+            ),
+            (
+                "01990000-0000-7000-8000-000000000002".into(),
+                "Floor".into(),
+                3000.0,
+            ),
+        ];
+        assert_ne!(
+            super::level_choice_label(&levels[0].0, &levels),
+            super::level_choice_label(&levels[1].0, &levels)
+        );
+        let choices = vec![
+            crate::tools::Choice {
+                digest: "a000000000000001".into(),
+                label: "Steel (0001)".into(),
+                rect_mm: None,
+            },
+            crate::tools::Choice {
+                digest: "b000000000000001".into(),
+                label: "Steel (0002)".into(),
+                rect_mm: None,
+            },
+        ];
+        assert_ne!(
+            super::definition_choice_label(&choices[0], &choices),
+            super::definition_choice_label(&choices[1], &choices)
+        );
+        assert_eq!(
+            super::definition_choice_label(&choices[0], &choices[..1]),
+            "Steel"
+        );
     }
 
     #[test]
@@ -3890,14 +4112,6 @@ mod tests {
         ));
         assert!(needs_refit(Some(framing), framing.0, 600.0, framing.2));
         assert!(needs_refit(Some(framing), framing.0, framing.1, 1.0));
-    }
-
-    #[test]
-    fn a_small_volume_is_not_zero() {
-        assert_eq!(volume_note(400_000.0), ", volume 400000 mm3");
-        assert_eq!(volume_note(999_999.0), ", volume 999999 mm3");
-        assert_eq!(volume_note(1e6), ", volume 0.001 m3");
-        assert_eq!(volume_note(1.025e9), ", volume 1.025 m3");
     }
 
     /// A development build finds the application icon in the source tree; the coded fallback is

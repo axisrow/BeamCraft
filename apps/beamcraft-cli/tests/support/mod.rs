@@ -81,3 +81,8 @@ pub(crate) fn text(json: &Json, key: &str) -> String {
 pub(crate) fn at<'a>(json: &'a Json, path: &[&str]) -> &'a Json {
     path.iter().fold(json, |j, k| j.get(k).unwrap())
 }
+
+/// The array at `key`, failing the test when the key is absent or not an array.
+pub(crate) fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
+    at(json, &[key]).array().unwrap()
+}

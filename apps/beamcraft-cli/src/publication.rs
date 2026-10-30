@@ -5,12 +5,16 @@
 
 use std::collections::BTreeMap;
 
-use crate::plate::{DERIVED_LAYER, PlateError, PlateVerifier, ROOT_LAYER, host_uuid};
+use crate::plate::{
+    DERIVED_LAYER, PlateError, PlateVerifier, ROOT_LAYER, check_footprint, host_uuid, integrity,
+};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{
-    CommitHook, Committed, ExpectedBase, LayerEntry, LayerRole, RevisionDraft, RevisionStore, Uuid7,
+    CommitHook, CommitOutcome, Committed, ExpectedBase, LayerEntry, LayerRole, RevisionDraft,
+    RevisionStore, Uuid7,
 };
-use beamcraft_layer_engine::authored::{Prepared, SchemaIdentity};
+use beamcraft_layer_engine::authored::{Author, Change, Prepare, Prepared, SchemaIdentity};
+use beamcraft_layer_engine::{Control, Opened};
 use beamcraft_model::{digest::ContentDigest, error::ErrorCode, id::RevisionId};
 
 fn role_of(name: &str) -> LayerRole {
@@ -108,6 +112,72 @@ pub(crate) fn publish_revision(
         Some(&PlateVerifier),
         hook,
     )?)
+}
+
+/// Identity and ledger context of one prepare→publish tail, shared by the copy, edit and
+/// delete adapters. The command-specific changes, footprint and replay decision stay with
+/// the caller: that is where the adapters genuinely differ.
+pub(crate) struct PublicationTail<'a> {
+    pub(crate) store: &'a RevisionStore,
+    pub(crate) control: &'a Control,
+    pub(crate) schema: SchemaIdentity,
+    pub(crate) fingerprint: ContentDigest,
+    pub(crate) project: &'a str,
+    pub(crate) workspace: &'a str,
+    pub(crate) revision_id: &'a RevisionId,
+    pub(crate) op: Uuid7,
+    pub(crate) op_id: String,
+    pub(crate) actor: String,
+    pub(crate) base_generation: u64,
+    pub(crate) expected: &'a ExpectedBase,
+}
+
+/// The genuinely common tail of the copy/edit/delete adapters: prepare the authored candidate
+/// with U02, check the layer engine's write set against the declared footprint, report the
+/// changed layers, and commit through U06/U07 with the strict verifier. Fails closed when the
+/// host reports an unseen operation as replayed.
+pub(crate) fn prepare_and_publish(
+    author: &mut Author,
+    opened: &Opened,
+    changes: Vec<Change>,
+    footprint: &Footprint,
+    before: &BTreeMap<String, ContentDigest>,
+    tail: PublicationTail<'_>,
+    hook: &mut dyn CommitHook,
+) -> Result<(Committed, Vec<String>), PlateError> {
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: tail.op_id,
+            actor: tail.actor,
+            schema: tail.schema,
+            resources: Vec::new(),
+            changes,
+        },
+        tail.control,
+    )?;
+    check_footprint(&prepared, footprint)?;
+    let changed_layers = changed_layers(&prepared, before);
+    let committed = publish_revision(
+        tail.store,
+        &PublishRequest {
+            footprint,
+            fingerprint: tail.fingerprint,
+            prepared: &prepared,
+            schema: tail.schema,
+            project: tail.project,
+            workspace: tail.workspace,
+            revision_id: tail.revision_id,
+            op: tail.op,
+            base_generation: tail.base_generation,
+            expected: tail.expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("an unseen operation was reported as replayed"));
+    }
+    Ok((committed, changed_layers))
 }
 
 /// Commits a complete layer set through U06/U07 with the model content verifier (U03

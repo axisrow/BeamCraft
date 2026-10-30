@@ -76,7 +76,9 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   The compact welcome window retains equal 28-point minimize/close buttons without maximize.
 - The property inspector pins Apply and Reset at the bottom. Apply validates and submits through
   the existing CLI property command; Reset restores the last inspected values without writing.
-  Reload re-reads current properties. The optional Command preview section shows exact arguments.
+  Reload re-reads current properties. Levels are selected by name and elevation; assignment changes
+  only the relationship, without moving the part. Quantities show unavailable/stale states explicitly.
+  Command arguments, revision hashes and Preview/Commit steps are absent from normal object workflows.
 - Theme is chosen on the welcome screen, not repeated in the library or model title bars:
   **System** (default), **Light**, **Dark**. System follows live OS theme changes. The preference
   persists in the user's settings through `beamcraft set-settings --theme system|light|dark`;
@@ -100,13 +102,17 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   engine snap kinds are wired to these controls; Snap toggles snapping globally.
   Unsupported filters/constraints remain disabled with explanatory tooltips.
   Search stays available without displaying its keyboard shortcut.
-- V05.1 Create panel (experimental, now the inspector of Plate, Beam and Column): a plate (width, length, thickness, optional name and material)
-  or a straight beam/column (start, end, profile and material chosen from the store's definitions,
-  optional name). Preview stages the exact `create-plate` / `create-member` argument list (one per line, not a shell
-  command line; no geometry preview), Commit runs it in a separate process and reloads the accepted revision,
-  Cancel drops it and publishes nothing; a CLI refusal is shown with its code and message. The
-  parameter mapping and reply parsing are `tools.rs` (pure, unit-tested); the process is
-  `command.rs`. See [the design note](../../docs/design/v05-1-ui-create-tools.md).
+- Interactive creation: choose Plate, Beam or Column, set thickness/profile/material/class,
+  then pick points in the viewport. A member's second point creates it; a plate takes ordered
+  contour vertices and finishes with Enter, right-click, wheel-click, the first vertex, or Finish plate.
+  Backspace removes a draft vertex; Reverse direction explicitly changes contour winding.
+  Esc, Cancel or a tool change discards unfinished points without writing. Invalid contours are
+  refused by the engine and remain editable. Numeric coordinates remain available for precision.
+  Plate points lie on the active work plane (world XY by default); engine snaps use the displayed
+  snapshot, exclude hidden grids, and preserve the work plane. The contour outline and member axis
+  follow the same resolved point as the final click. Supported member body previews use the engine.
+  Move/Copy/Delete also use direct modelling actions, while their existing verified command
+  adapters remain internal. See [the design note](../../docs/design/v06-properties-interactive-creation.md).
 - `--metrics` renders offscreen without a window and prints one JSON object (adapter, scene size,
   upload, per-frame median and p95). `--synthetic` measures synthetic kernel plates for scale.
 - `--perf-run PLAN` opens the window, runs a scripted measurement in it and prints one JSON report:

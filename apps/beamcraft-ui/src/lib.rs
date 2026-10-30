@@ -29,6 +29,7 @@ pub mod app;
 pub mod appearance;
 pub mod camera;
 pub mod command;
+pub mod creation;
 pub mod dialog;
 pub mod edit;
 pub mod grid;

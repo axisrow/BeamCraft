@@ -11,6 +11,7 @@
 //! foreign prim is an observable, scriptable refusal (`FOREIGN_READ_ONLY`, exit 2) and not only a
 //! missing feature.
 
+use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{
     Run, footprint_json, id_error, invalid, num, revision_json, translation, triple,
 };
@@ -24,13 +25,13 @@ use beamcraft_cli::reference::{
 use beamcraft_engine::measure::{MeshReading, ReferenceMeasurement};
 use beamcraft_host::{
     ids::IdSource,
-    revision::{NoFault, RevisionStore, Uuid7},
+    revision::{NoFault, RevisionStore},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
 use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::reference::{
     CorrectReferenceUnits, ForeignTarget, MoveReference, UnitsInterpretation, UpAxis, WriteForeign,
     check_source_path,
@@ -62,14 +63,6 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 /// real scene composes tens of thousands of prims; `foreign_prim_count` always carries the total.
 const MAX_LISTED_FOREIGN_PRIMS: usize = 512;
 
-const IDS: [&str; 5] = [
-    "--op-id",
-    "--revision-id",
-    "--actor-id",
-    "--project-id",
-    "--workspace-id",
-];
-
 fn options_of(command: &str) -> Option<Vec<&'static str>> {
     let own: &[&str] = match command {
         "attach-reference" => &[
@@ -92,7 +85,7 @@ fn options_of(command: &str) -> Option<Vec<&'static str>> {
         command,
         "attach-reference" | "move-reference" | "correct-reference-units"
     ) {
-        all.extend_from_slice(&IDS);
+        all.extend_from_slice(&CONTEXT_OPTIONS);
     }
     Some(all)
 }
@@ -157,28 +150,13 @@ fn ids(options: &BTreeMap<&str, &str>) -> Run<Ids> {
             message: "no identity could be generated",
         })
     };
-    let given = |key: &str| options.get(key).copied();
+    let common = command_context::parse(options, &mut fresh)?;
     Ok(Ids {
-        op_id: match given("--op-id") {
-            Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => OpId::from_uuid(fresh()?),
-        },
-        revision_id: match given("--revision-id") {
-            Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => RevisionId::from_uuid(fresh()?),
-        },
-        actor: match given("--actor-id") {
-            Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-            None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
-        },
-        project: match given("--project-id") {
-            Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => ProjectId::from_uuid(fresh()?),
-        },
-        workspace: match given("--workspace-id") {
-            Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => WorkspaceId::from_uuid(fresh()?),
-        },
+        op_id: common.op_id,
+        revision_id: common.revision_id,
+        actor: common.actor,
+        project: common.project,
+        workspace: common.workspace,
     })
 }
 

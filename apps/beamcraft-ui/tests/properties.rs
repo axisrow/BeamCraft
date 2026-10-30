@@ -593,3 +593,74 @@ fn publish_is_workspace_publish_and_its_refusals_are_shown() {
     assert!(!shown.contains("BASE_REVISION_MISMATCH"));
     assert_eq!(head(&cli, &published), before);
 }
+
+#[test]
+fn named_level_assignment_changes_only_the_relationship_and_can_be_reset_or_removed() {
+    let cli = cli().expect("build beamcraft-cli before the property acceptance suite");
+    let stores = Stores::new();
+    let store = stores.ui();
+    fixture(&cli, &store);
+    let level = "01990000-0000-7000-8000-000000007546";
+    ok(
+        &cli,
+        &[
+            "create-level",
+            "--store",
+            s(&store),
+            "--new-id",
+            level,
+            "--name",
+            "First floor",
+            "--elevation",
+            "3500",
+        ],
+    );
+    let before = ok(&cli, &["inspect-elements", "--store", s(&store)]);
+    let details = command::element_details(&cli, &store, PLATE, &Stats::default()).unwrap();
+    assert_eq!(
+        details.levels,
+        vec![(level.into(), "First floor".into(), 3500.0)]
+    );
+    let mut draft = Properties::default();
+    draft.load(PLATE, Ok(details.clone()));
+    draft.observe_head(Some(details.revision.clone()));
+    let pin = head(&cli, &store);
+    draft.form.level = Some(level.into());
+    draft.load(PLATE, Ok(details)); // Reset reloads values, never executes a command.
+    assert_eq!(draft.form.level, None);
+    assert_eq!(head(&cli, &store), pin);
+    let (assigned, args) = edit_properties(&cli, &store, PLATE, |props| {
+        props.form.level = Some(level.into())
+    });
+    assigned.unwrap();
+    assert!(args.windows(2).any(|pair| pair == ["--level", level]));
+    let after = ok(&cli, &["inspect-elements", "--store", s(&store)]);
+    let plate = |reply: &Json| {
+        at(reply, &["plates"])
+            .array()
+            .unwrap()
+            .iter()
+            .find(|p| text(p, &["element_id"]) == PLATE)
+            .unwrap()
+            .clone()
+    };
+    let old = plate(&before);
+    let new = plate(&after);
+    assert_eq!(text(&new, &["level"]), level);
+    for key in ["mesh_digest", "placement", "stored_quantities"] {
+        assert_eq!(
+            old.get(key).unwrap(),
+            new.get(key).unwrap(),
+            "assigning a level must preserve {key}"
+        );
+    }
+    edit_properties(&cli, &store, PLATE, |props| props.form.level = None)
+        .0
+        .unwrap();
+    assert_eq!(
+        command::element_details(&cli, &store, PLATE, &Stats::default())
+            .unwrap()
+            .level,
+        None
+    );
+}

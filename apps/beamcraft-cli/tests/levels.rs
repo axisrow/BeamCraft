@@ -15,7 +15,7 @@
 
 use crate::support;
 
-use support::{at, text};
+use support::{at, list, text};
 
 use beamcraft_host::{
     ids::IdSource,
@@ -174,9 +174,6 @@ impl Fixture {
     }
 }
 
-fn list<'a>(json: &'a Json, key: &str) -> &'a [Json] {
-    at(json, &[key]).array().unwrap()
-}
 fn strings(json: &Json, key: &str) -> Vec<String> {
     list(json, key)
         .iter()

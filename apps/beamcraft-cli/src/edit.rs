@@ -20,21 +20,21 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record,
-    mesh_change, open_base, plate_record, prior_op_with, replay_summary, summarize,
+    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
+    evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
+    plate_record, prior_op_with, replay_summary, summarize,
 };
-use crate::publication::{PublishRequest, changed_layers, publish_revision};
+use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::member::{evaluate_member, member_quantities};
 use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
-use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
+use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, MaterialOpinion, Opinion, Placement as LayerPlacement, Prepare,
+    Author, Change, EditTargets, MaterialOpinion, Opinion, Placement as LayerPlacement,
     schema_identity,
 };
 use beamcraft_model::command::{CommandError, UpdateElement};
@@ -446,38 +446,28 @@ pub fn update_element(
             }
         });
     }
-    let prepared = author.prepare(
-        Prepare {
-            context: opened.context.clone(),
-            op_id: request.op_id.to_string(),
-            actor: request.actor.to_string(),
+    let (committed, changed_layers) = prepare_and_publish(
+        &mut author,
+        &opened,
+        changes,
+        &footprint,
+        &before,
+        PublicationTail {
+            store,
+            control: &control,
             schema,
-            resources: Vec::new(),
-            changes,
-        },
-        &control,
-    )?;
-    check_footprint(&prepared, &footprint)?;
-    let changed_layers = changed_layers(&prepared, &before);
-    let committed = publish_revision(
-        store,
-        &PublishRequest {
-            footprint: &footprint,
             fingerprint,
-            prepared: &prepared,
-            schema,
             project: &project,
             workspace: &workspace,
             revision_id: &request.revision_id,
             op: op_host,
+            op_id: request.op_id.to_string(),
+            actor: request.actor.to_string(),
             base_generation,
             expected: &expected,
         },
         hook,
     )?;
-    if committed.outcome == CommitOutcome::Replayed {
-        return Err(integrity("an unseen operation was reported as replayed"));
-    }
     Ok(Updated {
         replayed: false,
         element: next,

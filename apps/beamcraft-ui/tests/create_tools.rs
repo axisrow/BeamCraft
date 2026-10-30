@@ -190,6 +190,7 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
 
     let mut tools = Tools::default();
     tools.plate = PlateForm {
+        contour: String::new(),
         class: String::new(),
         width: "1000".into(),
         length: "500".into(),
@@ -404,6 +405,7 @@ fn an_engine_refusal_reaches_the_panel_and_publishes_nothing() {
     let (ui, hand) = (stores.ui(), stores.hand());
     let mut tools = Tools::default();
     tools.plate = PlateForm {
+        contour: String::new(),
         width: "-5".into(),
         length: "500".into(),
         thickness: "10".into(),
@@ -453,6 +455,7 @@ fn a_missing_cli_is_an_error_not_a_hang() {
     let stores = Stores::new();
     let mut tools = Tools::default();
     tools.plate = PlateForm {
+        contour: String::new(),
         width: "1".into(),
         length: "1".into(),
         thickness: "1".into(),
@@ -634,4 +637,82 @@ fn a_work_plane_plate_from_the_ui_matches_explicit_cli_plane_input() {
         &token,
         "face plane selection cannot change the model pin"
     );
+}
+
+#[test]
+fn picked_concave_plate_in_a_work_plane_matches_the_cli_and_refusal_keeps_the_draft() {
+    use beamcraft_engine::work_plane::WorkPlane;
+    use beamcraft_ui::creation::ContourDraft;
+    let cli = cli().expect("build beamcraft-cli before interactive creation acceptance");
+    let stores = Stores::new();
+    let plane = WorkPlane::new([1000.0, 2000.0, 3000.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]).unwrap();
+    let mut draft = ContourDraft::default();
+    for [x, y] in [
+        [0.0, 0.0],
+        [4000.0, 0.0],
+        [4000.0, 1000.0],
+        [1000.0, 1000.0],
+        [1000.0, 4000.0],
+        [0.0, 4000.0],
+    ] {
+        draft.push(plane.to_world([x, y, 0.0]).unwrap()).unwrap();
+    }
+    let points = draft.points().to_vec();
+    let mut tools = Tools::default();
+    tools.plane = Some(plane);
+    tools.plate.thickness = "10".into();
+    tools.plate.contour = draft.contour(Some(plane)).unwrap();
+    tools.preview(&stores.ui()).unwrap();
+    tools.cancel();
+    assert!(!stores.ui().join("revisions").exists());
+    assert_eq!(draft.points(), points);
+    tools.preview(&stores.ui()).unwrap();
+    let prepared = tools.begin_commit(&stores.ui()).unwrap();
+    let created = command::commit(&cli, &prepared, &Stats::default()).unwrap();
+    tools.finish();
+    assert_eq!(created.volume_mm3, Some(70_000_000.0));
+    let direct = ok(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            stores.hand().to_str().unwrap(),
+            "--contour",
+            "0,0;4000,0;4000,1000;1000,1000;1000,4000;0,4000",
+            "--thickness",
+            "10",
+            "--plane",
+            &plane.expression(),
+        ],
+    );
+    assert_eq!(
+        created.mesh_digest,
+        direct
+            .get("plate")
+            .unwrap()
+            .get("mesh_digest")
+            .unwrap()
+            .string()
+            .unwrap()
+    );
+    let before = ok(
+        &cli,
+        &["open-revision", "--store", stores.ui().to_str().unwrap()],
+    );
+    // Crossing vertices are engine refusals; no repair, publication or draft loss.
+    let mut crossed = ContourDraft::default();
+    for [x, y] in [[0.0, 0.0], [4000.0, 4000.0], [0.0, 4000.0], [4000.0, 0.0]] {
+        crossed.push(plane.to_world([x, y, 0.0]).unwrap()).unwrap();
+    }
+    tools.plate.contour = crossed.contour(Some(plane)).unwrap();
+    let args = tools.preview(&stores.ui()).unwrap().clone();
+    assert!(command::commit(&cli, &args, &Stats::default()).is_err());
+    assert_eq!(
+        before,
+        ok(
+            &cli,
+            &["open-revision", "--store", stores.ui().to_str().unwrap()]
+        )
+    );
+    assert_eq!(crossed.points().len(), 4);
 }
