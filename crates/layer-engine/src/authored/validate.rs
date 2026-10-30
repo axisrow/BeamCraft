@@ -21,6 +21,24 @@ pub(super) fn schema(pin: SchemaIdentity) -> Result<(), Diagnostic> {
 pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic> {
     let mut bytes = 0usize;
     for change in &input.changes {
+        // A schema change names no element: its bounded definition or name is the whole payload.
+        match change {
+            Change::AttrDefine { def } => {
+                def.validate().map_err(|_| invalid())?;
+                let size = def.name.len()
+                    + def.unit.as_ref().map_or(0, |s| s.len())
+                    + def.set.as_ref().map_or(0, |s| s.len())
+                    + def.options.iter().map(|o| o.len()).sum::<usize>();
+                preflight::charge(&mut bytes, size, 1024 * 1024)?;
+                continue;
+            }
+            Change::AttrUndefine { name } => {
+                schema_path_name(name)?;
+                preflight::charge(&mut bytes, name.len(), 1024 * 1024)?;
+                continue;
+            }
+            _ => {}
+        }
         if !uuid7(change.key().0) {
             return Err(fail(ErrorCode::InvalidId, "invalid full element identity")
                 .with_rule("DV-BASE-001"));
@@ -53,6 +71,16 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
             }
             Change::Label { name, .. } if name.len() > 256 => {
                 return Err(limit().with_rule("DV-BASE-003"));
+            }
+            Change::AttrSet { name, value, .. } => {
+                // The value's own bounds are model admission; charge its worst stored size.
+                let size = name.len()
+                    + 8
+                    + match value {
+                        Some(v) => v.as_text().map_or(8, str::len),
+                        None => 0,
+                    };
+                preflight::charge(&mut bytes, size, 1024 * 1024)?;
             }
             Change::Mark { mark: m, .. } => mark(m)?,
             Change::AttachReference(r) if r.name.len() > 256 => {
@@ -93,6 +121,14 @@ pub(super) fn label(s: &str) -> Result<(), Diagnostic> {
         return Err(invalid().with_rule("DV-BASE-003"));
     }
     Ok(())
+}
+/// A user-attribute name, checked on the candidate and at every write (I04).
+pub(super) fn schema_path_name(name: &str) -> Result<&str, Diagnostic> {
+    if beamcraft_model::attribute::attr_name_is_valid(name) {
+        Ok(name)
+    } else {
+        Err(invalid())
+    }
 }
 pub(super) fn pose(p: &Placement) -> Result<(), Diagnostic> {
     cap(p.translation_mm, 1e9)?;
@@ -175,6 +211,47 @@ pub(super) fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, D
         Some(Value::Text(s)) => Ok(Some(s.clone())),
         Some(_) => Err(invalid()),
     }
+}
+/// The user-attribute schema scope (I04): every owned definition prim must be one bounded
+/// segment below the scope and a complete, well-formed definition; foreign or unknown content
+/// stays inert and is never interpreted.
+pub(super) fn attribute_schema(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let scope = format!("{}/", super::ATTR_SCHEMA_PATH);
+    for p in prims.iter().filter(|p| p.path.starts_with(&scope)) {
+        if p.sources.iter().any(|s| !s.owned) {
+            continue;
+        }
+        let name = p.path.strip_prefix(&scope).ok_or_else(invalid)?;
+        schema_path_name(name)?;
+        if name.contains('/') {
+            return Err(unsupported());
+        }
+        let ty = beamcraft_model::attribute::AttrType::parse(text(p, "bim:attr:type", "token")?)
+            .ok_or_else(unsupported)?;
+        let options = match optional(p, "bim:attr:options", "string[]")? {
+            None => Vec::new(),
+            Some(Value::Array(items)) => {
+                let mut options = Vec::with_capacity(items.len());
+                for item in items {
+                    match item {
+                        Value::Text(option) => options.push(option.clone()),
+                        _ => return Err(invalid()),
+                    }
+                }
+                options
+            }
+            Some(_) => return Err(invalid()),
+        };
+        let def = beamcraft_model::attribute::AttrDef {
+            name: name.to_owned(),
+            ty,
+            unit: optional_text(p, "bim:attr:unit")?,
+            options,
+            set: optional_text(p, "bim:attr:set")?,
+        };
+        def.validate().map_err(|_| invalid())?;
+    }
+    Ok(())
 }
 /// Every definition kind a member's `bim:profile` may target.
 pub(super) const PROFILE_KINDS: [&str; 11] = [
@@ -837,6 +914,7 @@ pub(super) fn snapshot(
     }
     project_record(metadata)?;
     let mut operation_ids = std::collections::BTreeSet::new();
+    attribute_schema(prims)?;
     for p in prims.iter().filter(|p| p.element_id.is_some()) {
         let id = p.element_id.as_deref().ok_or_else(invalid)?;
         // Foreign content is preserved inertly, not interpreted as engineering input.
@@ -1783,6 +1861,19 @@ pub(super) fn changes(
     let mut reads = BTreeSet::new();
     let mut writes = BTreeSet::new();
     for change in &input.changes {
+        // A schema change targets no element: it reads and writes the schema as a whole, so two
+        // schema edits conflict and neither conflicts with an element edit (I04). The candidate
+        // snapshot re-validates the whole scope.
+        if matches!(
+            change,
+            Change::AttrDefine { .. } | Change::AttrUndefine { .. }
+        ) {
+            writes.insert(Footprint {
+                identity: super::ATTR_SCHEMA_IDENTITY.to_owned(),
+                group: Group::Lifecycle,
+            });
+            continue;
+        }
         let (id, _) = change.key();
         let path = change_path(id, input, prims)?;
         let existing = prims.iter().find(|p| p.path == path);
@@ -1887,6 +1978,8 @@ pub(super) fn changes(
                     Change::Mark { .. } => {
                         matches!(kind, "plate" | "beam" | "column" | "assembly")
                     }
+                    // A user attribute is carried by any element kind, including a wrapper.
+                    Change::AttrSet { .. } => true,
                     _ => matches!(kind, "plate" | "beam" | "column"),
                 };
                 if !valid {
@@ -1919,6 +2012,11 @@ pub(super) fn changes(
             // A mark is stored with the label's group: it conflicts with a rename or another
             // mark of the element and with nothing derived.
             Change::Mark { .. } => (&[Group::Lifecycle, Group::Label], &[Group::Label]),
+            // A value lives with its element and conflicts only with another change of the
+            // element's attributes; no derived result depends on a user attribute.
+            Change::AttrSet { .. } => {
+                (&[Group::Lifecycle, Group::Attributes], &[Group::Attributes])
+            }
             Change::PartClass { .. } | Change::Label { .. } => {
                 (&[Group::Lifecycle, Group::Label], &[Group::Label])
             }

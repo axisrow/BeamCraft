@@ -4,6 +4,7 @@
 //! Compose feature-owned help without changing command dispatch or parsing.
 
 mod assembly;
+mod attribute;
 mod blobs;
 mod bolt;
 mod bom;
@@ -53,6 +54,7 @@ const COMMAND_GROUPS: &[&[&str]] = &[
     weld::COMMANDS,
     bolt::COMMANDS,
     level::COMMANDS,
+    attribute::COMMANDS,
     grid::COMMANDS,
     export::COMMANDS,
     numbering::COMMANDS,
@@ -86,6 +88,7 @@ const SECTIONS: &[&str] = &[
     weld::HELP,
     bolt::HELP,
     level::HELP,
+    attribute::HELP,
     grid::HELP,
     grid::LINES,
     grid::UPDATE,

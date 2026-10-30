@@ -14,6 +14,7 @@ mod a13;
 mod add_hole;
 mod alpha_scenario;
 mod assemblies;
+mod attributes;
 mod bolts;
 mod bom;
 mod changeset;

@@ -108,6 +108,11 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:fastener:washerUnderHead=bool;steel:fastener:washerUnderNut=bool;",
     "steel:fastener:holeMode=token(generate|none);steel:fastener:designation=string(optional);",
     "steel:fastener:standard=string(optional);steel:fastener:grade=string(optional)\n",
+    "attributes=/World/Definitions/Attributes/<name>;bim:attr:type=token(text|number|integer|boolean|choice);",
+    "bim:attr:unit=string(optional);bim:attr:options=string[](choice only);bim:attr:set=string(optional);",
+    "definitions are mutable schema metadata with no element identity\n",
+    "element values=bim:attr:<name>=string|double|int|bool on any element;a value may outlive its",
+    "definition and is then an unknown attribute: shown, never dropped\n",
     "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
@@ -159,6 +164,13 @@ pub(crate) fn pin_accepted(pin: &str) -> Result<bool, Diagnostic> {
 
 /// Key of the D1 project record in the root layer's `customLayerData`.
 pub const PROJECT_RECORD_KEY: &str = "bimProjectId";
+
+/// The reserved footprint identity of the user-attribute schema (I04): neither a UUIDv7 nor a
+/// digest, so it can never name an element or an immutable definition.
+pub const ATTR_SCHEMA_IDENTITY: &str = "bim:attr-schema";
+
+/// The authored-layer scope holding the user-attribute definitions (I04).
+pub const ATTR_SCHEMA_PATH: &str = "/World/Definitions/Attributes";
 
 /// The ProjectId recorded in the metadata of the root layer (D1), or `None` for a store that has
 /// none. A record that is not a text holding a full UUIDv7 is `INVALID_ID`: it is never read as
@@ -666,6 +678,29 @@ pub enum Change {
         /// Every record of the plate, ordered by ordinal; at least one.
         records: Vec<HoleRecord>,
     },
+    /// Define one user attribute in the schema scope (I04): the complete definition prim
+    /// `/World/Definitions/Attributes/<name>`. The engine has refused a duplicate name.
+    AttrDefine {
+        /// The complete definition, admitted by the model crate.
+        def: beamcraft_model::attribute::AttrDef,
+    },
+    /// Remove one user-attribute definition (I04); stored values are never touched, so an
+    /// unknown attribute stays stored and shown.
+    AttrUndefine {
+        /// The attribute name.
+        name: String,
+    },
+    /// Store or remove one user-attribute value of one element (I04): one targeted
+    /// `bim:attr:<name>` property, never a rewrite of the prim's property set, so unknown
+    /// attributes survive every edit.
+    AttrSet {
+        /// Full target UUIDv7.
+        id: String,
+        /// The attribute name.
+        name: String,
+        /// The value, or `None` to remove the property.
+        value: Option<beamcraft_model::attribute::AttrValue>,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
@@ -693,6 +728,10 @@ impl Change {
             Self::Level { id, .. } => (id, "bim:level"),
             Self::Mark { id, .. } => (id, "steel:numbering"),
             Self::HoleRecords { id, .. } => (id, "steel:hole"),
+            Self::AttrDefine { .. } | Self::AttrUndefine { .. } => {
+                (ATTR_SCHEMA_IDENTITY, "bim:attr:schema")
+            }
+            Self::AttrSet { id, .. } => (id, "bim:attr"),
         }
     }
 }
@@ -714,6 +753,8 @@ pub enum Group {
     Derived,
     /// Links to immutable definitions.
     Relationship,
+    /// The user-attribute values of an element (I04).
+    Attributes,
 }
 /// Engine-derived conservative footprint entry.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

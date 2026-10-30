@@ -648,14 +648,13 @@ pub fn apply_changeset(
         None => {
             let source_revision = workspace.open_at(source.head.sequence())?;
             let mut expected = footprint(&prims_of(&head)?, &prims_of(&source_revision)?)?;
-            // Old C01 v1 payloads had no mark group. They retain conservative validation and
-            // never acquire a precise destination proof merely by passing the legacy path.
-            if !changeset
-                .dependencies
-                .iter()
-                .any(|d| d.group == DependencyGroup::Mark)
-            {
-                expected.retain(|d| d.group != DependencyGroup::Mark);
+            // Old C01 payloads had no mark or attribute groups. They retain conservative
+            // validation and never acquire a precise destination proof merely by passing the
+            // legacy path.
+            for legacy in [DependencyGroup::Mark, DependencyGroup::Attributes] {
+                if !changeset.dependencies.iter().any(|d| d.group == legacy) {
+                    expected.retain(|d| d.group != legacy);
+                }
             }
             expected
         }

@@ -1225,6 +1225,61 @@ fn erase_mesh(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// Authors the complete definition prim of one user attribute (I04). A definition carries no
+/// opinion beyond its admitted fields: an absent unit, empty options or an absent set remove
+/// their properties, so a redefinition leaves no stale opinion behind.
+fn author_attr_define(
+    data: &mut sdf::Data,
+    def: &beamcraft_model::attribute::AttrDef,
+) -> Result<(), Diagnostic> {
+    let name = validate::schema_path_name(&def.name)?;
+    container(data, "/World", "Xform", Some("assembly"))?;
+    container(data, "/World/Definitions", "Scope", None)?;
+    container(data, super::ATTR_SCHEMA_PATH, "Scope", None)?;
+    let p = format!("{}/{name}", super::ATTR_SCHEMA_PATH);
+    prim(data, &p, Some("Scope"), true)?;
+    attr(
+        data,
+        &p,
+        "bim:attr:type",
+        "token",
+        sdf::Value::token(def.ty.as_str()),
+    )?;
+    let text_opinion = |v: &Option<String>| match v {
+        Some(text) => Opinion::Value(sdf::Value::String(text.clone())),
+        None => Opinion::Remove,
+    };
+    attribute(
+        data,
+        &p,
+        "bim:attr:unit",
+        "string",
+        text_opinion(&def.unit),
+        true,
+    )?;
+    attribute(
+        data,
+        &p,
+        "bim:attr:options",
+        "string[]",
+        match def.ty {
+            beamcraft_model::attribute::AttrType::Choice => {
+                Opinion::Value(sdf::Value::StringVec(def.options.clone()))
+            }
+            _ => Opinion::Remove,
+        },
+        true,
+    )?;
+    attribute(
+        data,
+        &p,
+        "bim:attr:set",
+        "string",
+        text_opinion(&def.set),
+        true,
+    )?;
+    Ok(())
+}
 fn erase_element(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
     let name = parent.rsplit_once('/').map_or(parent, |(_, n)| n);
     for path in data.spec_paths() {
@@ -1324,6 +1379,22 @@ pub(super) fn apply(
     }
     for c in &input.changes {
         control.check()?;
+        match c {
+            // The schema scope is not an element: its changes resolve no element path and pass
+            // no element kind checks; the candidate snapshot re-validates the scope as a whole.
+            Change::AttrDefine { def } => {
+                author_attr_define(&mut authored, def)?;
+                continue;
+            }
+            Change::AttrUndefine { name } => {
+                erase_element(
+                    &mut authored,
+                    &format!("{}/{name}", super::ATTR_SCHEMA_PATH),
+                )?;
+                continue;
+            }
+            _ => {}
+        }
         let (id, _) = c.key();
         let p = change_path(id, input, prims)?;
         match c {
@@ -1521,6 +1592,40 @@ pub(super) fn apply(
                     (MARK_BASIS, "string", sdf::Value::String(mark.basis.clone())),
                 ] {
                     attr(&mut authored, &p, name, ty, value)?;
+                }
+            }
+            Change::AttrSet { name, value, .. } => {
+                let property = format!("bim:attr:{}", validate::schema_path_name(name)?);
+                match value {
+                    Some(v) => {
+                        let (ty, stored) = match v {
+                            beamcraft_model::attribute::AttrValue::Text(t) => {
+                                ("string", sdf::Value::String(t.clone()))
+                            }
+                            beamcraft_model::attribute::AttrValue::Choice(t) => {
+                                ("string", sdf::Value::String(t.clone()))
+                            }
+                            beamcraft_model::attribute::AttrValue::Number(n) => {
+                                ("double", sdf::Value::Double(*n))
+                            }
+                            beamcraft_model::attribute::AttrValue::Integer(i) => {
+                                ("int", sdf::Value::Int(*i))
+                            }
+                            beamcraft_model::attribute::AttrValue::Boolean(b) => {
+                                ("bool", sdf::Value::Bool(*b))
+                            }
+                        };
+                        attr(&mut authored, &p, &property, ty, stored)?;
+                    }
+                    // A clear erases the property alone; the rest of the prim is untouched.
+                    None => attribute(
+                        &mut authored,
+                        &p,
+                        &property,
+                        "string",
+                        Opinion::Remove,
+                        true,
+                    )?,
                 }
             }
             Change::ReferenceUnits { interpretation, .. } => {
@@ -1931,6 +2036,10 @@ fn capture(
                     add(name, ty, 1);
                 }
             }
+            // User attributes (I04) are dynamic-named values outside the fixed supported
+            // mapping: they contribute no opinion inventory yet, while their footprint writes
+            // and the candidate bytes carry them as usual.
+            Change::AttrDefine { .. } | Change::AttrUndefine { .. } | Change::AttrSet { .. } => {}
         }
         if matches!(
             change,

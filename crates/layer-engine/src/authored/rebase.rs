@@ -489,9 +489,14 @@ pub fn prepare(
         let index = reader.element_index(&opened.context, control)?;
         reader.verify_index(&index, control)?;
         for &(target, _) in &writes {
-            let path = match target {
-                T::Element(id) => index.lookup(&id.to_string()).map(|entry| &entry.path),
-                T::Definition(digest) => index.definition(&digest).map(|entry| &entry.path),
+            let path: Result<&str, _> = match target {
+                T::Element(id) => index
+                    .lookup(&id.to_string())
+                    .map(|entry| entry.path.as_str()),
+                T::Definition(digest) => index.definition(&digest).map(|entry| entry.path.as_str()),
+                // The schema scope is authored content like any element folder; a rebase of a
+                // delta under it is refused earlier as an unsupported property.
+                T::AttrSchema => Ok(super::ATTR_SCHEMA_PATH),
             };
             match path {
                 Ok(path) => {

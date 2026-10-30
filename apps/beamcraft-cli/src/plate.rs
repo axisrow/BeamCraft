@@ -1866,12 +1866,16 @@ fn layer_group(group: LayerGroup) -> Group {
         LayerGroup::Material => Group::MaterialRef,
         LayerGroup::Derived => Group::Derived,
         LayerGroup::Relationship => Group::Relationship,
+        LayerGroup::Attributes => Group::Attributes,
     }
 }
 
 fn layer_entry(item: &beamcraft_layer_engine::authored::Footprint) -> Option<Entry> {
     let target = match ElementId::parse(&item.identity) {
         Ok(id) => Target::Element(id),
+        Err(_) if item.identity == beamcraft_layer_engine::authored::ATTR_SCHEMA_IDENTITY => {
+            Target::AttrSchema
+        }
         Err(_) => Target::Definition(item.identity.parse().ok()?),
     };
     Some(Entry {
