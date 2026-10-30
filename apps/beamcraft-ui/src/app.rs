@@ -203,6 +203,10 @@ pub struct App {
     selected_only: ((String, [f64; 3]), Option<crate::scene::SelectedDraw>),
     /// Actual world boundary segments, cached by selected identity and snapshot token.
     selection_edges: ((String, String), Vec<[[f64; 3]; 2]>),
+    /// The uncommitted cut-plane form (V15); applying it fills `cut`.
+    cut_form: crate::cut_plane::Form,
+    /// The window's applied display cut; `None` shows the whole model.
+    cut: Option<beamcraft_engine::view_clipping::Clipping>,
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -846,6 +850,8 @@ impl App {
             logo: None,
             logo_tried: false,
             mode: beamcraft_engine::RenderMode::default(),
+            cut_form: crate::cut_plane::Form::default(),
+            cut: None,
             shortcuts,
             shortcuts_note,
             selected_only: ((String::new(), [0.0; 3]), None),
@@ -1732,6 +1738,51 @@ impl App {
         }
     }
 
+    /// The V15 cut plane inspector: the form, the applied state, nothing model-touching.
+    fn cut_panel(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            "The cut plane hides part of the model in this window only. The model, its \
+             revisions and every measurement stay unchanged.",
+        );
+        let mut note = None;
+        match self.cut_form.show(ui) {
+            Ok(Some(crate::cut_plane::Action::Apply(cut))) => {
+                let planes = cut.effective().map_or(0, |p| p.len());
+                note = Some(Ok(format!(
+                    "Cut applied: {} user plane(s), work-area box {}, {planes} effective \
+                     half-space(s).",
+                    cut.planes.len(),
+                    if cut.area.is_some() { "on" } else { "off" },
+                )));
+                self.cut = Some(cut);
+            }
+            Ok(Some(crate::cut_plane::Action::Clear)) => {
+                note = Some(Ok("Cut removed: the whole model is visible.".into()));
+                self.cut = None;
+            }
+            Err(error) => note = Some(Err(error.to_string())),
+            Ok(None) => {}
+        }
+        match &self.cut {
+            Some(cut) => ui.label(format!(
+                "Applied: {} user plane(s), work-area box {}.",
+                cut.planes.len(),
+                if cut.area.is_some() { "on" } else { "off" },
+            )),
+            None => ui.label("No cut: the whole model is visible."),
+        };
+        if let Some(note) = note {
+            match note {
+                Ok(message) => {
+                    ui.label(message);
+                }
+                Err(message) => {
+                    ui.colored_label(crate::theme::Palette::current(ui).error, message);
+                }
+            }
+        }
+    }
+
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
         ui.label("Click an element in the view to select it. Esc clears the selection.");
         match self.editor.selected() {
@@ -2444,6 +2495,12 @@ impl eframe::App for App {
                     let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
                     self.renderer.background = wgpu::Color { r, g, b, a: 1.0 };
                     if let Some(l) = &self.loaded {
+                        // The display cut is uniform state: the scene and its snapshot never
+                        // change. Planes are model millimetres; the uniform is scene-centred.
+                        let clip = match &self.cut {
+                            Some(cut) => crate::cut_plane::ClipGpu::of(cut, l.summary.origin_mm),
+                            None => crate::cut_plane::ClipGpu::none(),
+                        };
                         // One loaded scene, five drawing styles: the mode picks the pipeline and
                         // never rewrites the snapshot or its token.
                         if self.mode == RenderMode::SelectedOnly {
@@ -2483,6 +2540,7 @@ impl eframe::App for App {
                                         &self.stats,
                                         &selected.digest,
                                         &selected.instance,
+                                        &clip,
                                     );
                                 }
                                 // Nothing selected: an empty view, not the whole model.
@@ -2494,6 +2552,7 @@ impl eframe::App for App {
                                         view,
                                         &self.stats,
                                         RenderMode::SelectedOnly,
+                                        &clip,
                                     );
                                 }
                             },
@@ -2505,6 +2564,7 @@ impl eframe::App for App {
                                     view,
                                     &self.stats,
                                     mode,
+                                    &clip,
                                 );
                             }
                         }

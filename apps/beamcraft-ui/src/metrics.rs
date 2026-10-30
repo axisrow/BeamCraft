@@ -94,6 +94,7 @@ pub fn measure(
             view,
             stats,
             RenderMode::Shaded,
+            &crate::cut_plane::ClipGpu::none(),
         );
         let submitted = start.elapsed().as_secs_f64() * 1000.0;
         wait(&gpu.device, index)?;

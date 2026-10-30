@@ -96,7 +96,7 @@ fn main() -> std::process::ExitCode {
     };
     let (json, exit) = if args
         .first()
-        .is_some_and(|c| c == "snapshot-view" || c == "inspect-view-changes")
+        .is_some_and(|c| c == "snapshot-view" || c == "inspect-view-changes" || c == "clip-view")
     {
         view::execute(&args)
     } else if args.first().is_some_and(history_cmd::handles) {

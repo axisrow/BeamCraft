@@ -90,6 +90,7 @@ mod start;
 mod undo;
 mod update;
 mod version;
+mod view_clipping;
 mod view_export;
 mod view_snapshot;
 mod welds;

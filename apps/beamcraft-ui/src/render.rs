@@ -344,7 +344,7 @@ fn pipeline(
     device: &wgpu::Device,
     samples: u32,
     stats: &Stats,
-) -> Result<(Pipelines, wgpu::Buffer, wgpu::BindGroup), Error> {
+) -> Result<(Pipelines, wgpu::Buffer, wgpu::Buffer, wgpu::BindGroup), Error> {
     let scopes = error_scopes(device);
     let camera = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("BeamCraft camera"),
@@ -352,26 +352,50 @@ fn pipeline(
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
+    let clip = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("BeamCraft cut planes"),
+        size: crate::cut_plane::ClipGpu::BYTES as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
     let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("BeamCraft camera layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
             },
-            count: None,
-        }],
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
     });
     let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("BeamCraft camera bind"),
         layout: &layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: camera.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: clip.as_entire_binding(),
+            },
+        ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("BeamCraft pipeline layout"),
@@ -477,7 +501,7 @@ fn pipeline(
     };
     finish_scopes(scopes)?;
     stats.pipeline_builds.add(5);
-    Ok((pipelines, camera, bind))
+    Ok((pipelines, camera, clip, bind))
 }
 
 /// The ghost preview's device buffers: one mesh, one instance.
@@ -498,6 +522,8 @@ pub struct Renderer {
     /// The pipelines of the five render modes and the ghost preview.
     pipeline: Pipelines,
     camera: wgpu::Buffer,
+    /// The V15 cut-plane uniform, rewritten per draw.
+    clip: wgpu::Buffer,
     bind: wgpu::BindGroup,
     /// The ghost preview's device buffers, when a placement is armed.
     ghost_buffers: Option<GhostDraw>,
@@ -552,7 +578,7 @@ impl Renderer {
             depth,
             msaa,
         } = targets(device, width, height, samples, stats)?;
-        let (pipeline, camera, bind) = pipeline(device, samples, stats)?;
+        let (pipeline, camera, clip, bind) = pipeline(device, samples, stats)?;
         Ok(Self {
             view,
             texture,
@@ -560,6 +586,7 @@ impl Renderer {
             msaa,
             pipeline,
             camera,
+            clip,
             bind,
             ghost_buffers: None,
             samples,
@@ -641,7 +668,9 @@ impl Renderer {
 
     /// Encodes one lit, depth-tested frame in `mode` and submits it; completion is a separate
     /// measurement. [`RenderMode::SelectedOnly`] draws only the background and the ghost here;
-    /// the selected element goes through [`Renderer::draw_one`].
+    /// the selected element goes through [`Renderer::draw_one`]. The `clip` uniform cuts the
+    /// image, never the data: a zero count draws everything.
+    #[allow(clippy::too_many_arguments)] // one frame needs its scene, camera, mode and cut
     pub fn draw(
         &self,
         device: &wgpu::Device,
@@ -650,10 +679,12 @@ impl Renderer {
         camera: View,
         stats: &Stats,
         mode: RenderMode,
+        clip: &crate::cut_plane::ClipGpu,
     ) -> wgpu::SubmissionIndex {
         stats.viewport_draws.add(1);
         stats.submits.add(1);
         queue.write_buffer(&self.camera, 0, &camera.bytes());
+        queue.write_buffer(&self.clip, 0, &clip.bytes());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("BeamCraft frame"),
         });
@@ -715,11 +746,13 @@ impl Renderer {
         stats: &Stats,
         digest: &ContentDigest,
         instance: &[u8; INSTANCE_BYTES],
+        clip: &crate::cut_plane::ClipGpu,
     ) -> Option<wgpu::SubmissionIndex> {
         let (vertices, vertex_count) = uploaded.mesh_vertices(digest)?;
         stats.viewport_draws.add(1);
         stats.submits.add(1);
         queue.write_buffer(&self.camera, 0, &camera.bytes());
+        queue.write_buffer(&self.clip, 0, &clip.bytes());
         let one = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("BeamCraft selected instance"),
             size: INSTANCE_BYTES as u64,
@@ -899,6 +932,7 @@ mod tests {
             view,
             &stats,
             RenderMode::Shaded,
+            &crate::cut_plane::ClipGpu::none(),
         );
         wait(&gpu.device, index).unwrap();
         let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
