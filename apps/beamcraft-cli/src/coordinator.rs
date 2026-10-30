@@ -199,9 +199,10 @@ impl PublishHandler {
             let workspace = RevisionStore::new(blobs);
             let request = CompensationRequest {
                 op_id,
-                // The token is the only trusted actor; a request cannot name one (C02).
-                actor: Uuid7::parse(&request.actor.to_string())
-                    .map_err(|_| invalid("the authenticated actor is not a canonical UUIDv7"))?,
+                // The token is the only trusted actor; a request cannot name one (C02). The
+                // authenticated id is already a validated UUIDv7, so the typed actor cannot
+                // fail to build.
+                actor: Uuid7::from_bytes(request.actor.uuid().as_bytes()),
                 target_revision,
                 expected_head,
             };
@@ -287,9 +288,10 @@ impl PublishHandler {
             let workspace = RevisionStore::new(blobs);
             let request = RebaseRequest {
                 op_id,
-                // The token is the only trusted actor; a request cannot name one (C02).
-                actor: Uuid7::parse(&request.actor.to_string())
-                    .map_err(|_| invalid("the authenticated actor is not a canonical UUIDv7"))?,
+                // The token is the only trusted actor; a request cannot name one (C02). The
+                // authenticated id is already a validated UUIDv7, so the typed actor cannot
+                // fail to build.
+                actor: Uuid7::from_bytes(request.actor.uuid().as_bytes()),
                 expected_head,
                 expected_draft,
             };
