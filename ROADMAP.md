@@ -1,6 +1,6 @@
 # Roadmap
 
-**Stage:** pre-alpha. Scope updated 2026-10-27; gate verdicts are unchanged.
+**Stage:** pre-alpha. Scope updated 2026-10-30; gate verdicts are unchanged.
 
 This file is the short summary of the [implementation plan](docs/plan/README.md): the stage, the
 acceptance gates, the MVP scope and the next work. Task IDs, scope, dependencies, acceptance and
@@ -32,7 +32,7 @@ that the gate's acceptance is claimed.
 | K1 | CLI creates a plate and atomically saves a complete revision readable by ordinary OpenUSD | U01–U07, U09, U14, G01–G02, P01 | **passed 2026-10-24** (owner decision; evidence and accepted limits in [`docs/plan/k1-k2-acceptance-evidence.md`](docs/plan/k1-k2-acceptance-evidence.md)) |
 | K2 | Straight beam/column, quantities, independent copy, personal workspace and local undo | P02–P08, A07 | **passed 2026-10-24** (owner decision; rolled, custom and library sections, rigid member placement; same evidence document) |
 | K3 | Foreign USD references remain read-only; supported measurements are separate results | R01–R03, G08 | R01 merged; R02–R03 deferred |
-| K4 | Two clients safely publish, rebase, detect conflicts, retry and compensate accepted changes | C01–C06 | C01–C02 merged; C03–C06 deferred |
+| K4 | Two clients safely publish, rebase, detect conflicts, retry and compensate accepted changes | C01–C06 | C01–C02 merged; C03 and C06 merged, C04 delivered, C05 delivered at suite scale (32 + 32 edits per client, its 1000 + 1000 sweep open); experimental, acceptance open |
 | K5 | Original native UI uses engine commands and saves the same result as the CLI | V01–V06 | V01–V04, V05.1–V05.2 and V06.1 merged; acceptance open |
 | K6 | Supported assemblies, cuts, holes, bolts, welds, approved numbering and IFC/BOM export | A01–A09, E01–E03 | slices merged for all; A03 cuts and A04 holes still use element attributes instead of the A-2 operation records; E01 contract draft; acceptance open |
 | K7 | Complete alpha scenario and native packaging rehearsal | Q01–Q02 | Q02 packaging merged, release rehearsal not run; Q01 open |
@@ -78,8 +78,10 @@ and admitted sources remain to be specified. All shipped data must satisfy `AGEN
 no commercial-product catalogue, palette or text is copied.
 
 Deferred until after the MVP: items (I01 to I03: the item contract and reading GLB and IFC geometry), IFC export (E01, E02; the experimental `export-ifc` stays in the code
-but is not part of the MVP), multi-client rebase, conflicts, retry and compensation (C03–C06),
-reference measurements (R02–R03), DSTV NC and DXF output, parametric connections and macros.
+but is not part of the MVP), the multi-client live delta channel and permissions with layer
+storage (C07, C08), reference measurements (R02–R03), DSTV NC and DXF output, parametric
+connections and macros. The multi-client rebase, conflict, retry and compensation slices
+(C03–C06) are merged or delivered on `master` as experimental slices; their acceptance is open.
 Which parts later stay open source and which become a commercial product is decided after the MVP;
 until then everything stays MPL-2.0.
 
@@ -105,7 +107,9 @@ put grids first on 2026-10-23); the task cards are indexed in the
 5. **M5, alpha scenario and packaging:** Q01 over the whole scope and a first run of the release
    workflow (Q02); acceptance of the gates K5, K6 and K8 to K11.
 
-Later work expands supported operations, additional data packs and DSTV NC export. The owner
+Later work expands supported operations, additional data packs and DSTV NC export. The post-MVP
+milestone M6 adds the collaboration cards C07 (live delta channel) and C08 (permissions and
+layer storage). The owner
 approved IFC reference loading and native steel IFC import for the MVP on 2026-10-27; broader
 persistent source-change coordination remains separate. BeamCraft is desktop-only on
 Windows, Linux and macOS; only `beamcraft-geom`, `beamcraft-model` and `beamcraft-kernel` keep the
