@@ -6,6 +6,7 @@
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
 use crate::report::report_with;
+use beamcraft_cli::bend::{BendRequest, bend_plate_record};
 use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element, copy_instance};
 use beamcraft_cli::cut::{
     A13Command, A13Request, CutElement, CutRequest, a13_record, cut_by_plane_record,
@@ -45,11 +46,11 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    AddHole, ChamferPart, CombineParts, CopyElement, CornerTreatment, CreatePlate, CreatePolybeam,
-    CreateStraightMember, CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord, DeleteElement,
-    ElementPatch, FitEndToPart, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner,
-    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition, SplitPart,
-    UpdateElement,
+    AddHole, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts, CopyElement,
+    CornerTreatment, CreatePlate, CreatePolybeam, CreateStraightMember, CutByLine, CutByPart,
+    CutByPlane, CutByPolygon, CutRecord, DeleteElement, ElementPatch, FitEndToPart, HoleSpec,
+    KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner, PlateSide, SectionDepthPosition,
+    SectionPlacement, SectionPlanePosition, SplitPart, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -305,6 +306,15 @@ a13_options!(A13_POLYGON_OPTIONS_ALL, "--polygon");
 a13_options!(A13_PART_OPTIONS_ALL, "--tool");
 a13_options!(A13_FIT_OPTIONS_ALL, "--tool");
 a13_options!(
+    BEND_OPTIONS_ALL,
+    "--kind",
+    "--point-a",
+    "--point-b",
+    "--radius",
+    "--radius-b",
+    "--angle-rad"
+);
+a13_options!(
     A13_CHAMFER_OPTIONS_ALL,
     "--vertex-index",
     "--first-distance",
@@ -441,6 +451,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "chamfer-part" => A13_CHAMFER_OPTIONS_ALL,
         "split-part" => A13_SPLIT_OPTIONS_ALL,
         "combine-parts" => A13_COMBINE_OPTIONS_ALL,
+        "bend-plate" => BEND_OPTIONS_ALL,
         "remove-cut" => REMOVE_CUT_OPTIONS,
         "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
@@ -513,6 +524,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "chamfer-part" => a13_command(&store, "chamfer-part", &options),
         "split-part" => a13_command(&store, "split-part", &options),
         "combine-parts" => a13_command(&store, "combine-parts", &options),
+        "bend-plate" => bend_command(&store, &options),
         "create-workspace" | "inspect-workspace" | "publish-workspace" => {
             workspace_command(&store, command, &options, candidates)
         }
@@ -1879,6 +1891,149 @@ fn a13_command(store: &RevisionStore, name: &str, options: &BTreeMap<&str, &str>
     ))
 }
 
+/// Runs `bend-plate` (A10): appends one fold or roll record to a plate and republishes the bent
+/// body. The unfolded outline is the plate's authored contour, reported in `contour_points_mm`.
+fn bend_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let id_text = |key: &str| -> Run<ElementId> {
+        ElementId::parse(given(key).ok_or_else(|| invalid("--id is required"))?).map_err(id_error)
+    };
+    let operation_id =
+        OpId::parse(given("--operation-id").ok_or_else(|| invalid("--operation-id is required"))?)
+            .map_err(id_error)?;
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let point = |key: &'static str| -> Run<[f64; 3]> {
+        translation(given(key).ok_or_else(|| invalid("a bend line point is required"))?)
+    };
+    let positive = |key: &'static str| -> Run<f64> {
+        let text = given(key).ok_or_else(|| invalid("a bend radius is required"))?;
+        let value = text
+            .parse::<f64>()
+            .map_err(|_| invalid("a number is malformed"))?;
+        if value <= 0.0 || !value.is_finite() {
+            return Err(invalid("a bend radius must be positive"));
+        }
+        Ok(value)
+    };
+    let kind = given("--kind").ok_or_else(|| invalid("--kind is required"))?;
+    let line_a = point("--point-a")?;
+    let line_b = point("--point-b")?;
+    let radius = positive("--radius")?;
+    let spec = match kind {
+        "fold" => {
+            let angle = given("--angle-rad")
+                .ok_or_else(|| invalid("--angle-rad is required for a fold"))?
+                .parse::<f64>()
+                .map_err(|_| invalid("a number is malformed"))?;
+            if !angle.is_finite() || angle.abs() >= core::f64::consts::PI || angle == 0.0 {
+                return Err(invalid(
+                    "the fold angle must be finite, non-zero and inside (-pi, pi)",
+                ));
+            }
+            BendSpec::Fold {
+                a_mm: line_a,
+                b_mm: line_b,
+                radius_mm: radius,
+                angle_rad: angle,
+            }
+        }
+        "roll" => {
+            let radius_b = match given("--radius-b") {
+                Some(text) => {
+                    let value = text
+                        .parse::<f64>()
+                        .map_err(|_| invalid("a number is malformed"))?;
+                    if value <= 0.0 || !value.is_finite() {
+                        return Err(invalid("a bend radius must be positive"));
+                    }
+                    Some(value)
+                }
+                None => None,
+            };
+            BendSpec::Roll {
+                a_mm: line_a,
+                b_mm: line_b,
+                radius_mm: radius,
+                radius_b_mm: radius_b,
+            }
+        }
+        _ => return Err(invalid("--kind is fold or roll")),
+    };
+    let result = bend_plate_record(
+        store,
+        &BendRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: BendPlate {
+                target_id: id_text("--id")?,
+                operation_id,
+                spec,
+            },
+        },
+        &mut NoFault,
+    )?;
+    let outcome = if result.replayed {
+        "bend_replayed"
+    } else {
+        "bend_applied"
+    };
+    let mut fields = vec![
+        ("outcome", Json::text(outcome)),
+        ("op_id", Json::text(op_id.to_string())),
+        ("element", plate_json(&result.plate)?),
+        ("revision", revision_json(&result.revision)),
+        ("footprint", footprint_json(result.footprint.as_ref())),
+    ];
+    if !result.changed_layers.is_empty() {
+        fields.push((
+            "changed_layers",
+            Json::Array(
+                result
+                    .changed_layers
+                    .iter()
+                    .map(|layer| Json::text(layer.clone()))
+                    .collect(),
+            ),
+        ));
+    }
+    Ok(Json::Object(
+        fields
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect(),
+    ))
+}
+
 /// Comma-separated numbers, exactly `count` of them (the shared shape of every hole option).
 fn numbers_list(text: &str, count: usize) -> Run<Vec<f64>> {
     let values: Vec<f64> = text
@@ -3052,6 +3207,46 @@ fn corners_json(corners: &[PlateCorner]) -> Run<Json> {
     Ok(Json::Array(records))
 }
 
+/// The bend records of a plate (A10): kind, identity, line and kind-specific parameters.
+fn bends_json(bends: &[BendRecord]) -> Run<Json> {
+    let records = bends
+        .iter()
+        .map(|bend| {
+            let (values, angle) = match bend.spec {
+                BendSpec::Fold {
+                    radius_mm,
+                    angle_rad,
+                    ..
+                } => (vec![radius_mm], Some(angle_rad)),
+                BendSpec::Roll {
+                    radius_mm,
+                    radius_b_mm,
+                    ..
+                } => (
+                    match radius_b_mm {
+                        Some(radius_b) => vec![radius_mm, radius_b],
+                        None => vec![radius_mm],
+                    },
+                    None,
+                ),
+            };
+            Ok(Json::object([
+                ("bend", Json::text(bend.spec.kind())),
+                ("operation_id", Json::text(bend.operation_id.to_string())),
+                (
+                    "values_mm",
+                    Json::Array(values.into_iter().map(num).collect::<Run<Vec<_>>>()?),
+                ),
+                match angle {
+                    Some(angle) => ("angle_rad", num(angle)?),
+                    None => ("angle_rad", Json::Null),
+                },
+            ]))
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::Array(records))
+}
+
 pub(crate) fn num(value: f64) -> Run<Json> {
     Json::number(value).map_err(|_| PlateError {
         rule_id: None,
@@ -3536,6 +3731,7 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
             }),
         ),
         ("corners", corners_json(&record.authored.corners)?),
+        ("bends", bends_json(&record.authored.bends)?),
         (
             "arc_deviation_mm",
             if record.body.arc_deviation_mm == 0.0 {

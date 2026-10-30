@@ -9,7 +9,7 @@ use crate::footprint::Footprint;
 use crate::query::committed::{BodyCache, PlateRecord};
 use crate::transaction::PriorOp;
 use beamcraft_model::command::{
-    CommandError, CreatePlate, HOLE_POINT_CAP, MAX_HOLES, label_is_valid,
+    CommandError, CreatePlate, HOLE_POINT_CAP, MAX_BENDS, MAX_HOLES, label_is_valid,
 };
 use beamcraft_model::definition::MaterialSpec;
 use beamcraft_model::digest::ContentDigest;
@@ -174,6 +174,7 @@ pub fn evaluate_committed_drafts_cached(
         if authored.contour_points_mm.len() > 1024
             || authored.holes_mm.len() > MAX_HOLES
             || authored.hole_records.len() > MAX_HOLES
+            || authored.bends.len() > MAX_BENDS
             || authored
                 .holes_mm
                 .iter()
@@ -249,6 +250,7 @@ mod tests {
             holes_mm: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
+            bends: Vec::new(),
         }
     }
 

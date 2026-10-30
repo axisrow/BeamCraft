@@ -311,6 +311,11 @@ impl LoftResult {
         self.op.body()
     }
 
+    /// The sealed operation result the loft wrapped, for readers that consume an `OpResult`.
+    pub const fn op(&self) -> &crate::ops::OpResult {
+        &self.op
+    }
+
     /// The sealed BCMESH01 blob of the loft mesh.
     pub fn blob(&self) -> &[u8] {
         self.op.blob()
@@ -521,23 +526,25 @@ fn build_mesh(
     };
     let start_z = cap_normal(z0, -1.0);
     let end_z = cap_normal(z1, 1.0);
+    // One face id per logical cap: the triangles of a cap share the id, as the face table
+    // requires one entry per logical face with no duplicated id.
+    let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
+    ids.push("ruled:f.cap0".to_owned());
+    normals.push(start_z);
     for cap in caps0 {
         let (a, b, c) = tri_points(cap)?;
-        let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
         // The start cap is the same triangulation wound the other way: its outward
         // normal points against the start frame Z.
         triangles.push([to_u32(a)?, to_u32(c)?, to_u32(b)?]);
         faces.push(face);
-        ids.push("ruled:f.cap0".to_owned());
-        normals.push(start_z);
     }
+    let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
+    ids.push("ruled:f.cap1".to_owned());
+    normals.push(end_z);
     for cap in caps1 {
         let (a, b, c) = tri_points(cap)?;
-        let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
         triangles.push([to_u32(a + count)?, to_u32(b + count)?, to_u32(c + count)?]);
         faces.push(face);
-        ids.push("ruled:f.cap1".to_owned());
-        normals.push(end_z);
     }
     Ok(Candidate {
         vertices,

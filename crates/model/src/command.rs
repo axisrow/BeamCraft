@@ -1654,6 +1654,229 @@ impl AddHole {
     }
 }
 
+/// Most bend records on one bent plate (A10). The records together must describe one
+/// constant-cross-section body; the cap keeps the derived cross-section inside the loft
+/// vertex budget with room for the bend arcs.
+pub const MAX_BENDS: usize = 16;
+
+/// How a plate is bent or rolled (A10). The authored contour of a bent plate is its
+/// developed mid-surface outline (the unfold) in the element-local plane `z = 0`; bending
+/// about the mid-surface preserves it, so the unfolded outline is the authored contour and
+/// the analytic volume stays `outline area x thickness`. All coordinates are element-local
+/// millimetres in the contour plane, angles are radians.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BendSpec {
+    /// The sheet is folded about the line `a_mm`–`b_mm` by `angle_rad` (positive folds the
+    /// far side towards `+Z` by the right-hand rule about `a->b`) on the inner bend radius
+    /// `radius_mm`; the outer radius is `radius_mm + thickness`. Several folds of one plate
+    /// must be parallel.
+    Fold {
+        /// First point of the fold line, in the contour plane.
+        a_mm: [f64; 3],
+        /// Second point of the fold line, in the contour plane; equal to `a_mm` is refused.
+        b_mm: [f64; 3],
+        /// Inner bend radius in millimetres.
+        radius_mm: f64,
+        /// Signed bend angle in radians, inside `(-pi, pi)`, never zero.
+        angle_rad: f64,
+    },
+    /// The sheet is rolled about the axis `a_mm`–`b_mm` into a cylinder section of the inner
+    /// radius `radius_mm` (the arc follows from the developed length of the blank), or, with
+    /// `radius_b_mm`, into a cone section of the two inner mid-surface radii at the axis
+    /// ends. A plate carries at most one roll and no fold beside it.
+    Roll {
+        /// First point of the roll axis, in the contour plane; for a cone it is the centre
+        /// of the blank's inner arc.
+        a_mm: [f64; 3],
+        /// Second point of the roll axis, in the contour plane; equal to `a_mm` is refused.
+        b_mm: [f64; 3],
+        /// Inner radius at `a_mm` in millimetres.
+        radius_mm: f64,
+        /// Inner radius at `b_mm` in millimetres; `None` rolls a cylinder.
+        radius_b_mm: Option<f64>,
+    },
+}
+
+impl BendSpec {
+    /// The wire token of the bend kind.
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::Fold { .. } => "fold",
+            Self::Roll { .. } => "roll",
+        }
+    }
+
+    /// Admits what does not depend on the plate: finite values, the coordinate cap for the
+    /// line points, positive radii and a bend angle inside `(-pi, pi)` and away from zero.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        let (points, radii, angle): ([[f64; 3]; 2], &[f64], Option<f64>) = match *self {
+            Self::Fold {
+                a_mm,
+                b_mm,
+                radius_mm,
+                angle_rad,
+            } => ([a_mm, b_mm], &[radius_mm][..], Some(angle_rad)),
+            Self::Roll {
+                a_mm,
+                b_mm,
+                radius_mm,
+                radius_b_mm,
+            } => (
+                [a_mm, b_mm],
+                match radius_b_mm {
+                    Some(rb) => &[radius_mm, rb][..],
+                    None => &[radius_mm][..],
+                },
+                None,
+            ),
+        };
+        if points
+            .iter()
+            .flatten()
+            .copied()
+            .chain(radii.iter().copied())
+            .any(|v| !v.is_finite())
+        {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "bend",
+                "bend value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if points.iter().flatten().any(|v| v.abs() > COORDINATE_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "bend",
+                "bend coordinate exceeds the coordinate cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if radii.iter().any(|r| *r <= 0.0) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "bend",
+                "bend radius is not positive",
+            ));
+        }
+        if radii.iter().any(|r| *r > DIMENSION_CAP_MM) {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "bend",
+                "bend radius exceeds the dimension cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if let Some(angle) = angle
+            && (angle == 0.0 || angle.abs() >= core::f64::consts::PI)
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "bend",
+                "fold angle is outside the open range (-pi, pi)",
+            ));
+        }
+        if points[0] == points[1] {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "bend",
+                "the bend line needs two distinct points",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// One owned bend operation record (A10). As for a cut, the record is authoritative and
+/// replayed in creation order; a fold appends to the plate's fold set, a roll requires the
+/// plate to carry no other bend.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BendRecord {
+    /// Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`).
+    pub operation_id: OpId,
+    /// The bend the record authors.
+    pub spec: BendSpec,
+}
+
+impl BendRecord {
+    /// Admits the record's arguments independently of the plate.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        self.spec.validate()
+    }
+}
+
+/// F04 section 7 `BendPlate` (A10): appends one bend operation record to a valid plate and
+/// updates its derived data in one transaction. The record's `operation_id` is also the
+/// logical command id, as for `AddHole`. Whether the records together describe a supported
+/// bent body (a rectangular blank for folds, a cylinder or cone section for a roll, no
+/// overlap) is the engine's decision at evaluation, and a refusal there refuses the command.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BendPlate {
+    /// The plate that will own the record; a member target is `UNSUPPORTED_GEOMETRY`.
+    pub target_id: ElementId,
+    /// Full UUIDv7 of the record, unused in the project.
+    pub operation_id: OpId,
+    /// The bend to author.
+    pub spec: BendSpec,
+}
+
+impl BendPlate {
+    /// Admits the arguments that do not depend on geometry or model state.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.spec.validate()
+    }
+
+    /// SHA-256 of a versioned binary encoding of the validated arguments, with signed zero
+    /// normalized, as for [`AddHole::content_fingerprint`]. It is *not* the F04 canonical
+    /// form and must not be sent over a wire.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "bend",
+                "value cannot be encoded",
+            )
+            .with_rule("DV-ATTR-003")
+        };
+        let (a, b, tail): ([f64; 3], [f64; 3], &[f64]) = match self.spec {
+            BendSpec::Fold {
+                a_mm,
+                b_mm,
+                radius_mm,
+                angle_rad,
+            } => (a_mm, b_mm, &[radius_mm, angle_rad]),
+            BendSpec::Roll {
+                a_mm,
+                b_mm,
+                radius_mm,
+                radius_b_mm,
+            } => (
+                a_mm,
+                b_mm,
+                // A cylinder repeats its one radius; the kind byte already separates the two
+                // encodings, so the fill value cannot collide with a cone's.
+                &[radius_mm, radius_b_mm.unwrap_or(radius_mm)],
+            ),
+        };
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/A10/BendPlate/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.operation_id.as_bytes());
+        bytes.push(match self.spec {
+            BendSpec::Fold { .. } => 0,
+            BendSpec::Roll { .. } => 1,
+        });
+        for v in a.iter().copied().chain(b).chain(tail.iter().copied()) {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
 /// F04 section 7 `CutByLine` (A13): cuts a valid plate, beam or column with the plane through
 /// the line `point_a_mm`–`point_b_mm` and the given axis direction, keeping one side. The plane
 /// is derived once at admission and stored as an ordinary `plane_cut` record; the line itself is

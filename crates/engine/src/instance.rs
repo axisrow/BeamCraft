@@ -245,6 +245,7 @@ mod tests {
                 kind: beamcraft_model::command::HoleKind::Hole,
             }],
             cuts: vec![],
+            bends: Vec::new(),
         }
     }
 

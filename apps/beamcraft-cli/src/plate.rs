@@ -69,9 +69,9 @@ use beamcraft_layer_engine::{
     Prim, Profile, Reader, Value,
 };
 use beamcraft_model::command::{
-    CommandError, CornerTreatment, CreatePlate, CutRecord, HoleKind, HoleRecord, KeepSide,
-    MemberKind, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
-    SectionPlanePosition,
+    BendRecord, BendSpec, CommandError, CornerTreatment, CreatePlate, CutRecord, HoleKind,
+    HoleRecord, KeepSide, MAX_BENDS, MemberKind, PlateCorner, PlateSide, SectionDepthPosition,
+    SectionPlacement, SectionPlanePosition,
 };
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
@@ -736,6 +736,7 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         holes_mm: decode_holes(prim)?,
         cuts: decode_cut(prim)?,
         hole_records: decode_hole_records(prim)?,
+        bends: decode_bends(prim)?,
     })
 }
 
@@ -852,6 +853,118 @@ fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
         beamcraft_model::command::MAX_HOLES,
         "committed plate has inconsistent hole attributes",
     )
+}
+
+/// The owned bend records of a committed plate (A10, amendment A-2): seven parallel attributes,
+/// all seven or none, of one common length. A damaged or half-authored list is an integrity
+/// error, never a default; the engine re-admits every record on replay. A fold stores its
+/// radius twice and a zero angle in the second-radius and angle slots; a roll stores a zero
+/// angle and, for a cylinder, its one radius twice.
+fn decode_bends(prim: &Prim) -> Result<Vec<BendRecord>, PlateError> {
+    const FIELDS: [&str; 7] = [
+        "steel:plate:bendOperationId",
+        "steel:plate:bendKind",
+        "steel:plate:bendLineAMm",
+        "steel:plate:bendLineBMm",
+        "steel:plate:bendRadiusMm",
+        "steel:plate:bendRadiusBMm",
+        "steel:plate:bendAngleRad",
+    ];
+    let bad = || integrity("committed plate has inconsistent bend attributes");
+    let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let count = FIELDS.iter().filter(|name| declared(name)).count();
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if count != FIELDS.len() {
+        return Err(bad());
+    }
+    let strings = |name: &str| -> Result<Vec<String>, PlateError> {
+        match property(prim, name) {
+            Some(Value::Array(values)) => values
+                .iter()
+                .map(|v| text(v).map(|s| s.to_owned()).ok_or_else(bad))
+                .collect(),
+            _ => Err(bad()),
+        }
+    };
+    let ids = strings(FIELDS[0])?;
+    let kinds: Vec<&str> = match property(prim, FIELDS[1]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| text(v).ok_or_else(bad))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(bad()),
+    };
+    let read_points = |name: &str| -> Result<Vec<[f64; 3]>, PlateError> {
+        match property(prim, name) {
+            Some(Value::Array(values)) => values
+                .iter()
+                .map(|v| numbers::<3>(v).ok_or_else(bad))
+                .collect(),
+            _ => Err(bad()),
+        }
+    };
+    let lines_a = read_points(FIELDS[2])?;
+    let lines_b = read_points(FIELDS[3])?;
+    let doubles = |name: &str| -> Result<Vec<f64>, PlateError> {
+        match property(prim, name) {
+            Some(Value::Array(values)) => {
+                values.iter().map(|v| number(v).ok_or_else(bad)).collect()
+            }
+            _ => Err(bad()),
+        }
+    };
+    let radii = doubles(FIELDS[4])?;
+    let radii_b = doubles(FIELDS[5])?;
+    let angles = doubles(FIELDS[6])?;
+    let n = ids.len();
+    if kinds.len() != n
+        || lines_a.len() != n
+        || lines_b.len() != n
+        || radii.len() != n
+        || radii_b.len() != n
+        || angles.len() != n
+        || n > MAX_BENDS
+    {
+        return Err(bad());
+    }
+    ids.iter()
+        .zip(kinds.iter())
+        .enumerate()
+        .map(|(i, (id, kind))| {
+            let get = |values: &Vec<[f64; 3]>, index: usize| -> Result<[f64; 3], PlateError> {
+                values.get(index).copied().ok_or_else(bad)
+            };
+            let (a, b) = (get(&lines_a, i)?, get(&lines_b, i)?);
+            let radius = radii.get(i).copied().ok_or_else(bad)?;
+            let radius_b = radii_b.get(i).copied().ok_or_else(bad)?;
+            let angle = angles.get(i).copied().ok_or_else(bad)?;
+            let spec = match *kind {
+                "fold" => BendSpec::Fold {
+                    a_mm: a,
+                    b_mm: b,
+                    radius_mm: radius,
+                    angle_rad: angle,
+                },
+                "roll" => BendSpec::Roll {
+                    a_mm: a,
+                    b_mm: b,
+                    radius_mm: radius,
+                    radius_b_mm: if radius_b == radius {
+                        None
+                    } else {
+                        Some(radius_b)
+                    },
+                },
+                _ => return Err(bad()),
+            };
+            Ok(BendRecord {
+                operation_id: OpId::parse(id).map_err(|_| bad())?,
+                spec,
+            })
+        })
+        .collect()
 }
 
 /// Planar polygons stored as one flat `double3[]` point array cut by an `int[]` of vertex counts:
@@ -2127,6 +2240,8 @@ pub fn create_plate(
                         thickness_mm: outcome.authored.thickness_mm,
                         thickness_side: outcome.authored.thickness_side,
                         corners: outcome.authored.corners.clone(),
+                        // A create carries no operation records (F04 section 4).
+                        bends: Vec::new(),
                         holes: outcome
                             .authored
                             .holes_mm
@@ -2134,7 +2249,6 @@ pub fn create_plate(
                             .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
                             .collect(),
                         cuts: Vec::new(),
-                        // A create carries no operation records (F04 section 4).
                         hole_records: Vec::new(),
                     },
                     placement: LayerPlacement {

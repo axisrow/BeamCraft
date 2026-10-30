@@ -185,6 +185,7 @@ fn main() -> std::process::ExitCode {
             || c == "chamfer-part"
             || c == "split-part"
             || c == "combine-parts"
+            || c == "bend-plate"
             || c == "update-cut"
             || c == "remove-cut"
             || c == "create-workspace"

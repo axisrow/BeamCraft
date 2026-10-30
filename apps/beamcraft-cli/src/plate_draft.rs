@@ -149,6 +149,7 @@ pub fn create_plate_draft(
                         // An unsupported plate is never evaluated, so it holds no treatments
                         // and no records.
                         corners: Vec::new(),
+                        bends: Vec::new(),
                         holes: Vec::new(),
                         hole_records: Vec::new(),
                         cuts: Vec::new(),

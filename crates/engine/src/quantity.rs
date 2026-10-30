@@ -456,6 +456,7 @@ mod tests {
             holes_mm: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
+            bends: Vec::new(),
         }
     }
 

@@ -19,7 +19,8 @@ use crate::scene::SceneElement;
 use crate::solid::SolidMesh;
 use beamcraft_geom::Translation3;
 use beamcraft_model::command::{
-    CommandError, CornerTreatment, CutRecord, KeepSide, MemberKind, PlateSide, label_is_valid,
+    BendSpec, CommandError, CornerTreatment, CutRecord, KeepSide, MemberKind, PlateSide,
+    label_is_valid,
 };
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
@@ -228,6 +229,7 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         holes_mm,
         hole_records,
         cuts,
+        bends,
     } = plate;
     let mut key = Vec::with_capacity(160);
     key.extend_from_slice(b"BeamCraft/BodyCache/Plate/v4\0");
@@ -265,6 +267,41 @@ fn plate_key(plate: &AuthoredPlate) -> Vec<u8> {
         push_points(&mut key, &record.polygon_mm);
     }
     push_cut(&mut key, cuts);
+    // The bends change the body entirely: the plate evaluates as its bent loft (A10).
+    key.extend_from_slice(b"bends\0");
+    push_len(&mut key, bends.len());
+    for bend in bends {
+        key.push(match bend.spec {
+            BendSpec::Fold { .. } => 1,
+            BendSpec::Roll { .. } => 2,
+        });
+        match bend.spec {
+            BendSpec::Fold {
+                a_mm,
+                b_mm,
+                radius_mm,
+                angle_rad,
+            } => {
+                for value in a_mm.iter().chain(b_mm.iter()) {
+                    push_f64(&mut key, *value);
+                }
+                push_f64(&mut key, radius_mm);
+                push_f64(&mut key, angle_rad);
+            }
+            BendSpec::Roll {
+                a_mm,
+                b_mm,
+                radius_mm,
+                radius_b_mm,
+            } => {
+                for value in a_mm.iter().chain(b_mm.iter()) {
+                    push_f64(&mut key, *value);
+                }
+                push_f64(&mut key, radius_mm);
+                push_f64(&mut key, radius_b_mm.unwrap_or(radius_mm));
+            }
+        }
+    }
     key
 }
 
@@ -580,6 +617,7 @@ mod tests {
             holes_mm: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
+            bends: Vec::new(),
         }
     }
 
