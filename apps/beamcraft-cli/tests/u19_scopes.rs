@@ -187,6 +187,8 @@ fn the_layout_names_one_layer_per_scope_and_the_first_proof_runs_both_sections()
         .collect();
     for expected in [
         "2401-DEMO_Grids.usda",
+        "2401-DEMO_K1_Grids.usda",
+        "2401-DEMO_K2_Grids.usda",
         "2401-DEMO_KM.usda",
         "2401-DEMO_K1_KMD.usda",
         "2401-DEMO_K2_KMD.usda",
@@ -267,12 +269,14 @@ fn an_authorized_scope_publishes_inside_itself_and_preserves_the_rest() {
     let kmd_published = f.publish(&store, wkmd.to_str().unwrap());
     let kmd_layer = f.layer_of(&store, &kmd_published, "2401-DEMO_K1_KMD.usda");
     assert!(String::from_utf8_lossy(&kmd_layer).contains("KMD plate renamed"));
-    // DV-SCOPE-003 positive: the KM section, the other zone, the shared layer and the root
-    // composition are preserved byte for byte.
+    // DV-SCOPE-003 positive: the KM section, the other zone, every grids layer of the other
+    // partitions and the root composition are preserved byte for byte.
     for name in [
         "2401-DEMO_KM.usda",
         "2401-DEMO_K2_KMD.usda",
         "2401-DEMO_Grids.usda",
+        "2401-DEMO_K1_Grids.usda",
+        "2401-DEMO_K2_Grids.usda",
         "root.usda",
     ] {
         assert_eq!(
@@ -509,7 +513,8 @@ fn a_sectioned_store_answers_only_to_an_authorized_workspace() {
 fn shared_grids_answer_only_to_authorized_shared_commands() {
     let f = Fixture::new();
     let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD,K2:KMD");
-    // DV-SCOPE-004 positive: the separately authorized shared command updates the grids...
+    // DV-SCOPE-004 positive: the separately authorized shared command updates the common
+    // grids of the unzoned partition (T01 §6: a common grid lives in the unzoned layer)...
     let wshared = f.shared.root.join("w-shared");
     f.workspace(
         &store,
@@ -525,15 +530,57 @@ fn shared_grids_answer_only_to_authorized_shared_commands() {
         &["--name", "Main", "--u-expression", "0 3*6000"],
     );
     assert_eq!(text(&grid, "outcome"), "grid_created");
-    let published = f.publish(&store, wshared.to_str().unwrap());
-    let grids_layer = f.layer_of(&store, &published, "2401-DEMO_Grids.usda");
+    let common_published = f.publish(&store, wshared.to_str().unwrap());
+    let grids_layer = f.layer_of(&store, &common_published, "2401-DEMO_Grids.usda");
     assert!(String::from_utf8_lossy(&grids_layer).contains("Main"));
     // ...and the section layers stay out of the shared command's reach.
-    let km_layer = f.layer_of(&store, &published, "2401-DEMO_KM.usda");
+    let km_layer = f.layer_of(&store, &common_published, "2401-DEMO_KM.usda");
     assert!(!String::from_utf8_lossy(&km_layer).contains("Main"));
+    let other_zone_layer = f.layer_of(&store, &common_published, "2401-DEMO_K2_Grids.usda");
 
-    // A section workspace, forked after the shared publication, cannot author the common
-    // grids (DV-SCOPE-004 negative)...
+    // A shared workspace of one zone authors its own zone's grids layer, not the common one:
+    // the zone of a grid is the layer it is stored in (T01 §6).
+    let wzone = f.shared.root.join("w-zone");
+    f.workspace(
+        &store,
+        wzone.to_str().unwrap(),
+        "2401-DEMO",
+        "KMD",
+        Some("K1"),
+        true,
+    );
+    let zone_grid = f.ok_in(
+        wzone.to_str().unwrap(),
+        "create-grid",
+        &["--name", "Zone grid", "--u-expression", "0 6000"],
+    );
+    assert_eq!(text(&zone_grid, "outcome"), "grid_created");
+    let zone_published = f.publish(&store, wzone.to_str().unwrap());
+    let zone_layer = f.layer_of(&store, &zone_published, "2401-DEMO_K1_Grids.usda");
+    assert!(String::from_utf8_lossy(&zone_layer).contains("Zone grid"));
+    // The common layer and the other partitions are untouched by the zone publication.
+    assert_eq!(
+        f.layer_of(&store, &zone_published, "2401-DEMO_Grids.usda"),
+        grids_layer
+    );
+    assert_eq!(
+        f.layer_of(&store, &zone_published, "2401-DEMO_K2_Grids.usda"),
+        other_zone_layer
+    );
+
+    // The zone's shared scope does not reach the common layer: updating the common grid from
+    // the K1 workspace is a foreign write (DV-SCOPE-002), like any other section's prim.
+    let common_grid_id = text(&grid, "element_id").to_owned();
+    let refused = f.refused_in(
+        wzone.to_str().unwrap(),
+        "update-grid",
+        &["--id", &common_grid_id, "--name", "Renamed from K1"],
+    );
+    assert_eq!(text(&refused, "code"), "FOREIGN_READ_ONLY");
+    assert_eq!(rule(&refused), "DV-SCOPE-002");
+
+    // A section workspace, forked after the shared publications, cannot author its zone's
+    // grids either (DV-SCOPE-004 negative)...
     let wkmd = f.shared.root.join("w-kmd");
     f.workspace(
         &store,
@@ -551,7 +598,8 @@ fn shared_grids_answer_only_to_authorized_shared_commands() {
     assert_eq!(text(&refused, "code"), "PERMISSION_DENIED");
     assert_eq!(rule(&refused), "DV-SCOPE-004");
 
-    // ...but still publishes its own scope beside the shared work.
+    // ...but still publishes its own scope beside the shared work, and the publication keeps
+    // both grids layers byte for byte.
     let kmd = "019a7bf0-0000-7000-8000-0000000000ab";
     f.ok_in(
         wkmd.to_str().unwrap(),
@@ -561,9 +609,12 @@ fn shared_grids_answer_only_to_authorized_shared_commands() {
     let published = f.publish(&store, wkmd.to_str().unwrap());
     let layer = f.layer_of(&store, &published, "2401-DEMO_K1_KMD.usda");
     assert!(String::from_utf8_lossy(&layer).contains("KMD plate"));
-    // The shared layer is preserved byte for byte by the section publication.
     assert_eq!(
         f.layer_of(&store, &published, "2401-DEMO_Grids.usda"),
         grids_layer,
+    );
+    assert_eq!(
+        f.layer_of(&store, &published, "2401-DEMO_K1_Grids.usda"),
+        zone_layer,
     );
 }

@@ -13,7 +13,9 @@
 //! while remaining separate writable sections, and enabling a module never widens a scope.
 //!
 //! The authored layer of one section/zone scope is named `<code>[_<zone>]_<section>.usda` with
-//! the project code. A code feeds a file name, so its charset is restricted to ASCII
+//! the project code, and the partition's grids and levels live in
+//! `<code>[_<zone>]_Grids.usda` (T01 §5.2/§6). A code feeds a file name, so its charset is
+//! restricted to ASCII
 //! alphanumerics and `-`; the F12 registries may widen the label rules for display names, which
 //! never enter a layer name.
 
@@ -72,10 +74,16 @@ pub fn section_layer(
     }
 }
 
-/// The shared layer that holds the common grids and levels of one project
-/// (`<code>_Grids.usda`); sections reference it without gaining edit rights.
-pub fn grids_layer(code: &str) -> Result<String, CommandError> {
+/// The grids/levels layer of one zone partition (T01 §5.2/§6): the unzoned partition keeps the
+/// common grids in `<code>_Grids.usda`, a zone partition keeps its own grids and levels in
+/// `<code>_<zone>_Grids.usda`. The zone of a grid or level is the layer it is stored in;
+/// sections reference the layer without gaining edit rights.
+pub fn grids_layer(code: &str, zone: Option<&str>) -> Result<String, CommandError> {
     check_code(code)?;
+    if let Some(zone) = zone {
+        check_code(zone)?;
+        return Ok(format!("{code}_{zone}_Grids.usda"));
+    }
     Ok(format!("{code}_Grids.usda"))
 }
 
@@ -125,9 +133,10 @@ impl WorkspaceScope {
         section_layer(&self.code, self.zone(), &self.section)
     }
 
-    /// The shared grids/levels layer of the project.
+    /// The grids/levels layer of the authorized partition: the common layer for the unzoned
+    /// partition, the zone's own layer otherwise (T01 §6).
     pub fn grids_layer(&self) -> Result<String, CommandError> {
-        grids_layer(&self.code)
+        grids_layer(&self.code, self.zone())
     }
 }
 
@@ -146,7 +155,15 @@ mod tests {
             section_layer("2401-DEMO", None, "KM").unwrap(),
             "2401-DEMO_KM.usda"
         );
-        assert_eq!(grids_layer("2401-DEMO").unwrap(), "2401-DEMO_Grids.usda");
+        assert_eq!(
+            grids_layer("2401-DEMO", None).unwrap(),
+            "2401-DEMO_Grids.usda"
+        );
+        assert_eq!(
+            grids_layer("2401-DEMO", Some("K1")).unwrap(),
+            "2401-DEMO_K1_Grids.usda"
+        );
+        assert!(grids_layer("2401-DEMO", Some("K_1")).is_err());
         for bad in ["", "a_b", "a.b", "a/b", "a b", "КМ", &"x".repeat(33)] {
             assert!(check_code(bad).is_err(), "{bad:?}");
         }
@@ -163,12 +180,13 @@ mod tests {
         };
         scope.validate().unwrap();
         assert_eq!(scope.section_layer().unwrap(), "2401-DEMO_K1_KMD.usda");
-        assert_eq!(scope.grids_layer().unwrap(), "2401-DEMO_Grids.usda");
+        assert_eq!(scope.grids_layer().unwrap(), "2401-DEMO_K1_Grids.usda");
         let unzoned = WorkspaceScope {
             zones: BTreeSet::new(),
             ..scope
         };
         assert_eq!(unzoned.section_layer().unwrap(), "2401-DEMO_KMD.usda");
+        assert_eq!(unzoned.grids_layer().unwrap(), "2401-DEMO_Grids.usda");
         let multi = WorkspaceScope {
             zones: BTreeSet::from(["K1".to_owned(), "K2".to_owned()]),
             ..unzoned

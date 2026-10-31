@@ -10,9 +10,10 @@ fork issue #363 (upstream #230, parent epic #189). Contracts:
 
 A project can now be created **sectioned**: `create-project --code 2401-DEMO --sections
 KM,K1:KMD,K2:KMD` stores one authored layer per scope, named
-`<code>[_<zone>]_<section>.usda` after the architecture's layer plan, plus the shared
-`<code>_Grids.usda` (grids and levels) and the one derived layer. The root composes the
-authored scope layers first and the derived layer last. Classic stores (the single
+`<code>[_<zone>]_<section>.usda` after the architecture's layer plan, plus the grids/levels
+layer `<code>[_<zone>]_Grids.usda` of every zone partition the scopes name (T01 §5.2/§6) and
+the one derived layer. The root composes the authored scope layers first and the derived
+layer last. Classic stores (the single
 `authored.usda`) are untouched and never gain authority from their names (DV-SCOPE-005).
 
 A workspace is authorized **once**, at `create-workspace --scope-code --scope-section
@@ -20,7 +21,8 @@ A workspace is authorized **once**, at `create-workspace --scope-code --scope-se
 creation needs one unambiguous write layer; a wider set is refused until element commands
 name their zone), and optionally the separately authorized shared grids/levels scope. The
 authorization is recorded in `workspace.json` (format v3) and validated against the
-store's layout — both the scope's layer and the shared layer must already participate.
+store's layout — both the scope's section layer and its partition's grids layer must
+already participate.
 
 Every edit command derives its routing again from trusted inputs (the verified manifest
 head and the workspace metadata), never from a client claim:
@@ -57,9 +59,15 @@ holes:
 - The grant is given only at workspace creation; there is no command to widen, narrow or
   revoke a scope yet (a scope change means a new workspace). T01.5's rights work can add
   the explicit grant/revoke command over the same recorded shape.
-- One shared layer per project (`<code>_Grids.usda`, unzoned). Per-zone grids layers
-  (`<code>_<zone>_Grids.usda`) are a layout extension the naming rule already admits; the
-  routing and the shared authorization then become per-layer instead of per-project.
+- The grids/levels layers are per zone partition (T01 §5.2/§6, owner decision 2026-10-31):
+  an unzoned workspace keeps the common grids in `<code>_Grids.usda`, a zoned workspace
+  keeps its zone's grids and levels in `<code>_<zone>_Grids.usda`. The zone of a grid is
+  the layer it is stored in; a zone's shared scope is refused (`FOREIGN_READ_ONLY`) at
+  every other partition's layer, and a grid created with no zone (an unzoned workspace) is
+  a common grid. A store sectioned before zoning keeps only the common layer, so a zoned
+  workspace is refused on it; zones are labels until F12 (U20), so the contract's "the
+  zone's own frame" binds when zone records carry frames — prims author in project
+  coordinates with unchanged paths and identities.
 - Read-only pinned coordination grids are coordination-project composition (U21/#364);
   this slice scopes only the project's own store, where foreign content is already
   `FOREIGN_READ_ONLY` by ownership.
