@@ -126,6 +126,17 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Plat
             ]
         }
         CopiedElement::Member(r) => {
+            // A04.2 member-hole records have no copy authoring yet (fresh operation ids and a
+            // Change::MemberHoles write): a copy or an array of a drilled member would report
+            // the source's holed mesh and silently lose the holes on the next evaluation.
+            if !r.authored.hole_records.is_empty() {
+                return Err(CommandError::new(
+                    ErrorCode::DependencyUnavailable,
+                    "hole_records",
+                    "copying a drilled member is not implemented",
+                )
+                .into());
+            }
             let a = &r.authored;
             let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
             vec![

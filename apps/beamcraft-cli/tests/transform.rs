@@ -346,6 +346,103 @@ fn a_member_mirror_reflects_the_path_and_refuses_a_polybeam() {
 }
 
 #[test]
+fn a_drilled_member_refuses_the_copy_the_array_and_the_mirror() {
+    let f = Fixture::new();
+    let published = f.dir("drilled");
+    std::fs::create_dir_all(&published).unwrap();
+    let profile = text(
+        at(
+            &f.ok(&[
+                "define-profile",
+                "--store",
+                &published,
+                "--width",
+                "200",
+                "--height",
+                "300",
+            ]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let created = f.ok(&[
+        "create-member",
+        "--store",
+        &published,
+        "--profile-digest",
+        &profile,
+        "--start",
+        "0,0,0",
+        "--end",
+        "2000,0,0",
+        "--kind",
+        "beam",
+    ]);
+    let id = text(at(&created, &["member"]), "element_id");
+    f.ok(&[
+        "add-hole",
+        "--store",
+        &published,
+        "--id",
+        &id,
+        "--operation-id",
+        "019a7bf0-0000-7000-8000-0000000000d1",
+        "--axis-point",
+        "0,0,1000",
+        "--axis-direction",
+        "1,0,0",
+        "--diameter",
+        "50",
+    ]);
+    let dir = f.dir("drilled-ws");
+    f.ok(&[
+        "create-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &dir,
+        "--user-id",
+        USER,
+    ]);
+    // The hole records have no copy, array or mirror authoring yet: all three refuse before
+    // anything is written instead of silently dropping the holes.
+    assert_eq!(
+        f.code(&["copy-element", "--store", &dir, "--id", &id]),
+        "DEPENDENCY_UNAVAILABLE"
+    );
+    assert_eq!(
+        f.code(&[
+            "array-linear",
+            "--store",
+            &dir,
+            "--id",
+            &id,
+            "--count",
+            "2",
+            "--direction",
+            "1,0,0",
+            "--spacing",
+            "3000",
+        ]),
+        "DEPENDENCY_UNAVAILABLE"
+    );
+    assert_eq!(
+        f.code(&[
+            "update-element",
+            "--store",
+            &dir,
+            "--id",
+            &id,
+            "--mirror-point",
+            "0,0,0",
+            "--mirror-normal",
+            "1,0,0",
+        ]),
+        "UNSUPPORTED_GEOMETRY"
+    );
+}
+
+#[test]
 fn a_linear_array_is_one_revision_and_one_undo_step() {
     let f = Fixture::new();
     let published = f.dir("array");
