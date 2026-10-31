@@ -46,6 +46,17 @@ fn quat_multiply(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
     ]
 }
 
+/// Scales a quaternion to unit length. The Hamilton product of two unit quaternions can push a
+/// component past 1.0 by an ulp (a second quarter turn about Z gives z = `2·sin(45°)·cos(45°)`),
+/// and platform libm rounding decides on which side of 1.0 that lands. The drift is rounding,
+/// not rotation: renormalizing keeps every composed placement inside the stored `[-1, 1]`
+/// component bound (DV-LIM-003) that [`Placement::validate`] checks.
+fn quat_normalized(q: [f64; 4]) -> [f64; 4] {
+    let [x, y, z, w] = q;
+    let norm = ((x * x + y * y) + (z * z + w * w)).sqrt();
+    [x / norm, y / norm, z / norm, w / norm]
+}
+
 /// The rotation matrix of a unit quaternion (row-major; maps a local vector to world).
 fn quat_to_matrix(q: [f64; 4]) -> Mat3 {
     let [x, y, z, w] = q;
@@ -195,7 +206,7 @@ pub fn rotate_placement(
                 rotate.pivot_mm[2] + turned[2],
             ]
         },
-        orientation_xyzw: quat_multiply(step, placement.orientation_xyzw),
+        orientation_xyzw: quat_normalized(quat_multiply(step, placement.orientation_xyzw)),
     };
     next.validate()?;
     Ok(next)
@@ -523,6 +534,37 @@ mod tests {
         assert!(z.abs() - core::f64::consts::FRAC_1_SQRT_2 < 1e-9);
         assert!(w.abs() - core::f64::consts::FRAC_1_SQRT_2 < 1e-9);
         assert!(x.abs() < 1e-9 && y.abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_second_quarter_turn_stays_inside_the_unit_quaternion_bound() {
+        // An element already at the quarter turn, composed with another quarter turn: the raw
+        // Hamilton product has z = `2·(√2/2)²` = 1.0000000000000002 in f64, which the strict
+        // stored component bound (DV-LIM-003) must reject as stored data but the rotation step
+        // must never produce. The input constants are literals, so the overshoot is exact on
+        // every platform regardless of the libm behind the step quaternion.
+        let quarter = Placement {
+            translation_mm: [0.0, 1000.0, 0.0],
+            orientation_xyzw: [
+                0.0,
+                0.0,
+                core::f64::consts::FRAC_1_SQRT_2,
+                core::f64::consts::FRAC_1_SQRT_2,
+            ],
+        };
+        let turned = rotate_placement(
+            &quarter,
+            &rotate([0.0; 3], [0.0, 0.0, 1.0], core::f64::consts::FRAC_PI_2),
+        )
+        .unwrap();
+        Placement::validate_orientation(turned.orientation_xyzw).unwrap();
+        let [x, y, z, w] = turned.orientation_xyzw;
+        assert!(x.abs() < 1e-9 && y.abs() < 1e-9);
+        assert!((z - 1.0).abs() < 1e-9);
+        assert!(w.abs() < 1e-9);
+        // The translation turns with it: (0, 1000, 0) becomes (-1000, 0, 0).
+        assert!((turned.translation_mm[0] + 1000.0).abs() < 1e-6);
+        assert!(turned.translation_mm[1].abs() < 1e-6);
     }
 
     #[test]
