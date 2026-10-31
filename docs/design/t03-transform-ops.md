@@ -50,7 +50,9 @@ beamcraft array-polar    --store ROOT --id UUID --count N --point P --axis V --a
   no expressible mirror symmetry in the authored fields. A plate with bend records (A10)
   refuses for the same reason: the curl of a fold or a roll about the mid-plane reflection has
   no authored form; negating a fold's angle alone would cover folds, but a roll carries no
-  direction field, and one honest rule for the whole bent body was preferred.
+  direction field, and one honest rule for the whole bent body was preferred. A member with
+  hole records (A04.2) refuses too: the hole polygons live in a face's own frame, which has no
+  face-aware mirrored encoding yet.
 - **Honesty limit:** the profile definition is not mirrored. A member mirror is exact for
   mirror-symmetric sections and keeps the profile handedness of a chiral one (L, Z). A
   mirrored-profile definition (or a mirror flag on the part) belongs to a later task.

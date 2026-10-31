@@ -332,6 +332,15 @@ pub fn mirror_member_local(member: &mut AuthoredMember) -> Result<(), CommandErr
             "a polybeam or curved member has no expressible mirrored path",
         ));
     }
+    // A04.2 member holes are polygons in a face's own frame; their mirrored placement is not
+    // expressible without a face-aware encoding, so a member with hole records refuses.
+    if !member.hole_records.is_empty() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "mirror",
+            "a member with hole records has no expressible mirrored holes",
+        ));
+    }
     let symmetry = member_symmetry(&member.axis_points_mm)
         .ok_or_else(|| degenerate("mirror", "the member path must have two points"))?;
     member.axis_points_mm = member
@@ -783,6 +792,7 @@ mod tests {
             placement: Placement::IDENTITY,
             material: None,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         }
     }
 
@@ -851,6 +861,20 @@ mod tests {
         curved.curved = true;
         assert_eq!(
             mirror_member_local(&mut curved).unwrap_err().code,
+            ErrorCode::UnsupportedGeometry
+        );
+        // A04.2 member holes have no expressible mirrored placement.
+        let mut drilled = member();
+        drilled.hole_records = vec![beamcraft_model::command::MemberHoleRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000ad").unwrap(),
+            ordinal: 0,
+            axis_point_mm: [500.0, 20.0, 0.0],
+            axis_direction: [0.0, 1.0, 0.0],
+            extent: beamcraft_model::command::HoleExtent::Through,
+            polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
+        }];
+        assert_eq!(
+            mirror_member_local(&mut drilled).unwrap_err().code,
             ErrorCode::UnsupportedGeometry
         );
     }
