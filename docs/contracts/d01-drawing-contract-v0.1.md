@@ -88,7 +88,10 @@ resolve as explicitly unresolved — that is a projection outcome, not an admiss
   (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each collection is under its own cap;
 - more than `MAX_LAYERS` (16) layers, a layer name violating the bounded label rule, or layer
   UUIDs colliding with any other document object;
-- a drawn object naming a layer the same admitted or replaced set does not define.
+- a drawn object naming a layer the same admitted or replaced set does not define;
+- any drawn number (coordinate, radius, height, rotation, scale, offset) whose canonical
+  decimal form exceeds `MAX_NUMBER_TEXT_BYTES` (24) bytes — a pathological binary64 would
+  otherwise overflow the document byte cap at encode time.
 
 ## 6. Resolution and unresolved states
 
@@ -155,7 +158,9 @@ topology.
 
 Admission refuses more than `MAX_DRAFTING_ENTITIES` (60) objects, any entity UUID equal to the
 drawing/view/dimension UUID, and any pair of equal entity UUIDs. Coordinates are exact paper
-millimetres; angles are radians. In the intent USD the entities are the canonical ordinal
+millimetres; angles are radians. The intent byte cap (`MAX_INTENT_BYTES`, 131 072) holds the
+densest admitted page: even fifty-eight sixteen-point hatches on the longest bounded canonical
+coordinates encode within it, so an admitted document never refuses at encode time. In the intent USD the entities are the canonical ordinal
 children `E1..En` of `/Drawing/Drafting` (`drawing:id`, `drawing:kind`,
 `drawing:geometry double[]`); the canonical re-encode comparison refuses any other topology.
 

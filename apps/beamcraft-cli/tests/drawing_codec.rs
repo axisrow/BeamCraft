@@ -242,6 +242,45 @@ fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
 }
 
 #[test]
+fn the_densest_admitted_page_encodes_within_the_intent_byte_cap() {
+    const LAYER: &str = "01900000-0000-7000-8000-000000000015";
+    // The longest bounded canonical coordinates: twenty-four bytes each, the admission edge,
+    // as literals so every shortest round-trip form is exactly the decimal written here.
+    const EDGE: [f64; 16] = [
+        1e-22, 2e-22, 3e-22, 4e-22, 5e-22, 6e-22, 7e-22, 8e-22, 9e-22, 1.0e-21, 1.1e-21, 1.2e-21,
+        1.3e-21, 1.4e-21, 1.5e-21, 1.6e-21,
+    ];
+    let layer = LayerSpec {
+        id: DraftingEntityId::parse(LAYER).unwrap(),
+        name: "Dense".into(),
+        visible: true,
+    };
+    let entities = (0..58u64)
+        .map(|index| DraftingSpec {
+            id: DraftingEntityId::parse(&format!("019a0000-0000-7000-8000-{index:012}")).unwrap(),
+            geometry: DraftingGeometry::Hatch {
+                outline: EDGE.iter().map(|value| [*value, *value]).collect(),
+                pattern: HatchPattern::Crosshatch,
+            },
+            layer: DraftingEntityId::parse(LAYER).unwrap(),
+            line_type: LineType::Dotted,
+        })
+        .collect();
+    // One layer and fifty-eight sixteen-point hatches is exactly the one-page ceiling.
+    let intent = drawing().with_drafting(vec![layer], entities).unwrap();
+    let asset = codec::encode(&intent).unwrap();
+    assert!(
+        asset.bytes.len() <= codec::MAX_INTENT_BYTES,
+        "{}",
+        asset.bytes.len()
+    );
+    assert_eq!(
+        codec::decode(asset, identity(), &control()).unwrap(),
+        intent
+    );
+}
+
+#[test]
 fn placed_views_round_trip_exactly_and_keep_their_own_paper_settings() {
     let view = |suffix: u64, plane: Plane, scale: f64, origin: [f64; 2]| ViewSpec {
         id: DrawingViewId::parse(&format!("01900000-0000-7000-8000-{suffix:012}")).unwrap(),

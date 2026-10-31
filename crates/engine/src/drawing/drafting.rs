@@ -22,6 +22,11 @@ pub const MAX_POLYLINE_POINTS: usize = 16;
 pub const MAX_LAYERS: usize = 16;
 /// Largest byte length of one drawn text string.
 pub const MAX_TEXT_BYTES: usize = 128;
+/// Largest byte length of one coordinate's canonical decimal form. A pathological binary64
+/// (say `5e-324`) prints as hundreds of characters and would overflow any fixed document byte
+/// cap; a coordinate whose shortest round-trip form exceeds this bound is refused at admission
+/// exactly like an oversized text string is.
+pub const MAX_NUMBER_TEXT_BYTES: usize = 24;
 
 /// One complete turn in radians; the bound for an admitted arc angle magnitude.
 pub const MAX_ARC_TURN: f64 = std::f64::consts::TAU;
@@ -452,6 +457,7 @@ fn finite_point(point: [f64; 2]) -> Result<(), CommandError> {
                 "coordinate is outside the drawing contract's range",
             ));
         }
+        bounded_form(value)?;
     }
     Ok(())
 }
@@ -506,12 +512,15 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
                     "radius must be positive and within the drawing contract's range",
                 ));
             }
+            bounded_form(*radius)?;
             if start.abs() > MAX_ARC_TURN || end.abs() > MAX_ARC_TURN {
                 return Err(invalid(
                     "drafting",
                     "arc angles must stay within one turn in magnitude",
                 ));
             }
+            bounded_form(*start)?;
+            bounded_form(*end)?;
             // A zero or full-turn sweep is a circle, never a silently accepted arc.
             if (end - start).rem_euclid(std::f64::consts::TAU) == 0.0 {
                 return Err(invalid(
@@ -535,6 +544,7 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
                     "radius must be positive and within the drawing contract's range",
                 ));
             }
+            bounded_form(*radius)?;
         }
         DraftingGeometry::Rectangle { a, b } => {
             finite_point(*a)?;
@@ -566,12 +576,14 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
                     "text height must be positive and within the drawing contract's range",
                 ));
             }
+            bounded_form(*height)?;
             if rotation.abs() > MAX_ARC_TURN {
                 return Err(invalid(
                     "drafting",
                     "text rotation must stay within one turn in magnitude",
                 ));
             }
+            bounded_form(*rotation)?;
             if text.is_empty() || text.len() > MAX_TEXT_BYTES {
                 return Err(invalid(
                     "drafting",
@@ -618,6 +630,7 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
                     "symbol scale must be positive and within the drawing contract's range",
                 ));
             }
+            bounded_form(*scale)?;
         }
         DraftingGeometry::FreeDimension {
             from,
@@ -647,6 +660,17 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
     Ok(())
 }
 
+/// Rejects a number whose canonical decimal form would overflow the document's byte budget.
+fn bounded_form(value: f64) -> Result<(), CommandError> {
+    if value.to_string().len() > MAX_NUMBER_TEXT_BYTES {
+        return Err(invalid(
+            "drafting",
+            "number's canonical form is too long for the document byte cap",
+        ));
+    }
+    Ok(())
+}
+
 /// Validates one finite value inside the drawing contract's signed paper range.
 fn finite_range_value(value: f64, field: &'static str) -> Result<(), CommandError> {
     if !value.is_finite() {
@@ -662,7 +686,7 @@ fn finite_range_value(value: f64, field: &'static str) -> Result<(), CommandErro
             "number is outside the drawing contract's range",
         ));
     }
-    Ok(())
+    bounded_form(value)
 }
 
 #[cfg(test)]
@@ -690,6 +714,57 @@ mod tests {
         }
         assert_eq!(LineType::parse("hidden"), None);
         assert_eq!(LineType::parse(""), None);
+    }
+
+    #[test]
+    fn pathological_canonical_forms_refuse_at_admission() {
+        // A binary64 whose shortest round-trip form would overflow the document's byte budget
+        // is refused exactly like an oversized text string, at every numeric surface. The
+        // twenty-four-byte edge itself stays valid.
+        let edge = 0.0000000000000000000001_f64;
+        assert_eq!(edge.to_string().len(), MAX_NUMBER_TEXT_BYTES);
+        assert!(
+            validate_geometry(&DraftingGeometry::Line {
+                a: [edge, 0.0],
+                b: [10.0, 0.0],
+            })
+            .is_ok()
+        );
+        for geometry in [
+            DraftingGeometry::Line {
+                a: [1e-23, 0.0],
+                b: [10.0, 0.0],
+            },
+            DraftingGeometry::Circle {
+                center: [0.0, 0.0],
+                radius: 1e-23,
+            },
+            DraftingGeometry::Arc {
+                center: [0.0, 0.0],
+                radius: 5.0,
+                start: 1e-23,
+                end: 1.25,
+            },
+            DraftingGeometry::Text {
+                anchor: [0.0, 0.0],
+                text: "t".to_owned(),
+                height: 1e-23,
+                rotation: 0.0,
+            },
+            DraftingGeometry::Symbol {
+                anchor: [0.0, 0.0],
+                symbol: PaperSymbol::North,
+                scale: 1e-23,
+            },
+            DraftingGeometry::FreeDimension {
+                from: [0.0, 0.0],
+                to: [30.0, 0.0],
+                offset: 1e-23,
+                decimal_places: 0,
+            },
+        ] {
+            assert!(validate_geometry(&geometry).is_err(), "{geometry:?}");
+        }
     }
 
     #[test]
