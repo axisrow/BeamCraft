@@ -18,9 +18,9 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change,
-    open_base, plate_record, prior_op_with, replay_summary, summarize,
+    Base, PlateError, RevisionSummary, check_footprint, control, decode, evaluate_decoded,
+    host_uuid, integrity, load_base, member_record, mesh_change, open_base, plate_record,
+    prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -29,7 +29,7 @@ use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Author, Change, EditTargets, Prepare, schema_identity};
+use beamcraft_layer_engine::authored::{Change, Prepare, schema_identity};
 use beamcraft_model::command::{AddHole, CommandError};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
@@ -456,15 +456,8 @@ fn apply_hole(
         footprint
     };
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

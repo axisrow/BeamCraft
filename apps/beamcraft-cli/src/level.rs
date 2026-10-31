@@ -19,9 +19,9 @@
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint,
-    control, digest_of, host_uuid, integrity, load_base, number, open_base, prior_op_with,
-    property, replay_summary, summarize, text,
+    Base, PlateError, RevisionSummary, base_of, check_footprint, control, digest_of, host_uuid,
+    integrity, load_base, number, open_base, prior_op_with, property, replay_summary, summarize,
+    text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -29,8 +29,7 @@ use beamcraft_engine::level::{HolderKind, LevelRecord, Levels};
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape,
-    schema_identity, validate_layers,
+    Change, Element, Placement as LayerPlacement, Prepare, Shape, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::command::{CommandError, CreateLevel};
@@ -286,15 +285,8 @@ pub fn create_level(
     }
     let creation = model.create(command)?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, true, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

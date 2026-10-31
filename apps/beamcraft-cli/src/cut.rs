@@ -29,9 +29,9 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, member_record,
-    mesh_change, open_base, plate_record, prior_op_with, replay_summary, summarize,
+    Base, PlateError, RevisionSummary, check_footprint, control, decode, digest_of,
+    evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
+    plate_record, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
@@ -43,7 +43,7 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, MemberKind, Placement, Prepare, Shape, schema_identity,
+    Change, Element, MemberKind, Placement, Prepare, Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{
@@ -448,15 +448,8 @@ fn apply_cut(
     }
     let id_text = canonical.to_string();
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let record = |element: &CutElement| match element {
         CutElement::Plate(r) => mesh_change(&r.authored.id, &r.body.solid, &plate_record(r)),
         CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
@@ -1294,15 +1287,8 @@ pub fn a13_record(
     }
 
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     if let Some(consumed) = deleted {
         let index = author.element_index(&opened.context, &control)?;
         author.check_delete(

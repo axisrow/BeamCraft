@@ -2365,8 +2365,72 @@ fn chain(prims: &[Prim], changes: &[Change], start: &str) -> Vec<String> {
     out
 }
 
+/// The U19 scope admission of one change (`DV-SCOPE-002..004`): an edit must name an element
+/// whose strongest authored provenance lies inside the authorized scopes, unknown provenance
+/// gives no write permission, and common-data layers answer only to authorized shared commands.
+/// An element this batch creates is admitted: it is authored in the scope's write layer.
+pub(super) fn in_scope(
+    change: &Change,
+    existing: Option<&Prim>,
+    scope: &EditScope,
+) -> Result<(), Diagnostic> {
+    if matches!(
+        change,
+        Change::AttrDefine { .. } | Change::AttrUndefine { .. }
+    ) {
+        return if scope.shared_authorized {
+            Ok(())
+        } else {
+            Err(fail(
+                ErrorCode::PermissionDenied,
+                "the user-attribute schema is shared data",
+            )
+            .with_rule("DV-SCOPE-004"))
+        };
+    }
+    if matches!(change, Change::Create(_) | Change::AttachReference(_)) {
+        return Ok(());
+    }
+    // An element created in the same batch has no provenance yet; the kind checks below still
+    // refuse a change that names no such create.
+    let Some(prim) = existing else {
+        return Ok(());
+    };
+    let layer = prim
+        .sources
+        .first()
+        .map(|s| s.layer.as_str())
+        .ok_or_else(|| {
+            fail(
+                ErrorCode::ForeignReadOnly,
+                "unknown provenance gives no write permission",
+            )
+            .with_rule("DV-SCOPE-002")
+        })?;
+    if scope.allowed.contains(layer) {
+        return Ok(());
+    }
+    if scope.shared.contains(layer) {
+        return if scope.shared_authorized {
+            Ok(())
+        } else {
+            Err(fail(
+                ErrorCode::PermissionDenied,
+                "grids and levels are shared data",
+            )
+            .with_rule("DV-SCOPE-004"))
+        };
+    }
+    Err(fail(
+        ErrorCode::ForeignReadOnly,
+        "the element belongs to another section or zone",
+    )
+    .with_rule("DV-SCOPE-002"))
+}
+
 pub(super) fn changes(
     input: &Prepare,
+    scope: Option<&EditScope>,
     prims: &[Prim],
     b: Budgets,
 ) -> Result<(BTreeSet<Footprint>, BTreeSet<Footprint>), Diagnostic> {
@@ -2380,6 +2444,9 @@ pub(super) fn changes(
             change,
             Change::AttrDefine { .. } | Change::AttrUndefine { .. }
         ) {
+            if let Some(scope) = scope {
+                in_scope(change, None, scope)?;
+            }
             writes.insert(Footprint {
                 identity: super::ATTR_SCHEMA_IDENTITY.to_owned(),
                 group: Group::Lifecycle,
@@ -2395,6 +2462,9 @@ pub(super) fn changes(
         let wrapper = existing
             .is_some_and(|p| matches!(text(p, "bim:geometryMode", "token"), Ok("reference")));
         owned(prims, &path, !wrapper)?;
+        if let Some(scope) = scope {
+            in_scope(change, existing, scope)?;
+        }
         if matches!(change, Change::Delete { .. })
             && input.changes.iter().filter(|c| c.key().0 == id).count() > 1
         {

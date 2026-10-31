@@ -29,7 +29,7 @@ use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerEntry, LayerRole, RevisionDraft, RevisionStore,
 };
 use beamcraft_host::storage::BlobStore;
-use beamcraft_layer_engine::authored::schema_identity;
+use beamcraft_layer_engine::authored::{PROJECT_RECORD_KEY, schema_identity};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
 use std::fs;
@@ -50,6 +50,58 @@ pub const ENVIRONMENTS_DIR: &str = "environments";
 /// `--environment`: the project carries the libraries it was created with, so it opens the same
 /// on another machine and the next session needs no setting.
 pub const PROJECT_ENVIRONMENT_DIR: &str = "environment";
+
+/// The section/zone scopes of a new sectioned project (U19): one authored layer per scope
+/// named `<code>[_<zone>]_<section>.usda` plus the shared `<code>_Grids.usda`. The codes are
+/// labels; the section and zone registries of F12 are a later package.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectLayout {
+    /// The project code the layer names are built from.
+    pub code: String,
+    /// One `(zone, section)` pair per authored section/zone scope.
+    pub scopes: Vec<(Option<String>, String)>,
+}
+
+impl ProjectLayout {
+    /// Parses `--code` and the `--sections` list ("KM", "K1:KMD"), validating every code.
+    pub fn parse(code: &str, specs: &[&str]) -> Result<Self, PlateError> {
+        beamcraft_engine::scope::check_code(code).map_err(PlateError::from)?;
+        let mut scopes = Vec::new();
+        for spec in specs {
+            let (zone, section) = match spec.split_once(':') {
+                Some((zone, section)) => (Some(zone.to_owned()), section),
+                None => (None, *spec),
+            };
+            beamcraft_engine::scope::section_layer(code, zone.as_deref(), section)
+                .map_err(PlateError::from)?;
+            scopes.push((zone, section.to_owned()));
+        }
+        if scopes.is_empty() {
+            return Err(PlateError::new(
+                ErrorCode::InvalidArgument,
+                "a sectioned project names at least one section",
+            ));
+        }
+        Ok(Self {
+            code: code.to_owned(),
+            scopes,
+        })
+    }
+
+    /// The authored layer names of the layout: the shared grids/levels layer and one per
+    /// section/zone scope, deduplicated and sorted; the derived layer is not included.
+    pub fn layer_names(&self) -> Result<Vec<String>, PlateError> {
+        let mut names = std::collections::BTreeSet::new();
+        names.insert(beamcraft_engine::scope::grids_layer(&self.code).map_err(PlateError::from)?);
+        for (zone, section) in &self.scopes {
+            names.insert(
+                beamcraft_engine::scope::section_layer(&self.code, zone.as_deref(), section)
+                    .map_err(PlateError::from)?,
+            );
+        }
+        Ok(names.into_iter().collect())
+    }
+}
 
 const fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
     PlateError::new(code, message)
@@ -240,7 +292,21 @@ pub fn create_project(
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
 ) -> Result<ProjectInfo, PlateError> {
-    create_named_project(parent, name, false, context, hook)
+    create_named_project(parent, name, false, context, hook, None)
+}
+
+/// Creates a project organized into authored section/zone scopes (U19): the root composes one
+/// authored layer per scope plus the shared grids/levels layer and the derived layer. Editing
+/// it requires a workspace authorized for one scope (`create-workspace --scope-*`).
+pub fn create_project_scoped(
+    parent: &Path,
+    name: &str,
+    unique: bool,
+    layout: &ProjectLayout,
+    context: &ProjectContext,
+    hook: &mut dyn CommitHook,
+) -> Result<ProjectInfo, PlateError> {
+    create_named_project(parent, name, unique, context, hook, Some(layout))
 }
 
 /// Create with the first free name: `name`, `name 1`, `name 2`, up to 10,000 candidates.
@@ -251,7 +317,7 @@ pub fn create_project_unique(
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
 ) -> Result<ProjectInfo, PlateError> {
-    create_named_project(parent, name, true, context, hook)
+    create_named_project(parent, name, true, context, hook, None)
 }
 
 fn numbered_name(name: &str, index: u32) -> String {
@@ -297,6 +363,7 @@ fn create_named_project(
     unique: bool,
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
+    layout: Option<&ProjectLayout>,
 ) -> Result<ProjectInfo, PlateError> {
     check_project_name(name)?;
     let parent = absolute(parent)?;
@@ -337,7 +404,7 @@ fn create_named_project(
             "no free project name within the candidate limit",
         )
     })?;
-    match first_revision(&dir, context, hook) {
+    match first_revision(&dir, context, hook, layout) {
         Ok(()) => project_info(&dir),
         Err(error) => {
             // Only what this call made is removed: the folder did not exist before it.
@@ -350,11 +417,14 @@ fn create_named_project(
 /// Commits the initial layer set of a store without a revision: the root that records the
 /// ProjectId, and empty authored and derived layers. An empty model is not an edit, so it is not
 /// authored through the layer engine; it is the same base every first command starts from, and
-/// it is verified at commit like every revision (U03 index, structural validation).
+/// it is verified at commit like every revision (U03 index, structural validation). A sectioned
+/// project (U19) instead starts with one authored layer per section/zone scope plus the shared
+/// grids/levels layer, composed by the root in that order.
 fn first_revision(
     dir: &Path,
     context: &ProjectContext,
     hook: &mut dyn CommitHook,
+    layout: Option<&ProjectLayout>,
 ) -> Result<(), PlateError> {
     let blobs = BlobStore::new(dir).map_err(|e| refuse(e.code(), "store root is not usable"))?;
     let store = RevisionStore::new(blobs);
@@ -367,17 +437,50 @@ fn first_revision(
         ));
     }
     let mut entries = Vec::with_capacity(base.assets.len());
-    for asset in &base.assets {
+    if let Some(layout) = layout {
+        let mut names = layout.layer_names()?;
+        names.push(crate::plate::DERIVED_LAYER.to_owned());
+        let root = scoped_root(&names, &context.project);
+        for name in &names {
+            let role = if name == crate::plate::DERIVED_LAYER {
+                LayerRole::Derived
+            } else {
+                LayerRole::Authored
+            };
+            store
+                .blobs()
+                .publish(crate::plate::EMPTY_LAYER.as_bytes())
+                .map_err(|e| refuse(e.code(), "layer blob could not be stored"))?;
+            entries.push(LayerEntry::from_bytes(
+                name,
+                role,
+                crate::plate::EMPTY_LAYER.as_bytes(),
+            )?);
+        }
         store
             .blobs()
-            .publish(&asset.bytes)
+            .publish(root.as_bytes())
             .map_err(|e| refuse(e.code(), "layer blob could not be stored"))?;
-        let role = if asset.name == DERIVED_LAYER {
-            LayerRole::Derived
-        } else {
-            LayerRole::Authored
-        };
-        entries.push(LayerEntry::from_bytes(&asset.name, role, &asset.bytes)?);
+        entries.push(LayerEntry::from_bytes(
+            crate::plate::ROOT_LAYER,
+            LayerRole::Authored,
+            root.as_bytes(),
+        )?);
+        // The manifest is strictly ascending by layer name.
+        entries.sort_by(|a, b| a.name().cmp(b.name()));
+    } else {
+        for asset in &base.assets {
+            store
+                .blobs()
+                .publish(&asset.bytes)
+                .map_err(|e| refuse(e.code(), "layer blob could not be stored"))?;
+            let role = if asset.name == DERIVED_LAYER {
+                LayerRole::Derived
+            } else {
+                LayerRole::Authored
+            };
+            entries.push(LayerEntry::from_bytes(&asset.name, role, &asset.bytes)?);
+        }
     }
     let draft = RevisionDraft {
         project: host_uuid(&base.project)?,
@@ -400,6 +503,19 @@ fn first_revision(
         ));
     }
     Ok(())
+}
+
+/// The root layer of a sectioned project: it records the ProjectId (D1) and composes the
+/// authored scope layers first and the derived layer last.
+fn scoped_root(names: &[String], project: &ProjectId) -> String {
+    let subs = names
+        .iter()
+        .map(|n| format!("@{n}@"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "#usda 1.0\n(\n    customLayerData = {{\n        string {PROJECT_RECORD_KEY} = \"{project}\"\n    }}\n    defaultPrim = \"World\"\n    metersPerUnit = 0.001\n    subLayers = [{subs}]\n    upAxis = \"Z\"\n)\n"
+    )
 }
 
 /// One environment found in an environments folder.

@@ -504,7 +504,8 @@ write.
 
 ```text
 create-workspace --store ROOT --workspace-dir DIR [--workspace-id UUID] [--user-id UUID]
-    [--revision-id UUID] [--op-id UUID]
+    [--revision-id UUID] [--op-id UUID] [--scope-code CODE] [--scope-section CODE]
+    [--scope-zone CODE] [--scope-shared true|false]
 ```
 
 ### inspect-workspace
@@ -1365,8 +1366,8 @@ write.
 
 ```text
 create-project --parent DIR --name TEXT [--unique-name true|false] [--config-dir DIR]
-    [--environment ID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
-    [--workspace-id UUID]
+    [--environment ID] [--code CODE] [--sections LIST] [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### list-project

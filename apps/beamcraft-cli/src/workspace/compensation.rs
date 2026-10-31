@@ -29,7 +29,7 @@ use beamcraft_host::revision::{
 };
 use beamcraft_layer_engine::{
     Reader,
-    authored::{EditTargets, rebase as materializer, schema_identity},
+    authored::{rebase as materializer, schema_identity},
 };
 use beamcraft_model::{
     changeset::MAX_OPERATIONS, digest::Sha256, error::ErrorCode, id::OpId,
@@ -334,10 +334,7 @@ pub fn compensate_workspace(
         &opened(&target_base)?,
         &opened(&accepted)?,
         &evidence::dependencies(&captured.footprint),
-        &EditTargets {
-            authored: plate::AUTHORED_LAYER.into(),
-            derived: plate::DERIVED_LAYER.into(),
-        },
+        &crate::scope::materializer_targets(&meta.scope)?,
         &plate::control(),
     )?;
     let mut reader = Reader::default();

@@ -25,9 +25,9 @@
 use crate::assembly::read_prims;
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint, control,
-    decode, digest_of, evaluate_decoded, host_uuid, integrity, load_base, mesh_change, number,
-    open_base, plate_record, prior_op_with, property, replay_summary, summarize, text,
+    PlateError, RevisionSummary, base_of, check_footprint, control, decode, digest_of,
+    evaluate_decoded, host_uuid, integrity, load_base, mesh_change, number, open_base,
+    plate_record, prior_op_with, property, replay_summary, summarize, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::bolt::Bounds;
@@ -37,8 +37,8 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::weld::{PartKind, Parts};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Bolt as LayerBolt, BoltGroup as LayerBoltGroup, Change, EditTargets, Element,
-    Placement as LayerPlacement, Prepare, Resource, Shape, schema_identity, validate_layers,
+    Bolt as LayerBolt, BoltGroup as LayerBoltGroup, Change, Element, Placement as LayerPlacement,
+    Prepare, Resource, Shape, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::{
@@ -910,15 +910,8 @@ pub fn create_bolt_group(
     if !model.definitions.contains_key(&resource.digest) {
         resources.push(resource);
     }
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
@@ -1081,15 +1074,8 @@ pub fn update_bolt_group(
     if !model.definitions.contains_key(&resource.digest) {
         resources.push(resource);
     }
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let mut changes = vec![Change::BoltGroup {
         id: command.target_id.to_string(),
         group: layer_group(&command.inputs, &placed),
@@ -1199,15 +1185,8 @@ pub fn create_bolt(
     }
     let footprint = model.parts.create_bolt(command, &model.bounds)?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

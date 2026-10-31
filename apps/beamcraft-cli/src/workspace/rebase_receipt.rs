@@ -317,6 +317,7 @@ impl RebaseReceipt {
                 base_manifest: base.manifest,
                 synced_sequence,
                 rebase_sequence,
+                scope: None,
             },
             old_base_sequence: base.sequence,
             draft,

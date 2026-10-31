@@ -13,9 +13,9 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, Recorded, RevisionSummary, check_footprint,
-    control, decode, digest_of, evaluate_decoded, host_uuid, load_base, member_record, mesh_change,
-    open_base, prior_op_with, replay_summary, summarize,
+    Base, PlateError, Recorded, RevisionSummary, check_footprint, control, decode, digest_of,
+    evaluate_decoded, host_uuid, load_base, member_record, mesh_change, open_base, prior_op_with,
+    replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -29,8 +29,8 @@ use beamcraft_host::revision::{
 use beamcraft_layer_engine::OpenRequest;
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, MemberKind as LayerKind, Placement as LayerPlacement,
-    Prepare, Shape, schema_identity,
+    Change, Element, MemberKind as LayerKind, Placement as LayerPlacement, Prepare, Shape,
+    schema_identity,
 };
 use beamcraft_model::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 use beamcraft_model::digest::ContentDigest;
@@ -437,15 +437,8 @@ fn finish_member(
         quantities: outcome.quantities,
     };
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        member_base.base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control(),
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, member_base.base_request, false, schema, &control())?;
     let placement = outcome.authored.placement;
     let [qx, qy, qz, qw] = placement.orientation_xyzw;
     let prepared = author.prepare(

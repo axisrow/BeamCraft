@@ -16,7 +16,7 @@ fn changed() -> PlateError {
     PlateError::new(ErrorCode::BaseRevisionMismatch, "workspace metadata moved")
 }
 
-fn read(dir: &Path) -> Result<Option<WorkspaceMeta>, PlateError> {
+pub(super) fn read(dir: &Path) -> Result<Option<WorkspaceMeta>, PlateError> {
     let path = meta_path(dir);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,

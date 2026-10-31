@@ -59,9 +59,8 @@ use beamcraft_host::revision::{
 };
 use beamcraft_layer_engine::Property;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Group as LayerGroup, PROJECT_RECORD_KEY,
-    Placement as LayerPlacement, Prepare, Prepared, Shape, StoredQuantities, project_record,
-    schema_identity,
+    Change, Element, Group as LayerGroup, PROJECT_RECORD_KEY, Placement as LayerPlacement, Prepare,
+    Prepared, Shape, StoredQuantities, project_record, schema_identity,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{
@@ -87,7 +86,8 @@ pub const AUTHORED_LAYER: &str = "authored.usda";
 /// Virtual name of the derived (geometry) layer.
 pub const DERIVED_LAYER: &str = "derived.usda";
 
-const EMPTY_LAYER: &str = "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n";
+pub(crate) const EMPTY_LAYER: &str =
+    "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\n";
 
 /// The root layer of the first revision of a project. It records the ProjectId (D1) in its
 /// `customLayerData`, once: later revisions keep it, because the layer engine preserves the other
@@ -2418,15 +2418,8 @@ pub fn create_plate(
         quantities: outcome.quantities,
     };
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let id_text = outcome.authored.id.to_string();
     let placement = outcome.authored.placement;
     let [qx, qy, qz, qw] = placement.orientation_xyzw;

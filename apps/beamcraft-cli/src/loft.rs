@@ -6,9 +6,8 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, DerivedMesh, PlateError, check_footprint, control, decode,
-    digest_of, host_uuid, integrity, load_base, mesh_change, open_base, prior_op_with,
-    replay_summary, summarize,
+    Base, DerivedMesh, PlateError, check_footprint, control, decode, digest_of, host_uuid,
+    integrity, load_base, mesh_change, open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -20,8 +19,7 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape,
-    schema_identity,
+    Change, Element, Placement as LayerPlacement, Prepare, Shape, schema_identity,
 };
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -144,15 +142,8 @@ pub fn create_lofted(
         &outcome.quantities,
     );
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        open_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, open_request, false, schema, &control)?;
     let placement = outcome.authored.placement;
     let prepared = author.prepare(
         Prepare {

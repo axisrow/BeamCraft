@@ -93,6 +93,7 @@ mod schedules;
 mod sections;
 mod start;
 mod transform;
+mod u19_scopes;
 mod undo;
 mod update;
 mod version;

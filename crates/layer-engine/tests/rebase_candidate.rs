@@ -105,7 +105,7 @@ fn create(n: usize) -> Change {
 fn edit(mut request: OpenRequest, changes: Vec<Change>, resources: Vec<Resource>) -> OpenRequest {
     let schema = schema_identity().unwrap();
     let (mut author, opened) =
-        Author::open(request.clone(), targets(), schema, &control()).unwrap();
+        Author::open(request.clone(), targets(), None, schema, &control()).unwrap();
     let prepared = author
         .prepare(
             Prepare {

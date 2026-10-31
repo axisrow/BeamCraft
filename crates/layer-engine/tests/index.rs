@@ -858,6 +858,7 @@ fn open_author(assets: Vec<Asset>) -> (Author, Opened) {
     Author::open(
         request("root.usda", assets, &LAYERS, 2),
         targets(),
+        None,
         schema_identity().unwrap(),
         &control(),
     )
@@ -1053,6 +1054,7 @@ fn authorized_writes_need_a_live_complete_owned_untampered_index() {
         let (a, o) = Author::open(
             request("root.usda", assets, &[LAYERS.as_slice(), &[]].concat(), 2),
             targets(),
+            None,
             schema_identity().unwrap(),
             &control(),
         )

@@ -5,9 +5,9 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    self, AUTHORED_LAYER, CreateRequest, Created, DERIVED_LAYER, PlateError, RevisionSummary,
-    check_footprint, control, decode, digest_of, host_uuid, integrity, load_base, open_base,
-    prior_op_with, replay_summary, summarize,
+    self, CreateRequest, Created, PlateError, RevisionSummary, check_footprint, control, decode,
+    digest_of, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
+    summarize,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -17,7 +17,7 @@ use beamcraft_engine::plate_draft::{
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement, Prepare, Shape, schema_identity,
+    Change, Element, Placement, Prepare, Shape, schema_identity,
 };
 
 /// Saved unsupported input with its committed revision and replay result.
@@ -117,15 +117,8 @@ pub fn create_plate_draft(
         plate::inspect_revision(head)?;
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        open_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, open_request, false, schema, &control)?;
     let authored = &plate.authored;
     let prepared = author.prepare(
         Prepare {
