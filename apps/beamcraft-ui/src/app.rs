@@ -218,6 +218,23 @@ pub struct App {
     /// The saved-views window and the extra view windows.
     views_panel: crate::views::Panel,
     view_windows: Vec<crate::views::ViewWindow>,
+    /// The saved representation sets of the user (V17): the class preset plus
+    /// `colour-sets.json`.
+    colour_sets: crate::colour_sets::Sets,
+    /// Why the colour-sets file was not used, when it was not.
+    colour_sets_note: Option<String>,
+    /// The set the colour combo shows; applying it evaluates it and fills `colour`.
+    colour_pick: String,
+    /// The applied colour overlay and the set it was built from; `None` colours nothing (V17).
+    colour: Option<(String, Arc<crate::colour_sets::Overlay>)>,
+    /// A set evaluation in flight.
+    colour_job: Option<ColourJob>,
+    /// The last colour outcome, shown in the colour panel.
+    colour_note: Option<Result<String, String>>,
+    /// The overlay the running refresh builds its scene with (V17): if the user changes or
+    /// clears the set while the refresh runs, the delivered scene is recoloured once, so stale
+    /// colours can never return or outlive their set.
+    reload_overlay: Option<Arc<crate::colour_sets::Overlay>>,
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -240,6 +257,14 @@ fn note_loaded(stats: &Stats, loaded: &Loaded) {
 struct SelectJob {
     asked: u64,
     rx: Receiver<Result<Option<Selected>, ToolError>>,
+    cancel: Arc<AtomicBool>,
+}
+
+/// A set evaluation in flight (V17): the set it colours, its receiver and the flag that gives
+/// it up when the overlay is cleared while the queries still run.
+struct ColourJob {
+    set: String,
+    rx: Receiver<Result<crate::colour_sets::Overlay, String>>,
     cancel: Arc<AtomicBool>,
 }
 
@@ -760,6 +785,13 @@ impl App {
         let publisher = Publisher::new(source.published.clone(), source.workspace.clone());
         let (shortcuts, shortcuts_note) =
             crate::shortcuts::Shortcuts::load(source.config_dir.as_deref());
+        let (colour_sets, colour_sets_note) =
+            crate::colour_sets::Sets::load(source.config_dir.as_deref());
+        let colour_pick = colour_sets
+            .list()
+            .first()
+            .map(|set| set.name.clone())
+            .unwrap_or_default();
         let perf = perf.map(|(phases, report)| {
             let header = format!(
                 "\"adapter\":{},\"device_type\":{},\"backend\":{},\"samples\":{},\"text\":{}",
@@ -879,6 +911,13 @@ impl App {
             work_area: None,
             views_panel: crate::views::Panel::default(),
             view_windows: Vec::new(),
+            colour_sets,
+            colour_sets_note,
+            colour_pick,
+            colour: None,
+            colour_job: None,
+            colour_note: None,
+            reload_overlay: None,
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -897,6 +936,10 @@ impl App {
             return;
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        // The overlay is shared with the worker so the new scene is coloured as it is built;
+        // the window keeps the same Arc to recognise a stale delivery when the set changes.
+        let overlay = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
+        let delivered = overlay.clone();
         // Only this refresh replaces `loaded`, so what it knows stays true until it is applied.
         let known = self.loaded.as_ref().map_or_else(Known::default, |l| Known {
             token: Some(l.snapshot.token().clone()),
@@ -907,10 +950,19 @@ impl App {
         let spawned = std::thread::Builder::new()
             .name("beamcraft-reload".into())
             .spawn(move || {
-                let _ = tx.send(source::reload(&cli, &store, &known, &stats));
+                let _ = tx.send(source::reload(
+                    &cli,
+                    &store,
+                    &known,
+                    overlay.as_deref(),
+                    &stats,
+                ));
             });
         match spawned {
-            Ok(_) => self.reload_job = Some(rx),
+            Ok(_) => {
+                self.reload_overlay = delivered;
+                self.reload_job = Some(rx);
+            }
             Err(_) => self.error = Some("the reload thread could not be started".into()),
         }
     }
@@ -922,11 +974,15 @@ impl App {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 self.reload_job = None;
+                self.reload_overlay = None;
                 self.error = Some("the reload thread ended without a result".into());
                 return;
             }
         };
         self.reload_job = None;
+        // What the delivered scene was coloured with, to compare against the set the panel
+        // shows now (a change during the refresh is applied to the delivery, not lost).
+        let delivered = self.reload_overlay.take();
         // The listing carries the head it was read from; an unreadable listing leaves it unknown.
         self.props.observe_head(
             reloaded
@@ -1020,6 +1076,20 @@ impl App {
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
+        }
+        // The delivered scene was built with the overlay captured at spawn (V17): when the user
+        // changed or cleared the set while the refresh ran, the delivery is recoloured once, so
+        // stale colours can neither return after a Hide nor outlive their set behind a legend.
+        if self.loaded.is_some() {
+            let current = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
+            let stale = match (&delivered, &current) {
+                (Some(built), Some(active)) => !Arc::ptr_eq(built, active),
+                (Some(_), None) | (None, Some(_)) => true,
+                (None, None) => false,
+            };
+            if stale {
+                self.recolour();
+            }
         }
         self.sync_grid_selection();
         if std::mem::take(&mut self.reload_queued) {
@@ -1553,11 +1623,7 @@ impl App {
     /// True while a command that writes to the store (or publishes it) is running: the property,
     /// publish and edit actions never run at the same time.
     fn other_command_running(&self) -> bool {
-        self.props_job.is_some()
-            || self.publish_job.is_some()
-            || self.edit_job.is_some()
-            || self.job.is_some()
-            || self.grid_job.is_some()
+        self.other_command_running_pre_colour() || self.colour_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -2031,6 +2097,232 @@ impl App {
                 }
             }
         }
+    }
+
+    /// The V17 colour inspector: pick a saved representation set, apply or clear the overlay.
+    /// Everything here is display state: the overlay is never written to the model, and a set
+    /// lives in the user's colour-sets file, not in the store.
+    fn colour_panel(&mut self, ui: &mut egui::Ui) {
+        ui.label(
+            "Colour the model by a saved representation set. Colours are display only: the \
+             model, its revisions and every measurement stay unchanged, and the set lives in \
+             your colour-sets file, never in the model.",
+        );
+        let palette = crate::theme::Palette::current(ui);
+        if let Some(note) = &self.colour_sets_note {
+            ui.colored_label(palette.muted, note);
+        }
+        let busy = self.colour_job.is_some();
+        let applied = self
+            .colour
+            .as_ref()
+            .map(|(name, overlay)| (name.clone(), overlay.len()));
+        let pick = self.colour_pick.clone();
+        ui.add_enabled_ui(!busy, |ui| {
+            egui::ComboBox::from_id_salt("colour-set")
+                .selected_text(if pick.is_empty() { "No set" } else { &pick })
+                .show_ui(ui, |ui| {
+                    for set in self.colour_sets.list() {
+                        ui.selectable_value(&mut self.colour_pick, set.name.clone(), &set.name);
+                    }
+                });
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(!pick.is_empty(), egui::Button::new("Show colours"))
+                    .clicked()
+                {
+                    self.apply_colour(&pick);
+                }
+                if ui
+                    .add_enabled(applied.is_some(), egui::Button::new("Hide colours"))
+                    .clicked()
+                {
+                    self.clear_colour();
+                }
+            });
+        });
+        if busy {
+            ui.label("Evaluating the set…");
+        }
+        // The legend of the applied set: one swatch per rule, in rule order.
+        if let Some((name, coloured)) = &applied {
+            ui.separator();
+            match self.colour_sets.find(name) {
+                Some(set) => {
+                    ui.label(format!("{name}: {} element(s) coloured", coloured));
+                    for rule in &set.rules {
+                        ui.horizontal(|ui| {
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                            ui.painter().rect_filled(
+                                rect,
+                                2.0,
+                                egui::Color32::from_rgb(
+                                    rule.colour[0],
+                                    rule.colour[1],
+                                    rule.colour[2],
+                                ),
+                            );
+                            let mut text = crate::colour_sets::Set::describe(&rule.rule);
+                            if rule.transparency > 0.0 {
+                                text.push_str(&format!(
+                                    ", {}% transparent",
+                                    (rule.transparency * 100.0).round() as u32
+                                ));
+                            }
+                            ui.label(text);
+                        });
+                    }
+                }
+                None => {
+                    ui.label(format!(
+                        "{name}: {coloured} element(s) coloured (the set is no longer in the \
+                         colour-sets file)"
+                    ));
+                }
+            }
+        }
+        if let Some(note) = &self.colour_note {
+            match note {
+                Ok(message) => {
+                    ui.label(message);
+                }
+                Err(message) => {
+                    ui.colored_label(palette.error, message);
+                }
+            }
+        }
+    }
+
+    /// Evaluates the named set on a worker (one paged `query-elements` per rule) and applies
+    /// the resulting overlay when it answers. The model is never written: the queries are the
+    /// CLI's own read-only command.
+    fn apply_colour(&mut self, name: &str) {
+        if self.colour_job.is_some() || self.other_command_running_pre_colour() {
+            self.colour_note = Some(Err("another command is running; wait for it.".into()));
+            return;
+        }
+        let Some(set) = self.colour_sets.find(name).cloned() else {
+            return;
+        };
+        let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&cancel);
+        let stats = Arc::clone(&self.stats);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-colour".into())
+            .spawn(move || {
+                let _ = tx.send(crate::colour_sets::evaluate(
+                    &cli, &store, &set, &flag, &stats,
+                ));
+            });
+        match spawned {
+            Ok(_) => {
+                self.colour_note = None;
+                self.colour_job = Some(ColourJob {
+                    set: name.to_owned(),
+                    rx,
+                    cancel,
+                });
+            }
+            Err(error) => {
+                self.colour_note = Some(Err(format!(
+                    "the colour worker could not be started: {error}"
+                )));
+            }
+        }
+    }
+
+    /// The other commands worth waiting for, without the colour job itself (which is never
+    /// running when an apply is requested from the panel).
+    fn other_command_running_pre_colour(&self) -> bool {
+        self.props_job.is_some()
+            || self.publish_job.is_some()
+            || self.edit_job.is_some()
+            || self.job.is_some()
+            || self.grid_job.is_some()
+    }
+
+    /// Clears the overlay and colours nothing again.
+    fn clear_colour(&mut self) {
+        if let Some(job) = &self.colour_job {
+            job.cancel.store(true, Ordering::Relaxed);
+        }
+        self.colour_job = None;
+        self.colour = None;
+        self.colour_note = None;
+        self.recolour();
+    }
+
+    /// Applies a finished evaluation. The controls are disabled while a job runs, so the answer
+    /// is always the request the panel still shows.
+    fn poll_colour(&mut self) {
+        let Some(job) = &self.colour_job else { return };
+        let received = match job.rx.try_recv() {
+            Ok(received) => Some(received),
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => None,
+        };
+        let set = job.set.clone();
+        self.colour_job = None;
+        let result = match received {
+            Some(Ok(overlay)) if overlay.is_empty() => {
+                Err(format!("no element in `{set}` matches: nothing to colour"))
+            }
+            Some(Ok(overlay)) => Ok(overlay),
+            Some(Err(message)) => Err(message),
+            None => Err("the colour worker ended without an answer".to_string()),
+        };
+        match result {
+            Ok(overlay) => {
+                self.colour_note =
+                    Some(Ok(format!("`{set}` colours {} element(s).", overlay.len())));
+                self.colour = Some((set, Arc::new(overlay)));
+                self.recolour();
+            }
+            Err(message) => {
+                self.colour = None;
+                self.recolour();
+                self.colour_note = Some(Err(message));
+            }
+        }
+    }
+
+    /// Rebuilds and re-uploads the loaded scene with the current overlay (V17). Display state
+    /// only: the snapshot and its token are untouched, the meshes the device holds are reused,
+    /// and only the instance buffers are sent again. A quiet no-op while nothing is loaded.
+    fn recolour(&mut self) {
+        let Some(mut loaded) = self.loaded.take() else {
+            return;
+        };
+        let overlay = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
+        let scene = crate::scene::Scene::from_snapshot_reusing(
+            &loaded.snapshot,
+            beamcraft_engine::Representation::Full,
+            &loaded.uploaded.resident(),
+            overlay.as_deref(),
+        );
+        match scene.and_then(|scene| {
+            let summary = scene.summary();
+            Uploaded::upload(
+                &self.state.device,
+                &self.state.queue,
+                &scene,
+                Some(&loaded.uploaded),
+            )
+            .map(|uploaded| (summary, uploaded))
+        }) {
+            Ok((summary, uploaded)) => {
+                loaded.summary = summary;
+                loaded.uploaded = uploaded;
+            }
+            Err(error) => {
+                // The device keeps the previous scene; the overlay is reported as refused.
+                self.error = Some(format!("the coloured scene was not applied: {error}"));
+            }
+        }
+        self.loaded = Some(loaded);
     }
 
     fn edit_panel(&mut self, ui: &mut egui::Ui) {
@@ -2616,6 +2908,7 @@ impl eframe::App for App {
         self.poll_status();
         self.poll_select();
         self.poll_reload();
+        self.poll_colour();
         self.selection_shortcuts(ui.ctx());
         self.render_mode_shortcuts(ui.ctx());
         self.perf_step(ui.ctx(), frame.info().cpu_usage);
@@ -3114,6 +3407,56 @@ mod tests {
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())
+    }
+
+    #[test]
+    fn an_applied_overlay_rebuilds_the_scene_and_leaves_the_snapshot_token() {
+        let Some(mut app) = headless() else { return };
+        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+        let snapshot = Arc::new(
+            ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap(),
+        );
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            uploaded,
+        });
+        let ids: std::collections::BTreeSet<beamcraft_model::id::ElementId> =
+            snapshot.elements().iter().map(|e| e.id).collect();
+        app.colour = Some((
+            "Test".into(),
+            Arc::new(crate::colour_sets::Overlay::from_rules(vec![(
+                ids,
+                [0.0, 1.0, 0.0, 1.0],
+            )])),
+        ));
+        let token = snapshot.token().clone();
+        app.recolour();
+        // The loaded snapshot is exactly the one shown before: the overlay is display state
+        // applied to the device, never a new reading of the model.
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        assert!(app.colour.is_some());
+    }
+
+    #[test]
+    fn applying_a_set_without_a_cli_reports_and_colours_nothing() {
+        let Some(mut app) = headless() else { return };
+        app.apply_colour(crate::colour_sets::CLASS_SET_NAME);
+        assert!(app.colour_job.is_some());
+        for _ in 0..250 {
+            app.poll_colour();
+            if app.colour_job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(app.colour_job.is_none(), "the missing CLI answers quickly");
+        assert!(app.colour.is_none());
+        assert!(matches!(app.colour_note, Some(Err(_))));
     }
 
     #[test]
@@ -3929,8 +4272,13 @@ mod tests {
         .unwrap();
         app.source.cli = cli.clone();
         app.source.store = root.clone();
-        let reload =
-            crate::source::reload(&cli, &root, &crate::source::Known::default(), &app.stats);
+        let reload = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
         deliver(&mut app, reload);
         app.set_bench(super::workbench::Bench::Plate);
         for kind in SnapKind::ALL {
@@ -4086,8 +4434,13 @@ mod tests {
         );
         app.source.cli = cli.clone();
         app.source.store = root.clone();
-        let reload =
-            crate::source::reload(&cli, &root, &crate::source::Known::default(), &app.stats);
+        let reload = crate::source::reload(
+            &cli,
+            &root,
+            &crate::source::Known::default(),
+            None,
+            &app.stats,
+        );
         assert!(
             reload
                 .grids

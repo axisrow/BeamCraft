@@ -11,8 +11,9 @@ use std::collections::BTreeSet;
 
 /// Bytes of one expanded vertex: position and normal, 3 x f32 each.
 pub const VERTEX_BYTES: usize = 24;
-/// Bytes of one instance: a translation and quaternion, 7 x f32.
-pub const INSTANCE_BYTES: usize = 28;
+/// Bytes of one instance: a translation, a quaternion and the V17 overlay tint, 11 x f32 plus
+/// one pad word for the 16-byte colour alignment.
+pub const INSTANCE_BYTES: usize = 48;
 /// Largest total of expanded vertex bytes a scene may upload.
 pub const MAX_VERTEX_BYTES: usize = 256 * 1024 * 1024;
 
@@ -92,9 +93,20 @@ impl GhostMesh {
                 slot.copy_from_slice(&((*a - o) as f32).to_le_bytes());
             }
         }
-        // The identity orientation: x = y = z = 0, w = 1.
+        // The identity orientation: x = y = z = 0, w = 1 (after the 12-byte translation).
         if let Some(w) = instance.get_mut(24..28) {
             w.copy_from_slice(&1.0f32.to_le_bytes());
+        }
+        // The ghost is never coloured by an overlay.
+        if let Some(tint) = instance.get_mut(28..44) {
+            for (slot, value) in tint
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .zip(crate::colour_sets::WHITE)
+            {
+                slot.copy_from_slice(&value.to_le_bytes());
+            }
         }
         Self {
             vertex_count: (triangles.len() * 3) as u32,
@@ -106,13 +118,15 @@ impl GhostMesh {
 }
 
 /// The instance bytes of one element: its placement translation and orientation, with the mesh's
-/// own anchor (rotated in) and the scene origin folded in, little-endian f32. `None` when the
+/// own anchor (rotated in) and the scene origin folded in, then the display tint (V17 overlay,
+/// [`crate::colour_sets::WHITE`] when nothing colours it), little-endian f32. `None` when the
 /// orientation is not a usable rotation or a coordinate is not finite.
 pub fn instance_bytes(
     placement_mm: [f64; 3],
     orientation_xyzw: [f64; 4],
     anchor_mm: [f64; 3],
     origin_mm: [f64; 3],
+    tint: [f32; 4],
 ) -> Option<[u8; INSTANCE_BYTES]> {
     let [qx, qy, qz, qw] = orientation_xyzw;
     let norm = (((qx * qx + qy * qy) + qz * qz) + qw * qw).sqrt();
@@ -143,6 +157,7 @@ pub fn instance_bytes(
     )
     .into_iter()
     .chain([x, y, z, w])
+    .chain(tint.map(f64::from))
     .map(|value| {
         let value = value as f32;
         value.is_finite().then_some(value)
@@ -178,6 +193,7 @@ impl SelectedDraw {
             entry.orientation_xyzw,
             anchor,
             origin_mm,
+            crate::colour_sets::WHITE,
         )?;
         Some(Self {
             digest: mesh.digest(),
@@ -362,22 +378,25 @@ fn expand(
 }
 
 impl Scene {
-    /// Builds the display scene of `snapshot` with the chosen representation.
+    /// Builds the display scene of `snapshot` with the chosen representation, nothing coloured.
     pub fn from_snapshot(
         snapshot: &ViewSnapshot,
         representation: Representation,
     ) -> Result<Self, Error> {
-        Self::from_snapshot_reusing(snapshot, representation, &BTreeSet::new())
+        Self::from_snapshot_reusing(snapshot, representation, &BTreeSet::new(), None)
     }
 
     /// [`Scene::from_snapshot`] for a device that already holds the meshes in `resident`: those
     /// are not expanded again (their [`DrawMesh::resident`] is set and `vertices` is empty), but
     /// they count against the vertex budget as if they were, so the same snapshot is accepted or
-    /// refused either way.
+    /// refused either way. `overlay` colours the instances of the elements it holds (V17); it is
+    /// display state read here and nothing else: the snapshot, its token and every mesh digest
+    /// are untouched.
     pub fn from_snapshot_reusing(
         snapshot: &ViewSnapshot,
         representation: Representation,
         resident: &BTreeSet<ContentDigest>,
+        overlay: Option<&crate::colour_sets::Overlay>,
     ) -> Result<Self, Error> {
         let bounds = snapshot.engineering_bounds();
         let origin_mm = bounds.map_or([0.0; 3], |b| {
@@ -436,11 +455,13 @@ impl Scene {
                 }
             };
             let mesh = meshes.get_mut(at).ok_or(Error::Input("slot"))?;
+            let tint = overlay.map_or(crate::colour_sets::WHITE, |o| o.tint_of(element.id));
             let bytes = instance_bytes(
                 element.placement_mm,
                 element.orientation_xyzw,
                 mesh.anchor_mm,
                 origin_mm,
+                tint,
             )
             .ok_or(Error::Input("instance"))?;
             mesh.instances.extend_from_slice(&bytes);
@@ -546,6 +567,81 @@ mod tests {
     }
 
     #[test]
+    fn an_overlay_colours_only_the_tint_words_and_touches_nothing_else() {
+        let s = snapshot(6);
+        let plain = Scene::from_snapshot(&s, Representation::Full).unwrap();
+        let ids: Vec<ElementId> = s.elements().iter().map(|e| e.id).collect();
+        // One element red, everything else green: first-match-wins keeps the red.
+        let overlay = crate::colour_sets::Overlay::from_rules(vec![
+            ([ids[0]].into_iter().collect(), [1.0, 0.0, 0.0, 1.0]),
+            (ids.iter().copied().collect(), [0.0, 1.0, 0.0, 1.0]),
+        ]);
+        let coloured = Scene::from_snapshot_reusing(
+            &s,
+            Representation::Full,
+            &BTreeSet::new(),
+            Some(&overlay),
+        )
+        .unwrap();
+        // The same shapes: meshes, digests, vertices, counts.
+        assert_eq!(coloured.elements, plain.elements);
+        assert_eq!(
+            coloured.meshes.iter().map(|m| m.digest).collect::<Vec<_>>(),
+            plain.meshes.iter().map(|m| m.digest).collect::<Vec<_>>()
+        );
+        // Per instance, exactly the tint words differ.
+        let mut reds = 0;
+        let mut greens = 0;
+        for (mesh, plain) in coloured.meshes.iter().zip(&plain.meshes) {
+            assert_eq!(mesh.vertices, plain.vertices);
+            assert_eq!(mesh.instance_count, plain.instance_count);
+            let words = |bytes: &[u8]| {
+                bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|w| f32::from_le_bytes(*w))
+                    .collect::<Vec<_>>()
+            };
+            for (instance, plain) in words(&mesh.instances)
+                .as_chunks::<12>()
+                .0
+                .iter()
+                .zip(words(&plain.instances).as_chunks::<12>().0)
+            {
+                let [x, y, z, qx, qy, qz, qw, r, g, b, a, pad] = *instance;
+                let [px, py, pz, pqx, pqy, pqz, pqw, _, _, _, _, ppad] = *plain;
+                assert_eq!(
+                    [x, y, z, qx, qy, qz, qw, pad],
+                    [px, py, pz, pqx, pqy, pqz, pqw, ppad],
+                    "placement, quaternion and pad stay"
+                );
+                if r == 1.0 {
+                    assert_eq!([r, g, b, a], [1.0, 0.0, 0.0, 1.0], "the first rule's red");
+                    reds += 1;
+                } else {
+                    assert_eq!(
+                        [r, g, b, a],
+                        [0.0, 1.0, 0.0, 1.0],
+                        "the second rule's green"
+                    );
+                    greens += 1;
+                }
+            }
+        }
+        assert_eq!((reds, greens), (1, 5));
+        // The snapshot itself is untouched: building the coloured scene changes no bundle.
+        let token = s.token().clone();
+        let _ = Scene::from_snapshot_reusing(
+            &s,
+            Representation::Full,
+            &BTreeSet::new(),
+            Some(&overlay),
+        );
+        assert_eq!(s.token(), &token);
+    }
+
+    #[test]
     fn a_rotated_element_uploads_the_full_instance_quaternion() {
         let half = core::f64::consts::FRAC_1_SQRT_2;
         let elements = plate_scene(1, false)
@@ -558,7 +654,7 @@ mod tests {
         let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
         let instance = scene.meshes[0].instances.as_slice();
         assert_eq!(instance.len(), INSTANCE_BYTES);
-        let orientation: Vec<f32> = instance[12..]
+        let orientation: Vec<f32> = instance[12..28]
             .as_chunks::<4>()
             .0
             .iter()
@@ -606,14 +702,22 @@ mod tests {
         // The first corner is (0, 0, 7) minus the anchor.
         let part = |at: usize| f32::from_le_bytes(ghost.vertices[at..at + 4].try_into().unwrap());
         assert_eq!((part(0), part(4), part(8)), (-5.0, -5.0, 0.0));
-        // The instance shifts the anchor relative to the scene origin, orientation identity.
-        let words: Vec<f32> = ghost.instance[12..]
+        // The instance shifts the anchor relative to the scene origin, orientation identity,
+        // and the ghost is never tinted by an overlay.
+        let words: Vec<f32> = ghost.instance[12..28]
             .as_chunks::<4>()
             .0
             .iter()
             .map(|b| f32::from_le_bytes(*b))
             .collect();
         assert_eq!(words, [0.0, 0.0, 0.0, 1.0]);
+        let tint: Vec<f32> = ghost.instance[28..44]
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect();
+        assert_eq!(tint, crate::colour_sets::WHITE);
         let shift: Vec<f32> = ghost.instance[..12]
             .as_chunks::<4>()
             .0
@@ -629,7 +733,8 @@ mod tests {
         let full = Scene::from_snapshot(&s, Representation::Full).unwrap();
         let resident: BTreeSet<ContentDigest> =
             full.meshes.iter().step_by(2).map(|m| m.digest).collect();
-        let reused = Scene::from_snapshot_reusing(&s, Representation::Full, &resident).unwrap();
+        let reused =
+            Scene::from_snapshot_reusing(&s, Representation::Full, &resident, None).unwrap();
         assert_eq!(reused.meshes.len(), full.meshes.len());
         for (a, b) in full.meshes.iter().zip(&reused.meshes) {
             assert_eq!(a.digest, b.digest);
@@ -699,25 +804,45 @@ mod tests {
 
     #[test]
     fn a_bad_orientation_or_a_non_finite_word_draws_nothing() {
-        assert_eq!(instance_bytes([0.0; 3], [0.0; 4], [0.0; 3], [0.0; 3]), None);
+        assert_eq!(
+            instance_bytes(
+                [0.0; 3],
+                [0.0; 4],
+                [0.0; 3],
+                [0.0; 3],
+                crate::colour_sets::WHITE
+            ),
+            None
+        );
         assert_eq!(
             instance_bytes(
                 [f64::NAN, 0.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
                 [0.0; 3],
-                [0.0; 3]
+                [0.0; 3],
+                crate::colour_sets::WHITE
             ),
             None
         );
-        let identity =
-            instance_bytes([10.0, -4.0, 2.0], [0.0, 0.0, 0.0, 1.0], [0.0; 3], [0.0; 3]).unwrap();
+        let identity = instance_bytes(
+            [10.0, -4.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0; 3],
+            [0.0; 3],
+            crate::colour_sets::WHITE,
+        )
+        .unwrap();
         let words: Vec<f32> = identity
             .as_chunks::<4>()
             .0
             .iter()
             .map(|b| f32::from_le_bytes(*b))
             .collect();
-        assert_eq!(words, [10.0, -4.0, 2.0, 0.0, 0.0, 0.0, 1.0]);
+        assert_eq!(
+            words,
+            [10.0, -4.0, 2.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
+            "placement, identity quaternion, the neutral tint and the pad"
+        );
     }
 }
 

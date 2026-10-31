@@ -68,7 +68,9 @@ impl ModelPreview {
         let mut faces = Vec::new();
         for mesh in &scene.meshes {
             for instance in mesh.instances.as_chunks::<INSTANCE_BYTES>().0 {
-                let [tx, ty, tz, qx, qy, qz, qw] = floats::<7>(instance)?;
+                // Placement and quaternion only; the overlay tint is display state the
+                // library preview does not show.
+                let [tx, ty, tz, qx, qy, qz, qw] = floats::<7>(&instance[..28])?;
                 let quaternion = [qx, qy, qz, qw];
                 for triangle in mesh.vertices.as_chunks::<{ VERTEX_BYTES * 3 }>().0 {
                     if faces.len() >= MAX_TRIANGLES {

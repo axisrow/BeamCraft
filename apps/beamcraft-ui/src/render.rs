@@ -407,7 +407,7 @@ fn pipeline(
         source: wgpu::ShaderSource::Wgsl(include_str!("viewport.wgsl").into()),
     });
     let attributes = wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3];
-    let instance_attributes = wgpu::vertex_attr_array![2=>Float32x3,3=>Float32x4];
+    let instance_attributes = wgpu::vertex_attr_array![2=>Float32x3,3=>Float32x4,4=>Float32x4];
     let vertex_layout = || {
         Some(wgpu::VertexBufferLayout {
             array_stride: 24,
@@ -941,5 +941,87 @@ mod tests {
         assert!(renderer.resize(&gpu.device, 0, 80, &stats).is_err());
         assert_eq!((renderer.width, renderer.height), (96, 80));
         assert!(Renderer::with_samples(&gpu.adapter, &gpu.device, 8, 8, Some(2), &stats).is_err());
+    }
+
+    #[test]
+    fn an_overlay_tint_reaches_the_drawn_pixels_and_white_leaves_them() {
+        let gpu = match pollster::block_on(Gpu::headless()) {
+            Ok(gpu) => gpu,
+            Err(Error::NoAdapter) => {
+                eprintln!("SKIP tint readback: no native wgpu adapter");
+                return;
+            }
+            Err(e) => panic!("adapter or device failed: {e}"),
+        };
+        let supports_4x = [FORMAT, DEPTH].into_iter().all(|f| {
+            gpu.adapter
+                .get_texture_format_features(f)
+                .flags
+                .sample_count_supported(4)
+        });
+        let samples = if supports_4x { 4 } else { 1 };
+        let stats = Stats::default();
+        let mut renderer =
+            Renderer::with_samples(&gpu.adapter, &gpu.device, 64, 48, Some(samples), &stats)
+                .unwrap();
+        let pin = beamcraft_engine::ViewPin::new(
+            beamcraft_model::digest::Sha256::digest(b"revision").unwrap(),
+            1,
+        );
+        let snapshot = beamcraft_engine::ViewSnapshot::build(
+            pin,
+            beamcraft_engine::synthetic::plate_scene(1, false).unwrap(),
+            &beamcraft_engine::Limits::default(),
+        )
+        .unwrap();
+        // Build both scenes: the plain one and the same snapshot fully coloured red.
+        let plain =
+            Scene::from_snapshot(&snapshot, beamcraft_engine::Representation::Full).unwrap();
+        let ids: std::collections::BTreeSet<beamcraft_model::id::ElementId> =
+            snapshot.elements().iter().map(|e| e.id).collect();
+        let overlay = crate::colour_sets::Overlay::from_rules(vec![(ids, [1.0, 0.0, 0.0, 1.0])]);
+        let coloured = Scene::from_snapshot_reusing(
+            &snapshot,
+            beamcraft_engine::Representation::Full,
+            &std::collections::BTreeSet::new(),
+            Some(&overlay),
+        )
+        .unwrap();
+        let (target, extent) = plain.framing();
+        let view = crate::camera::Camera::new(target, extent, 1.2)
+            .unwrap()
+            .view(1.2)
+            .unwrap();
+        let red_pixels = |renderer: &mut Renderer, uploaded: &Uploaded| -> usize {
+            let index = renderer.draw(
+                &gpu.device,
+                &gpu.queue,
+                uploaded,
+                view,
+                &stats,
+                RenderMode::Shaded,
+                &crate::cut_plane::ClipGpu::none(),
+            );
+            wait(&gpu.device, index).unwrap();
+            let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+            let _ = row;
+            pixels
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| i16::from(p[0]) > i16::from(p[2]) + 40)
+                .count()
+        };
+        let plain_gpu = Uploaded::new(&gpu.device, &gpu.queue, &plain, &stats).unwrap();
+        assert_eq!(
+            red_pixels(&mut renderer, &plain_gpu),
+            0,
+            "the steel colours are never red-dominant"
+        );
+        let coloured_gpu = Uploaded::new(&gpu.device, &gpu.queue, &coloured, &stats).unwrap();
+        assert!(
+            red_pixels(&mut renderer, &coloured_gpu) > 0,
+            "the overlay tint reaches the shaded faces"
+        );
     }
 }
