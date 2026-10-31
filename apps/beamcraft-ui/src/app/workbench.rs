@@ -750,6 +750,16 @@ impl App {
                         egui::CollapsingHeader::new("Publishing")
                             .default_open(false)
                             .show(ui, |ui| self.publish_panel(ui));
+                        egui::CollapsingHeader::new("Sheet editor")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    "Move the placed views of a drawing document on its sheet.",
+                                );
+                                if ui.button("Open sheet editor").clicked() {
+                                    self.sheet_editor.open = true;
+                                }
+                            });
                     });
             });
     }

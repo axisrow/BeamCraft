@@ -147,6 +147,8 @@ pub struct App {
     props_job: Option<Receiver<Result<Edited, ToolError>>>,
     /// The result of the last property Preview, Cancel or Commit.
     props_note: Option<Result<String, String>>,
+    /// The D05 sheet editor: hand placement of a drawing document's views.
+    sheet_editor: crate::sheet::SheetEditor,
     publisher: Publisher,
     publish_job: Option<Receiver<Result<Published, ToolError>>>,
     status_job: Option<Receiver<Result<Status, ToolError>>>,
@@ -842,6 +844,7 @@ impl App {
             invert_zoom: false,
             preset: Preset::default(),
             props: Properties::default(),
+            sheet_editor: crate::sheet::SheetEditor::default(),
             props_job: None,
             props_note: None,
             publisher,
@@ -2669,6 +2672,12 @@ impl eframe::App for App {
             self.publish_dialog(&ctx);
             self.views_window(&ctx);
             self.draw_view_windows(&ctx);
+            self.sheet_editor.window(
+                &ctx,
+                &self.source.cli,
+                self.source.actor.as_deref(),
+                &self.stats,
+            );
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
