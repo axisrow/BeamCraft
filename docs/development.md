@@ -184,10 +184,24 @@ deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 
 ## CI wall time and Windows runner queues
 
-CI wall time on `master` was about 15 minutes (14–17 minutes across the runs of 2026-10-22), with
-the Windows test path as the critical path; pull requests skip the Windows jobs and finish sooner. Each job carries an explicit `timeout-minutes` sized at about three times the longest
-observed runtime of that job, so a hung job fails within the hour instead of at GitHub's 6-hour
-per-job default, while a cold-cache rebuild is not killed and re-queued onto scarce runners.
+Recent successful runs in the [axisrow/BeamCraft fork](https://github.com/axisrow/BeamCraft/actions/workflows/ci.yml)
+give the following wall times (sample observed 2026-10-31, covering 2026-10-30–31):
+
+| Run | Median | Observed range | Successful runs |
+| --- | --- | --- | --- |
+| Full `master` CI: Linux, macOS, Windows and cold release builds | 6 min 27 s | 5 min 45 s–9 min 33 s | 14 |
+| Pull request CI: Linux and macOS, without Windows or cold release builds | 5 min 8 s | 4 min 11 s–6 min 59 s | 14 |
+
+Cancelled and failed runs are excluded, as is a sub-minute PR rerun. These are observed fork
+timings, not an upstream measurement or a guarantee for cold caches or busy runner queues. For
+examples, see successful full runs [#661](https://github.com/axisrow/BeamCraft/actions/runs/41159116676)
+and [#658](https://github.com/axisrow/BeamCraft/actions/runs/41158212875), and PR run
+[#678](https://github.com/axisrow/BeamCraft/actions/runs/41169951787). Budget about 10 minutes for
+a full run, plus any additional runner wait. The earlier 14–17 minute measurement from
+2026-10-22 is historical. A green PR does not establish that the Windows checks pass.
+
+Each job carries an explicit `timeout-minutes` (5–45 minutes depending on the job), so a hung job
+fails sooner than GitHub's 6-hour per-job default. These limits bound execution, not runner wait.
 
 Windows jobs queue for runners that the account shares across all of its repositories and
 workflows, and hosted Windows runners are the scarcest standard tier: each Windows minute is
