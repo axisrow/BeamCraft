@@ -7,7 +7,8 @@
 use crate::plate::{PlateError, integrity};
 use beamcraft_engine::drawing::{
     self, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
-    MAX_DRAFTING_ENTITIES, MAX_VIEWS, Plane, SourceModelPin, ViewSpec,
+    MAX_DRAFTING_ENTITIES, MAX_VIEWS, Plane, SheetFrame, SheetSpec, SourceModelPin, TitleBlock,
+    ViewSpec,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_layer_engine::{
@@ -18,6 +19,7 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{
     DimensionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
 };
+use beamcraft_model::sheet::Sheet;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Sole authored drawing asset, distinct from any engineering-model root.
@@ -25,7 +27,7 @@ pub const INTENT_LAYER: &str = "drawing.usda";
 /// Tight cap checked before copying or parsing a document intent.
 pub const MAX_INTENT_BYTES: usize = 16_384;
 /// Closed descriptor whose SHA-256 is the drawing schema identity.
-pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/1;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;page-items=64;dimension=/Drawing/Dimension;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
+pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/2;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;page-items=64;dimension=/Drawing/Dimension;sheet=/Drawing/Sheet;sheet-sizes=a4,a3,a2,a1,a0;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
 
 /// Independent drawing schema digest; never interchangeable with the engineering-model schema.
 pub fn schema_identity() -> Result<ContentDigest, PlateError> {
@@ -82,6 +84,9 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
     }
     text.push_str(&format!("    custom uint64 drawing:sourceGeneration = {}\n    def Scope \"View\"\n    {{\n        custom string drawing:id = {}\n        custom token drawing:plane = {}\n        custom double drawing:scale = {}\n        custom double[] drawing:origin = [{x}, {y}]\n    }}\n", source.generation, quote(&s.view.id.to_string()), quote(s.view.plane.as_str()), s.view.scale_denominator));
     text.push_str(&format!("    def Scope \"Dimension\"\n    {{\n        custom string drawing:id = {}\n        custom string[] drawing:anchors = [{}, {}]\n        custom double drawing:offset = {}\n        custom uint drawing:decimals = {}\n    }}\n", quote(&s.dimension.id.to_string()), quote(&a.to_string()), quote(&b.to_string()), s.dimension.paper_offset_mm, s.dimension.decimal_places));
+    if let Some(sheet) = &s.sheet {
+        text.push_str(&format!("    def Scope \"Sheet\"\n    {{\n        custom token drawing:size = {}\n        custom double drawing:frameInset = {}\n        custom string drawing:titleProject = {}\n        custom string drawing:titleAuthor = {}\n    }}\n", quote(sheet.size.as_str()), sheet.frame.inset_mm, quote(&sheet.title.project), quote(&sheet.title.author)));
+    }
     if !s.views.is_empty() {
         text.push_str("    def Scope \"Views\"\n    {\n");
         for (ordinal, view) in s.views.iter().enumerate() {
@@ -205,7 +210,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
             total_bytes: MAX_INTENT_BYTES,
             layers: 1,
             depth: 8,
-            // Root, view, dimension, the optional views and drafting scopes and up to the
+            // Root, view, dimension, the optional sheet/views/drafting scopes and up to the
             // entity caps — the whole intent fits one reader page (engine MAX_INTENT_PAGE_ITEMS).
             prims: 3 + 1 + MAX_DRAFTING_ENTITIES,
             // Account for Sdf property-child lists and per-attribute metadata as well as values.
@@ -283,6 +288,25 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
     let anchors: [FeatureId; 2] = anchors
         .try_into()
         .map_err(|_| integrity("drawing requires exactly two anchors"))?;
+    let sheet: Option<SheetSpec> = match page.items.iter().find(|p| p.path == "/Drawing/Sheet") {
+        None => None,
+        Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
+            // Admission re-validates every bound; the canonical re-encode comparison below
+            // refuses any other topology or stray attribute.
+            Some(SheetSpec {
+                size: Sheet::parse(text(scope, "drawing:size", "token")?)
+                    .ok_or_else(|| integrity("unsupported drawing sheet size"))?,
+                frame: SheetFrame {
+                    inset_mm: number(scope, "drawing:frameInset")?,
+                },
+                title: TitleBlock {
+                    project: text(scope, "drawing:titleProject", "string")?.to_owned(),
+                    author: text(scope, "drawing:titleAuthor", "string")?.to_owned(),
+                },
+            })
+        }
+        Some(_) => return Err(integrity("drawing prim profile disagrees")),
+    };
     let drafting: Vec<DraftingSpec> =
         match page.items.iter().find(|p| p.path == "/Drawing/Drafting") {
             None => Vec::new(),
@@ -406,6 +430,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
         },
         drafting,
         views,
+        sheet,
     })?;
     if encode(&drawing)?.bytes != asset.bytes {
         return Err(integrity(

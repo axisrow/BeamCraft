@@ -12,6 +12,7 @@ use beamcraft_layer_engine::{Asset, Cancellation, Control, Identity};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::*;
+use beamcraft_model::sheet::Sheet;
 use std::time::{Duration, Instant};
 
 const DRAWING: &str = "01900000-0000-7000-8000-000000000001";
@@ -46,6 +47,7 @@ fn drawing() -> Drawing {
         },
         drafting: Vec::new(),
         views: Vec::new(),
+        sheet: None,
     })
     .unwrap()
 }
@@ -348,4 +350,35 @@ fn oversized_assets_arrays_and_cancelled_or_expired_requests_never_return_intent
         codec::decode(asset, identity(), &expired).unwrap_err().code,
         ErrorCode::Cancelled
     );
+}
+
+#[test]
+fn the_sheet_round_trips_exactly_and_non_canonical_sheets_refuse() {
+    let mut spec = drawing().spec().clone();
+    spec.sheet = Some(SheetSpec {
+        size: Sheet::A3,
+        frame: SheetFrame { inset_mm: 12.5 },
+        title: TitleBlock {
+            project: "Bridge".into(),
+            author: "Drafter".into(),
+        },
+    });
+    let intent = Drawing::admit(spec).unwrap();
+    let asset = codec::encode(&intent).unwrap();
+    let text = String::from_utf8(asset.bytes.clone()).unwrap();
+    assert!(text.contains("def Scope \"Sheet\""));
+    assert!(text.contains("drawing:size = \"a3\""));
+    assert_eq!(
+        codec::decode(asset.clone(), identity(), &control()).unwrap(),
+        intent
+    );
+    // Anything outside the canonical sheet schema refuses: a renamed scope prim, and an
+    // unsupported size token. (A re-formatted number that stays canonical is a different,
+    // valid document, not a tamper.)
+    for (before, after) in [
+        ("def Scope \"Sheet\"", "def Scope \"SheetX\""),
+        ("drawing:size = \"a3\"", "drawing:size = \"b3\""),
+    ] {
+        assert!(codec::decode(changed(&asset, before, after), identity(), &control()).is_err());
+    }
 }

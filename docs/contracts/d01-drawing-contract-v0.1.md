@@ -164,17 +164,39 @@ replay discipline as `edit-drafting`: no model store on the command line, and th
 fingerprint binds the incoming placement, so an exact replay returns the same revision and a
 changed placement under the same operation id refuses.
 
+## 6c. Sheets (D05)
+
+A document may be laid on one sheet (`DrawingSpec.sheet`, `beamcraft_model::sheet`): a fixed
+catalogue size (`a4`–`a0`, portrait; any other size refuses, nothing is approximated), a
+uniform frame inset (`SheetFrame`, at least 1 mm and strictly inside the sheet) and two
+authored title block fields (`TitleBlock.project`, `TitleBlock.author`, both under the
+bounded label rule). The sheet holds no UUID: it is document furniture, not a document
+object, so it adds no identity constraints — only one more optional scope to the one-page
+budget. Placement changes only through `Drawing::with_sheet` / `without_sheet` (the CLI
+`edit-sheet`, same replay discipline and no model store).
+
+The whole-sheet export (`drawing::sheet::export_svg`) renders one exact published version as
+deterministic stroke-only SVG: frame, title block (contributor-original stroke glyphs, no
+font or embedded text), every resolved placed view and the primary view's dimension groups.
+Anything unresolved refuses; every stroke must lie inside the frame — content that does not
+fit refuses instead of being rescaled or clipped. A document without a sheet keeps the
+loose-paper export of section 6, and `--format pdf` defaults its print sheet to the
+document's sheet size.
+
 ## 7. Module map
 
 - `beamcraft-model::id` — drawing object identities (typed UUIDv7).
 - `beamcraft-model::drawing` — source pin, live-source and freshness states.
+- `beamcraft-model::sheet` — sheet entities: the fixed A4–A0 catalogue, frame and title
+  block, and their admission.
 - `beamcraft-engine::drawing` — admission (`Drawing::admit`), view/dimension specs, placed
-  views (`views`), drawn objects (`drafting`), re-export of the pin and freshness states;
-  `projection` (including per-view `resolve_view`), `svg`, `pdf` and `print` submodules. `pdf`
-  renders one published version as stroke-only PDF 1.4 (no font is embedded or referenced);
-  `print` is the print pipeline shape: resolved strokes laid out 1:1, centred on a fixed
-  A4–A0 sheet, refusing instead of rescaling.
+  views (`views`), drawn objects (`drafting`), the sheet (`sheet`), re-export of the pin and
+  freshness states; `projection` (including per-view `resolve_view`), `svg`, `pdf`, `print`
+  and `sheet` submodules. `pdf` renders one published version as stroke-only PDF 1.4 (no
+  font is embedded or referenced); `print` is the print pipeline shape: resolved strokes laid
+  out 1:1, centred on a fixed A4–A0 sheet, refusing instead of rescaling; `sheet` is the
+  whole-sheet renderer of section 6c.
 - `apps/beamcraft-cli` — `preview-drawing`, `create-drawing`, `refresh-drawing`,
-  `edit-drafting`, `edit-views`, `publish-drawing`, `inspect-drawing`,
+  `edit-drafting`, `edit-views`, `edit-sheet`, `publish-drawing`, `inspect-drawing`,
   `inspect-drawing-versions`, `export-drawing`, and the drawing document store; it computes
   nothing the engine does not expose.
