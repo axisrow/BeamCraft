@@ -11,7 +11,10 @@
 mod common;
 
 use beamcraft_geom::{Point3, Vec3};
-use beamcraft_kernel::ruled::{Loft, LoftCode, LoftFailure, LoftResult, RuledContour, loft};
+use beamcraft_kernel::ruled::{
+    ConePatch, CylinderPatch, Loft, LoftCode, LoftFailure, LoftResult, RuledContour, cone_patch,
+    cylinder_patch, loft,
+};
 use core::f64::consts::{FRAC_PI_2, PI, TAU};
 
 fn p3(x: f64, y: f64, z: f64) -> Point3 {
@@ -397,5 +400,243 @@ fn a_flat_translation_is_refused_as_degenerate() {
     match failure {
         LoftFailure::Body(_) => {}
         other => panic!("expected a body refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_cylinder_patch_meets_the_annular_sector_closed_form() {
+    // The first-class quarter-cylinder sheet: inner bend radius 90, thickness 10,
+    // swept 90 degrees about Z, height 50. The kernel derives both annular-sector
+    // sections on one grid; the seal cross-checks the mesh volume against the exact
+    // translation (section area x height), and the fixture compares the volume and
+    // area with the true annular-sector closed forms inside the faceting bounds.
+    let patch = CylinderPatch {
+        origin: p3(0.0, 0.0, 0.0),
+        x_axis: ex(),
+        y_axis: ey(),
+        radius_mm: 90.0,
+        thickness_mm: 10.0,
+        start_rad: 0.0,
+        sweep_rad: FRAC_PI_2,
+        height_mm: 50.0,
+        max_sagitta_mm: 0.1,
+    };
+    let r = cylinder_patch(&patch).unwrap();
+    let (ri, ro, theta, height) = (90.0_f64, 100.0_f64, FRAC_PI_2, 50.0_f64);
+    let exact = height * (theta / 2.0) * (ro * ro - ri * ri);
+    let d = r.sagitta_bound_mm().unwrap();
+    assert!(d > 0.0 && d <= 0.1, "{d}");
+    // The prism is the faceted section swept: the outer chords lose material inside
+    // the outer circle, the inner chords gain some inside the inner circle, and the
+    // net deficit is bounded by the sagitta bands over the two arc lengths (the outer
+    // band is the wider one, so the mesh stays below the true value).
+    let v = volume(&r);
+    assert!(v <= exact, "{v} vs {exact}");
+    assert!(
+        exact - v <= theta * (ro + ri) * d * height,
+        "{} vs {exact}",
+        exact - v
+    );
+    // Area: two faceted caps (below the exact sector areas), the two arc skins (below
+    // their true arc-by-height areas) and the two exact radial end faces.
+    let area = r.area_mm2().unwrap().midpoint();
+    let exact_area =
+        theta * (ro * ro - ri * ri) + theta * (ro + ri) * height + 2.0 * (ro - ri) * height;
+    assert!(area <= exact_area, "{area} vs {exact_area}");
+    assert!(area >= exact_area * 0.98, "{area} vs {exact_area}");
+    // A smooth flagged patch: the faceted turns are no authored folds, the deviation
+    // is reported instead.
+    assert!(r.fold_vertices().is_empty());
+    let blob = common::parse_blob(r.blob());
+    let topology = common::topology(&blob.triangles, blob.vertices.len());
+    assert!(topology.closed && topology.components == 1);
+    close(
+        common::mesh_volume(&blob.vertices, &blob.triangles),
+        v,
+        1e-12,
+    );
+}
+
+#[test]
+fn a_cone_patch_meets_the_cone_band_closed_form() {
+    // The first-class conical sheet: inner radius 100 tapering to 60 over the height
+    // 60, thickness 10, swept 90 degrees. The wall rulings lie in the meridian planes,
+    // so the skins sit on the true cones; the band volume is the outer cone minus the
+    // inner cone over the swept angle, and the faceting perturbs it by at most the
+    // sagitta bands over the four arc lengths.
+    let patch = ConePatch {
+        origin: p3(0.0, 0.0, 0.0),
+        x_axis: ex(),
+        y_axis: ey(),
+        radius_mm: 100.0,
+        end_radius_mm: 60.0,
+        thickness_mm: 10.0,
+        start_rad: 0.0,
+        sweep_rad: FRAC_PI_2,
+        height_mm: 60.0,
+        max_sagitta_mm: 0.13,
+    };
+    let r = cone_patch(&patch).unwrap();
+    let (r1, r2, t, theta, h) = (100.0_f64, 60.0_f64, 10.0_f64, FRAC_PI_2, 60.0_f64);
+    let (r1o, r2o) = (r1 + t, r2 + t);
+    let exact = theta / 2.0 * h / 3.0
+        * ((r1o * r1o + r1o * r2o + r2o * r2o) - (r1 * r1 + r1 * r2 + r2 * r2));
+    let d = r.sagitta_bound_mm().unwrap();
+    assert!(d > 0.0 && d <= 0.13, "{d}");
+    let v = volume(&r);
+    assert!(
+        (v - exact).abs() <= theta * (r1o + r2o + r1 + r2) * d * h,
+        "{v} vs {exact}"
+    );
+    // Area: the two cone skins and the two radial end faces (trapezia of the slant
+    // height) below their true values, plus the two faceted caps.
+    let slant = (h * h + (r2 - r1) * (r2 - r1)).sqrt();
+    let area = r.area_mm2().unwrap().midpoint();
+    let exact_area = theta / 2.0 * (r1 + r2) * slant
+        + theta / 2.0 * (r1o + r2o) * slant
+        + 2.0 * t * slant
+        + theta / 2.0 * (r1o * r1o - r1 * r1)
+        + theta / 2.0 * (r2o * r2o - r2 * r2);
+    assert!(area <= exact_area, "{area} vs {exact_area}");
+    assert!(area >= exact_area * 0.98, "{area} vs {exact_area}");
+    assert!(r.fold_vertices().is_empty());
+    let blob = common::parse_blob(r.blob());
+    let topology = common::topology(&blob.triangles, blob.vertices.len());
+    assert!(topology.closed && topology.components == 1);
+}
+
+#[test]
+fn a_cone_patch_with_equal_radii_is_the_cylinder_patch() {
+    // The cone degenerates to the cylinder: one shared grid builder means identical
+    // sections, bytes and reported deviation.
+    let cylinder = cylinder_patch(&CylinderPatch {
+        origin: p3(0.0, 0.0, 0.0),
+        x_axis: ex(),
+        y_axis: ey(),
+        radius_mm: 80.0,
+        thickness_mm: 12.0,
+        start_rad: 0.5,
+        sweep_rad: 1.2,
+        height_mm: 40.0,
+        max_sagitta_mm: 0.2,
+    })
+    .unwrap();
+    let cone = cone_patch(&ConePatch {
+        origin: p3(0.0, 0.0, 0.0),
+        x_axis: ex(),
+        y_axis: ey(),
+        radius_mm: 80.0,
+        end_radius_mm: 80.0,
+        thickness_mm: 12.0,
+        start_rad: 0.5,
+        sweep_rad: 1.2,
+        height_mm: 40.0,
+        max_sagitta_mm: 0.2,
+    })
+    .unwrap();
+    assert_eq!(cylinder.blob(), cone.blob());
+    assert_eq!(cylinder.sagitta_bound_mm(), cone.sagitta_bound_mm());
+}
+
+#[test]
+fn bad_patches_are_refused_with_typed_codes() {
+    let cone =
+        |radius: f64, end_radius: f64, thickness: f64, height: f64, sweep: f64, sagitta: f64| {
+            cone_patch(&ConePatch {
+                origin: p3(0.0, 0.0, 0.0),
+                x_axis: ex(),
+                y_axis: ey(),
+                radius_mm: radius,
+                end_radius_mm: end_radius,
+                thickness_mm: thickness,
+                start_rad: 0.0,
+                sweep_rad: sweep,
+                height_mm: height,
+                max_sagitta_mm: sagitta,
+            })
+        };
+    // Non-positive radii, thickness and height.
+    assert_eq!(
+        cone(0.0, 60.0, 10.0, 50.0, 1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::BadDeviation)
+    );
+    assert_eq!(
+        cone(100.0, -60.0, 10.0, 50.0, 1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::BadDeviation)
+    );
+    assert_eq!(
+        cone(100.0, 60.0, 0.0, 50.0, 1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::BadDeviation)
+    );
+    assert_eq!(
+        cone(100.0, 60.0, 10.0, 0.0, 1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::BadDeviation)
+    );
+    // Non-finite values in every role.
+    for (radius, end_radius, thickness, height, sweep, sagitta) in [
+        (f64::NAN, 60.0, 10.0, 50.0, 1.0, 0.1),
+        (100.0, f64::INFINITY, 10.0, 50.0, 1.0, 0.1),
+        (100.0, 60.0, f64::NAN, 50.0, 1.0, 0.1),
+        (100.0, 60.0, 10.0, f64::NAN, 1.0, 0.1),
+        (100.0, 60.0, 10.0, 50.0, f64::NAN, 0.1),
+        (100.0, 60.0, 10.0, 50.0, 1.0, f64::NAN),
+    ] {
+        assert_eq!(
+            cone(radius, end_radius, thickness, height, sweep, sagitta).unwrap_err(),
+            LoftFailure::Contour(LoftCode::NonFinite),
+            "{radius} {end_radius} {thickness} {height} {sweep} {sagitta}"
+        );
+    }
+    // The sweep is strictly inside a full turn: a closed ring needs a cavity section
+    // the loft does not take.
+    assert_eq!(
+        cone(100.0, 60.0, 10.0, 50.0, TAU, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::BadDeviation)
+    );
+    assert_eq!(
+        cone(100.0, 60.0, 10.0, 50.0, -1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::BadDeviation)
+    );
+    // Radii above the dimension cap.
+    assert_eq!(
+        cone(1.1e6, 60.0, 10.0, 50.0, 1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::AboveLimit)
+    );
+    assert_eq!(
+        cone(100.0, 60.0, 1.1e6, 50.0, 1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::AboveLimit)
+    );
+    // Radius and thickness each below the cap, but the derived outer radius beyond
+    // it: the skins keep the envelope one arc keeps.
+    assert_eq!(
+        cone(900.0e3, 60.0, 900.0e3, 50.0, 1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::AboveLimit)
+    );
+    // A half-metre radius at a nanometre sagitta is unreachable inside the G05 cap
+    // (a kilometre radius is refused by the envelope check above it first).
+    assert_eq!(
+        cone(500.0e3, 500.0e3, 10.0, 50.0, 1.0, 1.0e-9).unwrap_err(),
+        LoftFailure::Contour(LoftCode::DeviationUnreachable)
+    );
+    // The cylinder refuses the same ways (zero radius, full turn).
+    assert_eq!(
+        cylinder_patch(&CylinderPatch {
+            origin: p3(0.0, 0.0, 0.0),
+            x_axis: ex(),
+            y_axis: ey(),
+            radius_mm: 0.0,
+            thickness_mm: 10.0,
+            start_rad: 0.0,
+            sweep_rad: TAU,
+            height_mm: 50.0,
+            max_sagitta_mm: 0.1,
+        })
+        .unwrap_err(),
+        LoftFailure::Contour(LoftCode::BadDeviation)
+    );
+    // A sheet thinner than the geometric floor never passes contour admission.
+    match cone(100.0, 60.0, 1.0e-5, 50.0, 1.0, 0.1).unwrap_err() {
+        LoftFailure::Profile(_) => {}
+        other => panic!("expected a profile refusal, got {other:?}"),
     }
 }

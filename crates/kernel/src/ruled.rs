@@ -15,6 +15,9 @@
 //! translated along the cylinder axis, and two arcs of different radii about the same
 //! cone axis. Arc contours are polygons with vertices **on** the true curve, flagged by a
 //! proven sagitta bound (the G05 linear-interpolation bound) that the result reports.
+//! [`cylinder_patch`] and [`cone_patch`] build both patches first-class from authored
+//! bend radii and thickness: the kernel derives the two matched annular-sector sections
+//! on one angular grid, so the caller never resamples arcs by hand.
 //!
 //! Fold lines are the transverse wall edges at which the sheet changes direction: the
 //! vertex indices where either contour does not continue straight. A bent plate reads
@@ -642,4 +645,264 @@ pub fn loft(input: &Loft) -> Result<LoftResult, LoftFailure> {
         sagitta_bound_mm,
         fold_vertices,
     })
+}
+
+/// An authored cylindrical patch: the bent sheet of thickness `thickness_mm` between
+/// the inner bend radius `radius_mm` and the outer radius `radius_mm + thickness_mm`,
+/// swept `sweep_rad` about the Z axis of the certified frame from `start_rad`, running
+/// `height_mm` along that axis from the frame plane through `origin`.
+///
+/// The section (an annular sector) is one counter-clockwise polygon on a single angular
+/// grid chosen from the outer radius, so the start and end contours share the vertex
+/// count and the correspondence is the continuous one. The sweep is a partial turn,
+/// strictly below a full turn: a closed ring needs a cavity section, which the loft
+/// does not admit (as the A10 roll). The vertices lie on the true arcs; the proven
+/// sagitta bound is reported and the faceted turns contribute no fold lines.
+#[derive(Debug, Clone)]
+pub struct CylinderPatch {
+    /// A point on the axis in the sheet's lower plane; the frame X and Y span the
+    /// section plane, Z is the axis direction.
+    pub origin: Point3,
+    /// A section-plane direction, certified into the frame X axis.
+    pub x_axis: Vec3,
+    /// A second section-plane direction, certified into the frame Y axis.
+    pub y_axis: Vec3,
+    /// The authored inner bend radius (millimetres).
+    pub radius_mm: f64,
+    /// The sheet thickness (millimetres); the outer radius is `radius_mm + thickness_mm`.
+    pub thickness_mm: f64,
+    /// The start angle of the sweep, radians about the axis.
+    pub start_rad: f64,
+    /// The swept angle, radians, strictly inside `(0, TAU)`.
+    pub sweep_rad: f64,
+    /// The patch height along the frame Z axis (millimetres).
+    pub height_mm: f64,
+    /// The largest accepted chord sagitta of the faceted arcs (millimetres).
+    pub max_sagitta_mm: f64,
+}
+
+/// An authored conical patch: the bent sheet of thickness `thickness_mm` whose inner
+/// face tapers from `radius_mm` at the frame plane to `end_radius_mm` `height_mm` along
+/// the frame axis. Everything else as for [`CylinderPatch`]; with
+/// `end_radius_mm == radius_mm` the bytes are the cylinder patch's.
+#[derive(Debug, Clone)]
+pub struct ConePatch {
+    /// A point on the axis in the sheet's lower plane; the frame X and Y span the
+    /// section plane, Z is the axis direction.
+    pub origin: Point3,
+    /// A section-plane direction, certified into the frame X axis.
+    pub x_axis: Vec3,
+    /// A second section-plane direction, certified into the frame Y axis.
+    pub y_axis: Vec3,
+    /// The inner bend radius at the frame plane (millimetres).
+    pub radius_mm: f64,
+    /// The inner bend radius at the far plane (millimetres).
+    pub end_radius_mm: f64,
+    /// The sheet thickness (millimetres), measured radially at both levels.
+    pub thickness_mm: f64,
+    /// The start angle of the sweep, radians about the axis.
+    pub start_rad: f64,
+    /// The swept angle, radians, strictly inside `(0, TAU)`.
+    pub sweep_rad: f64,
+    /// The patch height along the frame Z axis (millimetres).
+    pub height_mm: f64,
+    /// The largest accepted chord sagitta of the faceted arcs (millimetres).
+    pub max_sagitta_mm: f64,
+}
+
+/// Validates one authored radius, thickness or height: finite, positive, below the
+/// dimension cap.
+fn checked_positive(value: f64) -> Result<f64, LoftFailure> {
+    if !value.is_finite() {
+        return Err(LoftFailure::Contour(LoftCode::NonFinite));
+    }
+    if value <= 0.0 {
+        return Err(LoftFailure::Contour(LoftCode::BadDeviation));
+    }
+    if value > DIMENSION_CAP_MM {
+        return Err(LoftFailure::Contour(LoftCode::AboveLimit));
+    }
+    Ok(value)
+}
+
+/// Validates a patch sweep: a finite start angle and a sweep strictly inside a full
+/// turn (the closed ring of a full turn needs a cavity section the loft does not take).
+fn checked_sweep(start_rad: f64, sweep_rad: f64) -> Result<(), LoftFailure> {
+    if !start_rad.is_finite() || !sweep_rad.is_finite() {
+        return Err(LoftFailure::Contour(LoftCode::NonFinite));
+    }
+    if !(sweep_rad > 0.0 && sweep_rad < TAU) {
+        return Err(LoftFailure::Contour(LoftCode::BadDeviation));
+    }
+    Ok(())
+}
+
+/// The angular grid of a patch: the facet count over the sweep follows the G05 segment
+/// choice for `r_max`, the largest radius of the four skins (so the reported bound meets
+/// the request), exactly as `RuledContour::arc` chooses for one arc. Returns the facet
+/// count, the facet angle and the proven sagitta bound `r_max * phi^2 / 8`.
+fn patch_grid(
+    r_max: f64,
+    sweep_rad: f64,
+    max_sagitta_mm: f64,
+) -> Result<(u64, f64, f64), LoftFailure> {
+    let spec = CurveSpec {
+        max_sagitta_mm,
+        min_segments: 8,
+        max_segments: 1020,
+    };
+    let (per_turn, _) = choose_segments(r_max, spec)
+        .map_err(|_| LoftFailure::Contour(LoftCode::DeviationUnreachable))?;
+    let step = TAU / f64::from(per_turn);
+    let facets = (sweep_rad / step).ceil();
+    if !facets.is_finite() || facets > 1021.0 {
+        return Err(LoftFailure::Contour(LoftCode::DeviationUnreachable));
+    }
+    let facet_angle = sweep_rad / facets;
+    Ok((
+        facets as u64,
+        facet_angle,
+        r_max * facet_angle * facet_angle / 8.0,
+    ))
+}
+
+/// The `facets + 1` points on the true circle of `radius_mm`, from `start_rad` in
+/// `facet_angle` steps; `reverse` walks the angles back down.
+fn arc_points(
+    radius_mm: f64,
+    start_rad: f64,
+    facets: u64,
+    facet_angle: f64,
+    reverse: bool,
+) -> Vec<Point2> {
+    let mut out = Vec::new();
+    for j in 0..=facets {
+        let k = if reverse { facets - j } else { j };
+        let phi = start_rad + facet_angle * k as f64;
+        let (sin, cos) = phi.sin_cos();
+        out.push(Point2::new(radius_mm * cos, radius_mm * sin));
+    }
+    out
+}
+
+/// The annular-sector section polygon of one patch level: the outer arc
+/// counter-clockwise from the start angle, the implicit radial edge in, the inner arc
+/// back, and the closing radial edge out — material on the left of every edge.
+fn sector_section(
+    r_in: f64,
+    r_out: f64,
+    start_rad: f64,
+    facets: u64,
+    facet_angle: f64,
+) -> Vec<Point2> {
+    let outer = arc_points(r_out, start_rad, facets, facet_angle, false);
+    let inner = arc_points(r_in, start_rad, facets, facet_angle, true);
+    let mut points = outer;
+    points.extend(inner);
+    points
+}
+
+/// A generated arc-grid polygon: like [`RuledContour::polygon`], but carrying the
+/// proven `sagitta_bound_mm` of its faceting — the loft reports the deviation and reads
+/// no authored fold lines from the flagged turns.
+fn flagged_contour(
+    origin: Point3,
+    x_axis: Vec3,
+    y_axis: Vec3,
+    points: Vec<Point2>,
+    sagitta_bound_mm: f64,
+) -> Result<RuledContour, LoftFailure> {
+    let mut contour = RuledContour::polygon(origin, x_axis, y_axis, points)?;
+    contour.sagitta_bound_mm = Some(sagitta_bound_mm);
+    Ok(contour)
+}
+
+/// Builds one patch: the two level sections `(inner, outer)` radii on one angular grid,
+/// the upper translated `height_mm` along the frame axis, sealed through [`loft`]. For
+/// equal level sections the translation is exact, so the seal carries the analytic
+/// prism self-check (`section area x height`).
+#[allow(clippy::too_many_arguments)]
+fn patch_loft(
+    origin: Point3,
+    x_axis: Vec3,
+    y_axis: Vec3,
+    start_radii: (f64, f64),
+    end_radii: (f64, f64),
+    start_rad: f64,
+    sweep_rad: f64,
+    height_mm: f64,
+    max_sagitta_mm: f64,
+) -> Result<LoftResult, LoftFailure> {
+    let frame = frame_of(origin, x_axis, y_axis)?;
+    let deviation = checked_deviation(max_sagitta_mm)?;
+    // The derived outer radii keep the envelope `RuledContour::arc` enforces on one
+    // arc: no skin may sit beyond the dimension cap even when radius and thickness
+    // each pass their own check.
+    let r_max = start_radii.1.max(end_radii.1);
+    if r_max > DIMENSION_CAP_MM {
+        return Err(LoftFailure::Contour(LoftCode::AboveLimit));
+    }
+    let (facets, facet_angle, bound) = patch_grid(r_max, sweep_rad, deviation)?;
+    let start = flagged_contour(
+        origin,
+        x_axis,
+        y_axis,
+        sector_section(start_radii.0, start_radii.1, start_rad, facets, facet_angle),
+        bound,
+    )?;
+    let axis = frame.z().scaled(height_mm).map_err(|_| numeric())?;
+    let end_origin = origin.translated(axis).map_err(|_| numeric())?;
+    let end = flagged_contour(
+        end_origin,
+        x_axis,
+        y_axis,
+        sector_section(end_radii.0, end_radii.1, start_rad, facets, facet_angle),
+        bound,
+    )?;
+    loft(&Loft { start, end })
+}
+
+/// Lofts an authored [`CylinderPatch`] into one sealed certified solid: the bent sheet
+/// between the inner bend radius and `radius_mm + thickness_mm` about the frame axis.
+/// The exact translation along the axis carries the seal's analytic prism self-check
+/// (`section area x height`).
+pub fn cylinder_patch(patch: &CylinderPatch) -> Result<LoftResult, LoftFailure> {
+    let radius = checked_positive(patch.radius_mm)?;
+    let thickness = checked_positive(patch.thickness_mm)?;
+    let height = checked_positive(patch.height_mm)?;
+    checked_sweep(patch.start_rad, patch.sweep_rad)?;
+    patch_loft(
+        patch.origin,
+        patch.x_axis,
+        patch.y_axis,
+        (radius, radius + thickness),
+        (radius, radius + thickness),
+        patch.start_rad,
+        patch.sweep_rad,
+        height,
+        patch.max_sagitta_mm,
+    )
+}
+
+/// Lofts an authored [`ConePatch`] into one sealed certified solid: the bent sheet whose
+/// inner face tapers from `radius_mm` to `end_radius_mm` over the height. The rulings
+/// lie in the meridian planes, so the walls sit on the true cones; the fixtures compare
+/// the volume with the cone-band closed form inside the faceting bounds.
+pub fn cone_patch(patch: &ConePatch) -> Result<LoftResult, LoftFailure> {
+    let radius = checked_positive(patch.radius_mm)?;
+    let end_radius = checked_positive(patch.end_radius_mm)?;
+    let thickness = checked_positive(patch.thickness_mm)?;
+    let height = checked_positive(patch.height_mm)?;
+    checked_sweep(patch.start_rad, patch.sweep_rad)?;
+    patch_loft(
+        patch.origin,
+        patch.x_axis,
+        patch.y_axis,
+        (radius, radius + thickness),
+        (end_radius, end_radius + thickness),
+        patch.start_rad,
+        patch.sweep_rad,
+        height,
+        patch.max_sagitta_mm,
+    )
 }
