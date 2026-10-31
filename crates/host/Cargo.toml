@@ -11,6 +11,7 @@ authors.workspace = true
 [dependencies]
 beamcraft-model.workspace = true
 beamcraft-json.workspace = true
+beamcraft-engine = { path = "../engine", version = "0.0.1" }
 
 [lints]
 workspace = true

@@ -42,6 +42,7 @@ mod resolve_cmd;
 mod schedule_cmd;
 mod view;
 mod view_export;
+mod views_cmd;
 mod weld_cmd;
 mod work_plane_cmd;
 
@@ -133,6 +134,8 @@ fn main() -> std::process::ExitCode {
         .is_some_and(|c| c == "work-plane" || c == "resolve-construction-point")
     {
         work_plane_cmd::execute(&args)
+    } else if args.first().is_some_and(views_cmd::handles) {
+        views_cmd::execute(&args)
     } else if args.first().is_some_and(pick_cmd::handles) {
         pick_cmd::execute(&args)
     } else if args.first().is_some_and(weld_cmd::handles) {

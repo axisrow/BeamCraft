@@ -170,6 +170,7 @@ version = "0.0.1"
 name = "beamcraft-host"
 version = "0.0.1"
 dependencies = [
+ "beamcraft-engine",
  "beamcraft-json",
  "beamcraft-model",
 ]
@@ -216,6 +217,7 @@ name = "beamcraft-ui"
 version = "0.0.1"
 dependencies = [
  "beamcraft-engine",
+ "beamcraft-host",
  "beamcraft-json",
  "beamcraft-model",
  "eframe",
