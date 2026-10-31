@@ -120,6 +120,19 @@ impl SolidMesh {
         })
     }
 
+    /// The mesh of a G13 ruled loft (an A11 lofted plate); the volume is the midpoint of the
+    /// enclosure of the certified signed-volume sum.
+    pub fn from_loft(result: &beamcraft_kernel::ruled::LoftResult) -> Self {
+        Self {
+            vertices: result.body().mesh().vertices().to_vec(),
+            triangles: result.body().mesh().triangles().to_vec(),
+            face_table: result.body().face_table().to_vec(),
+            blob: result.blob().to_vec(),
+            digest: result.mesh_digest(),
+            volume_mm3: result.volume_mm3().midpoint(),
+        }
+    }
+
     /// The mesh of an admitted triangle set with the kernel face table of the body it
     /// certifies (A12.1): a plain plate body translated along the element-local Z. The volume
     /// is the caller's analytic value, which a translation preserves. `None` when the blob is

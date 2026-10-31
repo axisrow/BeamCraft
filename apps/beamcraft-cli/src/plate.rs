@@ -235,11 +235,11 @@ pub(crate) struct DerivedMesh {
     pub(crate) points: Vec<[f32; 3]>,
     pub(crate) counts: Vec<i64>,
     pub(crate) indices: Vec<i64>,
-    shape_key: String,
+    pub(crate) shape_key: String,
     orientation: String,
     subdivision: String,
     /// The quantity record stored beside the mesh, if any. Not part of the geometry.
-    stored: Option<StoredRecord>,
+    pub(crate) stored: Option<StoredRecord>,
 }
 
 impl DerivedMesh {
@@ -393,6 +393,12 @@ pub(crate) struct Decoded {
         BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::CutHistory>,
     pub(crate) plates: Vec<(AuthoredPlate, Option<DerivedMesh>)>,
     pub(crate) members: Vec<(AuthoredMember, Option<DerivedMesh>)>,
+    /// Committed lofted plates (A11), decoded but not re-evaluated by the plate verifier:
+    /// their quantities were checked at creation and are read from the derived layer.
+    pub(crate) lofted: Vec<(
+        beamcraft_engine::loft_plate::AuthoredLoftedPlate,
+        Option<DerivedMesh>,
+    )>,
     other_elements: usize,
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
@@ -739,6 +745,49 @@ fn decode_plate(prim: &Prim, id: ElementId) -> Result<AuthoredPlate, PlateError>
         cuts: decode_cut(prim)?,
         hole_records: decode_hole_records(prim)?,
         bends: decode_bends(prim)?,
+    })
+}
+
+/// A committed lofted plate's authored inputs (A11): the two face contours as authored. The
+/// three loft attributes appear together; a half-authored or malformed record is an integrity
+/// error, never a default. The stored form token is checked by the caller.
+fn decode_lofted(
+    prim: &Prim,
+    id: ElementId,
+) -> Result<beamcraft_engine::loft_plate::AuthoredLoftedPlate, PlateError> {
+    let bad = || integrity("committed lofted plate lacks a required authored input");
+    let contour = |name: &str| -> Result<Vec<[f64; 3]>, PlateError> {
+        let Some(Value::Array(points)) = property(prim, name) else {
+            return Err(bad());
+        };
+        points
+            .iter()
+            .map(numbers::<3>)
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(bad)
+    };
+    let start = contour("steel:plate:loftStartMm")?;
+    let end = contour("steel:plate:loftEndMm")?;
+    let translation = property(prim, "xformOp:translate")
+        .and_then(numbers::<3>)
+        .ok_or_else(bad)?;
+    let [w, x, y, z] = property(prim, "xformOp:orient")
+        .and_then(numbers::<4>)
+        .ok_or_else(bad)?;
+    Ok(beamcraft_engine::loft_plate::AuthoredLoftedPlate {
+        id,
+        name: property(prim, "bim:name")
+            .and_then(text)
+            .ok_or_else(bad)?
+            .to_owned(),
+        class: decode_class(prim)?,
+        start_points_mm: start,
+        end_points_mm: end,
+        placement: beamcraft_model::command::Placement {
+            translation_mm: translation,
+            orientation_xyzw: [x, y, z, w],
+        },
+        material: decode_material(prim)?,
     })
 }
 
@@ -1168,6 +1217,7 @@ pub(crate) fn decode(
     let by_path: BTreeMap<&str, &Prim> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     let mut plates = Vec::new();
     let mut members = Vec::new();
+    let mut lofted = Vec::new();
     let mut other = 0usize;
     let mut elements = BTreeMap::new();
     let ids: BTreeMap<&str, ElementId> = prims
@@ -1208,6 +1258,11 @@ pub(crate) fn decode(
             );
         }
         match kind {
+            Some("plate")
+                if property(prim, "steel:plate:form").and_then(text) == Some("lofted") =>
+            {
+                lofted.push((decode_lofted(prim, id)?, mesh()))
+            }
             Some("plate") => plates.push((decode_plate(prim, id)?, mesh())),
             Some("beam") => members.push((decode_member(prim, id, MemberKind::Beam)?, mesh())),
             Some("column") => {
@@ -1222,10 +1277,10 @@ pub(crate) fn decode(
     let levels = levels_of(&prims)?;
     let derived_elements = plates
         .iter()
-        .filter_map(|(plate, _)| {
-            let path = plate
-                .id
-                .prim_path(beamcraft_model::prim::ElementCategory::Part);
+        .map(|(p, _)| &p.id)
+        .chain(lofted.iter().map(|(p, _)| &p.id))
+        .filter_map(|id| {
+            let path = id.prim_path(beamcraft_model::prim::ElementCategory::Part);
             let geometry = format!("{path}/Geometry");
             let prefix = format!("{path}/");
             let has_geometry = by_path
@@ -1241,7 +1296,7 @@ pub(crate) fn decode(
                                 .any(|prefix| v.name.starts_with(prefix))
                         })
                 });
-            has_geometry.then_some(plate.id)
+            has_geometry.then_some(*id)
         })
         .collect();
     let cut_history = prims
@@ -1285,6 +1340,7 @@ pub(crate) fn decode(
         cut_history,
         plates,
         members,
+        lofted,
         other_elements: other,
         definitions,
         levels,
@@ -2432,6 +2488,13 @@ pub(crate) fn inspect_manifest_assets(
     let quantities = verify_derived(&plates, &members, &decoded, false)?;
     let pin = ViewPin::new(digest, content.workspace_generation());
     let mut scene = scene_elements_with_members(&plates, &members)?;
+    for (authored, _) in &decoded.lofted {
+        let body = beamcraft_engine::loft_plate::evaluate_lofted_plate(authored)?;
+        scene.push(beamcraft_engine::loft_plate::scene_element(
+            authored, &body,
+        )?);
+    }
+    scene.sort_by_key(beamcraft_engine::SceneElement::id);
     let reference_view_error = match decoded.reference_scene {
         Ok(references) => {
             scene.extend(references);

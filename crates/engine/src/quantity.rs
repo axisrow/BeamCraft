@@ -414,6 +414,38 @@ pub fn plate_record(
     )
 }
 
+/// Signature of the shape inputs of a lofted plate (A11): the two face contours, with the
+/// algorithm and tolerance policy. Name, placement and material are not shape inputs. With no
+/// operations the net and gross records share this one signature: any shape change moves both.
+pub fn lofted_plate_shape_signature(
+    plate: &crate::loft_plate::AuthoredLoftedPlate,
+    algorithm: &str,
+) -> ContentDigest {
+    let mut bytes = Vec::with_capacity(256);
+    bytes.extend_from_slice(b"BeamCraft/A11/LoftedPlateShape/v1\0");
+    bytes.extend_from_slice(&TOLERANCE_POLICY_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&(algorithm.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(algorithm.as_bytes());
+    for points in [&plate.start_points_mm, &plate.end_points_mm] {
+        bytes.extend_from_slice(&(points.len() as u64).to_le_bytes());
+        for v in points.iter().flatten() {
+            float(&mut bytes, *v);
+        }
+    }
+    digest(&bytes)
+}
+
+/// The record the engine expects for a lofted plate (A11): its quantities under its one shape
+/// signature, which serves as both the net and the gross signature.
+pub fn lofted_plate_record(
+    plate: &crate::loft_plate::AuthoredLoftedPlate,
+    algorithm: &str,
+    quantities: &Quantities,
+) -> QuantityRecord {
+    let shape = lofted_plate_shape_signature(plate, algorithm);
+    record_for(shape, shape, quantities)
+}
+
 /// The record the engine expects for a member.
 pub fn member_record(
     member: &AuthoredMember,

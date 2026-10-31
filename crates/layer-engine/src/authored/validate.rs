@@ -68,6 +68,17 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                     count(hole_points.checked_mul(3).ok_or_else(limit)?, 8)?;
                     count(holes.len(), 4)?;
                 }
+                if let Shape::LoftedPlate { start_mm, end_mm } = &e.shape {
+                    count(
+                        start_mm
+                            .len()
+                            .checked_add(end_mm.len())
+                            .ok_or_else(limit)?
+                            .checked_mul(3)
+                            .ok_or_else(limit)?,
+                        8,
+                    )?;
+                }
             }
             Change::Label { name, .. } if name.len() > 256 => {
                 return Err(limit().with_rule("DV-BASE-003"));
@@ -510,6 +521,31 @@ fn norm([x, y, z]: [f64; 3]) -> f64 {
 fn difference([x, y, z]: [f64; 3], [a, b, c]: [f64; 3]) -> [f64; 3] {
     [x - a, y - b, z - c]
 }
+/// The stored face contours of a lofted plate (A11): the shared coordinate cap and the
+/// vertex-count bounds of the schema descriptor. Winding, planarity, simplicity and the
+/// equal vertex count of the loft correspondence are the engine's evaluation decision.
+fn lofted_plate(start: &[[f64; 3]], end: &[[f64; 3]]) -> Result<(), Diagnostic> {
+    cap(start.iter().flatten().copied(), 1e9)?;
+    cap(end.iter().flatten().copied(), 1e9)?;
+    let span = |points: &[[f64; 3]]| -> f64 {
+        let Some(&first) = points.first() else {
+            return 0.0;
+        };
+        let mut size = 0.0;
+        for &p in points {
+            let n = norm(difference(p, first));
+            if n > size {
+                size = n;
+            }
+        }
+        size
+    };
+    if start.len() < 3 || start.len() != end.len() || span(start).max(span(end)) > 2e6 {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
 fn plate(points: &[[f64; 3]], thickness: f64) -> Result<(), Diagnostic> {
     cap(points.iter().flatten().copied(), 1e9)?;
     cap([thickness], 1e6)?;
@@ -1010,10 +1046,47 @@ pub(super) fn snapshot(
             }
             match kind {
                 "plate" => {
-                    plate(
-                        &points(p, "steel:plate:contourPointsMm")?,
-                        number(p, "steel:plate:thicknessMm")?,
-                    )?;
+                    // The form token discriminates the stored record: a lofted plate (A11)
+                    // carries the three loft attributes and no plate extrusion inputs; an
+                    // extruded plate stores neither the token nor the loft attributes.
+                    let lofted = match p.properties.iter().find(|a| a.name == "steel:plate:form") {
+                        None => {
+                            if p.properties.iter().any(|a| {
+                                matches!(
+                                    a.name.as_str(),
+                                    "steel:plate:loftStartMm" | "steel:plate:loftEndMm"
+                                )
+                            }) {
+                                return Err(invalid());
+                            }
+                            false
+                        }
+                        Some(_) => {
+                            if text(p, "steel:plate:form", "token")? != "lofted" {
+                                return Err(invalid());
+                            }
+                            if p.properties.iter().any(|a| {
+                                matches!(
+                                    a.name.as_str(),
+                                    "steel:plate:contourPointsMm" | "steel:plate:thicknessMm"
+                                )
+                            }) {
+                                return Err(invalid());
+                            }
+                            true
+                        }
+                    };
+                    if lofted {
+                        lofted_plate(
+                            &points(p, "steel:plate:loftStartMm")?,
+                            &points(p, "steel:plate:loftEndMm")?,
+                        )?;
+                    } else {
+                        plate(
+                            &points(p, "steel:plate:contourPointsMm")?,
+                            number(p, "steel:plate:thicknessMm")?,
+                        )?;
+                    }
                     plate_corner_records(p)?;
                     plate_holes(p)?;
                     plate_hole_records(p)?;
@@ -2302,6 +2375,15 @@ pub(super) fn changes(
                             }
                         }
                     }
+                    Shape::LoftedPlate { start_mm, end_mm } => {
+                        // Both contours of a lofted plate (A11): the shared contour bounds;
+                        // the equal vertex count, floor, winding and planarity are the
+                        // engine's, and the certification refuses a twisted correspondence.
+                        for contour in [start_mm, end_mm] {
+                            count_points(contour, b)?;
+                            cap(contour.iter().flatten().copied(), 1e9)?;
+                        }
+                    }
                     Shape::Member {
                         curved,
                         axis_mm,
@@ -2763,6 +2845,13 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         ),
                 ),
                 Shape::Assembly => Ok(()),
+                Shape::LoftedPlate { start_mm, end_mm } => finite(
+                    start_mm
+                        .iter()
+                        .flatten()
+                        .copied()
+                        .chain(end_mm.iter().flatten().copied()),
+                ),
                 Shape::Weld(w) => finite([w.size_mm]),
                 Shape::Bolt(b) => finite(
                     [b.diameter_mm, b.pitch_mm]

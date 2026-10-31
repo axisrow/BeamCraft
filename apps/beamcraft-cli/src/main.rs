@@ -163,6 +163,8 @@ fn main() -> std::process::ExitCode {
         numbering_cmd::execute(&args)
     } else if args.first().is_some_and(|c| {
         c == "create-plate"
+            || c == "create-lofted-plate"
+            || c == "inspect-lofted-plates"
             || c == "inspect-elements"
             || c == "define-material"
             || c == "define-profile"

@@ -54,6 +54,8 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:plate:bendRadiusMm=double[](optional);steel:plate:bendRadiusBMm=double[](optional);steel:plate:bendAngleRad=double[](optional);",
     "all seven steel:plate:bend attributes or none, equal lengths, at most 16 records, a fold states its radius twice and a cone roll its two radii\n",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
+    "steel:plate:form=token(lofted,optional);steel:plate:loftStartMm=double3[](lofted,3..=1024);steel:plate:loftEndMm=double3[](lofted,same vertex count);",
+    "all three loft attributes or none;an extruded plate stores none\n",
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
     "steel:cut:keep=token[](optional,positive|negative);all five or none,equal lengths,ascending ordinals\n",
@@ -303,6 +305,17 @@ pub enum Shape {
         /// order. Empty means an uncut member.
         cuts: Vec<CutRecord>,
     },
+    /// A11 lofted plate: a plate between two face contours that need not be coplanar, stored
+    /// as two element-local point arrays of the same vertex count. The sheet thickness is the
+    /// distance between the contours themselves, so there is no thickness, hole, cut or corner
+    /// input; the kernel certifies the closed loft and refuses a twisted or self-intersecting
+    /// correspondence.
+    LoftedPlate {
+        /// Ordered start face contour, at most 1024 points and subject to tighter stage budgets.
+        start_mm: Vec<[f64; 3]>,
+        /// Ordered end face contour, the same vertex count as the start contour.
+        end_mm: Vec<[f64; 3]>,
+    },
     /// P11 instance: shared inputs are read from a canonical part; only metadata and pose are local.
     Instance {
         /// Same part kind as the canonical definition.
@@ -340,7 +353,8 @@ impl Shape {
     pub(crate) fn cuts(&self) -> &[CutRecord] {
         match self {
             Self::Plate { cuts, .. } | Self::Member { cuts, .. } => cuts,
-            Self::Instance { .. }
+            Self::LoftedPlate { .. }
+            | Self::Instance { .. }
             | Self::Assembly
             | Self::Weld(_)
             | Self::Bolt(_)
@@ -1154,9 +1168,10 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Construction(_) => ElementCategory::Construction,
-        Shape::Plate { .. } | Shape::Member { .. } | Shape::Instance { .. } => {
-            ElementCategory::Part
-        }
+        Shape::Plate { .. }
+        | Shape::Member { .. }
+        | Shape::LoftedPlate { .. }
+        | Shape::Instance { .. } => ElementCategory::Part,
     }
 }
 fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diagnostic> {

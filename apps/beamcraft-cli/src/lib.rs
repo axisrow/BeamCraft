@@ -29,6 +29,7 @@ pub mod history_compact;
 pub mod hole;
 pub mod level;
 pub mod library;
+pub mod loft;
 pub mod member;
 pub mod numbering;
 pub mod numbering_approval;
