@@ -108,22 +108,28 @@ pub fn publish(root: &Path, repo: &str, number: u64, report_path: &Path) -> Resu
     scope(root, &report)?;
     let body = pr.get("body").and_then(Value::as_str).unwrap_or("");
     let patched = with_report(body, &report)?;
-    let payload = report_path.with_file_name("publish.json");
-    std::fs::write(
-        &payload,
-        serde_json::to_vec(&serde_json::json!({"body":patched}))?,
-    )?;
-    let result = Command::new("gh")
+    let payload = serde_json::to_vec(&serde_json::json!({"body":patched}))?;
+    let mut child = Command::new("gh")
         .args([
             "api",
             "--method",
             "PATCH",
             &format!("repos/{repo}/pulls/{number}"),
             "--input",
+            "-",
         ])
-        .arg(&payload)
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .status()?;
+        .spawn()?;
+    use std::io::Write;
+    // Stream the bounded payload: never overwrite a file next to a copied report.
+    let written = child
+        .stdin
+        .take()
+        .ok_or_else(|| std::io::Error::other("missing publication stdin"))
+        .and_then(|mut input| input.write_all(&payload));
+    let result = child.wait()?;
+    written?;
     if !result.success() {
         return fail("GitHub refused report publication");
     }

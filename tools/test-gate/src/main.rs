@@ -126,6 +126,12 @@ fn run() -> Result<()> {
         }
         "ci-verdict" => {
             let needs = serde_json::from_str(&std::env::var("GATE_NEEDS")?)?;
+            if serde_json::Value::pointer(&needs, "/plan/result")
+                .and_then(serde_json::Value::as_str)
+                != Some("success")
+            {
+                return fail("CI planning failed: a current successful local report is required");
+            }
             let oses = serde_json::from_str::<Vec<String>>(&std::env::var("GATE_OSES")?)?;
             if std::env::var("GITHUB_EVENT_NAME")? == "pull_request" {
                 let payload =

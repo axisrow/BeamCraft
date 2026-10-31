@@ -65,6 +65,8 @@ Manual CI can name a source PR with the `pr_number` workflow input.
 Make `CI verdict` the required PR check and require branches to be up to date in the integration
 branch's GitHub protection/ruleset. The verdict rechecks live head/base before it succeeds;
 the repository rule also blocks previously completed green checks after a later base update.
+Replace old per-platform CI requirements with the aggregate check; retain unrelated required
+checks. An intentionally omitted OS cannot satisfy an obsolete per-platform requirement.
 Preserve the repository's existing authorized sync push access when configuring that rule.
 
 On integration, a merged PR's report is reusable only for an identical source tree. The no-PR

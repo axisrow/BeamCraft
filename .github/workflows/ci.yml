@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.plan.outputs.oses) }}
+        os: ${{ fromJSON(needs.plan.outputs.oses || '[]') }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -93,7 +93,7 @@ jobs:
   test-archive-ubuntu:
     name: build test archive (ubuntu-latest)
     needs: plan
-    if: contains(fromJSON(needs.plan.outputs.oses), 'ubuntu-latest')
+    if: contains(fromJSON(needs.plan.outputs.oses || '[]'), 'ubuntu-latest')
     runs-on: ubuntu-latest
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
@@ -161,7 +161,7 @@ jobs:
   test-archive-windows:
     name: build test archive (windows-latest)
     needs: plan
-    if: contains(fromJSON(needs.plan.outputs.oses), 'windows-latest')
+    if: contains(fromJSON(needs.plan.outputs.oses || '[]'), 'windows-latest')
     runs-on: windows-latest
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
@@ -225,7 +225,7 @@ jobs:
   test-archive-macos:
     name: build test archive (macos-latest)
     needs: plan
-    if: contains(fromJSON(needs.plan.outputs.oses), 'macos-latest')
+    if: contains(fromJSON(needs.plan.outputs.oses || '[]'), 'macos-latest')
     runs-on: macos-latest
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
