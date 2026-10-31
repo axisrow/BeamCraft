@@ -52,6 +52,7 @@ fn drawing(source: SourceModelPin) -> Drawing {
             decimal_places: 0,
         },
         drafting: Vec::new(),
+        views: Vec::new(),
     })
     .unwrap()
 }

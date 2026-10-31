@@ -35,6 +35,7 @@ fn intent(pin: SourceModelPin) -> Drawing {
             decimal_places: 1,
         },
         drafting: Vec::new(),
+        views: Vec::new(),
     })
     .unwrap()
 }

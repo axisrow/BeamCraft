@@ -3,7 +3,7 @@
 
 //! D02 orthographic wireframe and aligned projected dimension from semantic roles.
 
-use super::{Drawing, MAX_PAPER_MM, Plane};
+use super::{Drawing, MAX_PAPER_MM, Plane, SourceModelPin, ViewSpec};
 use crate::query::feature::{
     BodyKind, FeatureGeometry, FeatureId, FeatureKind, list_features, lookup_feature,
 };
@@ -11,6 +11,7 @@ use crate::{ViewPin, ViewSnapshot};
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::ElementId;
 
 /// Signature of fixed-basis f64 projected-distance rules, including collapse tolerance.
 pub const ALGORITHM: &str = "drawing-orthographic-box/1;collapse-mm=0.001";
@@ -120,8 +121,7 @@ fn bounded([x, y]: [f64; 2]) -> Result<[f64; 2], CommandError> {
     ])
 }
 
-fn paper(drawing: &Drawing, point: [f64; 3]) -> Result<[f64; 2], CommandError> {
-    let view = &drawing.spec().view;
+fn paper(view: &ViewSpec, point: [f64; 3]) -> Result<[f64; 2], CommandError> {
     let [x, y] = projected(view.plane, point);
     let [ox, oy] = view.paper_origin_mm;
     bounded([
@@ -137,26 +137,37 @@ fn unresolved(reason: UnresolvedReason) -> Projection {
     }
 }
 
-/// Resolves at the admitted intent's exact manifest/generation pin. The adapter must also verify
-/// source project/revision/schema and kernel-derived contents before supplying this snapshot.
-/// A mismatched pin refuses before geometry. Missing/unsupported geometry is explicitly unresolved.
-/// Fixed work: at most 26 named roles, twelve edges and two anchors. All paper output is bounded.
-pub fn resolve(drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<Projection, CommandError> {
-    let spec = drawing.spec();
-    if snapshot.pin() != ViewPin::new(spec.source.manifest, spec.source.generation) {
+/// Rejects a snapshot that does not carry the document's exact captured source. This is the
+/// whole stale rule: a model change marks every view of the document stale together.
+fn check_pin(source: &SourceModelPin, snapshot: &ViewSnapshot) -> Result<(), CommandError> {
+    if snapshot.pin() != ViewPin::new(source.manifest, source.generation) {
         return Err(failure(
             ErrorCode::StaleWorkspace,
             "snapshot does not match the captured source pin",
         ));
     }
-    let Some(owner) = snapshot.element(&spec.member) else {
-        return Ok(unresolved(UnresolvedReason::MissingOwner));
+    Ok(())
+}
+
+/// One view's body wireframe at the admitted intent's pin, or its explicit unresolved state.
+/// Fixed work: at most 26 named roles and twelve edges. All paper output is bounded.
+fn body_edges(
+    view: &ViewSpec,
+    member: ElementId,
+    snapshot: &ViewSnapshot,
+) -> Result<BodyProjection, CommandError> {
+    let Some(owner) = snapshot.element(&member) else {
+        return Ok(BodyProjection::Unresolved(UnresolvedReason::MissingOwner));
     };
     if BodyKind::of(owner.kind) != Some(BodyKind::Member) {
-        return Ok(unresolved(UnresolvedReason::UnsupportedBody));
+        return Ok(BodyProjection::Unresolved(
+            UnresolvedReason::UnsupportedBody,
+        ));
     }
-    let Ok(features) = list_features(snapshot, &spec.member) else {
-        return Ok(unresolved(UnresolvedReason::UnsupportedBody));
+    let Ok(features) = list_features(snapshot, &member) else {
+        return Ok(BodyProjection::Unresolved(
+            UnresolvedReason::UnsupportedBody,
+        ));
     };
     let mut edges = Vec::with_capacity(12);
     for id in features
@@ -164,17 +175,49 @@ pub fn resolve(drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<Projection,
         .filter(|id| id.kind() == FeatureKind::Edge)
     {
         let Ok(found) = lookup_feature(snapshot, &id.to_string()) else {
-            return Ok(unresolved(UnresolvedReason::MissingFeature));
+            return Ok(BodyProjection::Unresolved(UnresolvedReason::MissingFeature));
         };
         let FeatureGeometry::Edge { ends: [a, b], .. } = found.world else {
-            return Ok(unresolved(UnresolvedReason::MissingFeature));
+            return Ok(BodyProjection::Unresolved(UnresolvedReason::MissingFeature));
         };
         edges.push(ProjectedEdge {
             feature: id,
-            paper_mm: [paper(drawing, a)?, paper(drawing, b)?],
+            paper_mm: [paper(view, a)?, paper(view, b)?],
         });
     }
-    let body = BodyProjection::Resolved(edges);
+    Ok(BodyProjection::Resolved(edges))
+}
+
+/// Resolves one placed or primary view of an admitted document from its exact pinned snapshot:
+/// the view shows exactly what its basis shows over the captured source, nothing more. A view
+/// outside the document refuses; a stale snapshot refuses before geometry; missing or
+/// unsupported geometry is explicitly unresolved. All paper output is bounded.
+pub fn resolve_view(
+    drawing: &Drawing,
+    view: &ViewSpec,
+    snapshot: &ViewSnapshot,
+) -> Result<BodyProjection, CommandError> {
+    let spec = drawing.spec();
+    check_pin(&spec.source, snapshot)?;
+    if *view != spec.view && !spec.views.contains(view) {
+        return Err(failure(
+            ErrorCode::InvalidArgument,
+            "view does not belong to this document",
+        ));
+    }
+    body_edges(view, spec.member, snapshot)
+}
+
+/// Resolves the D02 document: the primary view's wireframe and its aligned dimension.
+pub fn resolve(drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<Projection, CommandError> {
+    let spec = drawing.spec();
+    check_pin(&spec.source, snapshot)?;
+    let body = match body_edges(&spec.view, spec.member, snapshot)? {
+        BodyProjection::Resolved(edges) => BodyProjection::Resolved(edges),
+        // A view without its body never reports a successfully measured dimension: both share
+        // the same explicit unresolved reason, exactly as the D02 contract resolved them.
+        BodyProjection::Unresolved(reason) => return Ok(unresolved(reason)),
+    };
     let [first, second] = &spec.dimension.anchors;
     let vertex = |id: &FeatureId| match lookup_feature(snapshot, &id.to_string()) {
         Ok(found) => match found.world {
@@ -205,8 +248,8 @@ pub fn resolve(drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<Projection,
             dimension: DimensionProjection::Unresolved(UnresolvedReason::CollapsedProjection),
         });
     }
-    let a_paper = paper(drawing, a)?;
-    let b_paper = paper(drawing, b)?;
+    let a_paper = paper(&spec.view, a)?;
+    let b_paper = paper(&spec.view, b)?;
     let offset = spec.dimension.paper_offset_mm;
     let (ox, oy) = (-dy / length * offset, dx / length * offset);
     let line = |[x, y]: [f64; 2]| bounded([x + ox, y + oy]);

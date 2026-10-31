@@ -46,6 +46,7 @@ pub fn handles(command: &OsString) -> bool {
                 | "create-drawing"
                 | "refresh-drawing"
                 | "edit-drafting"
+                | "edit-views"
                 | "publish-drawing"
                 | "inspect-drawing"
                 | "inspect-drawing-versions"
@@ -83,6 +84,23 @@ fn point([x, y]: [f64; 2]) -> Run<Json> {
 }
 fn segment([a, b]: [[f64; 2]; 2]) -> Run<Json> {
     Ok(Json::Array(vec![point(a)?, point(b)?]))
+}
+
+/// Parses one exactly-two-component paper origin.
+fn parse_origin(text: &str) -> Run<[f64; 2]> {
+    let mut parts = text.split(',');
+    let mut next = || {
+        parts
+            .next()
+            .ok_or_else(|| invalid("origin requires X,Y"))?
+            .parse::<f64>()
+            .map_err(|_| invalid("invalid origin number"))
+    };
+    let value = [next()?, next()?];
+    if parts.next().is_some() {
+        return Err(invalid("origin requires exactly X,Y"));
+    }
+    Ok(value)
 }
 
 fn geometry_json(result: Projection) -> Run<(Json, Json)> {
@@ -132,8 +150,15 @@ fn geometry_json(result: Projection) -> Run<(Json, Json)> {
     Ok((body, dimension))
 }
 
-/// Single-value options plus the repeatable `--drafting` values, in caller order.
-fn document_options(args: &[OsString]) -> Run<(BTreeMap<&str, &str>, Vec<&str>)> {
+/// Single-value options plus the repeatable `--drafting` and `--placed-view` values, in caller
+/// order.
+struct DocumentOptions<'a> {
+    options: BTreeMap<&'a str, &'a str>,
+    drafting: Vec<&'a str>,
+    views: Vec<&'a str>,
+}
+
+fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
     if args.len() > 159 {
         return Err(invalid("too many drawing document options"));
     }
@@ -151,40 +176,45 @@ fn document_options(args: &[OsString]) -> Run<(BTreeMap<&str, &str>, Vec<&str>)>
     }
     let mut options = BTreeMap::new();
     let mut drafting = Vec::new();
+    let mut views = Vec::new();
     for [key, value] in args.as_chunks::<2>().0 {
-        if *key == "--drafting" {
-            drafting.push(*value);
-        } else if !matches!(
-            *key,
-            "--store"
-                | "--document-dir"
-                | "--expected-head"
-                | "--id"
-                | "--drawing-id"
-                | "--view-id"
-                | "--dimension-id"
-                | "--anchor-a"
-                | "--anchor-b"
-                | "--name"
-                | "--plane"
-                | "--scale"
-                | "--origin"
-                | "--offset"
-                | "--decimals"
-                | "--op-id"
-                | "--revision-id"
-                | "--actor-id"
-                | "--version-id"
-                | "--model-store"
-                | "--out"
-                | "--format"
-                | "--sheet"
-        ) || options.insert(*key, *value).is_some()
-        {
-            return Err(invalid("unknown or repeated drawing document option"));
+        match *key {
+            "--drafting" => drafting.push(*value),
+            "--placed-view" => views.push(*value),
+            _ if matches!(
+                *key,
+                "--store"
+                    | "--document-dir"
+                    | "--expected-head"
+                    | "--id"
+                    | "--drawing-id"
+                    | "--view-id"
+                    | "--dimension-id"
+                    | "--anchor-a"
+                    | "--anchor-b"
+                    | "--name"
+                    | "--plane"
+                    | "--scale"
+                    | "--origin"
+                    | "--offset"
+                    | "--decimals"
+                    | "--op-id"
+                    | "--revision-id"
+                    | "--actor-id"
+                    | "--version-id"
+                    | "--model-store"
+                    | "--out"
+                    | "--format"
+                    | "--sheet"
+            ) && options.insert(*key, *value).is_none() => {}
+            _ => return Err(invalid("unknown or repeated drawing document option")),
         }
     }
-    Ok((options, drafting))
+    Ok(DocumentOptions {
+        options,
+        drafting,
+        views,
+    })
 }
 
 /// Parses repeatable `--drafting UUID:kind:x,y,...` values into drawn objects. Engine admission
@@ -224,6 +254,39 @@ fn drafting_specs(values: &[&str]) -> Run<Vec<DraftingSpec>> {
         .collect()
 }
 
+/// Parses repeatable `--placed-view UUID:plane:scale:x,y` values into placed views. Engine
+/// admission still owns every bound; this only builds the typed values.
+fn placed_view_specs(values: &[&str]) -> Run<Vec<ViewSpec>> {
+    values
+        .iter()
+        .map(|value| {
+            let mut parts = value.splitn(4, ':');
+            let id = parts
+                .next()
+                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y"))?;
+            let plane = parts
+                .next()
+                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y"))?;
+            let scale = parts
+                .next()
+                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y"))?;
+            let origin = parts
+                .next()
+                .ok_or_else(|| invalid("placed view requires UUID:plane:scale:x,y"))?;
+            Ok(ViewSpec {
+                id: DrawingViewId::parse(id)
+                    .map_err(|_| invalid("placed view identity must be a full canonical UUIDv7"))?,
+                plane: Plane::parse(plane)
+                    .ok_or_else(|| invalid("placed view plane must be front, top or right"))?,
+                scale_denominator: scale
+                    .parse::<f64>()
+                    .map_err(|_| invalid("invalid placed view scale"))?,
+                paper_origin_mm: parse_origin(origin)?,
+            })
+        })
+        .collect()
+}
+
 fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> Run<Drawing> {
     let required = |key| {
         options
@@ -254,21 +317,9 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
                 .map_err(|_| invalid("invalid drawing number"))
         })
     };
-    let origin = options.get("--origin").map_or(Ok([0.0, 0.0]), |text| {
-        let mut parts = text.split(',');
-        let mut next = || {
-            parts
-                .next()
-                .ok_or_else(|| invalid("origin requires X,Y"))?
-                .parse::<f64>()
-                .map_err(|_| invalid("invalid origin number"))
-        };
-        let value = [next()?, next()?];
-        if parts.next().is_some() {
-            return Err(invalid("origin requires exactly X,Y"));
-        }
-        Ok(value)
-    })?;
+    let origin = options
+        .get("--origin")
+        .map_or(Ok([0.0, 0.0]), |text| parse_origin(text))?;
     Drawing::admit(DrawingSpec {
         id,
         name: options
@@ -296,6 +347,7 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
             })?,
         },
         drafting: Vec::new(),
+        views: Vec::new(),
     })
     .map_err(Into::into)
 }
@@ -340,6 +392,24 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
         ),
         ("request_digest", Json::text(revision.request.to_string())),
         (
+            "placed_views",
+            Json::Array(
+                revision
+                    .drawing
+                    .views()
+                    .iter()
+                    .map(|view| {
+                        Ok(Json::object([
+                            ("id", Json::text(view.id.to_string())),
+                            ("plane", Json::text(view.plane.as_str())),
+                            ("scale_denominator", num(view.scale_denominator)?),
+                            ("paper_origin_mm", point(view.paper_origin_mm)?),
+                        ]))
+                    })
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        (
             "drafting",
             Json::Array(
                 revision
@@ -375,7 +445,8 @@ fn run_document(args: &[OsString]) -> Run<Json> {
         .first()
         .and_then(|value| value.to_str())
         .ok_or_else(|| invalid("drawing command is missing"))?;
-    let (options, drafting_values) = document_options(args)?;
+    let parsed = document_options(args)?;
+    let options = &parsed.options;
     let required = |key| {
         options
             .get(key)
@@ -401,7 +472,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 )
             };
             let source = SourceArchive::capture(std::path::Path::new(model_path))?;
-            let drawing = document_drawing(&options, source.pin())?;
+            let drawing = document_drawing(options, source.pin())?;
             let document_path = std::path::Path::new(document_path);
             let documents = if command == "create-drawing" && !document_path.exists() {
                 DocumentStore::create(document_path)?
@@ -442,7 +513,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 .map_err(|_| invalid("revision id must be UUIDv7"))?;
             let actor = ActorId::parse(required("--actor-id")?)
                 .map_err(|_| invalid("actor id must be UUIDv7"))?;
-            let drafting = drafting_specs(&drafting_values)?;
+            let drafting = drafting_specs(&parsed.drafting)?;
             // Replaying the exact accepted operation stays safe after later revisions. The
             // fingerprint binds the incoming drafting too: a retry that drops or changes the
             // geometry is a different request, never a replay.
@@ -469,6 +540,59 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             // Drawn objects belong to the document only: no model store is read, the retained
             // source archive and every identity carry over unchanged.
             let edited = current.drawing.clone().with_drafting(drafting)?;
+            let (_, revised) = documents.commit(
+                &expected,
+                DocumentWrite {
+                    revision,
+                    operation: op,
+                    actor,
+                    drawing: &edited,
+                    source: &current.source,
+                    state: State::Draft,
+                    version: None,
+                    latest_published: current.latest_published,
+                },
+            )?;
+            Ok(document_json(&revised)?)
+        }
+        "edit-views" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let expected = ExpectedBase::Revision(
+                beamcraft_host::revision::Uuid7::parse(required("--expected-head")?)
+                    .map_err(|_| invalid("expected head must be UUIDv7"))?,
+            );
+            let op = OpId::parse(required("--op-id")?)
+                .map_err(|_| invalid("operation id must be UUIDv7"))?;
+            let revision = Uuid7::parse(required("--revision-id")?)
+                .map_err(|_| invalid("revision id must be UUIDv7"))?;
+            let actor = ActorId::parse(required("--actor-id")?)
+                .map_err(|_| invalid("actor id must be UUIDv7"))?;
+            let views = placed_view_specs(&parsed.views)?;
+            // Same replay discipline as edit-drafting: the fingerprint binds the incoming views
+            // too, so a retry that drops or changes a placement is a different request.
+            if let Some(previous) = documents.query(&op)? {
+                let candidate = previous.drawing.clone().with_views(views)?;
+                let request = request_fingerprint(
+                    &candidate,
+                    State::Draft,
+                    None,
+                    previous.latest_published,
+                    actor,
+                    &expected,
+                )?;
+                if previous.request == request {
+                    return document_json(&previous);
+                }
+                return Err(PlateError {
+                    rule_id: None,
+                    code: ErrorCode::OpIdReuse,
+                    message: "document operation id was already used for another request",
+                });
+            }
+            let current = documents.head()?;
+            // Placed views belong to the document only: no model store is read, the retained
+            // source archive and every identity carry over unchanged.
+            let edited = current.drawing.clone().with_views(views)?;
             let (_, revised) = documents.commit(
                 &expected,
                 DocumentWrite {
@@ -722,21 +846,9 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .map_err(|_| invalid("invalid drawing number"))
         })
     };
-    let origin = options.get("--origin").map_or(Ok([0.0, 0.0]), |text| {
-        let mut parts = text.split(',');
-        let mut next = || {
-            parts
-                .next()
-                .ok_or_else(|| invalid("origin requires X,Y"))?
-                .parse::<f64>()
-                .map_err(|_| invalid("invalid origin number"))
-        };
-        let value = [next()?, next()?];
-        if parts.next().is_some() {
-            return Err(invalid("origin requires exactly X,Y"));
-        }
-        Ok(value)
-    })?;
+    let origin = options
+        .get("--origin")
+        .map_or(Ok([0.0, 0.0]), |text| parse_origin(text))?;
     let view = ViewSpec {
         id: view_id,
         plane: Plane::parse(options.get("--plane").copied().unwrap_or("front"))
@@ -781,6 +893,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         view,
         dimension,
         drafting: Vec::new(),
+        views: Vec::new(),
     })?;
     // Admission precedes the strict kernel-derived inspection. The same opened revision supplies
     // both the complete source pin and the snapshot; a concurrent model head never mixes them.

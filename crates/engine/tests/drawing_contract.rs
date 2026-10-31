@@ -42,6 +42,7 @@ fn spec() -> DrawingSpec {
             decimal_places: 1,
         },
         drafting: Vec::new(),
+        views: Vec::new(),
     }
 }
 
@@ -288,4 +289,173 @@ fn drawn_objects_are_bounded_distinct_and_never_document_object_ids() {
     })
     .unwrap_err();
     assert_eq!(degenerate.code, ErrorCode::InvalidArgument);
+}
+
+#[test]
+fn placed_views_are_bounded_distinct_and_never_document_or_drawn_object_ids() {
+    let view = |text: &str, scale: f64, origin: [f64; 2]| ViewSpec {
+        id: DrawingViewId::parse(text).unwrap(),
+        plane: Plane::Top,
+        scale_denominator: scale,
+        paper_origin_mm: origin,
+    };
+    const TOP: &str = "01900000-0000-7000-8000-000000000006";
+    const OTHER: &str = "01900000-0000-7000-8000-000000000007";
+    const D: &str = "01900000-0000-7000-8000-000000000005";
+    let entity = |text: &str| DraftingSpec {
+        id: DraftingEntityId::parse(text).unwrap(),
+        geometry: DraftingGeometry::Line {
+            a: [0.0, 0.0],
+            b: [10.0, 0.0],
+        },
+    };
+    let with = |views: Vec<ViewSpec>| Drawing::admit(DrawingSpec { views, ..spec() });
+    let admitted = with(vec![view(TOP, 50.0, [10.0, -20.0])]).unwrap();
+    assert_eq!(admitted.views().len(), 1);
+    assert_eq!(admitted.views()[0].id.to_string(), TOP);
+
+    // Paper bounds apply to every placed view exactly as to the primary view.
+    for bad in [f64::NAN, f64::INFINITY, 0.0, 0.999, 10_000.01] {
+        assert!(with(vec![view(TOP, bad, [0.0, 0.0])]).is_err());
+    }
+    for bad_origin in [[10_000.01, 0.0], [0.0, -10_000.01]] {
+        assert!(with(vec![view(TOP, 50.0, bad_origin)]).is_err());
+    }
+
+    // Identity collisions refuse: with the document objects, with drawn objects, pairwise.
+    assert_eq!(
+        with(vec![view(B, 50.0, [0.0, 0.0])]).unwrap_err().code,
+        ErrorCode::DuplicateId
+    );
+    assert_eq!(
+        Drawing::admit(DrawingSpec {
+            views: vec![view(D, 50.0, [0.0, 0.0])],
+            drafting: vec![entity(D)],
+            ..spec()
+        })
+        .unwrap_err()
+        .code,
+        ErrorCode::DuplicateId
+    );
+    assert!(
+        with(vec![
+            view(TOP, 50.0, [0.0, 0.0]),
+            view(TOP, 60.0, [1.0, 0.0])
+        ])
+        .is_err()
+    );
+
+    // The cap refuses without partial state.
+    let crowd = (0..=MAX_VIEWS as u64)
+        .map(|index| {
+            view(
+                &format!("01990000-0000-7000-8000-{index:012}"),
+                50.0,
+                [0.0, 0.0],
+            )
+        })
+        .collect();
+    assert_eq!(with(crowd).unwrap_err().code, ErrorCode::LimitExceeded);
+
+    // Placed views and drawn objects share the one closed intent page: sixteen views leave
+    // room for exactly forty-three drawn objects beside the fixed prims and their scopes.
+    let both = |views: usize, drafting: usize| {
+        let mut s = spec();
+        s.views = (0..views as u64)
+            .map(|index| {
+                view(
+                    &format!("01990000-0000-7000-8000-{index:012}"),
+                    50.0,
+                    [0.0, 0.0],
+                )
+            })
+            .collect();
+        s.drafting = (0..drafting as u64)
+            .map(|index| entity(&format!("019a0000-0000-7000-8000-{index:012}")))
+            .collect();
+        Drawing::admit(s)
+    };
+    assert!(both(16, 43).is_ok());
+    assert_eq!(both(16, 44).unwrap_err().code, ErrorCode::LimitExceeded);
+
+    // Replacement keeps every other object and its identity, cross-checked both ways.
+    let mut s = spec();
+    s.drafting = vec![entity(D)];
+    let editing = Drawing::admit(s).unwrap();
+    assert_eq!(
+        editing
+            .clone()
+            .with_views(vec![view(D, 50.0, [0.0, 0.0])])
+            .unwrap_err()
+            .code,
+        ErrorCode::DuplicateId
+    );
+    let replaced = editing
+        .with_views(vec![
+            view(TOP, 50.0, [10.0, 20.0]),
+            view(OTHER, 100.0, [0.0, 0.0]),
+        ])
+        .unwrap();
+    assert_eq!(replaced.views().len(), 2);
+    assert_eq!(replaced.spec().source, spec().source);
+    assert_eq!(replaced.spec().dimension, spec().dimension);
+    assert_eq!(replaced.drafting().len(), 1);
+    assert_eq!(
+        replaced.with_drafting(vec![entity(TOP)]).unwrap_err().code,
+        ErrorCode::DuplicateId
+    );
+}
+
+#[test]
+fn placed_views_resolve_from_the_document_pin_and_foreign_views_refuse() {
+    use beamcraft_engine::drawing::projection::{self, BodyProjection, UnresolvedReason};
+    use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
+    let view = |text: &str, plane: Plane| ViewSpec {
+        id: DrawingViewId::parse(text).unwrap(),
+        plane,
+        scale_denominator: 50.0,
+        paper_origin_mm: [10.0, 20.0],
+    };
+    const TOP: &str = "01900000-0000-7000-8000-000000000006";
+    let mut s = spec();
+    s.views = vec![view(TOP, Plane::Top)];
+    let drawing = Drawing::admit(s).unwrap();
+    let pin = drawing.spec().source;
+    let snapshot = ViewSnapshot::build(
+        ViewPin::new(pin.manifest, pin.generation),
+        vec![],
+        &Limits::default(),
+    )
+    .unwrap();
+    // A placed view resolves exactly like the primary view; an absent owner is explicitly
+    // unresolved, never an error.
+    for placed in drawing.views() {
+        assert_eq!(
+            projection::resolve_view(&drawing, placed, &snapshot).unwrap(),
+            BodyProjection::Unresolved(UnresolvedReason::MissingOwner)
+        );
+    }
+    // A view that is not part of the document refuses before any geometry work.
+    let foreign = view(TOP, Plane::Front);
+    assert_eq!(
+        projection::resolve_view(&drawing, &foreign, &snapshot)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    // A changed source pin marks the placed view stale together with the document.
+    let moved = ViewSnapshot::build(
+        ViewPin::new(pin.manifest, pin.generation + 1),
+        vec![],
+        &Limits::default(),
+    )
+    .unwrap();
+    for placed in drawing.views() {
+        assert_eq!(
+            projection::resolve_view(&drawing, placed, &moved)
+                .unwrap_err()
+                .code,
+            ErrorCode::StaleWorkspace
+        );
+    }
 }
