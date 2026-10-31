@@ -15,6 +15,7 @@ use beamcraft_json::{Json, Limits};
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
 use std::collections::BTreeMap;
 
+mod annotation_cmd;
 mod assembly_cmd;
 mod attribute_cmd;
 mod bolt_cmd;
@@ -158,6 +159,8 @@ fn main() -> std::process::ExitCode {
         level_cmd::execute(&args)
     } else if args.first().is_some_and(construction_cmd::handles) {
         construction_cmd::execute(&args)
+    } else if args.first().is_some_and(annotation_cmd::handles) {
+        annotation_cmd::execute(&args)
     } else if args.first().is_some_and(attribute_cmd::handles) {
         attribute_cmd::execute(&args)
     } else if args.first().is_some_and(filters_cmd::handles) {

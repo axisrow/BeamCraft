@@ -69,6 +69,8 @@ pub enum DeletedKind {
     Grid,
     /// A T02 construction object.
     Construction,
+    /// A D06 annotation.
+    Annotation,
 }
 
 /// Result of `delete_element`.
@@ -152,6 +154,8 @@ pub fn delete_element(
         Some(DeletedKind::Grid)
     } else if crate::construction::is_construction(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Construction)
+    } else if crate::annotation::is_annotation(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Annotation)
     } else if crate::level::is_level(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Level)
     } else {

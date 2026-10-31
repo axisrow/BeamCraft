@@ -3,6 +3,7 @@
 
 //! Compose feature-owned help without changing command dispatch or parsing.
 
+mod annotation;
 mod assembly;
 mod attribute;
 mod blobs;
@@ -62,6 +63,7 @@ const COMMAND_GROUPS: &[&[&str]] = &[
     filters::COMMANDS,
     grid::COMMANDS,
     construction::COMMANDS,
+    annotation::COMMANDS,
     export::COMMANDS,
     numbering::COMMANDS,
     changeset::COMMANDS,
@@ -100,6 +102,7 @@ const SECTIONS: &[&str] = &[
     filters::HELP,
     grid::HELP,
     construction::HELP,
+    annotation::HELP,
     grid::LINES,
     grid::UPDATE,
     grid::QUERIES,

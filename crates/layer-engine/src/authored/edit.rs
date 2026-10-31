@@ -661,6 +661,7 @@ fn create(
         Shape::Level { .. } => "level",
         Shape::Grid(_) => "grid",
         Shape::Construction(_) => "construction",
+        Shape::Annotation(_) => "annotation",
         Shape::Plate { .. } => "plate",
         // A lofted plate is a plate: its kind token and part path are the plate's, and the
         // shape token `steel:plate:form` discriminates the record form.
@@ -1013,6 +1014,7 @@ fn create(
         }
         Shape::Grid(g) => grid::author(data, &p, g)?,
         Shape::Construction(o) => construction::author(data, &p, o)?,
+        Shape::Annotation(a) => annotation::author(data, &p, a)?,
         Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
         Shape::Level { elevation_mm } => attr(
             data,
@@ -2043,6 +2045,11 @@ fn capture(
                     }
                     Shape::Construction(_) => {
                         for &(name, ty) in construction::FIELDS {
+                            add(name, ty, 0);
+                        }
+                    }
+                    Shape::Annotation(_) => {
+                        for &(name, ty) in annotation::FIELDS {
                             add(name, ty, 0);
                         }
                     }
