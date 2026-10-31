@@ -805,7 +805,13 @@ mod tests {
     #[test]
     fn a_bad_orientation_or_a_non_finite_word_draws_nothing() {
         assert_eq!(
-            instance_bytes([0.0; 3], [0.0; 4], [0.0; 3], [0.0; 3], crate::colour_sets::WHITE),
+            instance_bytes(
+                [0.0; 3],
+                [0.0; 4],
+                [0.0; 3],
+                [0.0; 3],
+                crate::colour_sets::WHITE
+            ),
             None
         );
         assert_eq!(

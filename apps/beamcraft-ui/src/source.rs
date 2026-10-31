@@ -280,7 +280,11 @@ type Parts = (
     Result<crate::grid::GridScene, ToolError>,
 );
 
-fn frame_parts(frame: &Frame<'_>, known: &Known, overlay: Option<&crate::colour_sets::Overlay>) -> Parts {
+fn frame_parts(
+    frame: &Frame<'_>,
+    known: &Known,
+    overlay: Option<&crate::colour_sets::Overlay>,
+) -> Parts {
     let definitions = parse_definitions(Some(0), frame.definitions);
     let scene = ViewSnapshot::from_bundle(frame.bundle, &Limits::default())
         .map_err(Error::from)

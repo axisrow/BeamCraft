@@ -177,8 +177,8 @@ impl Sets {
 
     /// Reads sets bytes: the class preset plus every complete version-1 set.
     pub fn decode(bytes: &[u8]) -> Result<Self, &'static str> {
-        let json =
-            beamcraft_json::decode(bytes, &limits()).map_err(|_| "the colour-sets file is not valid")?;
+        let json = beamcraft_json::decode(bytes, &limits())
+            .map_err(|_| "the colour-sets file is not valid")?;
         json.closed(&["version", "sets"])
             .map_err(|_| "the colour-sets file is not valid")?;
         let version = json

@@ -229,6 +229,10 @@ pub struct App {
     colour_job: Option<ColourJob>,
     /// The last colour outcome, shown in the colour panel.
     colour_note: Option<Result<String, String>>,
+    /// The overlay the running refresh builds its scene with (V17): if the user changes or
+    /// clears the set while the refresh runs, the delivered scene is recoloured once, so stale
+    /// colours can never return or outlive their set.
+    reload_overlay: Option<Arc<crate::colour_sets::Overlay>>,
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -910,6 +914,7 @@ impl App {
             colour: None,
             colour_job: None,
             colour_note: None,
+            reload_overlay: None,
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -928,8 +933,10 @@ impl App {
             return;
         }
         let (cli, store) = (self.source.cli.clone(), self.source.store.clone());
-        // The overlay is shared with the worker so the new scene is coloured as it is built.
+        // The overlay is shared with the worker so the new scene is coloured as it is built;
+        // the window keeps the same Arc to recognise a stale delivery when the set changes.
         let overlay = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
+        let delivered = overlay.clone();
         // Only this refresh replaces `loaded`, so what it knows stays true until it is applied.
         let known = self.loaded.as_ref().map_or_else(Known::default, |l| Known {
             token: Some(l.snapshot.token().clone()),
@@ -949,7 +956,10 @@ impl App {
                 ));
             });
         match spawned {
-            Ok(_) => self.reload_job = Some(rx),
+            Ok(_) => {
+                self.reload_overlay = delivered;
+                self.reload_job = Some(rx);
+            }
             Err(_) => self.error = Some("the reload thread could not be started".into()),
         }
     }
@@ -961,11 +971,15 @@ impl App {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => {
                 self.reload_job = None;
+                self.reload_overlay = None;
                 self.error = Some("the reload thread ended without a result".into());
                 return;
             }
         };
         self.reload_job = None;
+        // What the delivered scene was coloured with, to compare against the set the panel
+        // shows now (a change during the refresh is applied to the delivery, not lost).
+        let delivered = self.reload_overlay.take();
         // The listing carries the head it was read from; an unreadable listing leaves it unknown.
         self.props.observe_head(
             reloaded
@@ -1059,6 +1073,20 @@ impl App {
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
+        }
+        // The delivered scene was built with the overlay captured at spawn (V17): when the user
+        // changed or cleared the set while the refresh ran, the delivery is recoloured once, so
+        // stale colours can neither return after a Hide nor outlive their set behind a legend.
+        if self.loaded.is_some() {
+            let current = self.colour.as_ref().map(|(_, overlay)| Arc::clone(overlay));
+            let stale = match (&delivered, &current) {
+                (Some(built), Some(active)) => !Arc::ptr_eq(built, active),
+                (Some(_), None) | (None, Some(_)) => true,
+                (None, None) => false,
+            };
+            if stale {
+                self.recolour();
+            }
         }
         self.sync_grid_selection();
         if std::mem::take(&mut self.reload_queued) {
@@ -2182,7 +2210,9 @@ impl App {
         let spawned = std::thread::Builder::new()
             .name("beamcraft-colour".into())
             .spawn(move || {
-                let _ = tx.send(crate::colour_sets::evaluate(&cli, &store, &set, &flag, &stats));
+                let _ = tx.send(crate::colour_sets::evaluate(
+                    &cli, &store, &set, &flag, &stats,
+                ));
             });
         match spawned {
             Ok(_) => {
