@@ -4,16 +4,15 @@
 //! T01 grid commands through the atomic revision pipeline and verified USD records.
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint,
-    control, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
+    Base, PlateError, RevisionSummary, base_of, check_footprint, control, host_uuid, integrity,
+    load_base, open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Prepare, Shape, grid as storage, schema_identity,
-    validate_layers,
+    Change, Element, Prepare, Shape, grid as storage, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::command::{CommandError, CreateGrid};
@@ -195,15 +194,7 @@ fn commit_grid(
         )?;
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &c,
-    )?;
+    let (mut author, opened) = crate::scope::open_author(store, request, true, schema, &c)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -378,15 +369,7 @@ fn mutate_grid(
     let prims = snapshot(base_request.clone(), &c)?;
     let model = storage::read_grids(&prims)?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &c,
-    )?;
+    let (mut author, opened) = crate::scope::open_author(store, base_request, true, schema, &c)?;
     let index = author.element_index(&opened.context, &c)?;
     let id = beamcraft_layer_engine::index::ElementId::parse(&target_id.to_string())?;
     author.authorize_write(&index, &id, &c)?;

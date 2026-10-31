@@ -57,6 +57,7 @@ impl Fixture {
                 user_id: id(3),
                 revision_id: id(21),
                 op_id: id(22),
+                scope: None,
             },
             &mut NoFault,
         )

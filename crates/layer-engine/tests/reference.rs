@@ -126,7 +126,14 @@ fn targets() -> EditTargets {
     }
 }
 fn open(input: OpenRequest) -> (Author, Opened) {
-    Author::open(input, targets(), schema_identity().unwrap(), &control()).unwrap()
+    Author::open(
+        input,
+        targets(),
+        None,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap()
 }
 fn batch(context: &Context, changes: Vec<Change>) -> Prepare {
     Prepare {
@@ -625,6 +632,7 @@ fn every_write_aimed_at_foreign_content_is_refused() {
     let error = Author::open(
         request(exported(&a, &o.context), &OWNED),
         as_target,
+        None,
         schema_identity().unwrap(),
         &control(),
     )
@@ -1124,10 +1132,16 @@ fn layers_pinned_to_the_p02_2_mapping_are_refused() {
         ErrorCode::UnsupportedVersion
     );
     assert_eq!(
-        Author::open(input, targets(), schema_identity().unwrap(), &control())
-            .err()
-            .unwrap()
-            .code,
+        Author::open(
+            input,
+            targets(),
+            None,
+            schema_identity().unwrap(),
+            &control()
+        )
+        .err()
+        .unwrap()
+        .code,
         ErrorCode::UnsupportedVersion
     );
     // An unknown pin is still refused.
@@ -1135,9 +1149,15 @@ fn layers_pinned_to_the_p02_2_mapping_are_refused() {
     input.assets.retain(|a| a.name != "authored.usda");
     input.assets.push(pinned("authored.usda", "abc"));
     input.manifest = input.manifest_digest().unwrap();
-    let error = Author::open(input, targets(), schema_identity().unwrap(), &control())
-        .err()
-        .unwrap();
+    let error = Author::open(
+        input,
+        targets(),
+        None,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .err()
+    .unwrap();
     assert_eq!(error.code, ErrorCode::UnsupportedVersion);
 }
 
@@ -1188,6 +1208,7 @@ fn half_faked_wrappers_are_refused_and_never_owned() {
     let error = Author::open(
         request(parametric.clone(), &OWNED),
         targets(),
+        None,
         schema_identity().unwrap(),
         &control(),
     )

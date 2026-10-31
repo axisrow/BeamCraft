@@ -274,6 +274,7 @@ fn populated(page_items: usize) -> (Author, Opened) {
     let (mut author, opened) = Author::open(
         initial(page_items),
         targets(),
+        None,
         schema_identity().unwrap(),
         &control(),
     )

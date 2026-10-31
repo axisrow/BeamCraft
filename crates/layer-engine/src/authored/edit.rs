@@ -15,8 +15,27 @@ pub(super) fn data(asset: &Asset) -> Result<sdf::Data, Diagnostic> {
     if !asset.name.ends_with(".usda") {
         return Err(unsupported());
     }
-    openusd::usda::parse(std::str::from_utf8(&asset.bytes).map_err(|_| corrupt())?)
-        .map_err(|_| corrupt())
+    parse_bytes(&asset.bytes)
+}
+fn parse_bytes(bytes: &[u8]) -> Result<sdf::Data, Diagnostic> {
+    let text = std::str::from_utf8(bytes).map_err(|_| corrupt())?;
+    openusd::usda::parse(text).map_err(|_| corrupt())
+}
+/// Reads the `subLayers` list of a USDA layer's bytes. U19 publication compares the root
+/// composition of the base and the candidate to prove no layer was added, dropped or reordered
+/// by the workspace's work (`DV-SCOPE-003`).
+pub(super) fn layer_sublayers(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
+    let layer = parse_bytes(bytes)?;
+    let Some(value) = layer
+        .try_field(&sdf::Path::abs_root(), "subLayers")
+        .map_err(|_| corrupt())?
+    else {
+        return Ok(Vec::new());
+    };
+    match value.as_ref() {
+        sdf::Value::StringVec(layers) => Ok(layers.clone()),
+        _ => Err(invalid()),
+    }
 }
 /// Inspect each owned USDA marker after the reader has verified the manifest and bytes.
 pub(super) fn schema_pins(request: &OpenRequest) -> Result<(), Diagnostic> {

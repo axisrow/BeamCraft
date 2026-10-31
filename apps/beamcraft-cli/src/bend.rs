@@ -15,9 +15,8 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    decode, evaluate_decoded, host_uuid, integrity, load_base, mesh_change, open_base,
-    plate_record, summarize,
+    Base, PlateError, RevisionSummary, check_footprint, control, decode, evaluate_decoded,
+    host_uuid, integrity, load_base, mesh_change, open_base, plate_record, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::command::evaluate_plate;
@@ -25,7 +24,7 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Author, Change, EditTargets, Prepare, schema_identity};
+use beamcraft_layer_engine::authored::{Change, Prepare, schema_identity};
 use beamcraft_model::command::BendPlate;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -202,15 +201,8 @@ pub fn bend_plate_record(
         others.push(other);
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

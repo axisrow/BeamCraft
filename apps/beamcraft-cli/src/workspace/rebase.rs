@@ -22,7 +22,7 @@ use beamcraft_host::{
 };
 use beamcraft_layer_engine::{
     Reader,
-    authored::{EditTargets, rebase as materializer, schema_identity},
+    authored::{rebase as materializer, schema_identity},
 };
 use beamcraft_model::{
     digest::{ContentDigest, Sha256},
@@ -283,10 +283,7 @@ pub fn rebase_workspace(
             &opened(&draft)?,
             &opened(&accepted)?,
             &evidence::dependencies(&footprint),
-            &EditTargets {
-                authored: plate::AUTHORED_LAYER.into(),
-                derived: plate::DERIVED_LAYER.into(),
-            },
+            &crate::scope::materializer_targets(&meta.scope)?,
             &plate::control(),
         )?;
         let mut reader = Reader::default();

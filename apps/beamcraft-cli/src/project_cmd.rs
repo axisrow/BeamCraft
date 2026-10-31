@@ -14,9 +14,9 @@ use crate::plate_cmd::revision_json;
 use beamcraft_cli::definition::{DefineRequest, DefinitionRecord, define};
 use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::project::{
-    ENVIRONMENTS_DIR, EnvironmentState, ProjectContext, ProjectInfo, ProjectState,
-    builtin_environment_dirs, create_project, create_project_unique, install_environment,
-    list_environments, list_projects,
+    ENVIRONMENTS_DIR, EnvironmentState, ProjectContext, ProjectInfo, ProjectLayout, ProjectState,
+    builtin_environment_dirs, create_project, create_project_scoped, create_project_unique,
+    install_environment, list_environments, list_projects,
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::{NoFault, RevisionStore, Uuid7 as HostUuid7};
@@ -72,6 +72,8 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--name",
             "--unique-name",
             "--environment",
+            "--code",
+            "--sections",
             "--op-id",
             "--revision-id",
             "--actor-id",
@@ -148,12 +150,44 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .map(boolean)
                 .transpose()?
                 .unwrap_or(false);
-            let create = if unique {
-                create_project_unique
-            } else {
-                create_project
+            // U19: a sectioned project names its code and its section/zone scopes; both
+            // options go together, and environment seeding (shared definitions) is refused.
+            let layout = match (given("--code"), given("--sections")) {
+                (None, None) => None,
+                (Some(code), Some(sections)) => {
+                    if given("--environment").is_some() {
+                        return Err(invalid(
+                            "--environment is not available for sectioned projects yet",
+                        ));
+                    }
+                    Some(ProjectLayout::parse(
+                        code,
+                        &sections.split(',').collect::<Vec<_>>(),
+                    )?)
+                }
+                _ => {
+                    return Err(invalid(
+                        "--code and --sections name a sectioned project together",
+                    ));
+                }
             };
-            let info = create(Path::new(parent), name, &context, &mut NoFault)?;
+            let info = match &layout {
+                Some(layout) => create_project_scoped(
+                    Path::new(parent),
+                    name,
+                    unique,
+                    layout,
+                    &context,
+                    &mut NoFault,
+                )?,
+                None => {
+                    if unique {
+                        create_project_unique(Path::new(parent), name, &context, &mut NoFault)?
+                    } else {
+                        create_project(Path::new(parent), name, &context, &mut NoFault)?
+                    }
+                }
+            };
             let seeded = match given("--environment") {
                 Some(id) => {
                     let config = given("--config-dir").map(str::to_owned);

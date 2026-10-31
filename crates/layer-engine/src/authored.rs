@@ -23,6 +23,11 @@ pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
     read_references,
 };
+/// Reads the `subLayers` list of a USDA layer's bytes; U19 publication compares the root
+/// composition between revisions with it (`DV-SCOPE-003`).
+pub fn layer_sublayers(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
+    edit::layer_sublayers(bytes)
+}
 
 use crate::*;
 pub use beamcraft_model::command::{
@@ -34,7 +39,7 @@ pub use beamcraft_model::definition::SectionProperties;
 pub use beamcraft_model::fastener::FastenerSpec;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 pub use beamcraft_model::section::SectionShape;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Canonical UTF-8 schema descriptor. Its exact bytes commit the mapping and item profile.
 /// No generated schema, plugin, fallback values or external schema resources are required.
@@ -925,6 +930,19 @@ pub struct Prepare {
     /// Closed changes, at most the smaller of 4096 and the stage value budget.
     pub changes: Vec<Change>,
 }
+/// The host-authorized write scope of one batch, derived from the workspace's trusted scope
+/// state, never from client claims (U19). Layer names are authored layer names of the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditScope {
+    /// The authored layer new elements are created in (the active section/zone scope).
+    pub write_layer: String,
+    /// Authored layers whose existing elements this batch may edit, including `write_layer`.
+    pub allowed: BTreeSet<String>,
+    /// Common-data layers (grids/levels): edits only with `shared_authorized` (`DV-SCOPE-004`).
+    pub shared: BTreeSet<String>,
+    /// Whether this batch is an explicitly authorized shared command.
+    pub shared_authorized: bool,
+}
 /// Host-selected edit targets; ownership must also be proved from composition provenance.
 #[derive(Debug, Clone)]
 pub struct EditTargets {
@@ -1006,13 +1024,19 @@ pub struct Author {
     reader: Reader,
     request: OpenRequest,
     targets: EditTargets,
+    /// The authorized section/zone write scope of this authoring session (U19, F10 0.2
+    /// `DV-SCOPE-001..004`), or `None` for the unscoped 0.1 behaviour.
+    scope: Option<EditScope>,
     pending: Option<Pending>,
 }
 impl Author {
     /// Opens verified bytes and checks edit-target participation/ownership and schema compatibility.
+    /// `scope` is the host-authorized write scope; when present, the edit target must name
+    /// its write layer and every admission check of [`Self::prepare`] becomes scope-aware.
     pub fn open(
         request: OpenRequest,
         targets: EditTargets,
+        scope: Option<EditScope>,
         schema: SchemaIdentity,
         control: &Control,
     ) -> Result<(Self, Opened), Diagnostic> {
@@ -1029,6 +1053,7 @@ impl Author {
                 reader,
                 request,
                 targets,
+                scope,
                 pending: None,
             },
             opened,
@@ -1051,6 +1076,14 @@ impl Author {
     ) -> Result<Prepared, Diagnostic> {
         control.check()?;
         validate::schema(input.schema)?;
+        if let Some(scope) = &self.scope
+            && scope.write_layer != self.targets.authored
+        {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "the edit target is not the authorized write layer",
+            ));
+        }
         let live = self.reader.pinned(&input.context)?;
         if self.pending.is_some() {
             return Err(fail(
@@ -1083,7 +1116,7 @@ impl Author {
                 "duplicate normalized change key",
             ));
         }
-        let (reads, writes) = validate::changes(&input, &live.prims, b)?;
+        let (reads, writes) = validate::changes(&input, self.scope.as_ref(), &live.prims, b)?;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let (mut request, opinions) =
                 edit::apply(&self.request, &self.targets, &input, &live.prims, control)?;

@@ -1026,6 +1026,10 @@ pub const COMMANDS: &[Command] = &[
             opt("--user-id", "UUID"),
             opt("--revision-id", "UUID"),
             opt("--op-id", "UUID"),
+            opt("--scope-code", "CODE"),
+            opt("--scope-section", "CODE"),
+            opt("--scope-zone", "CODE"),
+            opt("--scope-shared", "true|false"),
         ],
     ),
     entry(
@@ -2267,6 +2271,8 @@ pub const COMMANDS: &[Command] = &[
             opt("--unique-name", "true|false"),
             opt("--config-dir", "DIR"),
             opt("--environment", "ID"),
+            opt("--code", "CODE"),
+            opt("--sections", "LIST"),
         ],
     ),
     entry(

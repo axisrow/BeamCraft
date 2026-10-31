@@ -36,6 +36,11 @@ impl RevisionStore {
         &self.blobs
     }
 
+    /// The store's root directory; a workspace's `workspace.json` lives beside it.
+    pub fn root(&self) -> &Path {
+        self.blobs.root()
+    }
+
     /// Verifies an opaque evidence pin's digest and size without loading unrelated USD layers.
     /// This does not assert that the pin belongs to a revision; callers must establish that
     /// binding from a verified manifest and validate the application evidence separately.

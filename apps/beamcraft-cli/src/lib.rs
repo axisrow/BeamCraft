@@ -42,6 +42,7 @@ mod publication;
 pub mod reference;
 mod reference_view;
 pub mod registry;
+pub mod scope;
 pub mod source_file;
 pub mod weld;
 pub mod workspace;

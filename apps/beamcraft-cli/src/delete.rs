@@ -7,7 +7,8 @@
 //! The delete removes the whole element, its authored prim and its result prims, and nothing else:
 //! the other elements, the unknown content and the immutable definitions it pinned stay. Before any
 //! layer is touched the layer engine's element index decides whether something still links to the
-//! element ([`Author::check_delete`]): an incoming relationship is `DEPENDENCY_CONFLICT`, an index
+//! element (`beamcraft_layer_engine::authored::Author::check_delete`): an incoming relationship is
+//! `DEPENDENCY_CONFLICT`, an index
 //! that cannot prove the links complete is `DEPENDENCY_UNAVAILABLE`, and there is no cascade and no
 //! dangling link. The layer engine's write set is checked against the footprint the engine declares.
 //!
@@ -20,16 +21,15 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
-    evaluate_decoded, host_uuid, load_base, mesh_change, open_base, plate_record, prior_op_with,
-    replay_summary, summarize,
+    Base, PlateError, RevisionSummary, control, decode, digest_of, evaluate_decoded, host_uuid,
+    load_base, mesh_change, open_base, plate_record, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Author, Change, EditTargets, schema_identity};
+use beamcraft_layer_engine::authored::{Change, schema_identity};
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{CommandError, DeleteElement};
 use beamcraft_model::error::ErrorCode;
@@ -253,15 +253,8 @@ pub fn delete_element(
             )?)?;
         }
     }
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let index = author.element_index(&opened.context, &control)?;
     author.check_delete(&index, &LayerElementId::parse(&id_text)?, &control)?;
     let (committed, changed_layers) = prepare_and_publish(

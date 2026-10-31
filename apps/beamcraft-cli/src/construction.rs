@@ -5,16 +5,15 @@
 //! revision pipeline as the grid commands.
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
+    Base, PlateError, RevisionSummary, check_footprint, control, host_uuid, integrity, load_base,
+    open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Prepare, Shape, construction as storage, schema_identity,
-    validate_layers,
+    Change, Element, Prepare, Shape, construction as storage, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::command::{CommandError, CreateConstructionObject};
@@ -143,15 +142,7 @@ pub fn create_construction(
         .map_err(|_| integrity("invalid element identity"))?;
     let footprint = beamcraft_engine::construction::create(command, &model, &elements)?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &c,
-    )?;
+    let (mut author, opened) = crate::scope::open_author(store, request, false, schema, &c)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

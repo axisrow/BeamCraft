@@ -22,9 +22,10 @@
 
 use crate::plate::{PlateError, RevisionSummary, host_uuid, integrity, summarize};
 use crate::publication::commit_verified;
+use beamcraft_engine::scope::WorkspaceScope;
 use beamcraft_host::revision::{
-    CommitHook, CommitOutcome, ExpectedBase, LayerEntry, Revision, RevisionDraft, RevisionError,
-    RevisionStore, Uuid7,
+    CommitHook, CommitOutcome, ExpectedBase, LayerEntry, LayerRole, Revision, RevisionDraft,
+    RevisionError, RevisionStore, Uuid7,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -42,6 +43,7 @@ pub mod resolve;
 const META_FILE: &str = "workspace.json";
 const META_MAGIC: &str = "beamcraft-workspace 1";
 const META_MAGIC_REBASED: &str = "beamcraft-workspace 2";
+const META_MAGIC_SCOPED: &str = "beamcraft-workspace 3";
 const META_CAP: u64 = 4096;
 
 pub(crate) fn unusable() -> PlateError {
@@ -68,17 +70,26 @@ pub struct WorkspaceMeta {
     /// Latest local rebase candidate. Publication cannot end before it. Zero keeps v1 bytes;
     /// this is separate from the already-published prefix and never marks unsent edits published.
     pub rebase_sequence: u64,
+    /// The authorized section/zone write scope (U19); `None` for the unscoped 0.1 behaviour.
+    /// Changed only by the explicit authorization of `create-workspace`, never by a claim.
+    pub scope: Option<WorkspaceScope>,
 }
 
 impl WorkspaceMeta {
-    fn encode(&self) -> String {
-        let magic = if self.rebase_sequence == 0 {
-            META_MAGIC
-        } else {
+    fn magic(&self) -> &'static str {
+        if self.scope.is_some() {
+            META_MAGIC_SCOPED
+        } else if self.rebase_sequence != 0 {
             META_MAGIC_REBASED
-        };
+        } else {
+            META_MAGIC
+        }
+    }
+
+    fn encode(&self) -> String {
         let mut out = format!(
-            "{magic}\nworkspace_id={}\nuser_id={}\nbase_revision={}\nbase_manifest={}\nsynced_sequence={}\n",
+            "{}\nworkspace_id={}\nuser_id={}\nbase_revision={}\nbase_manifest={}\nsynced_sequence={}\n",
+            self.magic(),
             self.workspace_id.as_str(),
             self.user_id.as_str(),
             self.base_revision.as_str(),
@@ -88,39 +99,77 @@ impl WorkspaceMeta {
         if self.rebase_sequence != 0 {
             out.push_str(&format!("rebase_sequence={}\n", self.rebase_sequence));
         }
+        if let Some(scope) = &self.scope {
+            out.push_str(&format!(
+                "scope_code={}\nscope_section={}\n",
+                scope.code, scope.section
+            ));
+            if !scope.zones.is_empty() {
+                let zones = scope.zones.iter().cloned().collect::<Vec<_>>().join(",");
+                out.push_str(&format!("scope_zones={zones}\n"));
+            }
+            out.push_str(&format!("scope_shared={}\n", scope.shared));
+        }
         out
     }
 
     fn decode(text: &str) -> Result<Self, PlateError> {
-        let mut lines = text.lines();
-        let magic = lines.next();
-        if magic != Some(META_MAGIC) && magic != Some(META_MAGIC_REBASED) {
+        let rows: Vec<&str> = text.lines().collect();
+        let magic = rows.first().copied();
+        let scoped = magic == Some(META_MAGIC_SCOPED);
+        if magic != Some(META_MAGIC) && magic != Some(META_MAGIC_REBASED) && !scoped {
             return Err(unusable());
         }
+        let mut at = 1usize;
         let mut field = |key: &str| -> Result<&str, PlateError> {
-            lines
-                .next()
-                .and_then(|l| l.strip_prefix(key))
+            let line = rows.get(at).copied().ok_or_else(unusable)?;
+            // A non-matching row is left in place: the optional fields below decide by key.
+            let value = line
+                .strip_prefix(key)
                 .and_then(|l| l.strip_prefix('='))
-                .ok_or_else(unusable)
+                .ok_or_else(unusable)?;
+            at += 1;
+            Ok(value)
         };
         let workspace_id = host_uuid(field("workspace_id")?)?;
         let user_id = host_uuid(field("user_id")?)?;
         let base_revision = host_uuid(field("base_revision")?)?;
         let base_manifest = field("base_manifest")?.parse().map_err(|_| unusable())?;
         let synced_sequence = field("synced_sequence")?.parse().map_err(|_| unusable())?;
-        let rebase_sequence = if magic == Some(META_MAGIC_REBASED) {
-            let sequence = field("rebase_sequence")?
-                .parse::<u64>()
-                .map_err(|_| unusable())?;
-            if sequence == 0 || sequence > beamcraft_host::revision::MAX_REVISIONS {
-                return Err(unusable());
+        let rebase_sequence = match field("rebase_sequence") {
+            Ok(sequence) => {
+                let sequence = sequence.parse::<u64>().map_err(|_| unusable())?;
+                if sequence == 0 || sequence > beamcraft_host::revision::MAX_REVISIONS {
+                    return Err(unusable());
+                }
+                sequence
             }
-            sequence
-        } else {
-            0
+            Err(_) => 0,
         };
-        if lines.next().is_some() {
+        let scope = if scoped {
+            let code = field("scope_code")?.to_owned();
+            let section = field("scope_section")?.to_owned();
+            let mut zones = std::collections::BTreeSet::new();
+            for zone in field("scope_zones").unwrap_or_default().split(',') {
+                if !zone.is_empty() {
+                    zones.insert(zone.to_owned());
+                }
+            }
+            let shared = match field("scope_shared") {
+                Ok("true") => true,
+                Ok("false") => false,
+                _ => return Err(unusable()),
+            };
+            Some(WorkspaceScope {
+                code,
+                section,
+                zones,
+                shared,
+            })
+        } else {
+            None
+        };
+        if at != rows.len() {
             return Err(unusable());
         }
         let meta = Self {
@@ -130,8 +179,9 @@ impl WorkspaceMeta {
             base_manifest,
             synced_sequence,
             rebase_sequence,
+            scope,
         };
-        if rebase_sequence != 0 && meta.encode() != text {
+        if meta.encode() != text {
             return Err(unusable());
         }
         Ok(meta)
@@ -148,6 +198,12 @@ pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
         .meta()
         .cloned()
         .ok_or_else(unusable)
+}
+
+/// Pure read of the workspace metadata: no locks, no recovery, `None` when absent. The U19
+/// routing derives the authorized scope from it for every command without taking a lease.
+pub fn peek_meta(dir: &Path) -> Result<Option<WorkspaceMeta>, PlateError> {
+    state::read(dir)
 }
 
 pub(crate) fn write_meta(
@@ -170,6 +226,10 @@ pub struct CreateWorkspace {
     pub revision_id: Uuid7,
     /// Operation that creates it.
     pub op_id: Uuid7,
+    /// The section/zone scope to authorize (U19). Validated against the published store's
+    /// layout before anything is written; a workspace without one cannot edit a sectioned
+    /// store, and a sectioned scope on a classic store is refused.
+    pub scope: Option<WorkspaceScope>,
 }
 
 /// Where a workspace stands against its base and the published head.
@@ -246,6 +306,23 @@ pub fn create_workspace(
         Err(error) => return Err(error.into()),
     };
     let content = revision.manifest().content();
+    // U19: the scope is authorized once, here, against the published layout — never claimed
+    // by a later command. A scope on a classic store is refused, and both the section and the
+    // shared layer must already exist in the store.
+    if let Some(layout) = &request.scope {
+        let classic = content
+            .entries()
+            .iter()
+            .any(|e| e.name() == crate::plate::AUTHORED_LAYER);
+        if classic {
+            return Err(PlateError {
+                rule_id: None,
+                code: ErrorCode::InvalidArgument,
+                message: "this store is not organized into section scopes",
+            });
+        }
+        crate::scope::authorize(layout, &revision)?;
+    }
     let exists = meta_path(dir).exists();
     let meta = if exists {
         let existing = read_meta(dir)?;
@@ -254,6 +331,13 @@ pub fn create_workspace(
                 rule_id: None,
                 code: ErrorCode::DuplicateId,
                 message: "the directory is already another workspace",
+            });
+        }
+        if existing.scope != request.scope {
+            return Err(PlateError {
+                rule_id: None,
+                code: ErrorCode::DuplicateId,
+                message: "the directory is already a workspace with another authorized scope",
             });
         }
         existing
@@ -272,6 +356,7 @@ pub fn create_workspace(
             base_manifest: revision.info().manifest_digest(),
             synced_sequence: 1,
             rebase_sequence: 0,
+            scope: request.scope.clone(),
         };
         write_meta(dir, None, &meta)?;
         meta
@@ -349,6 +434,82 @@ pub struct Published {
     pub status: WorkspaceStatus,
 }
 
+/// The trusted-context re-derivation of the authorized scope at publication (`DV-SCOPE-001`):
+/// the unsent work may change only the authorized layers, the derived layer and external
+/// sources, and the root composition must be intact (`DV-SCOPE-003`). The metadata scope is
+/// the recorded authorization; the manifests decide what actually changed.
+fn publish_in_scope(
+    draft: &Revision,
+    base: &Revision,
+    layout: &WorkspaceScope,
+) -> Result<(), PlateError> {
+    let section = layout.section_layer().map_err(PlateError::from)?;
+    let grids = layout.grids_layer().map_err(PlateError::from)?;
+    let mut authorized = std::collections::BTreeSet::from([section]);
+    if layout.shared {
+        authorized.insert(grids);
+    }
+    let refused = |rule_id: Option<&'static str>, code, message| PlateError {
+        rule_id,
+        code,
+        message,
+    };
+    let digest_of = |revision: &Revision| {
+        revision
+            .manifest()
+            .content()
+            .entries()
+            .iter()
+            .map(|e| (e.name().to_owned(), (e.digest(), e.role())))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    let draft_entries = digest_of(draft);
+    let base_entries = digest_of(base);
+    let root = draft.manifest().content().root_layer().to_owned();
+    let outside = |name: &str, role: LayerRole| {
+        // The derived layer follows the owning authored inputs and the root carries the units
+        // and schema pins; the root's composition is checked separately below.
+        name != crate::plate::DERIVED_LAYER
+            && name != root
+            && role != LayerRole::External
+            && !authorized.contains(name)
+    };
+    for (name, (digest, role)) in &base_entries {
+        if draft_entries.get(name) != Some(&(*digest, *role)) && outside(name, *role) {
+            return Err(refused(
+                Some(beamcraft_engine::scope::RULE_SCOPE_AUTHORIZED),
+                ErrorCode::PermissionDenied,
+                "the unsent work changes layers outside the authorized scope",
+            ));
+        }
+    }
+    for (name, (_, role)) in &draft_entries {
+        if !base_entries.contains_key(name) && outside(name, *role) {
+            return Err(refused(
+                Some(beamcraft_engine::scope::RULE_SCOPE_AUTHORIZED),
+                ErrorCode::PermissionDenied,
+                "the unsent work adds a layer outside the authorized scope",
+            ));
+        }
+    }
+    let changed_root =
+        base_entries.get(&root).map(|(d, _)| *d) != draft_entries.get(&root).map(|(d, _)| *d);
+    if changed_root {
+        let base_root = base.layer_bytes(&root)?;
+        let draft_root = draft.layer_bytes(&root)?;
+        if beamcraft_layer_engine::authored::layer_sublayers(&base_root)?
+            != beamcraft_layer_engine::authored::layer_sublayers(&draft_root)?
+        {
+            return Err(refused(
+                Some(beamcraft_engine::scope::RULE_PRESERVE_FOREIGN),
+                ErrorCode::ForeignReadOnly,
+                "the root layer composition changed",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Publishes the draft head as the next published revision, fast-forward only.
 ///
 /// The draft head's layers are committed to the published store with the draft head's revision id
@@ -409,6 +570,11 @@ pub fn publish_workspace(
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head moved since the workspace was forked",
         });
+    }
+    // U19: the publisher derives the authorized scope again from the verified manifests and
+    // refuses work outside it (DV-SCOPE-001/003).
+    if let Some(layout) = &meta.scope {
+        publish_in_scope(&draft, &head, layout)?;
     }
     let operations =
         crate::command_evidence::interval(workspace, meta.synced_sequence, draft_sequence)?;

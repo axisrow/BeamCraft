@@ -475,6 +475,20 @@ const WORKSPACE_OPTIONS: &[&str] = &[
     "--op-id",
 ];
 
+/// `create-workspace` also authorizes the U19 section/zone scope once, here.
+const CREATE_WORKSPACE_OPTIONS: &[&str] = &[
+    "--store",
+    "--workspace-dir",
+    "--workspace-id",
+    "--user-id",
+    "--revision-id",
+    "--op-id",
+    "--scope-code",
+    "--scope-section",
+    "--scope-zone",
+    "--scope-shared",
+];
+
 const HISTORY_OPTIONS: &[&str] = &["--workspace-dir", "--revision-id", "--op-id"];
 
 fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
@@ -517,7 +531,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "combine-parts" => A13_COMBINE_OPTIONS_ALL,
         "bend-plate" => BEND_OPTIONS_ALL,
         "remove-cut" => REMOVE_CUT_OPTIONS,
-        "create-workspace" | "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
+        "create-workspace" => CREATE_WORKSPACE_OPTIONS,
+        "inspect-workspace" | "publish-workspace" => WORKSPACE_OPTIONS,
         "undo-workspace" | "redo-workspace" => HISTORY_OPTIONS,
         "inspect-workspace-history" => &["--workspace-dir"],
         "define-material" => DEFINE_MATERIAL_OPTIONS,
@@ -3083,6 +3098,34 @@ fn workspace_command(
     };
     match command {
         "create-workspace" => {
+            let scope = match (given("--scope-code"), given("--scope-section")) {
+                (None, None) => None,
+                (Some(code), Some(section)) => {
+                    let mut zones = std::collections::BTreeSet::new();
+                    for zone in given("--scope-zone").unwrap_or_default().split(',') {
+                        if !zone.is_empty() {
+                            zones.insert(zone.to_owned());
+                        }
+                    }
+                    let shared = match given("--scope-shared") {
+                        None => false,
+                        Some("true") => true,
+                        Some("false") => false,
+                        Some(_) => return Err(invalid("--scope-shared is true or false")),
+                    };
+                    Some(beamcraft_engine::scope::WorkspaceScope {
+                        code: code.to_owned(),
+                        section: section.to_owned(),
+                        zones,
+                        shared,
+                    })
+                }
+                _ => {
+                    return Err(invalid(
+                        "--scope-code and --scope-section name the authorized scope together",
+                    ));
+                }
+            };
             let created = create_workspace(
                 store,
                 &workspace,
@@ -3092,6 +3135,7 @@ fn workspace_command(
                     user_id: uuid("--user-id", &mut fresh)?,
                     revision_id: uuid("--revision-id", &mut fresh)?,
                     op_id: uuid("--op-id", &mut fresh)?,
+                    scope,
                 },
                 &mut NoFault,
             )?;

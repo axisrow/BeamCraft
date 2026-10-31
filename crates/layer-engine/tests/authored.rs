@@ -90,7 +90,14 @@ fn targets() -> EditTargets {
     }
 }
 fn open(input: OpenRequest) -> (Author, Opened) {
-    Author::open(input, targets(), schema_identity().unwrap(), &control()).unwrap()
+    Author::open(
+        input,
+        targets(),
+        None,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap()
 }
 fn pose() -> Placement {
     Placement {
@@ -1020,7 +1027,7 @@ fn duplicate_keys_wrong_kind_bad_mesh_and_missing_or_forged_definitions_fail() {
     req.owned_layers = BTreeSet::from(["root.usda".into()]);
     req.manifest = req.manifest_digest().unwrap();
     assert_eq!(
-        Author::open(req, targets(), schema_identity().unwrap(), &control())
+        Author::open(req, targets(), None, schema_identity().unwrap(), &control())
             .err()
             .unwrap()
             .code,
@@ -2614,9 +2621,15 @@ fn a_store_pinned_to_the_previous_mapping_is_refused() {
     }
     input.manifest = input.manifest_digest().unwrap();
     assert_eq!(
-        Author::open(input, targets(), schema_identity().unwrap(), &control())
-            .err()
-            .map(|e| e.code),
+        Author::open(
+            input,
+            targets(),
+            None,
+            schema_identity().unwrap(),
+            &control()
+        )
+        .err()
+        .map(|e| e.code),
         Some(ErrorCode::UnsupportedVersion)
     );
 }
@@ -3878,6 +3891,7 @@ fn the_project_record_is_validated_read_and_kept_through_edits() {
         let refused = Author::open(
             with_root(bad),
             targets(),
+            None,
             schema_identity().unwrap(),
             &control(),
         )
@@ -4074,9 +4088,15 @@ fn a_store_pinned_to_the_pre_a09_mapping_is_refused() {
     }
     input.manifest = input.manifest_digest().unwrap();
     assert_eq!(
-        Author::open(input, targets(), schema_identity().unwrap(), &control())
-            .err()
-            .map(|e| e.code),
+        Author::open(
+            input,
+            targets(),
+            None,
+            schema_identity().unwrap(),
+            &control()
+        )
+        .err()
+        .map(|e| e.code),
         Some(ErrorCode::UnsupportedVersion)
     );
 }
@@ -4256,6 +4276,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
             authored: "weak.usda".into(),
             derived: "derived.usda".into(),
         },
+        None,
         schema_identity().unwrap(),
         &control(),
     )
@@ -4454,4 +4475,328 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
     input.op_id = "0199e7a0-0000-7000-8000-000000000099".into();
     let clear = a.prepare(input, &control()).unwrap();
     assert!(!clear.opinions.is_empty());
+}
+
+// --- U19: authored section/zone scopes (F10 0.2 DV-SCOPE-001..004) ---
+
+/// An element of the KMD section in zone K1.
+const KMD_EL: &str = "0199e7a0-0000-7000-8000-000000000501";
+/// An element of the shared grids/levels scope.
+const GRID_EL: &str = "0199e7a0-0000-7000-8000-000000000502";
+/// An element of the KM section.
+const KM_EL: &str = "0199e7a0-0000-7000-8000-000000000503";
+
+const KM_LAYER: &str = "2401-DEMO_KM.usda";
+const KMD_K1_LAYER: &str = "2401-DEMO_K1_KMD.usda";
+const KMD_K2_LAYER: &str = "2401-DEMO_K2_KMD.usda";
+const GRIDS_LAYER: &str = "2401-DEMO_Grids.usda";
+const SCOPED_OWNED: [&str; 6] = [
+    "root.usda",
+    KM_LAYER,
+    KMD_K1_LAYER,
+    KMD_K2_LAYER,
+    GRIDS_LAYER,
+    "derived.usda",
+];
+
+fn scoped_request() -> OpenRequest {
+    let empty = layer("");
+    let root = format!(
+        "#usda 1.0\n(metersPerUnit=0.001\nupAxis=\"Z\"\nsubLayers=[@{KM_LAYER}@,@{KMD_K1_LAYER}@,@{KMD_K2_LAYER}@,@{GRIDS_LAYER}@,@derived.usda@])\n"
+    );
+    request(
+        vec![
+            asset("root.usda", root),
+            asset(KM_LAYER, &empty),
+            asset(KMD_K1_LAYER, &empty),
+            asset(KMD_K2_LAYER, &empty),
+            asset(GRIDS_LAYER, &empty),
+            asset("derived.usda", &empty),
+        ],
+        &SCOPED_OWNED,
+    )
+}
+
+fn scope(
+    write_layer: &str,
+    allowed: &[&str],
+    shared: &[&str],
+    shared_authorized: bool,
+) -> EditScope {
+    EditScope {
+        write_layer: write_layer.into(),
+        allowed: allowed.iter().map(|s| (*s).into()).collect(),
+        shared: shared.iter().map(|s| (*s).into()).collect(),
+        shared_authorized,
+    }
+}
+
+fn open_as(targets_authored: &str, s: Option<EditScope>) -> (Author, Opened) {
+    Author::open(
+        scoped_request(),
+        EditTargets {
+            authored: targets_authored.into(),
+            derived: "derived.usda".into(),
+        },
+        s,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap()
+}
+
+/// Opens the store on one section/zone scope: the write layer is the target itself.
+fn open_scoped(targets_authored: &str) -> (Author, Opened) {
+    open_as(
+        targets_authored,
+        Some(scope(
+            targets_authored,
+            &[targets_authored],
+            &[GRIDS_LAYER],
+            false,
+        )),
+    )
+}
+
+/// Opens the store on the shared grids/levels scope, authorized for shared commands.
+fn open_grids() -> (Author, Opened) {
+    open_as(
+        GRIDS_LAYER,
+        Some(scope(GRIDS_LAYER, &[GRIDS_LAYER], &[GRIDS_LAYER], true)),
+    )
+}
+
+/// Reopens the exported layer bytes as a fresh stage pinned to new edit targets and scope.
+fn reopen_as(
+    author: &Author,
+    context: &Context,
+    targets_authored: &str,
+    s: Option<EditScope>,
+) -> (Author, Opened) {
+    let assets = author.export(context, &control()).unwrap();
+    let mut input = scoped_request();
+    input.assets = assets;
+    input.manifest = input.manifest_digest().unwrap();
+    Author::open(
+        input,
+        EditTargets {
+            authored: targets_authored.into(),
+            derived: "derived.usda".into(),
+        },
+        s,
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .unwrap()
+}
+
+fn reopen(author: &Author, context: &Context, targets_authored: &str) -> (Author, Opened) {
+    reopen_as(
+        author,
+        context,
+        targets_authored,
+        Some(scope(
+            targets_authored,
+            &[targets_authored],
+            &[GRIDS_LAYER],
+            false,
+        )),
+    )
+}
+
+fn layer_digests(author: &Author, context: &Context) -> Vec<(String, ContentDigest)> {
+    author
+        .export(context, &control())
+        .unwrap()
+        .into_iter()
+        .map(|a| (a.name, a.digest))
+        .collect()
+}
+
+fn digest_of_layer(author: &Author, context: &Context, name: &str) -> ContentDigest {
+    layer_digests(author, context)
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, d)| *d)
+        .unwrap()
+}
+
+#[test]
+fn a_scoped_edit_stays_inside_its_section_and_preserves_the_other_layers() {
+    // Seed one element per scope through its own authorized batch (the steel module serves
+    // both sections; the scopes keep them apart).
+    let (mut a, o) = open_scoped(KM_LAYER);
+    let (_, o) = installed(&mut a, &o, vec![assembly(KM_EL, "KM part")]);
+    let (mut a, o) = reopen(&a, &o.context, KMD_K1_LAYER);
+    let (_, o) = installed(&mut a, &o, vec![assembly(KMD_EL, "KMD part")]);
+    let before = layer_digests(&a, &o.context);
+    // DV-SCOPE-002 positive: the KMD workspace edits its own element...
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Label {
+                    id: KMD_EL.into(),
+                    name: "Renamed in scope".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    // ...and the KM layer, the other zone, the shared layer and the root composition are
+    // preserved byte for byte (DV-SCOPE-003 positive).
+    for name in [
+        "root.usda",
+        KM_LAYER,
+        KMD_K2_LAYER,
+        GRIDS_LAYER,
+        "derived.usda",
+    ] {
+        assert_eq!(
+            digest_of_layer(&a, &o.context, name),
+            before
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, d)| *d)
+                .unwrap(),
+            "{name} changed"
+        );
+    }
+    assert_ne!(
+        digest_of_layer(&a, &o.context, KMD_K1_LAYER),
+        before
+            .iter()
+            .find(|(n, _)| n == KMD_K1_LAYER)
+            .map(|(_, d)| *d)
+            .unwrap()
+    );
+    let root = a
+        .export(&o.context, &control())
+        .unwrap()
+        .into_iter()
+        .find(|a| a.name == "root.usda")
+        .unwrap();
+    assert_eq!(
+        layer_sublayers(&root.bytes).unwrap(),
+        [
+            KM_LAYER.to_owned(),
+            KMD_K1_LAYER.to_owned(),
+            KMD_K2_LAYER.to_owned(),
+            GRIDS_LAYER.to_owned(),
+            "derived.usda".to_owned()
+        ]
+    );
+}
+
+fn seeded_scoped() -> (Author, Opened) {
+    let (mut a, o) = open_scoped(KM_LAYER);
+    let (_, o) = installed(&mut a, &o, vec![assembly(KM_EL, "KM part")]);
+    let (mut a, o) = reopen(&a, &o.context, KMD_K1_LAYER);
+    let (_, o) = installed(&mut a, &o, vec![assembly(KMD_EL, "KMD part")]);
+    reopen(&a, &o.context, KMD_K1_LAYER)
+}
+
+#[test]
+fn the_same_module_editing_another_section_or_zone_is_refused_as_foreign() {
+    let (mut a, o) = seeded_scoped();
+    // DV-SCOPE-002 negative, other section: the KMD workspace names a KM element. The same
+    // steel module serves both sections; the section scope, not the module, decides.
+    let error = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Label {
+                    id: KM_EL.into(),
+                    name: "Smuggled override".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ForeignReadOnly);
+    assert_eq!(error.rule_id, Some("DV-SCOPE-002"));
+    // DV-SCOPE-002 negative, other zone: a K2 workspace cannot reach this K1 element either.
+    let (mut a, o) = reopen_as(
+        &a,
+        &o.context,
+        KMD_K2_LAYER,
+        Some(scope(KMD_K2_LAYER, &[KMD_K2_LAYER], &[GRIDS_LAYER], false)),
+    );
+    let error = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Label {
+                    id: KMD_EL.into(),
+                    name: "Other zone".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ForeignReadOnly);
+    assert_eq!(error.rule_id, Some("DV-SCOPE-002"));
+}
+
+#[test]
+fn shared_layers_and_the_attribute_schema_answer_only_to_authorized_commands() {
+    // DV-SCOPE-004 positive: the authorized shared command authors the common layer.
+    let (mut a, o) = open_grids();
+    let (_, o) = installed(&mut a, &o, vec![assembly(GRID_EL, "Common marker")]);
+    let (mut a, o) = reopen(&a, &o.context, KMD_K1_LAYER);
+    // DV-SCOPE-004 negative: an ordinary section edit cannot change the shared layer...
+    let error = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Label {
+                    id: GRID_EL.into(),
+                    name: "Ordinary edit".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    assert_eq!(error.rule_id, Some("DV-SCOPE-004"));
+    // ...nor the shared user-attribute schema.
+    let error = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::AttrUndefine {
+                    name: "demo_attr".into(),
+                }],
+            ),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    assert_eq!(error.rule_id, Some("DV-SCOPE-004"));
+}
+
+#[test]
+fn the_edit_target_must_be_the_authorized_write_layer() {
+    // A forged scope naming another layer than the open edit target is refused outright:
+    // the target decides where creates are authored, so the scope must pin it.
+    let (mut a, o) = open_as(
+        KMD_K1_LAYER,
+        Some(scope(KM_LAYER, &[KM_LAYER], &[GRIDS_LAYER], false)),
+    );
+    let error = a
+        .prepare(
+            batch(&o.context, vec![assembly(KMD_EL, "Misplaced")]),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::InvalidArgument);
 }

@@ -13,9 +13,8 @@
 use crate::copy::{CopiedElement, creation_changes, not_found};
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
-    evaluate_decoded, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
-    summarize,
+    Base, PlateError, RevisionSummary, control, decode, digest_of, evaluate_decoded, host_uuid,
+    integrity, load_base, open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
@@ -23,7 +22,7 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::transform::{array_member_copies, array_plate_copies};
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Author, Change, EditTargets, schema_identity};
+use beamcraft_layer_engine::authored::{Change, schema_identity};
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::{ArrayElements, CommandError};
 use beamcraft_model::digest::ContentDigest;
@@ -311,15 +310,8 @@ pub fn array_elements(
     }
     let footprint = footprint.ok_or_else(|| integrity("the array produced no copies"))?;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     // The links the adapter does not carry over must not be dropped silently: the layer engine
     // plans every copy, dropping assembly membership and connections (DV-REL-011) and keeping
     // the definition and level links.

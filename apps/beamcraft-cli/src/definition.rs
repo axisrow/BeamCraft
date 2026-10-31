@@ -34,9 +34,7 @@ use beamcraft_engine::command::MaterialInfo;
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_engine::member::{ProfileInfo, declared_section_area_warning};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
-use beamcraft_layer_engine::authored::{
-    Author, Definition, EditTargets, Prepare, Resource, schema_identity,
-};
+use beamcraft_layer_engine::authored::{Definition, Prepare, Resource, schema_identity};
 use beamcraft_layer_engine::{Prim, Reader, Value};
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::definition::{
@@ -704,6 +702,9 @@ pub fn define(
     hook: &mut dyn CommitHook,
 ) -> Result<Defined, PlateError> {
     let control = control();
+    // A definition is store-wide shared data (U19): on a sectioned store it is refused before
+    // anything is written, whatever workspace scope the caller holds.
+    crate::scope::refuse_definitions(store)?;
     let resource = request.definition.resource()?;
     let digest = resource.digest;
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
@@ -728,15 +729,8 @@ pub fn define(
         ..
     } = base;
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: crate::plate::AUTHORED_LAYER.into(),
-            derived: crate::plate::DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

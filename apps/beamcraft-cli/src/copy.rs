@@ -18,9 +18,9 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
-    evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
-    plate_record, prior_op_with, replay_summary, summarize,
+    Base, PlateError, RevisionSummary, control, decode, digest_of, evaluate_decoded, host_uuid,
+    integrity, load_base, member_record, mesh_change, open_base, plate_record, prior_op_with,
+    replay_summary, summarize,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::copy::{copy_member, copy_plate};
@@ -30,8 +30,7 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, MemberKind as LayerKind, Placement as LayerPlacement,
-    Shape, schema_identity,
+    Change, Element, MemberKind as LayerKind, Placement as LayerPlacement, Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::{CommandError, CopyElement, MemberKind};
@@ -403,15 +402,8 @@ fn copy_with_mode(
         footprint = footprint.union(Footprint::for_level(command.new_id, Some(level))?)?;
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     // Links the adapter does not carry over must not be dropped silently: the layer engine plans
     // the copy, dropping assembly membership and connections as required by DV-REL-011.
     // Other unsupported links refuse the operation.

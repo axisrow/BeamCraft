@@ -20,9 +20,9 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
-    evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
-    plate_record, prior_op_with, replay_summary, summarize,
+    Base, PlateError, RevisionSummary, control, decode, digest_of, evaluate_decoded, host_uuid,
+    integrity, load_base, member_record, mesh_change, open_base, plate_record, prior_op_with,
+    replay_summary, summarize,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::command::evaluate_plate;
@@ -34,8 +34,7 @@ use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, MaterialOpinion, Opinion, Placement as LayerPlacement,
-    schema_identity,
+    Change, MaterialOpinion, Opinion, Placement as LayerPlacement, schema_identity,
 };
 use beamcraft_model::command::{CommandError, UpdateElement};
 use beamcraft_model::digest::ContentDigest;
@@ -368,15 +367,8 @@ pub fn update_element(
         footprint = footprint.union(levels.assign(command.target_id, level)?.footprint)?;
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let id_text = command.target_id.to_string();
     let definition_text = canonical.to_string();
     let mut changes = Vec::new();

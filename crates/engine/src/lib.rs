@@ -52,6 +52,7 @@ pub mod query;
 pub mod rebase;
 pub mod reference;
 pub mod scene;
+pub mod scope;
 pub mod solid;
 pub mod synthetic;
 pub mod transaction;

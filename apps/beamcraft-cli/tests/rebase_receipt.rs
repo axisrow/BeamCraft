@@ -39,6 +39,7 @@ fn sample() -> RebaseReceipt {
             base_manifest: digest(1),
             synced_sequence: 1,
             rebase_sequence: 0,
+            scope: None,
         },
         old_base_sequence: 5,
         draft: RevisionPin {

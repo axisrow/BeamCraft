@@ -33,9 +33,8 @@
 //! as in the other commands. One implicit workspace, in-process layer engine, as in `plate`.
 
 use crate::plate::{
-    AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, check_footprint, control,
-    digest_of, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
-    summarize,
+    Base, PlateError, RevisionSummary, check_footprint, control, digest_of, host_uuid, integrity,
+    load_base, open_base, prior_op_with, replay_summary, summarize,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use crate::source_file::read_file;
@@ -49,8 +48,8 @@ use beamcraft_host::revision::{
     CommitHook, CommitOutcome, LayerRole, Revision, RevisionStore, Uuid7,
 };
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, ForeignPrim, Placement as LayerPlacement, Prepare, Reference,
-    ReferenceView, SourcePin, UpAxis, read_references, schema_identity, validate_layers,
+    Change, ForeignPrim, Placement as LayerPlacement, Prepare, Reference, ReferenceView, SourcePin,
+    UpAxis, read_references, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Asset, Budgets, Opened, Prim, Reader, inspect_foreign_layer};
 use beamcraft_model::command::{CommandError, Placement};
@@ -371,15 +370,7 @@ pub fn attach_reference(
         open.manifest = open.manifest_digest()?;
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        open,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) = crate::scope::open_author(store, open, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -499,15 +490,8 @@ fn edit(
         PriorOp::Unseen => {}
     }
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        open_base(&base)?,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, open_base(&base)?, false, schema, &control)?;
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),

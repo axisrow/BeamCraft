@@ -38,6 +38,7 @@ fn initial() -> WorkspaceMeta {
         base_manifest: Sha256::digest(b"synthetic accepted pin").unwrap(),
         synced_sequence: 1,
         rebase_sequence: 0,
+        scope: None,
     }
 }
 fn next(old: &WorkspaceMeta, n: usize) -> WorkspaceMeta {

@@ -20,9 +20,9 @@
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    AUTHORED_LAYER, DERIVED_LAYER, PlateError, RevisionSummary, base_of, check_footprint, control,
-    digest_of, host_uuid, integrity, load_base, mesh_change, number, numbers, open_base,
-    prior_op_with, property, replay_summary, summarize, text,
+    PlateError, RevisionSummary, base_of, check_footprint, control, digest_of, host_uuid,
+    integrity, load_base, mesh_change, number, numbers, open_base, prior_op_with, property,
+    replay_summary, summarize, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -31,8 +31,8 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::weld::{PartKind, Parts};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Shape, Weld,
-    WeldPath, schema_identity, validate_layers,
+    Change, Element, Placement as LayerPlacement, Prepare, Shape, Weld, WeldPath, schema_identity,
+    validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader, Value};
 use beamcraft_model::command::{
@@ -395,15 +395,8 @@ pub fn create_weld(
         None => None,
     };
     let schema = schema_identity()?;
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: AUTHORED_LAYER.into(),
-            derived: DERIVED_LAYER.into(),
-        },
-        schema,
-        &control,
-    )?;
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
