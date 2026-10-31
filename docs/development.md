@@ -13,38 +13,49 @@ cargo run -p beamcraft-cli -- --version
 
 ### The full gate
 
-Owner decision 2026-10-31 ([issue #342](https://github.com/axisrow/BeamCraft/issues/342)),
-replacing the previous wording that called nextest the local runner "matching CI". Before a
-pull request is opened or updated, run the gate once, whole, and read the result from that run.
+The [recorded gate policy](plan/test-gate.md) supersedes the literal-Cargo rule from #346.
+Commit the source, fetch the integration base, and run:
 
 ```sh
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps
+cargo run --locked -p beamcraft-test-gate -- check --scope full
+# Independent CLI-only changes, with unchanged UI-consumed commands/options/JSON:
+cargo run --locked -p beamcraft-test-gate -- check --scope cli --ui-independent-reason "..."
 ```
 
-The test step is the literal `cargo test --workspace` — every unit, integration and CLI suite
-plus the doctests in one command. `cargo nextest` never runs doctests, so a nextest run,
-`--workspace` included, is not the gate however complete it looks; the equivalent split
-(nextest plus a remembered `--doc` line) is how doctests escape review. CI can hold that split
-safely: it archives the nextest run per platform and pairs it with an explicit
-`cargo test --workspace --doc` step. Point runs passing do not replace the gate. When the log
-is worth keeping, redirect it to a file and read the summary and exit status from the file: a
-pipe such as `| tail` masks a non-zero exit code behind a friendly last page.
+The runner performs non-mutating format validation, Clippy, an unfiltered nextest 0.9.149 run,
+mandatory doctests and documentation with `RUSTDOCFLAGS="-D warnings"`. CLI-only checks select
+all CLI targets without compiling the UI. Shared crates, UI, dependency manifests/lockfiles,
+build settings and shared contracts require `full`; uncertain changes use `full` as well.
 
-While the gate runs, nothing else heavy runs on the machine — parallel agents and worktrees
-hold their builds until it finishes. Under exactly such parallel load the end-to-end test
-`reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`
-in `beamcraft-cli` has been cancelled at its
-deadline inside full runs that pass in isolation (~47 s and ~88 s observed) — a deadline flake
-that masks real regressions and costs a full re-run. If a suite fails while other builds were
-running, re-run it in isolation before debugging it.
+The source must be committed and unchanged throughout verification. One native file lock
+serializes heavy local gates across worktrees; do not launch other manual heavy builds beside
+a gate. Logs and the versioned report are retained under ignored build output, with original
+exit statuses and fresh inventory/JUnit evidence. Ordinary-test failures do not suppress
+doctests when preparation succeeded. A later success never erases an earlier failure.
+
+Execution budgets are 120 s per test, 180 s per CI partition, 300 s per local CLI run, 600 s per
+local workspace run and 120 s for the doctest command. Nextest timing excludes compilation,
+downloads, archive extraction and runner wait. Doctests include compilation of examples after
+dependency preparation. Timeouts fail and terminate descendants; no automatic retries or
+budget increases. See [the runner guide](../tools/test-gate/README.md) for installation,
+publication, sync and diagnostics.
+
+Publish the successful report explicitly:
+
+```sh
+cargo run --locked -p beamcraft-test-gate -- publish --report target/test-gate/RUN/report.json --pr NUMBER
+```
+
+CI validates the current head/base/tree and checks the whole workspace on the two other OSes.
+A CLI-only receipt explicitly means UI was omitted locally. Missing/stale reports fail the
+aggregate `CI verdict`. Integration reuses a PR result only for the identical source tree;
+upstream sync binds its full native gate to the merge tree. Release packaging is unchanged.
 
 ### Iteration runs
 
-[cargo nextest](https://nexte.st) is the iteration runner, not the gate, for its parallel
-scheduling and per-test timings. Install it once with `cargo install cargo-nextest --locked`.
+[cargo nextest](https://nexte.st) runs ordinary tests both in the recorded gate and during
+iteration. Install the pinned version with `cargo install cargo-nextest --version 0.9.149 --locked`.
+A standalone nextest invocation does not include doctests or produce the gate receipt.
 
 ```sh
 # Inner loop: workspace libs and the quick CLI suites (~1 min warm on the reference Apple M5).
@@ -54,8 +65,8 @@ cargo nextest run --profile fast
 cargo nextest run -p beamcraft-cli -E 'test(/^numbering::/)'
 ```
 
-A whole-workspace nextest sweep is a mid-work check, not a verdict: run it with `--no-fail-fast`
-so one failure does not hide the rest of the run, and let the gate decide.
+Use `--no-fail-fast` for whole-workspace iteration sweeps. Use the recorded runner for the
+final result, including doctests and source identity.
 
 The `fast`
 profile (`.config/nextest.toml`) skips only the integration suites that each measure at least
@@ -117,7 +128,7 @@ checks remain enabled, and the test cases, fuzz seeds, iteration counts and inde
 are unchanged. The first test build recompiles the selected libraries and their dependants;
 subsequent runs reuse those artifacts. Development and release profiles are unaffected.
 `cargo test --workspace` remains supported and uses the same optimized test libraries.
-CI's test archives and all eight partitions per OS use this test profile automatically;
+CI's test archives and every selected platform partition use this test profile automatically;
 no partition or platform is excluded.
 
 Compare runtime on the same machine and toolchain after building both variants with
@@ -208,10 +219,11 @@ reference-machine acceptance still needs the Apple M5 run described above.
 
 ## Everything CI checks
 
-CI (`.github/workflows/ci.yml`) runs on every pull request and every push to `master`. Pull
-requests run on Linux and macOS; the Windows quality and test jobs run on pushes to `master` and on
-manual runs only (owner decision 2026-10-24, #180). For a change to Windows-specific code, start the
-workflow by hand on the branch (`gh workflow run ci.yml --ref <branch>`) before merging. To run the
+CI (`.github/workflows/ci.yml`) runs on pull requests, pushes to `master` and manual dispatches.
+A fresh local report chooses the two other operating systems; both test the whole workspace.
+The first selected quality lane runs format/docs checks, with WASM, licences, fixtures and
+boundaries retained. New commits/base snapshots need a new local report. The commands below
+show the component checks; use the recorded runner for an eligible final result. To run the
 same checks locally:
 
 ```sh
@@ -265,6 +277,11 @@ and [#658](https://github.com/axisrow/BeamCraft/actions/runs/41158212875), and P
 [#678](https://github.com/axisrow/BeamCraft/actions/runs/41169951787). Budget about 10 minutes
 for a full run, plus any additional runner wait. The earlier 14–17 minute measurement from
 2026-10-22 is historical. A green PR does not establish that the Windows checks pass.
+
+Under the [recorded gate policy](plan/test-gate.md) a run covers the two operating systems
+other than the locally verified one, so a run's wall time also depends on that pair and on
+queue conditions. These are observations, not execution-budget thresholds: the recorded gate
+enforces runner-only test budgets separately from compilation and queue wait.
 
 Each job carries an explicit `timeout-minutes` (5–45 minutes depending on the job), so a hung job
 fails sooner than GitHub's 6-hour per-job default. These limits bound execution, not runner wait.

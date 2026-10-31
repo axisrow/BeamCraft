@@ -90,6 +90,11 @@ name = "openusd"
 version = "0.8.0"
 allow = ["MIT", "LicenseRef-TOST-1.0"]
 
+[[licenses.exceptions]]
+name = "beamcraft-test-gate"
+version = "0.0.1"
+allow = ["MPL-2.0"]
+
 [bans]
 multiple-versions = "allow"
 wildcards = "deny"

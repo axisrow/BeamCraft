@@ -7,7 +7,7 @@
 //! `update-element` typed by hand saves; a stale reading is detected against the head the
 //! window reads and is never edited; an engine refusal reaches the panel with the CLI's code and
 //! publishes nothing; Publish is the CLI's `publish-workspace`, and its refusals are shown.
-//! Without the CLI binary next to this package's binary the tests are skipped and say so
+//! The CLI binary next to this package's binary is required; missing prerequisites fail
 //! (`cargo test --workspace` builds it).
 
 #![allow(
@@ -34,17 +34,10 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 const PLATE: &str = "019a7bf0-0000-7000-8000-00000000b001";
 const BEAM: &str = "019a7bf0-0000-7000-8000-00000000b002";
 
+mod support;
+
 fn cli() -> Option<PathBuf> {
-    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
-    let cli = ui
-        .parent()?
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if cli.is_file() {
-        Some(cli)
-    } else {
-        eprintln!("SKIP properties test: build beamcraft-cli first (cargo test --workspace does)");
-        None
-    }
+    support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
 }
 
 struct Stores {
