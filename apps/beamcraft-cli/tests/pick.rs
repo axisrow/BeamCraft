@@ -40,6 +40,9 @@ mod drawing_drafting;
 #[path = "drawing/views.rs"]
 mod drawing_views;
 
+#[path = "drawing/sections.rs"]
+mod drawing_sections;
+
 #[path = "drawing/sheet.rs"]
 mod drawing_sheet;
 

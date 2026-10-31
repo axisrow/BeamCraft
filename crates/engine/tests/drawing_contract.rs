@@ -7,6 +7,7 @@
 
 use beamcraft_engine::drawing::*;
 use beamcraft_engine::query::feature::FeatureId;
+use beamcraft_geom::tolerance::COORDINATE_CAP_MM;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::*;
@@ -43,6 +44,8 @@ fn spec() -> DrawingSpec {
         },
         drafting: Vec::new(),
         views: Vec::new(),
+        sections: Vec::new(),
+        details: Vec::new(),
         sheet: None,
         layers: Vec::new(),
     }
@@ -589,6 +592,351 @@ fn placed_views_are_bounded_distinct_and_never_document_or_drawn_object_ids() {
             .unwrap_err()
             .code,
         ErrorCode::DuplicateId
+    );
+}
+
+#[test]
+fn sections_are_bounded_and_share_one_paper_identity_space() {
+    let section = |text: &str, cut: f64| SectionSpec {
+        id: DrawingViewId::parse(text).unwrap(),
+        plane: Plane::Right,
+        cut_mm: cut,
+        side: CutSide::Negative,
+        scale_denominator: 50.0,
+        paper_origin_mm: [5.0, -5.0],
+    };
+    const AA: &str = "01900000-0000-7000-8000-000000000007";
+    const BB: &str = "01900000-0000-7000-8000-000000000008";
+    let with = |sections: Vec<SectionSpec>| Drawing::admit(DrawingSpec { sections, ..spec() });
+    let admitted = with(vec![section(AA, 1500.0)]).unwrap();
+    assert_eq!(admitted.sections().len(), 1);
+    assert_eq!(admitted.sections()[0].side.as_str(), "negative");
+    assert_eq!(CutSide::parse("positive"), Some(CutSide::Positive));
+    assert_eq!(CutSide::parse("sideways"), None);
+
+    // Cut bounds: finite and within the model coordinate cap; paper bounds as for views.
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            with(vec![section(AA, bad)]).unwrap_err().code,
+            ErrorCode::NonFiniteNumber
+        );
+    }
+    assert_eq!(
+        with(vec![section(AA, COORDINATE_CAP_MM * 2.0)])
+            .unwrap_err()
+            .code,
+        ErrorCode::LimitExceeded
+    );
+    for bad_scale in [0.0, 10_000.01, f64::NAN] {
+        let mut bad = section(AA, 1500.0);
+        bad.scale_denominator = bad_scale;
+        assert!(with(vec![bad]).is_err());
+    }
+    for bad_origin in [[10_000.01, 0.0], [0.0, -10_000.01]] {
+        let mut bad = section(AA, 1500.0);
+        bad.paper_origin_mm = bad_origin;
+        assert!(with(vec![bad]).is_err());
+    }
+
+    // Identity: against the document objects, pairwise, and against drawn objects.
+    assert_eq!(
+        with(vec![section(B, 1500.0)]).unwrap_err().code,
+        ErrorCode::DuplicateId
+    );
+    assert!(with(vec![section(AA, 1.0), section(AA, 2.0)]).is_err());
+    const PAPER_LAYER: &str = "01900000-0000-7000-8000-000000000016";
+    let entity = DraftingSpec {
+        id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000005").unwrap(),
+        geometry: DraftingGeometry::Line {
+            a: [0.0, 0.0],
+            b: [10.0, 0.0],
+        },
+        layer: DraftingEntityId::parse(PAPER_LAYER).unwrap(),
+        line_type: LineType::Continuous,
+    };
+    assert_eq!(
+        Drawing::admit(DrawingSpec {
+            sections: vec![section("01900000-0000-7000-8000-000000000005", 1500.0)],
+            drafting: vec![entity],
+            layers: vec![LayerSpec {
+                id: DraftingEntityId::parse(PAPER_LAYER).unwrap(),
+                name: "Paper".into(),
+                visible: true,
+            }],
+            ..spec()
+        })
+        .unwrap_err()
+        .code,
+        ErrorCode::DuplicateId
+    );
+
+    // The cap refuses without partial state, and the one-page intent stays closed: every
+    // collection at its cap plus eight drawn objects fits, the ninth does not.
+    let crowd = (0..=MAX_SECTIONS as u64)
+        .map(|index| section(&format!("01990000-0000-7000-8000-{index:012}"), 1500.0))
+        .collect();
+    assert_eq!(with(crowd).unwrap_err().code, ErrorCode::LimitExceeded);
+    let paper = |views: usize, sections: usize, details: usize, drafting: usize| {
+        let mut s = spec();
+        let uuid = |prefix: u64, index: u64| {
+            DrawingViewId::parse(&format!("019{prefix:02}000-0000-7000-8000-{index:012}")).unwrap()
+        };
+        s.views = (0..views as u64)
+            .map(|index| ViewSpec {
+                id: uuid(1, index),
+                plane: Plane::Top,
+                scale_denominator: 50.0,
+                paper_origin_mm: [0.0, 0.0],
+            })
+            .collect();
+        s.sections = (0..sections as u64)
+            .map(|index| section(&format!("01920000-0000-7000-8000-{index:012}"), 1500.0))
+            .collect();
+        s.details = (0..details as u64)
+            .map(|index| DetailSpec {
+                id: uuid(3, index),
+                parent: s.view.id,
+                center_paper_mm: [0.0, 0.0],
+                radius_mm: 5.0,
+                scale_denominator: 10.0,
+                paper_origin_mm: [0.0, 0.0],
+            })
+            .collect();
+        if drafting > 0 {
+            s.layers = vec![LayerSpec {
+                id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000017").unwrap(),
+                name: "Paper".into(),
+                visible: true,
+            }];
+        }
+        s.drafting = (0..drafting as u64)
+            .map(|index| DraftingSpec {
+                id: DraftingEntityId::parse(&format!("019a0000-0000-7000-8000-{index:012}"))
+                    .unwrap(),
+                geometry: DraftingGeometry::Line {
+                    a: [0.0, 0.0],
+                    b: [10.0, 0.0],
+                },
+                layer: DraftingEntityId::parse("01900000-0000-7000-8000-000000000017").unwrap(),
+                line_type: LineType::Continuous,
+            })
+            .collect();
+        Drawing::admit(s)
+    };
+    // Every collection at its cap plus one layer and seven drawn objects fills the page
+    // exactly; one more drawn object refuses.
+    assert!(paper(16, 16, 16, 7).is_ok());
+    assert_eq!(
+        paper(16, 16, 16, 8).unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
+
+    // Replacement keeps every other object and its identity, cross-checked both ways.
+    let replaced = admitted
+        .clone()
+        .with_sections(vec![section(AA, 1500.0), section(BB, 2500.0)])
+        .unwrap();
+    assert_eq!(replaced.sections().len(), 2);
+    assert_eq!(replaced.spec().source, spec().source);
+    assert_eq!(replaced.views(), spec().views);
+    let mut other = spec();
+    other.sections = vec![section(AA, 1500.0)];
+    let editing = Drawing::admit(other).unwrap();
+    assert_eq!(
+        editing
+            .clone()
+            .with_views(vec![ViewSpec {
+                id: DrawingViewId::parse(AA).unwrap(),
+                plane: Plane::Top,
+                scale_denominator: 50.0,
+                paper_origin_mm: [0.0, 0.0],
+            }])
+            .unwrap_err()
+            .code,
+        ErrorCode::DuplicateId
+    );
+    assert!(editing.with_sections(vec![section(B, 1500.0)]).is_err());
+}
+
+#[test]
+fn details_magnify_an_existing_view_and_refuse_foreign_or_section_parents() {
+    let detail = |text: &str, parent: &DrawingViewId, radius: f64| DetailSpec {
+        id: DrawingViewId::parse(text).unwrap(),
+        parent: *parent,
+        center_paper_mm: [15.0, 20.0],
+        radius_mm: radius,
+        scale_denominator: 20.0,
+        paper_origin_mm: [100.0, 100.0],
+    };
+    const D1: &str = "01900000-0000-7000-8000-000000000009";
+    const PLACED: &str = "01900000-0000-7000-8000-000000000010";
+    const SECTION: &str = "01900000-0000-7000-8000-000000000011";
+    let mut base = spec();
+    base.views = vec![ViewSpec {
+        id: DrawingViewId::parse(PLACED).unwrap(),
+        plane: Plane::Top,
+        scale_denominator: 50.0,
+        paper_origin_mm: [0.0, 0.0],
+    }];
+    base.sections = vec![SectionSpec {
+        id: DrawingViewId::parse(SECTION).unwrap(),
+        plane: Plane::Right,
+        cut_mm: 1500.0,
+        side: CutSide::Positive,
+        scale_denominator: 50.0,
+        paper_origin_mm: [0.0, 0.0],
+    }];
+    let with = |details: Vec<DetailSpec>| {
+        Drawing::admit(DrawingSpec {
+            details,
+            ..base.clone()
+        })
+    };
+    assert!(
+        with(vec![detail(D1, &base.view.id, 5.0)])
+            .unwrap()
+            .details()
+            .len()
+            == 1
+    );
+    assert!(
+        with(vec![detail(
+            D1,
+            &DrawingViewId::parse(PLACED).unwrap(),
+            5.0
+        )])
+        .is_ok()
+    );
+    // A section is not a detail parent in this contract, and neither is another detail.
+    assert_eq!(
+        with(vec![detail(
+            D1,
+            &DrawingViewId::parse(SECTION).unwrap(),
+            5.0
+        )])
+        .unwrap_err()
+        .field,
+        "parent"
+    );
+    assert_eq!(
+        with(vec![detail(D1, &DrawingViewId::parse(D1).unwrap(), 5.0)])
+            .unwrap_err()
+            .field,
+        "parent"
+    );
+    assert_eq!(
+        with(vec![detail(
+            D1,
+            &DrawingViewId::parse("01900000-0000-7000-8000-000000000014").unwrap(),
+            5.0
+        )])
+        .unwrap_err()
+        .field,
+        "parent"
+    );
+    // Region bounds: positive radius within the paper cap, centre within it too.
+    for bad in [0.0, -1.0, f64::NAN, 10_000.01] {
+        assert!(with(vec![detail(D1, &base.view.id, bad)]).is_err());
+    }
+    let mut off = detail(D1, &base.view.id, 5.0);
+    off.center_paper_mm = [10_000.01, 0.0];
+    assert!(with(vec![off]).is_err());
+    // Identity and the cap behave exactly as for the other paper collections.
+    assert_eq!(
+        with(vec![detail(B, &base.view.id, 5.0)]).unwrap_err().code,
+        ErrorCode::DuplicateId
+    );
+    let crowd = (0..=MAX_DETAILS as u64)
+        .map(|index| {
+            detail(
+                &format!("01990000-0000-7000-8000-{index:012}"),
+                &base.view.id,
+                5.0,
+            )
+        })
+        .collect();
+    assert_eq!(with(crowd).unwrap_err().code, ErrorCode::LimitExceeded);
+}
+
+#[test]
+fn placed_sections_and_details_resolve_from_the_document_pin_and_foreign_ones_refuse() {
+    use beamcraft_engine::drawing::projection::{
+        self, DetailProjection, SectionProjection, UnresolvedReason,
+    };
+    use beamcraft_engine::{Limits, ViewPin, ViewSnapshot};
+    const AA: &str = "01900000-0000-7000-8000-000000000012";
+    const D1: &str = "01900000-0000-7000-8000-000000000013";
+    let mut s = spec();
+    let section = SectionSpec {
+        id: DrawingViewId::parse(AA).unwrap(),
+        plane: Plane::Right,
+        cut_mm: 1500.0,
+        side: CutSide::Positive,
+        scale_denominator: 50.0,
+        paper_origin_mm: [0.0, 0.0],
+    };
+    let detail = DetailSpec {
+        id: DrawingViewId::parse(D1).unwrap(),
+        parent: s.view.id,
+        center_paper_mm: [15.0, 20.0],
+        radius_mm: 20.0,
+        scale_denominator: 20.0,
+        paper_origin_mm: [100.0, 100.0],
+    };
+    s.sections = vec![section.clone()];
+    s.details = vec![detail.clone()];
+    let drawing = Drawing::admit(s).unwrap();
+    let pin = drawing.spec().source;
+    let snapshot = ViewSnapshot::build(
+        ViewPin::new(pin.manifest, pin.generation),
+        vec![],
+        &Limits::default(),
+    )
+    .unwrap();
+    // An absent owner is explicitly unresolved for both derived views, never an error.
+    assert_eq!(
+        projection::resolve_section(&drawing, &section, &snapshot).unwrap(),
+        SectionProjection::Unresolved(UnresolvedReason::MissingOwner)
+    );
+    assert_eq!(
+        projection::resolve_detail(&drawing, &detail, &snapshot).unwrap(),
+        DetailProjection::Unresolved(UnresolvedReason::MissingOwner)
+    );
+    // An object that is not part of the document refuses before any geometry work.
+    let mut foreign = section.clone();
+    foreign.cut_mm = 1.0;
+    assert_eq!(
+        projection::resolve_section(&drawing, &foreign, &snapshot)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    let mut foreign_detail = detail.clone();
+    foreign_detail.radius_mm = 1.0;
+    assert_eq!(
+        projection::resolve_detail(&drawing, &foreign_detail, &snapshot)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    // A changed source pin marks the derived views stale together with the document.
+    let moved = ViewSnapshot::build(
+        ViewPin::new(pin.manifest, pin.generation + 1),
+        vec![],
+        &Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        projection::resolve_section(&drawing, &section, &moved)
+            .unwrap_err()
+            .code,
+        ErrorCode::StaleWorkspace
+    );
+    assert_eq!(
+        projection::resolve_detail(&drawing, &detail, &moved)
+            .unwrap_err()
+            .code,
+        ErrorCode::StaleWorkspace
     );
 }
 

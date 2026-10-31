@@ -268,6 +268,8 @@ mod tests {
                     paper_origin_mm: [60.0, 40.0],
                 })
                 .collect(),
+            sections: Vec::new(),
+            details: Vec::new(),
             sheet: Some(sheet(size)),
             layers: Vec::new(),
         })

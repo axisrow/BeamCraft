@@ -274,6 +274,8 @@ fn a_placed_view_shows_exactly_its_own_basis_of_the_pinned_source() {
         drafting: Vec::new(),
         layers: Vec::new(),
         views,
+        sections: Vec::new(),
+        details: Vec::new(),
         sheet: None,
     };
     let drawing = Drawing::admit(spec_of(Vec::new()))

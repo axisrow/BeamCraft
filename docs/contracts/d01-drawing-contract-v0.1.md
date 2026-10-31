@@ -83,9 +83,13 @@ resolve as explicitly unresolved — that is a projection outcome, not an admiss
 - more than three decimal places in a dimension label;
 - anchors that are not distinct qualified vertices of the selected member;
 - placed views violating the paper bounds above, colliding with any document-object, drawn
-  object or sibling placed-view UUID (checked in both replacement directions);
-- placed views and drawn objects together exceeding the one-page intent
-  (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each collection is under its own cap;
+  object or sibling paper-object UUID (checked in both replacement directions);
+- section cuts that are nonfinite or beyond the model coordinate cap, and details whose
+  region centre or radius is nonfinite, non-positive or beyond the paper cap, or whose
+  parent is not the primary view or a placed view;
+- paper objects (placed views, sections, details, drawn objects and layers) together
+  exceeding the one-page intent (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each
+  collection is under its own cap;
 - more than `MAX_LAYERS` (16) layers, a layer name violating the bounded label rule, or layer
   UUIDs colliding with any other document object;
 - a drawn object naming a layer the same admitted or replaced set does not define;
@@ -164,34 +168,50 @@ coordinates encode within it, so an admitted document never refuses at encode ti
 children `E1..En` of `/Drawing/Drafting` (`drawing:id`, `drawing:kind`,
 `drawing:geometry double[]`); the canonical re-encode comparison refuses any other topology.
 
-## 6b. Placed views (D04 slice 1)
+## 6b. Placed views, sections and details (D04 slices 1–2)
 
 Beside the primary view, a document may hold up to `MAX_VIEWS` (16) placed views
 (`DrawingSpec.views`), each a full `ViewSpec` with its own front/top/right basis, scale
 denominator and paper origin under the same bounds as the primary view. Nothing is placed
 automatically: a created or refreshed document carries only the views its caller named, and
-placement changes only through the whole-document intent operation `Drawing::with_views`
-(the CLI `edit-views`), never as a side effect of model or drafting edits.
+placement changes only through the whole-document intent operations `Drawing::with_views`,
+`with_sections` and `with_details` (the CLI `edit-views`, which replaces all three collections
+in one operation), never as a side effect of model or drafting edits.
 
-Identity discipline mirrors the drawn objects: placed-view UUIDs are pairwise distinct and
-distinct from the drawing/view/dimension and drawn-object UUIDs, in both replacement
-directions — `with_views` is cross-checked against existing drafting and `with_drafting`
-against existing views.
+Identity discipline mirrors the drawn objects: every paper object's UUID — placed view,
+section, detail or drawn object — is pairwise distinct and distinct from the
+drawing/view/dimension UUIDs, in both replacement directions.
 
-Each placed view resolves from the document's exact pinned snapshot through
-`projection::resolve_view`: a view outside the document refuses, a snapshot whose pin
-disagrees refuses before geometry, and missing/unsupported geometry stays explicitly
-unresolved. Freshness is unchanged — every placed view shares the document's source pin, so
-a model change marks all views stale together and an explicit refresh re-binds them.
+A **section view** (`SectionSpec`) is a cut plane perpendicular to its basis's depth axis
+(Front looks along Y, Top along Z, Right along X) at `cut_mm`, with `side` picking the visible
+half-space. It resolves through `projection::resolve_section` to the visible half of the
+member wireframe — crossing edges end exactly on the cut — plus the exact cut contour (the
+edge/plane crossings in boundary order, empty when the cut misses the member box). Axis cuts
+only: arbitrary cut planes are outside this contract, exactly as arbitrary cameras are.
 
-The closed canonical intent carries the views as the optional `/Drawing/Views` scope with
-canonical ordinal children `V1..Vn` (`drawing:id`, `drawing:plane`, `drawing:scale`,
-`drawing:origin double[]`). The whole intent must fit one closed reader page:
-`MAX_INTENT_PAGE_ITEMS` (64) prims — the three fixed document prims, one optional scope per
-non-empty collection, and every placed view and drawn object. `edit-views` follows the same
-replay discipline as `edit-drafting`: no model store on the command line, and the request
-fingerprint binds the incoming placement, so an exact replay returns the same revision and a
-changed placement under the same operation id refuses.
+A **detail view** (`DetailSpec`) magnifies one parent view's circular region
+(`center_paper_mm`, `radius_mm` in the parent's paper millimetres) at the detail's own scale.
+The parent must be the primary view or a placed view; details of sections or of other details
+are outside this slice's contract. It resolves through `projection::resolve_detail` to the
+parent wireframe mapped by the scales' ratio and clipped to the region, keeping the parent's
+semantic feature addresses.
+
+Each derived view resolves from the document's exact pinned snapshot: an object outside the
+document refuses, a snapshot whose pin disagrees refuses before geometry, and
+missing/unsupported geometry stays explicitly unresolved. Freshness is unchanged — every
+paper object shares the document's source pin, so a model change marks all views stale
+together and an explicit refresh re-binds them.
+
+The closed canonical intent carries placed views as the optional `/Drawing/Views` scope
+(`V1..Vn`: `drawing:id`, `drawing:plane`, `drawing:scale`, `drawing:origin double[]`),
+sections as `/Drawing/Sections` (`S1..Sn`: plus `drawing:cut`, `drawing:side`) and details as
+`/Drawing/Details` (`D1..Dn`: plus `drawing:parent`, `drawing:center double[]`,
+`drawing:radius`). The whole intent must fit one closed reader page: `MAX_INTENT_PAGE_ITEMS`
+(64) prims — the three fixed document prims, one optional scope per non-empty collection, and
+every paper object. `edit-views` follows the same replay discipline as `edit-drafting`: no
+model store on the command line, and the request fingerprint binds the incoming placement of
+all three collections, so an exact replay returns the same revision and a changed placement
+under the same operation id refuses.
 
 ## 6c. Sheets (D05)
 

@@ -47,6 +47,8 @@ fn drawing() -> Drawing {
         },
         drafting: Vec::new(),
         views: Vec::new(),
+        sections: Vec::new(),
+        details: Vec::new(),
         sheet: None,
         layers: Vec::new(),
     })
@@ -278,6 +280,61 @@ fn the_densest_admitted_page_encodes_within_the_intent_byte_cap() {
         codec::decode(asset, identity(), &control()).unwrap(),
         intent
     );
+}
+
+#[test]
+fn sections_and_details_round_trip_exactly_and_foreign_tokens_refuse() {
+    let section = |suffix: u64, cut: f64, side: CutSide| SectionSpec {
+        id: DrawingViewId::parse(&format!("01900000-0000-7000-8000-{suffix:012}")).unwrap(),
+        plane: Plane::Right,
+        cut_mm: cut,
+        side,
+        scale_denominator: 50.0,
+        paper_origin_mm: [10.0, -10.0],
+    };
+    let detail = |suffix: u64, parent: &DrawingViewId| DetailSpec {
+        id: DrawingViewId::parse(&format!("01900000-0000-7000-8000-{suffix:012}")).unwrap(),
+        parent: *parent,
+        center_paper_mm: [15.0, 0.0],
+        radius_mm: 5.5,
+        scale_denominator: 20.0,
+        paper_origin_mm: [100.0, 100.0],
+    };
+    let intent = drawing()
+        .with_sections(vec![
+            section(6, 1500.0, CutSide::Positive),
+            section(7, 2500.0, CutSide::Negative),
+        ])
+        .unwrap()
+        .with_details(vec![detail(8, &DrawingViewId::parse(VIEW).unwrap())])
+        .unwrap();
+    let asset = codec::encode(&intent).unwrap();
+    assert!(asset.bytes.len() < codec::MAX_INTENT_BYTES);
+    assert_eq!(asset.bytes, codec::encode(&intent).unwrap().bytes);
+    let text = String::from_utf8(asset.bytes.clone()).unwrap();
+    assert!(text.contains("def Scope \"Sections\"") && text.contains("\"S1\""));
+    assert!(text.contains("drawing:side = \"negative\""));
+    assert!(text.contains("def Scope \"Details\"") && text.contains("drawing:parent"));
+    let decoded = codec::decode(asset.clone(), identity(), &control()).unwrap();
+    assert_eq!(decoded, intent);
+    // Empty placements encode without their optional scopes.
+    let emptied = intent
+        .clone()
+        .with_sections(Vec::new())
+        .unwrap()
+        .with_details(Vec::new())
+        .unwrap();
+    let bare = String::from_utf8(codec::encode(&emptied).unwrap().bytes).unwrap();
+    assert!(!bare.contains("\"Sections\"") && !bare.contains("\"Details\""));
+    // Ordinals are canonical and the side token is closed.
+    let renamed = changed(&asset, "\"S1\"", "\"S9\"");
+    assert!(codec::decode(renamed, identity(), &control()).is_err());
+    let sideways = changed(
+        &asset,
+        "drawing:side = \"positive\"",
+        "drawing:side = \"sideways\"",
+    );
+    assert!(codec::decode(sideways, identity(), &control()).is_err());
 }
 
 #[test]

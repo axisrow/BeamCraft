@@ -54,6 +54,8 @@ fn drawing(source: SourceModelPin) -> Drawing {
         drafting: Vec::new(),
         layers: Vec::new(),
         views: Vec::new(),
+        sections: Vec::new(),
+        details: Vec::new(),
         sheet: None,
     })
     .unwrap()

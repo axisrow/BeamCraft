@@ -21,6 +21,7 @@ pub use drafting::{
 };
 
 use crate::query::feature::{BodyKind, FeatureId, FeatureKind};
+use beamcraft_geom::tolerance::COORDINATE_CAP_MM;
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{DimensionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId};
@@ -31,9 +32,14 @@ pub const CONTRACT_VERSION: &str = "beamcraft-drawing/1";
 pub const MAX_PAPER_MM: f64 = 10_000.0;
 /// Largest number of placed views beyond the primary view in one document.
 pub const MAX_VIEWS: usize = 16;
+/// Largest number of section views in one document.
+pub const MAX_SECTIONS: usize = 16;
+/// Largest number of detail views in one document.
+pub const MAX_DETAILS: usize = 16;
 /// Largest prim count of the closed one-page drawing intent, equal to the layer reader's page
 /// ceiling: three fixed prims, one optional scope per non-empty collection (sheet, placed
-/// views, drawn objects), and every placed view and drawn object.
+/// views, sections, details, drawn objects), and every placed view, section, detail and drawn
+/// object.
 pub const MAX_INTENT_PAGE_ITEMS: usize = 64;
 /// Largest scale denominator; the first slice admits scales from 1:1 through 1:10000.
 pub const MAX_SCALE_DENOMINATOR: f64 = 10_000.0;
@@ -72,6 +78,16 @@ impl Plane {
             _ => None,
         }
     }
+
+    /// Index of the model axis this basis looks along: Front projects [x, z] and looks
+    /// along Y, Top along Z, Right along X. A section's cut plane is perpendicular to it.
+    pub const fn depth_axis(self) -> usize {
+        match self {
+            Self::Front => 1,
+            Self::Top => 2,
+            Self::Right => 0,
+        }
+    }
 }
 
 /// One view's authored settings; scale never changes a dimension's model-unit value.
@@ -82,6 +98,76 @@ pub struct ViewSpec {
     /// Explicit projection basis.
     pub plane: Plane,
     /// Paper/model scale denominator (1 through 10000, default supplied by the caller is 100).
+    pub scale_denominator: f64,
+    /// Paper-space view origin in millimetres, each component within 10000 in magnitude.
+    pub paper_origin_mm: [f64; 2],
+}
+
+/// Which side of a section's cut plane stays visible: the half-space at greater or lesser
+/// coordinates along the view basis's depth axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CutSide {
+    /// Model depth-axis coordinates greater than the cut stay visible.
+    Positive,
+    /// Model depth-axis coordinates less than the cut stay visible.
+    Negative,
+}
+
+impl CutSide {
+    /// Exact lowercase wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Positive => "positive",
+            Self::Negative => "negative",
+        }
+    }
+
+    /// Parses a fixed side token.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "positive" => Some(Self::Positive),
+            "negative" => Some(Self::Negative),
+            _ => None,
+        }
+    }
+}
+
+/// One section view: a cut plane perpendicular to the projection basis's depth axis, showing
+/// the remaining half of the member plus the exact cut contour. The cut is a fixed
+/// axis-aligned plane (`cut_mm` along the basis's depth axis); arbitrary cut planes are
+/// outside this contract, exactly as arbitrary cameras are.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SectionSpec {
+    /// Stable identity retained through refresh.
+    pub id: DrawingViewId,
+    /// Explicit projection basis of the section view.
+    pub plane: Plane,
+    /// Model coordinate of the cut along the basis's depth axis, within the coordinate cap.
+    pub cut_mm: f64,
+    /// The half-space that stays visible.
+    pub side: CutSide,
+    /// Paper/model scale denominator (1 through 10000).
+    pub scale_denominator: f64,
+    /// Paper-space view origin in millimetres, each component within 10000 in magnitude.
+    pub paper_origin_mm: [f64; 2],
+}
+
+/// One detail view: a circular region of one parent view (the primary view or a placed
+/// view) redrawn at the detail's own, usually larger scale. The region is authored in the
+/// parent's paper millimetres; the detail is a magnification of exactly that parent
+/// content, never a fresh projection, so a detail of a section or of another detail is
+/// outside this slice's contract.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DetailSpec {
+    /// Stable identity retained through refresh.
+    pub id: DrawingViewId,
+    /// The primary view's id or one placed view's id.
+    pub parent: DrawingViewId,
+    /// Region centre in the parent's paper millimetres, within 10000 per component.
+    pub center_paper_mm: [f64; 2],
+    /// Region radius in the parent's paper millimetres, greater than zero and within 10000.
+    pub radius_mm: f64,
+    /// Paper/model scale denominator (1 through 10000).
     pub scale_denominator: f64,
     /// Paper-space view origin in millimetres, each component within 10000 in magnitude.
     pub paper_origin_mm: [f64; 2],
@@ -118,6 +204,11 @@ pub struct DrawingSpec {
     /// views its caller named, and freshness marks every placed view stale together with the
     /// document because they share one source pin.
     pub views: Vec<ViewSpec>,
+    /// Section views of the same pinned source: cut planes perpendicular to their basis's
+    /// depth axis, placed by hand like every other view.
+    pub sections: Vec<SectionSpec>,
+    /// Detail views magnifying one parent view's circular region at the detail's own scale.
+    pub details: Vec<DetailSpec>,
     /// The sole dimension.
     pub dimension: DimensionSpec,
     /// Drawn paper-space objects owned by the document, never by the model.
@@ -134,6 +225,16 @@ pub struct DrawingSpec {
 /// Validated immutable intent. Admission grants no claim that the referenced geometry exists.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Drawing(DrawingSpec);
+
+/// The five paper-space collections of one document, always validated together: bounded
+/// counts, one closed intent page, per-entity bounds and one shared identity space.
+struct PaperCollections<'a> {
+    views: &'a [ViewSpec],
+    sections: &'a [SectionSpec],
+    details: &'a [DetailSpec],
+    drafting: &'a [DraftingSpec],
+    layers: &'a [LayerSpec],
+}
 
 fn invalid(field: &'static str, message: &'static str) -> CommandError {
     CommandError::new(ErrorCode::InvalidArgument, field, message)
@@ -156,19 +257,62 @@ fn finite_range(value: f64, min: f64, max: f64, field: &'static str) -> Result<(
     Ok(())
 }
 
-/// Validates one view's paper settings; both the primary and every placed view obey the same
-/// bounds.
-fn validate_view(view: &ViewSpec) -> Result<(), CommandError> {
+/// Validates one view's paper settings; the primary and every placed/section/detail view
+/// obey the same bounds.
+fn validate_paper_settings(
+    scale_denominator: f64,
+    paper_origin_mm: [f64; 2],
+) -> Result<(), CommandError> {
     finite_range(
-        view.scale_denominator,
+        scale_denominator,
         1.0,
         MAX_SCALE_DENOMINATOR,
         "scale_denominator",
     )?;
-    for value in view.paper_origin_mm {
+    for value in paper_origin_mm {
         finite_range(value, -MAX_PAPER_MM, MAX_PAPER_MM, "paper_origin_mm")?;
     }
     Ok(())
+}
+
+/// Validates one section's cut plane and paper settings.
+fn validate_section(section: &SectionSpec) -> Result<(), CommandError> {
+    if !section.cut_mm.is_finite() {
+        return Err(CommandError::new(
+            ErrorCode::NonFiniteNumber,
+            "cut_mm",
+            "section cut must be finite",
+        ));
+    }
+    if section.cut_mm.abs() > COORDINATE_CAP_MM {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "cut_mm",
+            "section cut exceeds the model coordinate cap",
+        ));
+    }
+    validate_paper_settings(section.scale_denominator, section.paper_origin_mm)
+}
+
+/// Validates one detail's circular region and paper settings.
+fn validate_detail(detail: &DetailSpec) -> Result<(), CommandError> {
+    for value in detail.center_paper_mm {
+        finite_range(value, -MAX_PAPER_MM, MAX_PAPER_MM, "center_paper_mm")?;
+    }
+    if !detail.radius_mm.is_finite() {
+        return Err(CommandError::new(
+            ErrorCode::NonFiniteNumber,
+            "radius_mm",
+            "detail radius must be finite",
+        ));
+    }
+    if detail.radius_mm <= 0.0 || detail.radius_mm > MAX_PAPER_MM {
+        return Err(invalid(
+            "radius_mm",
+            "detail radius must be greater than zero and within the paper coordinate cap",
+        ));
+    }
+    validate_paper_settings(detail.scale_denominator, detail.paper_origin_mm)
 }
 
 impl Drawing {
@@ -198,7 +342,7 @@ impl Drawing {
                 "drawing name must satisfy the bounded label rule",
             ));
         }
-        validate_view(&spec.view)?;
+        validate_paper_settings(spec.view.scale_denominator, spec.view.paper_origin_mm)?;
         finite_range(
             spec.dimension.paper_offset_mm,
             -MAX_PAPER_MM,
@@ -239,62 +383,69 @@ impl Drawing {
             &spec.view.id,
             &spec.dimension.id,
             spec.sheet.as_ref(),
-            &spec.views,
-            &spec.layers,
-            &spec.drafting,
+            PaperCollections {
+                views: &spec.views,
+                sections: &spec.sections,
+                details: &spec.details,
+                drafting: &spec.drafting,
+                layers: &spec.layers,
+            },
         )?;
         Ok(Self(spec))
     }
 
-    /// Validates the document's paper objects together: bounded counts, full distinct identities
-    /// within and across all three collections, and per-entity/per-view bounds. Drawn objects own
-    /// no model reference of any kind, every drawn object sits on a layer the document defines,
-    /// and every placed view resolves from the document's own pin.
+    /// Validates the document's paper objects together: bounded counts, one shared distinct
+    /// identity space across every collection, per-entity/per-view bounds, every detail's
+    /// parent present, and every drawn object on a layer the same document defines. Drawn
+    /// objects own no model reference of any kind.
     fn validate_paper_objects(
         drawing: &DrawingId,
         view: &DrawingViewId,
         dimension: &DimensionId,
         sheet: Option<&SheetSpec>,
-        views: &[ViewSpec],
-        layers: &[LayerSpec],
-        drafting: &[DraftingSpec],
+        paper: PaperCollections<'_>,
     ) -> Result<(), CommandError> {
-        if views.len() > MAX_VIEWS {
-            return Err(CommandError::new(
-                ErrorCode::LimitExceeded,
-                "views",
-                "too many placed views in one document",
-            ));
-        }
-        if layers.len() > MAX_LAYERS {
-            return Err(CommandError::new(
-                ErrorCode::LimitExceeded,
-                "layers",
-                "too many layers in one document",
-            ));
-        }
-        if drafting.len() > MAX_DRAFTING_ENTITIES {
-            return Err(CommandError::new(
-                ErrorCode::LimitExceeded,
-                "drafting",
-                "too many drawn objects in one document",
-            ));
+        let PaperCollections {
+            views,
+            sections,
+            details,
+            drafting,
+            layers,
+        } = paper;
+        for (count, cap, field) in [
+            (views.len(), MAX_VIEWS, "views"),
+            (sections.len(), MAX_SECTIONS, "sections"),
+            (details.len(), MAX_DETAILS, "details"),
+            (drafting.len(), MAX_DRAFTING_ENTITIES, "drafting"),
+            (layers.len(), MAX_LAYERS, "layers"),
+        ] {
+            if count > cap {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    field,
+                    "too many paper objects of this kind in one document",
+                ));
+            }
         }
         // The whole intent must stay within one closed reader page: the fixed document prims,
         // one optional scope per non-empty collection and the objects themselves.
         let page_items = 3
             + usize::from(sheet.is_some())
             + usize::from(!views.is_empty())
-            + usize::from(!layers.is_empty())
+            + usize::from(!sections.is_empty())
+            + usize::from(!details.is_empty())
             + usize::from(!drafting.is_empty())
+            + usize::from(!layers.is_empty())
             + views.len()
-            + layers.len()
-            + drafting.len();
+            + sections.len()
+            + details.len()
+            + drafting.len()
+            + layers.len();
         if page_items > MAX_INTENT_PAGE_ITEMS {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "paper",
-                "placed views, layers and drawn objects together exceed the one-page intent",
+                "placed views, sections, details, drawn objects and layers together exceed the one-page intent",
             ));
         }
         for layer in layers {
@@ -305,7 +456,6 @@ impl Drawing {
                 ));
             }
         }
-        let reserved = [drawing.uuid(), view.uuid(), dimension.uuid()];
         for entity in drafting {
             drafting::validate_geometry(&entity.geometry)?;
             if !layers
@@ -317,80 +467,41 @@ impl Drawing {
                     "drawn object names a layer the document does not define",
                 ));
             }
-            if reserved.contains(&entity.id.uuid()) {
-                return Err(CommandError::new(
-                    ErrorCode::DuplicateId,
-                    "drafting",
-                    "drawn object UUIDs must be distinct from the document object UUIDs",
-                ));
-            }
         }
         for placed in views {
-            validate_view(placed)?;
-            if reserved.contains(&placed.id.uuid()) {
-                return Err(CommandError::new(
-                    ErrorCode::DuplicateId,
-                    "views",
-                    "placed view UUIDs must be distinct from the document object UUIDs",
-                ));
-            }
-            if layers
-                .iter()
-                .any(|layer| layer.id.uuid() == placed.id.uuid())
-                || drafting
-                    .iter()
-                    .any(|entity| entity.id.uuid() == placed.id.uuid())
-            {
-                return Err(CommandError::new(
-                    ErrorCode::DuplicateId,
-                    "views",
-                    "placed view UUIDs must be distinct from the layer and drawn object UUIDs",
+            validate_paper_settings(placed.scale_denominator, placed.paper_origin_mm)?;
+        }
+        for section in sections {
+            validate_section(section)?;
+        }
+        for detail in details {
+            validate_detail(detail)?;
+            // A detail magnifies the primary view or a placed view; sections and other
+            // details are outside this slice's detail contract.
+            if detail.parent != *view && !views.iter().any(|placed| placed.id == detail.parent) {
+                return Err(invalid(
+                    "parent",
+                    "detail parent must be the primary view or a placed view",
                 ));
             }
         }
-        for (group, message) in [
-            (
-                drafting
-                    .iter()
-                    .map(|entity| entity.id.uuid())
-                    .collect::<Vec<_>>(),
-                "drawn object UUIDs must be pairwise distinct",
-            ),
-            (
-                views
-                    .iter()
-                    .map(|placed| placed.id.uuid())
-                    .collect::<Vec<_>>(),
-                "placed view UUIDs must be pairwise distinct",
-            ),
-            (
-                layers
-                    .iter()
-                    .map(|layer| layer.id.uuid())
-                    .collect::<Vec<_>>(),
-                "layer UUIDs must be pairwise distinct",
-            ),
-        ] {
-            for (index, id) in group.iter().enumerate() {
-                if group.iter().skip(index + 1).any(|other| other == id) {
-                    return Err(CommandError::new(ErrorCode::DuplicateId, "paper", message));
-                }
-            }
-        }
-        // Layer UUIDs must also be distinct from the drawn objects' own identities.
-        for layer in layers {
-            if reserved.contains(&layer.id.uuid())
-                || views
-                    .iter()
-                    .any(|placed| placed.id.uuid() == layer.id.uuid())
-                || drafting
-                    .iter()
-                    .any(|entity| entity.id.uuid() == layer.id.uuid())
-            {
+        // One shared identity space: every paper object's UUID is distinct from the three
+        // document objects and from every other paper object, whichever collections hold them.
+        let reserved = [drawing.uuid(), view.uuid(), dimension.uuid()];
+        let all = reserved
+            .into_iter()
+            .chain(views.iter().map(|placed| placed.id.uuid()))
+            .chain(sections.iter().map(|section| section.id.uuid()))
+            .chain(details.iter().map(|detail| detail.id.uuid()))
+            .chain(drafting.iter().map(|entity| entity.id.uuid()))
+            .chain(layers.iter().map(|layer| layer.id.uuid()))
+            .collect::<Vec<_>>();
+        for (index, id) in all.iter().enumerate() {
+            if all.iter().skip(index + 1).any(|other| other == id) {
                 return Err(CommandError::new(
                     ErrorCode::DuplicateId,
-                    "layers",
-                    "layer UUIDs must be distinct from every other document object UUID",
+                    "paper",
+                    "paper object UUIDs must be pairwise distinct and distinct from the document object UUIDs",
                 ));
             }
         }
@@ -417,9 +528,13 @@ impl Drawing {
             &self.0.view.id,
             &self.0.dimension.id,
             Some(&sheet),
-            &self.0.views,
-            &self.0.layers,
-            &self.0.drafting,
+            PaperCollections {
+                views: &self.0.views,
+                sections: &self.0.sections,
+                details: &self.0.details,
+                drafting: &self.0.drafting,
+                layers: &self.0.layers,
+            },
         )?;
         self.0.sheet = Some(sheet);
         Ok(self)
@@ -462,6 +577,16 @@ impl Drawing {
         &self.0.views
     }
 
+    /// Borrows the section views, in caller order.
+    pub fn sections(&self) -> &[SectionSpec] {
+        &self.0.sections
+    }
+
+    /// Borrows the detail views, in caller order.
+    pub fn details(&self) -> &[DetailSpec] {
+        &self.0.details
+    }
+
     /// Replaces the layers and drawn objects with a newly admitted set, retaining every other
     /// document object, its identity and its source pin. One atomic intent operation: the new
     /// objects must name layers the same replacement defines, so no intermediate state can hold
@@ -476,9 +601,13 @@ impl Drawing {
             &self.0.view.id,
             &self.0.dimension.id,
             self.0.sheet.as_ref(),
-            &self.0.views,
-            &layers,
-            &entities,
+            PaperCollections {
+                views: &self.0.views,
+                sections: &self.0.sections,
+                details: &self.0.details,
+                drafting: &entities,
+                layers: &layers,
+            },
         )?;
         self.0.layers = layers;
         self.0.drafting = entities;
@@ -494,11 +623,57 @@ impl Drawing {
             &self.0.view.id,
             &self.0.dimension.id,
             self.0.sheet.as_ref(),
-            &views,
-            &self.0.layers,
-            &self.0.drafting,
+            PaperCollections {
+                views: &views,
+                sections: &self.0.sections,
+                details: &self.0.details,
+                drafting: &self.0.drafting,
+                layers: &self.0.layers,
+            },
         )?;
         self.0.views = views;
+        Ok(self)
+    }
+
+    /// Replaces the section views with a newly admitted set, retaining every other document
+    /// object, its identity and its source pin. This is a whole-document intent operation: the
+    /// engineering model is neither read nor touched.
+    pub fn with_sections(mut self, sections: Vec<SectionSpec>) -> Result<Self, CommandError> {
+        Self::validate_paper_objects(
+            &self.0.id,
+            &self.0.view.id,
+            &self.0.dimension.id,
+            self.0.sheet.as_ref(),
+            PaperCollections {
+                views: &self.0.views,
+                sections: &sections,
+                details: &self.0.details,
+                drafting: &self.0.drafting,
+                layers: &self.0.layers,
+            },
+        )?;
+        self.0.sections = sections;
+        Ok(self)
+    }
+
+    /// Replaces the detail views with a newly admitted set, retaining every other document
+    /// object, its identity and its source pin. This is a whole-document intent operation: the
+    /// engineering model is neither read nor touched.
+    pub fn with_details(mut self, details: Vec<DetailSpec>) -> Result<Self, CommandError> {
+        Self::validate_paper_objects(
+            &self.0.id,
+            &self.0.view.id,
+            &self.0.dimension.id,
+            self.0.sheet.as_ref(),
+            PaperCollections {
+                views: &self.0.views,
+                sections: &self.0.sections,
+                details: &details,
+                drafting: &self.0.drafting,
+                layers: &self.0.layers,
+            },
+        )?;
+        self.0.details = details;
         Ok(self)
     }
 
