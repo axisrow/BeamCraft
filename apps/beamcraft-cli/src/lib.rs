@@ -20,6 +20,8 @@ pub mod delete;
 pub mod drawing;
 pub mod edit;
 pub mod export;
+/// Shared rule parsing and the admitted head dataset of element filters (V14).
+pub mod filters;
 pub mod grid;
 pub mod history;
 pub mod history_compact;

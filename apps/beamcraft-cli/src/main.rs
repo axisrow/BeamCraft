@@ -27,6 +27,7 @@ mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
 mod fastener_cmd;
+mod filters_cmd;
 mod grid_cmd;
 mod history_cmd;
 mod level_cmd;
@@ -156,6 +157,8 @@ fn main() -> std::process::ExitCode {
         construction_cmd::execute(&args)
     } else if args.first().is_some_and(attribute_cmd::handles) {
         attribute_cmd::execute(&args)
+    } else if args.first().is_some_and(filters_cmd::handles) {
+        filters_cmd::execute(&args)
     } else if args.first().is_some_and(numbering_cmd::handles) {
         numbering_cmd::execute(&args)
     } else if args.first().is_some_and(|c| {
