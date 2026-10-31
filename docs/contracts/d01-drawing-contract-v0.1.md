@@ -85,7 +85,10 @@ resolve as explicitly unresolved — that is a projection outcome, not an admiss
 - placed views violating the paper bounds above, colliding with any document-object, drawn
   object or sibling placed-view UUID (checked in both replacement directions);
 - placed views and drawn objects together exceeding the one-page intent
-  (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each collection is under its own cap.
+  (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each collection is under its own cap;
+- more than `MAX_LAYERS` (16) layers, a layer name violating the bounded label rule, or layer
+  UUIDs colliding with any other document object;
+- a drawn object naming a layer the same admitted or replaced set does not define.
 
 ## 6. Resolution and unresolved states
 
@@ -128,6 +131,27 @@ carries none. A free dimension measures the drawn paper interval only: it binds 
 resolves nothing through the pinned source and never becomes stale through the model. The
 document-wide text volume shares the intent byte cap below, so long labels are limited by
 `MAX_INTENT_BYTES`, not by a separate budget.
+
+## 6a-1. Layers and line types (D07 slice 3)
+
+Every drawn object names the document layer it sits on (`drawing:layer`) and its stroke pattern
+(`drawing:linetype` = `continuous`|`dashed`|`dotted`|`dashdot`, `LineType`). A document holds up
+to `MAX_LAYERS` (16) layers (`LayerSpec`), each a typed UUIDv7, a name under the bounded label
+rule, and a `visible` flag. A layer carries no model semantics and no geometry of its own:
+hiding one is a paper-visibility filter (`Drawing::visible_drafting`) and never touches the
+stored objects or the engineering model.
+
+Admission refuses a drawn object whose layer the same replacement does not define, so no
+admitted state ever holds a dangling layer reference. `Drawing::with_drafting` replaces layers
+and drawn objects as one atomic intent operation. Layer UUIDs are pairwise distinct and distinct
+from the document, placed-view and drawn-object UUIDs. Layers occupy the same one-page intent
+budget as every other paper object: the page formula counts one optional `/Drawing/Layers` scope
+plus each layer.
+
+In the intent USD the layers are the canonical ordinal children `L1..Ln` of `/Drawing/Layers`
+(`drawing:id`, `drawing:name`, `drawing:visible`); each drawn entity additionally carries
+`drawing:layer` and `drawing:linetype`. The canonical re-encode comparison refuses any other
+topology.
 
 Admission refuses more than `MAX_DRAFTING_ENTITIES` (60) objects, any entity UUID equal to the
 drawing/view/dimension UUID, and any pair of equal entity UUIDs. Coordinates are exact paper

@@ -27,6 +27,18 @@ const TEXT: &str = "01900000-0000-7000-8000-000000000218";
 const HATCH: &str = "01900000-0000-7000-8000-000000000219";
 const SYMBOL: &str = "01900000-0000-7000-8000-00000000021a";
 const FREE_DIM: &str = "01900000-0000-7000-8000-00000000021b";
+const LAYER: &str = "01900000-0000-7000-8000-00000000021c";
+const OTHER_LAYER: &str = "01900000-0000-7000-8000-00000000021d";
+
+/// The layer definition every slice 1–2 scenario now names, plus the stroke assignment each
+/// drawn object carries since slice 3.
+fn layer_args() -> Vec<String> {
+    vec!["--layer".to_owned(), format!("{LAYER}:Outlines:on")]
+}
+
+fn spec(value: String) -> Vec<String> {
+    vec!["--drafting".to_owned(), value]
+}
 
 fn intent() -> Vec<String> {
     [
@@ -118,13 +130,12 @@ fn drawn_objects_live_in_the_document_only_and_published_versions_survive_edits(
         OP_EDIT,
         REV_EDIT,
         &[
-            "--drafting".to_owned(),
-            format!("{LINE}:line:1.5,-2,30.25,4"),
-            "--drafting".to_owned(),
-            format!("{CIRCLE}:circle:10,10,2.5"),
-            "--drafting".to_owned(),
-            format!("{ARC}:arc:0,0,5,0,1.25"),
-        ],
+            layer_args(),
+            spec(format!("{LINE}:line:1.5,-2,30.25,4:{LAYER}:continuous")),
+            spec(format!("{CIRCLE}:circle:10,10,2.5:{LAYER}:dashed")),
+            spec(format!("{ARC}:arc:0,0,5,0,1.25:{LAYER}:dotted")),
+        ]
+        .concat(),
     );
     assert_eq!(code, 0, "{edited:?}");
     let edited_head = text(&edited, "revision_id");
@@ -137,10 +148,19 @@ fn drawn_objects_live_in_the_document_only_and_published_versions_survive_edits(
     assert_eq!(drawn.len(), 3);
     assert_eq!(text(&drawn[0], "id"), LINE);
     assert_eq!(text(&drawn[0], "kind"), "line");
+    assert_eq!(text(&drawn[0], "layer"), LAYER);
+    assert_eq!(text(&drawn[0], "line_type"), "continuous");
     assert_eq!(text(&drawn[1], "id"), CIRCLE);
     assert_eq!(text(&drawn[1], "kind"), "circle");
+    assert_eq!(text(&drawn[1], "line_type"), "dashed");
     assert_eq!(text(&drawn[2], "id"), ARC);
     assert_eq!(text(&drawn[2], "kind"), "arc");
+    assert_eq!(text(&drawn[2], "line_type"), "dotted");
+    let layers = list(&inspected, "layers");
+    assert_eq!(layers.len(), 1);
+    assert_eq!(text(&layers[0], "id"), LAYER);
+    assert_eq!(text(&layers[0], "name"), "Outlines");
+    assert!(at(&layers[0], &["visible"]).boolean().unwrap());
     // The source pin never moved, so the live model is still exactly current.
     assert_eq!(
         text(
@@ -164,7 +184,7 @@ fn drawn_objects_live_in_the_document_only_and_published_versions_survive_edits(
         &edited_head,
         OP_AFTER,
         REV_AFTER,
-        &["--drafting".to_owned(), format!("{RECT}:rectangle:0,0,5,0")],
+        &spec(format!("{RECT}:rectangle:0,0,5,0:{LAYER}:continuous")),
     );
     assert_eq!(code, 2, "{refused:?}");
     assert_eq!(
@@ -203,7 +223,11 @@ fn drawn_objects_live_in_the_document_only_and_published_versions_survive_edits(
         &published_head,
         OP_AFTER,
         REV_AFTER,
-        &["--drafting".to_owned(), format!("{RECT}:rectangle:0,0,5,7")],
+        &[
+            layer_args(),
+            spec(format!("{RECT}:rectangle:0,0,5,7:{LAYER}:dashdot")),
+        ]
+        .concat(),
     );
     assert_eq!(code, 0, "{after:?}");
     let after_head = text(&after, "revision_id");
@@ -272,8 +296,16 @@ fn drafting_replay_binds_the_incoming_geometry_even_after_later_edits() {
     ];
     create.extend(intent());
     let head = text(&f.ok("create-drawing", &argv(&create)), "revision_id");
-    let original = vec!["--drafting".to_owned(), format!("{LINE}:line:0,0,10,0")];
-    let changed = vec!["--drafting".to_owned(), format!("{LINE}:line:0,0,20,0")];
+    let original = [
+        layer_args(),
+        spec(format!("{LINE}:line:0,0,10,0:{LAYER}:continuous")),
+    ]
+    .concat();
+    let changed = [
+        layer_args(),
+        spec(format!("{LINE}:line:0,0,20,0:{LAYER}:continuous")),
+    ]
+    .concat();
     let (code, accepted) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &original);
     assert_eq!(code, 0, "{accepted:?}");
     let edited_head = text(&accepted, "revision_id");
@@ -341,15 +373,19 @@ fn text_hatch_symbol_and_free_dimension_are_drawn_objects_with_their_own_payload
         OP_EDIT,
         REV_EDIT,
         &[
-            "--drafting".to_owned(),
-            format!("{TEXT}:text:10,20,3.5,0.25:Note \u{00ab}A\u{bb}"),
-            "--drafting".to_owned(),
-            format!("{HATCH}:hatch:0,0,8,0,8,3:crosshatch"),
-            "--drafting".to_owned(),
-            format!("{SYMBOL}:symbol:40,40,2:north"),
-            "--drafting".to_owned(),
-            format!("{FREE_DIM}:free_dimension:0,0,30,0,6.5,1"),
-        ],
+            layer_args(),
+            spec(format!(
+                "{TEXT}:text:10,20,3.5,0.25:{LAYER}:continuous:Note \u{00ab}A\u{bb}"
+            )),
+            spec(format!(
+                "{HATCH}:hatch:0,0,8,0,8,3:{LAYER}:dashed:crosshatch"
+            )),
+            spec(format!("{SYMBOL}:symbol:40,40,2:{LAYER}:dotted:north")),
+            spec(format!(
+                "{FREE_DIM}:free_dimension:0,0,30,0,6.5,1:{LAYER}:dashdot"
+            )),
+        ]
+        .concat(),
     );
     assert_eq!(code, 0, "{edited:?}");
     let edited_head = text(&edited, "revision_id");
@@ -373,10 +409,7 @@ fn text_hatch_symbol_and_free_dimension_are_drawn_objects_with_their_own_payload
         &edited_head,
         OP_AFTER,
         REV_AFTER,
-        &[
-            "--drafting".to_owned(),
-            format!("{TEXT}:text:10,20,3.5,0.25"),
-        ],
+        &spec(format!("{TEXT}:text:10,20,3.5,0.25:{LAYER}:continuous")),
     );
     assert_eq!(code, 2, "{refused:?}");
     assert_eq!(
@@ -389,4 +422,96 @@ fn text_hatch_symbol_and_free_dimension_are_drawn_objects_with_their_own_payload
         ),
         edited_head
     );
+}
+
+#[test]
+fn layers_drive_visibility_refuse_dangling_references_and_bind_replays() {
+    let f = Fixture::new();
+    f.model();
+    let document_dir = f
+        .shared
+        .root
+        .join("slice-three-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut create = vec![
+        "--document-dir".to_owned(),
+        document_dir.clone(),
+        "--op-id".to_owned(),
+        OP_CREATE.to_owned(),
+        "--revision-id".to_owned(),
+        REV_CREATE.to_owned(),
+        "--actor-id".to_owned(),
+        ACTOR.to_owned(),
+    ];
+    create.extend(intent());
+    let head = text(&f.ok("create-drawing", &argv(&create)), "revision_id");
+
+    // Two layers, one hidden: the hidden layer's object stays in the document but leaves the
+    // paper-visible set.
+    let shown = [
+        vec!["--layer".to_owned(), format!("{LAYER}:Outlines:on")],
+        vec!["--layer".to_owned(), format!("{OTHER_LAYER}:Notes:off")],
+        spec(format!("{LINE}:line:0,0,10,0:{LAYER}:continuous")),
+        spec(format!("{CIRCLE}:circle:10,10,2.5:{OTHER_LAYER}:dashed")),
+    ]
+    .concat();
+    let (code, edited) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &shown);
+    assert_eq!(code, 0, "{edited:?}");
+    let edited_head = text(&edited, "revision_id");
+    let inspected = f.ok(
+        "inspect-drawing",
+        &["--document-dir", document_dir.as_str()],
+    );
+    let visible = list(&inspected, "visible_drafting");
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].string().unwrap(), LINE);
+    assert_eq!(list(&inspected, "drafting").len(), 2);
+
+    // Flipping visibility is a paper-only change: the same objects, a new revision, and the
+    // other object becomes the visible one.
+    let flipped = [
+        vec!["--layer".to_owned(), format!("{LAYER}:Outlines:off")],
+        vec!["--layer".to_owned(), format!("{OTHER_LAYER}:Notes:on")],
+        spec(format!("{LINE}:line:0,0,10,0:{LAYER}:continuous")),
+        spec(format!("{CIRCLE}:circle:10,10,2.5:{OTHER_LAYER}:dashed")),
+    ]
+    .concat();
+    let (code, visibility_edit) = edit(&document_dir, &edited_head, OP_AFTER, REV_AFTER, &flipped);
+    assert_eq!(code, 0, "{visibility_edit:?}");
+    let flipped_head = text(&visibility_edit, "revision_id");
+    let inspected = f.ok(
+        "inspect-drawing",
+        &["--document-dir", document_dir.as_str()],
+    );
+    let visible = list(&inspected, "visible_drafting");
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].string().unwrap(), CIRCLE);
+    assert_eq!(list(&inspected, "drafting").len(), 2);
+
+    // An object naming a layer the same replacement does not define refuses and keeps the head.
+    let dangling = [
+        vec!["--layer".to_owned(), format!("{LAYER}:Outlines:on")],
+        spec(format!("{ARC}:arc:0,0,5,0,1.25:{OTHER_LAYER}:continuous")),
+    ]
+    .concat();
+    let (code, refused) = edit(&document_dir, &flipped_head, OP_AFTER, REV_AFTER, &dangling);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(
+        text(
+            &f.ok("inspect-drawing", &["--document-dir", &document_dir]),
+            "revision_id"
+        ),
+        flipped_head
+    );
+
+    // The exact replay of the first edit replays its revision; changed layers under the same
+    // operation id are a different request.
+    let (code, replayed) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &shown);
+    assert_eq!(code, 0, "{replayed:?}");
+    assert_eq!(text(&replayed, "revision_id"), edited_head);
+    let (code, reused) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &flipped);
+    assert_eq!(code, 2, "{reused:?}");
+    assert_eq!(text(&reused, "code"), "OP_ID_REUSE");
 }

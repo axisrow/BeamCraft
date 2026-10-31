@@ -13,7 +13,8 @@ use beamcraft_engine::drawing::projection::{
 };
 use beamcraft_engine::drawing::{
     DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
-    Plane, SheetFrame, SheetSpec, SourceModelPin, TitleBlock, ViewSpec, print, sheet, svg,
+    LayerSpec, LineType, Plane, SheetFrame, SheetSpec, SourceModelPin, TitleBlock, ViewSpec, print,
+    sheet, svg,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_host::revision::{ExpectedBase, RevisionStore};
@@ -152,11 +153,12 @@ fn geometry_json(result: Projection) -> Run<(Json, Json)> {
     Ok((body, dimension))
 }
 
-/// Single-value options plus the repeatable `--drafting` and `--placed-view` values, in caller
-/// order.
+/// Single-value options plus the repeatable `--drafting`, `--layer` and `--placed-view` values,
+/// in caller order.
 struct DocumentOptions<'a> {
     options: BTreeMap<&'a str, &'a str>,
     drafting: Vec<&'a str>,
+    layers: Vec<&'a str>,
     views: Vec<&'a str>,
 }
 
@@ -178,10 +180,12 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
     }
     let mut options = BTreeMap::new();
     let mut drafting = Vec::new();
+    let mut layers = Vec::new();
     let mut views = Vec::new();
     for [key, value] in args.as_chunks::<2>().0 {
         match *key {
             "--drafting" => drafting.push(*value),
+            "--layer" => layers.push(*value),
             "--placed-view" => views.push(*value),
             _ if matches!(
                 *key,
@@ -220,30 +224,45 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
     Ok(DocumentOptions {
         options,
         drafting,
+        layers,
         views,
     })
 }
 
-/// Parses repeatable `--drafting UUID:kind:x,y,...[:payload]` values into drawn objects. The
-/// fourth segment is the string payload (`text`, `pattern` or `symbol`) the kind requires.
-/// Engine admission still owns every bound; this only builds the typed values.
+/// Parses repeatable `--drafting UUID:kind:x,y:layer:linetype[:payload]` values into drawn
+/// objects. The layer and stroke segments are required; the sixth segment is the string payload
+/// (`text`, `pattern` or `symbol`) the kind requires. Engine admission still owns every bound;
+/// this only builds the typed values.
 fn drafting_specs(values: &[&str]) -> Run<Vec<DraftingSpec>> {
     values
         .iter()
         .map(|value| {
-            let mut parts = value.splitn(4, ':');
-            let id = parts
-                .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y[:payload]"))?;
-            let kind = parts
-                .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y[:payload]"))?;
-            let coords = parts
-                .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y[:payload]"))?;
+            // The first five segments never contain a colon, so the split is exact even for a
+            // text payload holding colons: the payload is the whole remainder.
+            let mut parts = value.splitn(6, ':');
+            let id = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let kind = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let coords = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let layer = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
+            let line_type = parts.next().ok_or_else(|| {
+                invalid("drafting spec requires UUID:kind:x,y:layer:linetype[:payload]")
+            })?;
             let payload = parts.next();
             let id = DraftingEntityId::parse(id)
                 .map_err(|_| invalid("drafting identity must be a full canonical UUIDv7"))?;
+            let layer = DraftingEntityId::parse(layer)
+                .map_err(|_| invalid("drafting layer must be a full canonical UUIDv7"))?;
+            let line_type = LineType::parse(line_type).ok_or_else(|| {
+                invalid("drafting line type must be continuous, dashed, dotted or dashdot")
+            })?;
             let coords = coords
                 .split(',')
                 .map(|number| {
@@ -259,7 +278,42 @@ fn drafting_specs(values: &[&str]) -> Run<Vec<DraftingSpec>> {
                          hatch, symbol or free_dimension with matching coordinates and payload",
                     )
                 })?;
-            Ok(DraftingSpec { id, geometry })
+            Ok(DraftingSpec {
+                id,
+                geometry,
+                layer,
+                line_type,
+            })
+        })
+        .collect()
+}
+
+/// Parses repeatable `--layer UUID:name:visible` values into document layers, where the visible
+/// flag is `on` or `off`. Engine admission still owns every bound; this only builds the values.
+fn layer_specs(values: &[&str]) -> Run<Vec<LayerSpec>> {
+    values
+        .iter()
+        .map(|value| {
+            let mut parts = value.splitn(3, ':');
+            let id = parts
+                .next()
+                .ok_or_else(|| invalid("layer requires UUID:name:on|off"))?;
+            let name = parts
+                .next()
+                .ok_or_else(|| invalid("layer requires UUID:name:on|off"))?;
+            let visible = parts
+                .next()
+                .ok_or_else(|| invalid("layer requires UUID:name:on|off"))?;
+            Ok(LayerSpec {
+                id: DraftingEntityId::parse(id)
+                    .map_err(|_| invalid("layer identity must be a full canonical UUIDv7"))?,
+                name: name.to_owned(),
+                visible: match visible {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(invalid("layer visibility must be on or off")),
+                },
+            })
         })
         .collect()
 }
@@ -387,6 +441,7 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
         drafting: Vec::new(),
         views: Vec::new(),
         sheet: document_sheet(options)?,
+        layers: Vec::new(),
     })
     .map_err(Into::into)
 }
@@ -483,6 +538,35 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
             ),
         ),
         (
+            "layers",
+            Json::Array(
+                revision
+                    .drawing
+                    .layers()
+                    .iter()
+                    .map(|layer| {
+                        Ok(Json::object([
+                            ("id", Json::text(layer.id.to_string())),
+                            ("name", Json::text(&layer.name)),
+                            ("visible", Json::Bool(layer.visible)),
+                        ]))
+                    })
+                    .collect::<Run<Vec<_>>>()?,
+            ),
+        ),
+        // The paper-visible subset of the drawn objects: hiding a layer changes this list and
+        // never the stored document.
+        (
+            "visible_drafting",
+            Json::Array(
+                revision
+                    .drawing
+                    .visible_drafting()
+                    .map(|entity| Json::text(entity.id.to_string()))
+                    .collect(),
+            ),
+        ),
+        (
             "drafting",
             Json::Array(
                 revision
@@ -499,22 +583,23 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
                                 .map(|value| num(*value))
                                 .collect::<Run<Vec<_>>>()?,
                         );
-                        Ok(match entity.geometry.string_payload() {
-                            Some((name, value)) => {
-                                let name = name.strip_prefix("drawing:").unwrap_or(name);
-                                Json::object([
-                                    ("id", Json::text(entity.id.to_string())),
-                                    ("kind", Json::text(entity.geometry.kind())),
-                                    ("geometry_mm", geometry_mm),
-                                    (name, Json::text(value)),
-                                ])
-                            }
-                            None => Json::object([
-                                ("id", Json::text(entity.id.to_string())),
-                                ("kind", Json::text(entity.geometry.kind())),
-                                ("geometry_mm", geometry_mm),
-                            ]),
-                        })
+                        let mut fields = vec![
+                            ("id", Json::text(entity.id.to_string())),
+                            ("kind", Json::text(entity.geometry.kind())),
+                            ("layer", Json::text(entity.layer.to_string())),
+                            ("line_type", Json::text(entity.line_type.as_str())),
+                            ("geometry_mm", geometry_mm),
+                        ];
+                        if let Some((name, value)) = entity.geometry.string_payload() {
+                            let name = name.strip_prefix("drawing:").unwrap_or(name);
+                            fields.push((name, Json::text(value)));
+                        }
+                        Ok(Json::Object(
+                            fields
+                                .into_iter()
+                                .map(|(key, value)| (key.into(), value))
+                                .collect(),
+                        ))
                     })
                     .collect::<Run<Vec<_>>>()?,
             ),
@@ -595,12 +680,13 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 .map_err(|_| invalid("revision id must be UUIDv7"))?;
             let actor = ActorId::parse(required("--actor-id")?)
                 .map_err(|_| invalid("actor id must be UUIDv7"))?;
+            let layers = layer_specs(&parsed.layers)?;
             let drafting = drafting_specs(&parsed.drafting)?;
             // Replaying the exact accepted operation stays safe after later revisions. The
-            // fingerprint binds the incoming drafting too: a retry that drops or changes the
-            // geometry is a different request, never a replay.
+            // fingerprint binds the incoming layers and drafting too: a retry that drops or
+            // changes either is a different request, never a replay.
             if let Some(previous) = documents.query(&op)? {
-                let candidate = previous.drawing.clone().with_drafting(drafting)?;
+                let candidate = previous.drawing.clone().with_drafting(layers, drafting)?;
                 let request = request_fingerprint(
                     &candidate,
                     State::Draft,
@@ -621,7 +707,7 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let current = documents.head()?;
             // Drawn objects belong to the document only: no model store is read, the retained
             // source archive and every identity carry over unchanged.
-            let edited = current.drawing.clone().with_drafting(drafting)?;
+            let edited = current.drawing.clone().with_drafting(layers, drafting)?;
             let (_, revised) = documents.commit(
                 &expected,
                 DocumentWrite {
@@ -1074,6 +1160,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         drafting: Vec::new(),
         views: Vec::new(),
         sheet: None,
+        layers: Vec::new(),
     })?;
     // Admission precedes the strict kernel-derived inspection. The same opened revision supplies
     // both the complete source pin and the snapshot; a concurrent model head never mixes them.

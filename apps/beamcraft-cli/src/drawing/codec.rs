@@ -6,9 +6,9 @@
 
 use crate::plate::{PlateError, integrity};
 use beamcraft_engine::drawing::{
-    self, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
-    MAX_DRAFTING_ENTITIES, MAX_VIEWS, Plane, SheetFrame, SheetSpec, SourceModelPin, TitleBlock,
-    ViewSpec,
+    self, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec, LayerSpec, LineType,
+    MAX_DRAFTING_ENTITIES, MAX_INTENT_PAGE_ITEMS, MAX_LAYERS, MAX_VIEWS, Plane, SheetFrame,
+    SheetSpec, SourceModelPin, TitleBlock, ViewSpec,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_layer_engine::{
@@ -27,7 +27,7 @@ pub const INTENT_LAYER: &str = "drawing.usda";
 /// Tight cap checked before copying or parsing a document intent.
 pub const MAX_INTENT_BYTES: usize = 16_384;
 /// Closed descriptor whose SHA-256 is the drawing schema identity.
-pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/2;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;page-items=64;dimension=/Drawing/Dimension;sheet=/Drawing/Sheet;sheet-sizes=a4,a3,a2,a1,a0;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
+pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/3;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;page-items=64;dimension=/Drawing/Dimension;sheet=/Drawing/Sheet;sheet-sizes=a4,a3,a2,a1,a0;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;drafting-attrs=layer,linetype;linetypes=continuous,dashed,dotted,dashdot;layers=/Drawing/Layers;layers-cap=16;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
 
 /// Independent drawing schema digest; never interchangeable with the engineering-model schema.
 pub fn schema_identity() -> Result<ContentDigest, PlateError> {
@@ -97,6 +97,21 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
         }
         text.push_str("    }\n");
     }
+    if !s.layers.is_empty() {
+        text.push_str("    def Scope \"Layers\"\n    {\n");
+        for (ordinal, layer) in s.layers.iter().enumerate() {
+            // Canonical ordinal names, not layer UUIDs: the prim name is derived state, the
+            // identity lives in the drawing:id attribute.
+            text.push_str(&format!(
+                "        def Scope \"L{}\"\n        {{\n            custom string drawing:id = {}\n            custom string drawing:name = {}\n            custom bool drawing:visible = {}\n        }}\n",
+                ordinal + 1,
+                quote(&layer.id.to_string()),
+                quote(&layer.name),
+                layer.visible
+            ));
+        }
+        text.push_str("    }\n");
+    }
     if !s.drafting.is_empty() {
         text.push_str("    def Scope \"Drafting\"\n    {\n");
         for (ordinal, entity) in s.drafting.iter().enumerate() {
@@ -117,10 +132,12 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
                 None => String::new(),
             };
             text.push_str(&format!(
-                "        def Scope \"E{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:kind = {}\n            custom double[] drawing:geometry = [{}]\n{}        }}\n",
+                "        def Scope \"E{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:kind = {}\n            custom string drawing:layer = {}\n            custom token drawing:linetype = {}\n            custom double[] drawing:geometry = [{}]\n{}        }}\n",
                 ordinal + 1,
                 quote(&entity.id.to_string()),
                 quote(entity.geometry.kind()),
+                quote(&entity.layer.to_string()),
+                quote(entity.line_type.as_str()),
                 numbers,
                 payload
             ));
@@ -210,9 +227,11 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
             total_bytes: MAX_INTENT_BYTES,
             layers: 1,
             depth: 8,
-            // Root, view, dimension, the optional sheet/views/drafting scopes and up to the
-            // entity caps — the whole intent fits one reader page (engine MAX_INTENT_PAGE_ITEMS).
-            prims: 3 + 1 + MAX_DRAFTING_ENTITIES,
+            // Root, view, dimension, the optional sheet/views/layers/drafting scopes and every
+            // object — admission caps the whole intent page (engine MAX_INTENT_PAGE_ITEMS), so
+            // the reader budget is that exact bound; the semantic reader below still re-checks
+            // everything.
+            prims: MAX_INTENT_PAGE_ITEMS,
             // Account for Sdf property-child lists and per-attribute metadata as well as values.
             // The closed semantic reader below still requires exactly two anchors/two origins.
             values: 1024,
@@ -220,7 +239,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
             text_bytes: 1024,
             decoded_bytes: 65_536,
             snapshot_bytes: 65_536,
-            page_items: 3 + 1 + MAX_DRAFTING_ENTITIES,
+            page_items: MAX_INTENT_PAGE_ITEMS,
         },
     };
     // Asset digest and identity come from the caller's manifest. This is the wrapper's distinct
@@ -342,6 +361,10 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                     let id = DraftingEntityId::parse(text(item, "drawing:id", "string")?)
                         .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?;
                     let kind = text(item, "drawing:kind", "token")?;
+                    let layer = DraftingEntityId::parse(text(item, "drawing:layer", "string")?)
+                        .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?;
+                    let line_type = LineType::parse(text(item, "drawing:linetype", "token")?)
+                        .ok_or_else(|| integrity("invalid drawing line type"))?;
                     let payload = match DraftingGeometry::payload_attribute(kind) {
                         Some(name) => Some(text(item, name, "string")?),
                         None => None,
@@ -361,12 +384,60 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                     };
                     let geometry = DraftingGeometry::from_parts(kind, &values, payload)
                         .ok_or_else(|| integrity("drafting geometry disagrees with its kind"))?;
-                    entities.push(DraftingSpec { id, geometry });
+                    entities.push(DraftingSpec {
+                        id,
+                        geometry,
+                        layer,
+                        line_type,
+                    });
                 }
                 entities
             }
             Some(_) => return Err(integrity("drawing prim profile disagrees")),
         };
+    let layers: Vec<LayerSpec> = match page.items.iter().find(|p| p.path == "/Drawing/Layers") {
+        None => Vec::new(),
+        Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
+            // Canonical ordinal children L1..Ln with no gaps; the final canonical re-encode
+            // comparison refuses any other topology or stray attribute.
+            const PREFIX: &str = "/Drawing/Layers/L";
+            let mut children: BTreeMap<usize, &Prim> = BTreeMap::new();
+            for item in &page.items {
+                let Some(name) = item.path.strip_prefix(PREFIX) else {
+                    continue;
+                };
+                if item.type_name.as_deref() != Some("Scope") || !item.active {
+                    return Err(integrity("layers scope holds a foreign prim"));
+                }
+                let ordinal: usize = name
+                    .parse()
+                    .map_err(|_| integrity("layer prim name is not a canonical ordinal"))?;
+                if ordinal == 0 || children.insert(ordinal, item).is_some() {
+                    return Err(integrity("layer ordinals must be distinct from one"));
+                }
+            }
+            if children.len() > MAX_LAYERS {
+                return Err(limit());
+            }
+            let mut layers = Vec::new();
+            for (expected, (ordinal, item)) in children.iter().enumerate() {
+                if *ordinal != expected + 1 {
+                    return Err(integrity("layer ordinals must be contiguous"));
+                }
+                layers.push(LayerSpec {
+                    id: DraftingEntityId::parse(text(item, "drawing:id", "string")?)
+                        .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?,
+                    name: text(item, "drawing:name", "string")?.to_owned(),
+                    visible: match value(item, "drawing:visible", "bool")? {
+                        Value::Bool(flag) => *flag,
+                        _ => return Err(integrity("layer visibility is not a boolean")),
+                    },
+                });
+            }
+            layers
+        }
+        Some(_) => return Err(integrity("drawing prim profile disagrees")),
+    };
     let views: Vec<ViewSpec> = match page.items.iter().find(|p| p.path == "/Drawing/Views") {
         None => Vec::new(),
         Some(scope) if scope.type_name.as_deref() == Some("Scope") && scope.active => {
@@ -431,6 +502,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
         drafting,
         views,
         sheet,
+        layers,
     })?;
     if encode(&drawing)?.bytes != asset.bytes {
         return Err(integrity(

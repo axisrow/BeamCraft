@@ -18,6 +18,8 @@ use beamcraft_model::id::DraftingEntityId;
 pub const MAX_DRAFTING_ENTITIES: usize = 60;
 /// Largest number of vertices of one drawn polyline or hatch outline.
 pub const MAX_POLYLINE_POINTS: usize = 16;
+/// Largest number of layers in one document.
+pub const MAX_LAYERS: usize = 16;
 /// Largest byte length of one drawn text string.
 pub const MAX_TEXT_BYTES: usize = 128;
 
@@ -371,13 +373,68 @@ impl DraftingGeometry {
     }
 }
 
-/// One drawn object: identity plus paper geometry.
+/// The stroke pattern of a drawn object. These are paper line styles only; they never carry
+/// model semantics such as hidden-edge state resolved from the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineType {
+    /// Unbroken stroke.
+    Continuous,
+    /// Even alternating strokes and gaps.
+    Dashed,
+    /// Dots without strokes.
+    Dotted,
+    /// Alternating long strokes, dots and gaps.
+    DashDot,
+}
+
+impl LineType {
+    /// Stable lowercase wire token, also the persisted `drawing:linetype` value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Continuous => "continuous",
+            Self::Dashed => "dashed",
+            Self::Dotted => "dotted",
+            Self::DashDot => "dashdot",
+        }
+    }
+
+    /// Parses a fixed line-type token.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "continuous" => Some(Self::Continuous),
+            "dashed" => Some(Self::Dashed),
+            "dotted" => Some(Self::Dotted),
+            "dashdot" => Some(Self::DashDot),
+            _ => None,
+        }
+    }
+}
+
+/// One document-owned layer: a named, toggleable grouping that drawn objects join by
+/// reference. A layer holds no model semantics and no geometry of its own; hiding it is
+/// paper visibility only and never touches the engineering model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerSpec {
+    /// Stable layer identity, distinct from every other document object UUID.
+    pub id: DraftingEntityId,
+    /// Layer name under the model's existing bounded label rule.
+    pub name: String,
+    /// Whether drawn objects on this layer are visible on the paper.
+    pub visible: bool,
+}
+
+/// One drawn object: identity plus paper geometry plus its layer and stroke assignment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DraftingSpec {
     /// Stable entity identity, distinct from every other document object UUID.
     pub id: DraftingEntityId,
     /// The drawn geometry.
     pub geometry: DraftingGeometry,
+    /// The document-defined layer this object sits on; admission refuses a layer the
+    /// document does not define.
+    pub layer: DraftingEntityId,
+    /// The stroke pattern of this object.
+    pub line_type: LineType,
 }
 
 fn finite_point(point: [f64; 2]) -> Result<(), CommandError> {
@@ -618,6 +675,21 @@ mod tests {
             a: [0.0, 0.0],
             b: [10.0, 0.0],
         }
+    }
+
+    #[test]
+    fn line_types_round_trip_through_fixed_tokens() {
+        for (value, token) in [
+            (LineType::Continuous, "continuous"),
+            (LineType::Dashed, "dashed"),
+            (LineType::Dotted, "dotted"),
+            (LineType::DashDot, "dashdot"),
+        ] {
+            assert_eq!(value.as_str(), token);
+            assert_eq!(LineType::parse(token), Some(value));
+        }
+        assert_eq!(LineType::parse("hidden"), None);
+        assert_eq!(LineType::parse(""), None);
     }
 
     #[test]

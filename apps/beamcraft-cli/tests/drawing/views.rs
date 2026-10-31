@@ -170,8 +170,10 @@ fn views_are_placed_only_by_explicit_commands_and_survive_other_edits() {
             REV_DRAFT,
             "--actor-id",
             ACTOR,
+            "--layer",
+            "01900000-0000-7000-8000-00000000031a:Outlines:on",
             "--drafting",
-            &format!("{LINE}:line:0,0,100,0"),
+            &format!("{LINE}:line:0,0,100,0:01900000-0000-7000-8000-00000000031a:continuous"),
         ],
     );
     assert_eq!(list(&drafting, "drafting").len(), 1);
@@ -270,6 +272,7 @@ fn a_placed_view_shows_exactly_its_own_basis_of_the_pinned_source() {
             decimal_places: 0,
         },
         drafting: Vec::new(),
+        layers: Vec::new(),
         views,
         sheet: None,
     };

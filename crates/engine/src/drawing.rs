@@ -16,13 +16,14 @@ pub mod svg;
 
 pub use beamcraft_model::sheet::{SheetFrame, SheetSpec, TitleBlock};
 pub use drafting::{
-    DraftingGeometry, DraftingSpec, HatchPattern, MAX_DRAFTING_ENTITIES, PaperSymbol,
+    DraftingGeometry, DraftingSpec, HatchPattern, LayerSpec, LineType, MAX_DRAFTING_ENTITIES,
+    MAX_LAYERS, PaperSymbol,
 };
 
 use crate::query::feature::{BodyKind, FeatureId, FeatureKind};
 use beamcraft_model::command::{CommandError, label_is_valid};
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{DimensionId, DrawingId, DrawingViewId, ElementId};
+use beamcraft_model::id::{DimensionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId};
 
 /// Version of the first closed drawing intent contract (distinct from the model schema).
 pub const CONTRACT_VERSION: &str = "beamcraft-drawing/1";
@@ -125,6 +126,9 @@ pub struct DrawingSpec {
     /// loose unbounded paper of the earlier contract; present, every export surface renders
     /// the same fixed sheet.
     pub sheet: Option<SheetSpec>,
+    /// Document-owned layers that drawn objects join by reference; hiding a layer is paper
+    /// visibility only and never touches the model.
+    pub layers: Vec<LayerSpec>,
 }
 
 /// Validated immutable intent. Admission grants no claim that the referenced geometry exists.
@@ -236,20 +240,23 @@ impl Drawing {
             &spec.dimension.id,
             spec.sheet.as_ref(),
             &spec.views,
+            &spec.layers,
             &spec.drafting,
         )?;
         Ok(Self(spec))
     }
 
     /// Validates the document's paper objects together: bounded counts, full distinct identities
-    /// within and across both collections, and per-entity/per-view bounds. Drawn objects own no
-    /// model reference of any kind, and every placed view resolves from the document's own pin.
+    /// within and across all three collections, and per-entity/per-view bounds. Drawn objects own
+    /// no model reference of any kind, every drawn object sits on a layer the document defines,
+    /// and every placed view resolves from the document's own pin.
     fn validate_paper_objects(
         drawing: &DrawingId,
         view: &DrawingViewId,
         dimension: &DimensionId,
         sheet: Option<&SheetSpec>,
         views: &[ViewSpec],
+        layers: &[LayerSpec],
         drafting: &[DraftingSpec],
     ) -> Result<(), CommandError> {
         if views.len() > MAX_VIEWS {
@@ -257,6 +264,13 @@ impl Drawing {
                 ErrorCode::LimitExceeded,
                 "views",
                 "too many placed views in one document",
+            ));
+        }
+        if layers.len() > MAX_LAYERS {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "layers",
+                "too many layers in one document",
             ));
         }
         if drafting.len() > MAX_DRAFTING_ENTITIES {
@@ -271,19 +285,38 @@ impl Drawing {
         let page_items = 3
             + usize::from(sheet.is_some())
             + usize::from(!views.is_empty())
+            + usize::from(!layers.is_empty())
             + usize::from(!drafting.is_empty())
             + views.len()
+            + layers.len()
             + drafting.len();
         if page_items > MAX_INTENT_PAGE_ITEMS {
             return Err(CommandError::new(
                 ErrorCode::LimitExceeded,
                 "paper",
-                "placed views and drawn objects together exceed the one-page intent",
+                "placed views, layers and drawn objects together exceed the one-page intent",
             ));
+        }
+        for layer in layers {
+            if !label_is_valid(&layer.name) {
+                return Err(invalid(
+                    "layers",
+                    "layer name must satisfy the bounded label rule",
+                ));
+            }
         }
         let reserved = [drawing.uuid(), view.uuid(), dimension.uuid()];
         for entity in drafting {
             drafting::validate_geometry(&entity.geometry)?;
+            if !layers
+                .iter()
+                .any(|layer| layer.id.uuid() == entity.layer.uuid())
+            {
+                return Err(invalid(
+                    "drafting",
+                    "drawn object names a layer the document does not define",
+                ));
+            }
             if reserved.contains(&entity.id.uuid()) {
                 return Err(CommandError::new(
                     ErrorCode::DuplicateId,
@@ -301,14 +334,17 @@ impl Drawing {
                     "placed view UUIDs must be distinct from the document object UUIDs",
                 ));
             }
-            if drafting
+            if layers
                 .iter()
-                .any(|entity| entity.id.uuid() == placed.id.uuid())
+                .any(|layer| layer.id.uuid() == placed.id.uuid())
+                || drafting
+                    .iter()
+                    .any(|entity| entity.id.uuid() == placed.id.uuid())
             {
                 return Err(CommandError::new(
                     ErrorCode::DuplicateId,
                     "views",
-                    "placed view UUIDs must be distinct from the drawn object UUIDs",
+                    "placed view UUIDs must be distinct from the layer and drawn object UUIDs",
                 ));
             }
         }
@@ -327,11 +363,35 @@ impl Drawing {
                     .collect::<Vec<_>>(),
                 "placed view UUIDs must be pairwise distinct",
             ),
+            (
+                layers
+                    .iter()
+                    .map(|layer| layer.id.uuid())
+                    .collect::<Vec<_>>(),
+                "layer UUIDs must be pairwise distinct",
+            ),
         ] {
             for (index, id) in group.iter().enumerate() {
                 if group.iter().skip(index + 1).any(|other| other == id) {
                     return Err(CommandError::new(ErrorCode::DuplicateId, "paper", message));
                 }
+            }
+        }
+        // Layer UUIDs must also be distinct from the drawn objects' own identities.
+        for layer in layers {
+            if reserved.contains(&layer.id.uuid())
+                || views
+                    .iter()
+                    .any(|placed| placed.id.uuid() == layer.id.uuid())
+                || drafting
+                    .iter()
+                    .any(|entity| entity.id.uuid() == layer.id.uuid())
+            {
+                return Err(CommandError::new(
+                    ErrorCode::DuplicateId,
+                    "layers",
+                    "layer UUIDs must be distinct from every other document object UUID",
+                ));
             }
         }
         Ok(())
@@ -376,23 +436,50 @@ impl Drawing {
         &self.0.drafting
     }
 
+    /// Borrows the document's layers.
+    pub fn layers(&self) -> &[LayerSpec] {
+        &self.0.layers
+    }
+
+    /// Iterates the drawn objects whose layer is visible. Visibility is a paper-only filter:
+    /// hidden objects stay in the document unchanged and the model is never consulted.
+    pub fn visible_drafting(&self) -> impl Iterator<Item = &DraftingSpec> {
+        let visible = move |layer: &DraftingEntityId| {
+            self.0
+                .layers
+                .iter()
+                .any(|spec| spec.id.uuid() == layer.uuid() && spec.visible)
+        };
+        self.0
+            .drafting
+            .iter()
+            .filter(move |entity| visible(&entity.layer))
+    }
+
     /// Borrows the placed views beyond the primary view, in caller order.
     pub fn views(&self) -> &[ViewSpec] {
         &self.0.views
     }
 
-    /// Replaces the drawn objects with a newly admitted set, retaining every other document
-    /// object, its identity and its source pin. This is a whole-document intent operation: the
-    /// engineering model is neither read nor touched.
-    pub fn with_drafting(mut self, entities: Vec<DraftingSpec>) -> Result<Self, CommandError> {
+    /// Replaces the layers and drawn objects with a newly admitted set, retaining every other
+    /// document object, its identity and its source pin. One atomic intent operation: the new
+    /// objects must name layers the same replacement defines, so no intermediate state can hold
+    /// a dangling layer reference. The engineering model is neither read nor touched.
+    pub fn with_drafting(
+        mut self,
+        layers: Vec<LayerSpec>,
+        entities: Vec<DraftingSpec>,
+    ) -> Result<Self, CommandError> {
         Self::validate_paper_objects(
             &self.0.id,
             &self.0.view.id,
             &self.0.dimension.id,
             self.0.sheet.as_ref(),
             &self.0.views,
+            &layers,
             &entities,
         )?;
+        self.0.layers = layers;
         self.0.drafting = entities;
         Ok(self)
     }
@@ -407,6 +494,7 @@ impl Drawing {
             &self.0.dimension.id,
             self.0.sheet.as_ref(),
             &views,
+            &self.0.layers,
             &self.0.drafting,
         )?;
         self.0.views = views;
