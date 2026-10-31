@@ -456,3 +456,4 @@ jobs:
         env:
           GATE_NEEDS: ${{ toJSON(needs) }}
           GATE_OSES: ${{ needs.plan.outputs.oses }}
+          GH_TOKEN: ${{ github.token }}

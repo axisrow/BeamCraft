@@ -127,6 +127,11 @@ fn run() -> Result<()> {
         "ci-verdict" => {
             let needs = serde_json::from_str(&std::env::var("GATE_NEEDS")?)?;
             let oses = serde_json::from_str::<Vec<String>>(&std::env::var("GATE_OSES")?)?;
+            if std::env::var("GITHUB_EVENT_NAME")? == "pull_request" {
+                let payload =
+                    serde_json::from_str(&read(Path::new(&std::env::var("GITHUB_EVENT_PATH")?))?)?;
+                github::refresh_pr(&root, &payload, &std::env::var("GITHUB_REPOSITORY")?, &oses)?;
+            }
             github::verdict(&needs, &oses, &std::env::var("GITHUB_EVENT_NAME")?)?;
             println!("CI verdict: required checks passed on both selected operating systems");
         }

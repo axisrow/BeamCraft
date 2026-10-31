@@ -216,6 +216,39 @@ pub fn verdict(needs: &Value, oses: &[String], event: &str) -> Result<()> {
     Ok(())
 }
 
+/// Rejects a verdict whose PR head or base moved while CI was executing.
+pub fn current_pr_matches(event_pr: &Value, current_pr: &Value) -> Result<()> {
+    for pointer in ["/head/sha", "/base/sha"] {
+        if field(event_pr, pointer)? != field(current_pr, pointer)? {
+            return fail("PR head/base changed during CI; run and publish a new local gate");
+        }
+    }
+    Ok(())
+}
+
+/// Revalidates live PR metadata before the final verdict, not only the event payload.
+pub fn refresh_pr(root: &Path, payload: &Value, repo: &str, oses: &[String]) -> Result<()> {
+    let event_pr = payload.get("pull_request").ok_or("missing PR event")?;
+    let number = event_pr
+        .get("number")
+        .and_then(Value::as_u64)
+        .ok_or("missing PR number")?;
+    let current = api(repo, &format!("pulls/{number}"))?;
+    current_pr_matches(event_pr, &current)?;
+    let current_payload = serde_json::json!({"pull_request":current});
+    let selected = plan(
+        root,
+        "pull_request",
+        &current_payload,
+        field(event_pr, "/head/sha")?,
+        repo,
+    )?;
+    if selected.oses != oses {
+        return fail("local OS evidence changed during CI");
+    }
+    Ok(())
+}
+
 /// Checks a sync receipt against actual merge parents and tree, independently of its message.
 pub fn validate_sync(report: &Report, actual_tree: &str, parents: &[String]) -> Result<()> {
     report.validate()?;

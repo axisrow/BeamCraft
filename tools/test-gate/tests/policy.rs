@@ -111,6 +111,18 @@ fn a_new_head_base_or_tree_needs_new_local_evidence() {
 }
 
 #[test]
+fn a_base_update_during_ci_cannot_receive_a_current_verdict() {
+    let event = serde_json::json!({"head":{"sha":"head"},"base":{"sha":"base"}});
+    github::current_pr_matches(&event, &event).unwrap();
+    let mut changed = event.clone();
+    changed["base"]["sha"] = "new-base".into();
+    assert!(github::current_pr_matches(&event, &changed).is_err());
+    let mut changed = event.clone();
+    changed["head"]["sha"] = "new-head".into();
+    assert!(github::current_pr_matches(&event, &changed).is_err());
+}
+
+#[test]
 fn integration_receipt_matches_content_not_the_merge_method_commit_id() {
     let r = success();
     github::validate_merged(&r, &r.commit, &r.tree, &r.tree).unwrap();
