@@ -12,6 +12,7 @@
 
 pub mod assembly;
 pub mod attribute;
+pub mod bend;
 pub mod bolt;
 pub mod bom;
 pub mod class_palette;

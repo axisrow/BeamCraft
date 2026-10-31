@@ -16,6 +16,7 @@ mod alpha_scenario;
 mod alpha_scenario_expanded;
 mod assemblies;
 mod attributes;
+mod bent_plates;
 mod bolts;
 mod bom;
 mod changeset;

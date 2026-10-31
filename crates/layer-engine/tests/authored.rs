@@ -24,6 +24,8 @@ const ACTOR: &str = "0199e7a0-0000-7000-8000-000000000005";
 const OP: &str = "0199e7a0-0000-7000-8000-000000000006";
 /// A second part prim for the A12.2 corner-treatment authoring regression.
 const TREATED: &str = "0199e7a0-0000-7000-8000-000000000007";
+/// A third part prim for the A10 bend-record authoring regression.
+const BENT: &str = "0199e7a0-0000-7000-8000-000000000008";
 fn digest(bytes: &[u8]) -> ContentDigest {
     Sha256::digest(bytes).unwrap()
 }
@@ -132,6 +134,7 @@ fn elements() -> Vec<Change> {
                 holes: Vec::new(),
                 hole_records: Vec::new(),
                 cuts: Vec::new(),
+                bends: Vec::new(),
             },
             placement: pose(),
             material: Some(r[1].digest),
@@ -1379,6 +1382,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
             holes,
             hole_records: Vec::new(),
             cuts: Vec::new(),
+            bends: Vec::new(),
         },
         placement: pose(),
         material: None,
@@ -1510,6 +1514,7 @@ fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
         holes: Vec::new(),
         hole_records: Vec::new(),
         cuts: Vec::new(),
+        bends: Vec::new(),
     };
     let chamfer = PlateCorner {
         vertex: 1,
@@ -1680,6 +1685,207 @@ fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
 }
 
 #[test]
+fn bend_records_are_authored_as_seven_parallel_arrays_and_bounded() {
+    use beamcraft_model::command::BendRecord;
+    use beamcraft_model::id::OpId;
+    let bent = |bends: Vec<BendRecord>| Shape::Plate {
+        contour_mm: vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 500.0, 0.0],
+            [0.0, 500.0, 0.0],
+        ],
+        thickness_mm: 10.0,
+        thickness_side: None,
+        corners: Vec::new(),
+        bends,
+        holes: Vec::new(),
+        hole_records: Vec::new(),
+        cuts: Vec::new(),
+    };
+    let fold = BendRecord {
+        operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000d1").unwrap(),
+        spec: BendSpec::Fold {
+            a_mm: [0.0, 250.0, 0.0],
+            b_mm: [1000.0, 250.0, 0.0],
+            radius_mm: 8.0,
+            angle_rad: 1.5,
+        },
+    };
+    let roll = BendRecord {
+        operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000d2").unwrap(),
+        spec: BendSpec::Roll {
+            a_mm: [0.0, 0.0, 0.0],
+            b_mm: [80.0, 0.0, 0.0],
+            radius_mm: 54.0,
+            radius_b_mm: Some(114.0),
+        },
+    };
+    let (mut a, o) = open(initial());
+    let p = a
+        .prepare(
+            batch(
+                &o.context,
+                vec![Change::Create(Element {
+                    id: BENT.into(),
+                    name: "Bent plate".into(),
+                    shape: bent(vec![fold, roll]),
+                    placement: pose(),
+                    material: None,
+                })],
+            ),
+            &control(),
+        )
+        .unwrap();
+    let o = a
+        .install(
+            &o.context,
+            &p.token,
+            &p.op_id,
+            Decision::Accepted,
+            &control(),
+        )
+        .unwrap();
+    let prims = snapshot(&a, &o.context);
+    // The seven parallel arrays, always together and of equal length; a fold repeats its
+    // radius in the second-radius slot and a roll stores a zero angle.
+    assert_eq!(
+        value(&prims, BENT, "steel:plate:bendOperationId"),
+        Some(&Value::Array(vec![
+            Value::Text("019a7bf0-0000-7000-8000-0000000000d1".into()),
+            Value::Text("019a7bf0-0000-7000-8000-0000000000d2".into())
+        ]))
+    );
+    let kinds = value(&prims, BENT, "steel:plate:bendKind").unwrap();
+    let Value::Array(kinds) = kinds else {
+        panic!("bend kinds are missing");
+    };
+    fn kind(k: &Value) -> &str {
+        match k {
+            Value::Text(token) => token.as_str(),
+            _ => panic!("a bend kind must be a token"),
+        }
+    }
+    assert_eq!(kinds.iter().map(kind).collect::<Vec<_>>(), ["fold", "roll"]);
+    assert_eq!(
+        value(&prims, BENT, "steel:plate:bendRadiusMm"),
+        Some(&Value::Array(vec![Value::Number(8.0), Value::Number(54.0)]))
+    );
+    assert_eq!(
+        value(&prims, BENT, "steel:plate:bendRadiusBMm"),
+        Some(&Value::Array(vec![
+            Value::Number(8.0),
+            Value::Number(114.0)
+        ]))
+    );
+    assert_eq!(
+        value(&prims, BENT, "steel:plate:bendAngleRad"),
+        Some(&Value::Array(vec![Value::Number(1.5), Value::Number(0.0)]))
+    );
+    // The exported layers pass the structural validator.
+    let layers = a.export(&o.context, &control()).unwrap();
+    let mut request = initial();
+    request.assets = layers;
+    request.manifest = request.manifest_digest().unwrap();
+    validate_layers(request, schema_identity().unwrap(), &control()).unwrap();
+
+    // Structural bounds bind before anything is written: the refusals are a separate test.
+}
+
+#[test]
+fn a_bend_record_refuses_an_out_of_range_angle_or_radius_before_writing() {
+    use beamcraft_model::command::BendRecord;
+    use beamcraft_model::id::OpId;
+    let bent = |bends: Vec<BendRecord>| Shape::Plate {
+        contour_mm: vec![
+            [0.0, 0.0, 0.0],
+            [1000.0, 0.0, 0.0],
+            [1000.0, 500.0, 0.0],
+            [0.0, 500.0, 0.0],
+        ],
+        thickness_mm: 10.0,
+        thickness_side: None,
+        corners: Vec::new(),
+        bends,
+        holes: Vec::new(),
+        hole_records: Vec::new(),
+        cuts: Vec::new(),
+    };
+    let spec_of = |angle: f64, radius: f64| BendSpec::Fold {
+        a_mm: [0.0, 250.0, 0.0],
+        b_mm: [1000.0, 250.0, 0.0],
+        radius_mm: radius,
+        angle_rad: angle,
+    };
+    let (mut b, ob) = open(initial());
+    let refused_record =
+        |author: &mut Author, context: &Context, operation: &str, spec: BendSpec| {
+            author
+                .prepare(
+                    batch(
+                        context,
+                        vec![Change::Create(Element {
+                            id: BENT.into(),
+                            name: "Bad bend".into(),
+                            shape: bent(vec![BendRecord {
+                                operation_id: OpId::parse(operation).unwrap(),
+                                spec,
+                            }]),
+                            placement: pose(),
+                            material: None,
+                        })],
+                    ),
+                    &control(),
+                )
+                .err()
+                .map(|diagnostic| diagnostic.code)
+        };
+    assert_eq!(
+        refused_record(
+            &mut b,
+            &ob.context,
+            "019a7bf0-0000-7000-8000-0000000000d3",
+            spec_of(1.0, 0.0)
+        ),
+        Some(ErrorCode::InvalidArgument)
+    );
+    assert_eq!(
+        refused_record(
+            &mut b,
+            &ob.context,
+            "019a7bf0-0000-7000-8000-0000000000d4",
+            spec_of(0.0, 8.0)
+        ),
+        Some(ErrorCode::InvalidArgument)
+    );
+    assert_eq!(
+        refused_record(
+            &mut b,
+            &ob.context,
+            "019a7bf0-0000-7000-8000-0000000000d5",
+            spec_of(core::f64::consts::PI, 8.0)
+        ),
+        Some(ErrorCode::InvalidArgument)
+    );
+    // A cone with equal radii is a cylinder: the stored encoding keeps one radius for a
+    // cylinder, so the equal-radius cone is refused before it can wedge its own blank.
+    assert_eq!(
+        refused_record(
+            &mut b,
+            &ob.context,
+            "019a7bf0-0000-7000-8000-0000000000d6",
+            BendSpec::Roll {
+                a_mm: [0.0, 0.0, 0.0],
+                b_mm: [80.0, 0.0, 0.0],
+                radius_mm: 54.0,
+                radius_b_mm: Some(54.0),
+            }
+        ),
+        Some(ErrorCode::InvalidArgument)
+    );
+}
+
+#[test]
 fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
     use beamcraft_model::command::KeepSide;
     use beamcraft_model::id::OpId;
@@ -1703,6 +1909,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         holes: Vec::new(),
         hole_records: Vec::new(),
         cuts: records,
+        bends: Vec::new(),
     };
     let one = vec![record(
         0,

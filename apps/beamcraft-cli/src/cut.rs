@@ -1448,6 +1448,7 @@ fn created_element(state: &AuthoredState) -> Result<Element, PlateError> {
                 thickness_mm: authored.thickness_mm,
                 thickness_side: authored.thickness_side,
                 corners: authored.corners.clone(),
+                bends: authored.bends.clone(),
                 holes: authored
                     .holes_mm
                     .iter()

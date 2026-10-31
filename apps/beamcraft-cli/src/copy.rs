@@ -380,6 +380,7 @@ fn copy_with_mode(
                         thickness_mm: a.thickness_mm,
                         thickness_side: a.thickness_side,
                         corners: a.corners.clone(),
+                        bends: a.bends.clone(),
                         holes: a
                             .holes_mm
                             .iter()

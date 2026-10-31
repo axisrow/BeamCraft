@@ -20,6 +20,7 @@ pub(super) const COMMANDS: &[&str] = &[
     "chamfer-part",
     "split-part",
     "combine-parts",
+    "bend-plate",
 ];
 
 pub(super) const HELP: &str = concat!(
@@ -75,5 +76,14 @@ pub(super) const HELP: &str = concat!(
     "combine-parts --survivor UUID --consumed UUID --operation-id UUID (combines two ",
     "collinear members with the same profile, orientation, roll and material into one ",
     "longer member over the union of the two axis ranges, which must overlap or touch, and ",
-    "deletes the consumed member, which must carry no cut records)",
+    "deletes the consumed member, which must carry no cut records)\n",
+    "bend-plate --id UUID --operation-id UUID --kind fold --point-a X,Y,Z --point-b X,Y,Z ",
+    "--radius MM --angle-rad RAD (appends one fold record: the plate's contour is the ",
+    "developed mid-surface outline, the blank must be a rectangle with one side pair ",
+    "parallel to the fold line, and the fold regions must fit the blank and not overlap)\n",
+    "bend-plate --id UUID --operation-id UUID --kind roll --point-a X,Y,Z --point-b X,Y,Z ",
+    "--radius MM [--radius-b MM] (appends one roll record: a rectangular blank rolls into ",
+    "a cylinder section of the inner radius, whose wrap angle follows from the developed ",
+    "length; with --radius-b the blank is the developed annular sector about --point-a and ",
+    "the two radii share one cone apex; a plate carries at most one roll and no fold)",
 );

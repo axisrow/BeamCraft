@@ -164,8 +164,52 @@ pub fn copy_plate(
         next.name.clone_from(name);
     }
     next.cuts = copied_records(&source.cuts, &command.new_id)?;
+    next.bends = copied_bends(&source.bends, &command.new_id)?;
     next.placement = copied_placement(&source.placement, command)?;
     Ok(next)
+}
+
+/// The copy's bend records (A10): fresh operation identities, the same specs.
+fn copied_bends(
+    records: &[beamcraft_model::command::BendRecord],
+    new_id: &ElementId,
+) -> Result<Vec<beamcraft_model::command::BendRecord>, CommandError> {
+    records
+        .iter()
+        .map(|record| {
+            let mut seed = b"BeamCraft/A10/CopyBendRecord/v1\0".to_vec();
+            seed.extend_from_slice(new_id.as_bytes());
+            seed.extend_from_slice(record.operation_id.as_bytes());
+            let digest = Sha256::digest(&seed).map_err(|_| {
+                CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    "bend",
+                    "copied bend identity exceeds the digest limit",
+                )
+            })?;
+            let mut bytes = [0u8; 16];
+            for (out, value) in bytes.iter_mut().zip(digest.as_bytes()) {
+                *out = *value;
+            }
+            if let Some(v) = bytes.get_mut(6) {
+                *v = (*v & 0x0f) | 0x70;
+            }
+            if let Some(v) = bytes.get_mut(8) {
+                *v = (*v & 0x3f) | 0x80;
+            }
+            let operation_id = Uuid7::from_bytes(bytes).map(OpId::from_uuid).map_err(|_| {
+                CommandError::new(
+                    ErrorCode::InvalidId,
+                    "bend",
+                    "copied bend identity is invalid",
+                )
+            })?;
+            Ok(beamcraft_model::command::BendRecord {
+                operation_id,
+                spec: record.spec,
+            })
+        })
+        .collect()
 }
 
 /// The authored member of the copy; see [`copy_plate`].
@@ -216,6 +260,7 @@ mod tests {
             holes_mm: Vec::new(),
             hole_records: Vec::new(),
             cuts: Vec::new(),
+            bends: Vec::new(),
         }
     }
 

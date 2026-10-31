@@ -694,6 +694,7 @@ fn create(
             thickness_mm,
             thickness_side,
             corners,
+            bends,
             holes,
             hole_records,
             ..
@@ -723,6 +724,9 @@ fn create(
             }
             if !corners.is_empty() {
                 author_corners(data, &p, corners)?;
+            }
+            if !bends.is_empty() {
+                author_bends(data, &p, bends)?;
             }
             if !holes.is_empty() {
                 let flat: Vec<[f64; 3]> = holes.iter().flatten().copied().collect();
@@ -1438,6 +1442,7 @@ pub(super) fn apply(
                 sdf::Value::Double(*mm),
             )?,
             Change::Corners { corners, .. } => author_corners(&mut authored, &p, corners)?,
+            Change::Bends { bends, .. } => author_bends(&mut authored, &p, bends)?,
             Change::ThicknessSide { side, .. } => attr(
                 &mut authored,
                 &p,
@@ -1666,6 +1671,7 @@ pub(super) fn apply(
                 | Change::Thickness { .. }
                 | Change::ThicknessSide { .. }
                 | Change::Corners { .. }
+                | Change::Bends { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
@@ -1822,10 +1828,24 @@ fn capture(
                         ref holes,
                         ref cuts,
                         ref hole_records,
+                        ref bends,
                         ..
                     } => {
                         add("steel:plate:contourPointsMm", "double3[]", 0);
                         add("steel:plate:thicknessMm", "double", 0);
+                        if !bends.is_empty() {
+                            for (name, ty) in [
+                                ("steel:plate:bendOperationId", "string[]"),
+                                ("steel:plate:bendKind", "token[]"),
+                                ("steel:plate:bendLineAMm", "double3[]"),
+                                ("steel:plate:bendLineBMm", "double3[]"),
+                                ("steel:plate:bendRadiusMm", "double[]"),
+                                ("steel:plate:bendRadiusBMm", "double[]"),
+                                ("steel:plate:bendAngleRad", "double[]"),
+                            ] {
+                                add(name, ty, 0);
+                            }
+                        }
                         if !holes.is_empty() {
                             add("steel:plate:holePointsMm", "double3[]", 0);
                             add("steel:plate:holeVertexCounts", "int[]", 0);
@@ -2008,6 +2028,19 @@ fn capture(
                     add(name, ty, 0);
                 }
             }
+            Change::Bends { .. } => {
+                for (name, ty) in [
+                    ("steel:plate:bendOperationId", "string[]"),
+                    ("steel:plate:bendKind", "token[]"),
+                    ("steel:plate:bendLineAMm", "double3[]"),
+                    ("steel:plate:bendLineBMm", "double3[]"),
+                    ("steel:plate:bendRadiusMm", "double[]"),
+                    ("steel:plate:bendRadiusBMm", "double[]"),
+                    ("steel:plate:bendAngleRad", "double[]"),
+                ] {
+                    add(name, ty, 0);
+                }
+            }
             Change::ThicknessSide { .. } => add("steel:plate:thicknessSide", "token", 0),
             Change::Cuts { .. } => {
                 for &(name, ty) in CUT_FIELDS {
@@ -2054,6 +2087,7 @@ fn capture(
                 | Change::Thickness { .. }
                 | Change::ThicknessSide { .. }
                 | Change::Corners { .. }
+                | Change::Bends { .. }
                 | Change::Cuts { .. }
                 | Change::Axis { .. }
                 | Change::Roll { .. }
@@ -2173,5 +2207,90 @@ fn author_corners(
         sdf::Value::DoubleVec(radii),
     )?;
 
+    Ok(())
+}
+
+/// The seven parallel bend attributes (A10), always together; a value its kind does not use is
+/// written as the neutral fill (the line's first point twice, the radius twice, angle zero).
+fn author_bends(data: &mut sdf::Data, p: &str, bends: &[BendRecord]) -> Result<(), Diagnostic> {
+    let mut ids = Vec::with_capacity(bends.len());
+    let mut kinds: Vec<&str> = Vec::with_capacity(bends.len());
+    let mut lines_a: Vec<[f64; 3]> = Vec::with_capacity(bends.len());
+    let mut lines_b: Vec<[f64; 3]> = Vec::with_capacity(bends.len());
+    let mut radii = Vec::with_capacity(bends.len());
+    let mut radii_b = Vec::with_capacity(bends.len());
+    let mut angles = Vec::with_capacity(bends.len());
+    for bend in bends {
+        ids.push(bend.operation_id.to_string());
+        kinds.push(bend.spec.kind());
+        let (a, b, radius, radius_b, angle) = match bend.spec {
+            beamcraft_model::command::BendSpec::Fold {
+                a_mm,
+                b_mm,
+                radius_mm,
+                angle_rad,
+            } => (a_mm, b_mm, radius_mm, radius_mm, angle_rad),
+            beamcraft_model::command::BendSpec::Roll {
+                a_mm,
+                b_mm,
+                radius_mm,
+                radius_b_mm,
+            } => (a_mm, b_mm, radius_mm, radius_b_mm.unwrap_or(radius_mm), 0.0),
+        };
+        lines_a.push(a);
+        lines_b.push(b);
+        radii.push(radius);
+        radii_b.push(radius_b);
+        angles.push(angle);
+    }
+    attr(
+        data,
+        p,
+        "steel:plate:bendOperationId",
+        "string[]",
+        sdf::Value::StringVec(ids),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendKind",
+        "token[]",
+        sdf::Value::token_vec(kinds),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendLineAMm",
+        "double3[]",
+        points(&lines_a),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendLineBMm",
+        "double3[]",
+        points(&lines_b),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendRadiusMm",
+        "double[]",
+        sdf::Value::DoubleVec(radii),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendRadiusBMm",
+        "double[]",
+        sdf::Value::DoubleVec(radii_b),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:plate:bendAngleRad",
+        "double[]",
+        sdf::Value::DoubleVec(angles),
+    )?;
     Ok(())
 }

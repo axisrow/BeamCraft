@@ -1928,9 +1928,10 @@ pub(super) fn changes(
                     return Err(unsupported());
                 }
                 let valid = match change {
-                    Change::Contour { .. } | Change::Thickness { .. } | Change::Corners { .. } => {
-                        kind == "plate"
-                    }
+                    Change::Contour { .. }
+                    | Change::Thickness { .. }
+                    | Change::Corners { .. }
+                    | Change::Bends { .. } => kind == "plate",
                     Change::HoleRecords { .. } => kind == "plate",
                     Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
                         matches!(kind, "beam" | "column")
@@ -2193,6 +2194,7 @@ pub(super) fn changes(
                         // A parsed side is one of three closed tokens; nothing to bound.
                         thickness_side: _,
                         corners,
+                        bends,
                         holes,
                         hole_records,
                         cuts,
@@ -2244,6 +2246,61 @@ pub(super) fn changes(
                             cap(record.polygon_mm.iter().flatten().copied(), 1e9)?;
                         }
                         cut_values(cuts)?;
+                        // Bend records (A10): structural bounds only — finiteness and caps for
+                        // the line points and radii, a finite angle inside (-pi, pi); whether
+                        // the records form one supported bent body is the engine's replay
+                        // decision.
+                        if bends.len() > MAX_BENDS {
+                            return Err(limit());
+                        }
+                        for bend in bends {
+                            let (lines, radii, angle): ([[f64; 3]; 2], &[f64], Option<f64>) =
+                                match bend.spec {
+                                    BendSpec::Fold {
+                                        a_mm,
+                                        b_mm,
+                                        radius_mm,
+                                        angle_rad,
+                                    } => ([a_mm, b_mm], &[radius_mm][..], Some(angle_rad)),
+                                    BendSpec::Roll {
+                                        a_mm,
+                                        b_mm,
+                                        radius_mm,
+                                        radius_b_mm,
+                                    } => (
+                                        [a_mm, b_mm],
+                                        match radius_b_mm {
+                                            Some(rb) => &[radius_mm, rb][..],
+                                            None => &[radius_mm][..],
+                                        },
+                                        None,
+                                    ),
+                                };
+                            cap(lines.iter().flatten().copied(), 1e9)?;
+                            if radii.iter().any(|v| *v <= 0.0) {
+                                return Err(invalid());
+                            }
+                            cap(radii.iter().copied(), 1e9)?;
+                            // A cone with equal radii is a cylinder, and the stored encoding
+                            // keeps one radius for a cylinder: equal radii would read back as
+                            // a cylinder and refuse their own sector blank.
+                            if let BendSpec::Roll {
+                                radius_mm,
+                                radius_b_mm: Some(radius_b),
+                                ..
+                            } = bend.spec
+                                && radius_b == radius_mm
+                            {
+                                return Err(invalid());
+                            }
+                            if let Some(angle) = angle
+                                && (!angle.is_finite()
+                                    || angle == 0.0
+                                    || angle.abs() >= core::f64::consts::PI)
+                            {
+                                return Err(invalid());
+                            }
+                        }
                     }
                     Shape::Member {
                         curved,
@@ -2489,6 +2546,62 @@ pub(super) fn changes(
                 }
             }
             Change::Thickness { mm, .. } => cap([*mm], 1e6)?,
+            Change::Bends { bends, .. } => {
+                // Structural bounds only: finiteness, caps, positive radii and a finite angle
+                // inside (-pi, pi); whether the records form one supported bent body is the
+                // engine's replay decision.
+                if bends.len() > MAX_BENDS {
+                    return Err(limit());
+                }
+                for bend in bends {
+                    let (lines, radii, angle): ([[f64; 3]; 2], &[f64], Option<f64>) =
+                        match bend.spec {
+                            BendSpec::Fold {
+                                a_mm,
+                                b_mm,
+                                radius_mm,
+                                angle_rad,
+                            } => ([a_mm, b_mm], &[radius_mm][..], Some(angle_rad)),
+                            BendSpec::Roll {
+                                a_mm,
+                                b_mm,
+                                radius_mm,
+                                radius_b_mm,
+                            } => (
+                                [a_mm, b_mm],
+                                match radius_b_mm {
+                                    Some(rb) => &[radius_mm, rb][..],
+                                    None => &[radius_mm][..],
+                                },
+                                None,
+                            ),
+                        };
+                    cap(lines.iter().flatten().copied(), 1e9)?;
+                    if radii.iter().any(|v| *v <= 0.0) {
+                        return Err(invalid());
+                    }
+                    cap(radii.iter().copied(), 1e9)?;
+                    // A cone with equal radii is a cylinder, and the stored encoding keeps one
+                    // radius for a cylinder: equal radii would read back as a cylinder and
+                    // refuse their own sector blank.
+                    if let BendSpec::Roll {
+                        radius_mm,
+                        radius_b_mm: Some(radius_b),
+                        ..
+                    } = bend.spec
+                        && radius_b == radius_mm
+                    {
+                        return Err(invalid());
+                    }
+                    if let Some(angle) = angle
+                        && (!angle.is_finite()
+                            || angle == 0.0
+                            || angle.abs() >= core::f64::consts::PI)
+                    {
+                        return Err(invalid());
+                    }
+                }
+            }
             Change::Cuts { cuts, .. } => cut_values(cuts)?,
             Change::Axis { points_mm, .. } => cap(points_mm.iter().flatten().copied(), 1e9)?,
             Change::Roll {
@@ -2575,6 +2688,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     thickness_mm,
                     thickness_side: _,
                     corners,
+                    bends,
                     holes,
                     hole_records,
                     cuts,
@@ -2597,6 +2711,30 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(corners.iter().flat_map(|c| match c.treatment {
                             CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
                             CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
+                        }))
+                        .chain(bends.iter().flat_map(|b| {
+                            match b.spec {
+                                BendSpec::Fold {
+                                    a_mm,
+                                    b_mm,
+                                    radius_mm,
+                                    angle_rad,
+                                } => a_mm
+                                    .into_iter()
+                                    .chain(b_mm)
+                                    .chain([radius_mm, angle_rad])
+                                    .collect::<Vec<_>>(),
+                                BendSpec::Roll {
+                                    a_mm,
+                                    b_mm,
+                                    radius_mm,
+                                    radius_b_mm,
+                                } => a_mm
+                                    .into_iter()
+                                    .chain(b_mm)
+                                    .chain([radius_mm, radius_b_mm.unwrap_or(radius_mm)])
+                                    .collect::<Vec<_>>(),
+                            }
                         })),
                 ),
                 Shape::Member {

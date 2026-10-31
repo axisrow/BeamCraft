@@ -24,8 +24,8 @@ pub use reference::{
 
 use crate::*;
 pub use beamcraft_model::command::{
-    CornerTreatment, CutRecord, HoleRecord, KeepSide, PlateCorner, PlateSide, SectionDepthPosition,
-    SectionPlacement, SectionPlanePosition,
+    BendRecord, BendSpec, CornerTreatment, CutRecord, HoleRecord, KeepSide, MAX_BENDS, PlateCorner,
+    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
 };
 pub use beamcraft_model::definition::SectionProperties;
 pub use beamcraft_model::fastener::FastenerSpec;
@@ -49,6 +49,10 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:plate:cornerVertex=int[](optional);steel:plate:cornerKind=token[](optional,chamfer|round);",
     "steel:plate:cornerD1Mm=double[](optional);steel:plate:cornerD2Mm=double[](optional);steel:plate:cornerRadiusMm=double[](optional);",
     "all five steel:plate:corner attributes or none, equal lengths, one vertex at most once, sharp corners store nothing\n",
+    "steel:plate:bendOperationId=string[](optional,uuid7);steel:plate:bendKind=token[](optional,fold|roll);",
+    "steel:plate:bendLineAMm=double3[](optional);steel:plate:bendLineBMm=double3[](optional);",
+    "steel:plate:bendRadiusMm=double[](optional);steel:plate:bendRadiusBMm=double[](optional);steel:plate:bendAngleRad=double[](optional);",
+    "all seven steel:plate:bend attributes or none, equal lengths, at most 16 records, a fold states its radius twice and a cone roll its two radii\n",
     "steel:plate:holePointsMm=double3[](optional,z=0);steel:plate:holeVertexCounts=int[](optional,>=3 each);",
     "steel:cut:operationId=string[](optional,uuid7);steel:cut:ordinal=int[](optional,<=999);",
     "steel:cut:pointMm=double3[](optional);steel:cut:normal=double3[](optional,nonzero each);",
@@ -133,7 +137,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
-    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
+    "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Bends|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
@@ -264,6 +268,9 @@ pub enum Shape {
         /// Corner treatments of authored contour vertices (A12.2); empty means every corner
         /// sharp and stores no attribute. The contour keeps its sharp points.
         corners: Vec<PlateCorner>,
+        /// The bend operation records (A10); empty means a flat plate. The contour of a bent
+        /// plate is its developed mid-surface outline.
+        bends: Vec<BendRecord>,
         /// Through-hole polygons in plate-local XY (`z` is zero), each at least three points,
         /// stored as one flat point array plus the vertex counts. Empty means a solid plate.
         holes: Vec<Vec<[f64; 3]>>,
@@ -569,6 +576,15 @@ pub enum Change {
         /// Complete sparse replacement; empty clears every treatment.
         corners: Vec<PlateCorner>,
     },
+    /// Replace the owned bend operation records of a plate (A10) as a whole: seven parallel
+    /// attributes, or their removal for an empty list. Engineering validity is a host
+    /// prerequisite; the candidate re-validates the stored form.
+    Bends {
+        /// Canonical plate identity.
+        id: String,
+        /// The records in creation order.
+        bends: Vec<BendRecord>,
+    },
     /// Replace the thickness side of a plate (A12.1). A plate always has a side (absence is the
     /// `top` default), so the change authors the exact token, `top` included.
     ThicknessSide {
@@ -721,6 +737,7 @@ impl Change {
             Self::Contour { id, .. } => (id, "steel:plate:contourPointsMm"),
             Self::Thickness { id, .. } => (id, "steel:plate:thicknessMm"),
             Self::Corners { id, .. } => (id, "steel:plate:cornerVertex"),
+            Self::Bends { id, .. } => (id, "steel:plate:bendOperationId"),
             Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
             Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
