@@ -507,8 +507,11 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         fs::read(s.path("bom-summary-2.csv")).unwrap()
     );
 
-    // A published drawing over the numbered frame (the stale/version cycle lives in the
-    // original scenario; this checks the fresh path end to end).
+    // The full drawing document surface over the numbered frame (the stale/version cycle
+    // lives in the original scenario; this checks the fresh path end to end and then grows
+    // the document: D04 placed/section/detail views with per-view titles and scales, a D05
+    // sheet, D06/D07 drawn marks and leaders on owned layers, and D08 PDF export of each
+    // exact published version).
     let id = |suffix: u16| format!("019a7bf0-0000-7000-8000-{suffix:012}");
     let drawing = id(0xaa30);
     let view = id(0xaa31);
@@ -518,6 +521,24 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     let publish_op = id(0xaa35);
     let publish_revision = id(0xaa36);
     let version = id(0xaa37);
+    let placed = id(0xaa38);
+    let section = id(0xaa39);
+    let detail = id(0xaa3a);
+    let views_op = id(0xaa3b);
+    let views_revision = id(0xaa3c);
+    let sheet_op = id(0xaa3d);
+    let sheet_revision = id(0xaa3e);
+    let annotations = id(0xaa3f);
+    let construction = id(0xaa40);
+    let leader = id(0xaa41);
+    let mark = id(0xaa42);
+    let free = id(0xaa43);
+    let hidden = id(0xaa44);
+    let drafting_op = id(0xaa45);
+    let drafting_revision = id(0xaa46);
+    let publish_two_op = id(0xaa47);
+    let publish_two_revision = id(0xaa48);
+    let version_two = id(0xaa49);
     let anchor_a = format!("fid1:{}:member:v.x0.y0.z0", PARTS[0]);
     let anchor_b = format!("fid1:{}:member:v.x0.y0.z1", PARTS[0]);
     let created = s.ok(
@@ -538,6 +559,10 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             &anchor_a,
             "--anchor-b",
             &anchor_b,
+            "--view-title",
+            "COLUMN A",
+            "--scale",
+            "20",
             "--op-id",
             &create_op,
             "--revision-id",
@@ -548,6 +573,16 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     );
     assert_eq!(text(&created, "state"), "draft");
     assert_eq!(text(&created, "source_revision_id"), accepted_head);
+    assert_eq!(
+        at(&created, &["view", "title"]).string().unwrap(),
+        "COLUMN A"
+    );
+    close(
+        at(&created, &["view", "scale_denominator"])
+            .float()
+            .unwrap(),
+        20.0,
+    );
     let published_drawing = s.ok(
         "published",
         "publish-drawing",
@@ -582,5 +617,240 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "freshness"
         ),
         "current"
+    );
+
+    // D04: placed, section and detail views join the primary view, each with its own title
+    // and display scale. Placement belongs to the document; the model is never re-read.
+    let placed_views = s.ok(
+        "published",
+        "edit-views",
+        &[
+            "--document-dir",
+            &s.path("drawing"),
+            "--expected-head",
+            &publish_revision,
+            "--op-id",
+            &views_op,
+            "--revision-id",
+            &views_revision,
+            "--actor-id",
+            USER,
+            "--placed-view",
+            &format!("{placed}:top:10:140,70:TOP VIEW"),
+            "--placed-section",
+            &format!("{section}:right:0:positive:5:200,70:SECTION A-A"),
+            "--placed-detail",
+            &format!("{detail}:{placed}:25,35:15:2:260,70:DETAIL B"),
+        ],
+    );
+    let placed_list = at(&placed_views, &["placed_views"]).array().unwrap();
+    assert_eq!(placed_list.len(), 1);
+    assert_eq!(text(&placed_list[0], "id"), placed);
+    assert_eq!(text(&placed_list[0], "title"), "TOP VIEW");
+    close(
+        at(&placed_list[0], &["scale_denominator"]).float().unwrap(),
+        10.0,
+    );
+    let section_list = at(&placed_views, &["placed_sections"]).array().unwrap();
+    assert_eq!(section_list.len(), 1);
+    assert_eq!(text(&section_list[0], "id"), section);
+    assert_eq!(text(&section_list[0], "plane"), "right");
+    assert_eq!(text(&section_list[0], "side"), "positive");
+    assert_eq!(text(&section_list[0], "title"), "SECTION A-A");
+    close(at(&section_list[0], &["cut_mm"]).float().unwrap(), 0.0);
+    close(
+        at(&section_list[0], &["scale_denominator"])
+            .float()
+            .unwrap(),
+        5.0,
+    );
+    let detail_list = at(&placed_views, &["placed_details"]).array().unwrap();
+    assert_eq!(detail_list.len(), 1);
+    assert_eq!(text(&detail_list[0], "id"), detail);
+    assert_eq!(text(&detail_list[0], "parent"), placed);
+    assert_eq!(text(&detail_list[0], "title"), "DETAIL B");
+    close(at(&detail_list[0], &["radius_mm"]).float().unwrap(), 15.0);
+    close(
+        at(&detail_list[0], &["scale_denominator"]).float().unwrap(),
+        2.0,
+    );
+
+    // D05: the document lands on an a3 sheet with a title block; every export surface
+    // renders this fixed sheet from here on.
+    let sheet = s.ok(
+        "published",
+        "edit-sheet",
+        &[
+            "--document-dir",
+            &s.path("drawing"),
+            "--expected-head",
+            &views_revision,
+            "--op-id",
+            &sheet_op,
+            "--revision-id",
+            &sheet_revision,
+            "--actor-id",
+            USER,
+            "--sheet-size",
+            "a3",
+            "--sheet-frame",
+            "10",
+            "--sheet-project",
+            "Q01 alpha frame",
+            "--sheet-author",
+            "Q01 expanded story",
+        ],
+    );
+    assert_eq!(at(&sheet, &["sheet", "size"]).string().unwrap(), "a3");
+    assert_eq!(
+        at(&sheet, &["sheet", "project"]).string().unwrap(),
+        "Q01 alpha frame"
+    );
+
+    // D06/D07: drawn marks, a leader and a free dimension join document-owned layers; the
+    // circle joins a hidden layer, so the paper-visible subset excludes it.
+    let drafting = s.ok(
+        "published",
+        "edit-drafting",
+        &[
+            "--document-dir",
+            &s.path("drawing"),
+            "--expected-head",
+            &sheet_revision,
+            "--op-id",
+            &drafting_op,
+            "--revision-id",
+            &drafting_revision,
+            "--actor-id",
+            USER,
+            "--layer",
+            &format!("{annotations}:Q01 annotations:on"),
+            "--layer",
+            &format!("{construction}:Q01 construction:off"),
+            "--drafting",
+            &format!("{leader}:line:240,70,252,78:{annotations}:continuous"),
+            "--drafting",
+            &format!("{mark}:text:240,84,4,0:{annotations}:continuous:MARK P/1(1)"),
+            "--drafting",
+            &format!("{free}:free_dimension:0,0,1000,0,15,1:{annotations}:dashdot"),
+            "--drafting",
+            &format!("{hidden}:circle:290,70,8:{construction}:dashed"),
+        ],
+    );
+    let layer_list = at(&drafting, &["layers"]).array().unwrap();
+    assert_eq!(layer_list.len(), 2);
+    assert_eq!(text(&layer_list[0], "name"), "Q01 annotations");
+    assert_eq!(text(&layer_list[1], "name"), "Q01 construction");
+    assert!(!at(&layer_list[1], &["visible"]).boolean().unwrap());
+    let drawn = at(&drafting, &["drafting"]).array().unwrap();
+    assert_eq!(drawn.len(), 4);
+    assert_eq!(
+        at(&drafting, &["visible_drafting"]).array().unwrap().len(),
+        3,
+        "the hidden layer must hold its object out of the paper-visible subset"
+    );
+    assert_eq!(
+        text(
+            &s.ok(
+                "published",
+                "inspect-drawing",
+                &[
+                    "--document-dir",
+                    &s.path("drawing"),
+                    "--model-store",
+                    &s.path("published")
+                ]
+            ),
+            "freshness"
+        ),
+        "current",
+        "document edits must keep the pinned source revision"
+    );
+
+    // Second publication: the grown document becomes version two, and both versions stay
+    // listed and exportable from their own archived source.
+    let published_two = s.ok(
+        "published",
+        "publish-drawing",
+        &[
+            "--document-dir",
+            &s.path("drawing"),
+            "--expected-head",
+            &drafting_revision,
+            "--op-id",
+            &publish_two_op,
+            "--revision-id",
+            &publish_two_revision,
+            "--actor-id",
+            USER,
+            "--version-id",
+            &version_two,
+        ],
+    );
+    assert_eq!(text(&published_two, "state"), "published");
+    assert_eq!(text(&published_two, "version_id"), version_two);
+    let version_list = s.ok(
+        "published",
+        "inspect-drawing-versions",
+        &["--document-dir", &s.path("drawing")],
+    );
+    assert_eq!(at(&version_list, &["versions"]).array().unwrap().len(), 2);
+
+    // D08: the PDF of one exact published version is byte-deterministic across repeats, and
+    // each version renders its own stored document.
+    s.ok(
+        "published",
+        "export-drawing",
+        &[
+            "--document-dir",
+            &s.path("drawing"),
+            "--version-id",
+            &version_two,
+            "--out",
+            &s.path("drawing-v2.pdf"),
+            "--format",
+            "pdf",
+        ],
+    );
+    s.ok(
+        "published",
+        "export-drawing",
+        &[
+            "--document-dir",
+            &s.path("drawing"),
+            "--version-id",
+            &version_two,
+            "--out",
+            &s.path("drawing-v2-again.pdf"),
+            "--format",
+            "pdf",
+        ],
+    );
+    let second = fs::read(s.path("drawing-v2.pdf")).unwrap();
+    assert!(second.starts_with(b"%PDF-"));
+    assert_eq!(
+        fs::read(s.path("drawing-v2-again.pdf")).unwrap(),
+        second,
+        "the PDF must be deterministic for one version"
+    );
+    s.ok(
+        "published",
+        "export-drawing",
+        &[
+            "--document-dir",
+            &s.path("drawing"),
+            "--version-id",
+            &version,
+            "--out",
+            &s.path("drawing-v1.pdf"),
+            "--format",
+            "pdf",
+        ],
+    );
+    let first = fs::read(s.path("drawing-v1.pdf")).unwrap();
+    assert!(first.starts_with(b"%PDF-"));
+    assert_ne!(
+        first, second,
+        "each version must render its own stored document"
     );
 }

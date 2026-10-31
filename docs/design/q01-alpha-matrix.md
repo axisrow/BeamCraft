@@ -28,7 +28,11 @@ steps ran and passed on this machine.
 | Views/filters (real store) | `export-view` twice for one head: byte-identical bundles; a repeat export into an existing file is refused without overwriting | Passed |
 | Views/filters (kind filter) | `snapshot-view --hide support` over the synthetic kernel plate scene; hidden kind recorded in the reply | Passed (stand-in, see below) |
 | Exact stored outputs, reopen | After `publish-workspace`: every part's volume and `mesh_digest` equal the draft-side values; `export-bom` + `--summary` reproduce byte for byte | Passed |
-| Published drawings | `create-drawing`, `publish-drawing`, `inspect-drawing` freshness `current` over the published head | Passed |
+| Published drawings (D03 fresh path) | `create-drawing` (primary view titled `COLUMN A` at 1:20), `publish-drawing`, `inspect-drawing` freshness `current` over the published head | Passed |
+| Drawing views (D04) | `edit-views` places a top view, a right section (cut through the column axis, positive side) and a detail over the placed view; every view carries its own title and display scale (1:20 primary, 1:10, 1:5, 1:2) | Passed |
+| Sheet (D05) | `edit-sheet` lands the document on an a3 sheet with frame inset and title block; later exports render that sheet | Passed |
+| Marks, leaders, layers (D06/D07) | `edit-drafting` replaces layers and drawn objects in one atomic intent: two layers; a leader line, a text mark, a free dimension on the visible layer; a circle on a hidden layer; `visible_drafting` excludes the hidden object and the pinned source stays `current` | Passed |
+| PDF export (D08) | `publish-drawing` again as version two; `inspect-drawing-versions` lists both published versions; `export-drawing --format pdf` per version: byte-identical across repeats, distinct between versions, `%PDF-` header present | Passed |
 | Invalid-file regressions | `put-blob` with a missing file and `open-revision` on an empty store: both refused (`rejected`), heads unchanged | Passed |
 | Cancellation/crash regression | `put-blob --cancel-after-ms 0` answers `cancelled` (exit 130), `recover-revision --min-age-secs 0` reports `recovery_complete`, head unchanged | Passed |
 
@@ -51,7 +55,7 @@ tests without kittest, and visual acceptance belongs to the owner's eyes.
 | GPU variety beyond Apple M5/Metal 4 | Single-GPU hardware. Vulkan and D3D12 rendering paths of the native viewport did not execute here. |
 | User attributes and attribute schedules | Fork issues [#316](https://github.com/axisrow/BeamCraft/issues/316) (I04) and [#317](https://github.com/axisrow/BeamCraft/issues/317) (I05) are open. The story carries the actual schedule surface that exists today: `export-bom --summary`. |
 | Member holes | Fork issue [#315](https://github.com/axisrow/BeamCraft/issues/315) (A04.2) is open; holes in this story are plate holes (`--hole-rect`). |
-| Drawing views/sheets/dimensions/drafting tools (D04-D07) | Fork issues [#228](https://github.com/axisrow/BeamCraft/issues/228)-[#231](https://github.com/axisrow/BeamCraft/issues/231) are open. The drawing part of the story is the delivered D03 slice: create, publish, inspect, stale/version cycle. |
+| Oblique member holes and curved-wall geometry (G14.2) | Fork issue [#314](https://github.com/axisrow/BeamCraft/issues/314) is open; those cases stay out of the story until it closes, and no mock stands in for the blocked geometry. |
 | Item (I01-I03) | Deferred by the owner-approved MVP; the upstream issue records the same. |
 | `snapshot-view` over a real model | The command runs on the synthetic kernel plate scene because P01 does not exist; the output marks itself `synthetic: true`. The real-store view path is `export-view` (V03), which this story exercises. |
 | Full crash/interruption matrix | The hook-driven interrupted-commit regression lives in `apps/beamcraft-cli/tests/recovery.rs` (U07) and ran in the workspace run; the scenario adds the end-to-end cancellation path through the real binary. |
@@ -63,4 +67,5 @@ cargo nextest run -p beamcraft-cli --test cli alpha_scenario
 ```
 
 runs both stories (the delivered one and the expanded one). `BEAMCRAFT_Q01_KEEP=1` preserves the
-expanded story's store, workspace, BOM, view bundles and drawing document for inspection.
+expanded story's store, workspace, BOM, view bundles, drawing document and PDF exports for
+inspection.
