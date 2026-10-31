@@ -141,6 +141,26 @@ pub fn pick_in(
     Ok(face_pick(snapshot, ray, selection)?.map(|(_, id)| id))
 }
 
+/// The nearest front face's named feature along the ray, with the hit point: the qualified
+/// FeatureId a D06 annotation placement stores. Named features only; unnamed display geometry
+/// is no anchor, and the selection switches do not apply to a placement tool.
+pub fn feature_pick(
+    snapshot: &ViewSnapshot,
+    ray: &Ray,
+) -> Result<Option<(String, [f64; 3])>, ToolError> {
+    let mut query = RayPick::new(ray.origin, ray.direction, vec![FeatureKind::Face]);
+    query.max_hits = 1;
+    let result = pick(snapshot, &PickQuery::Ray(query)).map_err(|e| ToolError {
+        code: e.f04_code().as_str().to_owned(),
+        message: format!("the pick was refused ({})", e.code().as_str()),
+    })?;
+    Ok(result.hits.first().and_then(|hit| {
+        hit.feature_id
+            .as_ref()
+            .map(|id| (id.to_string(), hit.point_world_mm))
+    }))
+}
+
 /// Where a click lands in 3D (issue #134 placement): the engine's front-face hit point on the
 /// snapshot on screen together with the element it names. The selection switches do not apply:
 /// placement is a tool's point resolution, not a selection. `None` for empty space; the caller

@@ -6,6 +6,23 @@ Open questions are at the end.
 
 ## 2026-10-31
 
+- **One full test gate, literal `cargo test --workspace`.** Owner decision on
+  [issue #342](https://github.com/axisrow/BeamCraft/issues/342), after the worker survey recorded
+  there (related upstream thread:
+  [Apibim-com/BeamCraft#767](https://github.com/Apibim-com/BeamCraft/issues/767)). Before a pull
+  request is opened or updated, the gate runs once, whole, and its result is read from that run:
+  `cargo fmt --all`; `cargo clippy --workspace --all-targets -- -D warnings`;
+  `cargo test --workspace`; `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`. The test
+  step is the literal `cargo test --workspace`: nextest never runs doctests, so a nextest run is
+  the iteration tool (targeted `-p <crate>` runs; workspace sweeps with `--no-fail-fast`), not
+  the gate, and the earlier "matching CI" wording is corrected in `CLAUDE.md` and
+  `docs/development.md`. Results are read from the run itself — redirected to a file when the
+  log matters, never through a pipe (`| tail` masks the exit code). While the gate runs, no
+  parallel heavy builds share the machine: the e2e test
+  `reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`
+  deadline-cancels under parallel load and passes in isolation. `docs/development.md` records
+  the gate, the load rule, the test pyramid and the
+  acceptance-first rule.
 - **Interactive-assist commands leave the CLI.** Owner decision: an agent builds a model by giving
   coordinates and ids directly, so the CLI does not need cursor picking, snapping or the start
   screen. `pick`, `snap`, `show-settings`, `set-settings`, `list-environment`,

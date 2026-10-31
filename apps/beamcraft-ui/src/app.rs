@@ -7,6 +7,7 @@
 //! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
+mod annotation_panel;
 mod creation_panel;
 mod grid_panel;
 mod switches;
@@ -179,6 +180,8 @@ pub struct App {
     grids_visible: bool,
     grid_edit: Option<grid_panel::GridEdit>,
     grid_refresh_edit: bool,
+    /// D06 annotations: placement tool, listed rows and their jobs.
+    annotation: annotation_panel::Panel,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
     /// Whether the Details window is open.
@@ -827,6 +830,7 @@ impl App {
             grid_job: None,
             grid_note: None,
             grids_visible: true,
+            annotation: annotation_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             return_to_create: false,
             command_search: false,
@@ -1623,7 +1627,10 @@ impl App {
     /// True while a command that writes to the store (or publishes it) is running: the property,
     /// publish and edit actions never run at the same time.
     fn other_command_running(&self) -> bool {
-        self.other_command_running_pre_colour() || self.colour_job.is_some()
+        self.other_command_running_pre_colour()
+            || self.colour_job.is_some()
+            || self.annotation.list_job.is_some()
+            || self.annotation.commit_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -2901,6 +2908,7 @@ impl eframe::App for App {
         });
         self.poll_commit();
         self.poll_grid();
+        self.poll_annotations();
         self.poll_edit();
         self.poll_props();
         self.poll_publish();
@@ -3130,6 +3138,17 @@ impl eframe::App for App {
                                 self.grid_edit.as_ref().map(|edit| edit.id.as_str()),
                             );
                         }
+                        if let Ok(rows) = self.annotation.rows.as_deref()
+                            && !rows.is_empty()
+                        {
+                            annotation_panel::paint(
+                                ui,
+                                response.rect,
+                                &view,
+                                l.summary.origin_mm,
+                                rows,
+                            );
+                        }
                         if let Some(selected) = self.editor.selected() {
                             let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
                             if self.selection_edges.0 != key {
@@ -3270,6 +3289,8 @@ impl eframe::App for App {
                     self.place_plate(ray);
                 } else if self.beam_mode {
                     self.place_beam(ray);
+                } else if self.bench == workbench::Bench::Annotations {
+                    self.annotation_click(ray);
                 } else if !self.other_command_running() {
                     self.start_select(ray);
                 }

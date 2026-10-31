@@ -30,6 +30,8 @@ pub enum Route {
     View,
     /// The named-view session commands.
     Views,
+    /// The annotation commands.
+    Annotation,
     /// The history inspection and compaction commands.
     History,
     /// The reference model commands.
@@ -1879,6 +1881,33 @@ pub const COMMANDS: &[Command] = &[
         Access::Read,
         Ids::None,
         &[req("--file", "FILE"), req("--name", "TEXT")],
+    ),
+    entry(
+        Route::Annotation,
+        "annotation",
+        "annotation-create",
+        Access::Write,
+        Ids::Common,
+        &[
+            req("--store", "ROOT"),
+            req("--name", "TEXT"),
+            req("--kind", "dimension|mark|leader"),
+            req("--new-id", "UUID"),
+            opt("--from", "FEATURE_ID"),
+            opt("--to", "FEATURE_ID"),
+            opt("--anchor", "FEATURE_ID"),
+            opt("--attribute", "TEXT"),
+            opt("--text", "TEXT"),
+            opt("--end", "X,Y,Z"),
+        ],
+    ),
+    entry(
+        Route::Annotation,
+        "annotation",
+        "annotation-list",
+        Access::Read,
+        Ids::None,
+        &[req("--store", "ROOT")],
     ),
     entry(
         Route::History,

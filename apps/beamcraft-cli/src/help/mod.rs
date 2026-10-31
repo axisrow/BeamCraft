@@ -6,6 +6,7 @@
 
 use beamcraft_cli::registry;
 
+mod annotation;
 mod assembly;
 mod attribute;
 mod blobs;
@@ -68,6 +69,7 @@ const SECTIONS: &[&str] = &[
     filters::HELP,
     grid::HELP,
     construction::HELP,
+    annotation::HELP,
     grid::LINES,
     grid::UPDATE,
     grid::QUERIES,

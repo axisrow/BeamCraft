@@ -10,6 +10,7 @@
 //! no engineering geometry. P01 implements the first command only (a rectangular plate); keys,
 //! the other commands and personal workspaces are not implemented.
 
+pub mod annotation;
 pub mod assembly;
 pub mod attribute;
 pub mod bend;

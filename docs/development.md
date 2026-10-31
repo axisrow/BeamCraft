@@ -11,20 +11,53 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p beamcraft-cli -- --version
 ```
 
-[cargo nextest](https://nexte.st) is the local test runner — the same runner and version CI
-uses — for its parallel scheduling and per-test timings. Install it once with
-`cargo install cargo-nextest --locked`.
+### The full gate
+
+Owner decision 2026-10-31 ([issue #342](https://github.com/axisrow/BeamCraft/issues/342)),
+replacing the previous wording that called nextest the local runner "matching CI". Before a
+pull request is opened or updated, run the gate once, whole, and read the result from that run.
+
+```sh
+cargo fmt --all
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps
+```
+
+The test step is the literal `cargo test --workspace` — every unit, integration and CLI suite
+plus the doctests in one command. `cargo nextest` never runs doctests, so a nextest run,
+`--workspace` included, is not the gate however complete it looks; the equivalent split
+(nextest plus a remembered `--doc` line) is how doctests escape review. CI can hold that split
+safely: it archives the nextest run per platform and pairs it with an explicit
+`cargo test --workspace --doc` step. Point runs passing do not replace the gate. When the log
+is worth keeping, redirect it to a file and read the summary and exit status from the file: a
+pipe such as `| tail` masks a non-zero exit code behind a friendly last page.
+
+While the gate runs, nothing else heavy runs on the machine — parallel agents and worktrees
+hold their builds until it finishes. Under exactly such parallel load the end-to-end test
+`reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`
+in `beamcraft-cli` has been cancelled at its
+deadline inside full runs that pass in isolation (~47 s and ~88 s observed) — a deadline flake
+that masks real regressions and costs a full re-run. If a suite fails while other builds were
+running, re-run it in isolation before debugging it.
+
+### Iteration runs
+
+[cargo nextest](https://nexte.st) is the iteration runner, not the gate, for its parallel
+scheduling and per-test timings. Install it once with `cargo install cargo-nextest --locked`.
 
 ```sh
 # Inner loop: workspace libs and the quick CLI suites (~1 min warm on the reference Apple M5).
 cargo nextest run --profile fast
 
-# Full pre-merge gate: every test (~2.6 min warm) plus the doctests, which nextest never runs.
-cargo nextest run --workspace
-cargo test --workspace --doc
+# One crate, suite or test while working on it.
+cargo nextest run -p beamcraft-cli -E 'test(/^numbering::/)'
 ```
 
-`cargo test --workspace` runs the same full set including doctests in one command. The `fast`
+A whole-workspace nextest sweep is a mid-work check, not a verdict: run it with `--no-fail-fast`
+so one failure does not hide the rest of the run, and let the gate decide.
+
+The `fast`
 profile (`.config/nextest.toml`) skips only the integration suites that each measure at least
 ~40 s of serial time on the reference Apple M5 (baseline 2026-10-25): in
 `beamcraft-cli` `export_ifc`, `numbering_approval`, `numbering`, `libraries`, `environments`
@@ -45,6 +78,34 @@ none is available. On a headless Linux worker, Mesa's software Vulkan driver (`m
 can provide it; a physical GPU or display server is not required. The Vulkan loader must be able
 to find the driver and its ICD configuration. Build `beamcraft-cli` before running the UI's
 real-binary grid integration tests, which also fail when that executable is missing.
+
+### What each layer tests
+
+- **Unit tests** sit as `#[cfg(test)]` modules next to the code and pin engine invariants:
+  millimetres and radians inside the engine, right-handed coordinates with Z up, conversion
+  only at the UI and IO edge.
+- **Integration tests** live in a crate's `tests/` directory and drive its public API only.
+- **CLI end-to-end tests** drive `beamcraft-cli` (headless first, `AGENTS.md` §3): a
+  user-facing feature is asserted through a real command — stdout, stderr, exit code and the
+  store it writes.
+- **UI tests** are screenshot tests through `run_ui` and the `egui_wgpu` readback; kittest is
+  not used because it pulls in accesskit, which is disabled by owner decision.
+- **Doc tests** keep the `///` examples of the public API compiling.
+- **Schema stability:** a new `ElementKind` must also update `SCHEMA_DESCRIPTOR` and pass the
+  strips screenshot tests in `beamcraft-ui`. The kind registry is closed: adding or removing a
+  kind needs a new vocabulary version ([F10 vocabulary
+  contract](contracts/f10-domain-vocabulary-v0.1.md), section 2.1).
+
+### Acceptance first
+
+The acceptance criteria of a feature or a fix are formulated before the implementation: the
+observable fact that proves the work, and a method proportionate to it — a visual change by a
+real screenshot, an interactive element by a real click, a CLI change by the command's stdout,
+stderr and exit code, business logic by a behavioural test of the new effect. Tests cover
+behaviour and refusals, not a getter beside its setter; invalid input produces an error, never
+a panic, and the tests assert that. Fixtures stay deterministic: seed the RNG before creating
+the workspace, keep temporary names unique per process (the fixture-name collision fix,
+PR #157), and never wait with sleeps — wait on the condition.
 
 ## Faster test execution
 

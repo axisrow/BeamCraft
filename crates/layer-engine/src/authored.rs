@@ -4,6 +4,7 @@
 //! Codeless U02 schema and isolated layer authoring for a trusted command engine.
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
+pub mod annotation;
 pub mod construction;
 /// Persistent cut ordinal and retired-record identities.
 pub mod cut_history;
@@ -103,6 +104,12 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "construction=/World/Construction/CNS_<uuid7-32>;bim:elementKind=construction;kind=component;bim:discipline=token(steel);",
     "bim:construction:kind=token(point|line|circle|plane);bim:construction:aMm=double3;bim:construction:bMm=double3;bim:construction:radiusMm=double;",
     "geometry in world mm;line ends distinct;circle axis nonzero radius>0;plane normal nonzero;no material or Geometry;placement=identity\n",
+    "annotation=/World/Annotations/ANN_<uuid7-32>;bim:elementKind=annotation;kind=component;bim:discipline=token(steel);",
+    "bim:annotation:kind=token(dimension|mark|leader);bim:annotation:from=string;bim:annotation:to=string;bim:annotation:anchor=string;",
+    "bim:annotation:attribute=string;bim:annotation:text=string;bim:annotation:endMm=double3;bim:annotation:pinDigest=string[](sha256 each);",
+    "a dimension stores from+to;a mark anchor+attribute;a leader anchor+text+endMm;one pinDigest per anchor is the",
+    "addressed body's full-mesh digest at placement;anchors are verbatim feature ids, never re-numbered or re-bound;",
+    "no material or Geometry;placement=identity\n",
     "bim:level=rel(0..1 element target of kind level;source plate|beam|column)\n",
     "numbering=approved mark of a plate|beam|column|assembly (A09);steel:numbering:series=string(<=16 of A-Z a-z 0-9 _ -);",
     "steel:numbering:number=int(0..=2147483647);steel:numbering:basis=string(printable ASCII,<=512);",
@@ -358,6 +365,9 @@ pub enum Shape {
     /// T02 construction object: a helper point, line, circle or plane with no engineering body,
     /// authored in world millimetres. Its placement must be the identity.
     Construction(beamcraft_model::construction::ConstructionObject),
+    /// D06 annotation: a hand-placed dimension, mark or leader whose anchors are stored
+    /// qualified FeatureId texts. No engineering body; its placement must be the identity.
+    Annotation(beamcraft_model::annotation::Annotation),
     /// D2 level (a storey): an element of kind `level` with a stored elevation, no material and no
     /// derived body. Plates, beams and columns are assigned to it by [`Change::Level`]. Its
     /// placement must be the identity: the elevation is a value, never a pose.
@@ -380,6 +390,7 @@ impl Shape {
             | Self::BoltGroup(_)
             | Self::Grid(_)
             | Self::Construction(_)
+            | Self::Annotation(_)
             | Self::Level { .. } => &[],
         }
     }
@@ -1251,6 +1262,7 @@ fn shape_category(shape: &Shape) -> ElementCategory {
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Construction(_) => ElementCategory::Construction,
+        Shape::Annotation(_) => ElementCategory::Annotation,
         Shape::Plate { .. }
         | Shape::Member { .. }
         | Shape::LoftedPlate { .. }

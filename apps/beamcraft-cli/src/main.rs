@@ -16,6 +16,7 @@ use beamcraft_json::{Json, Limits};
 use beamcraft_model::{ErrorCode, digest::ContentDigest};
 use std::collections::BTreeMap;
 
+mod annotation_cmd;
 mod assembly_cmd;
 mod attribute_cmd;
 mod bolt_cmd;
@@ -84,6 +85,7 @@ fn main() -> std::process::ExitCode {
     let (json, exit) = match route {
         Some(Route::View) => view::execute(&args),
         Some(Route::Views) => views_cmd::execute(&args),
+        Some(Route::Annotation) => annotation_cmd::execute(&args),
         Some(Route::History) => history_cmd::execute(&args),
         Some(Route::Reference) => reference_cmd::execute(&args),
         Some(Route::Assembly) => assembly_cmd::execute(&args),
