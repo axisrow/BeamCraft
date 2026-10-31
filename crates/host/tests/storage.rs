@@ -35,7 +35,7 @@ impl Fixture {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = base.join(format!("test-{time}-{id}"));
+        let root = base.join(format!("test-{time}-{}-{id}", std::process::id()));
         fs::create_dir(&root).unwrap();
         Self(root)
     }

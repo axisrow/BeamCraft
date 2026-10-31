@@ -30,6 +30,7 @@ pub mod appearance;
 pub mod camera;
 pub mod command;
 pub mod creation;
+pub mod cut_plane;
 pub mod dialog;
 pub mod edit;
 pub mod grid;

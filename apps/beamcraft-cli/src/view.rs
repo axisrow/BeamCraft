@@ -8,6 +8,7 @@
 //! distinct stand-in simplified mesh. Both are marked in the output (`stand_ins`).
 
 use beamcraft_engine::synthetic::{SyntheticEdit, apply_edit, plate_scene};
+use beamcraft_engine::view_clipping::{self, ClipPlane, Clipping, WorkArea};
 use beamcraft_engine::{
     Aabb, ChangeSet, ElementEntry, ElementId, KindFilter, Limits, Representation, Selection,
     SnapshotHistory, SnapshotToken, ViewCode, ViewError, ViewPin, ViewProjection, ViewSettings,
@@ -15,6 +16,7 @@ use beamcraft_engine::{
 };
 use beamcraft_json::Json;
 use beamcraft_model::digest::{ContentDigest, Sha256};
+use beamcraft_model::error::ErrorCode;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -26,6 +28,46 @@ type View<T> = Result<T, ViewError>;
 
 fn invalid() -> ViewError {
     ViewError::new(ViewCode::ArgumentInvalid)
+}
+
+/// Maps a rejected cut record onto the closed view vocabulary.
+fn view_of(e: beamcraft_model::command::CommandError) -> ViewError {
+    ViewError::new(match e.code {
+        ErrorCode::NonFiniteNumber => ViewCode::NonFinite,
+        ErrorCode::LimitExceeded => ViewCode::ElementLimit,
+        _ => ViewCode::ArgumentInvalid,
+    })
+}
+
+/// Parses `px,py,pz,nx,ny,nz;...`, at most [`view_clipping::MAX_PLANES`] planes.
+fn cut_planes(text: &str) -> View<Vec<ClipPlane>> {
+    if text.len() > 1024 {
+        return Err(invalid());
+    }
+    text.split(';')
+        .map(|plane| {
+            let numbers = plane
+                .split(',')
+                .map(|v| v.trim().parse::<f64>().map_err(|_| invalid()))
+                .collect::<View<Vec<_>>>()?;
+            let [px, py, pz, nx, ny, nz]: [f64; 6] = numbers
+                .try_into()
+                .map_err(|_| ViewError::new(ViewCode::ArgumentInvalid))?;
+            ClipPlane::new([px, py, pz], [nx, ny, nz]).map_err(view_of)
+        })
+        .collect()
+}
+
+/// Parses `minx,miny,minz,maxx,maxy,maxz`.
+fn work_area(text: &str) -> View<WorkArea> {
+    let numbers = text
+        .split(',')
+        .map(|v| v.trim().parse::<f64>().map_err(|_| invalid()))
+        .collect::<View<Vec<_>>>()?;
+    let [a, b, c, d, e, f]: [f64; 6] = numbers
+        .try_into()
+        .map_err(|_| ViewError::new(ViewCode::ArgumentInvalid))?;
+    WorkArea::new([a, b, c], [d, e, f]).map_err(view_of)
 }
 
 /// Runs one view command and returns the JSON result and the process exit code.
@@ -75,6 +117,14 @@ fn run(args: &[OsString]) -> View<Json> {
             "--revision",
             "--generation",
         ],
+        "clip-view" => &[
+            "--plates",
+            "--cut",
+            "--area",
+            "--stand-in-simplified",
+            "--revision",
+            "--generation",
+        ],
         _ => return Err(invalid()),
     };
     if !tail.len().is_multiple_of(2) || tail.len() > 16 {
@@ -110,6 +160,33 @@ fn run(args: &[OsString]) -> View<Json> {
     };
     let pin = ViewPin::new(revision, generation);
     let scene = plate_scene(plates, stand_in)?;
+    if *command == "clip-view" {
+        let mut clip = Clipping::default();
+        if let Some(text) = options.get("--cut") {
+            clip.planes = cut_planes(text)?;
+        }
+        if let Some(text) = options.get("--area") {
+            clip.area = Some(work_area(text)?);
+        }
+        if clip.planes.is_empty() && clip.area.is_none() {
+            return Err(invalid());
+        }
+        let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())?;
+        let planes = clip.effective().map_err(view_of)?;
+        let visible = view_clipping::visible_elements(&snapshot, &planes).map_err(view_of)?;
+        // Non-destruction evidence: the same scene rebuilt after masking hashes to the
+        // identical token, and the cut itself is absent from the pin.
+        let rebuilt = ViewSnapshot::build(pin, plate_scene(plates, stand_in)?, &Limits::default())?;
+        let unchanged = rebuilt.token().as_str() == snapshot.token().as_str();
+        return clip_json(
+            &snapshot,
+            &planes,
+            &visible,
+            unchanged,
+            options.contains_key("--area"),
+            stand_in,
+        );
+    }
     if *command == "snapshot-view" {
         let snapshot = ViewSnapshot::build(pin, scene, &Limits::default())?;
         let settings = ViewSettings {
@@ -215,6 +292,47 @@ fn mesh_json(snapshot: &ViewSnapshot, digest: &ContentDigest) -> Json {
             Json::uint(entry.map_or(0, |m| u64::from(m.triangle_count()))),
         ),
     ])
+}
+
+/// The clip-view report: the effective half-spaces and the conservative visible mask, with
+/// the token equality that evidences the cut changed no model or measurement data.
+fn clip_json(
+    snapshot: &ViewSnapshot,
+    planes: &[ClipPlane],
+    visible: &[ElementId],
+    unchanged: bool,
+    boxed: bool,
+    simplified: bool,
+) -> View<Json> {
+    let plane = |p: &ClipPlane| -> View<Json> {
+        Ok(Json::object([
+            ("point_mm", triple(p.point_mm)?),
+            ("normal", triple(p.normal)?),
+        ]))
+    };
+    let planes = planes.iter().map(plane).collect::<View<Vec<_>>>()?;
+    let visible = visible
+        .iter()
+        .map(|id| Json::text(id.to_string()))
+        .collect::<Vec<_>>();
+    Ok(Json::object([
+        ("outcome", Json::text("view_clip")),
+        ("synthetic", Json::Bool(true)),
+        ("stand_ins", stand_ins(simplified)),
+        ("pin", pin_json(snapshot.pin())),
+        ("snapshot_token", Json::text(snapshot.token().as_str())),
+        ("model_unchanged", Json::Bool(unchanged)),
+        ("work_area_applied", Json::Bool(boxed)),
+        ("plane_count", Json::uint(planes.len() as u64)),
+        ("effective_planes", Json::Array(planes)),
+        ("element_count", Json::uint(snapshot.len() as u64)),
+        ("visible_count", Json::uint(visible.len() as u64)),
+        (
+            "clipped_count",
+            Json::uint((snapshot.len() - visible.len()) as u64),
+        ),
+        ("visible", Json::Array(visible)),
+    ]))
 }
 
 fn snapshot_json(

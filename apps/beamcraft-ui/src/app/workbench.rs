@@ -33,6 +33,8 @@ pub(crate) enum Bench {
     Copy,
     /// Delete the selected element.
     Delete,
+    /// The window's display cut plane (V15); a view filter, never a model change.
+    CutPlane,
 }
 
 impl Bench {
@@ -47,6 +49,7 @@ impl Bench {
             Self::Move => "Move",
             Self::Copy => "Copy",
             Self::Delete => "Delete",
+            Self::CutPlane => "Cut plane",
         }
     }
 
@@ -56,7 +59,12 @@ impl Bench {
             Self::Move => Some(EditKind::Move),
             Self::Copy => Some(EditKind::Copy),
             Self::Delete => Some(EditKind::Delete),
-            Self::Select | Self::Plate | Self::Beam | Self::Column | Self::Grid => None,
+            Self::Select
+            | Self::Plate
+            | Self::Beam
+            | Self::Column
+            | Self::Grid
+            | Self::CutPlane => None,
         }
     }
 }
@@ -335,6 +343,7 @@ impl App {
                 }
             }
             Bench::Select => {}
+            Bench::CutPlane => {}
             Bench::Grid => {
                 self.beam_mode = false;
                 self.beam.reset();
@@ -594,6 +603,11 @@ impl App {
                             if !self.grids_visible { self.grid_edit = None; }
                         }
                     });
+                    group(ui, "Cut", &mut |ui| {
+                        if tool_button(ui, Icon::Block, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
+                            pick = Some(Bench::CutPlane);
+                        }
+                    });
                     group(ui, "Refresh", &mut |ui| {
                         if tool_button(ui, Icon::Refresh, "Reload", false, true).clicked() {
                             self.reload();
@@ -722,6 +736,7 @@ impl App {
                             Bench::Plate | Bench::Beam | Bench::Column => self.tools_panel(ui),
                             Bench::Grid => self.grid_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
+                            Bench::CutPlane => self.cut_panel(ui),
                         }
                         ui.add_space(12.0);
                         egui::CollapsingHeader::new("Publishing")

@@ -53,6 +53,7 @@ pub mod solid;
 pub mod synthetic;
 pub mod transaction;
 pub mod update;
+pub mod view_clipping;
 pub mod weld;
 pub mod work_plane;
 
