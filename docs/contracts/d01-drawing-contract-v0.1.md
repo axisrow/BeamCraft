@@ -103,7 +103,7 @@ one explicit reason:
 
 There is no fabricated bounding-box fallback and no fabricated position mark in a label.
 
-## 6a. Drawn objects (D07 slice 1)
+## 6a. Drawn objects (D07 slices 1–2)
 
 A document also owns drawn paper-space objects (`drafting`). They are contributor-authored
 geometry, never projections of the model, and they hold no model reference of any kind: editing
@@ -117,6 +117,17 @@ of:
 | `arc` | centre, radius > 0, start/end radians, nonzero sweep (magnitude ≤ one turn) | radius ≤ `MAX_PAPER_MM` |
 | `circle` | centre, radius > 0 | radius ≤ `MAX_PAPER_MM` |
 | `rectangle` | two opposite corners, positive width and height | corners within ±`MAX_PAPER_MM` |
+| `text` | anchor, height > 0, rotation (radians, magnitude ≤ one turn); `drawing:text` string | text non-empty, no control characters, ≤ 128 bytes |
+| `hatch` | closed outline of 3–16 vertices (closing segment implicit), `drawing:pattern` = `solid`\|`diagonal`\|`crosshatch` | vertices within ±`MAX_PAPER_MM`, positive-length segments |
+| `symbol` | anchor, scale > 0; `drawing:symbol` = `north`\|`section`\|`detail`\|`elevation` | anchor and scale within ±`MAX_PAPER_MM` |
+| `free_dimension` | two distinct points, signed offset, 0–3 decimal places | points and offset within ±`MAX_PAPER_MM` |
+
+A `text`, `hatch` or `symbol` entity additionally carries exactly one string payload attribute —
+`drawing:text`, `drawing:pattern` or `drawing:symbol` — required by its kind; every other kind
+carries none. A free dimension measures the drawn paper interval only: it binds no model feature,
+resolves nothing through the pinned source and never becomes stale through the model. The
+document-wide text volume shares the intent byte cap below, so long labels are limited by
+`MAX_INTENT_BYTES`, not by a separate budget.
 
 Admission refuses more than `MAX_DRAFTING_ENTITIES` (60) objects, any entity UUID equal to the
 drawing/view/dimension UUID, and any pair of equal entity UUIDs. Coordinates are exact paper

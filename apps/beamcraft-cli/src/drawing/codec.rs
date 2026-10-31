@@ -25,7 +25,7 @@ pub const INTENT_LAYER: &str = "drawing.usda";
 /// Tight cap checked before copying or parsing a document intent.
 pub const MAX_INTENT_BYTES: usize = 16_384;
 /// Closed descriptor whose SHA-256 is the drawing schema identity.
-pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/1;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;page-items=64;dimension=/Drawing/Dimension;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle;drafting-cap=60;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
+pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/1;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;page-items=64;dimension=/Drawing/Dimension;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
 
 /// Independent drawing schema digest; never interchangeable with the engineering-model schema.
 pub fn schema_identity() -> Result<ContentDigest, PlateError> {
@@ -105,12 +105,19 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
                 .map(f64::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
+            let payload = match entity.geometry.string_payload() {
+                Some((name, value)) => {
+                    format!("            custom string {name} = {}\n", quote(value))
+                }
+                None => String::new(),
+            };
             text.push_str(&format!(
-                "        def Scope \"E{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:kind = {}\n            custom double[] drawing:geometry = [{}]\n        }}\n",
+                "        def Scope \"E{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:kind = {}\n            custom double[] drawing:geometry = [{}]\n{}        }}\n",
                 ordinal + 1,
                 quote(&entity.id.to_string()),
                 quote(entity.geometry.kind()),
-                numbers
+                numbers,
+                payload
             ));
         }
         text.push_str("    }\n");
@@ -311,6 +318,10 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                     let id = DraftingEntityId::parse(text(item, "drawing:id", "string")?)
                         .map_err(|_| integrity("drawing identity is not a full UUIDv7"))?;
                     let kind = text(item, "drawing:kind", "token")?;
+                    let payload = match DraftingGeometry::payload_attribute(kind) {
+                        Some(name) => Some(text(item, name, "string")?),
+                        None => None,
+                    };
                     let values = match value(item, "drawing:geometry", "double[]")? {
                         Value::Array(values) => values
                             .iter()
@@ -324,7 +335,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                             })?,
                         _ => return Err(integrity("drafting geometry is not an exact double set")),
                     };
-                    let geometry = DraftingGeometry::from_parts(kind, &values)
+                    let geometry = DraftingGeometry::from_parts(kind, &values, payload)
                         .ok_or_else(|| integrity("drafting geometry disagrees with its kind"))?;
                     entities.push(DraftingSpec { id, geometry });
                 }
