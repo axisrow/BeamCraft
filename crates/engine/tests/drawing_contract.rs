@@ -723,11 +723,11 @@ fn sections_are_bounded_and_share_one_paper_identity_space() {
             .collect();
         Drawing::admit(s)
     };
-    // Every collection at its cap plus one layer and twelve drawn objects fills the page
+    // Every collection at its cap plus one layer and seven drawn objects fills the page
     // exactly; one more drawn object refuses.
-    assert!(paper(16, 16, 16, 12).is_ok());
+    assert!(paper(16, 16, 16, 7).is_ok());
     assert_eq!(
-        paper(16, 16, 16, 13).unwrap_err().code,
+        paper(16, 16, 16, 8).unwrap_err().code,
         ErrorCode::LimitExceeded
     );
 
