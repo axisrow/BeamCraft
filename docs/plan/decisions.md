@@ -18,9 +18,10 @@ Open questions are at the end.
   the gate, and the earlier "matching CI" wording is corrected in `CLAUDE.md` and
   `docs/development.md`. Results are read from the run itself — redirected to a file when the
   log matters, never through a pipe (`| tail` masks the exit code). While the gate runs, no
-  parallel heavy builds share the machine: the e2e suite
-  `reference::a_reply_lists_a_bounded_number` deadline-cancels under parallel load and passes in
-  isolation. `docs/development.md` records the gate, the load rule, the test pyramid and the
+  parallel heavy builds share the machine: the e2e test
+  `reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`
+  deadline-cancels under parallel load and passes in isolation. `docs/development.md` records
+  the gate, the load rule, the test pyramid and the
   acceptance-first rule.
 
 ## 2026-10-27

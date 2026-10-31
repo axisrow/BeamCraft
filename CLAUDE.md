@@ -32,12 +32,13 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps
-cargo run -p beamcraft-cli -- --version
 ```
 
-This is the full gate (owner decision 2026-10-31, #342): run it once, whole, and read the
-result from that run. The test step is literal `cargo test --workspace` — `cargo nextest` never
-runs doctests, so nextest is the iteration runner for targeted `-p <crate>` runs, not the gate.
+This is the full gate (owner decision 2026-10-31, #342) — the same four commands as in
+`docs/development.md` and the decision record: run it once, whole, and read the result from
+that run. The test step is literal `cargo test --workspace` — `cargo nextest` never runs
+doctests, so nextest is the iteration runner for targeted `-p <crate>` runs, not the gate.
+A quick smoke after a build: `cargo run -p beamcraft-cli -- --version`.
 
 CI (`.github/workflows/ci.yml`) runs the same on Windows and Linux, plus a wasm32 check of the
 three pure crates (`beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`) and `cargo deny`.

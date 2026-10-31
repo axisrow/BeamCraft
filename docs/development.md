@@ -34,8 +34,9 @@ is worth keeping, redirect it to a file and read the summary and exit status fro
 pipe such as `| tail` masks a non-zero exit code behind a friendly last page.
 
 While the gate runs, nothing else heavy runs on the machine — parallel agents and worktrees
-hold their builds until it finishes. Under exactly such parallel load the end-to-end suite
-`reference::a_reply_lists_a_bounded_number` in `beamcraft-cli` has been cancelled at its
+hold their builds until it finishes. Under exactly such parallel load the end-to-end test
+`reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`
+in `beamcraft-cli` has been cancelled at its
 deadline inside full runs that pass in isolation (~47 s and ~88 s observed) — a deadline flake
 that masks real regressions and costs a full re-run. If a suite fails while other builds were
 running, re-run it in isolation before debugging it.
@@ -91,8 +92,9 @@ real-binary grid integration tests, which also fail when that executable is miss
   not used because it pulls in accesskit, which is disabled by owner decision.
 - **Doc tests** keep the `///` examples of the public API compiling.
 - **Schema stability:** a new `ElementKind` must also update `SCHEMA_DESCRIPTOR` and pass the
-  strips screenshot tests in `beamcraft-ui`; the new-element-kind checklist lists the
-  non-obvious touchpoints.
+  strips screenshot tests in `beamcraft-ui`. The kind registry is closed: adding or removing a
+  kind needs a new vocabulary version ([F10 vocabulary
+  contract](contracts/f10-domain-vocabulary-v0.1.md), section 2.1).
 
 ### Acceptance first
 
