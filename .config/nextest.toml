@@ -1,9 +1,29 @@
 # cargo nextest configuration (https://nexte.st/config.html).
 #
-# The `default` profile stays unfiltered: `cargo nextest run --workspace` runs
-# every test and remains the local pre-merge gate, matching CI's nextest runs.
-# Doctests are the one exception: nextest never runs them, so a full local gate
-# also runs `cargo test --workspace --doc`, exactly like CI does.
+# The recorded gate uses unfiltered gate-* profiles plus mandatory doctests.
+# Execution budgets exclude compilation and archive preparation/extraction.
+
+[profile.default]
+retries = 0
+slow-timeout = { period = "30s", terminate-after = 4, grace-period = "5s", on-timeout = "fail" }
+
+[profile.gate-full]
+default-filter = "all()"
+global-timeout = "600s"
+[profile.gate-full.junit]
+path = "junit.xml"
+
+[profile.gate-cli]
+default-filter = "all()"
+global-timeout = "300s"
+[profile.gate-cli.junit]
+path = "junit.xml"
+
+[profile.gate-ci]
+default-filter = "all()"
+global-timeout = "180s"
+[profile.gate-ci.junit]
+path = "junit.xml"
 
 [profile.fast]
 # Inner-loop default: everything except the integration suites that each measure

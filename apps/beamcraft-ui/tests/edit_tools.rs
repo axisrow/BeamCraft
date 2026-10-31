@@ -7,8 +7,8 @@
 //! exactly what the CLI gives by hand (same placement, same mesh digest, same world bounds); a
 //! click finds what the CLI's `pick` finds, without starting it; a lookup that is no longer
 //! wanted stops its process; a cancelled preview publishes nothing; a refusal
-//! reaches the panel with the engine's code and message. Without the CLI binary next to this
-//! package's binary the tests are skipped and say so (`cargo test --workspace` builds it).
+//! reaches the panel with the engine's code and message. The CLI binary must exist next to this
+//! package's binary; missing prerequisites fail acceptance.
 
 #![allow(
     clippy::unwrap_used,
@@ -38,17 +38,10 @@ const B: &str = "019a7bf0-0000-7000-8000-00000000a002";
 const IBEAM: &str = "019a7bf0-0000-7000-8000-00000000a003";
 const HOLED: &str = "019a7bf0-0000-7000-8000-00000000a004";
 
+mod support;
+
 fn cli() -> Option<PathBuf> {
-    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
-    let cli = ui
-        .parent()?
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if cli.is_file() {
-        Some(cli)
-    } else {
-        eprintln!("SKIP edit-tools test: build beamcraft-cli first (cargo test --workspace does)");
-        None
-    }
+    support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
 }
 
 struct Stores {
