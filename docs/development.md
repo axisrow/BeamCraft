@@ -192,7 +192,7 @@ give the following wall times. The sample is every successful `ci.yml` run creat
 | Run | Successful runs | Median | Observed range |
 | --- | --- | --- | --- |
 | Full `master` CI (push): Linux, macOS, Windows and cold release builds | 16 | 6 min 24 s | 5 min 15 s–9 min 33 s |
-| Pull request CI: Linux and macOS, without Windows or cold release builds | 59 of 62 | 5 min 30 s | 1 min 45 s–16 min 27 s |
+| Pull request CI: Linux and macOS, without Windows or cold release builds | 59 of 62 | 5 min 30 s | 1 min 45 s–51 min 33 s |
 
 Cancelled and failed runs are excluded. Three further successful PR runs (#604, #679, #680)
 finished in 9–63 s — too short to include any real check — and are excluded from the PR row.
