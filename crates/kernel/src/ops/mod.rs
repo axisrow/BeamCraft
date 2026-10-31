@@ -42,6 +42,7 @@ mod body;
 mod cut;
 mod diagnostic;
 mod hole;
+mod member_hole;
 mod plane;
 pub(crate) mod seal;
 mod section;
@@ -50,6 +51,7 @@ pub use body::{Body, MAX_LOCAL_ID_BYTES, MAX_ORDINAL};
 pub use cut::{Keep, plane_cut, plane_cut_with};
 pub use diagnostic::{OpCode, OpDefect, OpFailure, OpField};
 pub use hole::{HoleCutter, through_hole, through_hole_with};
+pub use member_hole::{MemberHoleCutter, member_through_hole, member_through_hole_with};
 pub use plane::CutPlane;
 pub use seal::{OpKind, OpResult};
 

@@ -296,7 +296,7 @@ pub fn through_hole_with(
 }
 
 // A profile diagnostic about the last hole of the cap is about the new cutter.
-fn cutter_field(mut error: OpFailure, existing_holes: usize) -> OpFailure {
+pub(crate) fn cutter_field(mut error: OpFailure, existing_holes: usize) -> OpFailure {
     if error.field == OpField::Cap
         && error
             .profile
