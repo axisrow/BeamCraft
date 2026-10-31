@@ -96,9 +96,10 @@ real-binary grid integration tests, which also fail when that executable is miss
   millimetres and radians inside the engine, right-handed coordinates with Z up, conversion
   only at the UI and IO edge.
 - **Integration tests** live in a crate's `tests/` directory and drive its public API only.
-- **CLI end-to-end tests** drive `beamcraft-cli` (headless first, `AGENTS.md` §3): a
-  user-facing feature is asserted through a real command — stdout, stderr, exit code and the
-  store it writes.
+- **CLI end-to-end tests** drive `beamcraft-cli` (headless first, `AGENTS.md` §3): a feature an
+  agent or a script needs is asserted through a real command — stdout, stderr, exit code and
+  the store it writes; window-only interactive assistance has no CLI command and is covered by
+  the UI screenshot tests.
 - **UI tests** are screenshot tests through `run_ui` and the `egui_wgpu` readback; kittest is
   not used because it pulls in accesskit, which is disabled by owner decision.
 - **Doc tests** keep the `///` examples of the public API compiling.
