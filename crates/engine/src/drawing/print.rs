@@ -18,62 +18,13 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::DocumentVersionId;
 
+pub use beamcraft_model::sheet::Sheet;
+
 /// Version of the closed print pipeline contract.
 pub const PRINT_CONTRACT: &str = "beamcraft-drawing-print/1";
 
 /// Blank margin kept clear along every sheet edge, in millimetres.
 pub const SHEET_MARGIN_MM: f64 = 10.0;
-
-/// Fixed international sheet sizes in portrait orientation, in increasing area.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Sheet {
-    /// 210 × 297 mm.
-    A4,
-    /// 297 × 420 mm.
-    A3,
-    /// 420 × 594 mm.
-    A2,
-    /// 594 × 841 mm.
-    A1,
-    /// 841 × 1189 mm.
-    A0,
-}
-
-impl Sheet {
-    /// Portrait sheet size in millimetres, width then height.
-    pub fn size_mm(self) -> [f64; 2] {
-        match self {
-            Self::A4 => [210.0, 297.0],
-            Self::A3 => [297.0, 420.0],
-            Self::A2 => [420.0, 594.0],
-            Self::A1 => [594.0, 841.0],
-            Self::A0 => [841.0, 1189.0],
-        }
-    }
-
-    /// Exact lowercase wire token.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::A4 => "a4",
-            Self::A3 => "a3",
-            Self::A2 => "a2",
-            Self::A1 => "a1",
-            Self::A0 => "a0",
-        }
-    }
-
-    /// Parses a fixed sheet token.
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "a4" => Some(Self::A4),
-            "a3" => Some(Self::A3),
-            "a2" => Some(Self::A2),
-            "a1" => Some(Self::A1),
-            "a0" => Some(Self::A0),
-            _ => None,
-        }
-    }
-}
 
 /// Lays the exact resolved published geometry out 1:1, centred on `sheet`, and renders the
 /// print-ready page through the PDF writer. The output stays bound to `version`; the
@@ -164,6 +115,7 @@ mod tests {
             },
             drafting: Vec::new(),
             views: Vec::new(),
+            sheet: None,
         })
         .unwrap()
     }

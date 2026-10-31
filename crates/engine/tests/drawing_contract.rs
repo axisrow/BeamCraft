@@ -43,6 +43,7 @@ fn spec() -> DrawingSpec {
         },
         drafting: Vec::new(),
         views: Vec::new(),
+        sheet: None,
     }
 }
 
