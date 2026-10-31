@@ -37,6 +37,7 @@ fn drawing() -> Drawing {
             plane: Plane::Top,
             scale_denominator: 125.0,
             paper_origin_mm: [-12.5, 17.25],
+            title: Some("PLAN 1:125".to_owned()),
         },
         dimension: DimensionSpec {
             id: DimensionId::parse(DIM).unwrap(),
@@ -291,6 +292,7 @@ fn sections_and_details_round_trip_exactly_and_foreign_tokens_refuse() {
         side,
         scale_denominator: 50.0,
         paper_origin_mm: [10.0, -10.0],
+        title: Some("SECTION A-A".to_owned()),
     };
     let detail = |suffix: u64, parent: &DrawingViewId| DetailSpec {
         id: DrawingViewId::parse(&format!("01900000-0000-7000-8000-{suffix:012}")).unwrap(),
@@ -299,6 +301,7 @@ fn sections_and_details_round_trip_exactly_and_foreign_tokens_refuse() {
         radius_mm: 5.5,
         scale_denominator: 20.0,
         paper_origin_mm: [100.0, 100.0],
+        title: Some("DETAIL 1".to_owned()),
     };
     let intent = drawing()
         .with_sections(vec![
@@ -344,6 +347,7 @@ fn placed_views_round_trip_exactly_and_keep_their_own_paper_settings() {
         plane,
         scale_denominator: scale,
         paper_origin_mm: origin,
+        title: None,
     };
     let intent = drawing()
         .with_views(vec![

@@ -40,6 +40,12 @@ const PLATE: &str = "01900000-0000-7000-8000-000000000417";
 const SECTION_FAR: &str = "01900000-0000-7000-8000-000000000418";
 const SECTION_ALL: &str = "01900000-0000-7000-8000-000000000419";
 const DETAIL_CLIP: &str = "01900000-0000-7000-8000-00000000041a";
+const VIEW2: &str = "01900000-0000-7000-8000-00000000041c";
+const OP_TITLES: &str = "01900000-0000-7000-8000-00000000041d";
+const REV_TITLES: &str = "01900000-0000-7000-8000-00000000041e";
+const OP_PUB: &str = "01900000-0000-7000-8000-00000000041f";
+const REV_PUB: &str = "01900000-0000-7000-8000-000000000420";
+const VERSION: &str = "01900000-0000-7000-8000-000000000421";
 
 /// The document's member is the fixture beam: world x 0..3000, y 1950..2050,
 /// z -25..25 (a 100 x 50 profile centred on the axis y = 2000, z = 0).
@@ -142,6 +148,7 @@ fn document(
             plane: Plane::Front,
             scale_denominator: DEFAULT_SCALE_DENOMINATOR,
             paper_origin_mm: [0.0, 0.0],
+            title: None,
         },
         dimension: DimensionSpec {
             id: DimensionId::parse(DIMENSION).unwrap(),
@@ -170,6 +177,7 @@ fn mid_section(id: &str, side: CutSide, cut: f64) -> SectionSpec {
         side,
         scale_denominator: 1.0,
         paper_origin_mm: [0.0, 0.0],
+        title: None,
     }
 }
 
@@ -181,6 +189,7 @@ fn detail(id: &str, radius: f64) -> DetailSpec {
         radius_mm: radius,
         scale_denominator: 20.0,
         paper_origin_mm: [100.0, 100.0],
+        title: None,
     }
 }
 
@@ -549,4 +558,118 @@ fn a_section_shows_the_visible_half_and_its_exact_cut_contour() {
             .code,
         ErrorCode::StaleWorkspace
     );
+}
+
+#[test]
+fn view_titles_travel_the_wire_and_annotate_the_sheet_export() {
+    let f = Fixture::new();
+    f.model();
+    let document_dir = f
+        .shared
+        .root
+        .join("titled-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    // The document is created with a primary view title and laid on a supported sheet.
+    let mut created = create_args(&document_dir);
+    created.extend(
+        [
+            "--origin",
+            "30,40",
+            "--view-title",
+            "FRONT",
+            "--sheet-size",
+            "a3",
+            "--sheet-project",
+            "Bridge",
+            "--sheet-author",
+            "Drafter",
+        ]
+        .iter()
+        .map(|value| (*value).to_owned()),
+    );
+    let created = f.ok("create-drawing", &argv(&created));
+    assert_eq!(text(at(&created, &["view"]), "title"), "FRONT");
+    let head = text(&created, "revision_id");
+
+    // One edit places a titled placed view, section and detail; titles may hold spaces.
+    let placed_view_spec = format!("{VIEW2}:top:100:200,60:PLAN");
+    let section_spec = format!("{SECTION}:right:1500:positive:20:60,40:SECTION A-A");
+    let detail_spec = format!("{DETAIL}:{VIEW}:45,40:10:20:100,40:DETAIL 1");
+    let placement = [
+        ("--placed-view", placed_view_spec.as_str()),
+        ("--placed-section", section_spec.as_str()),
+        ("--placed-detail", detail_spec.as_str()),
+    ];
+    let (code, placed) = edit_views(
+        &document_dir,
+        &head,
+        OP_TITLES,
+        REV_TITLES,
+        &pairs(&placement),
+    );
+    assert_eq!(code, 0, "{placed:?}");
+    assert_eq!(text(&list(&placed, "placed_views")[0], "title"), "PLAN");
+    assert_eq!(
+        text(&list(&placed, "placed_sections")[0], "title"),
+        "SECTION A-A"
+    );
+    assert_eq!(
+        text(&list(&placed, "placed_details")[0], "title"),
+        "DETAIL 1"
+    );
+    let edit_head = text(&placed, "revision_id");
+
+    // The exact replay returns the same revision.
+    let (code, replayed) = edit_views(
+        &document_dir,
+        &head,
+        OP_TITLES,
+        REV_TITLES,
+        &pairs(&placement),
+    );
+    assert_eq!(code, 0, "{replayed:?}");
+    assert_eq!(text(&replayed, "revision_id"), edit_head);
+
+    // Publishing and exporting renders every view's annotation line deterministically.
+    f.ok(
+        "publish-drawing",
+        &[
+            "--document-dir",
+            &document_dir,
+            "--expected-head",
+            &edit_head,
+            "--op-id",
+            OP_PUB,
+            "--revision-id",
+            REV_PUB,
+            "--actor-id",
+            ACTOR,
+            "--version-id",
+            VERSION,
+        ],
+    );
+    let first_out = f.shared.root.join("titled-sheet-one.svg");
+    let second_out = f.shared.root.join("titled-sheet-two.svg");
+    for out in [&first_out, &second_out] {
+        f.ok(
+            "export-drawing",
+            &[
+                "--document-dir",
+                &document_dir,
+                "--version-id",
+                VERSION,
+                "--out",
+                out.to_str().unwrap(),
+            ],
+        );
+    }
+    let first = fs::read(&first_out).unwrap();
+    assert_eq!(first, fs::read(&second_out).unwrap());
+    let exported = String::from_utf8(first).unwrap();
+    assert_eq!(exported.matches("class=\"viewtitle\"").count(), 4);
+    for id in [VIEW, VIEW2, SECTION, DETAIL] {
+        assert!(exported.contains(&format!("data-view=\"{id}\"")), "{id}");
+    }
 }

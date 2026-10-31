@@ -41,6 +41,7 @@ fn drawing(source: SourceModelPin) -> Drawing {
             plane: Plane::Front,
             scale_denominator: 100.0,
             paper_origin_mm: [0.0, 0.0],
+            title: None,
         },
         dimension: DimensionSpec {
             id: beamcraft_model::id::DimensionId::parse(DIMENSION).unwrap(),

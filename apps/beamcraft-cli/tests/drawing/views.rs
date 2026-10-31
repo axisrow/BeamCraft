@@ -263,6 +263,7 @@ fn a_placed_view_shows_exactly_its_own_basis_of_the_pinned_source() {
             plane: Plane::Front,
             scale_denominator: DEFAULT_SCALE_DENOMINATOR,
             paper_origin_mm: [0.0, 0.0],
+            title: None,
         },
         dimension: DimensionSpec {
             id: DimensionId::parse(DIMENSION).unwrap(),
@@ -286,12 +287,14 @@ fn a_placed_view_shows_exactly_its_own_basis_of_the_pinned_source() {
                 plane: Plane::Top,
                 scale_denominator: 100.0,
                 paper_origin_mm: [0.0, 0.0],
+                title: None,
             },
             ViewSpec {
                 id: DrawingViewId::parse(RIGHT).unwrap(),
                 plane: Plane::Right,
                 scale_denominator: 50.0,
                 paper_origin_mm: [100.0, 50.0],
+                title: None,
             },
         ])
         .unwrap();

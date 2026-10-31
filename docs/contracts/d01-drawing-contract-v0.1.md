@@ -87,6 +87,8 @@ resolve as explicitly unresolved — that is a projection outcome, not an admiss
 - section cuts that are nonfinite or beyond the model coordinate cap, and details whose
   region centre or radius is nonfinite, non-positive or beyond the paper cap, or whose
   parent is not the primary view or a placed view;
+- any view title (the primary view's, a placed view's, a section's or a detail's) that
+  violates the bounded label rule; an absent title is the unannotated default;
 - paper objects (placed views, sections, details, drawn objects and layers) together
   exceeding the one-page intent (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each
   collection is under its own cap;
@@ -196,6 +198,16 @@ are outside this slice's contract. It resolves through `projection::resolve_deta
 parent wireframe mapped by the scales' ratio and clipped to the region, keeping the parent's
 semantic feature addresses.
 
+Each view carries an optional authored **title** (`ViewSpec.title`, `SectionSpec.title`,
+`DetailSpec.title`, and the primary view's own). A present title obeys the bounded label
+rule; an absent title is the unannotated default. The title is annotation, never
+identity: it does not participate in the UUID space, and replacing a view collection
+replaces its titles with it (the CLI `edit-views` carries an optional `:title` segment on
+each spec, an empty segment meaning unannotated; `create-drawing`/`refresh-drawing` set
+the primary view's title with `--view-title`). The closed canonical intent carries the
+title as the optional `drawing:title` string attribute beside each view scope's other
+attributes; the schema descriptor extension `view-title` names it.
+
 Each derived view resolves from the document's exact pinned snapshot: an object outside the
 document refuses, a snapshot whose pin disagrees refuses before geometry, and
 missing/unsupported geometry stays explicitly unresolved. Freshness is unchanged — every
@@ -206,12 +218,13 @@ The closed canonical intent carries placed views as the optional `/Drawing/Views
 (`V1..Vn`: `drawing:id`, `drawing:plane`, `drawing:scale`, `drawing:origin double[]`),
 sections as `/Drawing/Sections` (`S1..Sn`: plus `drawing:cut`, `drawing:side`) and details as
 `/Drawing/Details` (`D1..Dn`: plus `drawing:parent`, `drawing:center double[]`,
-`drawing:radius`). The whole intent must fit one closed reader page: `MAX_INTENT_PAGE_ITEMS`
-(64) prims — the three fixed document prims, one optional scope per non-empty collection, and
-every paper object. `edit-views` follows the same replay discipline as `edit-drafting`: no
-model store on the command line, and the request fingerprint binds the incoming placement of
-all three collections, so an exact replay returns the same revision and a changed placement
-under the same operation id refuses.
+`drawing:radius`), each scope's prims optionally carrying `drawing:title`. The whole intent
+must fit one closed reader page: `MAX_INTENT_PAGE_ITEMS` (64) prims — the three fixed
+document prims, one optional scope per non-empty collection, and every paper object.
+`edit-views` follows the same replay discipline as `edit-drafting`: no model store on the
+command line, and the request fingerprint binds the incoming placement of all three
+collections, so an exact replay returns the same revision and a changed placement under the
+same operation id refuses.
 
 ## 6c. Sheets (D05)
 
@@ -226,11 +239,14 @@ budget. Placement changes only through `Drawing::with_sheet` / `without_sheet` (
 
 The whole-sheet export (`drawing::sheet::export_svg`) renders one exact published version as
 deterministic stroke-only SVG: frame, title block (contributor-original stroke glyphs, no
-font or embedded text), every resolved placed view and the primary view's dimension groups.
-Anything unresolved refuses; every stroke must lie inside the frame — content that does not
-fit refuses instead of being rescaled or clipped. A document without a sheet keeps the
-loose-paper export of section 6, and `--format pdf` defaults its print sheet to the
-document's sheet size.
+font or embedded text), and every view — the primary view's wireframe and dimension groups,
+each placed view's wireframe, each section's visible half plus its closed cut contour and
+each detail's magnified wireframe — annotated below its geometry with its title and display
+scale (`1:N`; the scale alone when the view carries no title). A section whose cut misses
+the member box annotates at its view origin. Anything unresolved refuses; every stroke must
+lie inside the frame — content that does not fit refuses instead of being rescaled or
+clipped. A document without a sheet keeps the loose-paper export of section 6, and
+`--format pdf` defaults its print sheet to the document's sheet size.
 
 ## 7. Module map
 
