@@ -219,27 +219,43 @@ pub(crate) fn list_json(
                     AnnotationPayload::Mark { attribute, .. } => {
                         fields.push(("attribute", Json::text(attribute.clone())));
                     }
-                    AnnotationPayload::Leader { text, .. } => {
+                    AnnotationPayload::Leader { text, end_mm, .. } => {
                         fields.push(("text", Json::text(text.clone())));
+                        fields.push(("end_mm", triple(*end_mm)?));
                     }
                 }
-                match state_of(&a.id) {
+                // Every record carries its anchors, empty when nothing resolves: the reply has
+                // one shape whatever the binding state.
+                let anchors = match state_of(&a.id) {
                     Some(Resolution::Current(bound)) => {
                         fields.push(("status", Json::text("current")));
                         push_bound(&mut fields, bound)?;
+                        bound.anchors_mm.clone()
                     }
                     Some(Resolution::Stale(bound)) => {
                         fields.push(("status", Json::text("stale")));
                         push_bound(&mut fields, bound)?;
+                        bound.anchors_mm.clone()
                     }
                     Some(Resolution::Unresolved(reason)) => {
                         fields.push(("status", Json::text("unresolved")));
                         fields.push(("reason", Json::text(reason.as_str())));
+                        Vec::new()
                     }
                     None => {
                         fields.push(("status", Json::text("unknown")));
+                        Vec::new()
                     }
-                }
+                };
+                fields.push((
+                    "anchors_mm",
+                    Json::Array(
+                        anchors
+                            .iter()
+                            .map(|p| triple(*p))
+                            .collect::<Run<Vec<_>>>()?,
+                    ),
+                ));
                 Ok(Json::Object(
                     fields.into_iter().map(|(k, v)| (k.to_owned(), v)).collect(),
                 ))
@@ -258,16 +274,6 @@ fn push_bound(
     if let Some(text) = &bound.text {
         fields.push(("bound_text", Json::text(text.clone())));
     }
-    fields.push((
-        "anchors_mm",
-        Json::Array(
-            bound
-                .anchors_mm
-                .iter()
-                .map(|p| triple(*p))
-                .collect::<Run<Vec<_>>>()?,
-        ),
-    ));
     Ok(())
 }
 

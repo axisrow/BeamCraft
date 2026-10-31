@@ -655,7 +655,7 @@ impl App {
                             if tool_button(ui, Icon::Grid, "Rectangular grid", bench == Bench::Grid, true).clicked() {
                                 pick = Some(Bench::Grid);
                             }
-                            if tool_button(ui, Icon::Fit, "Annotations", bench == Bench::Annotations, true).clicked() {
+                            if tool_button(ui, Icon::Callout, "Annotations", bench == Bench::Annotations, true).clicked() {
                                 pick = Some(Bench::Annotations);
                             }
                         });

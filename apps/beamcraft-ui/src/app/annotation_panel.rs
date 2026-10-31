@@ -60,8 +60,10 @@ pub(crate) struct Row {
     pub value_mm: Option<f64>,
     /// The shown text of a mark or leader.
     pub text: Option<String>,
-    /// The resolved world anchors.
+    /// The resolved world anchors, empty when nothing resolves.
     pub anchors: Vec<[f64; 3]>,
+    /// The leader's free end, when the record is a leader.
+    pub end_mm: Option<[f64; 3]>,
 }
 
 /// The stored state between frames; everything else is on [`App`].
@@ -77,6 +79,8 @@ pub(crate) struct Panel {
     pub(crate) rows: Result<Vec<Row>, String>,
     pub(super) list_job: Option<Receiver<Result<Vec<Row>, ToolError>>>,
     pub(super) commit_job: Option<Receiver<Result<(), ToolError>>>,
+    /// Whether the running commit is a delete, so the note names the right action.
+    pub(super) deleting: bool,
     pub(crate) note: Option<Result<String, String>>,
 }
 
@@ -91,6 +95,7 @@ impl Panel {
             rows: Ok(Vec::new()),
             list_job: None,
             commit_job: None,
+            deleting: false,
             note: None,
         }
     }
@@ -141,13 +146,17 @@ pub(crate) fn parse_rows(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Ro
     entries
         .iter()
         .map(|a| {
+            // The CLI writes anchors for every record; an absent key (an older reply) is the
+            // same as nothing resolved.
             let anchors = a
                 .get("anchors_mm")
-                .and_then(|j| j.array())
-                .map_err(|_| unreadable())?
+                .ok()
+                .and_then(|j| j.array().ok())
+                .unwrap_or(&[])
                 .iter()
                 .map(point)
-                .collect::<Result<Vec<_>, _>>();
+                .collect::<Result<Vec<_>, _>>()?;
+            let end_mm = a.get("end_mm").ok().and_then(|v| point(v).ok());
             Ok(Row {
                 id: text(a, "id").ok_or_else(unreadable)?,
                 name: text(a, "name").ok_or_else(unreadable)?,
@@ -156,7 +165,8 @@ pub(crate) fn parse_rows(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Ro
                 reason: text(a, "reason"),
                 value_mm: a.get("value_mm").ok().and_then(|v| v.float().ok()),
                 text: text(a, "bound_text").or_else(|| text(a, "text")),
-                anchors: anchors?,
+                anchors,
+                end_mm,
             })
         })
         .collect()
@@ -211,6 +221,24 @@ pub(crate) fn paint(ui: &egui::Ui, rect: egui::Rect, view: &View, origin: [f64; 
                 }
             }
             (Some(a), None) => {
+                // A leader runs from its feature to the free end and shows the text there; a
+                // mark (or a leader whose end is off screen) is a dot at the feature.
+                if let Some(end) = row.end_mm
+                    && let (Some(p), Some(q)) = (project(a), project(end))
+                {
+                    painter.line_segment([p, q], stroke);
+                    painter.circle_filled(p, 2.5, stroke.color);
+                    if let Some(text) = label {
+                        painter.text(
+                            q + egui::vec2(6.0, -6.0),
+                            egui::Align2::LEFT_BOTTOM,
+                            format!("{}: {text}", row.name),
+                            egui::FontId::proportional(12.0),
+                            stroke.color,
+                        );
+                    }
+                    continue;
+                }
                 let Some(p) = project(a) else { continue };
                 painter.circle_filled(p, 3.0, stroke.color);
                 if let Some(text) = label {
@@ -458,6 +486,7 @@ impl App {
     }
 
     fn annotation_delete(&mut self, id: &str) {
+        self.annotation.deleting = true;
         let cli = self.source.cli.clone();
         let stats = Arc::clone(&self.stats);
         let args = vec![
@@ -511,10 +540,16 @@ impl App {
             )),
         };
         self.annotation.commit_job = None;
+        let was_delete = self.annotation.deleting;
+        self.annotation.deleting = false;
         match result {
             Ok(()) => {
                 self.annotation.clear_placement();
-                self.annotation.note = Some(Ok("Placed.".into()));
+                self.annotation.note = Some(Ok(if was_delete {
+                    "Deleted.".into()
+                } else {
+                    "Placed.".into()
+                }));
                 self.annotation_load();
             }
             Err(error) => {
@@ -596,13 +631,14 @@ mod tests {
 
     #[test]
     fn a_listing_becomes_rows_with_their_binding_states() {
+        // The exact CLI shape: an unresolved record carries no anchors, a leader its free end.
         let reply = br#"{"annotations":[
             {"id":"a","name":"DIM1","kind":"dimension","status":"current",
              "value_mm":1200,"anchors_mm":[[0,300,5],[1200,300,5]]},
-            {"id":"b","name":"MK1","kind":"mark","status":"stale",
-             "bound_text":"P/7","anchors_mm":[[600,300,10]]},
-            {"id":"c","name":"LD1","kind":"leader","status":"unresolved",
-             "reason":"element-missing","text":"note","anchors_mm":[]}
+            {"id":"b","name":"LD1","kind":"leader","status":"stale",
+             "text":"note","end_mm":[1500,900,50],"anchors_mm":[[0,300,10]]},
+            {"id":"c","name":"MK1","kind":"mark","status":"unresolved",
+             "reason":"feature-missing","anchors_mm":[]}
         ]}"#;
         let rows = parse_rows(Some(0), reply).unwrap();
         assert_eq!(rows.len(), 3);
@@ -611,9 +647,22 @@ mod tests {
             rows[0].anchors,
             vec![[0.0, 300.0, 5.0], [1200.0, 300.0, 5.0]]
         );
-        assert_eq!(rows[1].text.as_deref(), Some("P/7"));
-        assert_eq!(rows[2].reason.as_deref(), Some("element-missing"));
+        assert_eq!(rows[1].end_mm, Some([1500.0, 900.0, 50.0]));
+        assert_eq!(rows[1].text.as_deref(), Some("note"));
+        assert_eq!(rows[2].reason.as_deref(), Some("feature-missing"));
+        assert!(rows[2].anchors.is_empty());
         assert!(parse_rows(Some(1), br#"{"outcome":"rejected"}"#).is_err());
+    }
+
+    #[test]
+    fn a_reply_without_anchors_is_an_empty_row_not_a_refusal() {
+        let reply = br#"{"annotations":[
+            {"id":"c","name":"MK1","kind":"mark","status":"unresolved",
+             "reason":"element-missing"}
+        ]}"#;
+        let rows = parse_rows(Some(0), reply).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].anchors.is_empty());
     }
 
     #[test]
