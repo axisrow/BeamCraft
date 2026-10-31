@@ -1067,7 +1067,7 @@ impl App {
             return;
         }
         let mut open = true;
-        let mut result = None;
+        let mut shown: Option<Result<Option<crate::views::Action>, String>> = None;
         egui::Window::new("Saved views")
             .open(&mut open)
             .default_width(430.0)
@@ -1077,14 +1077,18 @@ impl App {
                 if let Some(note) = &self.views_note {
                     ui.colored_label(RED, note);
                 }
-                result = self
-                    .views_panel
-                    .show(ui, &self.views, &self.camera, &self.grid_scene)
-                    .err();
+                shown =
+                    Some(
+                        self.views_panel
+                            .show(ui, &self.views, &self.camera, &self.grid_scene),
+                    );
             });
         self.views_panel.window_open &= open;
-        if let Some(note) = result {
-            self.views_note = Some(note);
+        match shown {
+            // The action runs after the window closes its borrow of the panel state.
+            Some(Ok(Some(action))) => self.view_action(action),
+            Some(Err(note)) => self.views_note = Some(note),
+            _ => {}
         }
     }
 
@@ -1224,6 +1228,14 @@ impl App {
                         return;
                     };
                     if let (Some(renderer), Some(texture)) = (window.renderer(), window.texture()) {
+                        // A secondary window shows the model as the main viewport does, so the
+                        // main window's cut applies to it too (the cut record stays V15's).
+                        let clip = match &self.cut {
+                            Some(cut) => {
+                                crate::cut_plane::ClipGpu::of(cut, loaded.summary.origin_mm)
+                            }
+                            None => crate::cut_plane::ClipGpu::none(),
+                        };
                         renderer.draw(
                             &self.state.device,
                             &self.state.queue,
@@ -1231,6 +1243,7 @@ impl App {
                             view,
                             &self.stats,
                             mode,
+                            &clip,
                         );
                         let response =
                             ui.add(egui::Image::new((texture, size)).sense(viewport_sense()));
@@ -1269,6 +1282,9 @@ impl App {
                         }
                     }
                 });
+            // The close button wrote through `open`: a closed window is gone next frame and
+            // its slot is free again.
+            window.open &= open;
         }
     }
 
@@ -5105,12 +5121,14 @@ mod tests {
     }
 
     /// A frame that draws the workspace panels and the saved-views window, returning the
-    /// centre of every drawn text label.
+    /// centre of every drawn text label and every filled rectangle (for the view-window
+    /// frame, whose close button sits at its right edge).
     fn views_frame(
         app: &mut App,
         ctx: &egui::Context,
         events: Vec<egui::Event>,
         labels: &mut Vec<(String, egui::Pos2)>,
+        rects: &mut Vec<egui::Rect>,
     ) {
         let output = ctx.run_ui(
             egui::RawInput {
@@ -5125,15 +5143,20 @@ mod tests {
                 app.ribbon(ui);
                 app.project_browser(ui);
                 app.views_window(ui.ctx());
+                app.draw_view_windows(ui.ctx());
                 egui::CentralPanel::default().show(ui, |_| {});
             },
         );
         for shape in &output.shapes {
-            if let egui::Shape::Text(text) = &shape.shape {
-                labels.push((
+            match &shape.shape {
+                egui::Shape::Text(text) => labels.push((
                     text.galley.text().to_owned(),
                     text.pos + text.galley.size() / 2.0,
-                ));
+                )),
+                egui::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT => {
+                    rects.push(rect.rect)
+                }
+                _ => {}
             }
         }
         output.drop_without_applying_deltas();
@@ -5170,25 +5193,38 @@ mod tests {
         crate::theme::install(&ctx);
         // The ribbon's View tab opens the saved-views window: a real click path.
         let mut labels = Vec::new();
-        views_frame(&mut app, &ctx, vec![], &mut labels);
+        let mut rects = Vec::new();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         let tab = labels
             .iter()
             .find(|(text, _)| text == "View")
             .map(|(_, pos)| *pos)
             .unwrap_or_else(|| panic!("the View tab was not drawn"));
-        views_frame(&mut app, &ctx, click(tab), &mut labels);
+        views_frame(&mut app, &ctx, click(tab), &mut labels, &mut rects);
         let open = labels
             .iter()
             .find(|(text, _)| text == "Saved views")
             .map(|(_, pos)| *pos)
             .unwrap_or_else(|| panic!("the Saved views button was not drawn"));
-        views_frame(&mut app, &ctx, click(open), &mut labels);
+        views_frame(&mut app, &ctx, click(open), &mut labels, &mut rects);
         assert!(app.views_panel.window_open, "the window did not open");
 
-        // Save the current view, navigate away, apply, and the pose is back exactly.
+        // The window's own buttons dispatch: saving the current view is one click there.
         app.views_panel.name = "Kept".into();
-        app.view_action(crate::views::Action::SaveCurrent);
-        assert_eq!(app.views.len(), 1);
+        let mut save = None;
+        for _ in 0..3 {
+            save = labels
+                .iter()
+                .find(|(text, _)| text == "Save current view")
+                .map(|(_, pos)| *pos);
+            if save.is_some() {
+                break;
+            }
+            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        }
+        let save = save.unwrap_or_else(|| panic!("the save button was not drawn: {labels:?}"));
+        views_frame(&mut app, &ctx, click(save), &mut labels, &mut rects);
+        assert_eq!(app.views.len(), 1, "the window button did not dispatch");
         assert!(crate::views::session_path(&dir).is_file());
         let saved = app.views.iter().next().unwrap().clone();
         app.camera.navigate([1.0, -0.5], [80.0, 0.0], 0.7).unwrap();
@@ -5266,7 +5302,7 @@ mod tests {
         assert_eq!(pose.pitch, 0.0);
         assert!((pose.yaw - std::f64::consts::PI).abs() < 1e-9);
         assert!(app.views_note.is_none(), "{:?}", app.views_note);
-        // Extra windows are display-only and bounded; closing releases the slot.
+        // Extra windows are display-only and bounded; the real close button releases the slot.
         for _ in 0..5 {
             app.open_view_window();
         }
@@ -5288,11 +5324,38 @@ mod tests {
             },
         )
         .drop_without_applying_deltas();
-        if let Some(window) = app.view_windows.first_mut() {
-            window.open = false;
+        let mut labels = Vec::new();
+        let mut rects = Vec::new();
+        let mut title = None;
+        for _ in 0..3 {
+            labels.clear();
+            rects.clear();
+            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+            title = labels
+                .iter()
+                .find(|(text, _)| text == "View 2")
+                .map(|(_, pos)| *pos);
+            if title.is_some() {
+                break;
+            }
         }
-        app.draw_view_windows(&ctx);
-        assert_eq!(app.view_windows.len(), crate::views::MAX_WINDOWS - 1);
+        let title = title.unwrap_or_else(|| panic!("the view window did not draw: {labels:?}"));
+        // The close button sits at the right edge of the window's own frame, the smallest
+        // filled rectangle around the title that is wide enough to be a window.
+        let frame = rects
+            .iter()
+            .filter(|r| r.contains(title) && r.width() > 300.0)
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .copied()
+            .unwrap_or_else(|| panic!("no window frame around {title:?} in {rects:?}"));
+        let close = egui::pos2(frame.right() - 11.0, title.y);
+        views_frame(&mut app, &ctx, click(close), &mut labels, &mut rects);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert_eq!(
+            app.view_windows.len(),
+            crate::views::MAX_WINDOWS - 1,
+            "the close button did not release the window"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

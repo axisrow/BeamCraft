@@ -143,10 +143,10 @@ impl Panel {
     pub(crate) fn set_work_area(&mut self, area: Option<&WorkArea>) {
         match area {
             Some(area) => {
-                for (slot, value) in self.work_min.iter_mut().zip(area.min_mm) {
+                for (slot, value) in self.work_min.iter_mut().zip(area.min) {
                     *slot = format!("{value}");
                 }
-                for (slot, value) in self.work_max.iter_mut().zip(area.max_mm) {
+                for (slot, value) in self.work_max.iter_mut().zip(area.max) {
                     *slot = format!("{value}");
                 }
             }

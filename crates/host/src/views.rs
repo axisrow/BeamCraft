@@ -134,13 +134,13 @@ fn plane_from_json(json: &Json) -> Result<PlaneSpec, CommandError> {
 pub fn work_area_to_json(area: &WorkArea) -> Result<Json, CommandError> {
     let point = |v: [f64; 3]| Json::Array(v.iter().filter_map(|v| Json::number(*v).ok()).collect());
     Ok(Json::object([
-        ("min_mm", point(area.min_mm)),
-        ("max_mm", point(area.max_mm)),
+        ("min", point(area.min)),
+        ("max", point(area.max)),
     ]))
 }
 
 fn work_area_from_json(json: &Json) -> Result<WorkArea, CommandError> {
-    WorkArea::new(point3(json, "min_mm")?, point3(json, "max_mm")?)
+    WorkArea::new(point3(json, "min")?, point3(json, "max")?)
 }
 
 /// One saved view as JSON, in the session file's element shape.

@@ -125,46 +125,10 @@ pub enum PlaneSpec {
     },
 }
 
-/// The axis-aligned model box a view works inside, in millimetres. Data only in V12: the cut
-/// plane task (V15) renders and clips with it.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WorkArea {
-    /// Smallest corner.
-    pub min_mm: [f64; 3],
-    /// Largest corner.
-    pub max_mm: [f64; 3],
-}
-
-impl WorkArea {
-    /// Admits a finite, ordered box inside the target cap.
-    pub fn new(min_mm: [f64; 3], max_mm: [f64; 3]) -> Result<Self, CommandError> {
-        let finite = min_mm.iter().all(|v| v.is_finite())
-            && max_mm.iter().all(|v| v.is_finite())
-            && min_mm
-                .iter()
-                .zip(max_mm.iter())
-                .all(|(low, high)| low <= high);
-        if !finite {
-            return Err(bad(
-                ErrorCode::NonFiniteNumber,
-                "views.work_area",
-                "work area value is not finite or unordered",
-            ));
-        }
-        if min_mm
-            .iter()
-            .chain(max_mm.iter())
-            .any(|v| v.abs() > TARGET_CAP_MM)
-        {
-            return Err(bad(
-                ErrorCode::LimitExceeded,
-                "views.work_area",
-                "work area exceeds the coordinate cap",
-            ));
-        }
-        Ok(Self { min_mm, max_mm })
-    }
-}
+/// The axis-aligned model box a view works inside, in millimetres. One type serves V12 and the
+/// cut plane: V15's [`crate::view_clipping::WorkArea`] is the admission and clipping source of
+/// truth, and saved views carry it.
+pub use crate::view_clipping::WorkArea;
 
 /// One saved view: its name, the plane it came from (`None` for a free 3D view), the pose that
 /// restores it and the work area it carried.
@@ -402,7 +366,9 @@ mod tests {
         assert!(WorkArea::new([0.0; 3], [100.0; 3]).is_ok());
         assert!(WorkArea::new([100.0; 3], [0.0; 3]).is_err());
         assert!(WorkArea::new([f64::INFINITY; 3], [0.0; 3]).is_err());
-        assert!(WorkArea::new([0.0; 3], [2e7; 3]).is_err());
+        // The cap is the shared view_clipping one, not the orbit camera's.
+        assert!(WorkArea::new([0.0; 3], [2e7; 3]).is_ok());
+        assert!(WorkArea::new([0.0; 3], [2e9; 3]).is_err());
     }
 
     #[test]

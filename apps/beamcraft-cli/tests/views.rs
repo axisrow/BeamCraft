@@ -122,7 +122,7 @@ fn named_views_save_apply_and_remove_without_touching_the_store() {
     assert!(at(pose, &["orthographic"]).boolean().unwrap());
     let wa = at(&applied, &["work_area"]);
     assert_eq!(
-        at(wa, &["max_mm"])
+        at(wa, &["max"])
             .array()
             .unwrap()
             .iter()

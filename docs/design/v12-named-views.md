@@ -9,8 +9,10 @@ The window saves, restores and deletes named views; a view is display state only
 this slice reads or writes a store, and a saved view restores exactly the pose, projection and
 work area it captured. The engine owns the semantics (`crates/engine/src/views.rs`):
 `ViewPose` (target, yaw, pitch, distance, orthographic — the orbit camera's own bounds),
-`PlaneSpec` (grid line, level or two points), `WorkArea` (an ordered axis-aligned box),
-`NamedView` and the bounded `ViewBook` (128 views, names trimmed to 64 bytes, ordered by name).
+`PlaneSpec` (grid line, level or two points), `NamedView` and the bounded `ViewBook` (128
+views, names trimmed to 64 bytes, ordered by name). The work area is V15's
+`view_clipping::WorkArea`, re-exported here: one type is admitted once and serves both the
+saved view and the cut record.
 
 A plane view resolves once at save time, so applying it needs no store:
 `resolve_plane` walks `grid_query` for the grid line's plane (eye along the horizontal normal,
@@ -43,4 +45,4 @@ so a restore is bit-equal; the orbit clamp's lower pitch bound widened to 0 so l
 stay level until the user orbits.
 
 The work area is data in this slice: carried per view, editable, restored. V15 renders the box
-and clips with it.
+and clips with it through the same `view_clipping::WorkArea`.
