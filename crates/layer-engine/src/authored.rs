@@ -89,8 +89,15 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:weld:pathMm=double3[](optional,2..=1024 world points);steel:weld:allAround=token(true|false,optional);",
     "steel:weld:contour=token(none|flush|concave|convex,optional)\n",
     "steel:bolt:diameterMm=double(>0,<=1000);steel:bolt:count=int(1..=512);steel:bolt:pitchMm=double(>0,<=1e6);",
-    "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit)\n",
-    "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;source connection)\n",
+    "steel:bolt:originMm=double3;steel:bolt:directionMm=double3(unit);\n",
+    "bolt group (A14.3)=steel:bolt:fastener=string(sha256);steel:bolt:point1Mm=double3;steel:bolt:point2Mm=double3;",
+    "steel:bolt:planeNormalMm=double3(unit);steel:bolt:rotationRad=double;steel:bolt:onPlaneMm=double;steel:bolt:depthMm=double;",
+    "steel:bolt:offsetStartMm=double;steel:bolt:spacingMode=token(spacings|pitch|offset_end);steel:bolt:spacingValueMm=double;",
+    "steel:bolt:spacingsMm=double[](>0 each);steel:bolt:lengthMode=token(auto|fixed);steel:bolt:lengthMm=double;",
+    "steel:bolt:washerUnderHead=bool;steel:bolt:washerUnderNut=bool;the fifteen steel:bolt:fastener attributes or none,",
+    "never mixed with the five A05 attributes;spacings give 2..=512 fasteners\n",
+    "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;",
+    "2..=1024 for an A14.3 bolt group;source connection)\n",
     "grid=/World/Grids/GRD_<uuid7-32>;bim:discipline=token(steel);bim:grid:u|v:mode=token(regular|drawn);expression=string;spanMm=double[];ids=string[];labels=string[];shapes=token[];pointsMm=double[];no authored Geometry or material\n",
     "level=element;bim:elementKind=level;kind=component;bim:elevationMm=double(finite,abs<=1e9);no material or Geometry;placement=identity\n",
     "construction=/World/Construction/CNS_<uuid7-32>;bim:elementKind=construction;kind=component;bim:discipline=token(steel);",
@@ -341,6 +348,11 @@ pub enum Shape {
     /// `bim:connects` record towards two distinct parts. Like a weld it has no material, no
     /// derived body and the identity placement in this slice.
     Bolt(Bolt),
+    /// A14.3 bolt group (bolt amendment sections 4 and 6): a `connection` element that places
+    /// one row of identical fasteners of a pinned definition between 2 to 1024 parts. Like an
+    /// A05 group it has no material, no derived body and the identity placement; the definition
+    /// travels by its digest. No hole is generated in this slice (A14.4).
+    BoltGroup(BoltGroup),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
     /// T02 construction object: a helper point, line, circle or plane with no engineering body,
@@ -365,6 +377,7 @@ impl Shape {
             | Self::Assembly
             | Self::Weld(_)
             | Self::Bolt(_)
+            | Self::BoltGroup(_)
             | Self::Grid(_)
             | Self::Construction(_)
             | Self::Level { .. } => &[],
@@ -420,6 +433,47 @@ pub struct Bolt {
     pub origin_mm: [f64; 3],
     /// Unit world direction of the line: finite, squared norm within 1e-6 of one.
     pub direction_mm: [f64; 3],
+}
+
+/// The authored inputs of an A14.3 bolt group (bolt amendment section 4): two points, a
+/// reference plane with rotation, the position values, the offsets and the authoritative
+/// spacings over a pinned fastener definition addressed by its digest. Every engine decision
+/// (crossing, length) has already run; this library stores, bounds and re-reads the record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoltGroup {
+    /// Full UUIDv7 of every connected part, main part first: 2 to 1024 distinct plates, beams
+    /// or columns.
+    pub connects: Vec<String>,
+    /// Content digest of the pinned fastener definition the group places.
+    pub fastener: ContentDigest,
+    /// World start of the row in millimetres, each component within the coordinate cap.
+    pub point1_mm: [f64; 3],
+    /// World end of the row.
+    pub point2_mm: [f64; 3],
+    /// Unit normal of the reference plane at zero rotation.
+    pub plane_normal_mm: [f64; 3],
+    /// Rotation about the row in radians.
+    pub rotation_rad: f64,
+    /// Offset of the whole group along the plane axis in millimetres.
+    pub on_plane_mm: f64,
+    /// Offset of the whole group along the shank axis in millimetres.
+    pub depth_mm: f64,
+    /// Distance along the row from `point1` to the first fastener, in millimetres.
+    pub offset_start_mm: f64,
+    /// `spacings`, `pitch` or `offset_end`: the stored pattern a moved `point2` re-expands.
+    pub spacing_mode: String,
+    /// The value of a `pitch` or `offset_end` pattern; `0.0` for `spacings`.
+    pub spacing_value_mm: f64,
+    /// The authoritative distances between neighbouring fasteners, one to 511 values.
+    pub spacings_mm: Vec<f64>,
+    /// `auto` or `fixed`.
+    pub length_mode: String,
+    /// The resolved shank length in millimetres, one for the whole group.
+    pub length_mm: f64,
+    /// Whether a washer sits under the head.
+    pub washer_under_head: bool,
+    /// Whether a washer sits under the nut.
+    pub washer_under_nut: bool,
 }
 
 /// Closed initial member vocabulary.
@@ -630,6 +684,16 @@ pub enum Change {
         /// Ordered element-local path points.
         points_mm: Vec<[f64; 3]>,
     },
+    /// Replace the complete authored record of an A14.3 bolt group as a whole (bolt amendment
+    /// section 6): the fifteen `steel:bolt:*` attributes and the `bim:connects` record, with
+    /// the five A05 annotation attributes removed. The engine has already decided the
+    /// placement; this writes it. It is also the upgrade path of a stored A05 group.
+    BoltGroup {
+        /// Full target UUIDv7.
+        id: String,
+        /// The complete new record.
+        group: BoltGroup,
+    },
     /// Change the optional roll opinion in the selected authored layer.
     Roll {
         /// Full target UUIDv7.
@@ -772,6 +836,7 @@ impl Change {
             Self::ThicknessSide { id, .. } => (id, "steel:plate:thicknessSide"),
             Self::Cuts { id, .. } => (id, "steel:cut"),
             Self::MemberHoles { id, .. } => (id, "steel:mhole"),
+            Self::BoltGroup { id, .. } => (id, "steel:bolt"),
             Self::Axis { id, .. } => (id, "bim:axisPointsMm"),
             Self::Roll { id, .. } => (id, "steel:member:rollRad"),
             Self::Profile { id, .. } => (id, "bim:profile"),
@@ -1182,7 +1247,7 @@ pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String
 fn shape_category(shape: &Shape) -> ElementCategory {
     match shape {
         Shape::Assembly => ElementCategory::Assembly,
-        Shape::Weld(_) | Shape::Bolt(_) => ElementCategory::Connection,
+        Shape::Weld(_) | Shape::Bolt(_) | Shape::BoltGroup(_) => ElementCategory::Connection,
         Shape::Level { .. } => ElementCategory::Level,
         Shape::Grid(_) => ElementCategory::Grid,
         Shape::Construction(_) => ElementCategory::Construction,

@@ -36,11 +36,15 @@ use beamcraft_engine::transaction::PriorOp;
 use beamcraft_engine::weld::{PartKind, Parts};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Bolt as LayerBolt, Change, EditTargets, Element, Placement as LayerPlacement, Prepare,
-    Shape, schema_identity, validate_layers,
+    Author, Bolt as LayerBolt, BoltGroup as LayerBoltGroup, Change, EditTargets, Element,
+    Placement as LayerPlacement, Prepare, Resource, Shape, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
-use beamcraft_model::command::{BoltSpec, CommandError, CreateBolt};
+use beamcraft_model::command::{
+    BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CommandError, CreateBolt, CreateBoltGroup,
+    UpdateBoltGroup,
+};
+use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use std::collections::BTreeMap;
@@ -90,11 +94,13 @@ pub struct BoltChange {
     pub bolts: Vec<BoltView>,
 }
 
-/// The kinds of a pinned model's elements, its bolt groups and the conservative world bounds of
-/// its parts.
+/// The kinds of a pinned model's elements, its bolt groups of both forms, the pinned
+/// definitions and the conservative world bounds of its parts.
 struct Model {
     parts: Parts,
     bolts: Vec<BoltView>,
+    groups: Vec<BoltGroupView>,
+    definitions: BTreeMap<ContentDigest, crate::definition::DefinitionRecord>,
     bounds: BTreeMap<ElementId, Bounds>,
 }
 
@@ -144,6 +150,127 @@ fn bolt_of(
         main: part(main)?,
         secondary: part(secondary)?,
         spec,
+    })
+}
+
+/// The stored record of an A14.3 bolt group (bolt amendment section 4), decoded from the
+/// authored properties. The engine's decisions (crossing, grip, length) are already in it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupSpec {
+    /// Content digest of the pinned fastener definition.
+    pub fastener: ContentDigest,
+    /// World start of the row in millimetres.
+    pub point1_mm: [f64; 3],
+    /// World end of the row.
+    pub point2_mm: [f64; 3],
+    /// Unit normal of the reference plane.
+    pub plane_normal_mm: [f64; 3],
+    /// Rotation about the row in radians.
+    pub rotation_rad: f64,
+    /// Offset of the whole group along the plane axis in millimetres.
+    pub on_plane_mm: f64,
+    /// Offset of the whole group along the shank axis in millimetres.
+    pub depth_mm: f64,
+    /// Distance from `point1` to the first fastener in millimetres.
+    pub offset_start_mm: f64,
+    /// `spacings`, `pitch` or `offset_end`.
+    pub spacing_mode: String,
+    /// The value of a generator; `0.0` for an explicit list.
+    pub spacing_value_mm: f64,
+    /// The authoritative distances between neighbouring fasteners.
+    pub spacings_mm: Vec<f64>,
+    /// `auto` or `fixed`.
+    pub length_mode: String,
+    /// The resolved shank length in millimetres.
+    pub length_mm: f64,
+    /// Whether a washer sits under the head.
+    pub washer_under_head: bool,
+    /// Whether a washer sits under the nut.
+    pub washer_under_nut: bool,
+}
+
+/// One A14.3 bolt group of the head.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoltGroupView {
+    /// Identity.
+    pub id: ElementId,
+    /// Label.
+    pub name: String,
+    /// Connected parts, main part first.
+    pub parts: Vec<ElementId>,
+    /// The stored record.
+    pub spec: GroupSpec,
+}
+
+fn bolt_group_of(
+    prim: &beamcraft_layer_engine::Prim,
+    id: ElementId,
+    by_path: &BTreeMap<&str, ElementId>,
+) -> Result<BoltGroupView, PlateError> {
+    let damaged = || integrity("bolt group record is not readable");
+    let number_of = |name| property(prim, name).and_then(number).ok_or_else(damaged);
+    let vec3 = |name: &str| -> Result<[f64; 3], PlateError> {
+        match property(prim, name) {
+            Some(Value::Array(items)) => match items.as_slice() {
+                [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
+                _ => Err(damaged()),
+            },
+            _ => Err(damaged()),
+        }
+    };
+    let flag = |name: &str| match property(prim, name) {
+        Some(Value::Bool(value)) => Ok(*value),
+        _ => Err(damaged()),
+    };
+    let token = |name: &str| -> Result<String, PlateError> {
+        property(prim, name)
+            .and_then(text)
+            .map(str::to_owned)
+            .ok_or_else(damaged)
+    };
+    let fastener = property(prim, "steel:bolt:fastener")
+        .and_then(text)
+        .and_then(|t| t.parse::<ContentDigest>().ok())
+        .ok_or_else(damaged)?;
+    let spacings = match property(prim, "steel:bolt:spacingsMm") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| number(v).ok_or_else(damaged))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => return Err(damaged()),
+    };
+    let targets = prim
+        .relationships
+        .iter()
+        .find(|r| r.name == "bim:connects")
+        .map(|r| r.targets.as_slice())
+        .unwrap_or_default();
+    let part = |path: &String| by_path.get(path.as_str()).copied().ok_or_else(damaged);
+    let parts = targets.iter().map(part).collect::<Result<Vec<_>, _>>()?;
+    Ok(BoltGroupView {
+        id,
+        name: property(prim, "bim:name")
+            .and_then(text)
+            .ok_or_else(damaged)?
+            .to_owned(),
+        parts,
+        spec: GroupSpec {
+            fastener,
+            point1_mm: vec3("steel:bolt:point1Mm")?,
+            point2_mm: vec3("steel:bolt:point2Mm")?,
+            plane_normal_mm: vec3("steel:bolt:planeNormalMm")?,
+            rotation_rad: number_of("steel:bolt:rotationRad")?,
+            on_plane_mm: number_of("steel:bolt:onPlaneMm")?,
+            depth_mm: number_of("steel:bolt:depthMm")?,
+            offset_start_mm: number_of("steel:bolt:offsetStartMm")?,
+            spacing_mode: token("steel:bolt:spacingMode")?,
+            spacing_value_mm: number_of("steel:bolt:spacingValueMm")?,
+            spacings_mm: spacings,
+            length_mode: token("steel:bolt:lengthMode")?,
+            length_mm: number_of("steel:bolt:lengthMm")?,
+            washer_under_head: flag("steel:bolt:washerUnderHead")?,
+            washer_under_nut: flag("steel:bolt:washerUnderNut")?,
+        },
     })
 }
 
@@ -250,6 +377,8 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
     let mut model = Model {
         parts: Parts::default(),
         bolts: Vec::new(),
+        groups: Vec::new(),
+        definitions: BTreeMap::new(),
         bounds: BTreeMap::new(),
     };
     for prim in &prims {
@@ -273,6 +402,12 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
             {
                 PartKind::Other
             }
+            // The definition digest discriminates an A14.3 group from an A05 annotation group;
+            // the structural validator has already refused a mixed property set.
+            Some("connection") if property(prim, "steel:bolt:fastener").is_some() => {
+                model.groups.push(bolt_group_of(prim, id, &by_path)?);
+                PartKind::Other
+            }
             Some("connection") => {
                 model.bolts.push(bolt_of(prim, id, &by_path)?);
                 PartKind::Other
@@ -282,8 +417,10 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateErro
         model.parts.insert(id, kind);
     }
     model.bolts.sort_by_key(|b| b.id);
+    model.groups.sort_by_key(|g| g.id);
     let decoded = decode(&reader, &opened, control)?;
     model.bounds = world_bounds(&decoded)?;
+    model.definitions = decoded.definitions;
     Ok(model)
 }
 
@@ -314,17 +451,15 @@ fn created_by(
     Ok(Some(bolt))
 }
 
-/// Whether the pinned model holds a bolt group of this identity (for `delete-element` and
-/// `copy-element`).
+/// Whether the pinned model holds a bolt group of this identity, of either form (for
+/// `delete-element` and `copy-element`).
 pub(crate) fn is_bolt(
     request: &OpenRequest,
     id: &ElementId,
     control: &Control,
 ) -> Result<bool, PlateError> {
-    Ok(model_of(request, control)?
-        .bolts
-        .iter()
-        .any(|b| b.id == *id))
+    let model = model_of(request, control)?;
+    Ok(model.bolts.iter().any(|b| b.id == *id) || model.groups.iter().any(|g| g.id == *id))
 }
 
 /// The bolt groups of the verified head (empty for a store without a revision).
@@ -341,6 +476,414 @@ pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, PlateError> {
     let workspace = WorkspaceId::parse(content.workspace().as_str()).map_err(damaged)?;
     let (_, base) = load_base(store, &project, &workspace)?;
     Ok(model_of(&open_base(&base)?, &control)?.bolts)
+}
+
+/// The placed A14.3 bolt groups of the verified head (empty for a store without a revision).
+pub fn bolt_groups(store: &RevisionStore) -> Result<Vec<BoltGroupView>, PlateError> {
+    let control = control();
+    let revision = match store.open() {
+        Ok(revision) => revision,
+        Err(RevisionError::NoRevision) => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let content = revision.manifest().content();
+    let damaged = |_| integrity("head manifest identity is not a UUIDv7");
+    let project = ProjectId::parse(content.project().as_str()).map_err(damaged)?;
+    let workspace = WorkspaceId::parse(content.workspace().as_str()).map_err(damaged)?;
+    let (_, base) = load_base(store, &project, &workspace)?;
+    Ok(model_of(&open_base(&base)?, &control)?.groups)
+}
+
+/// The stored record a command with these inputs and placement writes: the placement decision
+/// already carries the expanded spacings, the resolved length and the washer switches.
+fn expected_spec(
+    inputs: &BoltGroupInputs,
+    placed: &beamcraft_engine::bolt::BoltGroupPlaced,
+) -> GroupSpec {
+    let (spacing_mode, spacing_value_mm) = match &inputs.spacing {
+        BoltSpacing::Spacings(_) => ("spacings".to_owned(), 0.0),
+        BoltSpacing::Pitch { pitch_mm, .. } => ("pitch".to_owned(), *pitch_mm),
+        BoltSpacing::OffsetEnd { offset_end_mm, .. } => ("offset_end".to_owned(), *offset_end_mm),
+    };
+    GroupSpec {
+        fastener: inputs.fastener_digest,
+        point1_mm: inputs.point1_mm,
+        point2_mm: inputs.point2_mm,
+        plane_normal_mm: inputs.plane_normal_mm,
+        rotation_rad: inputs.rotation_rad,
+        on_plane_mm: inputs.on_plane_mm,
+        depth_mm: inputs.depth_mm,
+        offset_start_mm: inputs.offset_start_mm,
+        spacing_mode,
+        spacing_value_mm,
+        spacings_mm: placed.spacings_mm.clone(),
+        length_mode: match inputs.length {
+            BoltLength::Auto => "auto".to_owned(),
+            BoltLength::Fixed(_) => "fixed".to_owned(),
+        },
+        length_mm: placed.length_mm,
+        washer_under_head: placed.washer_under_head,
+        washer_under_nut: placed.washer_under_nut,
+    }
+}
+
+/// The A14.3 group `id` as the operation committed at `sequence` wrote it, together with the
+/// state the revision before it held. `None` when that revision wrote no such group, so the
+/// operation id belongs to another request.
+fn group_at(
+    store: &RevisionStore,
+    sequence: u64,
+    id: &ElementId,
+    control: &Control,
+) -> Result<Option<(bool, BoltGroupView)>, PlateError> {
+    let at = store.open_at(sequence)?;
+    let model = model_of(&open_base(&base_of(&at)?)?, control)?;
+    let Some(group) = model.groups.into_iter().find(|g| g.id == *id) else {
+        return Ok(None);
+    };
+    let existed_before = if sequence > 1 {
+        let before = store.open_at(sequence - 1)?;
+        let before_model = model_of(&open_base(&base_of(&before)?)?, control)?;
+        before_model.groups.iter().any(|g| g.id == *id)
+    } else {
+        false
+    };
+    Ok(Some((existed_before, group)))
+}
+
+/// Result of `create_bolt_group` and `update_bolt_group`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GroupChange {
+    /// True when the same operation was already committed and nothing was written.
+    pub replayed: bool,
+    /// The revision that holds the result.
+    pub revision: RevisionSummary,
+    /// The declared footprint; `None` for a replay.
+    pub footprint: Option<Footprint>,
+    /// Names of the layers whose bytes changed (empty for a replay).
+    pub changed_layers: Vec<String>,
+    /// The placed groups of the resulting head.
+    pub groups: Vec<BoltGroupView>,
+}
+
+/// Resolves the definition a command carries: its canonical resource must be exactly the
+/// digest the command names, so the stored record and the pinned values cannot diverge.
+fn definition_resource(
+    definition: &crate::definition::DefinitionRecord,
+    command_digest: ContentDigest,
+) -> Result<Resource, PlateError> {
+    let resource = definition.resource()?;
+    if resource.digest != command_digest {
+        return Err(integrity(
+            "the command does not carry the resolved definition",
+        ));
+    }
+    Ok(resource)
+}
+
+/// Authors the A14.3 shape of one command's inputs and placement.
+fn layer_group(
+    inputs: &BoltGroupInputs,
+    placed: &beamcraft_engine::bolt::BoltGroupPlaced,
+) -> LayerBoltGroup {
+    LayerBoltGroup {
+        connects: inputs.parts.iter().map(|part| part.to_string()).collect(),
+        fastener: inputs.fastener_digest,
+        point1_mm: inputs.point1_mm,
+        point2_mm: inputs.point2_mm,
+        plane_normal_mm: inputs.plane_normal_mm,
+        rotation_rad: inputs.rotation_rad,
+        on_plane_mm: inputs.on_plane_mm,
+        depth_mm: inputs.depth_mm,
+        offset_start_mm: inputs.offset_start_mm,
+        spacing_mode: match &inputs.spacing {
+            BoltSpacing::Spacings(_) => "spacings".to_owned(),
+            BoltSpacing::Pitch { .. } => "pitch".to_owned(),
+            BoltSpacing::OffsetEnd { .. } => "offset_end".to_owned(),
+        },
+        spacing_value_mm: match &inputs.spacing {
+            BoltSpacing::Spacings(_) => 0.0,
+            BoltSpacing::Pitch { pitch_mm, .. } => *pitch_mm,
+            BoltSpacing::OffsetEnd { offset_end_mm, .. } => *offset_end_mm,
+        },
+        spacings_mm: placed.spacings_mm.clone(),
+        length_mode: match inputs.length {
+            BoltLength::Auto => "auto".to_owned(),
+            BoltLength::Fixed(_) => "fixed".to_owned(),
+        },
+        length_mm: placed.length_mm,
+        washer_under_head: placed.washer_under_head,
+        washer_under_nut: placed.washer_under_nut,
+    }
+}
+
+/// Creates one A14.3 bolt group over 2 to 1024 existing parts and publishes the next revision,
+/// or replays the operation. The resolved fastener definition is pinned in the same
+/// transaction when the model does not hold it yet (bolt amendment section 6); no hole is
+/// generated in this slice (A14.4).
+pub fn create_bolt_group(
+    store: &RevisionStore,
+    context: &BoltContext,
+    command: &CreateBoltGroup,
+    definition: &crate::definition::DefinitionRecord,
+    hook: &mut dyn CommitHook,
+) -> Result<GroupChange, PlateError> {
+    command.validate_arguments()?;
+    let resource = definition_resource(definition, command.inputs.fastener_digest)?;
+    let control = control();
+    let (head, base) = load_base(store, &context.project, &context.workspace)?;
+    let before: BTreeMap<String, _> = base
+        .assets
+        .iter()
+        .map(|a| (a.name.clone(), a.digest))
+        .collect();
+    let base_request = open_base(&base)?;
+    let model = model_of(&base_request, &control)?;
+    let op_host = host_uuid(&context.op_id.to_string())?;
+    // The ledger proves that the operation committed; what it committed is read from its own
+    // revision, never from the head, so another group that happens to match is not a replay.
+    let (prior, recorded) = prior_op_with(store, &op_host, || {
+        digest_of(b"the accepted request is decided from the operation's revision")
+    })?;
+    // The replay comparison needs the placement; a request that no longer places (its parts
+    // moved away) is not a replay of anything, so a failure here just means "not the same".
+    let expected = || {
+        beamcraft_engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
+            .map(|placed| expected_spec(&command.inputs, &placed))
+            .ok()
+    };
+    let accepted = match (&prior, &recorded) {
+        (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
+            group_at(store, *sequence, &command.new_id, &control)?.map(|(_, group)| group)
+        }
+        _ => None,
+    };
+    let same = accepted.as_ref().is_some_and(|group| {
+        expected().is_some_and(|expected| {
+            group.name == command.name
+                && group.parts == command.inputs.parts
+                && group.spec == expected
+        })
+    });
+    match prior {
+        PriorOp::Accepted { .. } if same => {
+            return Ok(GroupChange {
+                replayed: true,
+                revision: replay_summary(&head, recorded)?,
+                footprint: None,
+                changed_layers: Vec::new(),
+                groups: model.groups,
+            });
+        }
+        PriorOp::Accepted { .. } => {
+            return Err(CommandError::new(
+                ErrorCode::OpIdReuse,
+                "op_id",
+                "operation id was accepted with different content",
+            )
+            .into());
+        }
+        PriorOp::Unseen => {}
+    }
+    let (placed, footprint) = model.parts.create_bolt_group(command, &model.bounds)?;
+    let schema = schema_identity()?;
+    // The definition is pinned in the same transaction unless the model already holds it.
+    let mut resources = Vec::new();
+    if !model.definitions.contains_key(&resource.digest) {
+        resources.push(resource);
+    }
+    let (mut author, opened) = Author::open(
+        base_request,
+        EditTargets {
+            authored: AUTHORED_LAYER.into(),
+            derived: DERIVED_LAYER.into(),
+        },
+        schema,
+        &control,
+    )?;
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: context.op_id.to_string(),
+            actor: context.actor.to_string(),
+            schema,
+            resources,
+            changes: vec![Change::Create(Element {
+                id: command.new_id.to_string(),
+                name: command.name.clone(),
+                shape: Shape::BoltGroup(layer_group(&command.inputs, &placed)),
+                placement: LayerPlacement {
+                    translation_mm: [0.0; 3],
+                    orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+                },
+                material: None,
+            })],
+        },
+        &control,
+    )?;
+    check_footprint(&prepared, &footprint)?;
+    let changed_layers = changed_layers(&prepared, &before);
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            footprint: &footprint,
+            fingerprint: command.content_fingerprint()?,
+            prepared: &prepared,
+            schema,
+            project: &base.project,
+            workspace: &base.workspace,
+            revision_id: &context.revision_id,
+            op: op_host,
+            base_generation: base.generation,
+            expected: &base.expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("an unseen operation was reported as replayed"));
+    }
+    Ok(GroupChange {
+        replayed: false,
+        revision: summarize(&committed.info),
+        footprint: Some(footprint),
+        changed_layers,
+        groups: bolt_groups(store)?,
+    })
+}
+
+/// Edits one A14.3 bolt group with the complete new inputs and publishes the next revision as
+/// one atomic edit and one undo unit, or replays the operation. A stored A05 annotation group
+/// is upgraded by supplying its placement inputs and a fastener; a `repin` supplies the
+/// current library entry, which the model then follows.
+pub fn update_bolt_group(
+    store: &RevisionStore,
+    context: &BoltContext,
+    command: &UpdateBoltGroup,
+    definition: &crate::definition::DefinitionRecord,
+    hook: &mut dyn CommitHook,
+) -> Result<GroupChange, PlateError> {
+    command.validate_arguments()?;
+    let resource = definition_resource(definition, command.inputs.fastener_digest)?;
+    let control = control();
+    let (head, base) = load_base(store, &context.project, &context.workspace)?;
+    let before: BTreeMap<String, _> = base
+        .assets
+        .iter()
+        .map(|a| (a.name.clone(), a.digest))
+        .collect();
+    let base_request = open_base(&base)?;
+    let model = model_of(&base_request, &control)?;
+    // The target is a placed group of this slice or a stored A05 annotation group (the
+    // upgrade of the amendment section 6); either way the identity must exist.
+    if !model.groups.iter().any(|g| g.id == command.target_id)
+        && !model.bolts.iter().any(|b| b.id == command.target_id)
+    {
+        return Err(CommandError::new(
+            ErrorCode::NotFound,
+            "target_id",
+            "no bolt group of this identity is in the head revision",
+        )
+        .into());
+    }
+    let op_host = host_uuid(&context.op_id.to_string())?;
+    let (prior, recorded) = prior_op_with(store, &op_host, || {
+        digest_of(b"the accepted request is decided from the operation's revision")
+    })?;
+    // A request that no longer places is not a replay of anything (see the create).
+    let expected = || {
+        beamcraft_engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
+            .map(|placed| expected_spec(&command.inputs, &placed))
+            .ok()
+    };
+    let accepted = match (&prior, &recorded) {
+        (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
+            group_at(store, *sequence, &command.target_id, &control)?
+        }
+        _ => None,
+    };
+    let same = accepted.is_some_and(|(existed_before, group)| {
+        existed_before
+            && expected().is_some_and(|expected| {
+                group.parts == command.inputs.parts && group.spec == expected
+            })
+    });
+    match prior {
+        PriorOp::Accepted { .. } if same => {
+            return Ok(GroupChange {
+                replayed: true,
+                revision: replay_summary(&head, recorded)?,
+                footprint: None,
+                changed_layers: Vec::new(),
+                groups: model.groups,
+            });
+        }
+        PriorOp::Accepted { .. } => {
+            return Err(CommandError::new(
+                ErrorCode::OpIdReuse,
+                "op_id",
+                "operation id was accepted with different content",
+            )
+            .into());
+        }
+        PriorOp::Unseen => {}
+    }
+    let (placed, footprint) = model.parts.update_bolt_group(command, &model.bounds)?;
+    let schema = schema_identity()?;
+    let mut resources = Vec::new();
+    if !model.definitions.contains_key(&resource.digest) {
+        resources.push(resource);
+    }
+    let (mut author, opened) = Author::open(
+        base_request,
+        EditTargets {
+            authored: AUTHORED_LAYER.into(),
+            derived: DERIVED_LAYER.into(),
+        },
+        schema,
+        &control,
+    )?;
+    let prepared = author.prepare(
+        Prepare {
+            context: opened.context.clone(),
+            op_id: context.op_id.to_string(),
+            actor: context.actor.to_string(),
+            schema,
+            resources,
+            changes: vec![Change::BoltGroup {
+                id: command.target_id.to_string(),
+                group: layer_group(&command.inputs, &placed),
+            }],
+        },
+        &control,
+    )?;
+    check_footprint(&prepared, &footprint)?;
+    let changed_layers = changed_layers(&prepared, &before);
+    let committed = publish_revision(
+        store,
+        &PublishRequest {
+            footprint: &footprint,
+            fingerprint: command.content_fingerprint()?,
+            prepared: &prepared,
+            schema,
+            project: &base.project,
+            workspace: &base.workspace,
+            revision_id: &context.revision_id,
+            op: op_host,
+            base_generation: base.generation,
+            expected: &base.expected,
+        },
+        hook,
+    )?;
+    if committed.outcome == CommitOutcome::Replayed {
+        return Err(integrity("an unseen operation was reported as replayed"));
+    }
+    Ok(GroupChange {
+        replayed: false,
+        revision: summarize(&committed.info),
+        footprint: Some(footprint),
+        changed_layers,
+        groups: bolt_groups(store)?,
+    })
 }
 
 /// Creates one bolt group between two existing parts and publishes the next revision, or replays

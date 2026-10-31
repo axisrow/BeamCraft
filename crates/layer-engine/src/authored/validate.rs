@@ -4,7 +4,9 @@
 use super::*;
 use beamcraft_model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
 use beamcraft_model::id::OpId;
-use beamcraft_model::limits::{MAX_FASTENER_LENGTHS, MAX_MEMBER_PATH_POINTS, MIN_WELD_SEGMENT_MM};
+use beamcraft_model::limits::{
+    MAX_FASTENER_LENGTHS, MAX_MEMBER_PATH_POINTS, MAX_RELATIONSHIP_TARGETS, MIN_WELD_SEGMENT_MM,
+};
 use beamcraft_model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
@@ -1320,9 +1322,17 @@ pub(super) fn snapshot(
                         let connection_type = text(p, "steel:connection:type", "token")?;
                         let has =
                             |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
+                        let placed = has("steel:bolt:fastener");
                         match connection_type {
                             "weld" if !has("steel:bolt:") => weld_properties(p)?,
-                            "bolt_group" if !has("steel:weld:") => bolt_properties(p)?,
+                            // An A05 annotation group and an A14.3 group are discriminated by
+                            // the definition digest; a mixed property set is never guessed.
+                            "bolt_group" if !has("steel:weld:") && placed => {
+                                bolt_group_properties(p, prims)?
+                            }
+                            "bolt_group" if !has("steel:weld:") && !has("steel:bolt:point1Mm") => {
+                                bolt_properties(p)?
+                            }
                             _ => return Err(invalid().with_rule("DV-ATTR-002")),
                         }
                     }
@@ -1726,6 +1736,29 @@ fn weld_size(mm: f64) -> Result<(), Diagnostic> {
 /// within the coordinate cap and the direction is a finite unit vector. A connection without them
 /// is not a bolt group this slice can read, so it is refused rather than guessed.
 fn bolt_properties(p: &Prim) -> Result<(), Diagnostic> {
+    // A stray A14.3 attribute on an A05 group is mixed content this version cannot read.
+    if p.properties.iter().any(|v| {
+        matches!(
+            v.name.as_str(),
+            "steel:bolt:fastener"
+                | "steel:bolt:point1Mm"
+                | "steel:bolt:point2Mm"
+                | "steel:bolt:planeNormalMm"
+                | "steel:bolt:rotationRad"
+                | "steel:bolt:onPlaneMm"
+                | "steel:bolt:depthMm"
+                | "steel:bolt:offsetStartMm"
+                | "steel:bolt:spacingMode"
+                | "steel:bolt:spacingValueMm"
+                | "steel:bolt:spacingsMm"
+                | "steel:bolt:lengthMode"
+                | "steel:bolt:lengthMm"
+                | "steel:bolt:washerUnderHead"
+                | "steel:bolt:washerUnderNut"
+        )
+    }) {
+        return Err(invalid());
+    }
     let diameter = number(p, "steel:bolt:diameterMm")?;
     finite([diameter])?;
     if diameter <= 0.0 {
@@ -1768,6 +1801,233 @@ fn bolt_vec3(p: &Prim, name: &str) -> Result<[f64; 3], Diagnostic> {
     }
 }
 
+/// One `double[]` property of a prim.
+fn bolt_f64s(p: &Prim, name: &str) -> Result<Vec<f64>, Diagnostic> {
+    let Value::Array(values) = required(p, name, "double[]")? else {
+        return Err(invalid());
+    };
+    values
+        .iter()
+        .map(|v| match v {
+            Value::Number(n) => Ok(*n),
+            _ => Err(invalid()),
+        })
+        .collect()
+}
+
+/// The `connects` identities of an A14.3 group: 2 to 1024 full UUIDv7s, distinct, never the
+/// group itself (`DV-REL-004`, `DV-REL-006`, `DV-REL-007`).
+fn bolt_group_connects(connects: &[String], self_id: &str) -> Result<(), Diagnostic> {
+    if connects.len() < 2 || connects.len() > MAX_RELATIONSHIP_TARGETS {
+        return Err(fail(
+            ErrorCode::DependencyConflict,
+            "a bolt group connects 2 to 1024 parts",
+        )
+        .with_rule("DV-REL-004"));
+    }
+    for part in connects {
+        if !uuid7(part) {
+            return Err(fail(ErrorCode::InvalidId, "invalid full element identity")
+                .with_rule("DV-BASE-001"));
+        }
+        if part == self_id {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "a bolt group cannot connect itself",
+            )
+            .with_rule("DV-REL-006"));
+        }
+    }
+    for (index, part) in connects.iter().enumerate() {
+        if connects.iter().skip(index + 1).any(|other| other == part) {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "a bolt group connects distinct parts",
+            )
+            .with_rule("DV-REL-007"));
+        }
+    }
+    Ok(())
+}
+
+/// The stored values of an A14.3 group (bolt amendment section 4): two distinct points within
+/// the coordinate cap, a unit plane normal, finite position values in range, and a spacing and
+/// length record consistent with its mode. The engine's crossing, grip and length decisions
+/// have already run; this re-checks the stored form so a damaged or forged record is refused,
+/// never guessed.
+fn bolt_group_values(b: &BoltGroup) -> Result<(), Diagnostic> {
+    finite(b.point1_mm)?;
+    finite(b.point2_mm)?;
+    cap(b.point1_mm, 1e9)?;
+    cap(b.point2_mm, 1e9)?;
+    let squared = b
+        .point2_mm
+        .iter()
+        .zip(b.point1_mm)
+        .map(|(q, p)| {
+            let d = q - p;
+            d * d
+        })
+        .sum::<f64>();
+    if squared < 1e-6 {
+        return Err(invalid());
+    }
+    finite(b.plane_normal_mm)?;
+    let unit = b.plane_normal_mm.iter().map(|v| v * v).sum::<f64>();
+    if (unit - 1.0).abs() > 1e-6 {
+        return Err(invalid());
+    }
+    finite([b.rotation_rad, b.on_plane_mm, b.depth_mm, b.offset_start_mm])?;
+    cap([b.on_plane_mm, b.depth_mm], 1e6)?;
+    if !(0.0..=1e6).contains(&b.offset_start_mm) || !(0.0..=1e6).contains(&b.length_mm) {
+        return Err(invalid());
+    }
+    // The authoritative spacings give 2 to 512 fasteners, positive and capped.
+    if b.spacings_mm.is_empty() || b.spacings_mm.len() >= 512 {
+        return Err(invalid());
+    }
+    finite(b.spacings_mm.iter().copied())?;
+    cap(b.spacings_mm.iter().copied(), 1e6)?;
+    if b.spacings_mm.iter().any(|s| *s <= 0.0) {
+        return Err(invalid());
+    }
+    // The stored pattern agrees with the authoritative list it expanded to: an explicit list
+    // carries no value, an equal pitch repeats its value, and an offset-end pattern re-expands
+    // from the stored points within a micron.
+    match b.spacing_mode.as_str() {
+        "spacings" if b.spacing_value_mm == 0.0 => {}
+        "pitch" => {
+            if b.spacing_value_mm <= 0.0 || b.spacing_value_mm > 1e6 {
+                return Err(invalid());
+            }
+            if b.spacings_mm.iter().any(|s| *s != b.spacing_value_mm) {
+                return Err(invalid());
+            }
+        }
+        "offset_end" => {
+            if !(0.0..=1e6).contains(&b.spacing_value_mm) {
+                return Err(invalid());
+            }
+            let pitch = (squared.sqrt() - b.offset_start_mm - b.spacing_value_mm)
+                / b.spacings_mm.len() as f64;
+            let agrees = |stored: f64| (stored - pitch).abs() <= stored.abs() * 1e-9 + 1e-9;
+            if pitch <= 0.0 || !b.spacings_mm.iter().all(|s| agrees(*s)) {
+                return Err(invalid());
+            }
+        }
+        _ => return Err(invalid()),
+    }
+    if !matches!(b.length_mode.as_str(), "auto" | "fixed") {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Consistency of a stored A14.3 group with its pinned definition (bolt amendment sections 2
+/// and 4): the resolved length is one of the definition's standard lengths, a washer switch is
+/// true only for a washer the definition carries, and under a nut only for a bolt.
+fn bolt_group_against(spec: &FastenerSpec, b: &BoltGroup) -> Result<(), Diagnostic> {
+    if !spec.lengths_mm.contains(&b.length_mm) {
+        return Err(invalid());
+    }
+    if b.washer_under_head && spec.washer.is_none() {
+        return Err(invalid());
+    }
+    if b.washer_under_nut && (spec.washer.is_none() || spec.kind != FastenerKind::Bolt) {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// The fastener definition a group places: one this batch pins as a resource, or the pinned
+/// definition the model already holds. Anything else is a dangling reference.
+fn fastener_definition(
+    input: &Prepare,
+    prims: &[Prim],
+    digest: ContentDigest,
+) -> Result<FastenerSpec, Diagnostic> {
+    if let Some(found) = input.resources.iter().find(|r| r.digest == digest) {
+        return match &found.definition {
+            Definition::Fastener { spec } => Ok(spec.clone()),
+            _ => Err(invalid()),
+        };
+    }
+    pinned_fastener(prims, digest)
+}
+
+/// The pinned fastener definition of a stored digest, re-admitted from its canonical bytes.
+fn pinned_fastener(prims: &[Prim], digest: ContentDigest) -> Result<FastenerSpec, Diagnostic> {
+    let p = resource(prims, digest, &["fastener"], DefinitionCategory::Fastener)?;
+    match read_definition(p, "fastener")? {
+        Definition::Fastener { spec } => Ok(spec),
+        _ => Err(corrupt()),
+    }
+}
+
+/// The fifteen A14.3 bolt-group attributes of a loaded `connection` (bolt amendment section 4):
+/// every one is authored and never mixed with the five A05 attributes; the points, the normal
+/// and the spacing and length records follow their stored rules; and the digest resolves to a
+/// pinned fastener definition the stored record agrees with. A connection without them is not a
+/// group this slice can read, so it is refused rather than guessed.
+fn bolt_group_properties(p: &Prim, prims: &[Prim]) -> Result<(), Diagnostic> {
+    // A stray A05 attribute on an A14.3 group is mixed content this version cannot read.
+    if p.properties.iter().any(|v| {
+        matches!(
+            v.name.as_str(),
+            "steel:bolt:diameterMm"
+                | "steel:bolt:count"
+                | "steel:bolt:pitchMm"
+                | "steel:bolt:originMm"
+                | "steel:bolt:directionMm"
+        )
+    }) {
+        return Err(invalid());
+    }
+    let digest = text(p, "steel:bolt:fastener", "string")?
+        .parse::<ContentDigest>()
+        .map_err(|_| invalid())?;
+    let point1 = bolt_vec3(p, "steel:bolt:point1Mm")?;
+    let point2 = bolt_vec3(p, "steel:bolt:point2Mm")?;
+    let normal = bolt_vec3(p, "steel:bolt:planeNormalMm")?;
+    let rotation = number(p, "steel:bolt:rotationRad")?;
+    let on_plane = number(p, "steel:bolt:onPlaneMm")?;
+    let depth = number(p, "steel:bolt:depthMm")?;
+    let offset_start = number(p, "steel:bolt:offsetStartMm")?;
+    let spacing_mode = text(p, "steel:bolt:spacingMode", "token")?.to_owned();
+    let spacing_value = number(p, "steel:bolt:spacingValueMm")?;
+    let spacings = bolt_f64s(p, "steel:bolt:spacingsMm")?;
+    let length_mode = text(p, "steel:bolt:lengthMode", "token")?.to_owned();
+    let length = number(p, "steel:bolt:lengthMm")?;
+    let washer_under_head = matches!(
+        required(p, "steel:bolt:washerUnderHead", "bool")?,
+        Value::Bool(true)
+    );
+    let washer_under_nut = matches!(
+        required(p, "steel:bolt:washerUnderNut", "bool")?,
+        Value::Bool(true)
+    );
+    let record = BoltGroup {
+        connects: Vec::new(),
+        fastener: digest,
+        point1_mm: point1,
+        point2_mm: point2,
+        plane_normal_mm: normal,
+        rotation_rad: rotation,
+        on_plane_mm: on_plane,
+        depth_mm: depth,
+        offset_start_mm: offset_start,
+        spacing_mode,
+        spacing_value_mm: spacing_value,
+        spacings_mm: spacings,
+        length_mode,
+        length_mm: length,
+        washer_under_head,
+        washer_under_nut,
+    };
+    bolt_group_values(&record)?;
+    bolt_group_against(&pinned_fastener(prims, digest)?, &record)
+}
+
 /// A06 and A05 `connects` records (domain vocabulary section 5.1): only a connection — a weld or
 /// a bolt group — carries one, with exactly two distinct targets (`DV-REL-004`, `DV-REL-007`),
 /// never itself (`DV-REL-006`), each an active owned plate, beam or column (`DV-REL-001`
@@ -1796,21 +2056,30 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
             )
             .with_rule("DV-REL-003"));
         }
-        let [first, second] = r.targets.as_slice() else {
+        // An A14.3 bolt group carries 2 to 1024 targets (the vocabulary's own range); a weld
+        // and an A05 group carry exactly two.
+        let limit = if p.properties.iter().any(|v| v.name == "steel:bolt:fastener") {
+            MAX_RELATIONSHIP_TARGETS
+        } else {
+            2
+        };
+        if r.targets.len() < 2 || r.targets.len() > limit {
             return Err(fail(
                 ErrorCode::DependencyConflict,
                 "a connection connects exactly two parts",
             )
             .with_rule("DV-REL-004"));
-        };
-        if first == second {
-            return Err(fail(
-                ErrorCode::InvalidArgument,
-                "a connection connects two distinct parts",
-            )
-            .with_rule("DV-REL-007"));
         }
-        for target in [first, second] {
+        for (index, first) in r.targets.iter().enumerate() {
+            if r.targets.iter().skip(index + 1).any(|other| other == first) {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "a connection connects two distinct parts",
+                )
+                .with_rule("DV-REL-007"));
+            }
+        }
+        for target in &r.targets {
             if target == path {
                 return Err(fail(
                     ErrorCode::InvalidArgument,
@@ -2152,6 +2421,7 @@ pub(super) fn changes(
                     }
                     Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
                     Change::Grid { .. } => kind == "grid",
+                    Change::BoltGroup { .. } => kind == "connection",
                     Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
@@ -2239,6 +2509,12 @@ pub(super) fn changes(
             Change::Grid { .. } => (
                 &[Group::Lifecycle, Group::ShapeInputs, Group::Placement],
                 &[Group::ShapeInputs],
+            ),
+            // The complete authored inputs and the `connects` record are replaced as a whole
+            // (A14.3); a connection derives no body, so no derived group is written.
+            Change::BoltGroup { .. } => (
+                &[Group::Lifecycle, Group::ShapeInputs, Group::Relationship],
+                &[Group::ShapeInputs, Group::Relationship],
             ),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
@@ -2668,6 +2944,25 @@ pub(super) fn changes(
                             });
                         }
                     }
+                    Shape::BoltGroup(b) => {
+                        bolt_group_connects(&b.connects, &e.id)?;
+                        bolt_group_values(b)?;
+                        // The pinned definition travels by digest: either this batch pins it as
+                        // a resource or the model already holds it. Either way the stored
+                        // record must agree with the definition's own values.
+                        let spec = fastener_definition(input, prims, b.fastener)?;
+                        bolt_group_against(&spec, b)?;
+                        for part in &b.connects {
+                            reads.insert(Footprint {
+                                identity: part.clone(),
+                                group: Group::Lifecycle,
+                            });
+                        }
+                        reads.insert(Footprint {
+                            identity: b.fastener.to_string(),
+                            group: Group::Relationship,
+                        });
+                    }
                     Shape::Instance { kind, definition } => {
                         if e.id == *definition || e.material.is_some() {
                             return Err(invalid());
@@ -2746,6 +3041,23 @@ pub(super) fn changes(
                 }
             }
             Change::PartClass { .. } => {}
+            Change::BoltGroup { id, group } => {
+                bolt_group_connects(&group.connects, id)?;
+                bolt_group_values(group)?;
+                // A repin in the same batch or the pinned definition the model already holds.
+                let spec = fastener_definition(input, prims, group.fastener)?;
+                bolt_group_against(&spec, group)?;
+                for part in &group.connects {
+                    reads.insert(Footprint {
+                        identity: part.clone(),
+                        group: Group::Lifecycle,
+                    });
+                }
+                reads.insert(Footprint {
+                    identity: group.fastener.to_string(),
+                    group: Group::Relationship,
+                });
+            }
             Change::Label { name, .. } => label(name)?,
             Change::AttachReference(r) => reference::check_new(r)?,
             Change::ReferenceUnits { interpretation, .. } => {
@@ -3000,6 +3312,21 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                         .chain(b.origin_mm)
                         .chain(b.direction_mm),
                 ),
+                Shape::BoltGroup(b) => finite(
+                    b.point1_mm
+                        .into_iter()
+                        .chain(b.point2_mm)
+                        .chain(b.plane_normal_mm)
+                        .chain([
+                            b.rotation_rad,
+                            b.on_plane_mm,
+                            b.depth_mm,
+                            b.offset_start_mm,
+                            b.spacing_value_mm,
+                            b.length_mm,
+                        ])
+                        .chain(b.spacings_mm.iter().copied()),
+                ),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
                 Shape::Instance { .. } => Ok(()),
                 Shape::Grid(g) => grid::validate_record(g),
@@ -3018,6 +3345,22 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
             finite(interpretation.iter().map(|i| i.meters_per_unit))
         }
         Change::Contour { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
+        Change::BoltGroup { group, .. } => finite(
+            group
+                .point1_mm
+                .into_iter()
+                .chain(group.point2_mm)
+                .chain(group.plane_normal_mm)
+                .chain([
+                    group.rotation_rad,
+                    group.on_plane_mm,
+                    group.depth_mm,
+                    group.offset_start_mm,
+                    group.spacing_value_mm,
+                    group.length_mm,
+                ])
+                .chain(group.spacings_mm.iter().copied()),
+        ),
         Change::Cuts { cuts, .. } => finite(
             cuts.iter()
                 .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),

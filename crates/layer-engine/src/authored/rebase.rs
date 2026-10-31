@@ -105,7 +105,22 @@ fn property_group(name: &str) -> Option<G> {
         | "steel:bolt:count"
         | "steel:bolt:pitchMm"
         | "steel:bolt:originMm"
-        | "steel:bolt:directionMm" => G::ShapeInputs,
+        | "steel:bolt:directionMm"
+        | "steel:bolt:fastener"
+        | "steel:bolt:point1Mm"
+        | "steel:bolt:point2Mm"
+        | "steel:bolt:planeNormalMm"
+        | "steel:bolt:rotationRad"
+        | "steel:bolt:onPlaneMm"
+        | "steel:bolt:depthMm"
+        | "steel:bolt:offsetStartMm"
+        | "steel:bolt:spacingMode"
+        | "steel:bolt:spacingValueMm"
+        | "steel:bolt:spacingsMm"
+        | "steel:bolt:lengthMode"
+        | "steel:bolt:lengthMm"
+        | "steel:bolt:washerUnderHead"
+        | "steel:bolt:washerUnderNut" => G::ShapeInputs,
         _ => return None,
     })
 }
