@@ -1998,6 +1998,8 @@ pub const COMMANDS: &[Command] = &[
             opt("--reference-snaps", "true|false"),
             opt("--geometry-snaps", "true|false"),
             opt("--grid-snaps", "true|false"),
+            opt("--construction-snaps", "true|false"),
+            opt("--grids", "UUID,..."),
             opt("--nearest", "true|false"),
         ],
     ),

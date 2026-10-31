@@ -720,6 +720,34 @@ create-bolt --store ROOT --name TEXT --main UUID --secondary UUID --origin X,Y,Z
     [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
+### create-bolt-group
+
+write.
+
+```text
+create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --fastener-library FILE
+    --designation TEXT --point1 X,Y,Z --point2 X,Y,Z --plane-normal X,Y,Z --offset-start MM
+    [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--spacings MM,MM,...] [--count N]
+    [--pitch MM] [--offset-end MM] [--washer-under-head true|false]
+    [--washer-under-nut true|false] [--length-mode auto|fixed] [--length MM] [--new-id UUID]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
+```
+
+### update-bolt-group
+
+write.
+
+```text
+update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID,UUID,...]
+    [--fastener-library FILE] [--designation TEXT] [--point1 X,Y,Z] [--point2 X,Y,Z]
+    [--plane-normal X,Y,Z] [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--offset-start MM]
+    [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
+    [--washer-under-head true|false] [--washer-under-nut true|false] [--length-mode auto|fixed]
+    [--length MM] [--repin true] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+    [--project-id UUID] [--workspace-id UUID]
+```
+
 ### bolts
 
 read.
@@ -1162,7 +1190,8 @@ read.
 snap --store ROOT --point X,Y,Z [--radius MM] [--kinds KIND,...] [--max-hits N]
     [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--origin X,Y,Z] [--direction X,Y,Z] [--aperture F]
     [--cursor-radius MM] [--reference-snaps true|false] [--geometry-snaps true|false]
-    [--grid-snaps true|false] [--nearest true|false]
+    [--grid-snaps true|false] [--construction-snaps true|false] [--grids UUID,...]
+    [--nearest true|false]
 ```
 
 ### lookup-feature
@@ -1270,6 +1299,16 @@ write.
 ```text
 edit-views --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID
     --placed-view SPEC
+```
+
+### edit-sheet
+
+write.
+
+```text
+edit-sheet --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID
+    [--sheet-size SIZE] [--sheet-frame true|false] [--sheet-project TEXT] [--sheet-author TEXT]
+    [--sheet-remove true]
 ```
 
 ### publish-drawing
