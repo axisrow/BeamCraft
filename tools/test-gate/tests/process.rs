@@ -280,12 +280,17 @@ mod tests {
                 "run",
                 "--locked",
                 "--offline",
+                "--profile",
+                "default",
+                "--user-config-file",
+                "none",
                 "-E",
                 "test(/^tests::hangs$/)",
                 "--no-fail-fast",
                 "--config-file",
             ])
             .arg(cfg)
+            .env("NEXTEST_PROFILE", "deliberately-unknown-parent-profile")
             .env("GATE_FIXTURE_PID", &ready)
             .env("CARGO_TARGET_DIR", root.join("target"));
         let result = process::run(name, &mut cmd, &temp.0, Duration::from_secs(90)).unwrap();

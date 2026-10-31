@@ -97,6 +97,8 @@ fn cargo(root: &Path) -> Command {
     command
         .current_dir(root)
         .env("CARGO_PROFILE_TEST_DEBUG", "0")
+        .env("CARGO_PROFILE_TEST_DEBUG_ASSERTIONS", "true")
+        .env("CARGO_PROFILE_TEST_OVERFLOW_CHECKS", "true")
         .env("CARGO_INCREMENTAL", "0");
     command
 }
@@ -193,9 +195,7 @@ fn ignored_inventory(text: &str) -> Result<Vec<String>> {
             .and_then(Value::as_object)
             .ok_or("unlisted test suite")?;
         for (name, case) in cases {
-            if case.get("ignored").and_then(Value::as_bool) == Some(true)
-                && case.pointer("/filter-match/status").and_then(Value::as_str) == Some("matches")
-            {
+            if case.get("ignored").and_then(Value::as_bool) == Some(true) {
                 ignored.push(format!("{id}::{name}"));
             }
         }
