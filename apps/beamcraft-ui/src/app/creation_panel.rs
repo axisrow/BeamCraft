@@ -204,6 +204,9 @@ impl App {
             let context = SnapContext {
                 grids,
                 member_axes: &self.grid_scene.member_axes,
+                // T02: construction objects reach the UI snap context with the UI slice that
+                // displays them; the engine and the CLI resolve them already.
+                construction: &[],
                 plane,
                 cursor: Some(cursor),
                 sources: self.selection.snap_sources(),

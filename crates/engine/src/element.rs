@@ -52,11 +52,14 @@ pub enum ElementKind {
     Reference,
     /// Shared plan grid with no engineering body.
     Grid,
+    /// T02 construction object: a helper point, line, circle or plane with no engineering body,
+    /// authored as a snap and placement target.
+    Construction,
 }
 
 impl ElementKind {
     /// Every kind, in registry order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Plate,
         Self::Beam,
         Self::Column,
@@ -71,6 +74,7 @@ impl ElementKind {
         Self::Connection,
         Self::Reference,
         Self::Grid,
+        Self::Construction,
     ];
 
     /// The lowercase registry token stored in `bim:elementKind`.
@@ -90,6 +94,7 @@ impl ElementKind {
             Self::Connection => "connection",
             Self::Reference => "reference",
             Self::Grid => "grid",
+            Self::Construction => "construction",
         }
     }
 

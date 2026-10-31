@@ -67,6 +67,8 @@ pub enum DeletedKind {
     Level,
     /// Shared project grid (T01).
     Grid,
+    /// A T02 construction object.
+    Construction,
 }
 
 /// Result of `delete_element`.
@@ -148,6 +150,8 @@ pub fn delete_element(
         Some(DeletedKind::Bolt)
     } else if crate::grid::is_grid(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Grid)
+    } else if crate::construction::is_construction(&base_request, &command.target_id, &control)? {
+        Some(DeletedKind::Construction)
     } else if crate::level::is_level(&base_request, &command.target_id, &control)? {
         Some(DeletedKind::Level)
     } else {

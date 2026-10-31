@@ -9,6 +9,7 @@ mod blobs;
 mod bolt;
 mod bom;
 mod changeset;
+mod construction;
 mod coordinator;
 mod copy;
 mod definitions;
@@ -57,6 +58,7 @@ const COMMAND_GROUPS: &[&[&str]] = &[
     level::COMMANDS,
     attribute::COMMANDS,
     grid::COMMANDS,
+    construction::COMMANDS,
     export::COMMANDS,
     numbering::COMMANDS,
     changeset::COMMANDS,
@@ -92,6 +94,7 @@ const SECTIONS: &[&str] = &[
     level::HELP,
     attribute::HELP,
     grid::HELP,
+    construction::HELP,
     grid::LINES,
     grid::UPDATE,
     grid::QUERIES,

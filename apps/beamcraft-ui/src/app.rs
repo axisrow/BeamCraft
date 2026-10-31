@@ -2943,7 +2943,7 @@ mod tests {
                 assert!(labels.iter().any(|label| label == "Find a command"));
                 assert!(!labels.iter().any(|label| label.contains("Ctrl K")
                     || matches!(label.as_str(), "Theme" | "System" | "Light" | "Dark")));
-                assert_eq!(bounds.len(), 33, "20 entity + 13 snap switches: {bounds:?}");
+                assert_eq!(bounds.len(), 34, "20 entity + 14 snap switches: {bounds:?}");
                 assert!(
                     bounds.iter().all(|(rect, clip)| rect.left() >= 0.0
                         && rect.right() <= width
@@ -4319,7 +4319,7 @@ mod tests {
             ]
         };
         let (rects, snap) = draw(&mut app, vec![]);
-        assert_eq!(rects.len(), 33);
+        assert_eq!(rects.len(), 34);
         draw(&mut app, click(rects[2].center()));
         draw(&mut app, click(rects[7].center()));
         use beamcraft_engine::query::pick::{SelectionClass, SnapKind};
@@ -4345,9 +4345,15 @@ mod tests {
         draw(&mut app, click(rects[29].center())); // grid source
         assert!(!app.selection.snap_grids);
         assert!(!app.selection.snap_nearest);
-        draw(&mut app, click(rects[31].center())); // reference master
-        draw(&mut app, click(rects[32].center())); // physical master
-        assert!(!app.selection.snap_reference && !app.selection.snap_geometry);
+        draw(&mut app, click(rects[30].center())); // construction source (T02)
+        assert!(!app.selection.snap_construction);
+        draw(&mut app, click(rects[32].center())); // reference master
+        draw(&mut app, click(rects[33].center())); // physical master
+        assert!(
+            !app.selection.snap_construction
+                && !app.selection.snap_reference
+                && !app.selection.snap_geometry
+        );
         draw(&mut app, click(snap.unwrap())); // global snap back on
         assert!(app.selection.snap_kinds().is_empty());
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);

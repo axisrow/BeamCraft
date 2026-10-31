@@ -31,6 +31,8 @@ pub struct Selection {
     pub snap_geometry: bool,
     /// Additional source gate for grids; never enables a point kind.
     pub snap_grids: bool,
+    /// Source gate for T02 construction objects.
+    pub snap_construction: bool,
     /// Point-kind gate for arbitrary positions on every eligible line family.
     pub snap_nearest: bool,
 }
@@ -46,6 +48,7 @@ impl Default for Selection {
             snap_reference: true,
             snap_geometry: true,
             snap_grids: true,
+            snap_construction: true,
             snap_nearest: true,
         }
     }
@@ -85,6 +88,7 @@ impl Selection {
             reference: self.snap_reference,
             geometry: self.snap_geometry,
             grids: self.snap_grids,
+            construction: self.snap_construction,
         }
     }
 
@@ -98,7 +102,15 @@ impl Selection {
             .filter(|kind| self.snap_on(*kind))
             .filter(|kind| {
                 self.snap_nearest
-                    || !matches!(kind, SnapKind::Axis | SnapKind::Edge | SnapKind::GridLine)
+                    || !matches!(
+                        kind,
+                        SnapKind::Axis
+                            | SnapKind::Edge
+                            | SnapKind::GridLine
+                            | SnapKind::ConstructionLine
+                            | SnapKind::ConstructionCircle
+                            | SnapKind::ConstructionPlane
+                    )
             })
             .filter(|kind| match kind {
                 SnapKind::Vertex | SnapKind::Edge => self.snap_geometry,
@@ -106,6 +118,12 @@ impl Selection {
                 SnapKind::GridIntersection | SnapKind::GridEnd | SnapKind::GridLine => {
                     self.snap_reference && self.snap_grids
                 }
+                SnapKind::ConstructionPoint
+                | SnapKind::ConstructionEnd
+                | SnapKind::ConstructionLine
+                | SnapKind::ConstructionCenter
+                | SnapKind::ConstructionCircle
+                | SnapKind::ConstructionPlane => self.snap_construction,
                 SnapKind::Midpoint => self.snap_reference || self.snap_geometry,
             })
             .collect()

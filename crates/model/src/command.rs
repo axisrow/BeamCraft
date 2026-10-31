@@ -10,6 +10,7 @@
 //! (`canonical`) remain planned, and [`CreatePlate::content_fingerprint`] is a
 //! deterministic digest of the typed arguments, not RFC 8785 canonical bytes.
 
+pub use crate::construction::CreateConstructionObject;
 use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
 pub use crate::grid::CreateGrid;
