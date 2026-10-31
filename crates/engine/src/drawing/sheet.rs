@@ -269,6 +269,7 @@ mod tests {
                 })
                 .collect(),
             sheet: Some(sheet(size)),
+            layers: Vec::new(),
         })
         .unwrap()
     }

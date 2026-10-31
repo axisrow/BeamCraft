@@ -418,6 +418,7 @@ impl Drawing {
             &self.0.dimension.id,
             Some(&sheet),
             &self.0.views,
+            &self.0.layers,
             &self.0.drafting,
         )?;
         self.0.sheet = Some(sheet);
