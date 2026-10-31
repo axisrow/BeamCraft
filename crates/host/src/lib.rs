@@ -14,3 +14,4 @@ pub mod output;
 pub mod revision;
 pub mod settings;
 pub mod storage;
+pub mod views;

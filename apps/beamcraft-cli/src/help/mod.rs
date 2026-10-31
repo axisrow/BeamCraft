@@ -34,6 +34,7 @@ mod start;
 mod store;
 mod view;
 mod view_export;
+mod views;
 mod weld;
 mod work_plane;
 mod workspace;
@@ -67,6 +68,7 @@ const COMMAND_GROUPS: &[&[&str]] = &[
     coordinator::COMMANDS,
     history::COMMANDS,
     view::COMMANDS,
+    views::COMMANDS,
     pick::COMMANDS,
     view_export::COMMANDS,
     bom::COMMANDS,
@@ -111,6 +113,7 @@ const SECTIONS: &[&str] = &[
     rebase::HELP,
     reference::HELP,
     view::HELP,
+    views::HELP,
     pick::HELP,
     view_export::HELP,
     bom::HELP,

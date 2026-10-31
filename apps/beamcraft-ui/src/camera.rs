@@ -82,7 +82,7 @@ impl Camera {
         let [ox, oy] = orbit;
         let [px, py] = pan;
         self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-        self.pitch = (self.pitch + oy).clamp(0.08, 1.52);
+        self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
         self.distance = (self.distance * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
         let view = self.view(1.0)?;
         let [rx, ry, rz, _] = view.right;
@@ -105,6 +105,40 @@ impl Camera {
     /// Distance used to convert UI pan pixels to display millimetres.
     pub fn distance(&self) -> f32 {
         self.distance
+    }
+    /// Captures the pose as an engine view pose (V12): the exact state a saved view restores.
+    /// The camera keeps its fields inside the pose's bounds, so the capture cannot refuse.
+    pub fn pose(&self) -> beamcraft_engine::views::ViewPose {
+        beamcraft_engine::views::ViewPose {
+            target_mm: self.target.map(f64::from),
+            yaw: f64::from(self.yaw),
+            // The f32 pitch can sit a rounding step above the pose bound after a restore.
+            pitch: f64::from(self.pitch).min(beamcraft_engine::views::PITCH_MAX_RAD),
+            distance_mm: f64::from(self.distance),
+            orthographic: self.orthographic,
+        }
+    }
+    /// Restores a saved pose exactly: unlike navigation it admits a horizontal pitch, so plane
+    /// views stay level until the user orbits.
+    pub fn set_pose(&mut self, pose: &beamcraft_engine::views::ViewPose) -> Result<(), Error> {
+        if !pose
+            .target_mm
+            .iter()
+            .chain([pose.yaw, pose.pitch, pose.distance_mm].iter())
+            .all(|x| x.is_finite())
+            || pose.target_mm.iter().any(|x| x.abs() > 1e7)
+            || !(10.0..=2e7).contains(&pose.distance_mm)
+            || !(0.0..=1.52).contains(&pose.pitch)
+        {
+            return Err(Error::Input("camera pose restore"));
+        }
+        let [x, y, z] = pose.target_mm;
+        self.target = [x as f32, y as f32, z as f32];
+        self.yaw = pose.yaw as f32;
+        self.pitch = pose.pitch as f32;
+        self.distance = pose.distance_mm as f32;
+        self.orthographic = pose.orthographic;
+        Ok(())
     }
     /// The pan (millimetres) that keeps the point under the cursor fixed while zooming: `ndc` is
     /// the cursor in normalized device coordinates (`edit::ndc_of`, y up, inside `[-1, 1]`) and
@@ -267,7 +301,43 @@ mod tests {
         assert!(px > 0.0);
     }
     #[test]
-    fn input_bounds_and_navigation() {
+    fn a_pose_round_trips_through_the_engine_view() {
+        let mut c = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
+        c.navigate([0.4, 0.3], [10.0, -20.0], 0.5).unwrap();
+        c.set_projection(true);
+        let pose = c.pose();
+        let mut back = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
+        back.navigate([1.0, 1.0], [500.0, 500.0], -3.0).unwrap();
+        back.set_pose(&pose).unwrap();
+        assert_eq!(back.pose(), pose);
+        assert!(back.is_orthographic());
+        // The restored state is valid again and navigation still keeps its bounds.
+        back.navigate([0.0, 0.0], [0.0; 2], 10.0).unwrap();
+        assert!(back.pose().distance_mm >= 10.0);
+        // A horizontal plane view restores exactly and survives one orbit step.
+        let level = beamcraft_engine::views::ViewPose {
+            target_mm: [100.0, 200.0, 300.0],
+            yaw: 1.1,
+            pitch: 0.0,
+            distance_mm: 2500.0,
+            orthographic: false,
+        };
+        let mut flat = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
+        flat.set_pose(&level).unwrap();
+        assert_eq!(flat.pitch, 0.0);
+        flat.navigate([0.0, 0.05], [0.0; 2], 0.0).unwrap();
+        assert!(flat.pitch > 0.0);
+        // Hostile poses refuse.
+        let mut junk = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
+        let mut bad = level;
+        bad.pitch = 1.6;
+        assert!(junk.set_pose(&bad).is_err());
+        bad.pitch = 0.0;
+        bad.distance_mm = 5.0;
+        assert!(junk.set_pose(&bad).is_err());
+        bad.distance_mm = 100.0;
+        bad.target_mm = [2e8, 0.0, 0.0];
+        assert!(junk.set_pose(&bad).is_err());
         assert!(Camera::new([f32::NAN; 3], 1.0, 1.0).is_err());
         assert!(Camera::new([0.0; 3], 100.0, 0.0).is_err());
         let mut c = Camera::new([0.0; 3], 100.0, 1.0).unwrap();
