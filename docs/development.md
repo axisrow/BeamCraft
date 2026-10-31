@@ -185,19 +185,24 @@ deviations are in [K1 acceptance evidence](design/k1-contract-acceptance.md).
 ## CI wall time and Windows runner queues
 
 Recent successful runs in the [axisrow/BeamCraft fork](https://github.com/axisrow/BeamCraft/actions/workflows/ci.yml)
-give the following wall times (sample observed 2026-10-31, covering 2026-10-30–31):
+give the following wall times. The sample is every successful `ci.yml` run created between
+2026-10-30T00:00Z and 2026-11-01T00:00Z, measured from `run_started_at` to `updated_at`
+(sample taken 2026-10-31):
 
-| Run | Median | Observed range | Successful runs |
+| Run | Successful runs | Median | Observed range |
 | --- | --- | --- | --- |
-| Full `master` CI: Linux, macOS, Windows and cold release builds | 6 min 27 s | 5 min 45 s–9 min 33 s | 14 |
-| Pull request CI: Linux and macOS, without Windows or cold release builds | 5 min 8 s | 4 min 11 s–6 min 59 s | 14 |
+| Full `master` CI (push): Linux, macOS, Windows and cold release builds | 16 | 6 min 24 s | 5 min 15 s–9 min 33 s |
+| Pull request CI: Linux and macOS, without Windows or cold release builds | 59 of 62 | 5 min 30 s | 1 min 45 s–16 min 27 s |
 
-Cancelled and failed runs are excluded, as is a sub-minute PR rerun. These are observed fork
-timings, not an upstream measurement or a guarantee for cold caches or busy runner queues. For
-examples, see successful full runs [#661](https://github.com/axisrow/BeamCraft/actions/runs/41159116676)
+Cancelled and failed runs are excluded. Three further successful PR runs (#604, #679, #680)
+finished in 9–63 s — too short to include any real check — and are excluded from the PR row.
+The slow tail is runner queueing, not work: on the evening of 2026-10-30, runs #636 (37 min)
+and #639 (52 min) waited out a starved hosted-runner queue. These are observed fork timings,
+not an upstream measurement or a guarantee for cold caches or busy runner queues. For examples,
+see successful full runs [#661](https://github.com/axisrow/BeamCraft/actions/runs/41159116676)
 and [#658](https://github.com/axisrow/BeamCraft/actions/runs/41158212875), and PR run
-[#678](https://github.com/axisrow/BeamCraft/actions/runs/41169951787). Budget about 10 minutes for
-a full run, plus any additional runner wait. The earlier 14–17 minute measurement from
+[#678](https://github.com/axisrow/BeamCraft/actions/runs/41169951787). Budget about 10 minutes
+for a full run, plus any additional runner wait. The earlier 14–17 minute measurement from
 2026-10-22 is historical. A green PR does not establish that the Windows checks pass.
 
 Each job carries an explicit `timeout-minutes` (5–45 minutes depending on the job), so a hung job
