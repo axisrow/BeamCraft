@@ -15,6 +15,7 @@ mod bom;
 mod changeset;
 mod commands;
 mod construction;
+mod coordination;
 mod coordinator;
 mod copy;
 mod definitions;
@@ -65,6 +66,7 @@ const SECTIONS: &[&str] = &[
     weld::HELP,
     bolt::HELP,
     level::HELP,
+    coordination::HELP,
     attribute::HELP,
     filters::HELP,
     grid::HELP,

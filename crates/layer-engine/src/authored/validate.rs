@@ -1102,6 +1102,18 @@ pub(super) fn snapshot(
         ));
     }
     project_record(metadata)?;
+    // The F12 descriptor is optional; when present it is validated as a whole, and its project
+    // identity can never disagree with the root layer's own project record.
+    let descriptor = super::descriptor::descriptor_of(metadata)?;
+    if let Some(descriptor) = descriptor
+        && let Some(record) = project_record(metadata)?
+        && descriptor.project.to_string() != record
+    {
+        return Err(fail(
+            ErrorCode::IntegrityError,
+            "the project descriptor names another project",
+        ));
+    }
     let mut operation_ids = std::collections::BTreeSet::new();
     attribute_schema(prims)?;
     for p in prims.iter().filter(|p| p.element_id.is_some()) {

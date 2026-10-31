@@ -27,6 +27,7 @@ mod construction;
 mod construction_input;
 mod construction_snaps;
 mod contour_plates;
+mod coordination;
 mod coordinator;
 mod coordinator_rebase;
 mod copy;

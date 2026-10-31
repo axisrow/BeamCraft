@@ -25,6 +25,7 @@ mod changeset_cmd;
 mod command_context;
 mod compensate_cmd;
 mod construction_cmd;
+mod coordination_cmd;
 mod coordinator_cmd;
 mod drawing_cmd;
 mod export_cmd;
@@ -108,6 +109,7 @@ fn main() -> std::process::ExitCode {
         Some(Route::Project) => project_cmd::execute(&args),
         Some(Route::Grid) => grid_cmd::execute(&args),
         Some(Route::Level) => level_cmd::execute(&args),
+        Some(Route::Coordination) => coordination_cmd::execute(&args),
         Some(Route::Attribute) => attribute_cmd::execute(&args),
         Some(Route::Numbering) => numbering_cmd::execute(&args),
         Some(Route::Plate) => plate_cmd::execute(&args),

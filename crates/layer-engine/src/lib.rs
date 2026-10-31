@@ -142,7 +142,11 @@ impl Budgets {
     pub const MODEL: Self = Self {
         layer_bytes: 32 * 1024 * 1024,
         total_bytes: 64 * 1024 * 1024,
-        layers: 8,
+        // F12 section 9: a coordination stage composes its own three layers plus the pinned
+        // source closures (three verified source layers per whole-project connection), so the
+        // stage holds at most 16 layers - four whole-project pins or more scoped pins, still
+        // a fixed, shallow set. Pins beyond this refuse with LIMIT_EXCEEDED.
+        layers: 16,
         depth: 16,
         prims: 262_144,
         values: 4_194_304,
