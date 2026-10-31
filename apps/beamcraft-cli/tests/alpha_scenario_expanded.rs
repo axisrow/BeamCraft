@@ -1205,4 +1205,377 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         first, second,
         "each version must render its own stored document"
     );
+
+    // D04.3: view titles and display scales in a second document, end to end. The primary
+    // view carries --view-title on create and on refresh, the edit-views specs carry the
+    // optional :title segment (one placed view stays unannotated), the sheet export
+    // annotates every view with its title and 1:N scale, inspect-drawing reports the title
+    // fields, and the stored intent binds the titles to the closed descriptor through its
+    // schema identity.
+    let titled_drawing = id(0xaa50);
+    let titled_view = id(0xaa51);
+    let titled_dimension = id(0xaa52);
+    let titled_create_op = id(0xaa53);
+    let titled_create_revision = id(0xaa54);
+    let titled_refresh_op = id(0xaa55);
+    let titled_refresh_revision = id(0xaa56);
+    let plan_view = id(0xaa57);
+    let bare_view = id(0xaa58);
+    let titled_section = id(0xaa59);
+    let titled_detail = id(0xaa5a);
+    let titled_views_op = id(0xaa5b);
+    let titled_views_revision = id(0xaa5c);
+    let titled_sheet_op = id(0xaa5d);
+    let titled_sheet_revision = id(0xaa5e);
+    let titled_publish_op = id(0xaa5f);
+    let titled_publish_revision = id(0xaa60);
+    let titled_version = id(0xaa61);
+    let refused_op = id(0xaa62);
+    let refused_revision = id(0xaa63);
+    let titled_dir = s.path("drawing-titled");
+    // A title over the bounded label cap refuses before anything is stored, so the
+    // document directory is not even created.
+    let long_title = "A".repeat(257);
+    let refused_title = s.run(
+        "published",
+        "create-drawing",
+        &[
+            "--document-dir",
+            &titled_dir,
+            "--drawing-id",
+            &titled_drawing,
+            "--view-id",
+            &titled_view,
+            "--dimension-id",
+            &titled_dimension,
+            "--id",
+            PARTS[0],
+            "--anchor-a",
+            &anchor_a,
+            "--anchor-b",
+            &anchor_b,
+            "--view-title",
+            long_title.as_str(),
+            "--op-id",
+            &refused_op,
+            "--revision-id",
+            &refused_revision,
+            "--actor-id",
+            USER,
+        ],
+        2,
+    );
+    assert_eq!(text(&refused_title, "code"), "INVALID_ARGUMENT");
+    let titled_create = s.ok(
+        "published",
+        "create-drawing",
+        &[
+            "--document-dir",
+            &titled_dir,
+            "--drawing-id",
+            &titled_drawing,
+            "--view-id",
+            &titled_view,
+            "--dimension-id",
+            &titled_dimension,
+            "--id",
+            PARTS[0],
+            "--anchor-a",
+            &anchor_a,
+            "--anchor-b",
+            &anchor_b,
+            "--view-title",
+            "COLUMN A",
+            "--scale",
+            "20",
+            "--origin",
+            "45,60",
+            "--op-id",
+            &titled_create_op,
+            "--revision-id",
+            &titled_create_revision,
+            "--actor-id",
+            USER,
+        ],
+    );
+    assert_eq!(text(&titled_create, "state"), "draft");
+    assert_eq!(text(at(&titled_create, &["view"]), "title"), "COLUMN A");
+    close(
+        at(&titled_create, &["view", "scale_denominator"])
+            .float()
+            .unwrap(),
+        20.0,
+    );
+
+    // Refresh re-authors the primary view annotation from the same archived source; the
+    // exact repeat is a replay that returns the stored revision byte for byte.
+    let refresh_args = [
+        "--document-dir",
+        &titled_dir,
+        "--expected-head",
+        &titled_create_revision,
+        "--drawing-id",
+        &titled_drawing,
+        "--view-id",
+        &titled_view,
+        "--dimension-id",
+        &titled_dimension,
+        "--id",
+        PARTS[0],
+        "--anchor-a",
+        &anchor_a,
+        "--anchor-b",
+        &anchor_b,
+        "--view-title",
+        "COLUMN A REV 2",
+        "--scale",
+        "25",
+        "--origin",
+        "45,60",
+        "--op-id",
+        &titled_refresh_op,
+        "--revision-id",
+        &titled_refresh_revision,
+        "--actor-id",
+        USER,
+    ];
+    let titled_refresh = s.ok("published", "refresh-drawing", &refresh_args);
+    assert_eq!(
+        text(at(&titled_refresh, &["view"]), "title"),
+        "COLUMN A REV 2"
+    );
+    close(
+        at(&titled_refresh, &["view", "scale_denominator"])
+            .float()
+            .unwrap(),
+        25.0,
+    );
+    let refreshed_again = s.ok("published", "refresh-drawing", &refresh_args);
+    assert_eq!(
+        refreshed_again.encode(&Limits::DEFAULT).unwrap(),
+        titled_refresh.encode(&Limits::DEFAULT).unwrap(),
+        "the refresh replay must return the stored revision unchanged"
+    );
+
+    // One edit places the titled family: a placed view whose title is the whole remainder
+    // of its spec (colons and spaces included), an unannotated placed view, and a titled
+    // section and detail; the exact repeat replays byte for byte.
+    let plan_spec = format!("{plan_view}:top:10:140,70:PLAN: east");
+    let bare_spec = format!("{bare_view}:top:25:140,110");
+    let section_spec = format!("{titled_section}:right:50:positive:5:200,70:SECTION A-A");
+    let detail_spec = format!("{titled_detail}:{plan_view}:145,72:5:2:260,70:DETAIL 1");
+    let views_args = [
+        "--document-dir",
+        &titled_dir,
+        "--expected-head",
+        &titled_refresh_revision,
+        "--op-id",
+        &titled_views_op,
+        "--revision-id",
+        &titled_views_revision,
+        "--actor-id",
+        USER,
+        "--placed-view",
+        plan_spec.as_str(),
+        "--placed-view",
+        bare_spec.as_str(),
+        "--placed-section",
+        section_spec.as_str(),
+        "--placed-detail",
+        detail_spec.as_str(),
+    ];
+    let placed_family = s.ok("published", "edit-views", &views_args);
+    let placed_list = at(&placed_family, &["placed_views"]).array().unwrap();
+    assert_eq!(placed_list.len(), 2);
+    assert_eq!(text(&placed_list[0], "title"), "PLAN: east");
+    close(
+        at(&placed_list[0], &["scale_denominator"]).float().unwrap(),
+        10.0,
+    );
+    assert_eq!(
+        placed_list[1].get("title").unwrap(),
+        &Json::Null,
+        "an absent title segment is the unannotated view"
+    );
+    close(
+        at(&placed_list[1], &["scale_denominator"]).float().unwrap(),
+        25.0,
+    );
+    let section_list = at(&placed_family, &["placed_sections"]).array().unwrap();
+    assert_eq!(text(&section_list[0], "title"), "SECTION A-A");
+    close(at(&section_list[0], &["cut_mm"]).float().unwrap(), 50.0);
+    close(
+        at(&section_list[0], &["scale_denominator"])
+            .float()
+            .unwrap(),
+        5.0,
+    );
+    let detail_list = at(&placed_family, &["placed_details"]).array().unwrap();
+    assert_eq!(text(&detail_list[0], "title"), "DETAIL 1");
+    assert_eq!(text(&detail_list[0], "parent"), plan_view);
+    let placed_again = s.ok("published", "edit-views", &views_args);
+    assert_eq!(
+        placed_again.encode(&Limits::DEFAULT).unwrap(),
+        placed_family.encode(&Limits::DEFAULT).unwrap(),
+        "the edit-views replay must return the stored revision unchanged"
+    );
+
+    // The annotated document lands on an a3 sheet and publishes as one version; its sheet
+    // render annotates all five views and repeats byte-identically.
+    s.ok(
+        "published",
+        "edit-sheet",
+        &[
+            "--document-dir",
+            &titled_dir,
+            "--expected-head",
+            &titled_views_revision,
+            "--op-id",
+            &titled_sheet_op,
+            "--revision-id",
+            &titled_sheet_revision,
+            "--actor-id",
+            USER,
+            "--sheet-size",
+            "a3",
+            "--sheet-project",
+            "Q01 titled sheet",
+            "--sheet-author",
+            "Q01 expanded story",
+        ],
+    );
+    s.ok(
+        "published",
+        "publish-drawing",
+        &[
+            "--document-dir",
+            &titled_dir,
+            "--expected-head",
+            &titled_sheet_revision,
+            "--op-id",
+            &titled_publish_op,
+            "--revision-id",
+            &titled_publish_revision,
+            "--actor-id",
+            USER,
+            "--version-id",
+            &titled_version,
+        ],
+    );
+    for name in ["titled-sheet-1.svg", "titled-sheet-2.svg"] {
+        s.ok(
+            "published",
+            "export-drawing",
+            &[
+                "--document-dir",
+                &titled_dir,
+                "--version-id",
+                &titled_version,
+                "--out",
+                &s.path(name),
+                "--format",
+                "svg",
+            ],
+        );
+    }
+    let sheet_svg = fs::read(s.path("titled-sheet-1.svg")).unwrap();
+    assert_eq!(
+        fs::read(s.path("titled-sheet-2.svg")).unwrap(),
+        sheet_svg,
+        "the sheet render must be deterministic for one version"
+    );
+    let sheet_svg = String::from_utf8(sheet_svg).unwrap();
+    // One annotation line per view: the primary, both placed views, the section and the
+    // detail. Sections and details render their own geometry, not only the annotation, and
+    // the refreshed primary scale rides in the render metadata.
+    assert_eq!(sheet_svg.matches("class=\"viewtitle\"").count(), 5);
+    for view_id in [
+        titled_view.as_str(),
+        plan_view.as_str(),
+        bare_view.as_str(),
+        titled_section.as_str(),
+        titled_detail.as_str(),
+    ] {
+        assert!(
+            sheet_svg.contains(&format!("data-view=\"{view_id}\"")),
+            "{view_id}"
+        );
+    }
+    assert!(
+        sheet_svg.contains(&format!("class=\"body\" data-view=\"{titled_section}\"")),
+        "the section renders its own sheet geometry"
+    );
+    assert!(
+        sheet_svg.contains(&format!("class=\"body\" data-view=\"{titled_detail}\"")),
+        "the detail renders its own sheet geometry"
+    );
+    assert!(
+        sheet_svg.contains("scale_denominator=25"),
+        "the refreshed primary scale annotates the render metadata"
+    );
+
+    // inspect-drawing reports every title field, including the null of the unannotated view.
+    let inspected_titles = s.ok(
+        "published",
+        "inspect-drawing",
+        &[
+            "--document-dir",
+            &titled_dir,
+            "--model-store",
+            &s.path("published"),
+        ],
+    );
+    assert_eq!(text(&inspected_titles, "freshness"), "current");
+    assert_eq!(
+        text(at(&inspected_titles, &["view"]), "title"),
+        "COLUMN A REV 2"
+    );
+    let reported_views = at(&inspected_titles, &["placed_views"]).array().unwrap();
+    assert_eq!(text(&reported_views[0], "title"), "PLAN: east");
+    assert_eq!(reported_views[1].get("title").unwrap(), &Json::Null);
+    assert_eq!(
+        text(
+            &at(&inspected_titles, &["placed_sections"]).array().unwrap()[0],
+            "title"
+        ),
+        "SECTION A-A"
+    );
+    assert_eq!(
+        text(
+            &at(&inspected_titles, &["placed_details"]).array().unwrap()[0],
+            "title"
+        ),
+        "DETAIL 1"
+    );
+
+    // The stored intent carries each title beside its view scope and binds the document to
+    // the closed descriptor through its schema identity; the unannotated view authors no
+    // title line, so an untitled document keeps its byte-stable form.
+    let documents =
+        beamcraft_cli::drawing::document::store::DocumentStore::open(Path::new(&titled_dir))
+            .unwrap();
+    let stored = documents.head().unwrap();
+    assert_eq!(stored.version.unwrap().to_string(), titled_version);
+    let intent_entry = stored
+        .info
+        .manifest()
+        .content()
+        .entries()
+        .iter()
+        .find(|entry| entry.name() == beamcraft_cli::drawing::codec::INTENT_LAYER)
+        .unwrap();
+    let blobs = beamcraft_host::storage::BlobStore::new(Path::new(&titled_dir)).unwrap();
+    let intent = String::from_utf8(blobs.read(&intent_entry.digest()).unwrap()).unwrap();
+    assert!(beamcraft_cli::drawing::codec::SCHEMA_DESCRIPTOR.contains("view-title=drawing:title"));
+    assert!(intent.contains(&format!(
+        "custom string drawing:schema = \"{}\"",
+        beamcraft_cli::drawing::codec::schema_identity().unwrap()
+    )));
+    assert_eq!(intent.matches("custom string drawing:title = ").count(), 4);
+    for title in ["COLUMN A REV 2", "PLAN: east", "SECTION A-A", "DETAIL 1"] {
+        assert!(
+            intent.contains(&format!("custom string drawing:title = \"{title}\"")),
+            "{title}"
+        );
+    }
 }
