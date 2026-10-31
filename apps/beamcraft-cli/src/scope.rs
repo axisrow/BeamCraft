@@ -214,6 +214,24 @@ pub(crate) fn materializer_targets(
     }
 }
 
+/// Refuses immutable definitions (materials, profiles, fasteners) on a sectioned store
+/// (`DV-SCOPE-004`): a definition is store-wide shared data, its resource batch carries no
+/// element change for the scope admission to see, and the separately authorized shared
+/// definition scope arrives with the F12 registry work (U20). Classic stores are unchanged.
+pub(crate) fn refuse_definitions(store: &RevisionStore) -> Result<(), PlateError> {
+    let Some(head) = store.head().map_err(PlateError::from)? else {
+        return Ok(());
+    };
+    match routing_of(store, &head) {
+        EditRouting::Classic => Ok(()),
+        EditRouting::Scoped(_) | EditRouting::Unauthorized(_) => Err(PlateError {
+            rule_id: Some(scope::RULE_SHARED_AUTHORIZED),
+            code: beamcraft_model::error::ErrorCode::PermissionDenied,
+            message: "definitions are shared data and are not writable from a section scope",
+        }),
+    }
+}
+
 /// Validates a scope a workspace asks to be authorized for against the published head's
 /// layout: the codes must be valid and both the section and the shared layer must already
 /// participate in the store (`DV-SCOPE-001`: explicit authorization against the store).

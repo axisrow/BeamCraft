@@ -702,6 +702,9 @@ pub fn define(
     hook: &mut dyn CommitHook,
 ) -> Result<Defined, PlateError> {
     let control = control();
+    // A definition is store-wide shared data (U19): on a sectioned store it is refused before
+    // anything is written, whatever workspace scope the caller holds.
+    crate::scope::refuse_definitions(store)?;
     let resource = request.definition.resource()?;
     let digest = resource.digest;
     let (head, base) = load_base(store, &request.project, &request.workspace)?;

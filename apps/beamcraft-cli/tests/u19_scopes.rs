@@ -357,6 +357,37 @@ fn the_same_module_cannot_edit_another_section_or_zone() {
 }
 
 #[test]
+fn definitions_are_refused_on_a_sectioned_store() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD,K2:KMD");
+    let wkmd = f.shared.root.join("w-kmd");
+    f.workspace(
+        &store,
+        wkmd.to_str().unwrap(),
+        "2401-DEMO",
+        "KMD",
+        Some("K1"),
+        false,
+    );
+    // A definition is store-wide shared data: no section scope, however authorized, authors
+    // it into its own layer (DV-SCOPE-004).
+    for dir in [store.as_str(), wkmd.to_str().unwrap()] {
+        let refused = f.refused_in(dir, "define-material", &["--density", "7850"]);
+        assert_eq!(text(&refused, "code"), "PERMISSION_DENIED", "{dir}");
+        assert_eq!(rule(&refused), "DV-SCOPE-004", "{dir}");
+    }
+    // The classic 0.1 line keeps its behaviour.
+    let classic = f.shared.root.join("classic-store");
+    std::fs::create_dir(&classic).unwrap();
+    let defined = f.ok_in(
+        classic.to_str().unwrap(),
+        "define-material",
+        &["--density", "7850"],
+    );
+    assert_eq!(text(&defined, "outcome"), "definition_created");
+}
+
+#[test]
 fn a_claimed_scope_change_cannot_smuggle_publication() {
     let f = Fixture::new();
     let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD,K2:KMD");
