@@ -12,19 +12,21 @@ Thanks for helping. Humans and AI agents follow the same rules.
    Use `<type>/<short-description>` with lowercase hyphenated words: `feat/`, `bug/`, `docs/`,
    `chore/`, `refactor/` or `test/`, as defined in `AGENTS.md` section 6. Include the task ID when
    applicable (for example `feat/f07-fixtures`); do not use agent/provider prefixes.
-3. Run before you push (install the runner once: `cargo install cargo-nextest --locked`):
+3. Commit the source and run the recorded gate (install the pinned runner once with
+   `cargo install cargo-nextest --version 0.9.149 --locked`):
    ```sh
-   cargo fmt --all
-   cargo clippy --workspace --all-targets -- -D warnings
-   cargo nextest run --workspace
-   cargo test --workspace --doc
+   cargo run --locked -p beamcraft-test-gate -- check --scope full
    ```
-   The full list of CI checks is in [`docs/development.md`](docs/development.md).
+   Independent CLI changes may use `--scope cli --ui-independent-reason "..."`; shared code,
+   contracts, build settings and dependencies require full verification. Explicitly publish
+   the resulting report with `publish --report PATH --pr NUMBER`. CI requires a current
+   head/base/tree report and checks the complete workspace on the two other operating systems.
+   See [the gate guide](tools/test-gate/README.md).
 4. Add a test for new behaviour. For a bug fix, confirm the test fails without the fix.
 5. Open a PR with the template filled in. CI must be green.
 6. Keep the fork aligned with upstream: `bash tools/fork-sync.sh status` inspects the
    divergence, `bash tools/fork-sync.sh sync` merges `upstream/master`, gates it on the local
-   triple and pushes `master`. Conflicting files keep their entire fork version
+   recorded full gate and pushes `master`. Conflicting files keep their entire fork version
    (including fork deletions); other files merge normally. Skipped upstream changes need
    manual integration in a separate branch: the merge records upstream commits as integrated,
    so later syncs do not retry those skipped changes. If a conflict cannot be cleared, sync aborts
@@ -56,7 +58,7 @@ repository ships only [`tools/sync.schema.example`](tools/sync.schema.example) â
 of such a sync, given as an example. No runnable sync script is committed here: upstream has
 no write access to any mirror, so sync automation cannot run from here. Keep your script
 inside your mirror and hold it to the schema: merge upstream commits without rewriting them,
-stop on a conflict for a human decision, and run the triple from step 3 before committing
+stop on a conflict for a human decision, and run the full recorded gate from step 3 before committing
 the merge.
 
 An AI agent that works through a hosted GitHub integration needs write access for that

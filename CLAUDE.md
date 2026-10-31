@@ -29,22 +29,22 @@ their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 ## Commands
 
 ```sh
-cargo fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps
+cargo run --locked -p beamcraft-test-gate -- check --scope full
 ```
 
-This is the full gate (owner decision 2026-10-31, #342) — the same four commands as in
-`docs/development.md` and the decision record: run it once, whole, and read the result from
-that run. The test step is literal `cargo test --workspace` — `cargo nextest` never runs
-doctests, so nextest is the iteration runner for targeted `-p <crate>` runs, not the gate.
-A quick smoke after a build: `cargo run -p beamcraft-cli -- --version`.
+The recorded gate runs unfiltered nextest 0.9.149 **and mandatory doctests**, format validation,
+Clippy and documentation with warnings denied. It enforces execution budgets, serializes heavy
+checks across worktrees and requires the committed source to stay unchanged. Independent
+CLI-only changes may use `--scope cli --ui-independent-reason "..."` when no shared code,
+dependencies, build settings or UI-consumed commands/options/JSON change. CI then tests the
+whole workspace on the two other operating systems; missing or stale local evidence fails CI.
+Publish the report explicitly with the runner's `publish --report PATH --pr NUMBER` command.
+New head/base snapshots require a new report. See `tools/test-gate/README.md` and the owner
+policy in `docs/plan/test-gate.md`; this supersedes the literal-Cargo rule from #346.
 
-CI (`.github/workflows/ci.yml`) runs the same on Windows and Linux, plus a wasm32 check of the
-three pure crates (`beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`) and `cargo deny`.
-A change is not done until these pass. The full list, with tools and PowerShell notes, the
-machine-load rules and the test pyramid, is in `docs/development.md`.
+Targeted Cargo/nextest commands remain iteration tools. A quick smoke after a build:
+`cargo run -p beamcraft-cli -- --version`. CI also checks WASM compatibility, dependencies,
+fixtures and module boundaries. Release packaging is unchanged.
 
 ## Conventions
 

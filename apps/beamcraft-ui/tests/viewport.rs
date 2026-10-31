@@ -4,8 +4,8 @@
 
 //! V03 end to end: the accepted revision of a real store, exported by the `beamcraft` CLI in a
 //! separate process, rebuilt by the engine, turned into an instanced scene and rendered offscreen
-//! with an actual pixel readback. Without a native adapter the render step is skipped and says so;
-//! without the CLI binary next to this package's binary the store test is skipped and says so.
+//! with an actual pixel readback. A native/software adapter and the CLI binary next to this package's
+//! binary are required; missing prerequisites fail acceptance.
 
 #![allow(
     clippy::unwrap_used,
@@ -40,8 +40,7 @@ fn gpu() -> Option<Gpu> {
             Some(gpu)
         }
         Err(Error::NoAdapter) => {
-            eprintln!("SKIP render: no native wgpu adapter");
-            None
+            panic!("required native/software GPU adapter is missing")
         }
         Err(e) => panic!("adapter or device failed: {e}"),
     }
@@ -281,17 +280,10 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
     assert!(Uploaded::upload(&gpu.device, &gpu.queue, &after, None).is_err());
 }
 
+mod support;
+
 fn cli() -> Option<PathBuf> {
-    let ui = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"));
-    let cli = ui
-        .parent()?
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if cli.is_file() {
-        Some(cli)
-    } else {
-        eprintln!("SKIP store test: build beamcraft-cli first (cargo test --workspace does)");
-        None
-    }
+    support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
 }
 
 fn run(cli: &Path, args: &[&str]) -> String {

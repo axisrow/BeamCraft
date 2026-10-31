@@ -126,8 +126,7 @@ fn native_selector_saves_and_reloads_all_preferences() {
         .unwrap()
         .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
     if !cli.is_file() {
-        eprintln!("SKIP appearance interaction: build beamcraft-cli first");
-        return;
+        panic!("required CLI binary is missing; build beamcraft-cli before UI acceptance");
     }
     let config = Fixture(
         Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("appearance-{}", std::process::id())),

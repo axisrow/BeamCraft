@@ -72,10 +72,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         if: steps.guard.outputs.pending != '0'
 
-      # Gate 3/3 in tools/fork-sync.sh runs cargo nextest; without this step
-      # the gate dies with "no such command: nextest" and the sync rolls back
-      # (exit 3). Same pinned version CI installs, so both gates run the same
-      # test runner.
+      # The recorded full gate requires this exact nextest version and mandatory doctests.
+      # Its tree-bound receipt tells master CI which two other OSes remain to check.
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         if: steps.guard.outputs.pending != '0'
         with:

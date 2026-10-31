@@ -857,6 +857,19 @@ impl Renderer {
 mod tests {
     use super::*;
 
+    fn required_adapter(result: Result<Gpu, Error>) -> Gpu {
+        match result {
+            Ok(gpu) => gpu,
+            Err(error) => panic!("required native/software GPU adapter failed: {error}"),
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "required native/software GPU adapter failed")]
+    fn a_missing_adapter_is_a_failed_check_not_a_successful_skip() {
+        let _ = required_adapter(Err(Error::NoAdapter));
+    }
+
     #[test]
     fn hardware_adapters_default_to_4x_and_software_ones_to_1x() {
         use wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu, Other, VirtualGpu};
@@ -870,14 +883,7 @@ mod tests {
 
     #[test]
     fn a_resize_rebuilds_the_targets_and_keeps_the_pipeline() {
-        let gpu = match pollster::block_on(Gpu::headless()) {
-            Ok(gpu) => gpu,
-            Err(Error::NoAdapter) => {
-                eprintln!("SKIP resize: no native wgpu adapter");
-                return;
-            }
-            Err(e) => panic!("adapter or device failed: {e}"),
-        };
+        let gpu = required_adapter(pollster::block_on(Gpu::headless()));
         let supports_4x = [FORMAT, DEPTH].into_iter().all(|f| {
             gpu.adapter
                 .get_texture_format_features(f)
@@ -945,14 +951,7 @@ mod tests {
 
     #[test]
     fn an_overlay_tint_reaches_the_drawn_pixels_and_white_leaves_them() {
-        let gpu = match pollster::block_on(Gpu::headless()) {
-            Ok(gpu) => gpu,
-            Err(Error::NoAdapter) => {
-                eprintln!("SKIP tint readback: no native wgpu adapter");
-                return;
-            }
-            Err(e) => panic!("adapter or device failed: {e}"),
-        };
+        let gpu = required_adapter(pollster::block_on(Gpu::headless()));
         let supports_4x = [FORMAT, DEPTH].into_iter().all(|f| {
             gpu.adapter
                 .get_texture_format_features(f)
