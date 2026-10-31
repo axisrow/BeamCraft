@@ -65,6 +65,14 @@ the aggregate `CI verdict`, instead of silently choosing a default matrix. Forma
 run on the first selected quality lane; WASM, licences, fixtures and boundaries remain checked.
 Manual CI can name a source PR with the `pr_number` workflow input.
 
+A `pull_request` run starts before its receipt exists, because publication follows the push that
+triggered the run. `ci-plan` keeps the event snapshot as the fast path and, when it holds no
+receipt current for the run's head and base, polls the live description for at most two minutes
+before failing; every attempt keeps the head/base/tree binding, and a window without a receipt is
+a failure. Master pushes and manual dispatches read the live description directly. Publication
+fires `pull_request edited`, so a receipt-bearing run follows the first one and may supersede it
+through `cancel-in-progress`; the first run then ends cancelled instead of red.
+
 Make `CI verdict` the required PR check and require branches to be up to date in the integration
 branch's GitHub protection/ruleset. The verdict rechecks live head/base before it succeeds;
 the repository rule also blocks previously completed green checks after a later base update.

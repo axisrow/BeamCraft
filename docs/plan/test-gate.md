@@ -67,6 +67,17 @@ new commits and base updates invalidate old CI selection. The tested head and ba
 the current PR; require the branch to include that base so the local source is the merge tree.
 Validate report structure, successful required stages, inventory and scope before selecting OSes.
 
+A `pull_request` event carries a description snapshot that predates the publication landing
+seconds after the triggering push. Planning reads the snapshot as the fast path and, when it holds
+no receipt current for the run's exact head and base, polls the live PR description for at most
+two minutes before failing; a window without a current receipt still fails, and every attempt
+keeps the head, base and tree binding. Master pushes and manual dispatches read the live
+description directly, so they have no such startup race; a dispatch without its source `--ref`
+branch runs the default branch's workflow there and can only plan through the `pr_number` input.
+Publication itself fires `pull_request edited`, whose run replans with the receipt present and,
+through the workflow's `cancel-in-progress` group, may supersede the still-waiting first run: the
+PR then goes green on that run while the superseded run ends cancelled, not red.
+
 | Local report OS | CI workspace platforms |
 | --- | --- |
 | Linux | macOS, Windows |

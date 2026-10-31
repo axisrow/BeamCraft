@@ -8,7 +8,7 @@ use beamcraft_test_gate::{
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 struct Repo {
@@ -176,4 +176,102 @@ fn sync_transport_accepts_the_tested_merge_and_rejects_a_different_committed_tre
     r.git(&["commit", "--amend", "--no-edit"]);
     assert!(github::verify_sync(&r.root, &path).is_err());
     assert_ne!(plan(&r, "push", serde_json::json!({})).0.exit_code, 0);
+}
+
+type FakeFetch<'a> = &'a mut dyn FnMut(&str, u64) -> beamcraft_test_gate::Result<serde_json::Value>;
+
+fn plan_with_grace(
+    r: &Repo,
+    payload: serde_json::Value,
+    grace: Duration,
+    fetch: FakeFetch<'_>,
+) -> beamcraft_test_gate::Result<github::Plan> {
+    github::plan_with(
+        &r.root,
+        "pull_request",
+        &payload,
+        r.git(&["rev-parse", "HEAD"]).trim(),
+        "test/repo",
+        fetch,
+        grace,
+    )
+}
+
+fn opened_payload(body: &str, head: &str, base: &str) -> serde_json::Value {
+    serde_json::json!({"pull_request":{"number":7,"head":{"sha":head},"base":{"sha":base},"body":body}})
+}
+
+#[test]
+fn a_receipt_published_after_the_push_is_found_within_the_grace_window() {
+    let r = Repo::new();
+    let base = r.git(&["rev-parse", "HEAD"]);
+    std::fs::write(
+        r.root.join("apps/beamcraft-cli/src/one.rs"),
+        "// changed CLI\n",
+    )
+    .unwrap();
+    r.commit("CLI change");
+    let report = r.report(&base);
+    let good = report::with_report("Human text", &report).unwrap();
+    let payload = opened_payload("no receipt yet", &report.commit, &base);
+    let mut calls = 0_u32;
+    let mut fetch = |_repo: &str, number: u64| {
+        calls += 1;
+        assert_eq!(number, 7);
+        if calls == 1 {
+            Ok(serde_json::json!({"body":"still no receipt"}))
+        } else {
+            Ok(serde_json::json!({"body":good.clone()}))
+        }
+    };
+    let selected =
+        plan_with_grace(&r, payload, Duration::from_secs(1), &mut fetch).expect("grace receipt");
+    assert_eq!(selected.oses, vec!["macos-latest", "windows-latest"]);
+    assert_eq!(calls, 2);
+}
+
+#[test]
+fn a_window_without_any_receipt_fails_bounded() {
+    let r = Repo::new();
+    let base = r.git(&["rev-parse", "HEAD"]);
+    let payload = opened_payload("no receipt ever", &r.git(&["rev-parse", "HEAD"]), &base);
+    let mut fetch = |_repo: &str, _number: u64| Ok(serde_json::json!({"body":"never"}));
+    let start = Instant::now();
+    let error = plan_with_grace(&r, payload, Duration::from_secs(1), &mut fetch)
+        .expect_err("an absent receipt must still fail");
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "must stay bounded"
+    );
+    assert!(error.to_string().contains("grace window"), "{error}");
+}
+
+#[test]
+fn a_live_receipt_for_another_head_never_satisfies_this_run() {
+    let r = Repo::new();
+    let base = r.git(&["rev-parse", "HEAD"]);
+    let report = r.report(&base);
+    std::fs::write(r.root.join("README.md"), "advanced\n").unwrap();
+    r.commit("newer head, receipt not for this run");
+    let newer = r.report(&base);
+    let live = report::with_report("", &newer).unwrap();
+    let payload = opened_payload("stale snapshot", &report.commit, &base);
+    let mut fetch = |_repo: &str, _number: u64| Ok(serde_json::json!({"body":live.clone()}));
+    let error = plan_with_grace(&r, payload, Duration::from_secs(1), &mut fetch)
+        .expect_err("a newer head's receipt is not this run's evidence");
+    assert!(error.to_string().contains("grace window"), "{error}");
+}
+
+#[test]
+fn a_current_payload_receipt_never_reaches_the_live_poll() {
+    let r = Repo::new();
+    let base = r.git(&["rev-parse", "HEAD"]);
+    let report = r.report(&base);
+    let body = report::with_report("Human text", &report).unwrap();
+    let payload = opened_payload(&body, &report.commit, &base);
+    let mut fetch = |_repo: &str, _number: u64| -> beamcraft_test_gate::Result<serde_json::Value> {
+        panic!("the fast path must not consult the API")
+    };
+    let selected = plan_with_grace(&r, payload, Duration::from_secs(30), &mut fetch).unwrap();
+    assert_eq!(selected.oses, vec!["macos-latest", "windows-latest"]);
 }

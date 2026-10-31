@@ -11,9 +11,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// Commit-message receipt used only by the existing no-PR sync flow.
 pub const SYNC_TRAILER: &str = "BeamCraft-Test-Gate: ";
+
+/// How long planning may wait for a receipt that lands after the triggering push.
+const GRACE: Duration = Duration::from_secs(120);
+/// Pause between live-description polls inside the grace window.
+const POLL: Duration = Duration::from_secs(5);
 
 fn api(repo: &str, path: &str) -> Result<Value> {
     check_repo(repo)?;
@@ -316,8 +322,43 @@ pub fn verify_sync(root: &Path, path: &Path) -> Result<()> {
     validate_sync(&report, &actual.tree, &parents)
 }
 
+/// Parses a description snapshot and binds it to this run's exact head, base and tree.
+fn receipt_for(body: &str, head: &str, base: &str, tested_tree: &str) -> Result<Report> {
+    let report = from_body(body)?;
+    report.validate_pr(head, base, tested_tree)?;
+    Ok(report)
+}
+
+/// Completes PR planning once a receipt is bound: source topology, scope, platforms.
+fn finalize_pr(root: &Path, pr: &Value, report: &Report) -> Result<Plan> {
+    let head = field(pr, "/head/sha")?;
+    let base = field(pr, "/base/sha")?;
+    ensure_commit(root, base)?;
+    git(root, &["merge-base", "--is-ancestor", base, head])?;
+    scope(root, report)?;
+    select(report)
+}
+
+/// Reads the live PR description; the seam tests substitute for a fake publisher.
+fn live_pr(repo: &str, number: u64) -> Result<Value> {
+    api(repo, &format!("pulls/{number}"))
+}
+
 /// Reads an event and validates its receipt against Git/PR facts before producing a matrix.
 pub fn plan(root: &Path, event: &str, payload: &Value, sha: &str, repo: &str) -> Result<Plan> {
+    plan_with(root, event, payload, sha, repo, &mut live_pr, GRACE)
+}
+
+/// [`plan`] with an injectable live-description source and grace window for tests.
+pub fn plan_with(
+    root: &Path,
+    event: &str,
+    payload: &Value,
+    sha: &str,
+    repo: &str,
+    fetch: &mut dyn FnMut(&str, u64) -> Result<Value>,
+    grace: Duration,
+) -> Result<Plan> {
     check_repo(repo)?;
     if !matches!(event, "pull_request" | "push" | "workflow_dispatch") {
         return fail("unsupported CI event");
@@ -328,12 +369,42 @@ pub fn plan(root: &Path, event: &str, payload: &Value, sha: &str, repo: &str) ->
             .ok_or("missing pull_request event")?;
         let head = field(pr, "/head/sha")?;
         let base = field(pr, "/base/sha")?;
-        let report = from_body(pr.get("body").and_then(Value::as_str).unwrap_or(""))?;
-        report.validate_pr(head, base, &tree(root, head)?)?;
-        ensure_commit(root, base)?;
-        git(root, &["merge-base", "--is-ancestor", base, head])?;
-        scope(root, &report)?;
-        return select(&report);
+        let tested_tree = tree(root, head)?;
+        if let Ok(report) = receipt_for(
+            pr.get("body").and_then(Value::as_str).unwrap_or(""),
+            head,
+            base,
+            &tested_tree,
+        ) {
+            return finalize_pr(root, pr, &report);
+        }
+        // Startup race: publication follows the push that started this run, so
+        // the event snapshot usually predates the receipt. Poll the live
+        // description for a bounded grace window; every attempt stays bound to
+        // this run's head and base, and a window without a receipt still fails.
+        let number = pr
+            .get("number")
+            .and_then(Value::as_u64)
+            .ok_or("missing PR number")?;
+        let deadline = Instant::now() + grace;
+        loop {
+            let live = fetch(repo, number)?;
+            if let Ok(report) = receipt_for(
+                live.get("body").and_then(Value::as_str).unwrap_or(""),
+                head,
+                base,
+                &tested_tree,
+            ) {
+                return finalize_pr(root, pr, &report);
+            }
+            if Instant::now() >= deadline {
+                return fail(
+                    "no eligible local gate receipt within the grace window; \
+                     publish a current report and rerun CI",
+                );
+            }
+            std::thread::sleep(grace.min(POLL));
+        }
     }
     let actual_tree = tree(root, sha)?;
     let message = git(root, &["show", "-s", "--format=%B", sha])?;
