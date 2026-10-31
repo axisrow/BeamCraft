@@ -34,6 +34,7 @@ Open questions are at the end.
   deadline-cancels under parallel load and passes in isolation. `docs/development.md` records
   the gate, the load rule, the test pyramid and the
   acceptance-first rule.
+
 - **Interactive-assist commands leave the CLI.** Owner decision: an agent builds a model by giving
   coordinates and ids directly, so the CLI does not need cursor picking, snapping or the start
   screen. `pick`, `snap`, `show-settings`, `set-settings`, `list-environment`,
