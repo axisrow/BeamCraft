@@ -28,6 +28,7 @@
 pub mod app;
 pub mod appearance;
 pub mod camera;
+pub mod colour_sets;
 pub mod command;
 pub mod creation;
 pub mod cut_plane;
