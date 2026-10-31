@@ -12,10 +12,13 @@ completing a slice does not accept its parent gate. Record delivery evidence in 
 
 ## How you verified it
 
+Run the full gate once, whole, and read the result from that run. nextest is the
+iteration runner, never the final gate: it skips doctests (`docs/development.md`).
+
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`
-- [ ] `cargo nextest run --workspace`
-- [ ] `cargo test --workspace --doc`
+- [ ] `cargo test --workspace`
+- [ ] `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`
 
 New behaviour needs a test. For a bug fix, check that the test fails before your fix.
 
