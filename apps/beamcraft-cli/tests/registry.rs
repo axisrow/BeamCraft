@@ -89,13 +89,7 @@ fn commands_lists_the_registry() {
     assert_eq!(all.len(), COMMANDS.len());
     assert!(all.iter().any(|n| n == "create-member"));
 
-    for removed in [
-        "pick",
-        "snap",
-        "show-settings",
-        "set-settings",
-        "list-environment",
-    ] {
+    for removed in ["show-settings", "set-settings", "list-environment"] {
         assert!(!all.iter().any(|n| n == removed), "{removed} was removed");
     }
 }

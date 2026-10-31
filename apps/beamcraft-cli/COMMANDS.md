@@ -1144,6 +1144,27 @@ clip-view --plates N [--cut X,Y,Z,X,Y,Z;...] [--area MM,MM,MM,MM,MM,MM]
 
 ## pick
 
+### pick
+
+read.
+
+```text
+pick --store ROOT --targets face,edge,vertex [--origin X,Y,Z] [--direction X,Y,Z] [--t-max MM]
+    [--include-backfaces true|false] [--point X,Y,Z] [--radius MM] [--max-hits N]
+    [--exclude KIND,...]
+```
+
+### snap
+
+read.
+
+```text
+snap --store ROOT --point X,Y,Z [--radius MM] [--kinds KIND,...] [--max-hits N]
+    [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ] [--origin X,Y,Z] [--direction X,Y,Z] [--aperture F]
+    [--cursor-radius MM] [--reference-snaps true|false] [--geometry-snaps true|false]
+    [--grid-snaps true|false] [--nearest true|false]
+```
+
 ### lookup-feature
 
 read.
