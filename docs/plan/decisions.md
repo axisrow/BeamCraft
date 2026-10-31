@@ -6,6 +6,17 @@ Open questions are at the end.
 
 ## 2026-10-31
 
+- **Recorded local gate and two other CI platforms.** The owner approved the
+  [test-gate policy](test-gate.md), superseding the literal-Cargo rule from fork PR #346
+  and the earlier Windows-on-master-only policy. One runner performs nextest plus mandatory
+  doctests, records the exact tested source and enforces runtime budgets. Independent CLI
+  changes may use a CLI-only local gate with an explicit UI-independence explanation; CI still
+  tests the whole workspace on the other two operating systems. A missing, failed or stale
+  local report fails CI, including after integration. Upstream sync retains its no-PR flow
+  through a full-gate report bound to the merge tree. Release packaging is unchanged.
+  This entry authorizes the implementation; the policy takes effect with its implementation
+  PR, and existing PRs then need fresh local reports.
+
 - **One full test gate, literal `cargo test --workspace`.** Owner decision on
   [issue #342](https://github.com/axisrow/BeamCraft/issues/342), after the worker survey recorded
   there (related upstream thread:
