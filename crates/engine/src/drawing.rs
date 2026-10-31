@@ -13,7 +13,9 @@ pub mod print;
 pub mod projection;
 pub mod svg;
 
-pub use drafting::{DraftingGeometry, DraftingSpec, MAX_DRAFTING_ENTITIES};
+pub use drafting::{
+    DraftingGeometry, DraftingSpec, HatchPattern, MAX_DRAFTING_ENTITIES, PaperSymbol,
+};
 
 use crate::query::feature::{BodyKind, FeatureId, FeatureKind};
 use beamcraft_model::command::{CommandError, label_is_valid};

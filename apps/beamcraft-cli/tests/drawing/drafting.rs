@@ -23,6 +23,10 @@ const LINE: &str = "01900000-0000-7000-8000-000000000214";
 const CIRCLE: &str = "01900000-0000-7000-8000-000000000215";
 const ARC: &str = "01900000-0000-7000-8000-000000000216";
 const RECT: &str = "01900000-0000-7000-8000-000000000217";
+const TEXT: &str = "01900000-0000-7000-8000-000000000218";
+const HATCH: &str = "01900000-0000-7000-8000-000000000219";
+const SYMBOL: &str = "01900000-0000-7000-8000-00000000021a";
+const FREE_DIM: &str = "01900000-0000-7000-8000-00000000021b";
 
 fn intent() -> Vec<String> {
     [
@@ -304,5 +308,85 @@ fn drafting_replay_binds_the_incoming_geometry_even_after_later_edits() {
             "revision_id"
         ),
         later_head
+    );
+}
+
+#[test]
+fn text_hatch_symbol_and_free_dimension_are_drawn_objects_with_their_own_payloads() {
+    let f = Fixture::new();
+    f.model();
+    let document_dir = f
+        .shared
+        .root
+        .join("slice-two-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut create = vec![
+        "--document-dir".to_owned(),
+        document_dir.clone(),
+        "--op-id".to_owned(),
+        OP_CREATE.to_owned(),
+        "--revision-id".to_owned(),
+        REV_CREATE.to_owned(),
+        "--actor-id".to_owned(),
+        ACTOR.to_owned(),
+    ];
+    create.extend(intent());
+    let head = text(&f.ok("create-drawing", &argv(&create)), "revision_id");
+
+    let (code, edited) = edit(
+        &document_dir,
+        &head,
+        OP_EDIT,
+        REV_EDIT,
+        &[
+            "--drafting".to_owned(),
+            format!("{TEXT}:text:10,20,3.5,0.25:Note \u{00ab}A\u{bb}"),
+            "--drafting".to_owned(),
+            format!("{HATCH}:hatch:0,0,8,0,8,3:crosshatch"),
+            "--drafting".to_owned(),
+            format!("{SYMBOL}:symbol:40,40,2:north"),
+            "--drafting".to_owned(),
+            format!("{FREE_DIM}:free_dimension:0,0,30,0,6.5,1"),
+        ],
+    );
+    assert_eq!(code, 0, "{edited:?}");
+    let edited_head = text(&edited, "revision_id");
+    let inspected = f.ok(
+        "inspect-drawing",
+        &["--document-dir", document_dir.as_str()],
+    );
+    let drawn = list(&inspected, "drafting");
+    assert_eq!(drawn.len(), 4);
+    assert_eq!(text(&drawn[0], "kind"), "text");
+    assert_eq!(text(&drawn[0], "text"), "Note \u{00ab}A\u{bb}");
+    assert_eq!(text(&drawn[1], "kind"), "hatch");
+    assert_eq!(text(&drawn[1], "pattern"), "crosshatch");
+    assert_eq!(text(&drawn[2], "kind"), "symbol");
+    assert_eq!(text(&drawn[2], "symbol"), "north");
+    assert_eq!(text(&drawn[3], "kind"), "free_dimension");
+
+    // A text kind without its required payload refuses and the head stays where it was.
+    let (code, refused) = edit(
+        &document_dir,
+        &edited_head,
+        OP_AFTER,
+        REV_AFTER,
+        &[
+            "--drafting".to_owned(),
+            format!("{TEXT}:text:10,20,3.5,0.25"),
+        ],
+    );
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(
+        text(
+            &f.ok(
+                "inspect-drawing",
+                &["--document-dir", document_dir.as_str()]
+            ),
+            "revision_id"
+        ),
+        edited_head
     );
 }
