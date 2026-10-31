@@ -3,6 +3,7 @@
 
 //! The structural model for BeamCraft.
 
+pub mod annotation;
 pub mod attribute;
 pub mod changeset;
 pub mod command;

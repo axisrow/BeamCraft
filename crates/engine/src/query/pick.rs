@@ -2576,12 +2576,14 @@ mod tests {
     fn the_selection_switches_round_trip_tokens_cover_kinds_and_refuse_unknowns() {
         assert_eq!(SelectionFilter::default(), SelectionFilter::ALL);
         // Every switch on covers every registered kind except the read-only reference, which
-        // no switch covers at all (R01; the pick refuses it before the filter).
+        // no switch covers at all (R01; the pick refuses it before the filter), and the
+        // bodyless annotation (D06): it has no surface a pick could address.
         assert!(!SelectionFilter::ALL.allows(ElementKind::Reference));
+        assert!(!SelectionFilter::ALL.allows(ElementKind::Annotation));
         assert!(
             ElementKind::ALL
                 .iter()
-                .filter(|k| **k != ElementKind::Reference)
+                .filter(|k| !matches!(*k, ElementKind::Reference | ElementKind::Annotation))
                 .all(|k| SelectionFilter::ALL.allows(*k))
         );
         let excluded = "parts,grids,items,construction_objects";
@@ -2626,7 +2628,7 @@ mod tests {
             assert!(
                 ElementKind::ALL
                     .iter()
-                    .filter(|k| **k != ElementKind::Reference)
+                    .filter(|k| !matches!(*k, ElementKind::Reference | ElementKind::Annotation))
                     .all(|k| without.allows(*k)),
                 "{:?} covers nothing yet",
                 class

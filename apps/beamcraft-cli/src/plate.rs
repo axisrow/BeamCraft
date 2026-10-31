@@ -409,6 +409,8 @@ pub(crate) struct Decoded {
     pub(crate) grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: validated construction objects, without engineering bodies.
     pub(crate) constructions: Vec<beamcraft_model::construction::ConstructionObject>,
+    /// D06: validated annotations bound to features, without engineering bodies.
+    pub(crate) annotations: Vec<beamcraft_model::annotation::Annotation>,
     /// The common facts of every element except levels, by id.
     pub(crate) elements: BTreeMap<ElementId, ElementMeta>,
     /// Any geometry subtree or derived-value opinion, including malformed/non-mesh prims.
@@ -1477,6 +1479,7 @@ pub(crate) fn decode(
         instances,
         grids: beamcraft_layer_engine::authored::grid::read_grids(&prims)?,
         constructions: beamcraft_layer_engine::authored::construction::read_constructions(&prims)?,
+        annotations: beamcraft_layer_engine::authored::annotation::read_annotations(&prims)?,
         elements,
         derived_elements,
         reference_scene: crate::reference_view::scene_elements(&prims),
@@ -2514,6 +2517,8 @@ pub struct Inspection {
     pub grids: Vec<beamcraft_model::grid::Grid>,
     /// T02: validated construction objects, without engineering bodies.
     pub constructions: Vec<beamcraft_model::construction::ConstructionObject>,
+    /// D06: validated annotations bound to features, without engineering bodies.
+    pub annotations: Vec<beamcraft_model::annotation::Annotation>,
     /// The common facts of every element except levels, by id (E02).
     pub elements: BTreeMap<ElementId, ElementMeta>,
 }
@@ -2650,6 +2655,7 @@ pub(crate) fn inspect_manifest_assets(
         instances: decoded.instances,
         grids: decoded.grids,
         constructions: decoded.constructions,
+        annotations: decoded.annotations,
         elements: decoded.elements,
     })
 }

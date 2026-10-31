@@ -55,11 +55,14 @@ pub enum ElementKind {
     /// T02 construction object: a helper point, line, circle or plane with no engineering body,
     /// authored as a snap and placement target.
     Construction,
+    /// D06 annotation: a hand-placed dimension, mark or leader bound to features, with no
+    /// engineering body.
+    Annotation,
 }
 
 impl ElementKind {
     /// Every kind, in registry order.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Plate,
         Self::Beam,
         Self::Column,
@@ -75,6 +78,7 @@ impl ElementKind {
         Self::Reference,
         Self::Grid,
         Self::Construction,
+        Self::Annotation,
     ];
 
     /// The lowercase registry token stored in `bim:elementKind`.
@@ -95,6 +99,7 @@ impl ElementKind {
             Self::Reference => "reference",
             Self::Grid => "grid",
             Self::Construction => "construction",
+            Self::Annotation => "annotation",
         }
     }
 

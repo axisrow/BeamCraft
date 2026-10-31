@@ -20,19 +20,22 @@ pub enum ElementCategory {
     Level,
     /// T02 construction object: a helper point, line, circle or plane.
     Construction,
+    /// D06 annotation: a dimension, mark or leader bound to features.
+    Annotation,
     /// Read-only foreign model wrapper.
     Reference,
 }
 
 impl ElementCategory {
     /// Every supported element category.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Part,
         Self::Assembly,
         Self::Connection,
         Self::Level,
         Self::Grid,
         Self::Construction,
+        Self::Annotation,
         Self::Reference,
     ];
 
@@ -45,6 +48,7 @@ impl ElementCategory {
             "level" => Some(Self::Level),
             "grid" => Some(Self::Grid),
             "construction" => Some(Self::Construction),
+            "annotation" => Some(Self::Annotation),
             "reference" => Some(Self::Reference),
             _ => None,
         }
@@ -59,6 +63,7 @@ impl ElementCategory {
             Self::Level => "/World/Levels/LVL_",
             Self::Grid => "/World/Grids/GRD_",
             Self::Construction => "/World/Construction/CNS_",
+            Self::Annotation => "/World/Annotations/ANN_",
             Self::Reference => "/World/References/REF_",
         }
     }

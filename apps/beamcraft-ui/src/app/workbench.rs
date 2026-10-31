@@ -37,6 +37,8 @@ pub(crate) enum Bench {
     CutPlane,
     /// Colour by a saved representation set (V17); a display overlay, never a model change.
     Colour,
+    /// D06 annotations: place dimensions, marks and leaders, watch their binding states.
+    Annotations,
 }
 
 impl Bench {
@@ -53,6 +55,7 @@ impl Bench {
             Self::Delete => "Delete",
             Self::CutPlane => "Cut plane",
             Self::Colour => "Colour",
+            Self::Annotations => "Annotations",
         }
     }
 
@@ -68,7 +71,8 @@ impl Bench {
             | Self::Column
             | Self::Grid
             | Self::CutPlane
-            | Self::Colour => None,
+            | Self::Colour
+            | Self::Annotations => None,
         }
     }
 }
@@ -349,6 +353,7 @@ impl App {
             Bench::Select => {}
             Bench::CutPlane => {}
             Bench::Colour => {}
+            Bench::Annotations => {}
             Bench::Grid => {
                 self.beam_mode = false;
                 self.beam.reset();
@@ -356,6 +361,9 @@ impl App {
                 self.renderer
                     .set_ghost(&self.state.device, &self.state.queue, None);
             }
+        }
+        if bench == Bench::Annotations {
+            self.annotation_load();
         }
     }
 
@@ -647,6 +655,9 @@ impl App {
                             if tool_button(ui, Icon::Grid, "Rectangular grid", bench == Bench::Grid, true).clicked() {
                                 pick = Some(Bench::Grid);
                             }
+                            if tool_button(ui, Icon::Callout, "Annotations", bench == Bench::Annotations, true).clicked() {
+                                pick = Some(Bench::Annotations);
+                            }
                         });
                         ui.vertical(|ui| {
                             ui.label(theme::bold("Workspace", 13.0));
@@ -758,6 +769,7 @@ impl App {
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                             Bench::CutPlane => self.cut_panel(ui),
                             Bench::Colour => self.colour_panel(ui),
+                            Bench::Annotations => self.annotation_panel(ui),
                         }
                         ui.add_space(12.0);
                         egui::CollapsingHeader::new("Publishing")
