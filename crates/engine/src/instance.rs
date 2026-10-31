@@ -243,6 +243,7 @@ mod tests {
                 ordinal: 0,
                 polygon_mm: vec![[10., 10.], [20., 10.], [20., 20.], [10., 20.]],
                 kind: beamcraft_model::command::HoleKind::Hole,
+                owner: None,
             }],
             cuts: vec![],
             bends: Vec::new(),

@@ -18,7 +18,6 @@ mod assemblies;
 mod attributes;
 mod bent_plates;
 mod bolt_groups;
-mod bolts;
 mod bom;
 mod changeset;
 mod changeset_base;

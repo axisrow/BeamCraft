@@ -220,6 +220,7 @@ fn admit_through_polygon(
         ordinal: usize::from(next_ordinal),
         polygon_mm: polygon,
         kind,
+        owner: None,
     });
     Ok((next, usize::from(next_ordinal), footprint))
 }

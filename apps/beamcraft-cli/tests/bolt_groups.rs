@@ -3,12 +3,14 @@
 // Contributor-original synthetic scenarios; the fastener values are the shipped synthetic
 // library's, which follows no national standard, MPL-2.0.
 
-//! A14.3 end to end through the real `beamcraft` binary: `create-bolt-group` places a row of
-//! identical fasteners of a pinned library definition between two or more parts,
-//! `update-bolt-group` edits one group as one atomic edit and one undo unit, and `bolts` lists
-//! both forms with the A05 groups as annotations. The positions, generators, length modes and
-//! washer cases of the bolt amendment section 9 drive the assertions, with the amendment's
-//! negative cases refused without a revision.
+//! A14.3 and A14.4 end to end through the real `beamcraft` binary: `create-bolt-group` places a
+//! row of identical fasteners of a pinned library definition between two or more parts and,
+//! with the bolt's default `hole_mode = generate`, writes one group-owned hole record per
+//! crossing fastener on every connected plate in the same revision; `update-bolt-group` edits
+//! one group as one atomic edit and one undo unit and regenerates its holes; `bolts` lists the
+//! A05 annotation groups (readable, upgradable) next to the placed ones. The positions,
+//! generators, length modes, washer and hole cases of the bolt amendment sections 5 and 9 drive
+//! the assertions, with the amendment's negative cases refused without a revision.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -28,7 +30,6 @@ const SYNTHETIC: &str = concat!(
 const GROUP: &str = "019a7bf0-0000-7000-8000-000000710001";
 const GROUP2: &str = "019a7bf0-0000-7000-8000-000000710002";
 const USER: &str = "019a7bf0-0000-7000-8000-000000719001";
-const UPGRADE_OP: &str = "019a7bf0-0000-7000-8000-0000007100c1";
 
 /// SYN-BOLT-12x50 of the shipped synthetic library: washered, lengths [30, 40, 50, 60, 80],
 /// nut 9, washer 2, protrusion 3, washer defaults true/true.
@@ -185,9 +186,6 @@ impl Fixture {
     fn groups(&self) -> Vec<Json> {
         list(&self.ok(&strs("bolts", &[])), "bolt_groups").to_vec()
     }
-    fn annotations(&self) -> Vec<Json> {
-        list(&self.ok(&strs("bolts", &[])), "bolts").to_vec()
-    }
 }
 
 /// One command line against the store root.
@@ -229,6 +227,28 @@ fn entries(change: &Json, key: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The hole records of one plate as `inspect-elements` lists them.
+fn holes_of(f: &Fixture, plate: &str) -> Vec<Json> {
+    let inspected = f.ok(&strs("inspect-elements", &[]));
+    let plates = at(&inspected, &["plates"]).array().unwrap().to_vec();
+    let record = plates
+        .iter()
+        .find(|p| text(p, "element_id") == plate)
+        .expect("inspected plate is present");
+    at(record, &["hole_records"]).array().unwrap().to_vec()
+}
+
+/// The mesh digest of one plate, so a generated or removed hole shows in the derived layer.
+fn mesh_of(f: &Fixture, plate: &str) -> String {
+    let inspected = f.ok(&strs("inspect-elements", &[]));
+    let plates = at(&inspected, &["plates"]).array().unwrap().to_vec();
+    let record = plates
+        .iter()
+        .find(|p| text(p, "element_id") == plate)
+        .expect("inspected plate is present");
+    text(record, "mesh_digest")
+}
+
 #[test]
 fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     let mut f = Fixture::new();
@@ -237,12 +257,17 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     let created = f.group(GROUP, &parts);
     assert_eq!(text(&created, "outcome"), "bolt_group_committed");
     assert_eq!(text(&created, "element_id"), GROUP);
-    // No body: only the authored layer changes.
-    assert_eq!(strings(&created, "changed_layers"), ["authored.usda"]);
-    // The parts' lifecycles and the pinned definition are read; the group's seven groups and
-    // the definition's entry (pinned by the same transaction) are written.
+    // No body of its own, but the group generates: the authored layer changes and the parts'
+    // derived meshes are rewritten.
+    assert_eq!(
+        strings(&created, "changed_layers"),
+        ["authored.usda", "derived.usda"]
+    );
+    // The parts' lifecycles and shapes and the pinned definition are read; the group's seven
+    // groups, the definition's entry (pinned by the same transaction) and both plates' hole
+    // records and meshes are written.
     let writes = entries(&created, "writes");
-    assert_eq!(writes.len(), 8);
+    assert_eq!(writes.len(), 12);
     assert_eq!(
         writes.iter().filter(|(target, _)| target == GROUP).count(),
         7
@@ -250,10 +275,11 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     let reads = entries(&created, "reads");
     for part in &parts {
         assert!(reads.contains(&(part.clone(), "lifecycle".to_owned())));
+        assert!(reads.contains(&(part.clone(), "shape_inputs".to_owned())));
     }
     assert_eq!(
         reads.len(),
-        4,
+        6,
         "the group, both parts and one definition are read"
     );
 
@@ -271,12 +297,22 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     assert_eq!(text(group, "washer_under_head"), "true");
     assert_eq!(text(group, "washer_under_nut"), "true");
     assert_eq!(text(group, "count"), "2");
+    assert_eq!(text(group, "hole_mode"), "generate");
     assert_eq!(strings(group, "point1_mm"), ["0", "250", "0"]);
     assert_eq!(strings(group, "point2_mm"), ["600", "250", "0"]);
     assert_eq!(strings(group, "plane_normal_mm"), ["0", "0", "1"]);
 
-    // One atomic edit and one undo unit: moving `point2` keeps the authoritative spacings, and
-    // the undo returns the whole record.
+    // One hole record per crossing fastener on every plate, owned by the group.
+    for part in &parts {
+        let holes = holes_of(&f, part);
+        assert_eq!(holes.len(), 2, "{part}");
+        for hole in &holes {
+            assert_eq!(text(hole, "generated_by"), GROUP);
+        }
+    }
+
+    // One atomic edit and one undo unit: moving `point2` keeps the authoritative spacings and
+    // regenerates the holes, and the undo returns the whole record.
     let op = "019a7bf0-0000-7000-8000-0000007100b1";
     let moved = f.ok(&f_args_edit(
         GROUP,
@@ -287,10 +323,21 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     let group = &f.groups()[0];
     assert_eq!(strings(group, "point2_mm"), ["700", "250", "0"]);
     assert!(strings(group, "spacings_mm") == ["150"]);
+    for part in &parts {
+        assert_eq!(holes_of(&f, part).len(), 2, "{part}");
+    }
     f.undo();
     let group = &f.groups()[0];
     assert_eq!(strings(group, "point2_mm"), ["600", "250", "0"]);
     assert_eq!(text(group, "length_mm"), "40");
+    // The undo returns the created records with their identities.
+    for part in &parts {
+        let holes = holes_of(&f, part);
+        assert_eq!(holes.len(), 2, "{part}");
+        for hole in &holes {
+            assert_eq!(text(hole, "generated_by"), GROUP);
+        }
+    }
 
     // A retry of the same operation replays; other content under the same id is reuse.
     let again = f.ok(&f_args_edit(
@@ -330,24 +377,36 @@ fn generators_expand_and_an_offset_end_follows_a_moved_point2() {
     assert!(strings(group, "spacings_mm") == ["120", "120"]);
 
     // count + offset_end: the last fastener lies `offset_end` before `point2`; a moved `point2`
-    // re-expands the row because the generator travels with the group.
-    f.ok(&strs(
-        "create-bolt-group",
-        &f.group_args(
-            GROUP2,
-            &parts,
-            WASHERED,
-            &["--count", "3", "--offset-end", "150"],
-        ),
-    ));
+    // re-expands the row because the generator travels with the group. The row starts at 130,
+    // clear of the first group's holes at 100, 220 and 340.
+    let mut args = f.group_args(
+        GROUP2,
+        &parts,
+        WASHERED,
+        &["--count", "3", "--offset-end", "150"],
+    );
+    let slot = args.iter().position(|a| a == "--offset-start").unwrap();
+    args[slot + 1] = "130".to_owned();
+    f.ok(&strs("create-bolt-group", &args));
     let group = &f.groups()[1];
     assert_eq!(text(group, "spacing_mode"), "offset_end");
     assert_eq!(text(group, "spacing_value_mm"), "150");
-    // (600 - 100 - 150) / 2: the last fastener stands at 450, 150 before point2.
-    assert!(strings(group, "spacings_mm") == ["175", "175"], "{group:?}");
+    // (600 - 130 - 150) / 2: the last fastener stands at 450, 150 before point2.
+    assert!(strings(group, "spacings_mm") == ["160", "160"], "{group:?}");
     f.ok(&f_args_edit(GROUP2, &["--point2", "800,250,0"], &[]));
     let group = &f.groups()[1];
-    assert!(strings(group, "spacings_mm") == ["275", "275"], "{group:?}");
+    assert!(strings(group, "spacings_mm") == ["260", "260"], "{group:?}");
+    // The row re-expanded around the moved point and regenerated its holes: still three
+    // records per plate, all owned by the group.
+    for part in &parts {
+        let holes = holes_of(&f, part);
+        assert_eq!(holes.len(), 6, "{part}");
+        assert!(
+            holes
+                .iter()
+                .all(|h| text(h, "generated_by") == GROUP || text(h, "generated_by") == GROUP2)
+        );
+    }
 }
 
 #[test]
@@ -425,7 +484,7 @@ fn length_modes_and_washer_cases_follow_the_amendment() {
 }
 
 #[test]
-fn the_definition_is_pinned_repinned_and_an_a05_group_is_upgraded() {
+fn the_definition_is_pinned_repinned_and_the_holes_follow_a_repin() {
     let mut f = Fixture::new();
     let parts = f.parts();
 
@@ -483,49 +542,14 @@ fn the_definition_is_pinned_repinned_and_an_a05_group_is_upgraded() {
         "40",
         "grip 20 + nut 12 + protrusion 4 = 36"
     );
-
-    // An A05 annotation group is upgraded by supplying the placement inputs and a fastener.
-    // The A05 bounds rule wants both bolts' positions inside both parts, so the annotation
-    // joins two coincident plates (the same box), not the stack.
-    let twin = f.plate("019a7bf0-0000-7000-8000-0000007100f5", "0");
-    let annotation = f.ok(&owned(
-        "create-bolt",
-        &[
-            "--name",
-            "A1",
-            "--main",
-            twin.as_str(),
-            "--secondary",
-            parts[0].as_str(),
-            "--origin",
-            "100,250,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
-            "150",
-            "--diameter",
-            "12",
-        ],
-    ));
-    let a05_id = text(&annotation, "element_id");
-    assert_eq!(f.annotations().len(), 1);
-    let mut upgrade = f.group_args(&a05_id, &parts, WASHERED, &["--spacings", "150,150"]);
-    let slot = upgrade.iter().position(|a| a == "--new-id").unwrap();
-    upgrade[slot] = "--target".to_owned();
-    upgrade.extend(["--op-id".to_owned(), UPGRADE_OP.to_owned()]);
-    let upgraded = f.ok(&strs("update-bolt-group", &upgrade));
-    assert_eq!(text(&upgraded, "outcome"), "bolt_group_committed");
-    assert!(f.annotations().is_empty(), "the upgrade replaces the form");
-    // The same line replays: the guard against a silent definition change gives way to the
-    // replay comparison for an already accepted operation, in either order of the checks.
-    let again = f.ok(&strs("update-bolt-group", &upgrade));
-    assert_eq!(text(&again, "outcome"), "bolt_group_replayed");
-    let groups = f.groups();
-    assert_eq!(groups.len(), 2);
-    assert_eq!(text(&groups[1], "id"), a05_id);
-    assert_eq!(text(&groups[1], "count"), "3");
+    // The repin regenerates the holes: the records keep the group ownership and the count.
+    for part in &parts {
+        let holes = holes_of(&f, part);
+        assert_eq!(holes.len(), 2, "{part}");
+        for hole in &holes {
+            assert_eq!(text(hole, "generated_by"), GROUP);
+        }
+    }
 }
 
 #[test]
@@ -641,4 +665,201 @@ fn wrong_rows_and_parts_are_refused_with_nothing_written() {
         "INVALID_ARGUMENT"
     );
     assert_eq!(f.groups().len(), 1);
+}
+
+#[test]
+fn none_writes_no_part_and_a_member_part_refuses_generate() {
+    let mut f = Fixture::new();
+    let parts = f.parts();
+    let plate = parts[0].clone();
+
+    // The screw's default writes no part: the footprint is the quiet A14.3 one and the plate
+    // keeps its mesh.
+    let mesh_before = mesh_of(&f, &plate);
+    let args = f.group_args(
+        GROUP,
+        &parts,
+        SCREW,
+        &["--spacings", "150", "--washer-under-head", "false"],
+    );
+    let quiet = f.ok(&strs("create-bolt-group", &args));
+    assert_eq!(strings(&quiet, "changed_layers"), ["authored.usda"]);
+    assert_eq!(entries(&quiet, "writes").len(), 8);
+    assert_eq!(text(&f.groups()[0], "hole_mode"), "none");
+    assert!(matches!(
+        f.groups()[0].get("hole_clearance_mm"),
+        Ok(Json::Null)
+    ));
+    assert_eq!(mesh_of(&f, &plate), mesh_before);
+    assert!(holes_of(&f, &plate).is_empty());
+
+    // An explicit generate overrides the screw's default and cuts the holes.
+    let args = f.group_args(
+        GROUP2,
+        &parts,
+        SCREW,
+        &[
+            "--spacings",
+            "150",
+            "--washer-under-head",
+            "false",
+            "--hole-mode",
+            "generate",
+        ],
+    );
+    let forced = f.ok(&strs("create-bolt-group", &args));
+    assert_eq!(
+        strings(&forced, "changed_layers"),
+        ["authored.usda", "derived.usda"]
+    );
+    let holes = holes_of(&f, &plate);
+    assert_eq!(holes.len(), 2);
+    for hole in &holes {
+        assert_eq!(text(hole, "generated_by"), GROUP2);
+    }
+    // A generating group stores its resolved clearance; the quiet one stores none.
+    assert!(matches!(
+        f.groups()[1].get("hole_clearance_mm"),
+        Ok(Json::String(_))
+    ));
+
+    // A member part refuses generate wholesale (G14.1); none avoids the hole refusal but still
+    // resolves its length over the member's conservative box, so the shipped synthetic screw's
+    // 40 mm maximum cannot span a member: the same UNSUPPORTED_GEOMETRY, from the length rule.
+    let profile = text(
+        at(
+            &f.ok(&owned(
+                "define-profile",
+                &["--width", "100", "--height", "50"],
+            )),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let beam = text(
+        at(
+            &f.ok(&owned(
+                "create-member",
+                &[
+                    "--start",
+                    "0,250,5",
+                    "--end",
+                    "3000,250,5",
+                    "--profile-digest",
+                    &profile,
+                ],
+            )),
+            &["member"],
+        ),
+        "element_id",
+    );
+    let mut crossed = parts.clone();
+    crossed.push(beam);
+    let args = f.group_args(
+        "019a7bf0-0000-7000-8000-000000710003",
+        &crossed,
+        WASHERED,
+        &["--spacings", "150"],
+    );
+    assert_eq!(
+        f.rejected(&strs("create-bolt-group", &args)),
+        "UNSUPPORTED_GEOMETRY"
+    );
+    let mut args = f.group_args(
+        "019a7bf0-0000-7000-8000-000000710003",
+        &crossed,
+        SCREW,
+        &["--spacings", "150", "--washer-under-head", "false"],
+    );
+    args.extend([
+        "--hole-mode".to_owned(),
+        "none".to_owned(),
+        "--op-id".to_owned(),
+        "019a7bf0-0000-7000-8000-0000007100d1".to_owned(),
+    ]);
+    assert_eq!(
+        f.rejected(&strs("create-bolt-group", &args)),
+        "UNSUPPORTED_GEOMETRY",
+        "the conservative member grip exceeds every standard length"
+    );
+}
+
+#[test]
+fn holes_are_removed_with_the_group_and_refuse_separate_edits() {
+    let mut f = Fixture::new();
+    let parts = f.parts();
+    let plate = parts[0].clone();
+
+    f.group(GROUP, &parts);
+    assert_eq!(holes_of(&f, &plate).len(), 2);
+
+    // A generated hole refuses its own edit and removal; the typed refusal names the group
+    // through the record, and a hand-placed hole on the same plate still works.
+    let hole = &holes_of(&f, &plate)[0];
+    let record = text(hole, "operation_id");
+    assert_eq!(
+        f.rejected(&owned(
+            "remove-hole",
+            &["--id", &plate, "--operation-id", &record]
+        )),
+        "DEPENDENCY_CONFLICT"
+    );
+    assert_eq!(
+        f.rejected(&owned(
+            "update-hole",
+            &[
+                "--id",
+                &plate,
+                "--operation-id",
+                &record,
+                "--hole-round",
+                "150,250,20"
+            ]
+        )),
+        "DEPENDENCY_CONFLICT"
+    );
+    let manual = f.ok(&owned(
+        "add-hole",
+        &[
+            "--id",
+            &plate,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000007100e1",
+            "--hole-round",
+            "500,100,20",
+        ],
+    ));
+    assert_eq!(
+        at(&manual, &["element", "hole_records"])
+            .array()
+            .unwrap()
+            .len(),
+        3
+    );
+
+    // Turning generate off removes exactly the group's holes and keeps the manual one.
+    f.ok(&f_args_edit(GROUP, &["--hole-mode", "none"], &[]));
+    let holes = holes_of(&f, &plate);
+    assert_eq!(holes.len(), 1);
+    assert!(matches!(holes[0].get("generated_by"), Ok(Json::Null)));
+
+    // Deleting the group removes its holes from the plates in the same revision.
+    let mut args = f.group_args(GROUP2, &parts, WASHERED, &["--spacings", "150"]);
+    args.extend([
+        "--op-id".to_owned(),
+        "019a7bf0-0000-7000-8000-0000007100d2".to_owned(),
+    ]);
+    f.ok(&strs("create-bolt-group", &args));
+    assert_eq!(holes_of(&f, &plate).len(), 3);
+    let deleted = f.ok(&owned("delete-element", &["--id", GROUP2]));
+    // The delete writes the group's removal and both parts' hole records and meshes.
+    assert_eq!(
+        strings(&deleted, "changed_layers"),
+        ["authored.usda", "derived.usda"]
+    );
+    let holes = holes_of(&f, &plate);
+    assert_eq!(holes.len(), 1, "only the manual hole stays");
+    for hole in &holes {
+        assert!(matches!(hole.get("generated_by"), Ok(Json::Null)));
+    }
 }

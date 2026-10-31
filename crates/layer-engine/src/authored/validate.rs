@@ -643,6 +643,7 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
         "steel:hole:operationIds",
         "steel:hole:ordinals",
         "steel:hole:kinds",
+        "steel:hole:generatedBy",
     ];
     let declared: Vec<bool> = names.iter().map(|name| present(name)).collect();
     if declared.iter().all(|seen| !seen) {
@@ -663,12 +664,26 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     let Value::Array(kinds) = required(prim, "steel:hole:kinds", "token[]")? else {
         return Err(invalid());
     };
+    let Value::Array(owners) = required(prim, "steel:hole:generatedBy", "string[]")? else {
+        return Err(invalid());
+    };
     if counts.len() > MAX_HOLES
         || counts.len() != ids.len()
         || counts.len() != ordinals.len()
         || counts.len() != kinds.len()
+        || counts.len() != owners.len()
     {
         return Err(invalid());
+    }
+    // Every generated record names its full generating bolt group; a hand-placed hole stores
+    // the empty string (A14.4).
+    for owner in owners {
+        let Value::Text(owner) = owner else {
+            return Err(invalid());
+        };
+        if !owner.is_empty() && !uuid7(owner) {
+            return Err(invalid());
+        }
     }
     let points = points(prim, "steel:hole:pointsMm")?;
     if points.len() > MAX_HOLES * MAX_HOLE_POINTS {
@@ -1920,6 +1935,17 @@ fn bolt_group_values(b: &BoltGroup) -> Result<(), Diagnostic> {
     if !matches!(b.length_mode.as_str(), "auto" | "fixed") {
         return Err(invalid());
     }
+    if !matches!(b.hole_mode.as_str(), "generate" | "none") {
+        return Err(invalid());
+    }
+    // A generating group may carry its own clearance; a quiet one carries none.
+    if matches!(b.hole_mode.as_str(), "none") && b.hole_clearance_mm.is_some() {
+        return Err(invalid());
+    }
+    if let Some(clearance) = b.hole_clearance_mm {
+        finite([clearance])?;
+        cap([clearance], 1e6)?;
+    }
     Ok(())
 }
 
@@ -2006,6 +2032,8 @@ fn bolt_group_properties(p: &Prim, prims: &[Prim]) -> Result<(), Diagnostic> {
         required(p, "steel:bolt:washerUnderNut", "bool")?,
         Value::Bool(true)
     );
+    let hole_mode = text(p, "steel:bolt:holeMode", "token")?.to_owned();
+    let hole_clearance_mm = optional_number(p, "steel:bolt:holeClearanceMm")?;
     let record = BoltGroup {
         connects: Vec::new(),
         fastener: digest,
@@ -2023,6 +2051,8 @@ fn bolt_group_properties(p: &Prim, prims: &[Prim]) -> Result<(), Diagnostic> {
         length_mm: length,
         washer_under_head,
         washer_under_nut,
+        hole_mode,
+        hole_clearance_mm,
     };
     bolt_group_values(&record)?;
     bolt_group_against(&pinned_fastener(prims, digest)?, &record)

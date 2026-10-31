@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! A05 and A14.3 headless commands. `create-bolt` is the A05 annotation group (origin,
-//! direction, count, pitch, diameter); the bolt amendment section 6 replaces it with
-//! `create-bolt-group` and `update-bolt-group`, which place a row of identical fasteners of a
-//! pinned library definition between two or more parts and edit one group as one atomic edit
-//! (`--repin` follows the current library; an A05 group is upgraded by supplying the placement
-//! inputs and a fastener). `bolts` lists both forms, the A05 groups as annotations. The
+//! A14.3 headless commands: `create-bolt-group` and `update-bolt-group` place a row of
+//! identical fasteners of a pinned library definition between two or more parts and edit one
+//! group as one atomic edit (`--repin` follows the current library; an A05 group is upgraded
+//! by supplying the placement inputs and a fastener). With `--hole-mode generate` the group
+//! also writes one group-owned hole record per crossing fastener on every connected plate
+//! (A14.4); `--hole-mode none` (a screw's default) writes no part. The A05 `create-bolt` token
+//! is retired: stored annotation groups stay readable and upgradable, `bolts` lists them. The
 //! commands call the engine API through `beamcraft_cli::bolt` and print one JSON object with
 //! the same error shape and exit codes as the weld commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{footprint_json, id_error, revision_json};
 use beamcraft_cli::bolt::{
-    BoltChange, BoltContext, BoltGroupView, BoltView, GroupChange, bolt_groups, bolts, create_bolt,
-    create_bolt_group, update_bolt_group,
+    BoltContext, BoltGroupView, BoltView, GroupChange, bolt_groups, bolts, create_bolt_group,
+    update_bolt_group,
 };
 use beamcraft_cli::definition::{DefinitionRecord, head_definitions};
 use beamcraft_cli::library::{Lookup, Source, load_fastener};
@@ -26,10 +27,10 @@ use beamcraft_host::{
 };
 use beamcraft_json::Json;
 use beamcraft_model::command::{
-    BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CreateBolt, CreateBoltGroup,
-    UpdateBoltGroup,
+    BoltGroupInputs, BoltLength, BoltSpacing, CreateBoltGroup, UpdateBoltGroup,
 };
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::fastener::HoleMode;
 use beamcraft_model::id::{ElementId, OpId};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -144,7 +145,24 @@ fn spec_fields(view: &BoltGroupView) -> Vec<(&'static str, Json)> {
             "washer_under_nut",
             Json::text(view.spec.washer_under_nut.to_string()),
         ),
+        ("hole_mode", Json::text(view.spec.hole_mode.clone())),
+        (
+            "hole_clearance_mm",
+            match view.spec.hole_clearance_mm {
+                Some(clearance) => Json::text(clearance.to_string()),
+                None => Json::Null,
+            },
+        ),
     ]
+}
+
+/// The `--hole-mode` option: the amendment tokens, or the definition's preference when absent.
+fn hole_mode(text: &str) -> Run<HoleMode> {
+    match text {
+        "generate" => Ok(HoleMode::Generate),
+        "none" => Ok(HoleMode::None),
+        _ => Err(invalid("--hole-mode is generate or none")),
+    }
 }
 
 fn views_json(views: &[BoltView]) -> Json {
@@ -213,96 +231,6 @@ fn group_views_json(views: &[BoltGroupView]) -> Vec<Json> {
         .collect()
 }
 
-/// Result JSON of the A05 `create-bolt` (the annotation group the amendment replaces; it stays
-/// until A14.4 lands the hole generation the replacement carries).
-fn a05_change_json(subject: ElementId, op_id: OpId, change: &BoltChange) -> Json {
-    let outcome = if change.replayed {
-        "bolt_created_replayed"
-    } else {
-        "bolt_created"
-    };
-    Json::object([
-        ("outcome", Json::text(outcome)),
-        ("op_id", Json::text(op_id.to_string())),
-        ("element_id", Json::text(subject.to_string())),
-        (
-            "changed_layers",
-            Json::Array(change.changed_layers.iter().map(Json::text).collect()),
-        ),
-        ("bolts", views_json(&change.bolts)),
-        ("revision", revision_json(&change.revision)),
-        ("footprint", footprint_json(change.footprint.as_ref())),
-    ])
-}
-
-/// The A05 annotation group: every property authored explicitly, both parts' bounds checked.
-fn a05_create<F>(store: &RevisionStore, options: &BTreeMap<&str, &str>, fresh: &mut F) -> Run<Json>
-where
-    F: FnMut() -> Result<beamcraft_model::id::Uuid7, PlateError>,
-{
-    let given = |key: &str| options.get(key).copied();
-    let required = |key: &str, missing: &'static str| given(key).ok_or_else(|| invalid(missing));
-    let number = |key: &'static str, missing: &'static str| -> Run<f64> {
-        required(key, missing)?
-            .parse::<f64>()
-            .map_err(|_| invalid("the value is a number"))
-    };
-    // Every bolt property is authored explicitly: no option has a default.
-    let diameter = number("--diameter", "--diameter is required")?;
-    let pitch = number("--pitch", "--pitch is required")?;
-    let count: usize = required("--count", "--count is required")?
-        .parse::<usize>()
-        .map_err(|_| invalid("--count is a whole number of bolts"))?;
-    let origin = vec3(required("--origin", "--origin is required")?)?;
-    let direction = vec3(required("--direction", "--direction is required")?)?;
-    // The model stores a unit direction: normalize here, refuse zero as degenerate.
-    let squared = direction.iter().map(|v| v * v).sum::<f64>();
-    if squared <= 0.0 {
-        return Err(invalid("--direction is a non-zero vector"));
-    }
-    let norm = squared.sqrt();
-    let bolt = BoltSpec {
-        diameter_mm: diameter,
-        count,
-        pitch_mm: pitch,
-        origin_mm: origin,
-        direction_mm: [
-            direction[0] / norm,
-            direction[1] / norm,
-            direction[2] / norm,
-        ],
-    };
-    let element = |key: &str, missing: &'static str| -> Run<ElementId> {
-        ElementId::parse(required(key, missing)?).map_err(id_error)
-    };
-    let (main_id, secondary_id) = (
-        element("--main", "--main is required")?,
-        element("--secondary", "--secondary is required")?,
-    );
-    let name = required("--name", "--name is required")?.to_owned();
-    let common = command_context::parse(options, fresh)?;
-    let context = BoltContext {
-        op_id: common.op_id,
-        revision_id: common.revision_id,
-        actor: common.actor,
-        project: common.project,
-        workspace: common.workspace,
-    };
-    let new_id = match given("--new-id") {
-        Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
-    };
-    let command = CreateBolt {
-        new_id,
-        name,
-        main_id,
-        secondary_id,
-        bolt,
-    };
-    let change = create_bolt(store, &context, &command, &mut NoFault)?;
-    Ok(a05_change_json(new_id, context.op_id, &change))
-}
-
 fn change_json(subject: ElementId, op_id: OpId, change: &GroupChange) -> Json {
     let outcome = if change.replayed {
         "bolt_group_replayed"
@@ -357,20 +285,10 @@ fn run(args: &[OsString]) -> Run<Json> {
         "--washer-under-nut",
         "--length-mode",
         "--length",
+        "--hole-mode",
+        "--hole-clearance",
     ];
     let own: &[&str] = match *command {
-        "create-bolt" => &[
-            "--store",
-            "--name",
-            "--new-id",
-            "--main",
-            "--secondary",
-            "--diameter",
-            "--count",
-            "--pitch",
-            "--origin",
-            "--direction",
-        ],
         "create-bolt-group" => create_options.leak(),
         "update-bolt-group" => {
             create_options.push("--target");
@@ -419,9 +337,6 @@ fn run(args: &[OsString]) -> Run<Json> {
             message: "no identity could be generated",
         })
     };
-    if *command == "create-bolt" {
-        return a05_create(&store, &options, &mut fresh);
-    }
     let given = |key: &str| options.get(key).copied();
     let required = |key: &str, missing: &'static str| given(key).ok_or_else(|| invalid(missing));
     let number = |key: &'static str, missing: &'static str| -> Run<f64> {
@@ -526,6 +441,9 @@ fn run(args: &[OsString]) -> Run<Json> {
             Some(_) => Err(invalid("--length-mode is auto or fixed")),
         }
     };
+    let opt_hole_mode = |options: &BTreeMap<&str, &str>| -> Run<Option<HoleMode>> {
+        options.get("--hole-mode").map(|v| hole_mode(v)).transpose()
+    };
     let common = command_context::parse(&options, &mut fresh)?;
     let context = BoltContext {
         op_id: common.op_id,
@@ -572,6 +490,8 @@ fn run(args: &[OsString]) -> Run<Json> {
                 washer_under_head: optional_flag("--washer-under-head")?,
                 washer_under_nut: optional_flag("--washer-under-nut")?,
                 length: length_choice(&options)?,
+                hole_mode: opt_hole_mode(&options)?,
+                hole_clearance_mm: optional_number("--hole-clearance")?,
             },
         };
         let subject = command.new_id;
@@ -715,6 +635,28 @@ fn run(args: &[OsString]) -> Run<Json> {
             _ => BoltLength::Auto,
         },
     };
+    // The hole setting follows the same rule: an absent --hole-mode keeps the stored one (an
+    // upgrade takes the definition's preference through the None default), and an absent
+    // --hole-clearance keeps the stored value only when the group keeps generating.
+    let stored_hole_mode = current
+        .as_ref()
+        .and_then(|g| beamcraft_model::fastener::HoleMode::from_token(&g.spec.hole_mode));
+    let hole_mode = match given("--hole-mode") {
+        Some(text) => Some(hole_mode(text)?),
+        None => stored_hole_mode,
+    };
+    let hole_clearance_mm = match given("--hole-clearance") {
+        Some(text) => Some(
+            text.parse::<f64>()
+                .map_err(|_| invalid("the value is a number"))?,
+        ),
+        None => match hole_mode {
+            Some(HoleMode::Generate) => current.as_ref().and_then(|g| g.spec.hole_clearance_mm),
+            // A quiet group stores none; a mode that follows the definition takes its
+            // clearance too.
+            _ => None,
+        },
+    };
     let command = UpdateBoltGroup {
         target_id: target,
         inputs: BoltGroupInputs {
@@ -751,6 +693,8 @@ fn run(args: &[OsString]) -> Run<Json> {
                 None => current.as_ref().map(|g| g.spec.washer_under_nut),
             },
             length,
+            hole_mode,
+            hole_clearance_mm,
         },
     };
     let change = update_bolt_group(&store, &context, &command, &definition, &mut NoFault)?;

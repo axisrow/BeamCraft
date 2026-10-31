@@ -772,12 +772,17 @@ fn create(
                 let mut ids = Vec::new();
                 let mut ordinals = Vec::new();
                 let mut kinds = Vec::new();
+                let mut owners = Vec::new();
                 for record in hole_records {
                     flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
                     counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
                     ids.push(record.operation_id.to_string());
                     ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
                     kinds.push(record.kind.as_str().into());
+                    owners.push(match record.owner {
+                        Some(group) => group.to_string(),
+                        None => String::new(),
+                    });
                 }
                 attr(data, &p, "steel:hole:pointsMm", "double3[]", points(&flat))?;
                 attr(
@@ -807,6 +812,13 @@ fn create(
                     "steel:hole:kinds",
                     "token[]",
                     sdf::Value::TokenVec(kinds),
+                )?;
+                attr(
+                    data,
+                    &p,
+                    "steel:hole:generatedBy",
+                    "string[]",
+                    sdf::Value::StringVec(owners),
                 )?;
             }
         }
@@ -1115,9 +1127,9 @@ fn author_record_history(
 
 /// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
 /// typed empty arrays, masking weaker opinions; fresh uncut elements still author no cuts.
-/// Authors the connection type and the fifteen bolt-group attributes of an A14.3 group (bolt
-/// amendment section 4), replaced as a whole on every write. The `connects` record is the
-/// caller's: it maps identities through the batch.
+/// Authors the connection type and the seventeen bolt-group attributes of an A14.3 group
+/// (bolt amendment sections 4 and 5), replaced as a whole on every write. The `connects`
+/// record is the caller's: it maps identities through the batch.
 pub(super) fn author_bolt_group(
     data: &mut sdf::Data,
     p: &str,
@@ -1211,8 +1223,32 @@ pub(super) fn author_bolt_group(
             "bool",
             sdf::Value::Bool(b.washer_under_nut),
         ),
+        (
+            "steel:bolt:holeMode",
+            "token",
+            sdf::Value::Token(b.hole_mode.clone().into()),
+        ),
     ] {
         attr(data, p, name, ty, v)?;
+    }
+    // The group's own clearance travels only with a generating group; a quiet group removes
+    // the attribute, so an edit from generate to none never leaves a stale value behind.
+    match b.hole_clearance_mm {
+        Some(clearance) => attr(
+            data,
+            p,
+            "steel:bolt:holeClearanceMm",
+            "double",
+            sdf::Value::Double(clearance),
+        )?,
+        None => attribute(
+            data,
+            p,
+            "steel:bolt:holeClearanceMm",
+            "double",
+            Opinion::Remove,
+            true,
+        )?,
     }
     Ok(())
 }
@@ -1627,20 +1663,26 @@ pub(super) fn apply(
                         .collect::<Vec<_>>(),
                     cut_history::Family::PlateHole,
                 )?;
-                // The five record attributes, always together: the authoritative polygons of
+                // The six record attributes, always together: the authoritative polygons of
                 // every record, replayed from the base shape in ordinal order, with the id,
-                // the engine-assigned ordinal and the kind (hole or polygon cut) of each.
+                // the engine-assigned ordinal, the kind (hole or polygon cut) and the
+                // generating bolt group of each (empty for a hand-placed record, A14.4).
                 let mut flat = Vec::new();
                 let mut counts = Vec::new();
                 let mut ids = Vec::new();
                 let mut ordinals = Vec::new();
                 let mut kinds = Vec::new();
+                let mut owners = Vec::new();
                 for record in records {
                     flat.extend(record.polygon_mm.iter().map(|[x, y]| [*x, *y, 0.0]));
                     counts.push(i32::try_from(record.polygon_mm.len()).map_err(|_| limit())?);
                     ids.push(record.operation_id.to_string());
                     ordinals.push(i32::try_from(record.ordinal).map_err(|_| limit())?);
                     kinds.push(record.kind.as_str().into());
+                    owners.push(match record.owner {
+                        Some(group) => group.to_string(),
+                        None => String::new(),
+                    });
                 }
                 attr(
                     &mut authored,
@@ -1676,6 +1718,13 @@ pub(super) fn apply(
                     "steel:hole:kinds",
                     "token[]",
                     sdf::Value::TokenVec(kinds),
+                )?;
+                attr(
+                    &mut authored,
+                    &p,
+                    "steel:hole:generatedBy",
+                    "string[]",
+                    sdf::Value::StringVec(owners),
                 )?;
             }
             Change::MemberHoles { records, .. } => {
@@ -2016,7 +2065,7 @@ fn capture(
         ("steel:bolt:directionMm", "double3"),
         ("bim:connects", "rel"),
     ];
-    /// The fifteen authored attributes of an A14.3 bolt group, replaced as a whole.
+    /// The seventeen authored attributes of an A14.3 bolt group, replaced as a whole.
     const BOLT_GROUP: &[(&str, &str)] = &[
         ("steel:bolt:fastener", "string"),
         ("steel:bolt:point1Mm", "double3"),
@@ -2033,6 +2082,8 @@ fn capture(
         ("steel:bolt:lengthMm", "double"),
         ("steel:bolt:washerUnderHead", "bool"),
         ("steel:bolt:washerUnderNut", "bool"),
+        ("steel:bolt:holeMode", "token"),
+        ("steel:bolt:holeClearanceMm", "double"),
     ];
     const CUT_FIELDS: &[(&str, &str)] = &[
         ("steel:cut:operationId", "string[]"),
@@ -2137,6 +2188,7 @@ fn capture(
                             add("steel:hole:vertexCounts", "int[]", 0);
                             add("steel:hole:operationIds", "string[]", 0);
                             add("steel:hole:ordinals", "int[]", 0);
+                            add("steel:hole:generatedBy", "string[]", 0);
                             add(cut_history::HOLE_NEXT, "int", 0);
                             add(cut_history::HOLE_RETIRED, "string[]", 0);
                         }
@@ -2186,11 +2238,14 @@ fn capture(
                             add(name, ty, 0);
                         }
                     }
-                    Shape::BoltGroup(_) => {
+                    Shape::BoltGroup(ref g) => {
                         add("steel:connection:type", "token", 0);
                         add("bim:connects", "rel", 0);
                         for &(name, ty) in BOLT_GROUP {
-                            add(name, ty, 0);
+                            if name != "steel:bolt:holeClearanceMm" || g.hole_clearance_mm.is_some()
+                            {
+                                add(name, ty, 0);
+                            }
                         }
                     }
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
@@ -2237,11 +2292,13 @@ fn capture(
             }
             Change::PartClass { .. } => add("steel:class", "int", 0),
             Change::Label { .. } => add("bim:name", "string", 0),
-            Change::BoltGroup { .. } => {
+            Change::BoltGroup { group, .. } => {
                 add("steel:connection:type", "token", 0);
                 add("bim:connects", "rel", 0);
                 for &(name, ty) in BOLT_GROUP {
-                    add(name, ty, 0);
+                    if name != "steel:bolt:holeClearanceMm" || group.hole_clearance_mm.is_some() {
+                        add(name, ty, 0);
+                    }
                 }
             }
             Change::HoleRecords { .. } => {
@@ -2249,6 +2306,7 @@ fn capture(
                 add("steel:hole:vertexCounts", "int[]", 0);
                 add("steel:hole:operationIds", "string[]", 0);
                 add("steel:hole:ordinals", "int[]", 0);
+                add("steel:hole:generatedBy", "string[]", 0);
                 add(cut_history::HOLE_NEXT, "int", 0);
                 add(cut_history::HOLE_RETIRED, "string[]", 0);
             }

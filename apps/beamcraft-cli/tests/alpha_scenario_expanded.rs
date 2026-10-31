@@ -392,28 +392,6 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     }
     s.ok(
         "draft",
-        "create-bolt",
-        &[
-            "--name",
-            "Q01 bolts",
-            "--main",
-            PARTS[3],
-            "--secondary",
-            PARTS[0],
-            "--origin",
-            "-25,0,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
-            "50",
-            "--diameter",
-            "16",
-        ],
-    );
-    s.ok(
-        "draft",
         "create-weld",
         &[
             "--name",

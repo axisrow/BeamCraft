@@ -350,6 +350,7 @@ mod tests {
             ordinal: 3,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
             kind: beamcraft_model::command::HoleKind::Hole,
+            owner: None,
         };
         // A retried copy derives the exact same identity.
         let first = copied_hole(&record, &id(6)).unwrap();

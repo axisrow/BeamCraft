@@ -23,7 +23,10 @@
 //! points, a reference plane with rotation, position values, offsets and spacings over a pinned
 //! fastener definition. The placement decision ([`place_bolt_group`]) is pure and bounded; the
 //! reachability of a part stays a conservative box test like A05's, with the grip read as the
-//! union length of the shank axis inside the boxes. No hole is generated in this slice (A14.4).
+//! union length of the shank axis inside the boxes. A14.4 adds the hole decision
+//! ([`generate_holes`]): with `hole_mode = generate` every connected plate takes one ordinary
+//! A04 hole record per crossing fastener, owned by the group; a member part refuses until the
+//! G14 contract lands, and `hole_mode = none` writes no part.
 
 use crate::footprint::Footprint;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
@@ -33,9 +36,9 @@ use beamcraft_model::command::{
     UpdateBoltGroup,
 };
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::fastener::FastenerKind;
+use beamcraft_model::fastener::{FastenerKind, HoleMode};
 use beamcraft_model::id::ElementId;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Conservative world bounds of one part: componentwise minimum, then maximum, both inclusive.
 pub type Bounds = [[f64; 3]; 2];
@@ -413,6 +416,84 @@ pub fn place_bolt_group(
     })
 }
 
+/// One generated hole decision (bolt amendment section 5): the plate that owns the record and
+/// its authoritative clockwise polygon in the plate's local XY. The record itself is an
+/// ordinary A04 hole record; the adapter appends it with a fresh ordinal and replays the
+/// plate, so a hole that does not fit refuses the whole command.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratedHole {
+    /// The plate that will own the record.
+    pub part: ElementId,
+    /// The round hole polygon in the plate's local XY.
+    pub polygon_mm: Vec<[f64; 2]>,
+}
+
+/// Decides the generated holes of a placed group (bolt amendment section 5): with
+/// `hole_mode = generate`, one round through hole per crossing fastener on every connected
+/// plate, of diameter `nominal + clearance` (the group's own clearance, or the definition's),
+/// centred where the shank axis crosses the plate's mid-plane and cut along the plate normal,
+/// like any A04 record. A beam or a column is refused with `UNSUPPORTED_GEOMETRY`:
+/// generated member holes need the kernel slice G14.1. `hole_mode = none` writes no part.
+/// The decision is pure: the same inputs give the same holes.
+pub fn generate_holes(
+    inputs: &BoltGroupInputs,
+    placed: &BoltGroupPlaced,
+    bounds: &BTreeMap<ElementId, Bounds>,
+    translations: &BTreeMap<ElementId, [f64; 3]>,
+    members: &BTreeSet<ElementId>,
+) -> Result<Vec<GeneratedHole>, CommandError> {
+    if inputs.resolved_hole_mode() == HoleMode::None {
+        return Ok(Vec::new());
+    }
+    let diameter = inputs.fastener.nominal_diameter_mm + inputs.resolved_hole_clearance_mm();
+    let mut holes = Vec::new();
+    for part in &inputs.parts {
+        if members.contains(part) {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole_mode",
+                "a generated hole in a member needs the kernel slice G14.1",
+            ));
+        }
+        let slab = bounds.get(part).ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::InvalidArgument,
+                "parts",
+                "a listed part is unreachable",
+            )
+        })?;
+        let translation = translations.get(part).ok_or_else(|| {
+            CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole_mode",
+                "the part has no placement this slice can read",
+            )
+        })?;
+        for bearing in &placed.bearings_mm {
+            let Some((start, exit)) = axis_interval(bearing, &placed.z, slab) else {
+                continue;
+            };
+            // The plate-local XY centre: where the shank axis crosses the slab's mid-plane
+            // (a plate's placement rotation is identity in this slice, so world minus
+            // translation is the plate-local frame).
+            let mid = (start + exit) / 2.0;
+            let centre = [
+                bearing[0] + placed.z[0] * mid - translation[0],
+                bearing[1] + placed.z[1] * mid - translation[1],
+            ];
+            holes.push(GeneratedHole {
+                part: *part,
+                polygon_mm: beamcraft_model::command::HoleSpec::Round {
+                    centre_mm: centre,
+                    diameter_mm: diameter,
+                }
+                .polygon()?,
+            });
+        }
+    }
+    Ok(holes)
+}
+
 /// Kinds of the listed parts: each exists and is a plate, beam or column (an assembly is
 /// unsupported, as for a weld). Their existence decides acceptance; they are only read.
 fn check_parts(parts: &[ElementId], kinds: &crate::weld::Parts) -> Result<(), CommandError> {
@@ -685,6 +766,8 @@ mod tests {
             washer_under_head: None,
             washer_under_nut: None,
             length: BoltLength::Auto,
+            hole_mode: None,
+            hole_clearance_mm: None,
         }
     }
 
@@ -929,6 +1012,106 @@ mod tests {
                 .unwrap()
                 .length_mm,
             30.0
+        );
+    }
+
+    /// The translations of the standard two-plate test: identity placements.
+    fn hole_args(inputs: &BoltGroupInputs) -> BTreeMap<ElementId, [f64; 3]> {
+        let mut translations = BTreeMap::new();
+        for part in &inputs.parts {
+            translations.insert(*part, [0.0, 0.0, 0.0]);
+        }
+        translations
+    }
+
+    #[test]
+    fn generate_holes_cut_every_crossed_plate_at_every_fastener() {
+        let inputs = group_inputs();
+        let bounds = group_bounds(1000.0);
+        let placed = place_bolt_group(&inputs, &bounds).unwrap();
+        let translations = hole_args(&inputs);
+        let holes =
+            generate_holes(&inputs, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        // Three fasteners, both plates crossed by every axis: one hole each, 18 mm across,
+        // centred on the bearing points' XY in the plate's local frame.
+        assert_eq!(holes.len(), 6);
+        assert!(holes.iter().all(|h| h.polygon_mm.len() >= 16));
+        let centres = [(50.0, 0.0), (130.0, 0.0), (220.0, 0.0)];
+        for (part_index, chunk) in holes.chunks(3).enumerate() {
+            assert_eq!(chunk[0].part, if part_index == 0 { id(1) } else { id(2) });
+            for (index, hole) in chunk.iter().enumerate() {
+                let (cx, cy) = centres[index];
+                let radius = hole
+                    .polygon_mm
+                    .iter()
+                    .map(|p| (p[0] - cx).hypot(p[1] - cy))
+                    .fold(0.0_f64, f64::max);
+                assert!((radius - 9.0).abs() <= 1e-9, "nominal 16 + clearance 2");
+            }
+        }
+        // The stored records live in the plates' local frames: a translated plate's holes are
+        // translated back (the polygon centroid sits on the mapped axis point).
+        let mut moved = translations.clone();
+        moved.insert(id(1), [10.0, 20.0, 0.0]);
+        let local = generate_holes(&inputs, &placed, &bounds, &moved, &BTreeSet::new()).unwrap();
+        let polygon = &local.first().unwrap().polygon_mm;
+        let n = polygon.len() as f64;
+        let centroid = [
+            polygon.iter().map(|p| p[0]).sum::<f64>() / n,
+            polygon.iter().map(|p| p[1]).sum::<f64>() / n,
+        ];
+        assert!((centroid[0] - 40.0).abs() <= 1e-9 && (centroid[1] + 20.0).abs() <= 1e-9);
+        // A group's own clearance widens the hole over the definition's.
+        let mut wide = inputs.clone();
+        wide.hole_clearance_mm = Some(4.0);
+        let widened =
+            generate_holes(&wide, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let radius = widened[0]
+            .polygon_mm
+            .iter()
+            .map(|p| (p[0] - 50.0).hypot(p[1]))
+            .fold(0.0_f64, f64::max);
+        assert!((radius - 10.0).abs() <= 1e-9);
+        // A screw defaults to none and writes no part; an explicit generate overrides it.
+        let mut screw = inputs.clone();
+        screw.fastener.kind = FastenerKind::Screw;
+        screw.fastener.nut_across_flats_mm = None;
+        screw.fastener.nut_height_mm = None;
+        screw.fastener.washer_under_nut = false;
+        screw.fastener.validate().unwrap();
+        let quiet =
+            generate_holes(&screw, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        assert!(quiet.is_empty());
+        let mut asked = screw.clone();
+        asked.hole_mode = Some(HoleMode::Generate);
+        let forced =
+            generate_holes(&asked, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        assert_eq!(forced.len(), 6);
+    }
+
+    #[test]
+    fn a_member_part_or_an_uncrossed_span_refuses_or_skips_holes() {
+        let inputs = group_inputs();
+        let bounds = group_bounds(1000.0);
+        let placed = place_bolt_group(&inputs, &bounds).unwrap();
+        let translations = hole_args(&inputs);
+        // A member part is refused wholesale until G14.1 (nothing is written).
+        let members = BTreeSet::from([id(2)]);
+        assert_eq!(
+            generate_holes(&inputs, &placed, &bounds, &translations, &members)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedGeometry
+        );
+        // A part only partly under the row takes only the holes the axes actually cross.
+        let mut short = group_bounds(1000.0);
+        short.insert(id(1), [[0.0, 0.0, 0.0], [100.0, 500.0, 10.0]]);
+        let partial =
+            generate_holes(&inputs, &placed, &short, &translations, &BTreeSet::new()).unwrap();
+        assert_eq!(
+            partial.len(),
+            4,
+            "three holes on the long plate, one on the short"
         );
     }
 
