@@ -1,5 +1,9 @@
 # V06 UI element properties and publication
 
+> **2026-10-31:** the CLI commands `pick` and `snap` described here were removed (interactive
+> assistance needs no CLI command, `AGENTS.md` section 3). The engine queries `pick` and `snap`
+> remain and serve the window; the command lines below are historical.
+
 Date: 2026-10-19; re-based on the merged V05.2 edit tools 2026-10-20. Status: **experimental
 vertical slice; V06 acceptance is not claimed.**
 Branch `feat/v06-properties-ui`; the slice was first based on `origin/master` `11a21397`, then

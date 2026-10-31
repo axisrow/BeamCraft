@@ -3,8 +3,6 @@
 
 //! Help owned by the element filter command family (V14).
 
-pub(super) const COMMANDS: &[&str] = &["query-elements"];
-
 pub(super) const HELP: &str = concat!(
     "Element filters (V14): query-elements --store ROOT --rule FILE.json [--limit 1..1024] ",
     "[--after UUID] [--expected-model DIGEST|none]; the reply lists matching element UUIDs in ",

@@ -86,6 +86,7 @@ mod recovery;
 mod reference;
 mod reference_measure;
 mod reference_reader;
+mod registry;
 mod relocate;
 mod resolve;
 mod revision;

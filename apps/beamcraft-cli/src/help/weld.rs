@@ -3,8 +3,6 @@
 
 //! Help owned by the weld command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-weld", "welds"];
-
 pub(super) const HELP: &str = concat!(
     "Weld (A06, a connection element; A15 adds an optional solid along a path): create-weld ",
     "--store ROOT --name TEXT --main PART_UUID --secondary PART_UUID --size MM --location ",

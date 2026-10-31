@@ -47,7 +47,7 @@ fn declared_label(value: &Option<String>, field: &'static str) -> Result<(), Com
 
 impl MaterialSpec {
     /// Admits the density: finite (`NON_FINITE_NUMBER`), at most 1,000,000 kg/m3
-    /// (`LIMIT_EXCEEDED`) and greater than zero (`INVALID_ARGUMENT`); and the labels.
+    /// (`LIMIT_EXCEEDED`) and not negative (`INVALID_ARGUMENT`; zero is the massless auxiliary material); and the labels.
     pub fn validate(&self) -> Result<(), CommandError> {
         declared_label(&self.grade, "grade")?;
         declared_label(&self.standard, "standard")?;
@@ -70,11 +70,11 @@ impl MaterialSpec {
                 "density exceeds the density cap",
             ));
         }
-        if density <= 0.0 {
+        if density < 0.0 {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "density_kg_m3",
-                "density must be greater than zero",
+                "density must not be negative",
             ));
         }
         Ok(())
@@ -427,7 +427,7 @@ mod tests {
             density(Some(f64::INFINITY)),
             Err(ErrorCode::NonFiniteNumber)
         );
-        assert_eq!(density(Some(0.0)), Err(ErrorCode::InvalidArgument));
+        assert_eq!(density(Some(0.0)), Ok(()));
         assert_eq!(density(Some(-1.0)), Err(ErrorCode::InvalidArgument));
         assert_eq!(density(Some(1_000_000.5)), Err(ErrorCode::LimitExceeded));
     }

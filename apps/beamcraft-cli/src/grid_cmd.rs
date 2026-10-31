@@ -34,23 +34,6 @@ fn error(code: ErrorCode, message: &'static str) -> PlateError {
         message,
     }
 }
-/// Whether this is a grid command.
-pub fn handles(c: &OsString) -> bool {
-    matches!(
-        c.to_str(),
-        Some(
-            "create-grid"
-                | "update-grid"
-                | "list-grids"
-                | "resolve-grid-point"
-                | "resolve-grid-plane"
-                | "draw-grid-line"
-                | "reshape-grid-line"
-                | "remove-grid-line"
-                | "relabel-grid-line"
-        )
-    )
-}
 /// Run one grid command through the common JSON result protocol.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     let result = run(args);

@@ -3,8 +3,6 @@
 
 //! Help owned by the library command family.
 
-pub(super) const COMMANDS: &[&str] = &["list-library", "show-library", "add-library"];
-
 pub(super) const HELP: &str = concat!(
     "Names and libraries (A07.2, experimental): every definition carries a readable display ",
     "name that is part of its content (so another name is another digest): --name TEXT on ",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 //! V08 session frame construction and plane-local point input.
-pub(super) const COMMANDS: &[&str] = &["work-plane", "resolve-construction-point"];
+
 pub(super) const HELP: &str = concat!(
     "Work plane (V08, read-only): work-plane (--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ | ",
     "--parallel xy|xz|yz [--offset MM] | --points OX,OY,OZ,PX,PY,PZ,QX,QY,QZ | ",

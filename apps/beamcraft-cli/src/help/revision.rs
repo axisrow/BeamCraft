@@ -3,13 +3,6 @@
 
 //! Help owned by the revision command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "commit-revision",
-    "open-revision",
-    "recover-revision",
-    "inspect-revision-outcome",
-];
-
 pub(super) const CONTROL: &str = concat!(
     "Control (blob and revision commands): [--timeout-ms 1..120000] [--cancel-after-ms ",
     "0..120000]",

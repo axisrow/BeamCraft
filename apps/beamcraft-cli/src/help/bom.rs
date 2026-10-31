@@ -3,8 +3,6 @@
 
 //! Help owned by the bom command family.
 
-pub(super) const COMMANDS: &[&str] = &["export-bom"];
-
 pub(super) const HELP: &str = concat!(
     "BOM (E03): export-bom --store ROOT --out ELEMENTS_CSV [--summary SUMMARY_CSV] (the ",
     "verified head's bill of materials as two CSV files: one row per plate, beam and column ",

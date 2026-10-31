@@ -1,0 +1,209 @@
+#usda 1.0
+(
+    doc = "BeamCraft starter profile library: generic test sections so a new model can place beams and columns at once. Contributor-original, MPL-2.0. Every value is invented and rounded; none follows or reproduces any national standard, manufacturer catalogue or commercial table. Not for design use."
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:library:id" = "beamcraft-starter"
+        string "bim:library:title" = "BeamCraft starter sections (generic, not a standard)"
+        string "bim:library:version" = "1"
+        string "bim:library:source" = "Contributor-original generic values for first use and tests; no standard, catalogue or vendor data"
+        string "bim:library:licence" = "MPL-2.0"
+    }
+)
+
+def Scope "Library"
+{
+    def Scope "Profiles"
+    {
+        def Scope "I_200x100"
+        {
+            string steel:profile:designation = "I-200x100"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 6
+            double steel:profile:tfMm = 9
+            double steel:profile:rMm = 10
+        }
+
+        def Scope "I_300x150"
+        {
+            string steel:profile:designation = "I-300x150"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 150
+            double steel:profile:twMm = 7
+            double steel:profile:tfMm = 10
+            double steel:profile:rMm = 15
+        }
+
+        def Scope "I_400x200"
+        {
+            string steel:profile:designation = "I-400x200"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 400
+            double steel:profile:bMm = 200
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 13
+            double steel:profile:rMm = 16
+        }
+
+        def Scope "I_500x200"
+        {
+            string steel:profile:designation = "I-500x200"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 500
+            double steel:profile:bMm = 200
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 16
+            double steel:profile:rMm = 20
+        }
+
+        def Scope "H_200x200"
+        {
+            string steel:profile:designation = "H-200x200"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 200
+            double steel:profile:twMm = 8
+            double steel:profile:tfMm = 12
+            double steel:profile:rMm = 13
+        }
+
+        def Scope "H_300x300"
+        {
+            string steel:profile:designation = "H-300x300"
+            token steel:profile:family = "i_shape"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 300
+            double steel:profile:twMm = 10
+            double steel:profile:tfMm = 15
+            double steel:profile:rMm = 18
+        }
+
+        def Scope "C_200x75"
+        {
+            string steel:profile:designation = "C-200x75"
+            token steel:profile:family = "channel"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 75
+            double steel:profile:twMm = 6
+            double steel:profile:tfMm = 9
+            double steel:profile:rMm = 10
+        }
+
+        def Scope "C_300x100"
+        {
+            string steel:profile:designation = "C-300x100"
+            token steel:profile:family = "channel"
+            double steel:profile:hMm = 300
+            double steel:profile:bMm = 100
+            double steel:profile:twMm = 9
+            double steel:profile:tfMm = 15
+            double steel:profile:rMm = 15
+        }
+
+        def Scope "L_75x75x6"
+        {
+            string steel:profile:designation = "L-75x75x6"
+            token steel:profile:family = "angle"
+            double steel:profile:hMm = 75
+            double steel:profile:bMm = 75
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 8
+        }
+
+        def Scope "L_100x100x8"
+        {
+            string steel:profile:designation = "L-100x100x8"
+            token steel:profile:family = "angle"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 8
+            double steel:profile:rMm = 10
+        }
+
+        def Scope "RHS_100x60x4"
+        {
+            string steel:profile:designation = "RHS-100x60x4"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 60
+            double steel:profile:tMm = 4
+            double steel:profile:rMm = 8
+        }
+
+        def Scope "SHS_100x100x5"
+        {
+            string steel:profile:designation = "SHS-100x100x5"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 100
+            double steel:profile:tMm = 5
+            double steel:profile:rMm = 10
+        }
+
+        def Scope "SHS_150x150x6"
+        {
+            string steel:profile:designation = "SHS-150x150x6"
+            token steel:profile:family = "rhs"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 150
+            double steel:profile:tMm = 6
+            double steel:profile:rMm = 12
+        }
+
+        def Scope "CHS_114x5"
+        {
+            string steel:profile:designation = "CHS-114x5"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 114
+            double steel:profile:tMm = 5
+        }
+
+        def Scope "CHS_168x6"
+        {
+            string steel:profile:designation = "CHS-168x6"
+            token steel:profile:family = "chs"
+            double steel:profile:dMm = 168
+            double steel:profile:tMm = 6
+        }
+
+        def Scope "BAR_50x50"
+        {
+            string steel:profile:designation = "BAR-50x50"
+            token steel:profile:family = "rectangle"
+            double steel:profile:hMm = 50
+            double steel:profile:bMm = 50
+        }
+
+        def Scope "BAR_100x20"
+        {
+            string steel:profile:designation = "BAR-100x20"
+            token steel:profile:family = "rectangle"
+            double steel:profile:hMm = 100
+            double steel:profile:bMm = 20
+        }
+
+        def Scope "BAR_200x10"
+        {
+            string steel:profile:designation = "BAR-200x10"
+            token steel:profile:family = "rectangle"
+            double steel:profile:hMm = 200
+            double steel:profile:bMm = 10
+        }
+
+        def Scope "LC_150x60x20x2"
+        {
+            string steel:profile:designation = "LC-150x60x20x2"
+            token steel:profile:family = "lipped_c"
+            double steel:profile:hMm = 150
+            double steel:profile:bMm = 60
+            double steel:profile:cMm = 20
+            double steel:profile:tMm = 2
+            double steel:profile:rMm = 4
+        }
+
+    }
+}

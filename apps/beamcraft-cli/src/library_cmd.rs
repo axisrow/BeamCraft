@@ -17,11 +17,6 @@ use beamcraft_json::Json;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-/// Whether `command` is one of the library commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "list-library" || command == "show-library" || command == "add-library"
-}
-
 /// Runs one library command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     report(run(args))

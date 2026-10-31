@@ -38,25 +38,6 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Whether the command is the D02 read-only preview.
-pub fn handles(command: &OsString) -> bool {
-    matches!(
-        command.to_str(),
-        Some(
-            "preview-drawing"
-                | "create-drawing"
-                | "refresh-drawing"
-                | "edit-drafting"
-                | "edit-views"
-                | "edit-sheet"
-                | "publish-drawing"
-                | "inspect-drawing"
-                | "inspect-drawing-versions"
-                | "export-drawing"
-        )
-    )
-}
-
 /// Runs the headless adapter; successful unresolved geometry is explicit in the JSON result.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     match run(args) {

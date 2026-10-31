@@ -22,7 +22,8 @@ their code or assets. Targets desktop-only use on Windows, Linux and macOS.
 - **Assets and provenance: `AGENTS.md` §1 and §2.** Nothing from Tekla/Trimble, ever.
 - **Never crash on input:** `AGENTS.md` §4. Clippy denies `unwrap`/`expect`/`panic`/indexing in
   non-test code.
-- **Headless first:** every feature has an engine API and a CLI command (`AGENTS.md` §3).
+- **Headless first:** every feature has an engine API and a CLI command, except interactive
+  assistance (picking, snapping, start screen), which needs no CLI command (`AGENTS.md` §3).
 - **Units:** millimetres, radians internally, right-handed, Z up. Convert only at the UI/IO edge.
 
 ## Commands

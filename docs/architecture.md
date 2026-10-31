@@ -12,6 +12,8 @@ in its note under [`design/`](design/); the plan is in [`plan/`](plan/README.md)
   everything the program computed lives in USD layers; in-memory indexes and snapshots are derived
   from them and thrown away.
 - **Headless first.** Every feature is an engine API, then a CLI command, then an end-to-end test.
+  Interactive assistance (picking, snapping, the start screen) is the exception: it needs the engine
+  API and tests, and no CLI command.
   The window is a client of the same commands; it holds no engineering logic.
 - **Own engineering core.** Geometry (extrusion, cuts, holes, volumes) and every engineering rule
   are our own Rust code. USD parsing uses the pure-Rust `openusd` crate behind our wrapper.

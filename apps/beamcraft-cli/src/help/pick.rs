@@ -3,8 +3,6 @@
 
 //! Help owned by the pick command family.
 
-pub(super) const COMMANDS: &[&str] = &["pick", "lookup-feature", "snap", "element-edges"];
-
 pub(super) const HELP: &str = concat!(
     "Pick (V04, engine queries over the verified head's view snapshot; read-only; FeatureIds ",
     "fid1:<element>:plate|member:<role> exist for box bodies only, others are listed as ",

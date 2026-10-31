@@ -20,11 +20,6 @@ use std::ffi::OsString;
 
 type Run<T> = Result<T, PlateError>;
 
-/// Whether `command` is the fastener geometry command.
-pub fn handles(command: &OsString) -> bool {
-    command == "fastener-geometry"
-}
-
 /// Runs the fastener geometry command and returns the JSON result and the exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     report(run(args))

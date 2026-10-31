@@ -1,5 +1,8 @@
 # Model creation defaults
 
+> **2026-10-31:** the CLI commands `suggest-project-name`, `list-recent` and `add-recent` were
+> removed (`AGENTS.md` section 3). The engine functions behind them remain and serve the start page.
+
 The start page suggests `New Model`, then the first available `New Model N` in the selected
 parent folder. Files, directories and links occupy names. Opening the form or changing its
 location asks `suggest-project-name`; the query creates nothing. A manually edited name stays

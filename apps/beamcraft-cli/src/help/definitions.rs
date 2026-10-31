@@ -3,13 +3,6 @@
 
 //! Help owned by the definitions command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "define-material",
-    "define-profile",
-    "define-fastener",
-    "definitions",
-];
-
 pub(super) const HELP: &str = concat!(
     "Definitions (P02, immutable USD assets pinned by full digest; a material without ",
     "--density keeps an unknown density, so mass stays unknown): define-material --store ROOT ",

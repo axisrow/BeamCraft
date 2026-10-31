@@ -310,6 +310,7 @@ pub fn project_create_args(
     parent: &str,
     name: &str,
     actor_id: Option<&str>,
+    environment: Option<&str>,
 ) -> Vec<String> {
     let mut args = vec![
         "create-project".to_owned(),
@@ -320,6 +321,11 @@ pub fn project_create_args(
     ];
     if name == DEFAULT_MODEL_NAME {
         args.extend(["--unique-name".into(), "true".into()]);
+    }
+    if let Some(environment) = environment {
+        // The new model is seeded with the environment's profiles and the default materials.
+        args.push("--environment".into());
+        args.push(environment.to_owned());
     }
     if let Some(actor) = actor_id {
         args.push("--actor-id".into());
@@ -638,6 +644,7 @@ impl StartPage {
                 self.new_name.trim()
             },
             self.actor_id().as_deref(),
+            self.environment.as_deref(),
         );
         self.spawn(move |cli, stats| {
             Reply::Opened(
@@ -701,9 +708,16 @@ impl StartPage {
                 let usable = |id: &str| self.environments.iter().any(|e| e.usable_id() == Some(id));
                 let saved = settings.environment.clone().filter(|id| usable(id));
                 self.environment = saved.clone().or_else(|| {
-                    self.environments
-                        .iter()
-                        .find_map(|e| e.usable_id().map(str::to_owned))
+                    // The starter environment has the sections a first beam needs; the blank
+                    // one is empty, so it is only the fallback.
+                    let usable = |wanted: Option<&str>| {
+                        self.environments.iter().find_map(|e| {
+                            e.usable_id()
+                                .filter(|id| wanted.is_none_or(|w| w == *id))
+                                .map(str::to_owned)
+                        })
+                    };
+                    usable(Some("starter")).or_else(|| usable(None))
                 });
                 self.launcher =
                     !(settings.skip_launcher && settings.profile.is_some() && saved.is_some());
@@ -1978,7 +1992,7 @@ mod tests {
 
     #[test]
     fn builds_arguments() {
-        let args = project_create_args(Some(Path::new("/c")), "/m", "Nave 1", Some("id"));
+        let args = project_create_args(Some(Path::new("/c")), "/m", "Nave 1", Some("id"), None);
         assert_eq!(
             args,
             [
@@ -1991,6 +2005,19 @@ mod tests {
                 "id",
                 "--config-dir",
                 "/c"
+            ]
+        );
+        let args = project_create_args(None, "/m", "Nave 1", None, Some("starter"));
+        assert_eq!(
+            args,
+            [
+                "create-project",
+                "--parent",
+                "/m",
+                "--name",
+                "Nave 1",
+                "--environment",
+                "starter"
             ]
         );
         let args = settings_set_args(None, "Ana", "a@b.cl", "blank", false);

@@ -3,8 +3,6 @@
 
 //! Help owned by the member command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-member", "create-polybeam", "create-curved-beam"];
-
 pub(super) const HELP: &str = concat!(
     "Member (P03): create-member --store ROOT --start X,Y,Z --end X,Y,Z (--profile-digest ",
     "SHA256 | --profile NAME) [--kind beam|column] [--roll RAD] [--material-digest SHA256 | ",

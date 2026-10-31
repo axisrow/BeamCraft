@@ -98,7 +98,7 @@ content digest as F04 requires. Its persisted encoding is not defined here. This
 | Contour/axis point coordinates, translation components | absolute value at most 1,000,000,000 mm | F04 |
 | Contour D / count | at most 2,000,000 mm / 1024 points | F04 |
 | Roll | absolute value at most 6.283185307179586 rad | F04 |
-| Density | greater than zero, at most 1,000,000 kg/m3, when present | F04 |
+| Density | at least zero, at most 1,000,000 kg/m3, when present (amended 2026-10-30, [density amendment](f04-material-density-amendment-v0.1.md)) | F04 |
 | Quaternion | components in [-1, 1]; squared norm within 1e-6 of one | F04 |
 | Section `width_mm`, `height_mm` | at most 1,000,000 mm | F06 |
 | Local size L | plate D <= 2,000,000 mm; member max(axis length, section half-diagonal) <= 1,000,000 mm | F04 |
@@ -246,7 +246,7 @@ the status of the first diagnostic.
 | `GEO_CONTOUR_INVALID` | `INVALID_ARGUMENT` | Invalid contour under F04 |
 | `GEO_UNSUPPORTED_CONTOUR` | `UNSUPPORTED_GEOMETRY` | Valid contour outside the supported evaluation (not a simple polygon in the plane `z = 0`) |
 | `GEO_NON_FINITE` | `NON_FINITE_NUMBER` | NaN or infinity in any number |
-| `GEO_NOT_POSITIVE` | `INVALID_ARGUMENT` | Dimension, density or similar not greater than zero |
+| `GEO_NOT_POSITIVE` | `INVALID_ARGUMENT` | Dimension or similar not greater than zero; a negative density (amended 2026-10-30, [density amendment](f04-material-density-amendment-v0.1.md)) |
 | `GEO_BELOW_MINIMUM` | `INVALID_ARGUMENT` | Dimension greater than zero but below the minimum |
 | `GEO_ABOVE_LIMIT` | `LIMIT_EXCEEDED` | Input above its cap |
 | `GEO_AXIS_TOO_SHORT` | `INVALID_ARGUMENT` | Axis length zero or below the minimum |
@@ -745,7 +745,8 @@ remains valid.
 - `stale`: authored inputs changed and the rebuild is not complete; the previous value may be
   retained, clearly marked, and is never presented as current (`F06-POS-38`).
 - `unknown`: a required input is absent or unavailable. **Unknown density keeps mass unknown** even
-  when volume is current; density is never defaulted, guessed from a catalogue or taken as zero
+  when volume is current; density is never defaulted, guessed from a catalogue or taken as zero when it is absent; an explicit
+  zero density gives a `current` mass of zero (amended 2026-10-30, [density amendment](f04-material-density-amendment-v0.1.md))
   (`F06-POS-03`, `F06-POS-13`). A dependency that cannot be read gives `unknown`
   (`DEPENDENCY_UNAVAILABLE` at the command level). An element in the `degenerate` state has every
   derived quantity `unknown`.

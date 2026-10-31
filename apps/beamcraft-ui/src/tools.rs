@@ -362,8 +362,13 @@ impl MemberForm {
             start,
             "--end".into(),
             end,
-            "--profile-digest".into(),
-            profile.clone(),
+            if profile.starts_with(BY_NAME) {
+                "--profile"
+            } else {
+                "--profile-digest"
+            }
+            .into(),
+            profile.strip_prefix(BY_NAME).unwrap_or(profile).to_owned(),
         ];
         push_name(&mut args, &self.name)?;
         if !self.class.trim().is_empty() {
@@ -615,6 +620,10 @@ pub fn definitions_args(store: &Path) -> Vec<String> {
 /// The most definitions listed in the panel.
 pub const MAX_CHOICES: usize = 1000;
 
+/// Prefix of a profile choice that is only in the project's environment, not in the model yet:
+/// the rest is its designation, which the CLI defines in the model when the member is created.
+pub const BY_NAME: &str = "name:";
+
 fn short(digest: &str) -> &str {
     digest.get(..8).unwrap_or(digest)
 }
@@ -642,6 +651,23 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
             .and_then(RevisionStamp::from_json),
         ..Definitions::default()
     };
+    // Profiles of the project's environment that the model does not define yet; the CLI defines
+    // one when a member is created from it.
+    let environment: Vec<Choice> = reply
+        .get("environment_profiles")
+        .and_then(Json::array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|entry| text(entry, "designation"))
+                .take(MAX_CHOICES)
+                .map(|designation| Choice {
+                    label: format!("{designation} (environment)"),
+                    digest: format!("{BY_NAME}{designation}"),
+                    rect_mm: None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     for definition in reply
         .get("definitions")
         .and_then(Json::array)
@@ -690,6 +716,7 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
             });
         }
     }
+    out.profiles.extend(environment);
     Ok(out)
 }
 
@@ -747,7 +774,19 @@ impl Tools {
                 .is_some_and(|d| list.iter().any(|c| &c.digest == d))
         };
         if !known(&definitions.profiles, &self.member.profile) {
-            self.member.profile = None;
+            // A profile picked from the environment gets a digest once a member defined it, so
+            // the selection follows it by name instead of being dropped.
+            self.member.profile = self
+                .member
+                .profile
+                .as_deref()
+                .and_then(|key| key.strip_prefix(BY_NAME))
+                .and_then(|name| {
+                    definitions.profiles.iter().find(|c| {
+                        c.label.starts_with(&format!("{name} ")) && !c.digest.starts_with(BY_NAME)
+                    })
+                })
+                .map(|c| c.digest.clone());
         }
         if !known(&definitions.materials, &self.member.material) {
             self.member.material = None;
@@ -1064,6 +1103,35 @@ mod tests {
         assert!(form.prepare(store()).unwrap_err().message.contains("bytes"));
         form.name = "ы".repeat(100);
         assert!(form.prepare(store()).is_ok());
+    }
+
+    #[test]
+    fn a_profile_of_the_environment_is_offered_and_created_by_name() {
+        let reply = br#"{"definition_count":0,"definitions":[],"environment_profiles":[{"designation":"I-300x150","kind":"i_shape"}],"outcome":"definitions"}"#;
+        let definitions = parse_definitions(Some(0), reply).unwrap();
+        assert_eq!(definitions.profiles.len(), 1);
+        assert_eq!(definitions.profiles[0].digest, "name:I-300x150");
+        assert_eq!(definitions.profiles[0].label, "I-300x150 (environment)");
+
+        let mut tools = Tools::default();
+        tools.member.profile = Some("name:I-300x150".into());
+        assert_eq!(tools.apply_definitions(Ok(definitions)), None);
+        assert_eq!(tools.member.profile.as_deref(), Some("name:I-300x150"));
+        let args = tools.member.prepare(store()).unwrap().args;
+        assert!(args.windows(2).any(|w| w == ["--profile", "I-300x150"]));
+        assert!(!args.iter().any(|a| a == "--profile-digest"));
+
+        // Once a member defined it, the model lists it with a digest and the selection follows.
+        let defined = Definitions {
+            profiles: vec![Choice {
+                digest: DIGEST.into(),
+                label: format!("I-300x150 ({})", short(DIGEST)),
+                rect_mm: None,
+            }],
+            ..Definitions::default()
+        };
+        assert_eq!(tools.apply_definitions(Ok(defined)), None);
+        assert_eq!(tools.member.profile.as_deref(), Some(DIGEST));
     }
 
     #[test]

@@ -3,8 +3,6 @@
 
 //! Help owned by the export command family.
 
-pub(super) const COMMANDS: &[&str] = &["export-ifc", "ifc-guid"];
-
 pub(super) const HELP: &str = concat!(
     "Export (E02, IFC4 STEP of one committed revision; experimental, E01 contract 0.1.0): ",
     "export-ifc --store ROOT --out FILE [--revision UUID] [--project-name TEXT] [--schema ",

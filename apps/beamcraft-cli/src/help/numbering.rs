@@ -3,12 +3,6 @@
 
 //! Help owned by the numbering command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "preview-numbering",
-    "approve-numbering",
-    "inspect-numbering",
-];
-
 pub(super) const PREVIEW: &str = concat!(
     "Numbering (A08, read-only preview; approving numbers is A09 below): preview-numbering ",
     "--store ROOT [--plate-series PREFIX:START] [--beam-series PREFIX:START] [--column-series ",

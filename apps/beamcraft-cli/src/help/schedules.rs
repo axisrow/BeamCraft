@@ -3,8 +3,6 @@
 
 //! Help owned by the schedule command family.
 
-pub(super) const COMMANDS: &[&str] = &["schedule-export"];
-
 pub(super) const HELP: &str = concat!(
     "Schedules (I05): schedule-export --store ROOT --template TEMPLATE.json --out ",
     "ELEMENTS_CSV [--summary GROUPS_CSV] [--html PAGE.html] (the verified head rendered ",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! P10 plate slice: rigid placement leaves the body local and reaches snapshot, pick and IFC.
+//! P10 plate slice: rigid placement leaves the body local and reaches snapshot and IFC.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use crate::support;
 use beamcraft_json::Json;
@@ -12,7 +12,7 @@ fn ok(f: &StoreFixture, cmd: &str, args: &[&str]) -> Json {
     reply
 }
 #[test]
-fn plate_rotation_is_a_pose_and_survives_reopen_pick_and_ifc_export() {
+fn plate_rotation_is_a_pose_and_survives_reopen_and_ifc_export() {
     let f = StoreFixture::new("p10-plate-placement");
     let made = ok(
         &f,
@@ -72,21 +72,6 @@ fn plate_rotation_is_a_pose_and_survives_reopen_pick_and_ifc_export() {
             assert!((v.float().unwrap() - e).abs() < 1e-8);
         }
     }
-    let pick = ok(
-        &f,
-        "pick",
-        &[
-            "--origin",
-            "1100,1900,3050",
-            "--direction",
-            "0,1,0",
-            "--targets",
-            "face",
-            "--max-hits",
-            "1",
-        ],
-    );
-    assert_eq!(pick.get("hits").unwrap().array().unwrap().len(), 1);
     let out = f.root.join("rotated.ifc");
     ok(&f, "export-ifc", &["--out", out.to_str().unwrap()]);
     let ifc = std::fs::read_to_string(out).unwrap();

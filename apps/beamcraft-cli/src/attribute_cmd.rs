@@ -43,21 +43,6 @@ fn not_defined() -> PlateError {
     }
 }
 
-/// Whether `command` is one of the attribute commands.
-pub fn handles(command: &OsString) -> bool {
-    matches!(
-        command.to_str(),
-        Some(
-            "attribute-define"
-                | "attribute-undefine"
-                | "attribute-set"
-                | "attribute-clear"
-                | "attribute-get"
-                | "attributes"
-        )
-    )
-}
-
 /// Runs one attribute command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))

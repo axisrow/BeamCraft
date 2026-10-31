@@ -24,7 +24,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::support;
 
@@ -746,6 +746,16 @@ fn lost_answers_and_a_killed_server_replay_exactly_once() {
         ("expected_draft", draft.as_str()),
     ];
     send_and_drop(&address, &request_bytes(TOKEN_B, "rebase", &fields));
+    // The server answers each connection on its own thread, so the retry could overtake the
+    // dropped request and do the merge itself. Wait until the dropped request has merged.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while f.head_of(&f.path("workspaces/b")) == draft {
+        assert!(
+            Instant::now() < deadline,
+            "the dropped request never merged"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
     let (code, answer) = wire_rebase(&f, &address, &token_b, "b", &op(1), &head1, &draft);
     assert_eq!(code, 0, "{answer:?}");
     assert_eq!(text(&answer, "outcome"), "workspace_rebase_replayed");

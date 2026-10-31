@@ -6,7 +6,7 @@ U05 implements `beamcraft_host::storage` using the standard library and the port
 `settings::Settings` also owns the per-user appearance preference (`System`, `Light`, `Dark`).
 It defaults to the system and is encoded as `theme` in the bounded settings JSON, never in a
 model. Version-1 files without this optional field retain their previous behavior; malformed or
-unknown values are refused. The CLI exposes it through `show-settings` and `set-settings --theme`.
+unknown values are refused.
 
 Public API:
 

@@ -114,18 +114,15 @@ impl Uuid7 {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
 
-    /// The id of 16 raw big-endian bytes, as a typed model id already validated them; the
-    /// canonical text is derived, so this cannot fail.
-    pub fn from_bytes(bytes: &[u8; 16]) -> Self {
-        let mut text = String::with_capacity(36);
-        for (i, b) in bytes.iter().enumerate() {
-            if matches!(i, 4 | 6 | 8 | 10) {
-                text.push('-');
-            }
-            text.push_str(&format!("{b:02x}"));
-        }
-        Self(text)
+impl From<beamcraft_model::id::Uuid7> for Uuid7 {
+    /// A validated model id needs no re-validation: both types accept exactly the canonical
+    /// lowercase UUIDv7 text, so the derived text of the model id always parses back. There is
+    /// deliberately no constructor from raw bytes — bytes without a checked version and RFC
+    /// 9562 variant would break the invariant every persisted id relies on.
+    fn from(uuid: beamcraft_model::id::Uuid7) -> Self {
+        Self(uuid.to_string())
     }
 }
 
@@ -324,16 +321,14 @@ impl From<LeaseError> for RevisionError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::Uuid7;
 
     #[test]
-    fn from_bytes_formats_the_canonical_text() {
-        let mut bytes = [0u8; 16];
-        bytes[..8].copy_from_slice(&[0x01, 0x9a, 0x7b, 0xf0, 0x00, 0x00, 0x70, 0x00]);
-        bytes[8] = 0x80;
-        bytes[15] = 0xc2;
-        let id = Uuid7::from_bytes(&bytes);
-        assert_eq!(id.as_str(), "019a7bf0-0000-7000-8000-0000000000c2");
+    fn a_model_id_converts_to_text_that_parses_back() {
+        let text = "019a7bf0-0000-7000-8000-0000000000c2";
+        let model = beamcraft_model::id::Uuid7::parse(text).unwrap();
+        let id = Uuid7::from(model);
+        assert_eq!(id.as_str(), text);
         assert_eq!(Uuid7::parse(id.as_str()), Ok(id));
     }
 }

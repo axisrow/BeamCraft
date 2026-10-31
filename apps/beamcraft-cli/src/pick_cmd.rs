@@ -67,15 +67,6 @@ fn invalid(message: &'static str) -> Failure {
     }
 }
 
-/// Whether `command` is one of the V04 queries.
-pub fn handles(command: &OsString) -> bool {
-    command == "pick"
-        || command == "lookup-feature"
-        || command == "list-feature"
-        || command == "element-edges"
-        || command == "snap"
-}
-
 /// Runs one query and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     match run(args) {

@@ -115,14 +115,6 @@ fn store(path: &str, book: &ViewBook) -> Run<()> {
     std::fs::rename(&temp, path).map_err(|_| backend("the view file could not be replaced"))
 }
 
-/// Whether this is one of the named-view commands.
-pub fn handles(c: &OsString) -> bool {
-    matches!(
-        c.to_str(),
-        Some("list-views" | "save-view" | "remove-view" | "apply-view")
-    )
-}
-
 /// Runs one named-view command through the common JSON result protocol.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))

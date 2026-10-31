@@ -3,13 +3,6 @@
 
 //! Help owned by the copy command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "copy-element",
-    "copy-instance",
-    "array-linear",
-    "array-polar",
-];
-
 pub(super) const HELP: &str = concat!(
     "Copy (P05): copy-element --store ROOT --id UUID [--name TEXT] [--offset X,Y,Z] [--new-id ",
     "UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID] ",

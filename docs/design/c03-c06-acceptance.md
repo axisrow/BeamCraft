@@ -5,11 +5,14 @@ owner decision. The C05 rows below are executable tests as of 2026-10-27
 (`apps/beamcraft-cli/tests/offline_clients.rs`), at the largest scale the default suite carries —
 the per-commit verification is O(revisions), so the full 1000 + 1000 sweep stays out of it. The
 authenticated coordinator rebase (C03) is executable as of 2026-10-30
-(`apps/beamcraft-cli/tests/coordinator_rebase.rs`), and compensation (C06) as of 2026-10-30
-(`apps/beamcraft-cli/tests/compensation.rs`). The C04 semantic-conflict workflow is executable as
-of 2026-10-26 (`apps/beamcraft-cli/tests/rebase.rs`, `apps/beamcraft-cli/tests/resolve.rs` and
-`apps/beamcraft-cli/tests/coordinator.rs`).**
-Scope: fork issue #12 and fork issue #160 (upstream #331). The local rebase acceptance cases
+(`apps/beamcraft-cli/tests/coordinator_rebase.rs`). The C04 semantic-conflict workflow is
+executable as of 2026-10-26 (`apps/beamcraft-cli/tests/rebase.rs`,
+`apps/beamcraft-cli/tests/resolve.rs` and `apps/beamcraft-cli/tests/coordinator.rs`).
+Compensation (C06) is executable on the fork (`apps/beamcraft-cli/tests/compensation.rs`) but is
+not part of `master`: the combined delivery was closed with the direction that compensating a
+published version ships only together with the post-MVP roles-and-permissions model it needs
+(Apibim-com/BeamCraft#737).**
+Scope: fork issue axisrow/BeamCraft#12 and fork issue axisrow/BeamCraft#160 (upstream #331). The local rebase acceptance cases
 C03-01 to C03-14 in `docs/design/c03-rebase.md` stay required unchanged. This document specifies
 the remaining per-slice acceptance: the authenticated coordinator rebase (C03), the
 semantic-conflict workflow (C04), retry across publication (C05) and compensation of a published
@@ -25,7 +28,7 @@ behaviour to build and verify, not a claim about current code.
 Every row is a required executable acceptance case. Rows marked *coordinator* run a real
 `coordinator-serve` process with real token files, over the real wire. Every case asserts content
 (values, digests, operation identities, report bytes), never only an exit code. Two invariants
-from issue #160 hold in every row, and each slice's test must assert them explicitly:
+from axisrow/BeamCraft#160 hold in every row, and each slice's test must assert them explicitly:
 
 - **No lost writes.** After any refusal, retry, kill or recovery, every accepted operation and
   every unsent draft operation is present with its authored content. A compensation never removes
@@ -42,7 +45,7 @@ boundary, restart, and compare complete states, in the spirit of U07.
 ## C03 remainder: rebase through the authenticated coordinator
 
 `docs/design/c03-rebase.md` defines the rebase semantics and the local acceptance. The remaining
-C03 scope (issue #160) is reaching the same semantics through the coordinator, where the
+C03 scope (axisrow/BeamCraft#160) is reaching the same semantics through the coordinator, where the
 token-derived actor is the only trusted actor; a claimed author field grants no authority, as
 C02 established for `publish`.
 
@@ -111,7 +114,7 @@ original base.
 
 ## What this document does not complete
 
-Each slice still needs its own focused implementation PR per fork issue #12 (one C-package per
+Each slice still needs its own focused implementation PR per fork issue axisrow/BeamCraft#12 (one C-package per
 PR), with these cases as executable tests through the real CLI and coordinator, all existing
 C01/C02 evidence and the platform CI staying green, and bounded input/error handling preserved.
 The plan statuses in `docs/plan/tasks.md` change only in docs-only PRs after owner acceptance.

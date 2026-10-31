@@ -3,14 +3,6 @@
 
 //! Help owned by the bolt command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "create-bolt",
-    "create-bolt-group",
-    "update-bolt-group",
-    "bolts",
-    "fastener-geometry",
-];
-
 pub(super) const HELP: &str = concat!(
     "Bolt groups (experimental). create-bolt --store ROOT --name TEXT --main PART_UUID ",
     "--secondary PART_UUID --origin X,Y,Z --direction X,Y,Z --count N --pitch MM --diameter MM ",

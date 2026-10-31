@@ -1,0 +1,10 @@
+#usda 1.0
+(
+    metersPerUnit = 0.001
+    upAxis = "Z"
+    customLayerData = {
+        string "bim:environment:id" = "starter"
+        string "bim:environment:title" = "Starter (generic test sections)"
+        string[] "bim:environment:libraries" = ["profiles.usda"]
+    }
+)

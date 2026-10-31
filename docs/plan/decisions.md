@@ -23,6 +23,28 @@ Open questions are at the end.
   deadline-cancels under parallel load and passes in isolation. `docs/development.md` records
   the gate, the load rule, the test pyramid and the
   acceptance-first rule.
+- **Interactive-assist commands leave the CLI.** Owner decision: an agent builds a model by giving
+  coordinates and ids directly, so the CLI does not need cursor picking, snapping or the start
+  screen. `pick`, `snap`, `show-settings`, `set-settings`, `list-environment`,
+  `suggest-project-name`, `list-recent` and `add-recent` are removed; the engine APIs stay for the
+  window. This narrows the headless-first rule in `AGENTS.md` §3 to features an agent or script
+  needs. `list-feature`, `lookup-feature`, `element-edges` and `work-plane` stay because
+  `preview-drawing` takes a feature id. Tracked in [#753](https://github.com/Apibim-com/BeamCraft/issues/753).
+
+## 2026-10-30
+
+- **Material density may be zero.** Owner decision: a density of exactly zero is admitted, a
+  negative one is not. A zero density gives a `current` mass of zero, which is all a massless
+  auxiliary part needs (`Steel_Undefined`); no other rule for such parts is set now. Recorded in
+  [the density amendment](../contracts/f04-material-density-amendment-v0.1.md).
+- **Profile lookup order is model, project, environment.** A profile name is resolved first among
+  the definitions of the model, then in the libraries of the project, then in the environment the
+  project was created with. The model carries a copy of the environment; libraries inside the
+  project folder are not implemented yet.
+- **The window must create and change profiles.** Creating a profile and changing the profile of
+  a placed member are required in the native window (V05/V06); neither exists yet.
+- **Typed designations and parametric profile templates** (for example `50*50`, `I 300*150*7*10`)
+  are wanted but not scheduled. Real regional catalogues wait for admitted sources.
 
 ## 2026-10-27
 

@@ -3,8 +3,6 @@
 
 //! Help owned by the level command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-level", "levels"];
-
 pub(super) const HELP: &str = concat!(
     "Level (D2, a storey element with no body): create-level --store ROOT --name TEXT ",
     "--elevation MM [--new-id UUID] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] ",

@@ -21,6 +21,7 @@ link integrated commits, PRs, reproducible checks and remaining limits)
 **Size and slices** (S/M estimate; split large tasks before implementation; the parent stays
 the acceptance gate)
 
-Runtime features need an engine API, a CLI command and an end-to-end test before UI.
+Runtime features need an engine API, a CLI command and an end-to-end test before UI (interactive
+assistance such as picking, snapping and the start screen needs no CLI command, `AGENTS.md` §3).
 Follow `AGENTS.md` for provenance, dependencies and never-crash rules. A merged slice does not
 accept the whole task. Link the implementing PR with `Fixes #N` only for the scope it completes.

@@ -87,11 +87,6 @@ fn invalid(message: &'static str) -> Failure {
     .into()
 }
 
-/// Whether `command` is one of the history commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "inspect-history" || command == "compact-history"
-}
-
 /// Runs the command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     match run(args) {

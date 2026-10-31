@@ -3,15 +3,6 @@
 
 //! Help owned by the attribute command family (I04).
 
-pub(super) const COMMANDS: &[&str] = &[
-    "attribute-define",
-    "attribute-undefine",
-    "attribute-set",
-    "attribute-clear",
-    "attribute-get",
-    "attributes",
-];
-
 pub(super) const HELP: &str = concat!(
     "Attributes (I04, user attributes): attribute-define --store ROOT --name NAME --type ",
     "text|number|integer|boolean|choice [--unit TEXT] [--options a,b,c] [--set NAME] ",

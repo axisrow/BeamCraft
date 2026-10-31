@@ -3,8 +3,6 @@
 
 //! Help owned by the changeset command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-changeset", "inspect-changeset", "apply-changeset"];
-
 pub(super) const HELP: &str = concat!(
     "Changeset (C01, the publication unit of a workspace): create-changeset --store PUBLISHED ",
     "--workspace-dir DIR [--changeset-id UUID] [--revision-id UUID] [--actor-id UUID] (base, ",

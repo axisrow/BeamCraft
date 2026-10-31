@@ -223,12 +223,14 @@ impl AttrDef {
             _ => {}
         }
         if let Some(set) = &self.set
-            && (set.is_empty() || set.len() > MAX_ATTR_SET_BYTES)
+            && (set.is_empty()
+                || set.len() > MAX_ATTR_SET_BYTES
+                || set.chars().any(|c| c <= '\u{1f}' || c == '\u{7f}'))
         {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "set",
-                "a set name is 1 to 64 bytes",
+                "a set name is 1 to 64 bytes without control characters",
             ));
         }
         Ok(())

@@ -41,13 +41,6 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Whether `command` is one of the numbering commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "preview-numbering"
-        || command == "approve-numbering"
-        || command == "inspect-numbering"
-}
-
 /// Runs the command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))

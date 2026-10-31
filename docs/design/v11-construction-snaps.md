@@ -1,5 +1,9 @@
 # V11 construction snaps
 
+> **2026-10-31:** the CLI commands `pick` and `snap` described here were removed (interactive
+> assistance needs no CLI command, `AGENTS.md` section 3). The engine queries `pick` and `snap`
+> remain and serve the window; the command lines below are historical.
+
 Contributor-original BeamCraft code and documentation, MPL-2.0. Follow-up to #439 and
 the interactive plate tool; no acceptance-gate verdict is changed here.
 

@@ -3,8 +3,6 @@
 
 //! Help owned by the view export command family.
 
-pub(super) const COMMANDS: &[&str] = &["export-view"];
-
 pub(super) const HELP: &str = concat!(
     "View export (V03, input of the native viewport): export-view --store ROOT --out FILE|- ",
     "[--with-definitions true|false] [--with-element UUID] [--with-grids true|false] (the verified head's pinned view ",

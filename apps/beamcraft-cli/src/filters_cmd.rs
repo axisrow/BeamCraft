@@ -24,11 +24,6 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Whether `command` is one of the filter commands.
-pub fn handles(command: &OsString) -> bool {
-    command.to_str() == Some("query-elements")
-}
-
 /// Runs one filter command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))
