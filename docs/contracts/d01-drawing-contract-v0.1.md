@@ -117,7 +117,7 @@ of:
 | `arc` | centre, radius > 0, start/end radians, nonzero sweep (magnitude ≤ one turn) | radius ≤ `MAX_PAPER_MM` |
 | `circle` | centre, radius > 0 | radius ≤ `MAX_PAPER_MM` |
 | `rectangle` | two opposite corners, positive width and height | corners within ±`MAX_PAPER_MM` |
-| `text` | anchor, height > 0, rotation (radians, magnitude ≤ one turn); `drawing:text` string | text non-empty, no control characters, ≤ 128 bytes |
+| `text` | anchor, height > 0, rotation (radians, magnitude ≤ one turn); `drawing:text` string | anchor and height within ±`MAX_PAPER_MM`; text non-empty, no control characters, ≤ 128 bytes |
 | `hatch` | closed outline of 3–16 vertices (closing segment implicit), `drawing:pattern` = `solid`\|`diagonal`\|`crosshatch` | vertices within ±`MAX_PAPER_MM`, positive-length segments |
 | `symbol` | anchor, scale > 0; `drawing:symbol` = `north`\|`section`\|`detail`\|`elevation` | anchor and scale within ±`MAX_PAPER_MM` |
 | `free_dimension` | two distinct points, signed offset, 0–3 decimal places | points and offset within ±`MAX_PAPER_MM` |
