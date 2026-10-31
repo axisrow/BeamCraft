@@ -81,7 +81,11 @@ resolve as explicitly unresolved — that is a projection outcome, not an admiss
 - nonfinite or out-of-range numbers: paper coordinates and dimension offsets within
   ±`MAX_PAPER_MM` (10 000 mm), scale denominators 1 through `MAX_SCALE_DENOMINATOR` (10 000);
 - more than three decimal places in a dimension label;
-- anchors that are not distinct qualified vertices of the selected member.
+- anchors that are not distinct qualified vertices of the selected member;
+- placed views violating the paper bounds above, colliding with any document-object, drawn
+  object or sibling placed-view UUID (checked in both replacement directions);
+- placed views and drawn objects together exceeding the one-page intent
+  (`MAX_INTENT_PAGE_ITEMS`, 64 prims), even when each collection is under its own cap.
 
 ## 6. Resolution and unresolved states
 
@@ -120,16 +124,46 @@ millimetres; angles are radians. In the intent USD the entities are the canonica
 children `E1..En` of `/Drawing/Drafting` (`drawing:id`, `drawing:kind`,
 `drawing:geometry double[]`); the canonical re-encode comparison refuses any other topology.
 
+## 6b. Placed views (D04 slice 1)
+
+Beside the primary view, a document may hold up to `MAX_VIEWS` (16) placed views
+(`DrawingSpec.views`), each a full `ViewSpec` with its own front/top/right basis, scale
+denominator and paper origin under the same bounds as the primary view. Nothing is placed
+automatically: a created or refreshed document carries only the views its caller named, and
+placement changes only through the whole-document intent operation `Drawing::with_views`
+(the CLI `edit-views`), never as a side effect of model or drafting edits.
+
+Identity discipline mirrors the drawn objects: placed-view UUIDs are pairwise distinct and
+distinct from the drawing/view/dimension and drawn-object UUIDs, in both replacement
+directions — `with_views` is cross-checked against existing drafting and `with_drafting`
+against existing views.
+
+Each placed view resolves from the document's exact pinned snapshot through
+`projection::resolve_view`: a view outside the document refuses, a snapshot whose pin
+disagrees refuses before geometry, and missing/unsupported geometry stays explicitly
+unresolved. Freshness is unchanged — every placed view shares the document's source pin, so
+a model change marks all views stale together and an explicit refresh re-binds them.
+
+The closed canonical intent carries the views as the optional `/Drawing/Views` scope with
+canonical ordinal children `V1..Vn` (`drawing:id`, `drawing:plane`, `drawing:scale`,
+`drawing:origin double[]`). The whole intent must fit one closed reader page:
+`MAX_INTENT_PAGE_ITEMS` (64) prims — the three fixed document prims, one optional scope per
+non-empty collection, and every placed view and drawn object. `edit-views` follows the same
+replay discipline as `edit-drafting`: no model store on the command line, and the request
+fingerprint binds the incoming placement, so an exact replay returns the same revision and a
+changed placement under the same operation id refuses.
+
 ## 7. Module map
 
 - `beamcraft-model::id` — drawing object identities (typed UUIDv7).
 - `beamcraft-model::drawing` — source pin, live-source and freshness states.
-- `beamcraft-engine::drawing` — admission (`Drawing::admit`), view/dimension specs, drawn
-  objects (`drafting`), re-export of the pin and freshness states; `projection`, `svg`, `pdf`
-  and `print` submodules. `pdf` renders one published version as stroke-only PDF 1.4 (no font is
-  embedded or referenced); `print` is the print pipeline shape: resolved strokes laid out 1:1,
-  centred on a fixed A4–A0 sheet, refusing instead of rescaling.
+- `beamcraft-engine::drawing` — admission (`Drawing::admit`), view/dimension specs, placed
+  views (`views`), drawn objects (`drafting`), re-export of the pin and freshness states;
+  `projection` (including per-view `resolve_view`), `svg`, `pdf` and `print` submodules. `pdf`
+  renders one published version as stroke-only PDF 1.4 (no font is embedded or referenced);
+  `print` is the print pipeline shape: resolved strokes laid out 1:1, centred on a fixed
+  A4–A0 sheet, refusing instead of rescaling.
 - `apps/beamcraft-cli` — `preview-drawing`, `create-drawing`, `refresh-drawing`,
-  `edit-drafting`, `publish-drawing`, `inspect-drawing`, `inspect-drawing-versions`,
-  `export-drawing`, and the drawing document store; it computes nothing the engine does not
-  expose.
+  `edit-drafting`, `edit-views`, `publish-drawing`, `inspect-drawing`,
+  `inspect-drawing-versions`, `export-drawing`, and the drawing document store; it computes
+  nothing the engine does not expose.
