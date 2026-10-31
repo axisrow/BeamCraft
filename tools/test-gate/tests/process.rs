@@ -325,8 +325,9 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     write(
         &root,
         "apps/beamcraft-cli/Cargo.toml",
-        "[package]\nname=\"beamcraft-cli\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+        "[package]\nname=\"beamcraft-cli\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[[bin]]\nname=\"beamcraft-test-gate\"\npath=\"src/main.rs\"\n",
     );
+    write(&root, "apps/beamcraft-cli/src/main.rs", "fn main() {}\n");
     write(
         &root,
         "apps/beamcraft-cli/src/lib.rs",
@@ -380,7 +381,14 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     );
     git(&root, &["add", "."]);
     git(&root, &["commit", "-m", "CLI-only fixture change"]);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_beamcraft-test-gate"));
+    // A workspace binary with the running wrapper's name must not replace or lock it.
+    let wrapper = root.join(format!(
+        "target/debug/beamcraft-test-gate{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_beamcraft-test-gate"), &wrapper).unwrap();
+    let mut cmd = Command::new(&wrapper);
     cmd.current_dir(&root)
         .args([
             "check",
@@ -398,6 +406,10 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     let result = process::run("cli-gate", &mut cmd, &temp.0, Duration::from_secs(90)).unwrap();
     let stderr = std::fs::read_to_string(temp.0.join("cli-gate.stderr.log")).unwrap();
     assert_eq!(result.exit_code, 0, "{stderr}");
+    assert_eq!(
+        std::fs::read(&wrapper).unwrap(),
+        std::fs::read(env!("CARGO_BIN_EXE_beamcraft-test-gate")).unwrap()
+    );
     let report: Report = serde_json::from_str(
         &std::fs::read_to_string(root.join("target/run/report.json")).unwrap(),
     )
@@ -411,7 +423,7 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
             .contains("1 passed")
     );
     assert!(
-        !std::fs::read_dir(root.join("target/debug/deps"))
+        !std::fs::read_dir(root.join("target/test-gate/target/debug/deps"))
             .unwrap()
             .any(|e| e
                 .unwrap()
@@ -428,7 +440,7 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     );
     git(&root, &["add", "."]);
     git(&root, &["commit", "-m", "source mutation fixture"]);
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_beamcraft-test-gate"));
+    let mut cmd = Command::new(&wrapper);
     cmd.current_dir(&root)
         .args([
             "check",

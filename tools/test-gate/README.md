@@ -40,6 +40,9 @@ scope, tool versions, executed/expected test counts and individual stage statuse
 Explicitly ignored tests are listed as coverage limits, not represented as executed passes.
 Test builds omit debug symbols and incremental state, matching CI; debug assertions and
 overflow checks remain enabled.
+Child Cargo artifacts use `test-gate/target` below the selected Cargo target directory.
+This keeps workspace builds from replacing the running `cargo run` wrapper or locking its
+executable on Windows. CI extracts archives into the same directory layout.
 Existing feature deferrals such as #763 are not silently re-enabled by this maintenance change.
 
 ## Publication and CI

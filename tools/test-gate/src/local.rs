@@ -91,11 +91,26 @@ pub fn changed_paths(root: &Path, base: &str, head: &str) -> Result<Vec<String>>
         .collect())
 }
 
+fn build_target(root: &Path) -> PathBuf {
+    let base = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.join("target"));
+    let base = if base.is_absolute() {
+        base
+    } else {
+        root.join(base)
+    };
+    // Keep Cargo's running `cargo run` wrapper outside the artifacts it rebuilds.
+    // The final `target` component also preserves archive paths on another runner.
+    base.join("test-gate/target")
+}
+
 fn cargo(root: &Path) -> Command {
     let mut command = Command::new("cargo");
     // Match CI's compact test artifacts without disabling runtime assertions.
     command
         .current_dir(root)
+        .env("CARGO_TARGET_DIR", build_target(root))
         .env("CARGO_PROFILE_TEST_DEBUG", "0")
         .env("CARGO_PROFILE_TEST_DEBUG_ASSERTIONS", "true")
         .env("CARGO_PROFILE_TEST_OVERFLOW_CHECKS", "true")
@@ -555,6 +570,11 @@ pub fn ci_test(root: &Path, output: &Path, archive: &Path, partition: &str) -> R
     }
     std::fs::create_dir_all(output)?;
     let cfg = config(root, output)?;
+    let target = build_target(root);
+    let extract = target
+        .parent()
+        .ok_or("missing archive extraction directory")?;
+    std::fs::create_dir_all(extract)?;
     let part = format!("hash:{index}/{total}");
     let prepare = stage(
         "prepare",
@@ -562,14 +582,14 @@ pub fn ci_test(root: &Path, output: &Path, archive: &Path, partition: &str) -> R
             .arg("--archive-file")
             .arg(archive)
             .args([
-                "--extract-to",
-                ".",
                 "--extract-overwrite",
                 "--partition",
                 &part,
                 "--message-format",
                 "json",
-            ]),
+            ])
+            .arg("--extract-to")
+            .arg(extract),
         output,
         BUILD_LIMIT,
     );
@@ -585,8 +605,6 @@ pub fn ci_test(root: &Path, output: &Path, archive: &Path, partition: &str) -> R
                 .arg("--archive-file")
                 .arg(archive)
                 .args([
-                    "--extract-to",
-                    ".",
                     "--extract-overwrite",
                     "--partition",
                     &part,
@@ -595,7 +613,9 @@ pub fn ci_test(root: &Path, output: &Path, archive: &Path, partition: &str) -> R
                     "0",
                     "--no-tests",
                     "fail",
-                ]),
+                ])
+                .arg("--extract-to")
+                .arg(extract),
             output,
             BUILD_LIMIT,
         )
