@@ -1410,9 +1410,10 @@ fn a_source_above_the_blob_cap_is_refused_without_changing_the_revision() {
 
 #[test]
 fn the_stage_budget_limits_how_many_distinct_sources_a_revision_can_hold() {
-    // Eight layers in all: root, authored, derived and five distinct foreign layers.
+    // Sixteen layers in all (F12 raised the stage budget from eight to hold coordination
+    // closures): root, authored, derived and thirteen distinct foreign layers.
     let f = Fixture::new();
-    for n in 0..5 {
+    for n in 0..13 {
         let source = f.source(
             &format!("site-{n}.usda"),
             SITE.replace("declared by the source", &format!("source number {n}")),
@@ -1420,15 +1421,15 @@ fn the_stage_budget_limits_how_many_distinct_sources_a_revision_can_hold() {
         f.attach(&source, &[]);
     }
     let before = f.listing();
-    let sixth = f.source(
-        "site-5.usda",
-        SITE.replace("declared by the source", "number five"),
+    let fourteenth = f.source(
+        "site-13.usda",
+        SITE.replace("declared by the source", "number thirteen"),
     );
-    let (code, body) = f.run("attach-reference", &["--source", &sixth]);
+    let (code, body) = f.run("attach-reference", &["--source", &fourteenth]);
     assert_eq!(
         (code, text(&body, "code")),
         (2, "LIMIT_EXCEEDED".to_owned())
     );
     assert_eq!(f.listing(), before, "the refused attach stored nothing");
-    assert_eq!(at(&f.inspect(), &["references"]).array().unwrap().len(), 5);
+    assert_eq!(at(&f.inspect(), &["references"]).array().unwrap().len(), 13);
 }

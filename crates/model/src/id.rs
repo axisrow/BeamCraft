@@ -211,6 +211,21 @@ typed_id!(
     /// Identity of an immutable published drawing version, separate from its source revision.
     DocumentVersionId
 );
+typed_id!(
+    /// Identity of one project section (F12 PC-ID-001). Its code is a mutable label; this
+    /// identity is not.
+    SectionId
+);
+typed_id!(
+    /// Identity of one project zone (F12 PC-ID-001). Its code is a mutable label; this
+    /// identity is not.
+    ZoneId
+);
+typed_id!(
+    /// Identity of one coordination connection occurrence in a coordination project
+    /// (F12 PC-ID-002). Repeated placement of one source is a distinct connection, never a copy.
+    ConnectionId
+);
 
 impl ElementId {
     /// The canonical USD path, using the immutable category and the complete UUIDv7.

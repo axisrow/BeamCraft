@@ -775,6 +775,85 @@ read.
 levels --store ROOT
 ```
 
+## coordination
+
+### set-project-metadata
+
+write.
+
+```text
+set-project-metadata --store ROOT [--code CODE] [--name TEXT] [--organization TEXT] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### define-section
+
+write.
+
+```text
+define-section --store ROOT --code CODE --module TOKENS [--section-id UUID] [--label TEXT]
+    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
+```
+
+### define-zone
+
+write.
+
+```text
+define-zone --store ROOT --code CODE [--zone-id UUID] [--label TEXT] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### show-project
+
+read.
+
+```text
+show-project --store ROOT [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+    [--project-id UUID] [--workspace-id UUID]
+```
+
+### connect-project
+
+write.
+
+```text
+connect-project --store ROOT --source-store ROOT --source-project UUID --source-revision UUID
+    --label TEXT [--scope whole|CODE] [--connection-id UUID] [--translation X,Y,Z]
+    [--orientation X,Y,Z,W] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+    [--project-id UUID] [--workspace-id UUID]
+```
+
+### update-connection
+
+write.
+
+```text
+update-connection --store ROOT --connection UUID --expected-revision UUID --source-store ROOT
+    --source-project UUID --source-revision UUID [--scope whole|CODE] [--label TEXT]
+    [--translation X,Y,Z] [--orientation X,Y,Z,W] [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### remove-connection
+
+write.
+
+```text
+remove-connection --store ROOT --connection UUID [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
+### resolve-connection
+
+read.
+
+```text
+resolve-connection --store ROOT --connection UUID [--op-id UUID] [--revision-id UUID]
+    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
+```
+
 ## attribute
 
 ### attribute-define

@@ -10,6 +10,8 @@ pub mod coordination;
 /// Persistent cut ordinal and retired-record identities.
 pub mod cut_history;
 mod derive;
+/// The F12 project descriptor record of the root layer (descriptor, registries, pins).
+pub mod descriptor;
 mod edit;
 pub mod grid;
 mod guard;
