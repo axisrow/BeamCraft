@@ -334,6 +334,23 @@ pub(super) fn text_strokes(text: &str, origin: [f64; 2]) -> Vec<[[f64; 2]; 2]> {
     strokes
 }
 
+/// Total advance width of one text run exactly as [`text_strokes`] lays it out, so callers
+/// can centre a run without duplicating the advance rule. Never negative.
+pub(super) fn text_width(text: &str) -> f64 {
+    let advances: f64 = text
+        .chars()
+        .map(|ch| {
+            let folded = ch.to_ascii_uppercase();
+            if folded == '.' {
+                DOT_ADVANCE
+            } else {
+                GLYPH_WIDTH + GLYPH_GAP
+            }
+        })
+        .sum();
+    (advances - GLYPH_GAP).max(0.0)
+}
+
 /// Two open-V strokes forming an arrowhead at `tip`, opening back along the unit `inward`.
 pub(super) fn arrow_strokes(tip: [f64; 2], inward: [f64; 2]) -> [[[f64; 2]; 2]; 2] {
     let side = [-inward[1], inward[0]];
@@ -549,6 +566,7 @@ mod tests {
                 plane: Plane::Front,
                 scale_denominator: DEFAULT_SCALE_DENOMINATOR,
                 paper_origin_mm: [0.0, 0.0],
+                title: None,
             },
             dimension: DimensionSpec {
                 id: DimensionId::parse(C).unwrap(),

@@ -32,7 +32,7 @@ pub const INTENT_LAYER: &str = "drawing.usda";
 /// page-maximal document instead of refusing admitted state at encode time.
 pub const MAX_INTENT_BYTES: usize = 131_072;
 /// Closed descriptor whose SHA-256 is the drawing schema identity.
-pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/4;intent-bytes=131072;number-text-bytes=24;root=/Drawing;view=/Drawing/View;views=/Drawing/Views;views-cap=16;sections=/Drawing/Sections;sections-cap=16;details=/Drawing/Details;details-cap=16;page-items=64;dimension=/Drawing/Dimension;sheet=/Drawing/Sheet;sheet-sizes=a4,a3,a2,a1,a0;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;drafting-attrs=layer,linetype;linetypes=continuous,dashed,dotted,dashdot;layers=/Drawing/Layers;layers-cap=16;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
+pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/4;intent-bytes=131072;number-text-bytes=24;root=/Drawing;view=/Drawing/View;view-title=drawing:title;views=/Drawing/Views;views-cap=16;sections=/Drawing/Sections;sections-cap=16;details=/Drawing/Details;details-cap=16;page-items=64;dimension=/Drawing/Dimension;sheet=/Drawing/Sheet;sheet-sizes=a4,a3,a2,a1,a0;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;drafting-attrs=layer,linetype;linetypes=continuous,dashed,dotted,dashdot;layers=/Drawing/Layers;layers-cap=16;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
 
 /// Independent drawing schema digest; never interchangeable with the engineering-model schema.
 pub fn schema_identity() -> Result<ContentDigest, PlateError> {
@@ -62,6 +62,15 @@ fn quote(text: &str) -> String {
     out
 }
 
+/// The optional `drawing:title` attribute line of one view scope; an unannotated view
+/// authors none, so the canonical bytes of an untitled document stay byte-stable.
+fn title_line(title: &Option<String>, indent: &str) -> String {
+    match title {
+        Some(title) => format!("{indent}custom string drawing:title = {}\n", quote(title)),
+        None => String::new(),
+    }
+}
+
 /// Encodes bounded immutable intent as ordinary USD custom attributes. It authors no engineering
 /// prim, geometry or approved mark and grants no source verification/publication authority.
 pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
@@ -87,7 +96,7 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
             quote(&value)
         ));
     }
-    text.push_str(&format!("    custom uint64 drawing:sourceGeneration = {}\n    def Scope \"View\"\n    {{\n        custom string drawing:id = {}\n        custom token drawing:plane = {}\n        custom double drawing:scale = {}\n        custom double[] drawing:origin = [{x}, {y}]\n    }}\n", source.generation, quote(&s.view.id.to_string()), quote(s.view.plane.as_str()), s.view.scale_denominator));
+    text.push_str(&format!("    custom uint64 drawing:sourceGeneration = {}\n    def Scope \"View\"\n    {{\n        custom string drawing:id = {}\n        custom token drawing:plane = {}\n        custom double drawing:scale = {}\n        custom double[] drawing:origin = [{x}, {y}]\n{}    }}\n", source.generation, quote(&s.view.id.to_string()), quote(s.view.plane.as_str()), s.view.scale_denominator, title_line(&s.view.title, "        ")));
     text.push_str(&format!("    def Scope \"Dimension\"\n    {{\n        custom string drawing:id = {}\n        custom string[] drawing:anchors = [{}, {}]\n        custom double drawing:offset = {}\n        custom uint drawing:decimals = {}\n    }}\n", quote(&s.dimension.id.to_string()), quote(&a.to_string()), quote(&b.to_string()), s.dimension.paper_offset_mm, s.dimension.decimal_places));
     if let Some(sheet) = &s.sheet {
         text.push_str(&format!("    def Scope \"Sheet\"\n    {{\n        custom token drawing:size = {}\n        custom double drawing:frameInset = {}\n        custom string drawing:titleProject = {}\n        custom string drawing:titleAuthor = {}\n    }}\n", quote(sheet.size.as_str()), sheet.frame.inset_mm, quote(&sheet.title.project), quote(&sheet.title.author)));
@@ -98,7 +107,7 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
             // Canonical ordinal names, not view UUIDs: the prim name is derived state, the
             // identity lives in the drawing:id attribute.
             let [x, y] = view.paper_origin_mm;
-            text.push_str(&format!("        def Scope \"V{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:plane = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n        }}\n", ordinal + 1, quote(&view.id.to_string()), quote(view.plane.as_str()), view.scale_denominator));
+            text.push_str(&format!("        def Scope \"V{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:plane = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n{}        }}\n", ordinal + 1, quote(&view.id.to_string()), quote(view.plane.as_str()), view.scale_denominator, title_line(&view.title, "            ")));
         }
         text.push_str("    }\n");
     }
@@ -108,7 +117,7 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
             // Canonical ordinal names, not view UUIDs: the prim name is derived state, the
             // identity lives in the drawing:id attribute.
             let [x, y] = section.paper_origin_mm;
-            text.push_str(&format!("        def Scope \"S{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:plane = {}\n            custom double drawing:cut = {}\n            custom token drawing:side = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n        }}\n", ordinal + 1, quote(&section.id.to_string()), quote(section.plane.as_str()), section.cut_mm, quote(section.side.as_str()), section.scale_denominator));
+            text.push_str(&format!("        def Scope \"S{}\"\n        {{\n            custom string drawing:id = {}\n            custom token drawing:plane = {}\n            custom double drawing:cut = {}\n            custom token drawing:side = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n{}        }}\n", ordinal + 1, quote(&section.id.to_string()), quote(section.plane.as_str()), section.cut_mm, quote(section.side.as_str()), section.scale_denominator, title_line(&section.title, "            ")));
         }
         text.push_str("    }\n");
     }
@@ -117,7 +126,7 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
         for (ordinal, detail) in s.details.iter().enumerate() {
             let [cx, cy] = detail.center_paper_mm;
             let [x, y] = detail.paper_origin_mm;
-            text.push_str(&format!("        def Scope \"D{}\"\n        {{\n            custom string drawing:id = {}\n            custom string drawing:parent = {}\n            custom double[] drawing:center = [{cx}, {cy}]\n            custom double drawing:radius = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n        }}\n", ordinal + 1, quote(&detail.id.to_string()), quote(&detail.parent.to_string()), detail.radius_mm, detail.scale_denominator));
+            text.push_str(&format!("        def Scope \"D{}\"\n        {{\n            custom string drawing:id = {}\n            custom string drawing:parent = {}\n            custom double[] drawing:center = [{cx}, {cy}]\n            custom double drawing:radius = {}\n            custom double drawing:scale = {}\n            custom double[] drawing:origin = [{x}, {y}]\n{}        }}\n", ordinal + 1, quote(&detail.id.to_string()), quote(&detail.parent.to_string()), detail.radius_mm, detail.scale_denominator, title_line(&detail.title, "            ")));
         }
         text.push_str("    }\n");
     }
@@ -197,6 +206,22 @@ fn text<'a>(prim: &'a Prim, name: &str, type_name: &str) -> Result<&'a str, Plat
     match value(prim, name, type_name)? {
         Value::Text(text) => Ok(text),
         _ => Err(integrity("drawing attribute is not text")),
+    }
+}
+
+/// Reads one view's optional title attribute. An absent attribute is the unannotated
+/// default; any present-but-malformed one refuses, and the canonical re-encode comparison
+/// below refuses every other deviation from the closed schema.
+fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, PlateError> {
+    let Some(property) = prim.properties.iter().find(|p| p.name == name) else {
+        return Ok(None);
+    };
+    if property.type_name != "string" {
+        return Err(integrity("drawing attribute is not text"));
+    }
+    match &property.value {
+        Some(Value::Text(text)) => Ok(Some(text.clone())),
+        _ => Err(integrity("drawing attribute has no value")),
     }
 }
 
@@ -482,6 +507,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                         .ok_or_else(|| integrity("invalid drawing plane"))?,
                     scale_denominator: number(item, "drawing:scale")?,
                     paper_origin_mm: paper_origin(item)?,
+                    title: optional_text(item, "drawing:title")?,
                 });
             }
             views
@@ -503,6 +529,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                         .ok_or_else(|| integrity("invalid drawing side"))?,
                     scale_denominator: number(item, "drawing:scale")?,
                     paper_origin_mm: paper_origin(item)?,
+                    title: optional_text(item, "drawing:title")?,
                 });
             }
             sections
@@ -530,6 +557,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                     radius_mm: number(item, "drawing:radius")?,
                     scale_denominator: number(item, "drawing:scale")?,
                     paper_origin_mm: paper_origin(item)?,
+                    title: optional_text(item, "drawing:title")?,
                 });
             }
             details
@@ -547,6 +575,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
                 .ok_or_else(|| integrity("invalid drawing plane"))?,
             scale_denominator: number(view, "drawing:scale")?,
             paper_origin_mm: origin,
+            title: optional_text(view, "drawing:title")?,
         },
         dimension: DimensionSpec {
             id: DimensionId::parse(text(dim, "drawing:id", "string")?).map_err(bad_id)?,

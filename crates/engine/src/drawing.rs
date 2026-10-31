@@ -101,6 +101,9 @@ pub struct ViewSpec {
     pub scale_denominator: f64,
     /// Paper-space view origin in millimetres, each component within 10000 in magnitude.
     pub paper_origin_mm: [f64; 2],
+    /// Authored view title rendered beside the view with its display scale on sheet exports;
+    /// absent renders the scale alone. A present title obeys the bounded label rule.
+    pub title: Option<String>,
 }
 
 /// Which side of a section's cut plane stays visible: the half-space at greater or lesser
@@ -150,6 +153,9 @@ pub struct SectionSpec {
     pub scale_denominator: f64,
     /// Paper-space view origin in millimetres, each component within 10000 in magnitude.
     pub paper_origin_mm: [f64; 2],
+    /// Authored section title rendered beside the view with its display scale; absent
+    /// renders the scale alone. A present title obeys the bounded label rule.
+    pub title: Option<String>,
 }
 
 /// One detail view: a circular region of one parent view (the primary view or a placed
@@ -171,6 +177,9 @@ pub struct DetailSpec {
     pub scale_denominator: f64,
     /// Paper-space view origin in millimetres, each component within 10000 in magnitude.
     pub paper_origin_mm: [f64; 2],
+    /// Authored detail title rendered beside the view with its display scale; absent
+    /// renders the scale alone. A present title obeys the bounded label rule.
+    pub title: Option<String>,
 }
 
 /// One aligned projected linear dimension. Its endpoints must be vertices of the selected member.
@@ -257,6 +266,18 @@ fn finite_range(value: f64, min: f64, max: f64, field: &'static str) -> Result<(
     Ok(())
 }
 
+/// Validates one view's authored title; a present title obeys the bounded label rule, an
+/// absent one is the unannotated default.
+fn validate_title(title: &Option<String>) -> Result<(), CommandError> {
+    if title.as_ref().is_some_and(|title| !label_is_valid(title)) {
+        return Err(invalid(
+            "title",
+            "view title must satisfy the bounded label rule",
+        ));
+    }
+    Ok(())
+}
+
 /// Validates one view's paper settings; the primary and every placed/section/detail view
 /// obey the same bounds.
 fn validate_paper_settings(
@@ -291,6 +312,7 @@ fn validate_section(section: &SectionSpec) -> Result<(), CommandError> {
             "section cut exceeds the model coordinate cap",
         ));
     }
+    validate_title(&section.title)?;
     validate_paper_settings(section.scale_denominator, section.paper_origin_mm)
 }
 
@@ -312,6 +334,7 @@ fn validate_detail(detail: &DetailSpec) -> Result<(), CommandError> {
             "detail radius must be greater than zero and within the paper coordinate cap",
         ));
     }
+    validate_title(&detail.title)?;
     validate_paper_settings(detail.scale_denominator, detail.paper_origin_mm)
 }
 
@@ -343,6 +366,7 @@ impl Drawing {
             ));
         }
         validate_paper_settings(spec.view.scale_denominator, spec.view.paper_origin_mm)?;
+        validate_title(&spec.view.title)?;
         finite_range(
             spec.dimension.paper_offset_mm,
             -MAX_PAPER_MM,
@@ -469,6 +493,7 @@ impl Drawing {
             }
         }
         for placed in views {
+            validate_title(&placed.title)?;
             validate_paper_settings(placed.scale_denominator, placed.paper_origin_mm)?;
         }
         for section in sections {

@@ -1279,8 +1279,8 @@ write.
 ```text
 create-drawing --store ROOT --document-dir DIR --op-id UUID --revision-id UUID --actor-id UUID
     --id UUID --drawing-id UUID --view-id UUID --dimension-id UUID --anchor-a FEATURE_ID
-    --anchor-b FEATURE_ID [--name TEXT] [--plane front|top|right] [--scale N] [--origin X,Y]
-    [--offset MM] [--decimals 0..255]
+    --anchor-b FEATURE_ID [--name TEXT] [--view-title TEXT] [--plane front|top|right] [--scale N]
+    [--origin X,Y] [--offset MM] [--decimals 0..255]
 ```
 
 ### refresh-drawing
@@ -1291,7 +1291,8 @@ write.
 refresh-drawing --store ROOT --document-dir DIR --expected-head UUID --op-id UUID
     --revision-id UUID --actor-id UUID --id UUID --drawing-id UUID --view-id UUID
     --dimension-id UUID --anchor-a FEATURE_ID --anchor-b FEATURE_ID [--name TEXT]
-    [--plane front|top|right] [--scale N] [--origin X,Y] [--offset MM] [--decimals 0..255]
+    [--view-title TEXT] [--plane front|top|right] [--scale N] [--origin X,Y] [--offset MM]
+    [--decimals 0..255]
 ```
 
 ### edit-drafting
@@ -1309,7 +1310,7 @@ write.
 
 ```text
 edit-views --document-dir DIR --expected-head UUID --op-id UUID --revision-id UUID --actor-id UUID
-    --placed-view SPEC
+    --placed-view SPEC [--placed-section SPEC] [--placed-detail SPEC]
 ```
 
 ### edit-sheet

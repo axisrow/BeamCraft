@@ -105,6 +105,7 @@ mod tests {
                 plane: Plane::Front,
                 scale_denominator: DEFAULT_SCALE_DENOMINATOR,
                 paper_origin_mm: [0.0, 0.0],
+                title: None,
             },
             dimension: DimensionSpec {
                 id: DimensionId::parse(C).unwrap(),

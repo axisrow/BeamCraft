@@ -34,6 +34,7 @@ fn spec() -> DrawingSpec {
             plane: Plane::Front,
             scale_denominator: DEFAULT_SCALE_DENOMINATOR,
             paper_origin_mm: [25.0, 40.0],
+            title: None,
         },
         dimension: DimensionSpec {
             id: DimensionId::parse(C).unwrap(),
@@ -455,6 +456,7 @@ fn placed_views_are_bounded_distinct_and_never_document_or_drawn_object_ids() {
         plane: Plane::Top,
         scale_denominator: scale,
         paper_origin_mm: origin,
+        title: None,
     };
     const TOP: &str = "01900000-0000-7000-8000-000000000006";
     const OTHER: &str = "01900000-0000-7000-8000-000000000007";
@@ -604,6 +606,7 @@ fn sections_are_bounded_and_share_one_paper_identity_space() {
         side: CutSide::Negative,
         scale_denominator: 50.0,
         paper_origin_mm: [5.0, -5.0],
+        title: None,
     };
     const AA: &str = "01900000-0000-7000-8000-000000000007";
     const BB: &str = "01900000-0000-7000-8000-000000000008";
@@ -687,6 +690,7 @@ fn sections_are_bounded_and_share_one_paper_identity_space() {
                 plane: Plane::Top,
                 scale_denominator: 50.0,
                 paper_origin_mm: [0.0, 0.0],
+                title: None,
             })
             .collect();
         s.sections = (0..sections as u64)
@@ -700,6 +704,7 @@ fn sections_are_bounded_and_share_one_paper_identity_space() {
                 radius_mm: 5.0,
                 scale_denominator: 10.0,
                 paper_origin_mm: [0.0, 0.0],
+                title: None,
             })
             .collect();
         if drafting > 0 {
@@ -750,6 +755,7 @@ fn sections_are_bounded_and_share_one_paper_identity_space() {
                 plane: Plane::Top,
                 scale_denominator: 50.0,
                 paper_origin_mm: [0.0, 0.0],
+                title: None,
             }])
             .unwrap_err()
             .code,
@@ -767,6 +773,7 @@ fn details_magnify_an_existing_view_and_refuse_foreign_or_section_parents() {
         radius_mm: radius,
         scale_denominator: 20.0,
         paper_origin_mm: [100.0, 100.0],
+        title: None,
     };
     const D1: &str = "01900000-0000-7000-8000-000000000009";
     const PLACED: &str = "01900000-0000-7000-8000-000000000010";
@@ -777,6 +784,7 @@ fn details_magnify_an_existing_view_and_refuse_foreign_or_section_parents() {
         plane: Plane::Top,
         scale_denominator: 50.0,
         paper_origin_mm: [0.0, 0.0],
+        title: None,
     }];
     base.sections = vec![SectionSpec {
         id: DrawingViewId::parse(SECTION).unwrap(),
@@ -785,6 +793,7 @@ fn details_magnify_an_existing_view_and_refuse_foreign_or_section_parents() {
         side: CutSide::Positive,
         scale_denominator: 50.0,
         paper_origin_mm: [0.0, 0.0],
+        title: None,
     }];
     let with = |details: Vec<DetailSpec>| {
         Drawing::admit(DrawingSpec {
@@ -874,6 +883,7 @@ fn placed_sections_and_details_resolve_from_the_document_pin_and_foreign_ones_re
         side: CutSide::Positive,
         scale_denominator: 50.0,
         paper_origin_mm: [0.0, 0.0],
+        title: None,
     };
     let detail = DetailSpec {
         id: DrawingViewId::parse(D1).unwrap(),
@@ -882,6 +892,7 @@ fn placed_sections_and_details_resolve_from_the_document_pin_and_foreign_ones_re
         radius_mm: 20.0,
         scale_denominator: 20.0,
         paper_origin_mm: [100.0, 100.0],
+        title: None,
     };
     s.sections = vec![section.clone()];
     s.details = vec![detail.clone()];
@@ -949,6 +960,7 @@ fn placed_views_resolve_from_the_document_pin_and_foreign_views_refuse() {
         plane,
         scale_denominator: 50.0,
         paper_origin_mm: [10.0, 20.0],
+        title: None,
     };
     const TOP: &str = "01900000-0000-7000-8000-000000000006";
     let mut s = spec();
@@ -992,4 +1004,63 @@ fn placed_views_resolve_from_the_document_pin_and_foreign_views_refuse() {
             ErrorCode::StaleWorkspace
         );
     }
+}
+
+#[test]
+fn view_titles_obey_the_bounded_label_rule_in_every_view_collection() {
+    use beamcraft_model::limits::MAX_LABEL_BYTES;
+    let titled = |title: Option<String>| {
+        let mut s = spec();
+        s.view.title = title.clone();
+        s.views = vec![ViewSpec {
+            id: DrawingViewId::parse("01900000-0000-7000-8000-000000000006").unwrap(),
+            plane: Plane::Top,
+            scale_denominator: 50.0,
+            paper_origin_mm: [0.0, 0.0],
+            title: title.clone(),
+        }];
+        s.sections = vec![SectionSpec {
+            id: DrawingViewId::parse("01900000-0000-7000-8000-000000000007").unwrap(),
+            plane: Plane::Right,
+            cut_mm: 1500.0,
+            side: CutSide::Negative,
+            scale_denominator: 50.0,
+            paper_origin_mm: [5.0, -5.0],
+            title: title.clone(),
+        }];
+        s.details = vec![DetailSpec {
+            id: DrawingViewId::parse("01900000-0000-7000-8000-000000000008").unwrap(),
+            parent: s.view.id,
+            center_paper_mm: [0.0, 0.0],
+            radius_mm: 5.0,
+            scale_denominator: 10.0,
+            paper_origin_mm: [0.0, 0.0],
+            title,
+        }];
+        s
+    };
+    // An absent title stays the default everywhere; a present one must pass the label rule,
+    // in the primary view and in every paper collection alike.
+    assert!(Drawing::admit(titled(None)).is_ok());
+    let good = Drawing::admit(titled(Some("SECTION A-A".to_owned()))).unwrap();
+    assert_eq!(good.spec().view.title.as_deref(), Some("SECTION A-A"));
+    assert_eq!(good.views()[0].title.as_deref(), Some("SECTION A-A"));
+    assert_eq!(good.sections()[0].title.as_deref(), Some("SECTION A-A"));
+    assert_eq!(good.details()[0].title.as_deref(), Some("SECTION A-A"));
+    for bad in [
+        String::new(),
+        "\u{7}".to_owned(),
+        "x".repeat(MAX_LABEL_BYTES + 1),
+    ] {
+        assert!(Drawing::admit(titled(Some(bad.clone()))).is_err());
+    }
+    // A replacement re-validates the incoming titles with the same rule.
+    let replaced = good.with_views(vec![ViewSpec {
+        id: DrawingViewId::parse("01900000-0000-7000-8000-000000000006").unwrap(),
+        plane: Plane::Top,
+        scale_denominator: 50.0,
+        paper_origin_mm: [0.0, 0.0],
+        title: Some("\u{7}".to_owned()),
+    }]);
+    assert!(replaced.is_err());
 }
