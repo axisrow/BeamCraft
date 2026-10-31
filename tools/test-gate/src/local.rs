@@ -575,6 +575,8 @@ pub fn ci_test(root: &Path, output: &Path, archive: &Path, partition: &str) -> R
         .parent()
         .ok_or("missing archive extraction directory")?;
     std::fs::create_dir_all(extract)?;
+    // Empty Cargo scratch directories are not stored in nextest archives.
+    std::fs::create_dir_all(target.join("tmp"))?;
     let part = format!("hash:{index}/{total}");
     let prepare = stage(
         "prepare",

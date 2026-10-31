@@ -149,7 +149,6 @@ jobs:
       - name: Run the whole partition with fixed budgets and complete evidence
         run: |
           chmod +x nextest-archive/beamcraft-test-gate
-          mkdir -p target/tmp
           ./nextest-archive/beamcraft-test-gate ci-test --archive nextest-archive/nextest-archive.tar.zst --partition ${{ matrix.shard }}/4 --output target/test-gate/partition
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
@@ -213,7 +212,6 @@ jobs:
       - name: Run the whole partition with fixed budgets and complete evidence
         run: |
           chmod +x nextest-archive/beamcraft-test-gate.exe
-          mkdir -p target/tmp
           ./nextest-archive/beamcraft-test-gate.exe ci-test --archive nextest-archive/nextest-archive.tar.zst --partition ${{ matrix.shard }}/12 --output target/test-gate/partition
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
@@ -277,7 +275,6 @@ jobs:
       - name: Run the whole partition with fixed budgets and complete evidence
         run: |
           chmod +x nextest-archive/beamcraft-test-gate
-          mkdir -p target/tmp
           ./nextest-archive/beamcraft-test-gate ci-test --archive nextest-archive/nextest-archive.tar.zst --partition ${{ matrix.shard }}/6 --output target/test-gate/partition
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
