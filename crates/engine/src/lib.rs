@@ -57,6 +57,7 @@ pub mod transaction;
 pub mod transform;
 pub mod update;
 pub mod view_clipping;
+pub mod views;
 pub mod weld;
 pub mod work_plane;
 

@@ -38,6 +38,7 @@ mod start;
 mod store;
 mod view;
 mod view_export;
+mod views;
 mod weld;
 mod work_plane;
 mod workspace;
@@ -80,6 +81,7 @@ const SECTIONS: &[&str] = &[
     rebase::HELP,
     reference::HELP,
     view::HELP,
+    views::HELP,
     pick::HELP,
     view_export::HELP,
     bom::HELP,

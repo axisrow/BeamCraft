@@ -43,6 +43,7 @@ mod resolve_cmd;
 mod schedule_cmd;
 mod view;
 mod view_export;
+mod views_cmd;
 mod weld_cmd;
 mod work_plane_cmd;
 
@@ -82,6 +83,7 @@ fn main() -> std::process::ExitCode {
     // refuses it.
     let (json, exit) = match route {
         Some(Route::View) => view::execute(&args),
+        Some(Route::Views) => views_cmd::execute(&args),
         Some(Route::History) => history_cmd::execute(&args),
         Some(Route::Reference) => reference_cmd::execute(&args),
         Some(Route::Assembly) => assembly_cmd::execute(&args),

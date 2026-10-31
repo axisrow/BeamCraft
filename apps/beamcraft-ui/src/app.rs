@@ -30,6 +30,7 @@ use beamcraft_engine::RenderMode;
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
 use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
+use beamcraft_engine::views::{NamedView, ViewBook, WorkArea};
 use beamcraft_model::command::{MemberKind as ModelMemberKind, Placement};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -207,6 +208,14 @@ pub struct App {
     cut_form: crate::cut_plane::Form,
     /// The window's applied display cut; `None` shows the whole model.
     cut: Option<beamcraft_engine::view_clipping::Clipping>,
+    /// The named views of this model (V12) with their session sidecar state.
+    views: ViewBook,
+    views_note: Option<String>,
+    /// The work area the current view carries; a view property, never model state.
+    work_area: Option<WorkArea>,
+    /// The saved-views window and the extra view windows.
+    views_panel: crate::views::Panel,
+    view_windows: Vec<crate::views::ViewWindow>,
 }
 
 /// Records a scene swap in the perf counters: the CPU display bytes and the snapshot mesh bytes
@@ -767,6 +776,12 @@ impl App {
             }
             None => (None, None),
         };
+        // The named-view sidecar is display state: a missing file is an empty book, and an
+        // unreadable one only notes, never blocks opening the model.
+        let (views, views_note) = match crate::views::load(&source.store) {
+            Ok(book) => (book, None),
+            Err(note) => (beamcraft_engine::views::ViewBook::new(), Some(note)),
+        };
         let mut app = Self {
             appearance: None,
             from_library: false,
@@ -856,6 +871,11 @@ impl App {
             shortcuts_note,
             selected_only: ((String::new(), [0.0; 3]), None),
             selection_edges: Default::default(),
+            views,
+            views_note,
+            work_area: None,
+            views_panel: crate::views::Panel::default(),
+            view_windows: Vec::new(),
         };
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
@@ -1039,6 +1059,233 @@ impl App {
             );
         self.stats.resize_ns.add_duration(started.elapsed());
         Ok(())
+    }
+
+    /// The saved-views window (V12): one place to apply, capture and edit views.
+    fn views_window(&mut self, ctx: &egui::Context) {
+        if !self.views_panel.window_open {
+            return;
+        }
+        let mut open = true;
+        let mut shown: Option<Result<Option<crate::views::Action>, String>> = None;
+        egui::Window::new("Saved views")
+            .open(&mut open)
+            .default_width(430.0)
+            .show(ctx, |ui| {
+                // Why the last save, removal or restore failed, kept visible until the next
+                // action succeeds.
+                if let Some(note) = &self.views_note {
+                    ui.colored_label(RED, note);
+                }
+                shown =
+                    Some(
+                        self.views_panel
+                            .show(ui, &self.views, &self.camera, &self.grid_scene),
+                    );
+            });
+        self.views_panel.window_open &= open;
+        match shown {
+            // The action runs after the window closes its borrow of the panel state.
+            Some(Ok(Some(action))) => self.view_action(action),
+            Some(Err(note)) => self.views_note = Some(note),
+            _ => {}
+        }
+    }
+
+    /// Runs one explicit saved-views action; field edits never reach here.
+    fn view_action(&mut self, action: crate::views::Action) {
+        match action {
+            crate::views::Action::Apply(name) => {
+                if let Some(view) = self.views.get(&name).cloned() {
+                    if let Err(e) = self.camera.set_pose(&view.pose) {
+                        self.error = Some(e.to_string());
+                    }
+                    self.work_area = view.work_area;
+                    self.views_panel.set_work_area(self.work_area.as_ref());
+                    self.views_note = None;
+                }
+            }
+            crate::views::Action::Delete(name) => {
+                self.views.remove(&name);
+                self.persist_views();
+            }
+            crate::views::Action::SaveCurrent => {
+                let name = self.views_panel.typed_name().to_owned();
+                match NamedView::new(&name, None, self.camera.pose(), self.work_area) {
+                    Ok(view) => self.save_named_view(view),
+                    Err(e) => self.views_note = Some(e.to_string()),
+                }
+            }
+            crate::views::Action::SavePlane(spec) => {
+                let name = self.views_panel.typed_name().to_owned();
+                let distance = f64::from(self.camera.distance());
+                let resolved = beamcraft_engine::views::resolve_plane(
+                    &spec,
+                    &self.grid_scene.query_grids,
+                    self.frame_centre(),
+                    distance,
+                );
+                match resolved {
+                    Ok(pose) => match NamedView::new(&name, Some(spec), pose, self.work_area) {
+                        Ok(view) => self.save_named_view(view),
+                        Err(e) => self.views_note = Some(e.to_string()),
+                    },
+                    Err(e) => self.views_note = Some(e.to_string()),
+                }
+            }
+            crate::views::Action::SetWorkArea(area) => {
+                self.work_area = Some(area);
+                self.views_panel.set_work_area(self.work_area.as_ref());
+            }
+            crate::views::Action::ClearWorkArea => {
+                self.work_area = None;
+                self.views_panel.set_work_area(None);
+            }
+            crate::views::Action::ToggleProjection => {
+                self.camera.set_projection(!self.camera.is_orthographic());
+            }
+        }
+    }
+
+    /// Saves a named view into the book and its sidecar.
+    fn save_named_view(&mut self, view: NamedView) {
+        if let Err(e) = self.views.save(view) {
+            self.views_note = Some(e.to_string());
+            return;
+        }
+        self.persist_views();
+        self.views_note = None;
+    }
+
+    /// Persists the book, reporting a failure as a note.
+    fn persist_views(&mut self) {
+        if let Err(e) = crate::views::persist(&self.source.store, &self.views) {
+            self.views_note = Some(e);
+        }
+    }
+
+    /// The centre of the loaded scene bounds in model millimetres; the frame plane views
+    /// centre on. Without a loaded scene it is the origin.
+    fn frame_centre(&self) -> [f64; 3] {
+        match &self.loaded {
+            Some(l) => {
+                let axis = |i: usize| {
+                    l.summary.origin_mm.get(i).copied().unwrap_or(0.0)
+                        + f64::from(
+                            (l.summary.min.get(i).copied().unwrap_or(0.0)
+                                + l.summary.max.get(i).copied().unwrap_or(0.0))
+                                / 2.0,
+                        )
+                };
+                [axis(0), axis(1), axis(2)]
+            }
+            None => [0.0; 3],
+        }
+    }
+
+    /// Opens another view window on the current view, up to the cap.
+    fn open_view_window(&mut self) {
+        if self.view_windows.len() < crate::views::MAX_WINDOWS {
+            let camera = self.camera;
+            let index = self.view_windows.len();
+            self.view_windows
+                .push(crate::views::ViewWindow::new(camera, index));
+        }
+    }
+
+    /// Draws the extra view windows: the loaded scene through their own cameras. They navigate
+    /// and zoom like the main viewport; selection and tools stay in the main viewport.
+    fn draw_view_windows(&mut self, ctx: &egui::Context) {
+        self.view_windows.retain(|w| w.open);
+        for window in &mut self.view_windows {
+            let mut open = true;
+            let title = window.title().to_owned();
+            egui::Window::new(title)
+                .open(&mut open)
+                .default_width(520.0)
+                .default_height(390.0)
+                .show(ctx, |ui| {
+                    let size = ui.available_size();
+                    let scale = ui.ctx().pixels_per_point();
+                    let [width, height] = target_size([size.x, size.y], scale);
+                    let samples = self.source.samples;
+                    let Ok(aspect) =
+                        window.resize(&self.state, width, height, samples, &self.stats)
+                    else {
+                        return;
+                    };
+                    let Some(loaded) = &self.loaded else {
+                        return;
+                    };
+                    // The selected-only mode belongs to the main viewport's inspector; other
+                    // windows always draw the whole scene.
+                    let mode = if self.mode == RenderMode::SelectedOnly {
+                        RenderMode::Shaded
+                    } else {
+                        self.mode
+                    };
+                    let Ok(view) = window.camera.view(aspect) else {
+                        return;
+                    };
+                    if let (Some(renderer), Some(texture)) = (window.renderer(), window.texture()) {
+                        // A secondary window shows the model as the main viewport does, so the
+                        // main window's cut applies to it too (the cut record stays V15's).
+                        let clip = match &self.cut {
+                            Some(cut) => {
+                                crate::cut_plane::ClipGpu::of(cut, loaded.summary.origin_mm)
+                            }
+                            None => crate::cut_plane::ClipGpu::none(),
+                        };
+                        renderer.draw(
+                            &self.state.device,
+                            &self.state.queue,
+                            &loaded.uploaded,
+                            view,
+                            &self.stats,
+                            mode,
+                            &clip,
+                        );
+                        let response =
+                            ui.add(egui::Image::new((texture, size)).sense(viewport_sense()));
+                        let hovered = response.hovered();
+                        let (delta, shift, ctrl, scroll_y, pinch) = ui.input(|i| {
+                            (
+                                i.pointer.delta(),
+                                i.modifiers.shift,
+                                i.modifiers.ctrl,
+                                if hovered {
+                                    i.smooth_scroll_delta.y
+                                } else {
+                                    0.0
+                                },
+                                if hovered { i.zoom_delta() } else { 1.0 },
+                            )
+                        });
+                        let (orbit, pan, zoom) = navigation(
+                            self.preset,
+                            delta,
+                            response.dragged_by(egui::PointerButton::Primary),
+                            response.dragged_by(egui::PointerButton::Secondary),
+                            response.dragged_by(egui::PointerButton::Middle),
+                            ctrl,
+                            shift,
+                            window.camera.distance(),
+                            hovered,
+                            scroll_y,
+                            pinch,
+                            false,
+                            false,
+                            self.invert_zoom,
+                        );
+                        if let Err(e) = window.camera.navigate(orbit, pan, zoom) {
+                            self.error = Some(e.to_string());
+                        }
+                    }
+                });
+            // The close button wrote through `open`: a closed window is gone next frame and
+            // its slot is free again.
+            window.open &= open;
+        }
     }
 
     /// Registers a lookup under a new epoch; returns the flag that gives it up.
@@ -2419,6 +2666,8 @@ impl eframe::App for App {
             self.project_browser(ui);
             self.details_window(&ctx);
             self.publish_dialog(&ctx);
+            self.views_window(&ctx);
+            self.draw_view_windows(&ctx);
         }
         egui::CentralPanel::default().show(ui, |ui| {
             let size = ui.available_size();
@@ -4868,6 +5117,245 @@ mod tests {
         let fallback = super::icon();
         assert_eq!((fallback.width, fallback.height), (32, 32));
         assert_eq!(fallback.rgba.len(), 32 * 32 * 4);
+    }
+
+    /// A frame that draws the workspace panels and the saved-views window, returning the
+    /// centre of every drawn text label and every filled rectangle (for the view-window
+    /// frame, whose close button sits at its right edge).
+    fn views_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        labels: &mut Vec<(String, egui::Pos2)>,
+        rects: &mut Vec<egui::Rect>,
+    ) {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1400.0, 900.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                app.ribbon(ui);
+                app.project_browser(ui);
+                app.views_window(ui.ctx());
+                app.draw_view_windows(ui.ctx());
+                egui::CentralPanel::default().show(ui, |_| {});
+            },
+        );
+        for shape in &output.shapes {
+            match &shape.shape {
+                egui::Shape::Text(text) => labels.push((
+                    text.galley.text().to_owned(),
+                    text.pos + text.galley.size() / 2.0,
+                )),
+                egui::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT => {
+                    rects.push(rect.rect)
+                }
+                _ => {}
+            }
+        }
+        output.drop_without_applying_deltas();
+    }
+
+    fn click(pos: egui::Pos2) -> Vec<egui::Event> {
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    }
+
+    #[test]
+    fn a_saved_view_restores_the_camera_and_never_changes_the_model() {
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("beamcraft-v12-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.clone();
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        // The ribbon's View tab opens the saved-views window: a real click path.
+        let mut labels = Vec::new();
+        let mut rects = Vec::new();
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        let tab = labels
+            .iter()
+            .find(|(text, _)| text == "View")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("the View tab was not drawn"));
+        views_frame(&mut app, &ctx, click(tab), &mut labels, &mut rects);
+        let open = labels
+            .iter()
+            .find(|(text, _)| text == "Saved views")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("the Saved views button was not drawn"));
+        views_frame(&mut app, &ctx, click(open), &mut labels, &mut rects);
+        assert!(app.views_panel.window_open, "the window did not open");
+
+        // The window's own buttons dispatch: saving the current view is one click there.
+        app.views_panel.name = "Kept".into();
+        let mut save = None;
+        for _ in 0..3 {
+            save = labels
+                .iter()
+                .find(|(text, _)| text == "Save current view")
+                .map(|(_, pos)| *pos);
+            if save.is_some() {
+                break;
+            }
+            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        }
+        let save = save.unwrap_or_else(|| panic!("the save button was not drawn: {labels:?}"));
+        views_frame(&mut app, &ctx, click(save), &mut labels, &mut rects);
+        assert_eq!(app.views.len(), 1, "the window button did not dispatch");
+        assert!(crate::views::session_path(&dir).is_file());
+        let saved = app.views.iter().next().unwrap().clone();
+        app.camera.navigate([1.0, -0.5], [80.0, 0.0], 0.7).unwrap();
+        assert_ne!(app.camera.pose(), saved.pose);
+        app.view_action(crate::views::Action::Apply("Kept".into()));
+        assert_eq!(app.camera.pose(), saved.pose);
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+
+        // A work area is a view property: set, saved, dropped, restored.
+        app.view_action(crate::views::Action::SetWorkArea(
+            beamcraft_engine::views::WorkArea::new([0.0; 3], [4000.0, 3000.0, 2000.0]).unwrap(),
+        ));
+        app.views_panel.name = "Boxed".into();
+        app.view_action(crate::views::Action::SaveCurrent);
+        app.view_action(crate::views::Action::ClearWorkArea);
+        assert!(app.work_area.is_none());
+        app.view_action(crate::views::Action::Apply("Boxed".into()));
+        assert_eq!(
+            app.work_area,
+            Some(
+                beamcraft_engine::views::WorkArea::new([0.0; 3], [4000.0, 3000.0, 2000.0]).unwrap()
+            )
+        );
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+
+        // The sidecar round-trips into a fresh book, and delete persists.
+        let book = crate::views::load(&dir).unwrap();
+        assert_eq!(book.len(), 2);
+        app.view_action(crate::views::Action::Delete("Kept".into()));
+        assert_eq!(crate::views::load(&dir).unwrap().len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn plane_views_resolve_from_displayed_grids_and_windows_cap_at_three() {
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("beamcraft-v12-planes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.clone();
+        deliver(&mut app, refreshed(2));
+        // The displayed grids come from the same pinned snapshot; a drawn line "M" along +y.
+        let grid = beamcraft_model::grid::Grid {
+            id: beamcraft_engine::element::ElementId::parse("019a7bf0-0000-7000-8000-000000000123")
+                .unwrap(),
+            name: "Main".into(),
+            translation_mm: [0.0, 0.0],
+            orientation_zw: [0.0, 1.0],
+            u: beamcraft_model::grid::GridFamily::Drawn(vec![
+                beamcraft_model::grid::DrawnGridLine {
+                    axis_id: beamcraft_engine::element::ElementId::parse(
+                        "019a7bf0-0000-7000-8000-000000000124",
+                    )
+                    .unwrap(),
+                    label: "M".into(),
+                    start_mm: [1000.0, 0.0],
+                    end_mm: [1000.0, 9000.0],
+                },
+            ]),
+            v: beamcraft_model::grid::GridFamily::Drawn(vec![]),
+        };
+        app.grid_scene.query_grids = vec![grid];
+        let centre = app.frame_centre();
+        app.views_panel.name = "Along M".into();
+        app.view_action(crate::views::Action::SavePlane(
+            beamcraft_engine::views::PlaneSpec::GridLine {
+                grid: "Main".into(),
+                line: "M".into(),
+                reverse: false,
+            },
+        ));
+        let view = app.views.iter().next().unwrap();
+        let pose = view.pose;
+        // Level view at the line's midpoint, facing the plane normal (-x).
+        assert_eq!(pose.target_mm, [1000.0, 4500.0, centre[2]]);
+        assert_eq!(pose.pitch, 0.0);
+        assert!((pose.yaw - std::f64::consts::PI).abs() < 1e-9);
+        assert!(app.views_note.is_none(), "{:?}", app.views_note);
+        // Extra windows are display-only and bounded; the real close button releases the slot.
+        for _ in 0..5 {
+            app.open_view_window();
+        }
+        assert_eq!(app.view_windows.len(), crate::views::MAX_WINDOWS);
+        // Closing a window releases its slot on the next drawn frame.
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |_| {});
+            },
+        )
+        .drop_without_applying_deltas();
+        let mut labels = Vec::new();
+        let mut rects = Vec::new();
+        let mut title = None;
+        for _ in 0..3 {
+            labels.clear();
+            rects.clear();
+            views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+            title = labels
+                .iter()
+                .find(|(text, _)| text == "View 2")
+                .map(|(_, pos)| *pos);
+            if title.is_some() {
+                break;
+            }
+        }
+        let title = title.unwrap_or_else(|| panic!("the view window did not draw: {labels:?}"));
+        // The close button sits at the right edge of the window's own frame, the smallest
+        // filled rectangle around the title that is wide enough to be a window.
+        let frame = rects
+            .iter()
+            .filter(|r| r.contains(title) && r.width() > 300.0)
+            .min_by(|a, b| a.area().total_cmp(&b.area()))
+            .copied()
+            .unwrap_or_else(|| panic!("no window frame around {title:?} in {rects:?}"));
+        let close = egui::pos2(frame.right() - 11.0, title.y);
+        views_frame(&mut app, &ctx, click(close), &mut labels, &mut rects);
+        views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
+        assert_eq!(
+            app.view_windows.len(),
+            crate::views::MAX_WINDOWS - 1,
+            "the close button did not release the window"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
 

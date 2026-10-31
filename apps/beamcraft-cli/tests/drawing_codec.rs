@@ -149,6 +149,39 @@ fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
                     points: vec![[0.0, 0.0], [2.0, 1.0], [5.0, -1.0]],
                 },
             ),
+            entity(
+                10,
+                DraftingGeometry::Text {
+                    anchor: [12.0, 3.0],
+                    text: "Note \u{00ab}B\u{00bb}".to_owned(),
+                    height: 3.5,
+                    rotation: -0.25,
+                },
+            ),
+            entity(
+                11,
+                DraftingGeometry::Hatch {
+                    outline: vec![[0.0, 0.0], [8.0, 0.0], [8.0, 3.0]],
+                    pattern: HatchPattern::Crosshatch,
+                },
+            ),
+            entity(
+                12,
+                DraftingGeometry::Symbol {
+                    anchor: [40.0, 40.0],
+                    symbol: PaperSymbol::Section,
+                    scale: 2.0,
+                },
+            ),
+            entity(
+                13,
+                DraftingGeometry::FreeDimension {
+                    from: [0.0, 0.0],
+                    to: [30.0, 0.0],
+                    offset: 6.5,
+                    decimal_places: 1,
+                },
+            ),
         ])
         .unwrap();
     let asset = codec::encode(&intent).unwrap();
@@ -167,6 +200,13 @@ fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
         "custom token drawing:kind = \"line\"\n            custom string drawing:extra = \"x\"",
     );
     assert!(codec::decode(extra, identity(), &control()).is_err());
+    // A text entity without its required payload disagrees with its kind.
+    let stripped = changed(
+        &asset,
+        "            custom string drawing:text = \"Note «B»\"\n",
+        "",
+    );
+    assert!(codec::decode(stripped, identity(), &control()).is_err());
     // A rewritten coordinate is a well-formed different document, not a decoding failure: its
     // detection is the manifest digest's job, verified at the document store layer.
 }

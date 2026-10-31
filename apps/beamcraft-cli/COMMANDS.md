@@ -1056,6 +1056,43 @@ read.
 inspect-coordinator-head --address IP:PORT --token-file FILE
 ```
 
+## views
+
+### list-views
+
+read.
+
+```text
+list-views --file FILE [--store ROOT]
+```
+
+### save-view
+
+write.
+
+```text
+save-view --file FILE --name TEXT [--store ROOT] [--target X,Y,Z] [--yaw RAD] [--pitch RAD]
+    [--distance MM] [--ortho true|false] [--work-area MM,MM,MM,MM,MM,MM] [--plane-grid SELECTOR]
+    [--plane-line LABEL] [--plane-reverse true|false] [--plane-level true|false] [--from X,Y,Z]
+    [--to X,Y,Z] [--centre X,Y,Z]
+```
+
+### remove-view
+
+write.
+
+```text
+remove-view --file FILE --name TEXT
+```
+
+### apply-view
+
+read.
+
+```text
+apply-view --file FILE --name TEXT
+```
+
 ## history
 
 ### inspect-history

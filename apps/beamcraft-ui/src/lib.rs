@@ -49,6 +49,7 @@ pub mod start;
 pub mod stats;
 pub mod theme;
 pub mod tools;
+pub mod views;
 pub mod work_plane;
 
 /// A bounded viewport failure; adapter absence is reported, never replaced by a fake result.

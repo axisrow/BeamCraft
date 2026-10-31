@@ -1,12 +1,13 @@
-# G13, slice 1: ruled surface between two contours, with thickness
+# G13: ruled surfaces with thickness, and the first-class patches
 
-Date: 2026-10-27. Status: design note for the G13 kernel primitive (`beamcraft-kernel`,
-module `ruled`). Task card: `docs/plan/tasks.md` G13 / M (milestone M1); issue #186.
-Depends on G05 (`profile` admission, cap triangulation, arc segment choice) and G09
-(`ops` sealing and certification). Foundation for A10 (bent plate) and A11 (lofted
-plate). The card's remaining scope — cylinder and cone patches as first-class inputs
-with authored bend radii, and the unfolded outline — stays with the issue's acceptance
-gate; this slice delivers the ruled surface mechanism itself.
+Date: 2026-10-27 (slice 1), 2026-10-31 (slice 2). Status: design note for the G13 kernel
+primitive (`beamcraft-kernel`, module `ruled`). Task card: `docs/plan/tasks.md` G13 / M
+(milestone M1); issue #186. Depends on G05 (`profile` admission, cap triangulation, arc
+segment choice) and G09 (`ops` sealing and certification). Foundation for A10 (bent plate)
+and A11 (lofted plate), both delivered on the slice-1 primitive. Slice 1 delivers the
+ruled surface mechanism itself; slice 2 completes the card with the cylinder and cone
+patches as first-class inputs with authored bend radii. The unfolded outline of the card's
+acceptance gate is A10's deliverable (`outline_mm`, the developed blank itself).
 
 ## 1. Input and result
 
@@ -87,3 +88,36 @@ Authored-polygon lofts use only IEEE `+ - * /` and `sqrt` (frame certification, 
 vectors, fold measures): their bytes may be pinned across targets. Arc contours use
 platform `sin`/`cos` for the facet vertices, exactly like the G12 arc sweep and the
 member roll boundary; no cross-target byte identity is claimed for them.
+
+## 7. Slice 2: the first-class cylinder and cone patches
+
+`ruled::cylinder_patch(&CylinderPatch)` and `ruled::cone_patch(&ConePatch)` build the
+card's patches directly from authored quantities — the inner bend radius, the sheet
+thickness, the start angle and sweep (strictly inside a full turn, as the A10 roll), the
+height along the frame axis, and the requested sagitta. The kernel derives what slice 1
+left to the caller:
+
+* each level's section is one counter-clockwise annular-sector polygon — the outer arc
+  forward, one radial edge in, the inner arc back, the closing radial edge out — so the
+  thickness is the radial distance between the arcs and the radial edge length is
+  exactly the thickness (a sheet below the geometric floor is refused by the contour
+  admission, `LoftFailure::Profile`);
+* one angular grid serves all four skins: the facet count over the sweep follows the G05
+  segment choice for the largest radius, exactly as `RuledContour::arc` chooses for one
+  arc, so the two contours always share the vertex count (`ContourMismatch` cannot
+  happen) and the sagitta bound `r_max * phi^2 / 8` meets the request;
+* every derived outer radius `r + t` keeps the dimension cap a single arc keeps —
+  radius and thickness cannot combine past the envelope (`AboveLimit`);
+* both sections carry that bound as a flagged generated polygon, so the result reports
+  the deviation and reads no fold lines: a patch is smoothly curved, and its faceted
+  turns belong to the approximation, not to authored folds;
+* the upper section is the lower one translated `height_mm` along the frame axis, so a
+  cylinder patch is an exact translation and the seal carries the analytic prism
+  self-check (`section area x height`); a cone's rulings lie in the meridian planes, so
+  its walls sit on the true cones and the fixtures compare volume and area with the cone
+  closed forms inside the sagitta bands.
+
+`ConePatch` with `end_radius_mm == radius_mm` produces the cylinder patch's bytes — one
+grid builder serves both. Everything downstream (the G05 admission of the sections, the
+G09 seal with its certification, the reported area, bounds and blob) is slice 1's path
+unchanged.

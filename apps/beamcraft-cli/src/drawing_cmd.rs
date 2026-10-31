@@ -199,22 +199,24 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
     })
 }
 
-/// Parses repeatable `--drafting UUID:kind:x,y,...` values into drawn objects. Engine admission
-/// still owns every bound; this only builds the typed values.
+/// Parses repeatable `--drafting UUID:kind:x,y,...[:payload]` values into drawn objects. The
+/// fourth segment is the string payload (`text`, `pattern` or `symbol`) the kind requires.
+/// Engine admission still owns every bound; this only builds the typed values.
 fn drafting_specs(values: &[&str]) -> Run<Vec<DraftingSpec>> {
     values
         .iter()
         .map(|value| {
-            let mut parts = value.splitn(3, ':');
+            let mut parts = value.splitn(4, ':');
             let id = parts
                 .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
+                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y[:payload]"))?;
             let kind = parts
                 .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
+                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y[:payload]"))?;
             let coords = parts
                 .next()
-                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y"))?;
+                .ok_or_else(|| invalid("drafting spec requires UUID:kind:x,y[:payload]"))?;
+            let payload = parts.next();
             let id = DraftingEntityId::parse(id)
                 .map_err(|_| invalid("drafting identity must be a full canonical UUIDv7"))?;
             let coords = coords
@@ -225,12 +227,13 @@ fn drafting_specs(values: &[&str]) -> Run<Vec<DraftingSpec>> {
                         .map_err(|_| invalid("invalid drafting coordinate"))
                 })
                 .collect::<Run<Vec<f64>>>()?;
-            let geometry = DraftingGeometry::from_parts(kind, &coords).ok_or_else(|| {
-                invalid(
-                    "drafting kind must be line, polyline, arc, circle or rectangle \
-                     with matching coordinates",
-                )
-            })?;
+            let geometry =
+                DraftingGeometry::from_parts(kind, &coords, payload).ok_or_else(|| {
+                    invalid(
+                        "drafting kind must be line, polyline, arc, circle, rectangle, text, \
+                         hatch, symbol or free_dimension with matching coordinates and payload",
+                    )
+                })?;
             Ok(DraftingSpec { id, geometry })
         })
         .collect()
@@ -399,22 +402,31 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
                     .drafting()
                     .iter()
                     .map(|entity| {
-                        Ok(Json::object([
-                            ("id", Json::text(entity.id.to_string())),
-                            ("kind", Json::text(entity.geometry.kind())),
-                            (
-                                "geometry_mm",
-                                Json::Array(
-                                    entity
-                                        .geometry
-                                        .clone()
-                                        .coordinates()
-                                        .iter()
-                                        .map(|value| num(*value))
-                                        .collect::<Run<Vec<_>>>()?,
-                                ),
-                            ),
-                        ]))
+                        let geometry_mm = Json::Array(
+                            entity
+                                .geometry
+                                .clone()
+                                .coordinates()
+                                .iter()
+                                .map(|value| num(*value))
+                                .collect::<Run<Vec<_>>>()?,
+                        );
+                        Ok(match entity.geometry.string_payload() {
+                            Some((name, value)) => {
+                                let name = name.strip_prefix("drawing:").unwrap_or(name);
+                                Json::object([
+                                    ("id", Json::text(entity.id.to_string())),
+                                    ("kind", Json::text(entity.geometry.kind())),
+                                    ("geometry_mm", geometry_mm),
+                                    (name, Json::text(value)),
+                                ])
+                            }
+                            None => Json::object([
+                                ("id", Json::text(entity.id.to_string())),
+                                ("kind", Json::text(entity.geometry.kind())),
+                                ("geometry_mm", geometry_mm),
+                            ]),
+                        })
                     })
                     .collect::<Run<Vec<_>>>()?,
             ),
