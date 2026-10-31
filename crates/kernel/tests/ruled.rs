@@ -606,9 +606,16 @@ fn bad_patches_are_refused_with_typed_codes() {
         cone(100.0, 60.0, 1.1e6, 50.0, 1.0, 0.1).unwrap_err(),
         LoftFailure::Contour(LoftCode::AboveLimit)
     );
-    // A kilometre radius at a nanometre sagitta is unreachable inside the G05 cap.
+    // Radius and thickness each below the cap, but the derived outer radius beyond
+    // it: the skins keep the envelope one arc keeps.
     assert_eq!(
-        cone(1.0e6, 60.0, 10.0, 50.0, 1.0, 1.0e-9).unwrap_err(),
+        cone(900.0e3, 60.0, 900.0e3, 50.0, 1.0, 0.1).unwrap_err(),
+        LoftFailure::Contour(LoftCode::AboveLimit)
+    );
+    // A half-metre radius at a nanometre sagitta is unreachable inside the G05 cap
+    // (a kilometre radius is refused by the envelope check above it first).
+    assert_eq!(
+        cone(500.0e3, 500.0e3, 10.0, 50.0, 1.0, 1.0e-9).unwrap_err(),
         LoftFailure::Contour(LoftCode::DeviationUnreachable)
     );
     // The cylinder refuses the same ways (zero radius, full turn).

@@ -3,7 +3,7 @@
 Date: 2026-10-27 (slice 1), 2026-10-31 (slice 2). Status: design note for the G13 kernel
 primitive (`beamcraft-kernel`, module `ruled`). Task card: `docs/plan/tasks.md` G13 / M
 (milestone M1); issue #186. Depends on G05 (`profile` admission, cap triangulation, arc
-segment choice) and G9 (`ops` sealing and certification). Foundation for A10 (bent plate)
+segment choice) and G09 (`ops` sealing and certification). Foundation for A10 (bent plate)
 and A11 (lofted plate), both delivered on the slice-1 primitive. Slice 1 delivers the
 ruled surface mechanism itself; slice 2 completes the card with the cylinder and cone
 patches as first-class inputs with authored bend radii. The unfolded outline of the card's
@@ -106,6 +106,8 @@ left to the caller:
   segment choice for the largest radius, exactly as `RuledContour::arc` chooses for one
   arc, so the two contours always share the vertex count (`ContourMismatch` cannot
   happen) and the sagitta bound `r_max * phi^2 / 8` meets the request;
+* every derived outer radius `r + t` keeps the dimension cap a single arc keeps —
+  radius and thickness cannot combine past the envelope (`AboveLimit`);
 * both sections carry that bound as a flagged generated polygon, so the result reports
   the deviation and reads no fold lines: a patch is smoothly curved, and its faceted
   turns belong to the approximation, not to authored folds;

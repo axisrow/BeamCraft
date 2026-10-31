@@ -835,7 +835,13 @@ fn patch_loft(
 ) -> Result<LoftResult, LoftFailure> {
     let frame = frame_of(origin, x_axis, y_axis)?;
     let deviation = checked_deviation(max_sagitta_mm)?;
+    // The derived outer radii keep the envelope `RuledContour::arc` enforces on one
+    // arc: no skin may sit beyond the dimension cap even when radius and thickness
+    // each pass their own check.
     let r_max = start_radii.1.max(end_radii.1);
+    if r_max > DIMENSION_CAP_MM {
+        return Err(LoftFailure::Contour(LoftCode::AboveLimit));
+    }
     let (facets, facet_angle, bound) = patch_grid(r_max, sweep_rad, deviation)?;
     let start = flagged_contour(
         origin,
