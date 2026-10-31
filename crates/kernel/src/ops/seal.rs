@@ -23,6 +23,8 @@ pub enum OpKind {
     PlaneCut,
     /// A straight through hole.
     ThroughHole,
+    /// A transverse hole through the walls of a member section (G14.1).
+    MemberThroughHole,
     /// A section swept along a polyline or arc path (G12).
     Sweep,
     /// A ruled surface between two contours (G13).

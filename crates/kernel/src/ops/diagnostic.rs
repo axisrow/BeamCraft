@@ -202,6 +202,8 @@ pub enum OpDefect {
     BodyShells,
     /// The hole pilot needs a straight prism with two horizontal caps.
     BodyNotPrism,
+    /// The member hole meets a curved or sloped wall face inside the cutter range (G14.2).
+    BodyWallUnsupported,
     /// The caps of the prism are not one face each, or a cap has no outline.
     BodyCapFaces,
     /// The cap outlines of the body are not one outer loop plus holes.
@@ -271,6 +273,7 @@ impl OpDefect {
             Self::None => "none",
             Self::BodyShells => "body.shells",
             Self::BodyNotPrism => "body.not_prism",
+            Self::BodyWallUnsupported => "body.wall_unsupported",
             Self::BodyCapFaces => "body.cap_faces",
             Self::BodyLoops => "body.loops",
             Self::FaceTableEntry => "face_table.entry",
