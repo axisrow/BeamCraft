@@ -44,6 +44,7 @@ fn spec() -> DrawingSpec {
         drafting: Vec::new(),
         views: Vec::new(),
         sheet: None,
+        layers: Vec::new(),
     }
 }
 
@@ -245,24 +246,38 @@ fn resolution_refuses_a_mismatched_snapshot_before_trying_to_find_geometry() {
 
 #[test]
 fn drawn_objects_are_bounded_distinct_and_never_document_object_ids() {
-    let entity = |text: &str, b: [f64; 2]| DraftingSpec {
-        id: DraftingEntityId::parse(text).unwrap(),
+    let entity = |layer: &str, id: &str, b: [f64; 2]| DraftingSpec {
+        id: DraftingEntityId::parse(id).unwrap(),
         geometry: DraftingGeometry::Line { a: [0.0, 0.0], b },
+        layer: DraftingEntityId::parse(layer).unwrap(),
+        line_type: LineType::Continuous,
     };
+    const L: &str = "01900000-0000-7000-8000-000000000009";
     const D: &str = "01900000-0000-7000-8000-000000000005";
+    let layer = LayerSpec {
+        id: DraftingEntityId::parse(L).unwrap(),
+        name: "Outlines".into(),
+        visible: true,
+    };
+    let drafting = vec![entity(L, D, [10.0, 0.0])];
     let admitted = Drawing::admit(DrawingSpec {
-        drafting: vec![entity(D, [10.0, 0.0])],
+        layers: vec![layer.clone()],
+        drafting,
         ..spec()
     })
     .unwrap();
     assert_eq!(admitted.drafting().len(), 1);
     assert_eq!(admitted.drafting()[0].id.to_string(), D);
-    let emptied = admitted.clone().with_drafting(Vec::new()).unwrap();
+    let emptied = admitted
+        .clone()
+        .with_drafting(Vec::new(), Vec::new())
+        .unwrap();
     assert!(emptied.drafting().is_empty());
 
     // Identity collisions with the document objects and between entities refuse.
     let clash = Drawing::admit(DrawingSpec {
-        drafting: vec![entity(C, [10.0, 0.0])],
+        layers: vec![layer.clone()],
+        drafting: vec![entity(L, C, [10.0, 0.0])],
         ..spec()
     })
     .unwrap_err();
@@ -270,26 +285,164 @@ fn drawn_objects_are_bounded_distinct_and_never_document_object_ids() {
     assert!(
         admitted
             .clone()
-            .with_drafting(vec![entity(D, [4.0, 0.0]), entity(D, [5.0, 0.0])])
+            .with_drafting(
+                admitted.layers().to_vec(),
+                vec![entity(L, D, [4.0, 0.0]), entity(L, D, [5.0, 0.0])]
+            )
             .is_err()
     );
 
     // More than the entity cap refuses without partial state.
     let crowd = (0..=MAX_DRAFTING_ENTITIES as u64)
-        .map(|index| entity(&format!("01990000-0000-7000-8000-{index:012}"), [10.0, 0.0]))
+        .map(|index| {
+            entity(
+                L,
+                &format!("01990000-0000-7000-8000-{index:012}"),
+                [10.0, 0.0],
+            )
+        })
         .collect();
+    let outline = admitted.layers().to_vec();
     assert_eq!(
-        admitted.with_drafting(crowd).unwrap_err().code,
+        admitted.with_drafting(outline, crowd).unwrap_err().code,
         ErrorCode::LimitExceeded
     );
 
     // Geometry bounds still run through the same admission.
     let degenerate = Drawing::admit(DrawingSpec {
-        drafting: vec![entity(D, [0.0, 0.0])],
+        layers: vec![LayerSpec {
+            id: DraftingEntityId::parse(L).unwrap(),
+            name: "Outlines".into(),
+            visible: true,
+        }],
+        drafting: vec![entity(L, D, [0.0, 0.0])],
         ..spec()
     })
     .unwrap_err();
     assert_eq!(degenerate.code, ErrorCode::InvalidArgument);
+}
+
+#[test]
+fn layers_are_bounded_distinct_and_every_drawn_object_names_a_defined_layer() {
+    let layer = |id: &str, name: &str, visible: bool| LayerSpec {
+        id: DraftingEntityId::parse(id).unwrap(),
+        name: name.to_owned(),
+        visible,
+    };
+    const L1: &str = "01900000-0000-7000-8000-000000000009";
+    const L2: &str = "01900000-0000-7000-8000-00000000000a";
+    const D: &str = "01900000-0000-7000-8000-000000000005";
+    let entity = |layer: &str, id: &str, line_type: LineType| DraftingSpec {
+        id: DraftingEntityId::parse(id).unwrap(),
+        geometry: DraftingGeometry::Line {
+            a: [0.0, 0.0],
+            b: [10.0, 0.0],
+        },
+        layer: DraftingEntityId::parse(layer).unwrap(),
+        line_type,
+    };
+    let with = |layers: Vec<LayerSpec>, drafting: Vec<DraftingSpec>| {
+        Drawing::admit(DrawingSpec {
+            layers,
+            drafting,
+            ..spec()
+        })
+    };
+
+    // A drawn object on a layer the replacement does not define refuses.
+    let dangling = with(
+        vec![layer(L1, "Outlines", true)],
+        vec![entity(L2, D, LineType::Dashed)],
+    )
+    .unwrap_err();
+    assert_eq!(dangling.code, ErrorCode::InvalidArgument);
+    assert_eq!(
+        with(Vec::new(), vec![entity(L1, D, LineType::Continuous)])
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+
+    // Layer names obey the bounded label rule.
+    assert!(with(vec![layer(L1, "", true)], Vec::new()).is_err());
+    assert!(with(vec![layer(L1, "Okay name-1", false)], Vec::new()).is_ok());
+
+    // Identity collisions refuse: with the document objects, pairwise, and with drawn objects.
+    assert_eq!(
+        with(vec![layer(B, "Clash", true)], Vec::new())
+            .unwrap_err()
+            .code,
+        ErrorCode::DuplicateId
+    );
+    assert!(
+        with(
+            vec![layer(L1, "One", true), layer(L1, "Two", true)],
+            Vec::new()
+        )
+        .is_err()
+    );
+    assert!(
+        with(
+            vec![layer(L1, "One", true)],
+            vec![
+                entity(L1, D, LineType::Dotted),
+                entity(L1, L1, LineType::Dotted)
+            ]
+        )
+        .is_err()
+    );
+
+    // The layer cap refuses without partial state.
+    let crowd = (0..=MAX_LAYERS as u64)
+        .map(|index| layer(&format!("01990000-0000-7000-8000-{index:012}"), "Cap", true))
+        .collect();
+    assert_eq!(
+        with(crowd, Vec::new()).unwrap_err().code,
+        ErrorCode::LimitExceeded
+    );
+
+    // Layers and drawn objects share the one closed intent page: sixteen layers leave room
+    // for exactly forty-three drawn objects beside the fixed prims and their scopes.
+    let both = |layers: usize, drafting: usize| {
+        let mut s = spec();
+        s.layers = (0..layers as u64)
+            .map(|index| {
+                layer(
+                    &format!("01990000-0000-7000-8000-{index:012}"),
+                    "Page",
+                    true,
+                )
+            })
+            .collect();
+        s.drafting = (0..drafting as u64)
+            .map(|index| {
+                entity(
+                    &s.layers[0].id.to_string(),
+                    &format!("019a0000-0000-7000-8000-{index:012}"),
+                    LineType::Continuous,
+                )
+            })
+            .collect();
+        Drawing::admit(s)
+    };
+    assert!(both(16, 43).is_ok());
+    assert_eq!(both(16, 44).unwrap_err().code, ErrorCode::LimitExceeded);
+
+    // Visibility by layer is a paper-only filter over the admitted document.
+    let mut hidden = spec();
+    hidden.layers = vec![layer(L1, "Hidden", false), layer(L2, "Shown", true)];
+    hidden.drafting = vec![
+        entity(L1, D, LineType::DashDot),
+        entity(L2, "01900000-0000-7000-8000-00000000000b", LineType::Dashed),
+    ];
+    let document = Drawing::admit(hidden).unwrap();
+    let visible: Vec<_> = document.visible_drafting().map(|e| e.id).collect();
+    assert_eq!(visible.len(), 1);
+    assert_eq!(
+        visible[0].to_string(),
+        "01900000-0000-7000-8000-00000000000b"
+    );
+    assert_eq!(document.drafting().len(), 2);
 }
 
 #[test]
@@ -303,12 +456,20 @@ fn placed_views_are_bounded_distinct_and_never_document_or_drawn_object_ids() {
     const TOP: &str = "01900000-0000-7000-8000-000000000006";
     const OTHER: &str = "01900000-0000-7000-8000-000000000007";
     const D: &str = "01900000-0000-7000-8000-000000000005";
+    const L: &str = "01900000-0000-7000-8000-000000000009";
+    let layer = LayerSpec {
+        id: DraftingEntityId::parse(L).unwrap(),
+        name: "Outlines".into(),
+        visible: true,
+    };
     let entity = |text: &str| DraftingSpec {
         id: DraftingEntityId::parse(text).unwrap(),
         geometry: DraftingGeometry::Line {
             a: [0.0, 0.0],
             b: [10.0, 0.0],
         },
+        layer: DraftingEntityId::parse(L).unwrap(),
+        line_type: LineType::Continuous,
     };
     let with = |views: Vec<ViewSpec>| Drawing::admit(DrawingSpec { views, ..spec() });
     let admitted = with(vec![view(TOP, 50.0, [10.0, -20.0])]).unwrap();
@@ -331,6 +492,7 @@ fn placed_views_are_bounded_distinct_and_never_document_or_drawn_object_ids() {
     assert_eq!(
         Drawing::admit(DrawingSpec {
             views: vec![view(D, 50.0, [0.0, 0.0])],
+            layers: vec![layer.clone()],
             drafting: vec![entity(D)],
             ..spec()
         })
@@ -358,9 +520,10 @@ fn placed_views_are_bounded_distinct_and_never_document_or_drawn_object_ids() {
         .collect();
     assert_eq!(with(crowd).unwrap_err().code, ErrorCode::LimitExceeded);
 
-    // Placed views and drawn objects share the one closed intent page: sixteen views leave
-    // room for exactly forty-three drawn objects beside the fixed prims and their scopes.
-    let both = |views: usize, drafting: usize| {
+    // Placed views, layers and drawn objects share the one closed intent page: sixteen views
+    // and one layer leave room for exactly forty-one drawn objects beside the fixed prims and
+    // their scopes.
+    let both = |views: usize, layers: usize, drafting: usize| {
         let mut s = spec();
         s.views = (0..views as u64)
             .map(|index| {
@@ -371,16 +534,34 @@ fn placed_views_are_bounded_distinct_and_never_document_or_drawn_object_ids() {
                 )
             })
             .collect();
+        s.layers = (0..layers as u64)
+            .map(|index| LayerSpec {
+                id: DraftingEntityId::parse(&format!("019b0000-0000-7000-8000-{index:012}"))
+                    .unwrap(),
+                name: "Page".into(),
+                visible: true,
+            })
+            .collect();
         s.drafting = (0..drafting as u64)
-            .map(|index| entity(&format!("019a0000-0000-7000-8000-{index:012}")))
+            .map(|index| DraftingSpec {
+                id: DraftingEntityId::parse(&format!("019a0000-0000-7000-8000-{index:012}"))
+                    .unwrap(),
+                geometry: DraftingGeometry::Line {
+                    a: [0.0, 0.0],
+                    b: [10.0, 0.0],
+                },
+                layer: s.layers.first().unwrap().id,
+                line_type: LineType::Continuous,
+            })
             .collect();
         Drawing::admit(s)
     };
-    assert!(both(16, 43).is_ok());
-    assert_eq!(both(16, 44).unwrap_err().code, ErrorCode::LimitExceeded);
+    assert!(both(16, 1, 41).is_ok());
+    assert_eq!(both(16, 1, 42).unwrap_err().code, ErrorCode::LimitExceeded);
 
     // Replacement keeps every other object and its identity, cross-checked both ways.
     let mut s = spec();
+    s.layers = vec![layer];
     s.drafting = vec![entity(D)];
     let editing = Drawing::admit(s).unwrap();
     assert_eq!(
@@ -401,8 +582,12 @@ fn placed_views_are_bounded_distinct_and_never_document_or_drawn_object_ids() {
     assert_eq!(replaced.spec().source, spec().source);
     assert_eq!(replaced.spec().dimension, spec().dimension);
     assert_eq!(replaced.drafting().len(), 1);
+    let layers_now = replaced.layers().to_vec();
     assert_eq!(
-        replaced.with_drafting(vec![entity(TOP)]).unwrap_err().code,
+        replaced
+            .with_drafting(layers_now, vec![entity(TOP)])
+            .unwrap_err()
+            .code,
         ErrorCode::DuplicateId
     );
 }

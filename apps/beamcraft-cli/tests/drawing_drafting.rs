@@ -24,6 +24,7 @@ const REV_EDIT: &str = "01900000-0000-7000-8000-000000000208";
 const OP_AFTER: &str = "01900000-0000-7000-8000-000000000211";
 const REV_AFTER: &str = "01900000-0000-7000-8000-000000000212";
 const LINE: &str = "01900000-0000-7000-8000-000000000214";
+const LAYER: &str = "01900000-0000-7000-8000-00000000021c";
 
 fn intent() -> Vec<String> {
     [
@@ -133,8 +134,18 @@ fn drafting_replay_binds_the_incoming_geometry_even_after_later_edits() {
     ];
     create.extend(intent());
     let head = text(&ok("create-drawing", &argv(&create)), "revision_id");
-    let original = vec!["--drafting".to_owned(), format!("{LINE}:line:0,0,10,0")];
-    let changed = vec!["--drafting".to_owned(), format!("{LINE}:line:0,0,20,0")];
+    let original = vec![
+        "--layer".to_owned(),
+        format!("{LAYER}:Outlines:on"),
+        "--drafting".to_owned(),
+        format!("{LINE}:line:0,0,10,0:{LAYER}:continuous"),
+    ];
+    let changed = vec![
+        "--layer".to_owned(),
+        format!("{LAYER}:Outlines:on"),
+        "--drafting".to_owned(),
+        format!("{LINE}:line:0,0,20,0:{LAYER}:continuous"),
+    ];
     let (code, accepted) = edit(&document_dir, &head, OP_EDIT, REV_EDIT, &original);
     assert_eq!(code, 0, "{accepted:?}");
     let edited_head = text(&accepted, "revision_id");

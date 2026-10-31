@@ -114,6 +114,7 @@ mod tests {
                 decimal_places: 0,
             },
             drafting: Vec::new(),
+            layers: Vec::new(),
             views: Vec::new(),
             sheet: None,
         })

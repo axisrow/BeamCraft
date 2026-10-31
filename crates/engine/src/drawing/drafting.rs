@@ -18,8 +18,15 @@ use beamcraft_model::id::DraftingEntityId;
 pub const MAX_DRAFTING_ENTITIES: usize = 60;
 /// Largest number of vertices of one drawn polyline or hatch outline.
 pub const MAX_POLYLINE_POINTS: usize = 16;
+/// Largest number of layers in one document.
+pub const MAX_LAYERS: usize = 16;
 /// Largest byte length of one drawn text string.
 pub const MAX_TEXT_BYTES: usize = 128;
+/// Largest byte length of one coordinate's canonical decimal form. A pathological binary64
+/// (say `5e-324`) prints as hundreds of characters and would overflow any fixed document byte
+/// cap; a coordinate whose shortest round-trip form exceeds this bound is refused at admission
+/// exactly like an oversized text string is.
+pub const MAX_NUMBER_TEXT_BYTES: usize = 24;
 
 /// One complete turn in radians; the bound for an admitted arc angle magnitude.
 pub const MAX_ARC_TURN: f64 = std::f64::consts::TAU;
@@ -371,13 +378,68 @@ impl DraftingGeometry {
     }
 }
 
-/// One drawn object: identity plus paper geometry.
+/// The stroke pattern of a drawn object. These are paper line styles only; they never carry
+/// model semantics such as hidden-edge state resolved from the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineType {
+    /// Unbroken stroke.
+    Continuous,
+    /// Even alternating strokes and gaps.
+    Dashed,
+    /// Dots without strokes.
+    Dotted,
+    /// Alternating long strokes, dots and gaps.
+    DashDot,
+}
+
+impl LineType {
+    /// Stable lowercase wire token, also the persisted `drawing:linetype` value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Continuous => "continuous",
+            Self::Dashed => "dashed",
+            Self::Dotted => "dotted",
+            Self::DashDot => "dashdot",
+        }
+    }
+
+    /// Parses a fixed line-type token.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "continuous" => Some(Self::Continuous),
+            "dashed" => Some(Self::Dashed),
+            "dotted" => Some(Self::Dotted),
+            "dashdot" => Some(Self::DashDot),
+            _ => None,
+        }
+    }
+}
+
+/// One document-owned layer: a named, toggleable grouping that drawn objects join by
+/// reference. A layer holds no model semantics and no geometry of its own; hiding it is
+/// paper visibility only and never touches the engineering model.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LayerSpec {
+    /// Stable layer identity, distinct from every other document object UUID.
+    pub id: DraftingEntityId,
+    /// Layer name under the model's existing bounded label rule.
+    pub name: String,
+    /// Whether drawn objects on this layer are visible on the paper.
+    pub visible: bool,
+}
+
+/// One drawn object: identity plus paper geometry plus its layer and stroke assignment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DraftingSpec {
     /// Stable entity identity, distinct from every other document object UUID.
     pub id: DraftingEntityId,
     /// The drawn geometry.
     pub geometry: DraftingGeometry,
+    /// The document-defined layer this object sits on; admission refuses a layer the
+    /// document does not define.
+    pub layer: DraftingEntityId,
+    /// The stroke pattern of this object.
+    pub line_type: LineType,
 }
 
 fn finite_point(point: [f64; 2]) -> Result<(), CommandError> {
@@ -395,6 +457,7 @@ fn finite_point(point: [f64; 2]) -> Result<(), CommandError> {
                 "coordinate is outside the drawing contract's range",
             ));
         }
+        bounded_form(value)?;
     }
     Ok(())
 }
@@ -449,12 +512,15 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
                     "radius must be positive and within the drawing contract's range",
                 ));
             }
+            bounded_form(*radius)?;
             if start.abs() > MAX_ARC_TURN || end.abs() > MAX_ARC_TURN {
                 return Err(invalid(
                     "drafting",
                     "arc angles must stay within one turn in magnitude",
                 ));
             }
+            bounded_form(*start)?;
+            bounded_form(*end)?;
             // A zero or full-turn sweep is a circle, never a silently accepted arc.
             if (end - start).rem_euclid(std::f64::consts::TAU) == 0.0 {
                 return Err(invalid(
@@ -478,6 +544,7 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
                     "radius must be positive and within the drawing contract's range",
                 ));
             }
+            bounded_form(*radius)?;
         }
         DraftingGeometry::Rectangle { a, b } => {
             finite_point(*a)?;
@@ -509,12 +576,14 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
                     "text height must be positive and within the drawing contract's range",
                 ));
             }
+            bounded_form(*height)?;
             if rotation.abs() > MAX_ARC_TURN {
                 return Err(invalid(
                     "drafting",
                     "text rotation must stay within one turn in magnitude",
                 ));
             }
+            bounded_form(*rotation)?;
             if text.is_empty() || text.len() > MAX_TEXT_BYTES {
                 return Err(invalid(
                     "drafting",
@@ -561,6 +630,7 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
                     "symbol scale must be positive and within the drawing contract's range",
                 ));
             }
+            bounded_form(*scale)?;
         }
         DraftingGeometry::FreeDimension {
             from,
@@ -590,6 +660,17 @@ pub fn validate_geometry(geometry: &DraftingGeometry) -> Result<(), CommandError
     Ok(())
 }
 
+/// Rejects a number whose canonical decimal form would overflow the document's byte budget.
+fn bounded_form(value: f64) -> Result<(), CommandError> {
+    if value.to_string().len() > MAX_NUMBER_TEXT_BYTES {
+        return Err(invalid(
+            "drafting",
+            "number's canonical form is too long for the document byte cap",
+        ));
+    }
+    Ok(())
+}
+
 /// Validates one finite value inside the drawing contract's signed paper range.
 fn finite_range_value(value: f64, field: &'static str) -> Result<(), CommandError> {
     if !value.is_finite() {
@@ -605,7 +686,7 @@ fn finite_range_value(value: f64, field: &'static str) -> Result<(), CommandErro
             "number is outside the drawing contract's range",
         ));
     }
-    Ok(())
+    bounded_form(value)
 }
 
 #[cfg(test)]
@@ -617,6 +698,72 @@ mod tests {
         DraftingGeometry::Line {
             a: [0.0, 0.0],
             b: [10.0, 0.0],
+        }
+    }
+
+    #[test]
+    fn line_types_round_trip_through_fixed_tokens() {
+        for (value, token) in [
+            (LineType::Continuous, "continuous"),
+            (LineType::Dashed, "dashed"),
+            (LineType::Dotted, "dotted"),
+            (LineType::DashDot, "dashdot"),
+        ] {
+            assert_eq!(value.as_str(), token);
+            assert_eq!(LineType::parse(token), Some(value));
+        }
+        assert_eq!(LineType::parse("hidden"), None);
+        assert_eq!(LineType::parse(""), None);
+    }
+
+    #[test]
+    fn pathological_canonical_forms_refuse_at_admission() {
+        // A binary64 whose shortest round-trip form would overflow the document's byte budget
+        // is refused exactly like an oversized text string, at every numeric surface. The
+        // twenty-four-byte edge itself stays valid.
+        let edge = 0.0000000000000000000001_f64;
+        assert_eq!(edge.to_string().len(), MAX_NUMBER_TEXT_BYTES);
+        assert!(
+            validate_geometry(&DraftingGeometry::Line {
+                a: [edge, 0.0],
+                b: [10.0, 0.0],
+            })
+            .is_ok()
+        );
+        for geometry in [
+            DraftingGeometry::Line {
+                a: [1e-23, 0.0],
+                b: [10.0, 0.0],
+            },
+            DraftingGeometry::Circle {
+                center: [0.0, 0.0],
+                radius: 1e-23,
+            },
+            DraftingGeometry::Arc {
+                center: [0.0, 0.0],
+                radius: 5.0,
+                start: 1e-23,
+                end: 1.25,
+            },
+            DraftingGeometry::Text {
+                anchor: [0.0, 0.0],
+                text: "t".to_owned(),
+                height: 1e-23,
+                rotation: 0.0,
+            },
+            DraftingGeometry::Symbol {
+                anchor: [0.0, 0.0],
+                symbol: PaperSymbol::North,
+                scale: 1e-23,
+            },
+            DraftingGeometry::FreeDimension {
+                from: [0.0, 0.0],
+                to: [30.0, 0.0],
+                offset: 1e-23,
+                decimal_places: 0,
+            },
+        ] {
+            assert!(validate_geometry(&geometry).is_err(), "{geometry:?}");
         }
     }
 
