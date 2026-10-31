@@ -4,6 +4,25 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-10-31
+
+- **One full test gate, literal `cargo test --workspace`.** Owner decision on
+  [issue #342](https://github.com/axisrow/BeamCraft/issues/342), after the worker survey recorded
+  there (related upstream thread:
+  [Apibim-com/BeamCraft#767](https://github.com/Apibim-com/BeamCraft/issues/767)). Before a pull
+  request is opened or updated, the gate runs once, whole, and its result is read from that run:
+  `cargo fmt --all`; `cargo clippy --workspace --all-targets -- -D warnings`;
+  `cargo test --workspace`; `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`. The test
+  step is the literal `cargo test --workspace`: nextest never runs doctests, so a nextest run is
+  the iteration tool (targeted `-p <crate>` runs; workspace sweeps with `--no-fail-fast`), not
+  the gate, and the earlier "matching CI" wording is corrected in `CLAUDE.md` and
+  `docs/development.md`. Results are read from the run itself — redirected to a file when the
+  log matters, never through a pipe (`| tail` masks the exit code). While the gate runs, no
+  parallel heavy builds share the machine: the e2e suite
+  `reference::a_reply_lists_a_bounded_number` deadline-cancels under parallel load and passes in
+  isolation. `docs/development.md` records the gate, the load rule, the test pyramid and the
+  acceptance-first rule.
+
 ## 2026-10-27
 
 - **Task tracking moves to GitHub.** The code owner directed removal of the repository task table
