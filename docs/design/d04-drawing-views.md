@@ -55,8 +55,9 @@ placement surface is a later slice of this issue.
 
 ## Slice 2: section and detail views
 
-Baseline: verified fork `master` `0434ed3f` (2026-10-31). Slice 2 keeps the placement
-discipline and adds two hand-placed derived views beside it.
+Baseline: verified fork `master` `587e2812` (2026-10-31), i.e. after D07 slice 3 (#347)
+already owned the layers and line types in this same document model; slice 2 rebased onto it
+and keeps the placement discipline, adding two hand-placed derived views beside it.
 
 A **section view** (`SectionSpec`, up to `MAX_SECTIONS` = 16 in `DrawingSpec.sections`)
 cuts the model with one axis-aligned plane: perpendicular to its basis's depth axis
@@ -77,14 +78,16 @@ clips it to the region (parametric line–disk clipping), keeping the parent's s
 feature addresses. The detail is a magnification of exactly that parent content, never a
 fresh projection.
 
-Identity collapses into one shared paper space: every placed view, section, detail and
-drawn object UUID is pairwise distinct and distinct from the three document objects, in
-both replacement directions. The one-page intent budget counts all four collections and
-their optional scopes; the caps stay 16/16/16/60 and the page (64 prims) arbitrates. The
+Identity collapses into one shared paper space: every placed view, section, detail, drawn
+object and layer UUID is pairwise distinct and distinct from the three document objects, in
+both replacement directions. The one-page intent budget counts all five collections and
+their optional scopes; the caps stay 16/16/16/60/16 and the page (64 prims) arbitrates. The
 wire format gains optional `/Drawing/Sections` (`S1..Sn`) and `/Drawing/Details`
-(`D1..Dn`) scopes beside `/Drawing/Views`; the drawing schema descriptor is bumped to
-`beamcraft-drawing-usd/3`. `edit-views` replaces all three view collections in one
-fingerprinted document operation via `--placed-section UUID:plane:cut:side:scale:x,y` and
+(`D1..Dn`) scopes beside `/Drawing/Views` and `/Drawing/Layers`; the slice extends the
+drawing schema descriptor that #347 carries (`beamcraft-drawing-usd/4`) with the
+`sections=`/`details=` entries rather than bumping it again. `edit-views` replaces all
+three view collections in one fingerprinted document operation via
+`--placed-section UUID:plane:cut:side:scale:x,y` and
 `--placed-detail UUID:parent:x,y:radius:scale:x,y`; `inspect-drawing` reports them as
 `placed_sections`/`placed_details`.
 
