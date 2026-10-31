@@ -28,6 +28,7 @@ const SYNTHETIC: &str = concat!(
 const GROUP: &str = "019a7bf0-0000-7000-8000-000000710001";
 const GROUP2: &str = "019a7bf0-0000-7000-8000-000000710002";
 const USER: &str = "019a7bf0-0000-7000-8000-000000719001";
+const UPGRADE_OP: &str = "019a7bf0-0000-7000-8000-0000007100c1";
 
 /// SYN-BOLT-12x50 of the shipped synthetic library: washered, lengths [30, 40, 50, 60, 80],
 /// nut 9, washer 2, protrusion 3, washer defaults true/true.
@@ -513,8 +514,14 @@ fn the_definition_is_pinned_repinned_and_an_a05_group_is_upgraded() {
     let mut upgrade = f.group_args(&a05_id, &parts, WASHERED, &["--spacings", "150,150"]);
     let slot = upgrade.iter().position(|a| a == "--new-id").unwrap();
     upgrade[slot] = "--target".to_owned();
-    f.ok(&strs("update-bolt-group", &upgrade));
+    upgrade.extend(["--op-id".to_owned(), UPGRADE_OP.to_owned()]);
+    let upgraded = f.ok(&strs("update-bolt-group", &upgrade));
+    assert_eq!(text(&upgraded, "outcome"), "bolt_group_committed");
     assert!(f.annotations().is_empty(), "the upgrade replaces the form");
+    // The same line replays: the guard against a silent definition change gives way to the
+    // replay comparison for an already accepted operation, in either order of the checks.
+    let again = f.ok(&strs("update-bolt-group", &upgrade));
+    assert_eq!(text(&again, "outcome"), "bolt_group_replayed");
     let groups = f.groups();
     assert_eq!(groups.len(), 2);
     assert_eq!(text(&groups[1], "id"), a05_id);

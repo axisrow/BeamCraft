@@ -605,8 +605,12 @@ fn run(args: &[OsString]) -> Run<Json> {
     // A repin always names the library entry it follows; a library without a repin on a stored
     // group would silently follow a changed definition, which only --repin may do. The upgrade
     // of an A05 annotation group is different: it has no definition yet, so naming the library
-    // entry is the only way.
-    if repin != from_library && current.is_some() {
+    // entry is the only way. A retry of an already accepted operation skips the guard and
+    // reaches the adapter's replay comparison, whose verdict names the real state.
+    if repin != from_library
+        && current.is_some()
+        && !beamcraft_cli::bolt::op_accepted(&store, &context.op_id)?
+    {
         return Err(invalid(
             "--repin needs --fastener-library and --designation",
         ));

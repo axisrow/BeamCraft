@@ -462,6 +462,17 @@ pub(crate) fn is_bolt(
     Ok(model.bolts.iter().any(|b| b.id == *id) || model.groups.iter().any(|g| g.id == *id))
 }
 
+/// Whether the host ledger already accepted this operation. A retry of an accepted edit
+/// reaches the replay comparison instead of a command-line argument guard, so its content —
+/// not its argument shape — decides between `bolt_group_replayed` and `OP_ID_REUSE`.
+pub fn op_accepted(store: &RevisionStore, op_id: &OpId) -> Result<bool, PlateError> {
+    let op_host = host_uuid(&op_id.to_string())?;
+    let (prior, _) = prior_op_with(store, &op_host, || {
+        digest_of(b"the accepted request is decided from the operation's revision")
+    })?;
+    Ok(matches!(prior, PriorOp::Accepted { .. }))
+}
+
 /// The bolt groups of the verified head (empty for a store without a revision).
 pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, PlateError> {
     let control = control();
@@ -528,8 +539,9 @@ fn expected_spec(
 }
 
 /// The A14.3 group `id` as the operation committed at `sequence` wrote it, together with the
-/// state the revision before it held. `None` when that revision wrote no such group, so the
-/// operation id belongs to another request.
+/// state the revision before it held: the target may have existed as either form (a committed
+/// upgrade was an A05 annotation before). `None` when that revision wrote no such group, so
+/// the operation id belongs to another request.
 fn group_at(
     store: &RevisionStore,
     sequence: u64,
@@ -544,7 +556,10 @@ fn group_at(
     let existed_before = if sequence > 1 {
         let before = store.open_at(sequence - 1)?;
         let before_model = model_of(&open_base(&base_of(&before)?)?, control)?;
+        // The edit's target may have existed as either form: a committed upgrade had it as an
+        // A05 annotation in the revision before, so a retry of that upgrade must still replay.
         before_model.groups.iter().any(|g| g.id == *id)
+            || before_model.bolts.iter().any(|b| b.id == *id)
     } else {
         false
     };
