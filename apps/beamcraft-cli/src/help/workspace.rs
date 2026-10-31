@@ -3,16 +3,6 @@
 
 //! Help owned by the workspace command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "create-workspace",
-    "inspect-workspace",
-    "publish-workspace",
-    "resolve-workspace",
-    "undo-workspace",
-    "redo-workspace",
-    "inspect-workspace-history",
-];
-
 pub(super) const HELP: &str = concat!(
     "Workspace (P06, a personal draft is a separate store directory; edit it with the usual ",
     "commands and --store DIR): create-workspace --store PUBLISHED --workspace-dir DIR ",

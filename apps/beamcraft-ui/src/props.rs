@@ -101,6 +101,8 @@ pub struct Details {
     pub section_mm: Option<[f64; 2]>,
     /// A member's axis start and end in millimetres.
     pub axis_points_mm: Option<[[f64; 3]; 2]>,
+    /// A member's pinned profile definition (its digest), `None` for a plate.
+    pub profile: Option<String>,
     /// A member's profile name, when the definition has one.
     pub profile_name: Option<String>,
     /// The assigned level's id.
@@ -277,6 +279,7 @@ pub fn parse_details(
             plate_size_mm,
             section_mm,
             axis_points_mm,
+            profile: text(element, "profile_digest"),
             profile_name: text(element, "profile_name"),
             level: text(element, "level"),
             levels,
@@ -450,6 +453,9 @@ pub struct Form {
     pub name: String,
     /// `--material-digest` (`None` is the engine's explicit `none`).
     pub material: Option<String>,
+    /// `--profile-digest` of a member (or `--profile` for a choice that only the project's
+    /// environment has, see `tools::BY_NAME`); `None` for a plate.
+    pub profile: Option<String>,
     /// `--thickness` (plates only), mm.
     pub thickness: String,
     /// `--translation`, mm, absolute.
@@ -464,6 +470,7 @@ impl Form {
             class: details.class.to_string(),
             name: details.name.clone(),
             material: details.material.clone(),
+            profile: details.profile.clone(),
             thickness: details.thickness_mm.map(show).unwrap_or_default(),
             translation: details.translation_mm.map(show),
         }
@@ -706,6 +713,16 @@ impl Properties {
             ]);
             changed.push("material");
         }
+        if !details.is_plate() && self.form.profile != self.baseline.profile {
+            // A profile is always present on a member; clearing the choice is no edit.
+            if let Some(profile) = &self.form.profile {
+                match profile.strip_prefix(crate::tools::BY_NAME) {
+                    Some(name) => args.extend(["--profile".into(), name.to_owned()]),
+                    None => args.extend(["--profile-digest".into(), profile.clone()]),
+                }
+                changed.push("profile");
+            }
+        }
         if details.is_plate() && self.form.thickness != self.baseline.thickness {
             let (typed, value) = bounded("Thickness", &self.form.thickness, DIMENSION_CAP_MM)?;
             if value <= 0.0 {
@@ -799,7 +816,7 @@ mod tests {
 \"mass\":{{\"kg\":39.25,\"kg_display\":39.3,\"density_kg_m3\":7850.0,\"status\":\"current\"}}}},\
 \"level\":null}}],\
 \"members\":[{{\"element_id\":\"{BEAM}\",\"kind\":\"beam\",\"name\":\"B1\",\
-\"material_digest\":null,\"profile_name\":\"R200x300\",\
+\"material_digest\":null,\"profile_digest\":\"aa11\",\"profile_name\":\"R200x300\",\
 \"section_mm\":{{\"width\":200.0,\"height\":300.0}},\
 \"axis_points_mm\":[[0.0,0.0,0.0],[3000.0,0.0,0.0]],\
 \"placement\":{{\"translation_mm\":[0.0,0.0,0.0]}},\
@@ -1088,6 +1105,26 @@ mod tests {
         m.load(BEAM, Ok(details(BEAM, 3, "d3")));
         m.form.thickness = "5".into();
         assert_eq!(m.prepare(store()).unwrap_err().field, "Properties");
+    }
+
+    #[test]
+    fn a_member_profile_change_is_one_flag_by_digest_or_by_name() {
+        let mut m = Properties::default();
+        m.load(BEAM, Ok(details(BEAM, 3, "d3")));
+        m.observe_head(Some(head(3, "d3")));
+        assert_eq!(m.form.profile.as_deref(), Some("aa11"));
+        m.form.profile = Some("bb22".into());
+        let edit = m.prepare(store()).unwrap();
+        assert_eq!(edit.args.get(5..).unwrap(), ["--profile-digest", "bb22"]);
+        assert_eq!(edit.changed, ["profile"]);
+        // A choice that only the project environment has is passed by name.
+        m.form.profile = Some("name:I-300x150".into());
+        assert_eq!(
+            m.prepare(store()).unwrap().args.get(5..).unwrap(),
+            ["--profile", "I-300x150"]
+        );
+        // A plate has no profile.
+        assert_eq!(loaded().form.profile, None);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic frame and closed-form references, MPL-2.0.
 
-//! Expanded Q01 (fork issue #318, upstream issue #334): one real-binary story that extends the
+//! Expanded Q01 (fork issue axisrow/BeamCraft#318, upstream issue #334): one real-binary story that extends the
 //! delivered alpha scenario into the model tools, views/filters, grids/levels, invalid-input and
 //! cancellation regressions, and exact stored outputs. Every command starts a fresh process; no
 //! mock storage, renderer or geometry is used. The original scenario stays in `alpha_scenario.rs`;

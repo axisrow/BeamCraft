@@ -3,8 +3,6 @@
 
 //! Help owned by the history command family.
 
-pub(super) const COMMANDS: &[&str] = &["inspect-history", "compact-history"];
-
 pub(super) const HELP: &str = concat!(
     "History (U14): inspect-history --store ROOT [--workspaces-root DIR] [--workspace-dir ",
     "DIR] (revisions, blob bytes in total, reachable from the head and from the workspaces, ",

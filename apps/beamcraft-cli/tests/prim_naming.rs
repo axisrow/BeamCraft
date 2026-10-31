@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! U16 end to end: every category, cross-category links, stable paths, view export and picking.
+//! U16 end to end: every category, cross-category links, stable paths, view export.
 //! All generated model data are contributor-original synthetic fixtures (ATTRIBUTION.md).
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
@@ -336,24 +336,6 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
                 .is_some()
         );
     }
-    let picked = f.run(
-        "pick",
-        &[
-            "--origin",
-            "500,250,100",
-            "--direction",
-            "0,0,-1",
-            "--targets",
-            "face",
-        ],
-    );
-    assert_eq!(
-        string(
-            &picked.get("hits").unwrap().array().unwrap()[0],
-            "element_id"
-        ),
-        PLATE
-    );
     // Deleting non-parts removes the leaf from its category folder as well.
     for id in [WELD, BOLT, ASSEMBLY, LEVEL] {
         f.run("delete-element", &["--id", id]);

@@ -3,15 +3,6 @@
 
 //! Help owned by the reference command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "attach-reference",
-    "move-reference",
-    "correct-reference-units",
-    "write-reference",
-    "inspect-reference",
-    "measure-reference",
-];
-
 pub(super) const HELP: &str = concat!(
     "Reference (R01, a foreign USD file attached read-only; its bytes are stored under their ",
     "SHA-256 and never rewritten): attach-reference --store ROOT --source FILE [--name TEXT] ",

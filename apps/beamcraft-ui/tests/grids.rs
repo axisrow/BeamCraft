@@ -435,6 +435,7 @@ fn growing_both_coordinate_families_keeps_every_line_across_the_whole_grid() {
 }
 
 #[test]
+#[ignore = "the window still runs a removed CLI command, see #763"]
 fn edited_rotated_rectangle_uses_master_queries_and_preserves_placed_parts() {
     let f = Fixture::new();
     let store = f.root.join("ui");

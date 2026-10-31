@@ -14,8 +14,8 @@ use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
 use beamcraft_kernel::diagnostic::{Code, Stage};
 use beamcraft_kernel::enclosure::Enclosure;
 use beamcraft_kernel::measure::{
-    Basis, MeshMeasurement, QuantityStatus, analytic_mass_kg, cross_check_plate, mass_status,
-    measure, measure_with_cancel,
+    Basis, MassRecord, MeshMeasurement, QuantityStatus, analytic_mass_kg, cross_check_plate,
+    mass_status, measure, measure_with_cancel,
 };
 use beamcraft_kernel::topology::{Limits, analyze, analyze_with};
 use beamcraft_kernel::trimesh::TriMesh;
@@ -234,7 +234,14 @@ fn analytic_mass_uses_the_written_order_and_never_defaults_density() {
         analytic_mass_kg(1.0, Some(f64::INFINITY)),
         Err(Code::NonFinite)
     );
-    assert_eq!(analytic_mass_kg(1.0, Some(0.0)), Err(Code::NotPositive));
+    // A zero density is the massless auxiliary material: a current mass of zero.
+    assert_eq!(
+        analytic_mass_kg(1.0, Some(0.0)),
+        Ok(MassRecord {
+            status: QuantityStatus::Current,
+            kg: Some(0.0)
+        })
+    );
     assert_eq!(analytic_mass_kg(1.0, Some(-5.0)), Err(Code::NotPositive));
     // W10: a subnormal density underflows; zero is never a current mass.
     assert_eq!(

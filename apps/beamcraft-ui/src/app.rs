@@ -1528,18 +1528,17 @@ impl App {
                 ui.label(egui::RichText::new("General").size(12.0));
                 field(ui, "Name", &mut self.props.form.name, 170.0);
                 field(ui, "Class", &mut self.props.form.class, 80.0);
-                if let Some(profile) = &details.profile_name {
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            egui::vec2(70.0, 28.0),
-                            egui::Label::new(
-                                egui::RichText::new("Profile")
-                                    .size(11.0)
-                                    .color(palette.muted),
-                            ),
-                        );
-                        ui.label(profile);
-                    });
+                if !details.is_plate() {
+                    // A member's profile is chosen from the model's and the project environment's
+                    // profiles; the engine rebuilds the body and the mass (`update-element`).
+                    choice_combo(
+                        ui,
+                        "props-profile",
+                        "Profile",
+                        &mut self.props.form.profile,
+                        &self.tools.definitions.profiles,
+                        false,
+                    );
                 }
                 choice_combo(
                     ui,

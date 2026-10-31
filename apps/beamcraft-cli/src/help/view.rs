@@ -3,8 +3,6 @@
 
 //! Help owned by the view command family.
 
-pub(super) const COMMANDS: &[&str] = &["snapshot-view", "inspect-view-changes", "clip-view"];
-
 pub(super) const HELP: &str = concat!(
     "View (synthetic kernel plate scene, no store): snapshot-view --plates 1..500 [--hide ",
     "KIND,...] [--representation full|simplified] [--stand-in-simplified true|false] ",

@@ -3,8 +3,6 @@
 
 //! Help owned by the bolt command family.
 
-pub(super) const COMMANDS: &[&str] = &["create-bolt", "bolts", "fastener-geometry"];
-
 pub(super) const HELP: &str = concat!(
     "Bolt (A05, experimental, a connection element with no body): create-bolt --store ROOT ",
     "--name TEXT --main PART_UUID --secondary PART_UUID --origin X,Y,Z --direction X,Y,Z ",

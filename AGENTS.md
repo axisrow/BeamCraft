@@ -97,6 +97,12 @@ is fine; copying from them is not.
 
 - **Everything is reachable headlessly.** Every user-facing feature needs an engine API first, then a
   CLI command. A feature is not done until it has an end-to-end test.
+- **Exception: interactive assistance.** Cursor aids of the window (picking, snapping) and the
+  start screen (appearance settings, environment list, project-name suggestion, recent-project
+  list) need an engine API and tests but **no CLI command**: an agent addresses geometry and
+  files directly. Owner decision of 2026-10-31; the commands `pick`, `snap`, `show-settings`,
+  `set-settings`, `list-environment`, `suggest-project-name`, `list-recent` and `add-recent` are
+  removed.
 - Any control channel, scripting server or MCP server is **opt-in**, loopback-only and
   token-authenticated. Never enable one by default or widen its bind address.
 

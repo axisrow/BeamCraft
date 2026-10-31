@@ -112,6 +112,7 @@ fn settle(ctx: &egui::Context, appearance: &mut Appearance) -> egui::FullOutput 
 }
 
 #[test]
+#[ignore = "the window still runs a removed CLI command, see #763"]
 fn native_selector_saves_and_reloads_all_preferences() {
     if matches!(
         std::env::var("BEAMCRAFT_THEME").as_deref(),

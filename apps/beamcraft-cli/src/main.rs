@@ -7,6 +7,7 @@ mod help;
 mod report;
 mod revision;
 
+use beamcraft_cli::registry::{self, Route};
 use beamcraft_host::{
     control::{Cancellation, Control, HostError},
     storage::BlobStore,
@@ -60,35 +61,16 @@ fn main() -> std::process::ExitCode {
         help::print();
         return std::process::ExitCode::SUCCESS;
     }
-    if args.first().is_some_and(|c| c == "export-view") {
-        match view_export::execute(&args) {
-            view_export::Output::Raw(bytes) => {
-                use std::io::Write;
-                let mut out = std::io::stdout().lock();
-                if out.write_all(&bytes).and_then(|()| out.flush()).is_err() {
-                    return std::process::ExitCode::from(3);
-                }
-                return std::process::ExitCode::SUCCESS;
-            }
-            view_export::Output::Framed { head, bundle } => {
-                use std::io::Write;
-                let mut out = std::io::stdout().lock();
-                let written = out
-                    .write_all(&head)
-                    .and_then(|()| out.write_all(&bundle))
-                    .and_then(|()| out.flush());
-                if written.is_err() {
-                    return std::process::ExitCode::from(3);
-                }
-                return std::process::ExitCode::SUCCESS;
-            }
-            view_export::Output::Json(json, exit) => return print_json(&json, exit),
+    let route = args.first().and_then(|c| registry::route(c));
+    match route {
+        Some(Route::Commands) => return list_commands(args.get(1..).unwrap_or_default()),
+        Some(Route::ExportView) => return export_view(&args),
+        Some(Route::Export) => {
+            // The report lists every element, so it can exceed the control-message bounds that
+            // `print_json` enforces; it is rendered by the command itself.
+            return export_cmd::run_and_print(&args);
         }
-    }
-    if args.first().is_some_and(export_cmd::handles) {
-        // The report lists every element, so it can exceed the control-message bounds that
-        // `print_json` enforces; it is rendered by the command itself.
-        return export_cmd::run_and_print(&args);
+        _ => {}
     }
     // A serving coordinator holds its store for as long as it runs, so a compaction cannot start
     // under it (U14).
@@ -96,141 +78,91 @@ fn main() -> std::process::ExitCode {
         Ok(lease) => lease,
         Err((json, exit)) => return print_json(&json, exit),
     };
-    let (json, exit) = if args
-        .first()
-        .is_some_and(|c| c == "snapshot-view" || c == "inspect-view-changes" || c == "clip-view")
-    {
-        view::execute(&args)
-    } else if args.first().is_some_and(history_cmd::handles) {
-        history_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| reference_cmd::handles(c)) {
-        reference_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| {
-        c == "create-assembly"
-            || c == "attach-to-assembly"
-            || c == "detach-from-assembly"
-            || c == "set-main-part"
-            || c == "explode-assembly"
-            || c == "assemblies"
-    }) {
-        assembly_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| c == "rebase-workspace") {
-        rebase_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| c == "compensate-workspace") {
-        compensate_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| c == "resolve-workspace") {
-        resolve_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| {
-        c == "create-changeset" || c == "inspect-changeset" || c == "apply-changeset"
-    }) {
-        changeset_cmd::execute(&args)
-    } else if args.first().is_some_and(coordinator_cmd::handles) {
-        coordinator_cmd::execute(&args)
-    } else if args.first().is_some_and(drawing_cmd::handles) {
-        drawing_cmd::execute(&args)
-    } else if args
-        .first()
-        .is_some_and(|c| c == "work-plane" || c == "resolve-construction-point")
-    {
-        work_plane_cmd::execute(&args)
-    } else if args.first().is_some_and(pick_cmd::handles) {
-        pick_cmd::execute(&args)
-    } else if args.first().is_some_and(weld_cmd::handles) {
-        weld_cmd::execute(&args)
-    } else if args.first().is_some_and(bolt_cmd::handles) {
-        bolt_cmd::execute(&args)
-    } else if args.first().is_some_and(bom_cmd::handles) {
-        bom_cmd::execute(&args)
-    } else if args.first().is_some_and(schedule_cmd::handles) {
-        schedule_cmd::execute(&args)
-    } else if args.first().is_some_and(library_cmd::handles) {
-        library_cmd::execute(&args)
-    } else if args.first().is_some_and(fastener_cmd::handles) {
-        fastener_cmd::execute(&args)
-    } else if args.first().is_some_and(project_cmd::handles) {
-        project_cmd::execute(&args)
-    } else if args.first().is_some_and(grid_cmd::handles) {
-        grid_cmd::execute(&args)
-    } else if args.first().is_some_and(level_cmd::handles) {
-        level_cmd::execute(&args)
-    } else if args.first().is_some_and(construction_cmd::handles) {
-        construction_cmd::execute(&args)
-    } else if args.first().is_some_and(attribute_cmd::handles) {
-        attribute_cmd::execute(&args)
-    } else if args.first().is_some_and(filters_cmd::handles) {
-        filters_cmd::execute(&args)
-    } else if args.first().is_some_and(numbering_cmd::handles) {
-        numbering_cmd::execute(&args)
-    } else if args.first().is_some_and(|c| {
-        c == "create-plate"
-            || c == "create-lofted-plate"
-            || c == "inspect-lofted-plates"
-            || c == "inspect-elements"
-            || c == "define-material"
-            || c == "define-profile"
-            || c == "define-fastener"
-            || c == "definitions"
-            || c == "create-member"
-            || c == "create-polybeam"
-            || c == "create-curved-beam"
-            || c == "add-hole"
-            || c == "update-hole"
-            || c == "remove-hole"
-            || c == "update-element"
-            || c == "move-plate-vertex"
-            || c == "move-plate-edge"
-            || c == "insert-plate-vertex"
-            || c == "delete-plate-vertex"
-            || c == "set-plate-corner"
-            || c == "delete-element"
-            || c == "copy-element"
-            || c == "copy-instance"
-            || c == "array-linear"
-            || c == "array-polar"
-            || c == "cut-by-plane"
-            || c == "cut-by-line"
-            || c == "cut-by-polygon"
-            || c == "cut-by-part"
-            || c == "fit-end-to-part"
-            || c == "chamfer-part"
-            || c == "split-part"
-            || c == "combine-parts"
-            || c == "bend-plate"
-            || c == "update-cut"
-            || c == "remove-cut"
-            || c == "create-workspace"
-            || c == "inspect-workspace"
-            || c == "publish-workspace"
-            || c == "undo-workspace"
-            || c == "redo-workspace"
-            || c == "inspect-workspace-history"
-    }) {
-        plate_cmd::execute(&args)
-    } else {
-        match run(args) {
-            Ok(j) => (j, 0),
-            Err((e, observed)) => (
-                Json::object([
-                    (
-                        "outcome",
-                        Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                            "outcome_unknown"
-                        } else if e.code == ErrorCode::Cancelled {
-                            "cancelled"
-                        } else {
-                            "rejected"
-                        }),
-                    ),
-                    ("code", Json::text(e.code.as_str())),
-                    ("message", Json::text(e.message())),
-                    ("observed_context", observed),
-                    ("diagnostics", Json::Array(vec![])),
-                ]),
-                e.exit_code(),
-            ),
+    // Dispatch is by registry route only; an unregistered word takes the store-level path, which
+    // refuses it.
+    let (json, exit) = match route {
+        Some(Route::View) => view::execute(&args),
+        Some(Route::History) => history_cmd::execute(&args),
+        Some(Route::Reference) => reference_cmd::execute(&args),
+        Some(Route::Assembly) => assembly_cmd::execute(&args),
+        Some(Route::Rebase) => rebase_cmd::execute(&args),
+        Some(Route::Resolve) => resolve_cmd::execute(&args),
+        Some(Route::Compensate) => compensate_cmd::execute(&args),
+        Some(Route::Changeset) => changeset_cmd::execute(&args),
+        Some(Route::Coordinator) => coordinator_cmd::execute(&args),
+        Some(Route::Drawing) => drawing_cmd::execute(&args),
+        Some(Route::WorkPlane) => work_plane_cmd::execute(&args),
+        Some(Route::Pick) => pick_cmd::execute(&args),
+        Some(Route::Filters) => filters_cmd::execute(&args),
+        Some(Route::Construction) => construction_cmd::execute(&args),
+        Some(Route::Weld) => weld_cmd::execute(&args),
+        Some(Route::Bolt) => bolt_cmd::execute(&args),
+        Some(Route::Bom) => bom_cmd::execute(&args),
+        Some(Route::Schedule) => schedule_cmd::execute(&args),
+        Some(Route::Library) => library_cmd::execute(&args),
+        Some(Route::Fastener) => fastener_cmd::execute(&args),
+        Some(Route::Project) => project_cmd::execute(&args),
+        Some(Route::Grid) => grid_cmd::execute(&args),
+        Some(Route::Level) => level_cmd::execute(&args),
+        Some(Route::Attribute) => attribute_cmd::execute(&args),
+        Some(Route::Numbering) => numbering_cmd::execute(&args),
+        Some(Route::Plate) => plate_cmd::execute(&args),
+        // The early returns above already took these three.
+        Some(Route::Generic | Route::Commands | Route::ExportView | Route::Export) | None => {
+            run_store_command(args)
         }
     };
     print_json(&json, exit)
+}
+/// Runs a store-level blob or revision command, or refuses an unregistered word.
+fn run_store_command(args: Vec<std::ffi::OsString>) -> (Json, u8) {
+    match run(args) {
+        Ok(j) => (j, 0),
+        Err((e, observed)) => (
+            Json::object([
+                (
+                    "outcome",
+                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
+                        "outcome_unknown"
+                    } else if e.code == ErrorCode::Cancelled {
+                        "cancelled"
+                    } else {
+                        "rejected"
+                    }),
+                ),
+                ("code", Json::text(e.code.as_str())),
+                ("message", Json::text(e.message())),
+                ("observed_context", observed),
+                ("diagnostics", Json::Array(vec![])),
+            ]),
+            e.exit_code(),
+        ),
+    }
+}
+/// Runs `export-view`, which writes raw or framed bytes instead of a JSON document.
+fn export_view(args: &[std::ffi::OsString]) -> std::process::ExitCode {
+    use std::io::Write;
+    match view_export::execute(args) {
+        view_export::Output::Raw(bytes) => {
+            let mut out = std::io::stdout().lock();
+            if out.write_all(&bytes).and_then(|()| out.flush()).is_err() {
+                return std::process::ExitCode::from(3);
+            }
+            std::process::ExitCode::SUCCESS
+        }
+        view_export::Output::Framed { head, bundle } => {
+            let mut out = std::io::stdout().lock();
+            let written = out
+                .write_all(&head)
+                .and_then(|()| out.write_all(&bundle))
+                .and_then(|()| out.flush());
+            if written.is_err() {
+                return std::process::ExitCode::from(3);
+            }
+            std::process::ExitCode::SUCCESS
+        }
+        view_export::Output::Json(json, exit) => print_json(&json, exit),
+    }
 }
 fn print_json(json: &Json, exit: u8) -> std::process::ExitCode {
     match json.encode(&Limits::DEFAULT) {
@@ -362,4 +294,21 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
 }
 fn read_file(path: &str, cap: usize) -> Result<Vec<u8>, HostError> {
     beamcraft_cli::source_file::read_file(path, cap).map_err(HostError::logical)
+}
+/// `commands`: the registry, with no store involved. It takes no options.
+fn list_commands(tail: &[std::ffi::OsString]) -> std::process::ExitCode {
+    match tail {
+        [] => print_json(&beamcraft_cli::registry::listing(), 0),
+        _ => {
+            let error = invalid();
+            let json = Json::object([
+                ("outcome", Json::text("rejected")),
+                ("code", Json::text(error.code.as_str())),
+                ("message", Json::text(error.message())),
+                ("observed_context", Json::Null),
+                ("diagnostics", Json::Array(vec![])),
+            ]);
+            print_json(&json, error.exit_code())
+        }
+    }
 }

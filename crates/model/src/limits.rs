@@ -80,7 +80,7 @@ pub const MAX_ATTR_NAME_BYTES: usize = 64;
 pub const MAX_ATTR_TEXT_BYTES: usize = 256;
 /// A user-attribute unit label, at most this many bytes (I04).
 pub const MAX_ATTR_UNIT_BYTES: usize = 16;
-/// An attribute-set name, at most this many bytes (I04).
+/// An attribute-set name, at most this many bytes and without control characters (I04).
 pub const MAX_ATTR_SET_BYTES: usize = 64;
 /// At most this many options on one choice attribute (I04).
 pub const MAX_ATTR_OPTIONS: usize = 64;

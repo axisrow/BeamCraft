@@ -1333,7 +1333,6 @@ mod tests {
         .unwrap();
         for (density, expected) in [
             (f64::NAN, ErrorCode::NonFiniteNumber),
-            (0.0, ErrorCode::InvalidArgument),
             (-7850.0, ErrorCode::InvalidArgument),
             (2_000_000.0, ErrorCode::LimitExceeded),
         ] {
@@ -1348,6 +1347,14 @@ mod tests {
             body.quantities_for(None).unwrap().mass_status,
             QuantityStatus::Unknown
         );
+        // A zero density is the massless auxiliary material: a known zero mass.
+        let massless = body
+            .quantities_for(Some(MaterialInfo {
+                density_kg_m3: Some(0.0),
+            }))
+            .unwrap();
+        assert_eq!(massless.mass_status, QuantityStatus::Current);
+        assert_eq!(massless.mass_kg, Some(0.0));
     }
 
     fn code(c: &CreatePlate) -> ErrorCode {

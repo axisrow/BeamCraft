@@ -40,7 +40,7 @@ fn reject(f: &support::StoreFixture, c: &str, a: &[&str]) {
     assert_eq!(before, ok(f, "open-revision", &[]));
 }
 #[test]
-fn read_queries_and_snaps_follow_contract_without_publication() {
+fn read_queries_follow_contract_without_publication() {
     let f = support::StoreFixture::new("t01-queries");
     create(&f);
     let before = ok(&f, "open-revision", &[]);
@@ -58,71 +58,6 @@ fn read_queries_and_snaps_follow_contract_without_publication() {
     );
     let plane = ok(&f, "resolve-grid-plane", &["--grid", G, "--label", "3"]);
     assert_eq!(list(&plane, "normal_world")[0].float().unwrap().abs(), 1.);
-    let s = ok(
-        &f,
-        "snap",
-        &[
-            "--point",
-            "12003,7502,3000",
-            "--radius",
-            "10",
-            "--kinds",
-            "grid_intersection,grid_end,grid_line",
-        ],
-    );
-    // GR-P07: the candidates in contract order - line B, line 3, then the B,3 crossing - with
-    // plan distances 2, 3 and sqrt(13), no grid_end, and every hit at the query height.
-    let hits = list(&s, "candidates");
-    assert_eq!(hits.len(), 3);
-    let coords = |h: &Json| -> Vec<f64> {
-        list(h, "point_world_mm")
-            .iter()
-            .map(|v| v.float().unwrap())
-            .collect()
-    };
-    assert_eq!(coords(&hits[0]), [12003., 7500., 3000.]);
-    assert_eq!(coords(&hits[1]), [12000., 7502., 3000.]);
-    assert_eq!(coords(&hits[2]), [12000., 7500., 3000.]);
-    for (hit, kind) in hits
-        .iter()
-        .zip(["grid_line", "grid_line", "grid_intersection"])
-    {
-        assert_eq!(text(hit, "kind"), kind);
-    }
-    let d = |h: &Json| h.get("distance_mm").unwrap().float().unwrap();
-    assert_eq!(d(&hits[0]), 2.);
-    assert_eq!(d(&hits[1]), 3.);
-    assert!((d(&hits[2]) - 13f64.sqrt()).abs() < 1e-9);
-    let kept = ok(
-        &f,
-        "snap",
-        &[
-            "--point",
-            "12003,7502,3000",
-            "--radius",
-            "10",
-            "--kinds",
-            "grid_intersection,grid_end,grid_line",
-            "--grids",
-            G,
-        ],
-    );
-    assert_eq!(list(&kept, "candidates"), hits);
-    let empty = ok(
-        &f,
-        "snap",
-        &[
-            "--point",
-            "12003,7502,3000",
-            "--radius",
-            "10",
-            "--kinds",
-            "grid_line",
-            "--grids",
-            "",
-        ],
-    );
-    assert!(list(&empty, "candidates").is_empty());
     assert_eq!(before, ok(&f, "open-revision", &[]));
     reject(&f, "resolve-grid-point", &["--grid", G, "--labels", "1,2"]);
     reject(&f, "resolve-grid-point", &["--grid", G, "--labels", "?,B"]);
@@ -227,26 +162,7 @@ fn placement_height_errors_and_level_offsets_are_explicit() {
         ],
     );
     let j = ok(&f, "inspect-elements", &[]);
-    let member = &list(&j, "members")[0];
-    // Independent query of the accepted member's semantic axis.
-    let member_id = text(member, "element_id");
-    let snaps = ok(
-        &f,
-        "snap",
-        &[
-            "--point",
-            "6000,7500,3500",
-            "--radius",
-            "0",
-            "--kinds",
-            "axis_end",
-        ],
-    );
-    assert!(
-        list(&snaps, "candidates")
-            .iter()
-            .any(|c| text(c, "element_id") == member_id)
-    );
+    assert_eq!(list(&j, "members").len(), 1);
 }
 
 #[test]

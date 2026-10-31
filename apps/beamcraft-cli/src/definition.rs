@@ -1338,7 +1338,7 @@ mod tests {
         for (record, code) in [
             (
                 DefinitionRecord::Material {
-                    density_kg_m3: Some(0.0),
+                    density_kg_m3: Some(-1.0),
                     grade: None,
                     standard: None,
                     display_name: None,

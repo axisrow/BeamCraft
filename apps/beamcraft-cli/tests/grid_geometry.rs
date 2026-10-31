@@ -50,19 +50,6 @@ fn guides_are_derived_only_and_relabel_is_geometry_inert() {
     let view = ok(&f, "inspect-elements", &[]);
     assert!(view.get("plates").unwrap().array().unwrap().is_empty());
     assert!(view.get("members").unwrap().array().unwrap().is_empty());
-    let snap = ok(
-        &f,
-        "snap",
-        &[
-            "--point",
-            "1000,2000,0",
-            "--radius",
-            "100",
-            "--kinds",
-            "vertex,axis,axis_end",
-        ],
-    );
-    assert!(snap.get("candidates").unwrap().array().unwrap().is_empty());
     ok(
         &f,
         "relabel-grid-line",

@@ -383,6 +383,13 @@ fn adversarial_inputs_are_refused() {
         "INVALID_ARGUMENT"
     );
     assert_eq!(
+        f.rejected(
+            "attribute-define",
+            &["--name", "Finish", "--type", "text", "--set", "coat\ting"]
+        ),
+        "INVALID_ARGUMENT"
+    );
+    assert_eq!(
         f.rejected("attribute-undefine", &["--name", "Missing"]),
         "NOT_FOUND"
     );

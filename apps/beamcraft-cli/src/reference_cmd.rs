@@ -39,21 +39,6 @@ use beamcraft_model::reference::{
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-/// Whether `command` is one of the reference commands.
-pub fn handles(command: &std::ffi::OsStr) -> bool {
-    command.to_str().is_some_and(|c| {
-        matches!(
-            c,
-            "attach-reference"
-                | "move-reference"
-                | "correct-reference-units"
-                | "write-reference"
-                | "inspect-reference"
-                | "measure-reference"
-        )
-    })
-}
-
 /// Runs one reference command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     report(run(args))

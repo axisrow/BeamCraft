@@ -3,26 +3,6 @@
 
 //! Help owned by the edit command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "update-element",
-    "move-plate-vertex",
-    "move-plate-edge",
-    "insert-plate-vertex",
-    "delete-plate-vertex",
-    "set-plate-corner",
-    "cut-by-plane",
-    "update-cut",
-    "remove-cut",
-    "cut-by-line",
-    "cut-by-polygon",
-    "cut-by-part",
-    "fit-end-to-part",
-    "chamfer-part",
-    "split-part",
-    "combine-parts",
-    "bend-plate",
-];
-
 pub(super) const HELP: &str = concat!(
     "Remove cut: remove-cut --store ROOT --id PART_UUID --operation-id RECORD_UUID [common request identity options]. Rebuilds the linked group in one revision; retired record UUIDs and cap ordinals are never reused on that model-history branch. Undo restores the complete previous state.\n",
     "Update cut: update-cut uses the same target/record and plane options as cut-by-plane, replacing an existing record in place. --op-id is a new logical request identity; record UUID and ordinal remain unchanged. Linked instances update atomically; replay returns the original accepted revision even after later edits.\n",
@@ -35,10 +15,11 @@ pub(super) const HELP: &str = concat!(
     "one revision and one undo unit, replays every hole and cut, moves the vertex's treatment ",
     "with it, and a plate with three vertices is never reduced; invalid shapes refuse. ",
     "Update (P04, P08): update-element --store ROOT --id UUID [--name TEXT] [--class INT32] ",
-    "[--material-digest SHA256|none] [--thickness MM] [--thickness-side top|middle|bottom] [--translation X,Y,Z] ",
+    "[--material-digest SHA256|none] [--profile-digest SHA256 | --profile NAME] [--thickness MM] [--thickness-side top|middle|bottom] [--translation X,Y,Z] ",
     "[--orientation-xyzw X,Y,Z,W|none] [--level UUID|none] [--op-id UUID] [--revision-id ",
     "UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID] (typed patch; a rename ",
     "rewrites only the authored layer, a material change only the quantity record, a ",
+    "profile change (a member only; the digest or the name as for create-member, looked up in the model and then in the project environment) repins the section and rebuilds the mesh and the mass, ",
     "thickness or thickness-side change (A12.1) the mesh, a move (--translation, absolute, rotation kept) only the ",
     "placement without rebuilding the body; --orientation-xyzw replaces the stored placement ",
     "quaternion (absolute; none resets to the identity) and is validated like on ",

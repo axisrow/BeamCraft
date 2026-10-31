@@ -3,7 +3,9 @@
 Date: 2026-10-30. Status: implemented (wire operation `rebase`, client command
 `coordinator-rebase`, acceptance C03-R01..C03-R08 in
 `apps/beamcraft-cli/tests/coordinator_rebase.rs`). This note records how the remaining C03
-slice of fork issue #12 / #290 reached the wire. It changes no acceptance specification and
+slice of fork issue axisrow/BeamCraft#12 and fork issue axisrow/BeamCraft#290 reached the wire.
+It changes no acceptance
+specification and
 no implementation-plan status; the local semantics stay owned by `docs/design/c03-rebase.md`
 and the R rows by `docs/design/c03-c06-acceptance.md`.
 

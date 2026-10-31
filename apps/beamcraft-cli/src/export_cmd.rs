@@ -32,11 +32,6 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Whether `command` is one of the export commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "export-ifc" || command == "ifc-guid"
-}
-
 /// Runs one export command and prints its JSON result; returns the process exit code.
 pub fn run_and_print(args: &[OsString]) -> std::process::ExitCode {
     use std::io::Write;

@@ -20,7 +20,7 @@ use beamcraft_cli::delete::{DeleteRequest, DeletedKind, delete_element};
 use beamcraft_cli::edit::{UpdateRequest, UpdatedElement, update_element};
 use beamcraft_cli::history::{Direction, Step, step, timeline};
 use beamcraft_cli::hole::{AddHoleRequest, add_hole_command};
-use beamcraft_cli::library::open_lookup;
+use beamcraft_cli::library::{Lookup, open_lookup};
 use beamcraft_cli::member::{
     CreateCurvedBeamRequest, CreateMemberRequest, CreatePolybeamRequest, create_curved_beam,
     create_member, create_polybeam,
@@ -30,6 +30,7 @@ use beamcraft_cli::plate::{
     RevisionSummary, accepted_binding, claim_project, ensure_project, inspect,
 };
 use beamcraft_cli::plate_draft::{CreatedDraft, create_plate_draft};
+use beamcraft_cli::project::project_environment_file;
 use beamcraft_cli::workspace::{
     CreateWorkspace, WorkspaceStatus, create_workspace, publish_workspace,
     status as workspace_status,
@@ -374,6 +375,8 @@ const A13_COMBINE_OPTIONS_ALL: &[&str] = &[
 
 const UPDATE_OPTIONS: &[&str] = &[
     "--class",
+    "--profile-digest",
+    "--profile",
     "--store",
     "--id",
     "--name",
@@ -568,7 +571,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "add-hole" => add_hole_cli(&store, &options, false, false),
         "update-hole" => add_hole_cli(&store, &options, true, false),
         "remove-hole" => add_hole_cli(&store, &options, false, true),
-        "update-element" => update_command(&store, &options),
+        "update-element" => update_command(&store, &options, candidates),
         "move-plate-vertex" => contour_edit_command(&store, &options, "move-plate-vertex"),
         "move-plate-edge" => contour_edit_command(&store, &options, "move-plate-edge"),
         "insert-plate-vertex" => contour_edit_command(&store, &options, "insert-plate-vertex"),
@@ -741,15 +744,23 @@ fn selected(
             let definitions = head_definitions(store)?;
             match resolve_name(&definitions, name, profiles) {
                 NameResolution::Found(digest) => Ok(Some(digest)),
-                NameResolution::NotFound => Err(PlateError {
-                    rule_id: None,
-                    code: ErrorCode::NotFound,
-                    message: if profiles {
-                        "no profile definition in the head has this name"
-                    } else {
-                        "no material definition in the head has this name"
-                    },
-                }),
+                NameResolution::NotFound => {
+                    // A profile name the model does not have yet is looked up in the environment
+                    // the project was created with and defined in the model when it is first used.
+                    if profiles && let Some(digest) = define_from_environment(store, options, name)?
+                    {
+                        return Ok(Some(digest));
+                    }
+                    Err(PlateError {
+                        rule_id: None,
+                        code: ErrorCode::NotFound,
+                        message: if profiles {
+                            "no profile definition in the head has this name"
+                        } else {
+                            "no material definition in the head has this name"
+                        },
+                    })
+                }
                 NameResolution::Ambiguous(found) => {
                     candidates.extend(ambiguity_diagnostics(&found));
                     Err(invalid(
@@ -1311,7 +1322,11 @@ fn keep_side(options: &BTreeMap<&str, &str>) -> Run<KeepSide> {
         .ok_or_else(|| invalid("--keep is positive or negative"))
 }
 
-fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<Json> {
+fn update_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    candidates: &mut Vec<Json>,
+) -> Run<Json> {
     let mut source = IdSource::system();
     let mut fresh = || {
         source.next_id().map_err(|_| PlateError {
@@ -1440,6 +1455,16 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
             })
             .transpose()?,
         axis_points_mm: given("--axis-point").map(path_points).transpose()?,
+        // A member's new section: a digest, or a name looked up in the model and then in the
+        // environment of the project, exactly as when a member is created.
+        profile: selected(
+            store,
+            options,
+            ("--profile-digest", "--profile"),
+            true,
+            None,
+            candidates,
+        )?,
     };
     let updated = update_element(
         store,
@@ -1480,6 +1505,7 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 ("rotate", Json::Bool(updated.effect.rotate)),
                 ("mirror", Json::Bool(updated.effect.mirror)),
                 ("move", Json::Bool(updated.effect.move_mm)),
+                ("profile", Json::Bool(updated.effect.profile)),
             ]),
         ),
         (
@@ -4078,6 +4104,10 @@ pub(crate) fn definitions_json(
                 },
             ),
             ("definitions", Json::Array(definitions)),
+            (
+                "environment_profiles",
+                environment_profiles_json(inspection, options)?,
+            ),
         ]))
     })
 }
@@ -4710,6 +4740,89 @@ pub(crate) fn domain_diagnostics(error: &PlateError) -> Vec<Json> {
             ])
         })
         .collect()
+}
+
+/// The lookup over the environment copied into the project folder, when there is one. The
+/// project carries its environment (`create-project --environment`), so no option names it.
+fn project_lookup(options: &BTreeMap<&str, &str>) -> Run<Option<Lookup>> {
+    let Some(store) = options.get("--store") else {
+        return Ok(None);
+    };
+    let Some(file) = project_environment_file(std::path::Path::new(store)) else {
+        return Ok(None);
+    };
+    let file = file
+        .to_str()
+        .ok_or_else(|| invalid("the project environment path is not UTF-8"))?;
+    open_lookup(None, Some(file), None).map(|(lookup, _)| Some(lookup))
+}
+
+/// Defines the profile `name` of the project's environment in the model and returns its digest;
+/// `None` when the project has no environment or the environment has no such designation.
+/// Definitions are content-addressed, so a profile that is already there is not written again.
+fn define_from_environment(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    name: &str,
+) -> Run<Option<ContentDigest>> {
+    let Some(lookup) = project_lookup(options)? else {
+        return Ok(None);
+    };
+    let record = match lookup.find(name) {
+        Ok((_, entry)) => entry.record.clone(),
+        Err(error) if error.code == ErrorCode::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let actor = match options.get("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let defined = define(
+        store,
+        &DefineRequest {
+            revision_id: RevisionId::from_uuid(fresh()?),
+            op_id: OpId::from_uuid(fresh()?),
+            actor,
+            project: ProjectId::from_uuid(fresh()?),
+            workspace: WorkspaceId::from_uuid(fresh()?),
+            definition: record,
+        },
+        &mut NoFault,
+    )?;
+    Ok(Some(defined.digest))
+}
+
+/// The designations of the project's environment that the model does not define yet, for
+/// pickers: what `definitions` lists beside the profiles already in the model.
+fn environment_profiles_json(inspection: &Inspection, options: &BTreeMap<&str, &str>) -> Run<Json> {
+    let Some(lookup) = project_lookup(options)? else {
+        return Ok(Json::Array(Vec::new()));
+    };
+    let defined: Vec<&str> = inspection
+        .definitions
+        .values()
+        .filter(|record| record.is_profile())
+        .filter_map(DefinitionRecord::display_name)
+        .collect();
+    let mut listed = Vec::new();
+    for (_, entry) in lookup.effective() {
+        if defined.contains(&entry.designation.as_str()) {
+            continue;
+        }
+        listed.push(Json::object([
+            ("designation", Json::text(entry.designation.clone())),
+            ("kind", Json::text(entry.record.kind())),
+        ]));
+    }
+    Ok(Json::Array(listed))
 }
 
 #[cfg(test)]

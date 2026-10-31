@@ -1,13 +1,13 @@
 ---
 name: model
-description: Drive BeamCraft steel detailing through the beamcraft-cli - create, update and inspect members and plates (define-profile, define-material, create-member, create-plate, update-element, inspect-elements), create and verify a store (create-project, open-revision), pick and resolve coordinates (pick, list-feature, lookup-feature, snap), and snapshot or export views (snapshot-view, export-view). Use when the user asks to model, edit, move or list elements in a BeamCraft store, to check or create a store, to snap or resolve a coordinate or feature address, or for a view snapshot or export. The slash command /beamcraft:open launches the native viewport app separately.
+description: Drive BeamCraft steel detailing through the beamcraft-cli - create, update and inspect members and plates (define-profile, define-material, create-member, create-plate, update-element, inspect-elements), create and verify a store (create-project, open-revision), resolve feature addresses (list-feature, lookup-feature, element-edges), and snapshot or export views (snapshot-view, export-view). Use when the user asks to model, edit, move or list elements in a BeamCraft store, to check or create a store, to resolve a feature address, or for a view snapshot or export. The slash command /beamcraft:open launches the native viewport app separately.
 argument-hint: [what to do, and where]
 ---
 
 # Drive BeamCraft through the CLI
 
 One entry point for every BeamCraft task: model members and plates, create and verify a store,
-pick and resolve features, snapshot and export views. Wrap only the `beamcraft` binary. There is
+resolve features, snapshot and export views. Wrap only the `beamcraft` binary. There is
 no MCP server and no daemon: the CLI is the single contract, and every reference below embeds
 real captured output from it as acceptance evidence.
 
@@ -40,8 +40,8 @@ cargo build --offline -p beamcraft-cli --bins
   verify its integrity, list what it holds.
 - `reference/model.md` - `define-profile`, `define-material`, `create-member`, `create-plate`,
   `update-element`: publish definitions and model or edit elements.
-- `reference/pick.md` - `pick`, `list-feature`, `lookup-feature`, `snap`: resolve coordinates,
-  feature addresses and snaps.
+- `reference/pick.md` - `list-feature`, `lookup-feature`, `element-edges`: resolve feature
+  addresses.
 - `reference/view.md` - `snapshot-view`, `export-view`: snapshot a scene, export a view bundle,
   open the native viewport.
 

@@ -33,11 +33,6 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Whether `command` is one of the weld commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "create-weld" || command == "welds"
-}
-
 /// Runs one weld command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))

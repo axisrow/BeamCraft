@@ -259,6 +259,27 @@ impl Footprint {
         Ok(footprint)
     }
 
+    /// The part of an `UpdateElement` that repins a member's profile: it reads the new profile
+    /// definition and writes the element's relationship group (the `bim:profile` link). The shape
+    /// and derived groups of the rebuild come from [`Footprint::for_update`] with `shape` set.
+    pub fn for_profile_change(
+        id: ElementId,
+        new_profile: ContentDigest,
+    ) -> Result<Self, CommandError> {
+        let footprint = Self {
+            reads: BTreeSet::from([Entry {
+                target: Target::Definition(new_profile),
+                group: Group::Relationship,
+            }]),
+            writes: BTreeSet::from([Entry {
+                target: Target::Element(id),
+                group: Group::Relationship,
+            }]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of `DeleteElement` (P08): it reads the element's lifecycle and the
     /// relationships (the incoming-relationship index that decides whether deletion is allowed),
     /// and writes the element's whole authored state and its derived group, because removing the

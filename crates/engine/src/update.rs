@@ -16,6 +16,7 @@
 //! | `thickness_side` (A12.1) | yes | yes | mesh and quantity record |
 //! | `contour_points_mm` (A12.3) | yes | yes | mesh and quantity record (a plate contour) |
 //! | `axis_points_mm` | yes | yes | mesh and quantity record (a member path, P12) |
+//! | `profile` | yes | yes | mesh and quantity record (a member's pinned section) |
 //! | `translation_mm` | no | no | untouched (the body is element-local) |
 //! | `orientation_xyzw` | no | no | untouched (the body is element-local) |
 //! | `rotate` (T03) | no | no | untouched (a placement-only rigid rotation) |
@@ -27,9 +28,9 @@
 //! whole; local meshes and quantities are unchanged. A `rotate` patch composes a world-axis
 //! rotation with the current placement and stays placement-only. A `mirror` patch re-encodes the
 //! element through a symmetry of its local body (see `transform`): the world result is the exact
-//! mirror image, and the re-encoded fields are a shape change, so the body is rebuilt. Fields
-//! outside this list (contour, roll, profile) are `UNSUPPORTED_PROPERTY`: they belong to later
-//! tasks.
+//! mirror image, and the re-encoded fields are a shape change, so the body is rebuilt. A profile
+//! change replaces the pinned section of a member (a plate has none). Fields outside this list
+//! (contour, roll) are `UNSUPPORTED_PROPERTY`: they belong to later tasks.
 
 use crate::command::AuthoredPlate;
 use crate::member::AuthoredMember;
@@ -60,6 +61,8 @@ pub struct UpdateEffect {
     pub mirror: bool,
     /// The element is translated by a relative world offset (T03): a placement-only move.
     pub move_mm: bool,
+    /// The pinned profile of a member changes; the body is rebuilt from the new section.
+    pub profile: bool,
 }
 
 /// The effect of a patch on the element it targets, ignoring whether a value really differs:
@@ -74,7 +77,8 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
             || patch.thickness_mm.is_some()
             || patch.thickness_side.is_some()
             || patch.axis_points_mm.is_some()
-            || patch.mirror.is_some(),
+            || patch.mirror.is_some()
+            || patch.profile.is_some(),
         placement: patch.translation_mm.is_some()
             || patch.rotate.is_some()
             || patch.mirror.is_some()
@@ -84,6 +88,7 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         rotate: patch.rotate.is_some(),
         mirror: patch.mirror.is_some(),
         move_mm: patch.move_mm.is_some(),
+        profile: patch.profile.is_some(),
     }
 }
 
@@ -98,6 +103,13 @@ pub fn patch_plate(
             ErrorCode::UnsupportedProperty,
             "axis_points_mm",
             "a plate has no path points",
+        ));
+    }
+    if patch.profile.is_some() {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedProperty,
+            "profile",
+            "a plate has no profile",
         ));
     }
     let mut next = plate.clone();
@@ -194,6 +206,9 @@ pub fn patch_member(
     }
     if let Some(material) = patch.material {
         next.material = material;
+    }
+    if let Some(profile) = patch.profile {
+        next.profile = profile;
     }
     if let Some(points) = &patch.axis_points_mm {
         if points.len() < 2 {
@@ -309,7 +324,8 @@ mod tests {
                 level: false,
                 rotate: false,
                 mirror: false,
-                move_mm: false
+                move_mm: false,
+                profile: false
             }
         );
         let clear = ElementPatch {

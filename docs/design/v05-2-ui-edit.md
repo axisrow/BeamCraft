@@ -1,5 +1,9 @@
 # V05.2 UI edit tools
 
+> **2026-10-31:** the CLI commands `pick` and `snap` described here were removed (interactive
+> assistance needs no CLI command, `AGENTS.md` section 3). The engine queries `pick` and `snap`
+> remain and serve the window; the command lines below are historical.
+
 Date: 2026-10-19. Status: **experimental vertical slice; V05 acceptance is not claimed.**
 Branch `feat/v05-2-ui-edit`, based on `origin/master` `11a2139`.
 

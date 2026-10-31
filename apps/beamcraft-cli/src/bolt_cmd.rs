@@ -31,11 +31,6 @@ fn invalid(message: &'static str) -> PlateError {
     }
 }
 
-/// Whether `command` is one of the bolt commands.
-pub fn handles(command: &OsString) -> bool {
-    command == "create-bolt" || command == "bolts"
-}
-
 /// Runs one bolt command and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))

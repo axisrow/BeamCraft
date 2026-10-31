@@ -36,11 +36,6 @@ fn optional(options: &std::collections::BTreeMap<&str, &str>, key: &str) -> Json
         .map_or(Json::Null, |p| Json::text((*p).to_owned()))
 }
 
-/// Whether `command` is `schedule-export`.
-pub fn handles(command: &OsString) -> bool {
-    command == "schedule-export"
-}
-
 /// Runs `schedule-export` and returns the JSON result and the process exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))

@@ -468,7 +468,7 @@ fn rejections_use_the_f04_codes_and_publish_nothing() {
     let steel = digest_of(&f.ok("define-material", &["--density", STEEL]));
     let profile = digest_of(&f.ok("define-profile", &["--width", "200", "--height", "300"]));
     for (extra, code) in [
-        (vec!["--density", "0"], "INVALID_ARGUMENT"),
+        (vec!["--density", "-1"], "INVALID_ARGUMENT"),
         (vec!["--density", "-7850"], "INVALID_ARGUMENT"),
         (vec!["--density", "1000000.5"], "LIMIT_EXCEEDED"),
         (vec!["--density", "NaN"], "NON_FINITE_NUMBER"),

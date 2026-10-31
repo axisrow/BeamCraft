@@ -18,7 +18,7 @@
 //! request (F04 section 3) replaces this. One implicit workspace, in-process layer engine, as in
 //! `plate`.
 
-use crate::definition::material_lookup;
+use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
     AUTHORED_LAYER, Base, DERIVED_LAYER, PlateError, RevisionSummary, control, decode, digest_of,
     evaluate_decoded, host_uuid, integrity, load_base, member_record, mesh_change, open_base,
@@ -207,7 +207,13 @@ pub fn update_element(
             // from the resolved profile. The other supported member edits change metadata,
             // placement or material, never local shape.
             let body = if patch_effect.shape {
-                evaluate_member(&authored, head.body.profile.clone())?
+                // A profile patch rebuilds the body from the new section; any other shape
+                // patch keeps the standing one.
+                let profile = match command.patch.profile {
+                    Some(digest) => profile_lookup(&definitions)(&digest)?,
+                    None => head.body.profile.clone(),
+                };
+                evaluate_member(&authored, profile)?
             } else {
                 head.body.clone()
             };
@@ -296,6 +302,7 @@ pub fn update_element(
             contour_points_mm: command.patch.contour_points_mm.clone(),
             thickness_side: command.patch.thickness_side,
             axis_points_mm: command.patch.axis_points_mm.clone(),
+            profile: command.patch.profile,
             ..Default::default()
         };
         for id in instances.group(command.target_id)? {
@@ -337,6 +344,9 @@ pub fn update_element(
         patch_effect.placement || patch_effect.orientation,
         new_material,
     )?;
+    if let Some(profile) = command.patch.profile {
+        footprint = footprint.union(Footprint::for_profile_change(command.target_id, profile)?)?;
+    }
     if shared {
         footprint = footprint.union(instances.dependencies(command.target_id)?)?;
         for id in instances.group(command.target_id)? {
@@ -429,6 +439,12 @@ pub fn update_element(
                 opinion: Opinion::Remove,
             });
         }
+    }
+    if let Some(digest) = command.patch.profile {
+        changes.push(Change::Profile {
+            id: definition_text.clone(),
+            digest,
+        });
     }
     // A mirror (T03) re-encodes the local body: the plate's side flips and the cuts of either
     // part kind reflect, both authored on the canonical part.

@@ -3,15 +3,6 @@
 
 //! Help owned by the assembly command family.
 
-pub(super) const COMMANDS: &[&str] = &[
-    "create-assembly",
-    "attach-to-assembly",
-    "detach-from-assembly",
-    "set-main-part",
-    "explode-assembly",
-    "assemblies",
-];
-
 pub(super) const HELP: &str = concat!(
     "Assembly (A01/A16): create-assembly --store ROOT --name TEXT [--new-id UUID] [--op-id UUID] ",
     "[--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID] (an ",

@@ -1,8 +1,7 @@
 # I04: user attributes
 
-Date: 2026-10-30. Status: **experimental slice.** Branch `feat/i04-user-attributes`, based on
-`origin/master` `fab7b5cf`. Contract: upstream #531 / fork #316 (M3), depends on F04 and U02
-(both delivered).
+Date: 2026-10-30. Status: **experimental slice.** Contract: upstream #531 /
+axisrow/BeamCraft#316 (M3), depends on F04 and U02 (both delivered).
 
 Result scope of this card: defined attributes (text, number, integer, boolean, choice, with
 units) on any element, attribute sets. Acceptance: stored in USD; an unknown attribute is shown,
@@ -42,7 +41,7 @@ their stored USD type and raw value. Foreign content stays inert, as everywhere 
 A name must be a valid USD identifier: `[A-Za-z_][A-Za-z0-9_]*`, 1..=64 bytes — the property
 name and the definition prim name are then the attribute name verbatim, lossless in USDA.
 Text values and option strings are 1..=256 bytes without control characters (the label rule);
-a unit is 1..=16 bytes; a set name 1..=64; choice has 1..=64 options, unique; a number is finite
+a unit is 1..=16 bytes; a set name 1..=64 without control characters; choice has 1..=64 options, unique; a number is finite
 with |v| <= 1e9; one element carries at most 256 values; a model defines at most 1024 attributes.
 
 ## Commands and layers

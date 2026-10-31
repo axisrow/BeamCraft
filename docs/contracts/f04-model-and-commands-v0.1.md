@@ -88,7 +88,7 @@ negative zero are equivalent for signatures; only their sign is normalized for t
 | Local size L / contour radius D | Plate L = D <= 2,000,000 mm; member L = max(axis length, section half-diagonal) <= 1,000,000 mm |
 | Plate contour count / roll angle | 3–1024 points; `abs(roll_rad) <= 6.283185307179586` rad (2*pi) |
 | Coordinates and translation components | Absolute value at most 1,000,000,000 mm |
-| Material density, when authored | Greater than zero and at most 1,000,000 kg/m3; absence is unknown |
+| Material density, when authored | At least zero and at most 1,000,000 kg/m3; absence is unknown (amended 2026-10-30, see [the density amendment](f04-material-density-amendment-v0.1.md): zero was "greater than zero") |
 | Element relationship targets | At most 1024; valid pinned targets, no forbidden cycles |
 | Derived command footprint entries | At most 4096; fail before publishing if the footprint cannot be bounded |
 

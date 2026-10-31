@@ -200,9 +200,9 @@ impl PublishHandler {
             let request = CompensationRequest {
                 op_id,
                 // The token is the only trusted actor; a request cannot name one (C02). The
-                // authenticated id is already a validated UUIDv7, so the typed actor cannot
-                // fail to build.
-                actor: Uuid7::from_bytes(request.actor.uuid().as_bytes()),
+                // authenticated id is already a validated model UUIDv7, so the conversion
+                // cannot fail.
+                actor: request.actor.uuid().into(),
                 target_revision,
                 expected_head,
             };
@@ -289,9 +289,9 @@ impl PublishHandler {
             let request = RebaseRequest {
                 op_id,
                 // The token is the only trusted actor; a request cannot name one (C02). The
-                // authenticated id is already a validated UUIDv7, so the typed actor cannot
-                // fail to build.
-                actor: Uuid7::from_bytes(request.actor.uuid().as_bytes()),
+                // authenticated id is already a validated model UUIDv7, so the conversion
+                // cannot fail.
+                actor: request.actor.uuid().into(),
                 expected_head,
                 expected_draft,
             };

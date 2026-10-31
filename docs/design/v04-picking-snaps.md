@@ -1,5 +1,9 @@
 # V04 picking and snaps
 
+> **2026-10-31:** the CLI commands `pick` and `snap` described here were removed (interactive
+> assistance needs no CLI command, `AGENTS.md` section 3). The engine queries `pick` and `snap`
+> remain and serve the window; the command lines below are historical.
+
 Issue #190 extends this original box-only design. See
 [non-box semantic features](non-box-feature-transport.md) for `fid1` extrusion/cut roles,
 F06 0.2 profile roles, surface lookup, point/ray picking, snaps and bundle transport.

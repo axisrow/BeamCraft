@@ -19,7 +19,7 @@
 //! of the same id is reported as shadowed. An environment that does not read is listed with its
 //! refusal, never skipped silently.
 
-use crate::library::parse_environment;
+use crate::library::{load_environment, parse_environment};
 use crate::plate::{
     DERIVED_LAYER, PlateError, ROOT_LAYER, RevisionSummary, claim_project, host_uuid, load_base,
     summarize,
@@ -46,6 +46,10 @@ pub const MAX_LISTED: usize = 512;
 pub const ENVIRONMENT_FILE: &str = "environment.usda";
 /// Name of the folder of environments, next to the program and in the user's settings directory.
 pub const ENVIRONMENTS_DIR: &str = "environments";
+/// Folder of a project that holds the copy of its environment, made by `create-project`
+/// `--environment`: the project carries the libraries it was created with, so it opens the same
+/// on another machine and the next session needs no setting.
+pub const PROJECT_ENVIRONMENT_DIR: &str = "environment";
 
 const fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
     PlateError::new(code, message)
@@ -527,6 +531,40 @@ fn read_environment(file: &Path) -> Result<(String, Option<String>), PlateError>
         })?;
     let info = parse_environment(bytes)?;
     Ok((info.id, info.title))
+}
+
+/// The environment file of the project at `dir`, when the project was created with one.
+pub fn project_environment_file(dir: &Path) -> Option<PathBuf> {
+    let file = dir.join(PROJECT_ENVIRONMENT_DIR).join(ENVIRONMENT_FILE);
+    file.is_file().then_some(file)
+}
+
+/// Copies the environment `file` and the libraries it lists into the project at `dir`
+/// (`environment/`). The environment is read and admitted first, so a refused one writes nothing.
+/// Commands of the project then resolve profile names against this copy.
+pub fn install_environment(dir: &Path, file: &Path) -> Result<(), PlateError> {
+    let path = file
+        .to_str()
+        .ok_or_else(|| invalid("the environment path is not UTF-8"))?;
+    let environment = load_environment(path)?;
+    let source = file.parent().unwrap_or_else(|| Path::new("."));
+    let target = dir.join(PROJECT_ENVIRONMENT_DIR);
+    let unusable = || {
+        refuse(
+            ErrorCode::BackendUnavailable,
+            "the project environment could not be copied",
+        )
+    };
+    fs::create_dir(&target).map_err(|_| unusable())?;
+    fs::copy(file, target.join(ENVIRONMENT_FILE)).map_err(|_| unusable())?;
+    for reference in &environment.info.libraries {
+        let to = target.join(reference);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|_| unusable())?;
+        }
+        fs::copy(source.join(reference), &to).map_err(|_| unusable())?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
