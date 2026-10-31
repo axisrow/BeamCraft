@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MPL-2.0
 # Sync the fork with upstream: merge upstream/master into the local fork master,
-# gate the result on the local full gate, then push origin/master.
+# gate the result on the recorded full local gate, then push origin/master.
 # Conflicting files keep their entire fork version (including fork deletions);
 # cleanly merged files take the normal Git merge result. After a
 # green sync the fork-only commits upstream does not have yet are listed with
@@ -16,10 +16,10 @@ Usage: bash tools/fork-sync.sh [sync] [--dry-run] [--yes]
 
 Modes:
   sync     (default) fetch upstream, merge upstream/master into the local fork
-           master, run the local full gate (fmt --check, clippy -D warnings,
-           cargo test --workspace, the -D warnings doc build) BEFORE committing,
-           push origin/master, then delete merged sync/* branches. No PR: master
-           is the integration branch.
+           master, run the recorded full gate BEFORE committing, bind its
+           tested tree into the merge commit message, push
+           origin/master, then delete merged sync/* branches. No PR: master is
+           the integration branch.
            Conflicting files keep their entire fork version; other files merge
            normally. Skipped upstream changes require manual integration.
            An unresolved conflict stops the run with exit 2.
@@ -33,8 +33,8 @@ Options:
 Exit codes: 0 ok or nothing to sync, 1 environment, 2 a conflict could not
 be cleared, 3 gate failure, 4 push or other git failure.
 
-The gate is the local full gate only. Fork CI does not gate a sync: it has no
-macOS lane and its Windows runners queue for hours.
+The native full gate records a merge-tree receipt. CI validates that receipt
+and tests the complete workspace on the two other operating systems.
 EOF
 }
 
@@ -173,15 +173,10 @@ resolve_conflicts() {
     fi
 }
 
+sync_report=
 run_gate() {
-    echo "fork-sync: gate 1/4: cargo fmt --check"
-    cargo fmt --check || return $?
-    echo "fork-sync: gate 2/4: cargo clippy --workspace --all-targets -- -D warnings"
-    cargo clippy --workspace --all-targets -- -D warnings || return $?
-    echo "fork-sync: gate 3/4: cargo test --workspace"
-    cargo test --workspace || return $?
-    echo "fork-sync: gate 4/4: RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps"
-    RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps || return $?
+    sync_report="target/test-gate/sync-$(date -u +%Y%m%dT%H%M%S)-$$/report.json"
+    cargo run --locked -p beamcraft-test-gate -- check --scope full --staged-merge --report "$sync_report"
 }
 
 # Merged sync branches accumulate one per sync; -d never loses unmerged work.
@@ -245,7 +240,7 @@ do_sync() {
     align_master
 
     if [ "$assume_yes" = false ]; then
-        printf 'Proceed with merge, local gate and push to origin/master? [y/N] '
+        printf 'Proceed with merge, recorded full gate and push to origin/master? [y/N] '
         # EOF (closed stdin) means empty answer: abort, never guess.
         read -r answer || answer=""
         case "$answer" in
@@ -268,12 +263,19 @@ do_sync() {
     fi
 
     if ! run_gate; then
-        echo "fork-sync: the local gate failed; rolling the merge back" >&2
+        echo "fork-sync: the recorded full gate failed; rolling the merge back" >&2
         git merge --abort
         exit $EXIT_GATE
     fi
 
-    git commit -m "$(merge_message)"
+    local receipt
+    receipt="$(cargo run --quiet --locked -p beamcraft-test-gate -- sync-trailer --report "$sync_report")" || {
+        git merge --abort
+        die "cannot bind the tested sync tree" $EXIT_GATE
+    }
+    git commit -m "$(merge_message)" -m "$receipt"
+    cargo run --quiet --locked -p beamcraft-test-gate -- verify-sync --report "$sync_report" ||
+        die "created merge differs from its tested receipt; refusing push" $EXIT_GATE
 
     if ! git push origin master; then
         # The local merge commit is correct; the next run pushes it after a re-fetch.

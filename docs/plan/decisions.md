@@ -23,7 +23,7 @@ Open questions are at the end.
   [Apibim-com/BeamCraft#767](https://github.com/Apibim-com/BeamCraft/issues/767)). Before a pull
   request is opened or updated, the gate runs once, whole, and its result is read from that run:
   `cargo fmt --all`; `cargo clippy --workspace --all-targets -- -D warnings`;
-  `cargo test --workspace`; `RUSTDOCFLAGS=-D warnings cargo doc --workspace --no-deps`. The test
+  `cargo test --workspace`; `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`. The test
   step is the literal `cargo test --workspace`: nextest never runs doctests, so a nextest run is
   the iteration tool (targeted `-p <crate>` runs; workspace sweeps with `--no-fail-fast`), not
   the gate, and the earlier "matching CI" wording is corrected in `CLAUDE.md` and
