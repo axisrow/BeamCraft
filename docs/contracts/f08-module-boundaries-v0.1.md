@@ -66,6 +66,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-ui | apps/beamcraft-ui | app | 5 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the JSON crate); V05.2 (edit tools; same edges) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
+| beamcraft-test-gate | tools/test-gate | tool | 9 | - | planned | Fork #342: recorded test gate |
 <!-- module-table:end -->
 
 No package has a third-party dependency today: `Cargo.lock` holds project-owned packages only.
