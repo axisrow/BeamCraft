@@ -1,4 +1,4 @@
-# D04: drawing views — slice 1, view placement core
+# D04: drawing views — slice 1, view placement core; slice 2, section and detail views
 
 Scope: fork #228 (epic #224, roadmap M4). The issue splits D04 into 2–3 slice PRs:
 view placement core → section/detail views → titles and scales. This note records
@@ -52,3 +52,42 @@ binds the incoming placement, so an exact replay returns the same revision and a
 changed placement under the same operation id refuses. `inspect-drawing` reports
 `placed_views` with each view's plane, scale and origin. Headless first: the UI
 placement surface is a later slice of this issue.
+
+## Slice 2: section and detail views
+
+Baseline: verified fork `master` `0434ed3f` (2026-10-31). Slice 2 keeps the placement
+discipline and adds two hand-placed derived views beside it.
+
+A **section view** (`SectionSpec`, up to `MAX_SECTIONS` = 16 in `DrawingSpec.sections`)
+cuts the model with one axis-aligned plane: perpendicular to its basis's depth axis
+(Front→Y, Top→Z, Right→X) at `cut_mm`, with `CutSide` picking the visible half-space —
+the same half-space semantics as V15's cut planes, reused as a drawing intent instead of
+display state. `projection::resolve_section` resolves the visible half of the member
+wireframe (a crossing edge is clipped exactly to the cut and keeps its feature address) and
+the exact cut contour: the strict edge/plane crossing points, floor-deduplicated and ordered
+by angle around their centroid, empty when the cut misses the member box. Axis cuts only —
+arbitrary cut planes are outside the contract, exactly as arbitrary cameras are.
+
+A **detail view** (`DetailSpec`, up to `MAX_DETAILS` = 16 in `DrawingSpec.details`)
+magnifies one parent view's circular region at its own scale: the parent must be the primary
+view or a placed view (details of sections or of details are outside this slice),
+`center_paper_mm`/`radius_mm` are authored in the parent's paper, and
+`projection::resolve_detail` maps the parent's resolved wireframe by the scales' ratio and
+clips it to the region (parametric line–disk clipping), keeping the parent's semantic
+feature addresses. The detail is a magnification of exactly that parent content, never a
+fresh projection.
+
+Identity collapses into one shared paper space: every placed view, section, detail and
+drawn object UUID is pairwise distinct and distinct from the three document objects, in
+both replacement directions. The one-page intent budget counts all four collections and
+their optional scopes; the caps stay 16/16/16/60 and the page (64 prims) arbitrates. The
+wire format gains optional `/Drawing/Sections` (`S1..Sn`) and `/Drawing/Details`
+(`D1..Dn`) scopes beside `/Drawing/Views`; the drawing schema descriptor is bumped to
+`beamcraft-drawing-usd/3`. `edit-views` replaces all three view collections in one
+fingerprinted document operation via `--placed-section UUID:plane:cut:side:scale:x,y` and
+`--placed-detail UUID:parent:x,y:radius:scale:x,y`; `inspect-drawing` reports them as
+`placed_sections`/`placed_details`.
+
+Known boundary: the whole-sheet renderer (`drawing::sheet`, D05) draws placed views and
+the primary dimension groups; section and detail geometry resolves headlessly but does not
+render on exports yet. Titles and scales are slice 3.
