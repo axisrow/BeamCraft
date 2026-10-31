@@ -62,6 +62,9 @@ pub const MAX_WELD_LENGTH_MM: f64 = 1_000_000.0;
 pub const MIN_MEMBER_PATH_POINTS: usize = 3;
 /// Most points of a member path (P12); the kernel's sweep mesh budget refuses earlier.
 pub const MAX_MEMBER_PATH_POINTS: usize = 1024;
+/// Most copies of one array (T03). An implementation bound that keeps one revision's element
+/// creation light; callers may lower it, never raise it.
+pub const MAX_ARRAY_COPIES: usize = 100;
 /// Largest nominal bolt diameter (A05), in millimetres.
 pub const BOLT_DIAMETER_CAP_MM: f64 = 1_000.0;
 /// Most bolts of one bolt group (A05).

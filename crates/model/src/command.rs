@@ -17,7 +17,7 @@ pub use crate::grid::CreateGrid;
 pub use crate::grid_update::UpdateGrid;
 use crate::id::{ElementId, OpId};
 use crate::limits::{
-    BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM,
+    BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, MAX_ARRAY_COPIES,
     MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_MEMBER_PATH_POINTS, MAX_WELD_LENGTH_MM,
     MAX_WELD_PATH_POINTS, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES, MIN_MEMBER_PATH_POINTS,
     MIN_WELD_PATH_POINTS, MIN_WELD_SEGMENT_MM, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD,
@@ -2649,6 +2649,97 @@ fn push_f64(bytes: &mut Vec<u8>, value: f64) -> Result<(), CommandError> {
     Ok(())
 }
 
+/// T03: a relative rotation of the whole element about a world axis through `pivot_mm` by
+/// `angle_rad`, composed with the element's current placement. The local shape is untouched: the
+/// rotation is absorbed by the placement alone, so a retried command recomputes the same absolute
+/// placement from the head state.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ElementRotate {
+    /// A point on the rotation axis, in world millimetres.
+    pub pivot_mm: [f64; 3],
+    /// Direction of the rotation axis; need not be unit or axis-aligned, must be nonzero.
+    pub axis: [f64; 3],
+    /// Rotation angle in radians, right-handed about `axis`.
+    pub angle_rad: f64,
+}
+
+impl ElementRotate {
+    /// Admits the request: finite numbers (`NON_FINITE_NUMBER`), a nonzero axis
+    /// (`INVALID_ARGUMENT`) and an angle within `TAU` (`LIMIT_EXCEEDED`). Whether the rotated
+    /// placement stays in range is the engine's decision.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        if self
+            .pivot_mm
+            .iter()
+            .chain(self.axis.iter())
+            .any(|v| !v.is_finite())
+            || !self.angle_rad.is_finite()
+        {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "rotate",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if self.axis.iter().all(|v| *v == 0.0) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "rotate",
+                "the rotation axis is the zero vector",
+            ));
+        }
+        if self.angle_rad.abs() > ROLL_CAP_RAD {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "rotate",
+                "the angle exceeds the rotation cap",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        Ok(())
+    }
+}
+
+/// T03: a relative mirror of the whole element about the world plane through `point_mm` with
+/// unit-independent `normal`. The engine re-encodes the element through a symmetry of its local
+/// body, so the mirrored part is the same authored shape at a mirrored placement.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ElementMirror {
+    /// A point on the mirror plane, in world millimetres.
+    pub point_mm: [f64; 3],
+    /// Normal of the mirror plane; need not be unit, must be nonzero.
+    pub normal: [f64; 3],
+}
+
+impl ElementMirror {
+    /// Admits the request: finite numbers (`NON_FINITE_NUMBER`) and a nonzero normal
+    /// (`INVALID_ARGUMENT`).
+    pub fn validate(&self) -> Result<(), CommandError> {
+        if self
+            .point_mm
+            .iter()
+            .chain(self.normal.iter())
+            .any(|v| !v.is_finite())
+        {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "mirror",
+                "value is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if self.normal.iter().all(|v| *v == 0.0) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "mirror",
+                "the mirror normal is the zero vector",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// A typed patch of supported authored fields (F04 section 7 `UpdateElement`). A field that is
 /// `None` is left unchanged. `material` distinguishes no change (`None`), clearing the reference
 /// (`Some(None)`) and pinning a definition (`Some(Some(digest))`). There is no raw USD setter.
@@ -2683,6 +2774,16 @@ pub struct ElementPatch {
     /// P12: the complete replacement of a member's path points, two for a straight member and
     /// at least three for a polybeam. The whole path is replaced; there is no per-point setter.
     pub axis_points_mm: Option<Vec<[f64; 3]>>,
+    /// T03: rotate the element about a world axis, relative to its current placement. Mutually
+    /// exclusive with `translation_mm`, `orientation_xyzw` and `mirror`.
+    pub rotate: Option<ElementRotate>,
+    /// T03: mirror the element about a world plane, relative to its current state. Mutually
+    /// exclusive with `translation_mm`, `orientation_xyzw` and `rotate`.
+    pub mirror: Option<ElementMirror>,
+    /// T03: translate the element by this world offset, relative to its current placement (the
+    /// two-point move form is its `to - from`). Mutually exclusive with `translation_mm`,
+    /// `rotate` and `mirror`.
+    pub move_mm: Option<[f64; 3]>,
 }
 
 /// F04 section 7 `UpdateElement`: the target element and a typed patch.
@@ -2767,12 +2868,61 @@ impl UpdateElement {
             && patch.orientation_xyzw.is_none()
             && patch.level.is_none()
             && patch.axis_points_mm.is_none()
+            && patch.rotate.is_none()
+            && patch.mirror.is_none()
+            && patch.move_mm.is_none()
         {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "changes",
                 "the patch changes nothing",
             ));
+        }
+        // A relative transform composes with the current placement, so naming an absolute
+        // placement field in the same patch would be ambiguous.
+        if patch.rotate.is_some() || patch.mirror.is_some() || patch.move_mm.is_some() {
+            if patch.translation_mm.is_some() || patch.orientation_xyzw.is_some() {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "changes",
+                    "a relative transform takes no absolute placement fields",
+                ));
+            }
+            let named = patch.rotate.is_some() as u8
+                + patch.mirror.is_some() as u8
+                + patch.move_mm.is_some() as u8;
+            if named > 1 {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "changes",
+                    "relative transforms are separate patches; compose them with two updates",
+                ));
+            }
+            if let Some(rotate) = &patch.rotate {
+                rotate.validate()?;
+            }
+            if let Some(mirror) = &patch.mirror {
+                mirror.validate()?;
+            }
+            if let Some(move_mm) = patch.move_mm
+                && move_mm.iter().any(|v| !v.is_finite())
+            {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "move_mm",
+                    "value is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            // A mirror re-encodes the member through its path symmetry: replacing the path in
+            // the same patch would mirror through one path and re-encode through another.
+            if patch.mirror.is_some() && patch.axis_points_mm.is_some() {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "changes",
+                    "a mirror takes no path replacement in the same patch",
+                ));
+            }
         }
         if let Some(translation) = patch.translation_mm {
             if translation.iter().any(|v| !v.is_finite()) {
@@ -2987,6 +3137,56 @@ impl UpdateElement {
                 })?);
             }
         }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(rotate) = &self.patch.rotate {
+            bytes.extend_from_slice(b"T03/rotate/v1\0");
+            for v in rotate.pivot_mm.into_iter().chain(rotate.axis) {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "rotate",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+            bytes.extend_from_slice(&canonical_f64_bytes(rotate.angle_rad).map_err(|_| {
+                CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "rotate",
+                    "value cannot be encoded",
+                )
+                .with_rule("DV-ATTR-003")
+            })?);
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(mirror) = &self.patch.mirror {
+            bytes.extend_from_slice(b"T03/mirror/v1\0");
+            for v in mirror.point_mm.into_iter().chain(mirror.normal) {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "mirror",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+        }
+        // Appended only when present, so the fingerprints of earlier patches are unchanged.
+        if let Some(move_mm) = self.patch.move_mm {
+            bytes.extend_from_slice(b"T03/move/v1\0");
+            for v in move_mm {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "move_mm",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+        }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
                 .with_rule("DV-LIM-001")
@@ -3095,6 +3295,224 @@ impl CopyElement {
                 )
                 .with_rule("DV-ATTR-003")
             })?);
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
+/// T03: the placement rule of one array copy. The source stays as it is; the copy at index
+/// `i` (counting from one) takes the step `i` times.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ArrayStep {
+    /// A linear array: copy `i` is the source translated by `direction * (spacing_mm * i)`.
+    Linear {
+        /// Direction of the array; need not be unit, must be nonzero.
+        direction: [f64; 3],
+        /// Distance between neighbouring copies along `direction`, in millimetres.
+        spacing_mm: f64,
+    },
+    /// A polar array: copy `i` is the source rotated by `angle_rad * i` about the world axis
+    /// through `point_mm` along `axis`.
+    Polar {
+        /// A point on the array axis, in world millimetres.
+        point_mm: [f64; 3],
+        /// Direction of the array axis; need not be unit, must be nonzero.
+        axis: [f64; 3],
+        /// Angle between neighbouring copies in radians, right-handed about `axis`.
+        angle_rad: f64,
+    },
+}
+
+/// F04 `ArrayElements` (T03): independent copies of one source part, created in one revision so
+/// one undo step takes them all back. Each copy is a `CopyElement` duplicate with a fresh
+/// identity and freshly minted operation records; the source is only read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayElements {
+    /// The element to copy.
+    pub source_id: ElementId,
+    /// Label of every copy; the source label when `None`.
+    pub name: Option<String>,
+    /// Identities of the copies, in array order. The length is the copy count.
+    pub new_ids: Vec<ElementId>,
+    /// The placement rule between neighbouring copies.
+    pub step: ArrayStep,
+}
+
+impl ArrayElements {
+    /// Admits the request: one to [`MAX_ARRAY_COPIES`] copies (`LIMIT_EXCEEDED`), distinct
+    /// identities that differ from the source (`DUPLICATE_ID`), a valid label, a nonzero
+    /// direction or axis, a positive spacing and finite angles (`NON_FINITE_NUMBER`,
+    /// `INVALID_ARGUMENT`, `LIMIT_EXCEEDED`). That the source exists, the placements stay in
+    /// range and the identities are unused are the engine's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if self.new_ids.is_empty() || self.new_ids.len() > MAX_ARRAY_COPIES {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "new_ids",
+                "an array has one to one hundred copies",
+            )
+            .with_rule("DV-LIM-001"));
+        }
+        if self.new_ids.contains(&self.source_id) {
+            return Err(CommandError::new(
+                ErrorCode::DuplicateId,
+                "new_ids",
+                "a copy identity equals the source",
+            )
+            .with_rule("DV-BASE-002"));
+        }
+        let mut seen = Vec::new();
+        for id in &self.new_ids {
+            if seen.contains(id) {
+                return Err(CommandError::new(
+                    ErrorCode::DuplicateId,
+                    "new_ids",
+                    "a copy identity repeats in the array",
+                )
+                .with_rule("DV-BASE-002"));
+            }
+            seen.push(*id);
+        }
+        if self.name.as_deref().is_some_and(|n| !label_is_valid(n)) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
+        let zero = |values: &[f64]| values.iter().all(|v| *v == 0.0);
+        match self.step {
+            ArrayStep::Linear {
+                direction,
+                spacing_mm,
+            } => {
+                if direction.iter().any(|v| !v.is_finite()) || !spacing_mm.is_finite() {
+                    return Err(CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value is not finite",
+                    )
+                    .with_rule("DV-ATTR-003"));
+                }
+                if zero(&direction) {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "step",
+                        "the array direction is the zero vector",
+                    ));
+                }
+                if spacing_mm <= 0.0 || spacing_mm > COORDINATE_CAP_MM {
+                    return Err(CommandError::new(
+                        ErrorCode::LimitExceeded,
+                        "step",
+                        "the spacing must be positive and within the coordinate cap",
+                    )
+                    .with_rule("DV-LIM-001"));
+                }
+            }
+            ArrayStep::Polar {
+                point_mm,
+                axis,
+                angle_rad,
+            } => {
+                if point_mm.iter().chain(axis.iter()).any(|v| !v.is_finite())
+                    || !angle_rad.is_finite()
+                {
+                    return Err(CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value is not finite",
+                    )
+                    .with_rule("DV-ATTR-003"));
+                }
+                if zero(&axis) {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "step",
+                        "the array axis is the zero vector",
+                    ));
+                }
+                if angle_rad == 0.0 || angle_rad.abs() > ROLL_CAP_RAD {
+                    return Err(CommandError::new(
+                        ErrorCode::LimitExceeded,
+                        "step",
+                        "the angle must be nonzero and within the rotation cap",
+                    )
+                    .with_rule("DV-LIM-001"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(128);
+        bytes.extend_from_slice(b"BeamCraft/T03/ArrayElements/v1\0");
+        bytes.extend_from_slice(self.source_id.as_bytes());
+        match &self.name {
+            Some(name) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(name.as_bytes());
+            }
+            None => bytes.push(0),
+        }
+        bytes.extend_from_slice(&(self.new_ids.len() as u64).to_le_bytes());
+        for id in &self.new_ids {
+            bytes.extend_from_slice(id.as_bytes());
+        }
+        let push_vec = |bytes: &mut Vec<u8>, values: [f64; 3]| {
+            for v in values {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+            Ok(())
+        };
+        match self.step {
+            ArrayStep::Linear {
+                direction,
+                spacing_mm,
+            } => {
+                bytes.push(1);
+                push_vec(&mut bytes, direction)?;
+                bytes.extend_from_slice(&canonical_f64_bytes(spacing_mm).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
+            ArrayStep::Polar {
+                point_mm,
+                axis,
+                angle_rad,
+            } => {
+                bytes.push(2);
+                push_vec(&mut bytes, point_mm)?;
+                push_vec(&mut bytes, axis)?;
+                bytes.extend_from_slice(&canonical_f64_bytes(angle_rad).map_err(|_| {
+                    CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "step",
+                        "value cannot be encoded",
+                    )
+                    .with_rule("DV-ATTR-003")
+                })?);
+            }
         }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")

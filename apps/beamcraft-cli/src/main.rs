@@ -185,6 +185,8 @@ fn main() -> std::process::ExitCode {
             || c == "delete-element"
             || c == "copy-element"
             || c == "copy-instance"
+            || c == "array-linear"
+            || c == "array-polar"
             || c == "cut-by-plane"
             || c == "cut-by-line"
             || c == "cut-by-polygon"

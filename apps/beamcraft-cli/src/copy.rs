@@ -79,12 +79,96 @@ pub struct Copied {
     pub changed_layers: Vec<String>,
 }
 
-fn not_found() -> PlateError {
+pub(crate) fn not_found() -> PlateError {
     PlateError::from(CommandError::new(
         ErrorCode::NotFound,
         "source_id",
         "the source element is not in the head revision",
     ))
+}
+
+/// The authored changes one copied part needs: its class, its create and its mesh. Shared by
+/// the single copy (P05) and the array copies (T03), which author the same per-copy records.
+pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, PlateError> {
+    Ok(match copy {
+        CopiedElement::Plate(r) => {
+            let a = &r.authored;
+            let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
+            vec![
+                Change::PartClass {
+                    id: a.id.to_string(),
+                    class: a.class,
+                },
+                Change::Create(Element {
+                    id: a.id.to_string(),
+                    name: a.name.clone(),
+                    shape: Shape::Plate {
+                        contour_mm: a.contour_points_mm.clone(),
+                        thickness_mm: a.thickness_mm,
+                        thickness_side: a.thickness_side,
+                        corners: a.corners.clone(),
+                        bends: a.bends.clone(),
+                        holes: a
+                            .holes_mm
+                            .iter()
+                            .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
+                            .collect(),
+                        hole_records: a.hole_records.clone(),
+                        cuts: a.cuts.clone(),
+                    },
+                    placement: LayerPlacement {
+                        translation_mm: a.placement.translation_mm,
+                        orientation_xyzw: [qx, qy, qz, qw],
+                    },
+                    material: a.material,
+                }),
+                mesh_change(&a.id, &r.body.solid, &plate_record(r))?,
+            ]
+        }
+        CopiedElement::Member(r) => {
+            // A04.2 member-hole records have no copy authoring yet (fresh operation ids and a
+            // Change::MemberHoles write): a copy or an array of a drilled member would report
+            // the source's holed mesh and silently lose the holes on the next evaluation.
+            if !r.authored.hole_records.is_empty() {
+                return Err(CommandError::new(
+                    ErrorCode::DependencyUnavailable,
+                    "hole_records",
+                    "copying a drilled member is not implemented",
+                )
+                .into());
+            }
+            let a = &r.authored;
+            let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
+            vec![
+                Change::PartClass {
+                    id: a.id.to_string(),
+                    class: a.class,
+                },
+                Change::Create(Element {
+                    id: a.id.to_string(),
+                    name: a.name.clone(),
+                    shape: Shape::Member {
+                        kind: match a.kind {
+                            MemberKind::Beam => LayerKind::Beam,
+                            MemberKind::Column => LayerKind::Column,
+                        },
+                        curved: a.curved,
+                        axis_mm: a.axis_points_mm.clone(),
+                        profile: a.profile,
+                        roll_rad: a.roll_rad,
+                        placement: a.section_placement,
+                        cuts: a.cuts.clone(),
+                    },
+                    placement: LayerPlacement {
+                        translation_mm: a.placement.translation_mm,
+                        orientation_xyzw: [qx, qy, qz, qw],
+                    },
+                    material: a.material,
+                }),
+                mesh_change(&a.id, &r.body.solid, &member_record(r))?,
+            ]
+        }
+    })
 }
 
 /// Copies one element and publishes the next revision, or replays the operation.
@@ -363,74 +447,7 @@ fn copy_with_mode(
     if planned_level != level.map(|l| l.to_string()) {
         return Err(integrity("the level of the source differs between readers"));
     }
-    let mut changes = match &copy {
-        CopiedElement::Plate(r) => {
-            let a = &r.authored;
-            let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
-            vec![
-                Change::PartClass {
-                    id: a.id.to_string(),
-                    class: a.class,
-                },
-                Change::Create(Element {
-                    id: a.id.to_string(),
-                    name: a.name.clone(),
-                    shape: Shape::Plate {
-                        contour_mm: a.contour_points_mm.clone(),
-                        thickness_mm: a.thickness_mm,
-                        thickness_side: a.thickness_side,
-                        corners: a.corners.clone(),
-                        bends: a.bends.clone(),
-                        holes: a
-                            .holes_mm
-                            .iter()
-                            .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
-                            .collect(),
-                        hole_records: a.hole_records.clone(),
-                        cuts: a.cuts.clone(),
-                    },
-                    placement: LayerPlacement {
-                        translation_mm: a.placement.translation_mm,
-                        orientation_xyzw: [qx, qy, qz, qw],
-                    },
-                    material: a.material,
-                }),
-                mesh_change(&a.id, &r.body.solid, &plate_record(r))?,
-            ]
-        }
-        CopiedElement::Member(r) => {
-            let a = &r.authored;
-            let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
-            vec![
-                Change::PartClass {
-                    id: a.id.to_string(),
-                    class: a.class,
-                },
-                Change::Create(Element {
-                    id: a.id.to_string(),
-                    name: a.name.clone(),
-                    shape: Shape::Member {
-                        kind: match a.kind {
-                            MemberKind::Beam => LayerKind::Beam,
-                            MemberKind::Column => LayerKind::Column,
-                        },
-                        curved: a.curved,
-                        axis_mm: a.axis_points_mm.clone(),
-                        profile: a.profile,
-                        roll_rad: a.roll_rad,
-                        placement: a.section_placement,
-                        cuts: a.cuts.clone(),
-                    },
-                    placement: LayerPlacement {
-                        translation_mm: a.placement.translation_mm,
-                        orientation_xyzw: [qx, qy, qz, qw],
-                    },
-                    material: a.material,
-                }),
-                mesh_change(&a.id, &r.body.solid, &member_record(r))?,
-            ]
-        }
-    };
+    let mut changes = creation_changes(&copy)?;
     if instance {
         for change in &mut changes {
             if let Change::Create(element) = change {

@@ -6,6 +6,7 @@
 //! commands; exit 0 success, 2 rejection, 3 backend unavailable, 4 outcome unknown).
 
 use crate::report::report_with;
+use beamcraft_cli::array::{ArrayRequest, array_elements};
 use beamcraft_cli::bend::{BendRequest, bend_plate_record};
 use beamcraft_cli::copy::{CopiedElement, CopyRequest, copy_element, copy_instance};
 use beamcraft_cli::cut::{
@@ -46,12 +47,12 @@ use beamcraft_host::{
 };
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::{
-    AddHole, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts, CopyElement,
-    CornerTreatment, CreateLoftedPlate, CreatePlate, CreatePolybeam, CreateStraightMember,
-    CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord, DeleteElement, ElementPatch,
-    FitEndToPart, HoleExtent, HoleSpec, KeepSide, MAX_HOLES, MemberKind, Placement, PlateCorner,
-    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition, SplitPart,
-    UpdateElement,
+    AddHole, ArrayElements, ArrayStep, BendPlate, BendRecord, BendSpec, ChamferPart, CombineParts,
+    CopyElement, CornerTreatment, CreateLoftedPlate, CreatePlate, CreatePolybeam,
+    CreateStraightMember, CutByLine, CutByPart, CutByPlane, CutByPolygon, CutRecord, DeleteElement,
+    ElementMirror, ElementPatch, ElementRotate, FitEndToPart, HoleExtent, HoleSpec, KeepSide,
+    MAX_HOLES, MemberKind, Placement, PlateCorner, PlateSide, SectionDepthPosition,
+    SectionPlacement, SectionPlanePosition, SplitPart, UpdateElement,
 };
 use beamcraft_model::definition::SectionProperties;
 use beamcraft_model::digest::ContentDigest;
@@ -384,6 +385,13 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--translation",
     "--orientation-xyzw",
     "--level",
+    "--move-from",
+    "--move-to",
+    "--rotate-about",
+    "--rotate-axis",
+    "--rotate-angle",
+    "--mirror-point",
+    "--mirror-normal",
     "--op-id",
     "--revision-id",
     "--actor-id",
@@ -428,7 +436,26 @@ const COPY_OPTIONS: &[&str] = &[
     "--id",
     "--name",
     "--offset",
+    "--copy-from",
+    "--copy-to",
     "--new-id",
+    "--op-id",
+    "--revision-id",
+    "--actor-id",
+    "--project-id",
+    "--workspace-id",
+];
+
+const ARRAY_OPTIONS: &[&str] = &[
+    "--store",
+    "--id",
+    "--name",
+    "--count",
+    "--direction",
+    "--spacing",
+    "--point",
+    "--axis",
+    "--angle",
     "--op-id",
     "--revision-id",
     "--actor-id",
@@ -476,6 +503,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "set-plate-corner" => SET_CORNER_OPTIONS,
         "delete-element" => DELETE_OPTIONS,
         "copy-element" | "copy-instance" => COPY_OPTIONS,
+        "array-linear" | "array-polar" => ARRAY_OPTIONS,
         "cut-by-plane" | "update-cut" => CUT_OPTIONS,
         "cut-by-line" => A13_LINE_OPTIONS_ALL,
         "cut-by-polygon" => A13_POLYGON_OPTIONS_ALL,
@@ -549,6 +577,8 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "delete-element" => delete_command(&store, &options),
         "copy-element" => copy_command(&store, &options, false),
         "copy-instance" => copy_command(&store, &options, true),
+        "array-linear" => array_command(&store, &options, false),
+        "array-polar" => array_command(&store, &options, true),
         "cut-by-plane" => cut_command(&store, &options, false, false),
         "update-cut" => cut_command(&store, &options, true, false),
         "remove-cut" => cut_command(&store, &options, false, true),
@@ -1313,6 +1343,61 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
         None => WorkspaceId::from_uuid(fresh()?),
     };
+    // T03 input forms. The move and copy deltas are two-point forms of the same translation;
+    // the relative transforms are passed to the engine as their own patch fields, which refuse
+    // any absolute placement field in the same patch.
+    let move_from = given("--move-from").map(translation).transpose()?;
+    let move_to = given("--move-to").map(translation).transpose()?;
+    if move_from.is_some() != move_to.is_some() {
+        return Err(invalid("--move-from and --move-to are given together"));
+    }
+    if move_from.is_some() && given("--translation").is_some() {
+        return Err(invalid(
+            "--translation and --move-from/--move-to are exclusive",
+        ));
+    }
+    let move_mm = move_from
+        .zip(move_to)
+        .map(|(from, to)| [to[0] - from[0], to[1] - from[1], to[2] - from[2]]);
+    let rotate = match (
+        given("--rotate-about"),
+        given("--rotate-axis"),
+        given("--rotate-angle"),
+    ) {
+        (None, None, None) => None,
+        (about, axis, angle) => {
+            let (about, axis, angle) = (
+                about.ok_or_else(|| invalid("--rotate-about is required"))?,
+                axis.ok_or_else(|| invalid("--rotate-axis is required"))?,
+                angle.ok_or_else(|| invalid("--rotate-angle is required"))?,
+            );
+            Some(ElementRotate {
+                pivot_mm: translation(about)?,
+                axis: translation(axis)?,
+                angle_rad: angle
+                    .parse::<f64>()
+                    .map_err(|_| invalid("a number is malformed"))?,
+            })
+        }
+    };
+    let mirror = match (given("--mirror-point"), given("--mirror-normal")) {
+        (None, None) => None,
+        (point, normal) => Some(ElementMirror {
+            point_mm: translation(point.ok_or_else(|| invalid("--mirror-point is required"))?)?,
+            normal: translation(normal.ok_or_else(|| invalid("--mirror-normal is required"))?)?,
+        }),
+    };
+    if rotate.is_some() || mirror.is_some() || move_mm.is_some() {
+        if given("--orientation-xyzw").is_some() {
+            return Err(invalid(
+                "--orientation-xyzw and a relative transform are exclusive",
+            ));
+        }
+        let named = rotate.is_some() as u8 + mirror.is_some() as u8 + move_mm.is_some() as u8;
+        if named > 1 {
+            return Err(invalid("relative transforms are separate updates"));
+        }
+    }
     let patch = ElementPatch {
         corners: if given("--corners").is_some() {
             Some(corner_treatments(options)?)
@@ -1345,6 +1430,9 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
             Some("none") => Some([0.0, 0.0, 0.0, 1.0]),
             Some(text) => Some(quaternion(text)?),
         },
+        rotate,
+        mirror,
+        move_mm,
         level: given("--level")
             .map(|text| match text {
                 "none" => Ok(None),
@@ -1389,6 +1477,9 @@ fn update_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
                 ("placement", Json::Bool(updated.effect.placement)),
                 ("orientation", Json::Bool(updated.effect.orientation)),
                 ("level", Json::Bool(updated.effect.level)),
+                ("rotate", Json::Bool(updated.effect.rotate)),
+                ("mirror", Json::Bool(updated.effect.mirror)),
+                ("move", Json::Bool(updated.effect.move_mm)),
             ]),
         ),
         (
@@ -2457,6 +2548,20 @@ fn copy_command(
     } else {
         copy_element
     };
+    // T03: the two-point form of the copy offset; exclusive with the explicit offset.
+    let copy_from = given("--copy-from").map(translation).transpose()?;
+    let copy_to = given("--copy-to").map(translation).transpose()?;
+    if copy_from.is_some() != copy_to.is_some() {
+        return Err(invalid("--copy-from and --copy-to are given together"));
+    }
+    if copy_from.is_some() && given("--offset").is_some() {
+        return Err(invalid("--offset and --copy-from/--copy-to are exclusive"));
+    }
+    let offset_mm = if let Some((from, to)) = copy_from.zip(copy_to) {
+        [to[0] - from[0], to[1] - from[1], to[2] - from[2]]
+    } else {
+        given("--offset").map_or(Ok([0.0; 3]), translation)?
+    };
     let copied = copy(
         store,
         &CopyRequest {
@@ -2469,7 +2574,7 @@ fn copy_command(
                 source_id,
                 new_id,
                 name: given("--name").map(str::to_owned),
-                offset_mm: given("--offset").map_or(Ok([0.0; 3]), translation)?,
+                offset_mm,
             },
         },
         &mut NoFault,
@@ -2670,6 +2775,111 @@ fn lofted_inspect(store: &RevisionStore) -> Run<Json> {
         ("outcome", Json::text("lofted_plates")),
         ("count", Json::uint(plates.len() as u64)),
         ("plates", Json::Array(plates)),
+    ]))
+}
+
+/// The engine's `ArrayElements` (T03) through the real adapter: `--count` independent copies at
+/// the stepped placements, all authored in one revision so one undo step takes them back.
+fn array_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, polar: bool) -> Run<Json> {
+    let mut source = IdSource::system();
+    let mut fresh = || {
+        source.next_id().map_err(|_| PlateError {
+            rule_id: None,
+            code: ErrorCode::BackendUnavailable,
+            message: "no identity could be generated",
+        })
+    };
+    let given = |key: &str| options.get(key).copied();
+    let source_id = ElementId::parse(given("--id").ok_or_else(|| invalid("--id is required"))?)
+        .map_err(id_error)?;
+    let count: usize = given("--count")
+        .ok_or_else(|| invalid("--count is required"))?
+        .parse()
+        .map_err(|_| invalid("count is not a whole number"))?;
+    if count == 0 {
+        return Err(invalid("count must be at least one"));
+    }
+    let mut new_ids = Vec::new();
+    for _ in 0..count {
+        new_ids.push(ElementId::from_uuid(fresh()?));
+    }
+    let op_id = match given("--op-id") {
+        Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => OpId::from_uuid(fresh()?),
+    };
+    let revision_id = match given("--revision-id") {
+        Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => RevisionId::from_uuid(fresh()?),
+    };
+    let actor = match given("--actor-id") {
+        Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
+        None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+    };
+    let project = match given("--project-id") {
+        Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => ProjectId::from_uuid(fresh()?),
+    };
+    let workspace = match given("--workspace-id") {
+        Some(text) => WorkspaceId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
+        None => WorkspaceId::from_uuid(fresh()?),
+    };
+    let step = if polar {
+        ArrayStep::Polar {
+            point_mm: translation(given("--point").ok_or_else(|| invalid("--point is required"))?)?,
+            axis: translation(given("--axis").ok_or_else(|| invalid("--axis is required"))?)?,
+            angle_rad: float(options, "--angle")?,
+        }
+    } else {
+        ArrayStep::Linear {
+            direction: translation(
+                given("--direction").ok_or_else(|| invalid("--direction is required"))?,
+            )?,
+            spacing_mm: float(options, "--spacing")?,
+        }
+    };
+    let arrayed = array_elements(
+        store,
+        &ArrayRequest {
+            op_id,
+            revision_id,
+            actor,
+            project,
+            workspace,
+            command: ArrayElements {
+                source_id,
+                name: given("--name").map(str::to_owned),
+                new_ids,
+                step,
+            },
+        },
+        &mut NoFault,
+    )?;
+    let elements = arrayed
+        .elements
+        .iter()
+        .map(|record| match record {
+            CopiedElement::Plate(record) => plate_json(record),
+            CopiedElement::Member(record) => member_json(record),
+        })
+        .collect::<Run<Vec<_>>>()?;
+    Ok(Json::object([
+        (
+            "outcome",
+            Json::text(if arrayed.replayed {
+                "element_array_replayed"
+            } else {
+                "element_arrayed"
+            }),
+        ),
+        ("op_id", Json::text(op_id.to_string())),
+        ("source_id", Json::text(source_id.to_string())),
+        (
+            "changed_layers",
+            Json::Array(arrayed.changed_layers.iter().map(Json::text).collect()),
+        ),
+        ("elements", Json::Array(elements)),
+        ("revision", revision_json(&arrayed.revision)),
+        ("footprint", footprint_json(arrayed.footprint.as_ref())),
     ]))
 }
 
