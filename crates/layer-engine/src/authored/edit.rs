@@ -657,7 +657,7 @@ fn create(
     let kind = match e.shape {
         Shape::Instance { kind, .. } => kind.token(),
         Shape::Assembly => "assembly",
-        Shape::Weld(_) | Shape::Bolt(_) => "connection",
+        Shape::Weld(_) | Shape::Bolt(_) | Shape::BoltGroup(_) => "connection",
         Shape::Level { .. } => "level",
         Shape::Grid(_) => "grid",
         Shape::Construction(_) => "construction",
@@ -1011,6 +1011,15 @@ fn create(
                 .collect::<Result<Vec<_>, _>>()?;
             relationship_targets(data, &p, "bim:connects", Some(targets))?;
         }
+        Shape::BoltGroup(b) => {
+            author_bolt_group(data, &p, b)?;
+            let targets = b
+                .connects
+                .iter()
+                .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
+                .collect::<Result<Vec<_>, _>>()?;
+            relationship_targets(data, &p, "bim:connects", Some(targets))?;
+        }
         Shape::Grid(g) => grid::author(data, &p, g)?,
         Shape::Construction(o) => construction::author(data, &p, o)?,
         Shape::Instance { definition, .. } => instance::author(data, &p, definition, input, prims)?,
@@ -1104,6 +1113,108 @@ fn author_record_history(
 
 /// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
 /// typed empty arrays, masking weaker opinions; fresh uncut elements still author no cuts.
+/// Authors the connection type and the fifteen bolt-group attributes of an A14.3 group (bolt
+/// amendment section 4), replaced as a whole on every write. The `connects` record is the
+/// caller's: it maps identities through the batch.
+pub(super) fn author_bolt_group(
+    data: &mut sdf::Data,
+    p: &str,
+    b: &BoltGroup,
+) -> Result<(), Diagnostic> {
+    attr(
+        data,
+        p,
+        "steel:connection:type",
+        "token",
+        sdf::Value::Token("bolt_group".into()),
+    )?;
+    attr(
+        data,
+        p,
+        "steel:bolt:fastener",
+        "string",
+        sdf::Value::String(b.fastener.to_string()),
+    )?;
+    let [x1, y1, z1] = b.point1_mm;
+    let [x2, y2, z2] = b.point2_mm;
+    let [nx, ny, nz] = b.plane_normal_mm;
+    for (name, ty, v) in [
+        (
+            "steel:bolt:point1Mm",
+            "double3",
+            sdf::Value::vec3d(x1, y1, z1),
+        ),
+        (
+            "steel:bolt:point2Mm",
+            "double3",
+            sdf::Value::vec3d(x2, y2, z2),
+        ),
+        (
+            "steel:bolt:planeNormalMm",
+            "double3",
+            sdf::Value::vec3d(nx, ny, nz),
+        ),
+        (
+            "steel:bolt:rotationRad",
+            "double",
+            sdf::Value::Double(b.rotation_rad),
+        ),
+        (
+            "steel:bolt:onPlaneMm",
+            "double",
+            sdf::Value::Double(b.on_plane_mm),
+        ),
+        (
+            "steel:bolt:depthMm",
+            "double",
+            sdf::Value::Double(b.depth_mm),
+        ),
+        (
+            "steel:bolt:offsetStartMm",
+            "double",
+            sdf::Value::Double(b.offset_start_mm),
+        ),
+        (
+            "steel:bolt:spacingMode",
+            "token",
+            sdf::Value::Token(b.spacing_mode.clone().into()),
+        ),
+        (
+            "steel:bolt:spacingValueMm",
+            "double",
+            sdf::Value::Double(b.spacing_value_mm),
+        ),
+        (
+            "steel:bolt:spacingsMm",
+            "double[]",
+            sdf::Value::DoubleVec(b.spacings_mm.clone()),
+        ),
+        (
+            "steel:bolt:lengthMode",
+            "token",
+            sdf::Value::Token(b.length_mode.clone().into()),
+        ),
+        (
+            "steel:bolt:lengthMm",
+            "double",
+            sdf::Value::Double(b.length_mm),
+        ),
+        (
+            "steel:bolt:washerUnderHead",
+            "bool",
+            sdf::Value::Bool(b.washer_under_head),
+        ),
+        (
+            "steel:bolt:washerUnderNut",
+            "bool",
+            sdf::Value::Bool(b.washer_under_nut),
+        ),
+    ] {
+        attr(data, p, name, ty, v)?;
+    }
+    Ok(())
+}
+
 pub(super) fn author_cuts(
     data: &mut sdf::Data,
     p: &str,
@@ -1470,6 +1581,26 @@ pub(super) fn apply(
             )?,
             Change::Corners { corners, .. } => author_corners(&mut authored, &p, corners)?,
             Change::Bends { bends, .. } => author_bends(&mut authored, &p, bends)?,
+            Change::BoltGroup { group, .. } => {
+                // An A05 annotation group is upgraded by removing its five attributes; a group
+                // of this slice replaces its own attributes as a whole.
+                for (name, ty) in [
+                    ("steel:bolt:diameterMm", "double"),
+                    ("steel:bolt:count", "int"),
+                    ("steel:bolt:pitchMm", "double"),
+                    ("steel:bolt:originMm", "double3"),
+                    ("steel:bolt:directionMm", "double3"),
+                ] {
+                    attribute(&mut authored, &p, name, ty, Opinion::Remove, true)?;
+                }
+                author_bolt_group(&mut authored, &p, group)?;
+                let targets = group
+                    .connects
+                    .iter()
+                    .map(|id| path(&target_path(id, ElementCategory::Part, input, prims)?))
+                    .collect::<Result<Vec<_>, _>>()?;
+                relationship_targets(&mut authored, &p, "bim:connects", Some(targets))?;
+            }
             Change::ThicknessSide { side, .. } => attr(
                 &mut authored,
                 &p,
@@ -1883,6 +2014,24 @@ fn capture(
         ("steel:bolt:directionMm", "double3"),
         ("bim:connects", "rel"),
     ];
+    /// The fifteen authored attributes of an A14.3 bolt group, replaced as a whole.
+    const BOLT_GROUP: &[(&str, &str)] = &[
+        ("steel:bolt:fastener", "string"),
+        ("steel:bolt:point1Mm", "double3"),
+        ("steel:bolt:point2Mm", "double3"),
+        ("steel:bolt:planeNormalMm", "double3"),
+        ("steel:bolt:rotationRad", "double"),
+        ("steel:bolt:onPlaneMm", "double"),
+        ("steel:bolt:depthMm", "double"),
+        ("steel:bolt:offsetStartMm", "double"),
+        ("steel:bolt:spacingMode", "token"),
+        ("steel:bolt:spacingValueMm", "double"),
+        ("steel:bolt:spacingsMm", "double[]"),
+        ("steel:bolt:lengthMode", "token"),
+        ("steel:bolt:lengthMm", "double"),
+        ("steel:bolt:washerUnderHead", "bool"),
+        ("steel:bolt:washerUnderNut", "bool"),
+    ];
     const CUT_FIELDS: &[(&str, &str)] = &[
         ("steel:cut:operationId", "string[]"),
         ("steel:cut:ordinal", "int[]"),
@@ -2035,6 +2184,13 @@ fn capture(
                             add(name, ty, 0);
                         }
                     }
+                    Shape::BoltGroup(_) => {
+                        add("steel:connection:type", "token", 0);
+                        add("bim:connects", "rel", 0);
+                        for &(name, ty) in BOLT_GROUP {
+                            add(name, ty, 0);
+                        }
+                    }
                     Shape::Level { .. } => add("bim:elevationMm", "double", 0),
                     Shape::Grid(_) => {
                         for &(name, ty) in grid::FIELDS {
@@ -2074,6 +2230,13 @@ fn capture(
             }
             Change::PartClass { .. } => add("steel:class", "int", 0),
             Change::Label { .. } => add("bim:name", "string", 0),
+            Change::BoltGroup { .. } => {
+                add("steel:connection:type", "token", 0);
+                add("bim:connects", "rel", 0);
+                for &(name, ty) in BOLT_GROUP {
+                    add(name, ty, 0);
+                }
+            }
             Change::HoleRecords { .. } => {
                 add("steel:hole:pointsMm", "double3[]", 0);
                 add("steel:hole:vertexCounts", "int[]", 0);
@@ -2134,6 +2297,9 @@ fn capture(
                     add(name, ty, 0);
                 }
                 for &(name, ty) in BOLT {
+                    add(name, ty, 0);
+                }
+                for &(name, ty) in BOLT_GROUP {
                     add(name, ty, 0);
                 }
                 for &(name, ty) in POSE {

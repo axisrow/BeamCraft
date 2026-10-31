@@ -35,6 +35,8 @@ pub(crate) enum Bench {
     Delete,
     /// The window's display cut plane (V15); a view filter, never a model change.
     CutPlane,
+    /// Colour by a saved representation set (V17); a display overlay, never a model change.
+    Colour,
 }
 
 impl Bench {
@@ -50,6 +52,7 @@ impl Bench {
             Self::Copy => "Copy",
             Self::Delete => "Delete",
             Self::CutPlane => "Cut plane",
+            Self::Colour => "Colour",
         }
     }
 
@@ -64,7 +67,8 @@ impl Bench {
             | Self::Beam
             | Self::Column
             | Self::Grid
-            | Self::CutPlane => None,
+            | Self::CutPlane
+            | Self::Colour => None,
         }
     }
 }
@@ -344,6 +348,7 @@ impl App {
             }
             Bench::Select => {}
             Bench::CutPlane => {}
+            Bench::Colour => {}
             Bench::Grid => {
                 self.beam_mode = false;
                 self.beam.reset();
@@ -611,6 +616,13 @@ impl App {
                             if !self.grids_visible { self.grid_edit = None; }
                         }
                     });
+                    group(ui, "Colour", &mut |ui| {
+                        if tool_button(ui, Icon::Block, "Colour", self.bench == Bench::Colour, true)
+                            .clicked()
+                        {
+                            pick = Some(Bench::Colour);
+                        }
+                    });
                     group(ui, "Cut", &mut |ui| {
                         if tool_button(ui, Icon::Block, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
                             pick = Some(Bench::CutPlane);
@@ -745,11 +757,22 @@ impl App {
                             Bench::Grid => self.grid_panel(ui),
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                             Bench::CutPlane => self.cut_panel(ui),
+                            Bench::Colour => self.colour_panel(ui),
                         }
                         ui.add_space(12.0);
                         egui::CollapsingHeader::new("Publishing")
                             .default_open(false)
                             .show(ui, |ui| self.publish_panel(ui));
+                        egui::CollapsingHeader::new("Sheet editor")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    "Move the placed views of a drawing document on its sheet.",
+                                );
+                                if ui.button("Open sheet editor").clicked() {
+                                    self.sheet_editor.open = true;
+                                }
+                            });
                     });
             });
     }

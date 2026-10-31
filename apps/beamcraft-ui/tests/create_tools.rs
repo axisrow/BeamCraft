@@ -481,7 +481,13 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
     let ui = stores.ui();
     let refresh = |cli: PathBuf, store: PathBuf| {
         std::thread::spawn(move || {
-            source::reload(&cli, &store, &source::Known::default(), &Stats::default())
+            source::reload(
+                &cli,
+                &store,
+                &source::Known::default(),
+                None,
+                &Stats::default(),
+            )
         })
         .join()
         .unwrap()
@@ -539,7 +545,7 @@ fn a_refresh_runs_off_the_ui_thread_and_keeps_its_two_results_apart() {
         resident: scene.meshes.iter().map(|m| m.digest).collect(),
     };
     let stats = Stats::default();
-    let again = std::thread::spawn(move || source::reload(&cli, &ui, &known, &stats))
+    let again = std::thread::spawn(move || source::reload(&cli, &ui, &known, None, &stats))
         .join()
         .unwrap();
     assert!(matches!(again.scene, Ok(source::Refreshed::Unchanged)));

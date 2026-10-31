@@ -333,6 +333,75 @@ impl Footprint {
         Self::for_weld(id, parts)
     }
 
+    /// The footprint of `CreateBoltGroup` (A14.3): the shape of [`Self::for_bolt`] over 2 to
+    /// 1024 parts, plus the pinned fastener definition the group places: its values and
+    /// existence decide the placement, so a concurrent repin or edit of the definition
+    /// conflicts, and the same transaction may pin it, which writes its entry (as
+    /// [`Self::for_define`] does; a digest already in the model is written with identical
+    /// bytes).
+    pub fn for_bolt_group(
+        id: ElementId,
+        parts: &[ElementId],
+        fastener: ContentDigest,
+    ) -> Result<Self, CommandError> {
+        let mut footprint = Self::for_create_with(id, None, None)?;
+        for part in parts {
+            footprint.reads.insert(Entry {
+                target: Target::Element(*part),
+                group: Group::Lifecycle,
+            });
+        }
+        let definition = Entry {
+            target: Target::Definition(fastener),
+            group: Group::Relationship,
+        };
+        footprint.reads.insert(definition);
+        footprint.writes.insert(definition);
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
+    /// The footprint of `UpdateBoltGroup` (A14.3): the complete authored inputs and the
+    /// `connects` record are replaced as a whole, so both groups of the group are read and
+    /// written and no derived group exists for a connection. The parts' lifecycles are only
+    /// read; the definition is read for the placement and written when a `repin` pins it.
+    pub fn for_bolt_group_edit(
+        id: ElementId,
+        parts: &[ElementId],
+        fastener: ContentDigest,
+    ) -> Result<Self, CommandError> {
+        let entry = |group| Entry {
+            target: Target::Element(id),
+            group,
+        };
+        let mut reads = BTreeSet::from([
+            entry(Group::Lifecycle),
+            entry(Group::ShapeInputs),
+            entry(Group::Relationship),
+        ]);
+        for part in parts {
+            reads.insert(Entry {
+                target: Target::Element(*part),
+                group: Group::Lifecycle,
+            });
+        }
+        let definition = Entry {
+            target: Target::Definition(fastener),
+            group: Group::Relationship,
+        };
+        reads.insert(definition);
+        let footprint = Self {
+            reads,
+            writes: BTreeSet::from([
+                entry(Group::ShapeInputs),
+                entry(Group::Relationship),
+                definition,
+            ]),
+        };
+        footprint.check_bound()?;
+        Ok(footprint)
+    }
+
     /// The footprint of `AttachToAssembly` and `DetachFromAssembly` (A01): the `part-of` record
     /// lives with its source, so only the part's relationship group is written. It reads the
     /// part's lifecycle and relationships and, for an attach, the lifecycle and relationships of

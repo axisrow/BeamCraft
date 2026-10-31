@@ -280,7 +280,11 @@ type Parts = (
     Result<crate::grid::GridScene, ToolError>,
 );
 
-fn frame_parts(frame: &Frame<'_>, known: &Known) -> Parts {
+fn frame_parts(
+    frame: &Frame<'_>,
+    known: &Known,
+    overlay: Option<&crate::colour_sets::Overlay>,
+) -> Parts {
     let definitions = parse_definitions(Some(0), frame.definitions);
     let scene = ViewSnapshot::from_bundle(frame.bundle, &Limits::default())
         .map_err(Error::from)
@@ -289,8 +293,12 @@ fn frame_parts(frame: &Frame<'_>, known: &Known) -> Parts {
             if known.token.as_ref() == Some(snapshot.token()) {
                 return Ok(Refreshed::Unchanged);
             }
-            let scene =
-                Scene::from_snapshot_reusing(&snapshot, Representation::Full, &known.resident)?;
+            let scene = Scene::from_snapshot_reusing(
+                &snapshot,
+                Representation::Full,
+                &known.resident,
+                overlay,
+            )?;
             Ok(Refreshed::New(Box::new((snapshot, scene))))
         });
     (
@@ -338,12 +346,19 @@ pub struct Reloaded {
 /// inspection of one revision; only when that export fails is the definitions listing asked on
 /// its own, so a failing snapshot never hides it (issue 26, finding 2). `known` is what the
 /// window already shows: the same snapshot again is reported as [`Refreshed::Unchanged`].
-pub fn reload(cli: &Path, store: &Path, known: &Known, stats: &Stats) -> Reloaded {
+/// `overlay` colours the new scene's instances when the window shows a saved set (V17).
+pub fn reload(
+    cli: &Path,
+    store: &Path,
+    known: &Known,
+    overlay: Option<&crate::colour_sets::Overlay>,
+    stats: &Stats,
+) -> Reloaded {
     let started = Instant::now();
     // The framed export; on its failure, the definitions listing on its own.
     let mut processes = 1;
     let framed = export_framed(cli, store, None, command::DEADLINE, stats)
-        .and_then(|bytes| Ok(frame_parts(&split_frame(&bytes)?, known)));
+        .and_then(|bytes| Ok(frame_parts(&split_frame(&bytes)?, known, overlay)));
     let (scene, definitions, grids) = match framed {
         Ok(parts) => parts,
         Err(e) => {
@@ -507,7 +522,7 @@ mod tests {
         let bytes = frame(b"{}", b"", &snapshot.to_bundle().unwrap());
         let frame = split_frame(&bytes).unwrap();
         // Nothing on screen yet: a new scene with every mesh expanded.
-        let Ok(Refreshed::New(first)) = frame_parts(&frame, &Known::default()).0 else {
+        let Ok(Refreshed::New(first)) = frame_parts(&frame, &Known::default(), None).0 else {
             panic!("a first refresh builds the scene");
         };
         assert!(
@@ -523,7 +538,7 @@ mod tests {
             resident: first.1.meshes.iter().map(|m| m.digest).collect(),
         };
         assert!(matches!(
-            frame_parts(&frame, &known).0,
+            frame_parts(&frame, &known, None).0,
             Ok(Refreshed::Unchanged)
         ));
         // Another snapshot whose meshes the device holds: built, but nothing expanded again.
@@ -531,7 +546,7 @@ mod tests {
             token: None,
             ..known
         };
-        let Ok(Refreshed::New(again)) = frame_parts(&frame, &known).0 else {
+        let Ok(Refreshed::New(again)) = frame_parts(&frame, &known, None).0 else {
             panic!("another token builds the scene");
         };
         assert!(
@@ -548,7 +563,7 @@ mod tests {
         let definitions = br#"{"outcome":"definitions","definitions":[]}"#;
         let bytes = frame(definitions, b"", b"not a bundle");
         let frame = split_frame(&bytes).unwrap();
-        let (scene, definitions, _) = frame_parts(&frame, &Known::default());
+        let (scene, definitions, _) = frame_parts(&frame, &Known::default(), None);
         // A bundle the engine refuses fails the scene alone.
         assert!(scene.is_err());
         assert!(definitions.is_ok());

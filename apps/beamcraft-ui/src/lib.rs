@@ -28,6 +28,7 @@
 pub mod app;
 pub mod appearance;
 pub mod camera;
+pub mod colour_sets;
 pub mod command;
 pub mod creation;
 pub mod cut_plane;
@@ -42,6 +43,7 @@ pub mod publish;
 pub mod render;
 pub mod scene;
 pub mod selection;
+pub mod sheet;
 pub mod shell;
 pub mod shortcuts;
 pub mod source;
