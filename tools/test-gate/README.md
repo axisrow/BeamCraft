@@ -38,6 +38,8 @@ has a new directory with stdout/stderr logs and fresh JUnit evidence. `--report 
 a new output directory. Reports include the exact commit/tree/base, native OS/architecture,
 scope, tool versions, executed/expected test counts and individual stage statuses/times.
 Explicitly ignored tests are listed as coverage limits, not represented as executed passes.
+Test builds omit debug symbols and incremental state, matching CI; debug assertions and
+overflow checks remain enabled.
 Existing feature deferrals such as #763 are not silently re-enabled by this maintenance change.
 
 ## Publication and CI
@@ -59,6 +61,11 @@ the report and CI plan say so explicitly. Missing/stale/incomplete reports fail 
 the aggregate `CI verdict`, instead of silently choosing a default matrix. Formatter/docs
 run on the first selected quality lane; WASM, licences, fixtures and boundaries remain checked.
 Manual CI can name a source PR with the `pr_number` workflow input.
+
+Make `CI verdict` the required PR check and require branches to be up to date in the integration
+branch's GitHub protection/ruleset. The verdict rechecks live head/base before it succeeds;
+the repository rule also blocks previously completed green checks after a later base update.
+Preserve the repository's existing authorized sync push access when configuring that rule.
 
 On integration, a merged PR's report is reusable only for an identical source tree. The no-PR
 upstream sync uses `check --scope full --staged-merge`, `sync-trailer` before commit and

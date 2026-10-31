@@ -93,7 +93,11 @@ pub fn changed_paths(root: &Path, base: &str, head: &str) -> Result<Vec<String>>
 
 fn cargo(root: &Path) -> Command {
     let mut command = Command::new("cargo");
-    command.current_dir(root);
+    // Match CI's compact test artifacts without disabling runtime assertions.
+    command
+        .current_dir(root)
+        .env("CARGO_PROFILE_TEST_DEBUG", "0")
+        .env("CARGO_INCREMENTAL", "0");
     command
 }
 
