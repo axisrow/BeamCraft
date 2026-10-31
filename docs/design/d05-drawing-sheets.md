@@ -28,8 +28,9 @@ with_sheet` / `without_sheet` are whole-document intent operations, exactly like
 `drawing::sheet::export_svg` renders one exact published version as stroke-only SVG bound
 to its version id: frame, title block, every resolved placed view in document order and the
 primary view's dimension groups. Text is contributor-original glyph strokes — the digit
-glyphs of D03 extended with angular capitals on the same 2.0 × 3.5 box — so no font, image
-or `<text>` element is embedded. The same sheet reproduces byte-identical output across
+glyphs of D03 extended with angular capitals on the same 2.0 × 3.5 box, with ASCII
+lowercase folded onto its capitals and a drawn dot, so admissible title text keeps every
+mark — and no font, image or `<text>` element is embedded. The same sheet reproduces byte-identical output across
 runs and processes; anything unresolved, beyond the frame, or over the byte cap refuses
 instead of being rescaled or clipped. A document without a sheet keeps the D03 loose-paper
 export, and the pdf print defaults its sheet to the document's sheet size.

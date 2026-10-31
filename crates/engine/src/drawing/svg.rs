@@ -309,18 +309,22 @@ pub(super) fn label_strokes(
 }
 
 /// Left-aligned glyph strokes of one bounded text run with its bottom-left corner at
-/// `origin`. A character without a glyph advances a blank gap instead of a fabricated
-/// mark, so unknown text changes only the spacing, never the drawn strokes.
+/// `origin`. ASCII lowercase folds onto its capital and a `.` draws its dot, so admissible
+/// title-block text keeps every mark; a character without any glyph advances a blank gap
+/// instead of a fabricated mark, changing only the spacing, never the drawn strokes.
 pub(super) fn text_strokes(text: &str, origin: [f64; 2]) -> Vec<[[f64; 2]; 2]> {
     let mut strokes = Vec::new();
     let mut x = origin[0];
     for ch in text.chars() {
-        let advance = if ch == '.' {
+        let folded = ch.to_ascii_uppercase();
+        let advance = if folded == '.' {
             DOT_ADVANCE
         } else {
             GLYPH_WIDTH + GLYPH_GAP
         };
-        if let Some(segments) = glyph(ch) {
+        if folded == '.' {
+            strokes.push([[x + 0.9, origin[1]], [x + 1.1, origin[1]]]);
+        } else if let Some(segments) = glyph(folded) {
             for [[ax, ay], [bx, by]] in segments {
                 strokes.push([[x + ax, origin[1] + ay], [x + bx, origin[1] + by]]);
             }
@@ -650,5 +654,19 @@ mod tests {
             .nth(1)
             .unwrap_or_default();
         assert_eq!(label.matches("M ").count(), 14);
+    }
+
+    #[test]
+    fn title_text_folds_ascii_case_and_draws_the_dot_instead_of_blanking() {
+        // Admissible mixed-case text with a dot keeps every mark: "st. mary" folds onto its
+        // capitals and draws the same strokes as its uppercase form.
+        assert_eq!(
+            text_strokes("st. mary", [0.0, 0.0]),
+            text_strokes("ST. MARY", [0.0, 0.0])
+        );
+        // Five capitals, the dot and nothing for the space.
+        assert_eq!(text_strokes("st. mary", [0.0, 0.0]).len(), 23);
+        // A space or a character without a glyph still advances blank, never fabricated.
+        assert!(text_strokes("    ", [0.0, 0.0]).is_empty());
     }
 }
