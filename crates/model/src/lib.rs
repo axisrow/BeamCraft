@@ -8,6 +8,7 @@ pub mod attribute;
 pub mod changeset;
 pub mod command;
 pub mod construction;
+pub mod coordination;
 pub mod definition;
 pub mod digest;
 pub mod drawing;

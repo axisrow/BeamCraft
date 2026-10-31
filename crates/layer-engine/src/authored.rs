@@ -6,6 +6,7 @@
 
 pub mod annotation;
 pub mod construction;
+pub mod coordination;
 /// Persistent cut ordinal and retired-record identities.
 pub mod cut_history;
 mod derive;
