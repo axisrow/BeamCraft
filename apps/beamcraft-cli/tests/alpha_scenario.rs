@@ -199,28 +199,6 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
     }
     s.ok(
         "draft",
-        "create-bolt",
-        &[
-            "--name",
-            "Q01 bolts",
-            "--main",
-            PARTS[3],
-            "--secondary",
-            PARTS[0],
-            "--origin",
-            "-25,0,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
-            "50",
-            "--diameter",
-            "16",
-        ],
-    );
-    s.ok(
-        "draft",
         "create-weld",
         &[
             "--name",
@@ -236,15 +214,6 @@ fn a_detailed_frame_is_numbered_published_exported_and_reopened() {
             "--side",
             "both",
         ],
-    );
-    assert_eq!(
-        s.ok("draft", "bolts", &[])
-            .get("bolts")
-            .unwrap()
-            .array()
-            .unwrap()
-            .len(),
-        1
     );
     assert_eq!(
         s.ok("draft", "welds", &[])

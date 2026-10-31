@@ -64,7 +64,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:cut:nextOrdinal=int(optional,0..1000);steel:cut:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000);retired ids never reactivate\n",
     "steel:hole:pointsMm=double3[](optional,z=0);steel:hole:vertexCounts=int[](optional,>=3 each);",
     "steel:hole:operationIds=string[](uuid7 each);steel:hole:ordinals=int[](strictly increasing);",
-    "steel:hole:kinds=token[](hole|polygon_cut);all five steel:hole attributes or none,",
+    "steel:hole:kinds=token[](hole|polygon_cut);",
+    "steel:hole:generatedBy=string[](uuid7 or empty,generating bolt group per record,A14.4);",
+    "all six steel:hole attributes or none, equal lengths,",
     "ordinals are engine-assigned and never reused\n",
     "steel:hole:nextOrdinal=int(optional,0..1000);steel:hole:retiredOperationIds=string[](optional,sorted unique uuid7,<=1000)\n",
     "steel:mhole:pointsMm=double3[](optional,z=0);steel:mhole:vertexCounts=int[](optional,>=3 each);",
@@ -95,7 +97,9 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "steel:bolt:planeNormalMm=double3(unit);steel:bolt:rotationRad=double;steel:bolt:onPlaneMm=double;steel:bolt:depthMm=double;",
     "steel:bolt:offsetStartMm=double;steel:bolt:spacingMode=token(spacings|pitch|offset_end);steel:bolt:spacingValueMm=double;",
     "steel:bolt:spacingsMm=double[](>0 each);steel:bolt:lengthMode=token(auto|fixed);steel:bolt:lengthMm=double;",
-    "steel:bolt:washerUnderHead=bool;steel:bolt:washerUnderNut=bool;the fifteen steel:bolt:fastener attributes or none,",
+    "steel:bolt:washerUnderHead=bool;steel:bolt:washerUnderNut=bool;",
+    "steel:bolt:holeMode=token(generate|none);steel:bolt:holeClearanceMm=double(optional,present when generate);",
+    "the seventeen steel:bolt:fastener attributes or none,",
     "never mixed with the five A05 attributes;spacings give 2..=512 fasteners\n",
     "bim:connects=rel(2 distinct ordered element targets of kind plate|beam|column, main part first;",
     "2..=1024 for an A14.3 bolt group;source connection)\n",
@@ -358,7 +362,8 @@ pub enum Shape {
     /// A14.3 bolt group (bolt amendment sections 4 and 6): a `connection` element that places
     /// one row of identical fasteners of a pinned definition between 2 to 1024 parts. Like an
     /// A05 group it has no material, no derived body and the identity placement; the definition
-    /// travels by its digest. No hole is generated in this slice (A14.4).
+    /// travels by its digest. With `hole_mode = generate` (A14.4) the connected plates carry
+    /// the group-owned hole records this group decides.
     BoltGroup(BoltGroup),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
@@ -485,6 +490,12 @@ pub struct BoltGroup {
     pub washer_under_head: bool,
     /// Whether a washer sits under the nut.
     pub washer_under_nut: bool,
+    /// `generate` or `none` (bolt amendment section 5): whether the group cuts holes in the
+    /// parts it passes through.
+    pub hole_mode: String,
+    /// The clearance the generated holes use beyond the nominal diameter; `Some` exactly when
+    /// `hole_mode` is `generate`, `None` reading as the pinned definition's clearance.
+    pub hole_clearance_mm: Option<f64>,
 }
 
 /// Closed initial member vocabulary.

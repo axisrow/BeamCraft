@@ -117,6 +117,9 @@ pub(crate) fn copied_hole(
     })?;
     Ok(HoleRecord {
         operation_id,
+        // The duplicate is independent: an owner of the source record stays with the source,
+        // so a copy or a split half is never governed by (or stripped by) another group (A14.4).
+        owner: None,
         ..record.clone()
     })
 }
@@ -350,6 +353,7 @@ mod tests {
             ordinal: 3,
             polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
             kind: beamcraft_model::command::HoleKind::Hole,
+            owner: None,
         };
         // A retried copy derives the exact same identity.
         let first = copied_hole(&record, &id(6)).unwrap();
@@ -365,5 +369,29 @@ mod tests {
         assert_ne!(elsewhere.operation_id, first.operation_id);
         assert_eq!(elsewhere.ordinal, record.ordinal);
         assert_eq!(elsewhere.polygon_mm, record.polygon_mm);
+    }
+
+    #[test]
+    fn a_copy_of_a_drilled_plate_drops_the_source_groups_ownership() {
+        use beamcraft_model::command::HoleKind;
+        use beamcraft_model::id::OpId;
+        let group = ElementId::parse("019a7bf0-0000-7000-8000-0000000000be").unwrap();
+        let mut source = plate();
+        source.hole_records = vec![HoleRecord {
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
+            ordinal: 0,
+            polygon_mm: vec![[10.0, 10.0], [20.0, 10.0], [20.0, 20.0], [10.0, 20.0]],
+            kind: HoleKind::Hole,
+            owner: Some(group),
+        }];
+        let copy = copy_plate(&source, &command()).unwrap();
+        assert_eq!(copy.hole_records.len(), 1);
+        assert_eq!(copy.hole_records[0].ordinal, 0);
+        assert_ne!(
+            copy.hole_records[0].operation_id,
+            source.hole_records[0].operation_id
+        );
+        // The duplicate is not governed by the source's generating group (A14.4).
+        assert_eq!(copy.hole_records[0].owner, None);
     }
 }

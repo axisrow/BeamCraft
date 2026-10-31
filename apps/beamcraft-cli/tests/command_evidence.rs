@@ -22,6 +22,11 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
+/// The shipped synthetic fastener library (contributor-original values).
+const SYNTHETIC: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
 fn element(n: usize) -> ElementId {
     ElementId::parse(&format!("019a7bf0-0000-7000-8000-{n:012x}")).unwrap()
 }
@@ -371,24 +376,28 @@ fn every_modeling_publication_path_records_its_own_operation() {
         ],
     );
     f.recorded(
-        "create-bolt",
+        "create-bolt-group",
         &[
             "--name",
             "Bolts",
-            "--main",
-            &element(1).to_string(),
-            "--secondary",
-            &element(2).to_string(),
-            "--origin",
+            "--parts",
+            &format!("{},{}", element(1), element(2)),
+            "--fastener-library",
+            SYNTHETIC,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
             "100,100,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
+            "--point2",
+            "180,100,5",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "0",
+            "--spacings",
             "80",
-            "--diameter",
-            "16",
+            "--hole-mode",
+            "none",
         ],
     );
     let preview = f.ok("preview-numbering", &[]);

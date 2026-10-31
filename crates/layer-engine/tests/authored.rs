@@ -4248,6 +4248,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
         ordinal: 7,
         polygon_mm: vec![[10.0, 10.0], [10.0, 20.0], [20.0, 20.0], [20.0, 10.0]],
         kind: beamcraft_model::command::HoleKind::Hole,
+        owner: None,
     };
     let (mut a, o) = Author::open(
         initial(),

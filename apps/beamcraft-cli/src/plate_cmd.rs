@@ -4318,6 +4318,14 @@ fn plate_json(record: &PlateRecord) -> Run<Json> {
                         Json::object([
                             ("operation_id", Json::text(r.operation_id.to_string())),
                             ("ordinal", Json::uint(r.ordinal as u64)),
+                            // The generating bolt group (A14.4); null for a hand-placed hole.
+                            (
+                                "generated_by",
+                                r.owner
+                                    .as_ref()
+                                    .map(|group| Json::text(group.to_string()))
+                                    .unwrap_or(Json::Null),
+                            ),
                         ])
                     })
                     .collect(),

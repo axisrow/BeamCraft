@@ -27,6 +27,11 @@ const LEVEL: &str = "019a7bf0-0000-7000-8000-000000139005";
 const WELD: &str = "019a7bf0-0000-7000-8000-000000139006";
 const BOLT: &str = "019a7bf0-0000-7000-8000-000000139007";
 const REFERENCE: &str = "019a7bf0-0000-7000-8000-000000139008";
+/// The shipped synthetic fastener library (contributor-original values).
+const SYNTHETIC: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
 
 struct Fixture(PathBuf);
 impl Fixture {
@@ -221,24 +226,28 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
         ],
     );
     f.run(
-        "create-bolt",
+        "create-bolt-group",
         &[
             "--name",
             "Bolts",
-            "--main",
-            PLATE,
-            "--secondary",
-            BEAM,
-            "--origin",
+            "--parts",
+            &format!("{PLATE},{BEAM}"),
+            "--fastener-library",
+            SYNTHETIC,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
             "100,0,5",
-            "--direction",
-            "1,0,0",
-            "--count",
-            "2",
-            "--pitch",
+            "--point2",
+            "180,0,5",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "0",
+            "--spacings",
             "80",
-            "--diameter",
-            "16",
+            "--hole-mode",
+            "none",
             "--new-id",
             BOLT,
         ],

@@ -1778,6 +1778,10 @@ pub struct HoleRecord {
     pub polygon_mm: Vec<[f64; 2]>,
     /// Whether the record is a hole (A04) or a polygon cut (A13).
     pub kind: HoleKind,
+    /// The bolt group that generated the record (A14.4); `None` for a hand-placed hole. A
+    /// generated record is owned by its group: it is created, regenerated and removed with the
+    /// group as one unit, and `UpdateHole`/`RemoveHole` refuse it with `DEPENDENCY_CONFLICT`.
+    pub owner: Option<ElementId>,
 }
 
 /// One member-hole operation record of a member (A04.2, the F06 member-hole amendment): an
@@ -4350,9 +4354,32 @@ pub struct BoltGroupInputs {
     pub washer_under_nut: Option<bool>,
     /// The length choice, resolved once for the whole group.
     pub length: BoltLength,
+    /// Whether the group cuts holes in the parts it passes through (bolt amendment section 5);
+    /// `None` takes the definition's own `hole_mode`.
+    pub hole_mode: Option<crate::fastener::HoleMode>,
+    /// The clearance the generated holes use beyond the nominal diameter, in millimetres;
+    /// `None` takes the definition's `hole_clearance_mm`.
+    pub hole_clearance_mm: Option<f64>,
 }
 
 impl BoltGroupInputs {
+    /// The hole mode the group follows: the command's own setting, or the definition's
+    /// preference (bolt amendment section 5: `generate` is a bolt's default, `none` a screw's).
+    pub fn resolved_hole_mode(&self) -> crate::fastener::HoleMode {
+        use crate::fastener::{FastenerKind, HoleMode};
+        self.hole_mode.unwrap_or(match self.fastener.kind {
+            FastenerKind::Bolt => HoleMode::Generate,
+            FastenerKind::Screw => HoleMode::None,
+        })
+    }
+
+    /// The clearance the generated holes use beyond the nominal diameter: the group's own
+    /// value, or the definition's.
+    pub fn resolved_hole_clearance_mm(&self) -> f64 {
+        self.hole_clearance_mm
+            .unwrap_or(self.fastener.hole_clearance_mm)
+    }
+
     /// Admits the request: the definition re-admitted (`F04` codes), 2 to
     /// [`MAX_RELATIONSHIP_TARGETS`] distinct parts, two distinct points within the coordinate
     /// cap, a finite unit plane normal, finite position values and spacings of up to
@@ -4572,6 +4599,22 @@ impl BoltGroupInputs {
                 ));
             }
         }
+        if let Some(clearance) = self.hole_clearance_mm {
+            if !clearance.is_finite() {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "hole_clearance_mm",
+                    "value is not finite",
+                ));
+            }
+            if clearance < 0.0 || clearance > DIMENSION_CAP_MM {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "hole_clearance_mm",
+                    "hole clearance is negative or above the dimension cap",
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -4588,7 +4631,7 @@ impl BoltGroupInputs {
             .with_rule("DV-ATTR-003")
         };
         let mut bytes = Vec::with_capacity(320 + 32 * self.parts.len());
-        bytes.extend_from_slice(b"BeamCraft/A14/BoltGroupInputs/v1\0");
+        bytes.extend_from_slice(b"BeamCraft/A14/BoltGroupInputs/v2\0");
         bytes.extend_from_slice(&(self.parts.len() as u64).to_le_bytes());
         for part in &self.parts {
             bytes.extend_from_slice(part.as_bytes());
@@ -4643,6 +4686,17 @@ impl BoltGroupInputs {
                 bytes.extend_from_slice(&canonical_f64_bytes(length).map_err(|_| bad())?);
             }
         }
+        bytes.extend_from_slice(&[match self.hole_mode {
+            None => 0,
+            Some(mode) => 1 + mode as u8,
+        }]);
+        match self.hole_clearance_mm {
+            None => bytes.extend_from_slice(&[0]),
+            Some(clearance) => {
+                bytes.extend_from_slice(&[1]);
+                bytes.extend_from_slice(&canonical_f64_bytes(clearance).map_err(|_| bad())?);
+            }
+        }
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
                 .with_rule("DV-LIM-001")
@@ -4651,8 +4705,9 @@ impl BoltGroupInputs {
 }
 
 /// A14.3 `CreateBoltGroup`: a new `connection` element that places one row of identical
-/// fasteners of a pinned definition between 2 to 1024 parts (bolt amendment section 6). No
-/// holes are generated in this slice (A14.4).
+/// fasteners of a pinned definition between 2 to 1024 parts (bolt amendment section 6). With
+/// `hole_mode = generate` the group also writes one through-hole operation record per crossing
+/// fastener on every connected plate (A14.4); members refuse until the G14 contract lands.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreateBoltGroup {
     /// Identity of the new bolt group.
@@ -6252,6 +6307,8 @@ mod tests {
             washer_under_head: None,
             washer_under_nut: None,
             length: BoltLength::Auto,
+            hole_mode: None,
+            hole_clearance_mm: None,
         }
     }
 
@@ -6307,12 +6364,35 @@ mod tests {
             }),
             variant(&|v| v.washer_under_head = Some(false)),
             variant(&|v| v.length = BoltLength::Fixed(50.0)),
+            variant(&|v| v.hole_mode = Some(crate::fastener::HoleMode::None)),
+            variant(&|v| v.hole_clearance_mm = Some(3.0)),
             variant(&|v| {
                 v.fastener_digest = ContentDigest::from_bytes([8u8; 32]);
             }),
         ] {
             assert_ne!(different, base);
         }
+        // The hole defaults follow the definition: a bolt generates, a screw does not, and an
+        // absent clearance takes the definition's.
+        assert_eq!(
+            inputs.resolved_hole_mode(),
+            crate::fastener::HoleMode::Generate
+        );
+        assert_eq!(inputs.resolved_hole_clearance_mm(), 2.0);
+        let mut screw = inputs.clone();
+        screw.fastener.kind = crate::fastener::FastenerKind::Screw;
+        screw.fastener.nut_across_flats_mm = None;
+        screw.fastener.nut_height_mm = None;
+        screw.fastener.washer_under_nut = false;
+        screw.fastener.validate().unwrap();
+        assert_eq!(screw.resolved_hole_mode(), crate::fastener::HoleMode::None);
+        screw.hole_mode = Some(crate::fastener::HoleMode::Generate);
+        assert_eq!(
+            screw.resolved_hole_mode(),
+            crate::fastener::HoleMode::Generate
+        );
+        screw.hole_clearance_mm = Some(1.0);
+        assert_eq!(screw.resolved_hole_clearance_mm(), 1.0);
         assert_eq!(
             CreateBoltGroup {
                 new_id: id(1),
@@ -6381,9 +6461,18 @@ mod tests {
             "length_mm",
             "a fixed length is listed"
         );
-        // A fixed length the definition lists is admitted.
+        assert_eq!(
+            field(&|v| v.hole_clearance_mm = Some(-1.0)),
+            "hole_clearance_mm"
+        );
+        assert_eq!(
+            field(&|v| v.hole_clearance_mm = Some(f64::NAN)),
+            "hole_clearance_mm"
+        );
+        // A fitted hole (zero clearance) and a positive one are admitted.
         let mut v = bolt_group_inputs();
         v.length = BoltLength::Fixed(50.0);
+        v.hole_clearance_mm = Some(0.0);
         assert!(v.validate_arguments().is_ok());
     }
 }

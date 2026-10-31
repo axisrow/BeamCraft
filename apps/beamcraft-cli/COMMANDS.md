@@ -710,16 +710,6 @@ welds --store ROOT
 
 ## bolt
 
-### create-bolt
-
-write.
-
-```text
-create-bolt --store ROOT --name TEXT --main UUID --secondary UUID --origin X,Y,Z --direction X,Y,Z
-    --count N --pitch MM --diameter MM [--new-id UUID] [--op-id UUID] [--revision-id UUID]
-    [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
-```
-
 ### create-bolt-group
 
 write.
@@ -729,9 +719,9 @@ create-bolt-group --store ROOT --name TEXT --parts UUID,UUID,... --fastener-libr
     --designation TEXT --point1 X,Y,Z --point2 X,Y,Z --plane-normal X,Y,Z --offset-start MM
     [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--spacings MM,MM,...] [--count N]
     [--pitch MM] [--offset-end MM] [--washer-under-head true|false]
-    [--washer-under-nut true|false] [--length-mode auto|fixed] [--length MM] [--new-id UUID]
-    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
-    [--workspace-id UUID]
+    [--washer-under-nut true|false] [--length-mode auto|fixed] [--length MM]
+    [--hole-mode generate|none] [--hole-clearance MM] [--new-id UUID] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### update-bolt-group
@@ -744,8 +734,8 @@ update-bolt-group --store ROOT --target UUID [--name TEXT] [--parts UUID,UUID,..
     [--plane-normal X,Y,Z] [--rotation-deg DEG] [--on-plane MM] [--depth MM] [--offset-start MM]
     [--spacings MM,MM,...] [--count N] [--pitch MM] [--offset-end MM]
     [--washer-under-head true|false] [--washer-under-nut true|false] [--length-mode auto|fixed]
-    [--length MM] [--repin true] [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
-    [--project-id UUID] [--workspace-id UUID]
+    [--length MM] [--hole-mode generate|none] [--hole-clearance MM] [--repin true] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### bolts

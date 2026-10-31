@@ -60,6 +60,7 @@ pub fn shared_property(name: &str) -> bool {
             | "steel:hole:operationIds"
             | "steel:hole:ordinals"
             | "steel:hole:kinds"
+            | "steel:hole:generatedBy"
             | "steel:member:pathType"
             | "steel:member:rollRad"
             | "steel:member:planePosition"
