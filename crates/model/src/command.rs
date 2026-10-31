@@ -13,17 +13,19 @@
 pub use crate::construction::CreateConstructionObject;
 use crate::digest::{ContentDigest, Sha256};
 use crate::error::ErrorCode;
+pub use crate::fastener::FastenerSpec;
 pub use crate::grid::CreateGrid;
 pub use crate::grid_update::UpdateGrid;
 use crate::id::{ElementId, OpId};
 use crate::limits::{
     BOLT_DIAMETER_CAP_MM, CONTOUR_POINT_CAP, COORDINATE_CAP_MM, DIMENSION_CAP_MM, MAX_ARRAY_COPIES,
-    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_MEMBER_PATH_POINTS, MAX_WELD_LENGTH_MM,
-    MAX_WELD_PATH_POINTS, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES, MIN_MEMBER_PATH_POINTS,
-    MIN_WELD_PATH_POINTS, MIN_WELD_SEGMENT_MM, ORIENTATION_NORM_TOLERANCE, ROLL_CAP_RAD,
-    WELD_SIZE_CAP_MM,
+    MAX_BOLT_GROUP_SIZE, MAX_LABEL_BYTES, MAX_MEMBER_PATH_POINTS, MAX_RELATIONSHIP_TARGETS,
+    MAX_WELD_LENGTH_MM, MAX_WELD_PATH_POINTS, MIN_CONTOUR_POINTS, MIN_LABEL_BYTES,
+    MIN_MEMBER_PATH_POINTS, MIN_WELD_PATH_POINTS, MIN_WELD_SEGMENT_MM, ORIENTATION_NORM_TOLERANCE,
+    ROLL_CAP_RAD, WELD_SIZE_CAP_MM,
 };
 use beamcraft_geom::canonical_f64_bytes;
+use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use core::fmt;
 
 /// The only contract version this implementation accepts.
@@ -4268,6 +4270,471 @@ impl CreateBolt {
     }
 }
 
+/// The spacing pattern of an A14.3 bolt group (bolt amendment section 4): an explicit list of
+/// distances, or a generator kept for editing and expanded to the authoritative list. The
+/// pattern travels with the group, so a moved `point2` re-expands an `offset_end` pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoltSpacing {
+    /// The distances between neighbouring fasteners; authoritative as authored.
+    Spacings(Vec<f64>),
+    /// `count` fasteners at one equal pitch.
+    Pitch {
+        /// Fasteners in the group, 1 to [`MAX_BOLT_GROUP_SIZE`].
+        count: usize,
+        /// The one spacing in millimetres.
+        pitch_mm: f64,
+    },
+    /// `count` fasteners equally spaced so the last lies `offset_end_mm` before `point2`.
+    OffsetEnd {
+        /// Fasteners in the group, 2 to [`MAX_BOLT_GROUP_SIZE`].
+        count: usize,
+        /// Distance from the last fastener to `point2` in millimetres.
+        offset_end_mm: f64,
+    },
+}
+
+/// The length choice of an A14.3 bolt group (bolt amendment section 4). `auto` picks the
+/// smallest standard length that covers the grip, the far washers, the nut and the thread
+/// protrusion, so every fastener of the group is identical.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BoltLength {
+    /// Pick the smallest standard length that covers the joint.
+    Auto,
+    /// One exact value from the definition's list of standard lengths.
+    Fixed(f64),
+}
+
+/// The authored inputs of an A14.3 bolt group (bolt amendment section 4): two points, a
+/// reference plane with rotation, the position values, offsets and spacings over a pinned
+/// fastener definition. The group is one straight row of identical fasteners; the bearing face
+/// of the first lies at `point1 + on_plane * y + depth * z` and the shank runs along `+z`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoltGroupInputs {
+    /// Connected parts: 2 to [`MAX_RELATIONSHIP_TARGETS`] distinct plates, beams or columns,
+    /// the main part first. Every part must be crossed by the axis of at least one fastener.
+    pub parts: Vec<ElementId>,
+    /// Content digest of the pinned fastener definition the group places.
+    pub fastener_digest: ContentDigest,
+    /// The complete definition the digest pins, re-admitted by the engine.
+    pub fastener: FastenerSpec,
+    /// World start of the row in millimetres.
+    pub point1_mm: [f64; 3],
+    /// World end of the row; distinct from `point1_mm`.
+    pub point2_mm: [f64; 3],
+    /// Unit normal of the reference plane: its component perpendicular to the row is the shank
+    /// axis at zero rotation; parallel to the row is refused.
+    pub plane_normal_mm: [f64; 3],
+    /// Rotation about the row in radians, turning the plane axes together.
+    pub rotation_rad: f64,
+    /// Offset of the whole group along the rotated plane axis `y`, in millimetres.
+    pub on_plane_mm: f64,
+    /// Offset of the whole group along the shank axis `z`, in millimetres.
+    pub depth_mm: f64,
+    /// Distance along the row from `point1` to the first fastener, in millimetres.
+    pub offset_start_mm: f64,
+    /// The spacings or the generator that expands to them.
+    pub spacing: BoltSpacing,
+    /// Washer under the head; `None` takes the definition's preference.
+    pub washer_under_head: Option<bool>,
+    /// Washer under the nut; `None` takes the definition's preference.
+    pub washer_under_nut: Option<bool>,
+    /// The length choice, resolved once for the whole group.
+    pub length: BoltLength,
+}
+
+impl BoltGroupInputs {
+    /// Admits the request: the definition re-admitted (`F04` codes), 2 to
+    /// [`MAX_RELATIONSHIP_TARGETS`] distinct parts, two distinct points within the coordinate
+    /// cap, a finite unit plane normal, finite position values and spacings of up to
+    /// [`MAX_BOLT_GROUP_SIZE`] fasteners, and a fixed length the definition lists. Whether the
+    /// parts exist, are supported and are crossed, and which standard length `auto` picks, are
+    /// the engine's decisions.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.fastener.validate()?;
+        if self.parts.len() < 2 || self.parts.len() > MAX_RELATIONSHIP_TARGETS {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "parts",
+                "a bolt group connects 2 to 1024 parts",
+            )
+            .with_rule("DV-REL-004"));
+        }
+        for (index, part) in self.parts.iter().enumerate() {
+            if self.parts.iter().skip(index + 1).any(|other| other == part) {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "parts",
+                    "a bolt group connects distinct parts",
+                )
+                .with_rule("DV-REL-007"));
+            }
+        }
+        for (point, field) in [
+            (&self.point1_mm, "point1_mm"),
+            (&self.point2_mm, "point2_mm"),
+        ] {
+            if point.iter().any(|v| !v.is_finite()) {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    field,
+                    "the point is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if point.iter().any(|v| v.abs() > COORDINATE_CAP_MM) {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    field,
+                    "the point exceeds the coordinate cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
+        let apart = self
+            .point2_mm
+            .iter()
+            .zip(&self.point1_mm)
+            .map(|(b, a)| {
+                let d = b - a;
+                d * d
+            })
+            .sum::<f64>();
+        if apart < ABSOLUTE_FLOOR_MM * ABSOLUTE_FLOOR_MM {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "point2_mm",
+                "the two points of the row are distinct",
+            ));
+        }
+        if self.plane_normal_mm.iter().any(|v| !v.is_finite()) {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "plane_normal_mm",
+                "the plane normal is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        let squared = self.plane_normal_mm.iter().map(|v| v * v).sum::<f64>();
+        if (squared - 1.0).abs() > ORIENTATION_NORM_TOLERANCE {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "plane_normal_mm",
+                "the plane normal must be a unit vector",
+            ));
+        }
+        if !self.rotation_rad.is_finite() {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "rotation_rad",
+                "the rotation is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        for (value, field) in [
+            (&self.on_plane_mm, "on_plane_mm"),
+            (&self.depth_mm, "depth_mm"),
+        ] {
+            if !value.is_finite() {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    field,
+                    "the offset is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if value.abs() > DIMENSION_CAP_MM {
+                return Err(CommandError::new(
+                    ErrorCode::LimitExceeded,
+                    field,
+                    "the offset exceeds the dimension cap",
+                )
+                .with_rule("DV-LIM-001"));
+            }
+        }
+        if !self.offset_start_mm.is_finite() {
+            return Err(CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "offset_start_mm",
+                "the offset is not finite",
+            )
+            .with_rule("DV-ATTR-003"));
+        }
+        if !(0.0..=DIMENSION_CAP_MM).contains(&self.offset_start_mm) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "offset_start_mm",
+                "the offset start is a distance from point1",
+            ));
+        }
+        match &self.spacing {
+            BoltSpacing::Spacings(spacings) => {
+                if spacings.is_empty() || spacings.len() >= MAX_BOLT_GROUP_SIZE {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "spacings_mm",
+                        "the spacings give 2 to 512 fasteners",
+                    ));
+                }
+                for spacing in spacings {
+                    if !spacing.is_finite() {
+                        return Err(CommandError::new(
+                            ErrorCode::NonFiniteNumber,
+                            "spacings_mm",
+                            "a spacing is not finite",
+                        )
+                        .with_rule("DV-ATTR-003"));
+                    }
+                    if *spacing <= 0.0 || *spacing > DIMENSION_CAP_MM {
+                        return Err(CommandError::new(
+                            ErrorCode::InvalidArgument,
+                            "spacings_mm",
+                            "a spacing is positive and within the dimension cap",
+                        ));
+                    }
+                }
+            }
+            BoltSpacing::Pitch { count, pitch_mm } => {
+                if *count == 0 || *count > MAX_BOLT_GROUP_SIZE {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "count",
+                        "the group has 1 to 512 fasteners",
+                    ));
+                }
+                if !pitch_mm.is_finite() {
+                    return Err(CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "pitch_mm",
+                        "the pitch is not finite",
+                    )
+                    .with_rule("DV-ATTR-003"));
+                }
+                if *pitch_mm <= 0.0 || *pitch_mm > DIMENSION_CAP_MM {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "pitch_mm",
+                        "the pitch is positive and within the dimension cap",
+                    ));
+                }
+            }
+            BoltSpacing::OffsetEnd {
+                count,
+                offset_end_mm,
+            } => {
+                if *count < 2 || *count > MAX_BOLT_GROUP_SIZE {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "count",
+                        "an offset-end pattern has 2 to 512 fasteners",
+                    ));
+                }
+                if !offset_end_mm.is_finite() {
+                    return Err(CommandError::new(
+                        ErrorCode::NonFiniteNumber,
+                        "offset_end_mm",
+                        "the offset end is not finite",
+                    )
+                    .with_rule("DV-ATTR-003"));
+                }
+                if *offset_end_mm < 0.0 || *offset_end_mm > DIMENSION_CAP_MM {
+                    return Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "offset_end_mm",
+                        "the offset end is a distance from point2",
+                    ));
+                }
+            }
+        }
+        if let BoltLength::Fixed(length) = self.length {
+            if !length.is_finite() {
+                return Err(CommandError::new(
+                    ErrorCode::NonFiniteNumber,
+                    "length_mm",
+                    "the fixed length is not finite",
+                )
+                .with_rule("DV-ATTR-003"));
+            }
+            if !self.fastener.lengths_mm.contains(&length) {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "length_mm",
+                    "the fixed length is one of the definition's standard lengths",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request. The definition
+    /// travels by its digest: content-addressed pinning makes equal digests equal definitions.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let bad = || {
+            CommandError::new(
+                ErrorCode::NonFiniteNumber,
+                "placement",
+                "a placement value cannot be encoded",
+            )
+            .with_rule("DV-ATTR-003")
+        };
+        let mut bytes = Vec::with_capacity(320 + 32 * self.parts.len());
+        bytes.extend_from_slice(b"BeamCraft/A14/BoltGroupInputs/v1\0");
+        bytes.extend_from_slice(&(self.parts.len() as u64).to_le_bytes());
+        for part in &self.parts {
+            bytes.extend_from_slice(part.as_bytes());
+        }
+        bytes.extend_from_slice(self.fastener_digest.as_bytes());
+        for point in [self.point1_mm, self.point2_mm, self.plane_normal_mm] {
+            for v in point {
+                bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+            }
+        }
+        for v in [
+            self.rotation_rad,
+            self.on_plane_mm,
+            self.depth_mm,
+            self.offset_start_mm,
+        ] {
+            bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+        }
+        match &self.spacing {
+            BoltSpacing::Spacings(spacings) => {
+                bytes.extend_from_slice(&[0]);
+                bytes.extend_from_slice(&(spacings.len() as u64).to_le_bytes());
+                for spacing in spacings {
+                    bytes.extend_from_slice(&canonical_f64_bytes(*spacing).map_err(|_| bad())?);
+                }
+            }
+            BoltSpacing::Pitch { count, pitch_mm } => {
+                bytes.extend_from_slice(&[1]);
+                bytes.extend_from_slice(&(*count as u64).to_le_bytes());
+                bytes.extend_from_slice(&canonical_f64_bytes(*pitch_mm).map_err(|_| bad())?);
+            }
+            BoltSpacing::OffsetEnd {
+                count,
+                offset_end_mm,
+            } => {
+                bytes.extend_from_slice(&[2]);
+                bytes.extend_from_slice(&(*count as u64).to_le_bytes());
+                bytes.extend_from_slice(&canonical_f64_bytes(*offset_end_mm).map_err(|_| bad())?);
+            }
+        }
+        for washer in [self.washer_under_head, self.washer_under_nut] {
+            bytes.extend_from_slice(&[match washer {
+                None => 0,
+                Some(false) => 1,
+                Some(true) => 2,
+            }]);
+        }
+        match self.length {
+            BoltLength::Auto => bytes.extend_from_slice(&[0]),
+            BoltLength::Fixed(length) => {
+                bytes.extend_from_slice(&[1]);
+                bytes.extend_from_slice(&canonical_f64_bytes(length).map_err(|_| bad())?);
+            }
+        }
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
+/// A14.3 `CreateBoltGroup`: a new `connection` element that places one row of identical
+/// fasteners of a pinned definition between 2 to 1024 parts (bolt amendment section 6). No
+/// holes are generated in this slice (A14.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateBoltGroup {
+    /// Identity of the new bolt group.
+    pub new_id: ElementId,
+    /// Explicit user label.
+    pub name: String,
+    /// The complete placement inputs.
+    pub inputs: BoltGroupInputs,
+}
+
+impl CreateBoltGroup {
+    /// Admits the request: the label (`DV-BASE-003`), the inputs and a group that is not one of
+    /// its own parts (`DV-REL-006`).
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if !label_is_valid(&self.name) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
+        self.inputs.validate_arguments()?;
+        if self.inputs.parts.contains(&self.new_id) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "new_id",
+                "a bolt group cannot connect itself",
+            )
+            .with_rule("DV-REL-006"));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(96 + self.name.len());
+        bytes.extend_from_slice(b"BeamCraft/A14/CreateBoltGroup/v1\0");
+        bytes.extend_from_slice(self.new_id.as_bytes());
+        bytes.extend_from_slice(&(self.name.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(self.name.as_bytes());
+        bytes.extend_from_slice(self.inputs.content_fingerprint()?.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
+/// A14.3 `UpdateBoltGroup`: one atomic edit of an existing group (bolt amendment section 6).
+/// The caller sends the complete new inputs — an edit of one value sends the others unchanged,
+/// and a `repin` sends the digest and definition of the current library entry. A stored A05
+/// group is upgraded by supplying the placement inputs and a fastener.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateBoltGroup {
+    /// Identity of the edited group.
+    pub target_id: ElementId,
+    /// The complete new placement inputs.
+    pub inputs: BoltGroupInputs,
+}
+
+impl UpdateBoltGroup {
+    /// Admits the request: the inputs and a group that is not one of its own parts
+    /// (`DV-REL-006`).
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        self.inputs.validate_arguments()?;
+        if self.inputs.parts.contains(&self.target_id) {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "target_id",
+                "a bolt group cannot connect itself",
+            )
+            .with_rule("DV-REL-006"));
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
+    pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut bytes = Vec::with_capacity(64);
+        bytes.extend_from_slice(b"BeamCraft/A14/UpdateBoltGroup/v1\0");
+        bytes.extend_from_slice(self.target_id.as_bytes());
+        bytes.extend_from_slice(self.inputs.content_fingerprint()?.as_bytes());
+        Sha256::digest(&bytes).map_err(|_| {
+            CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
+                .with_rule("DV-LIM-001")
+        })
+    }
+}
+
 /// A08 `ApproveMark`: a person approves the mark of one element, freezing its value. Whether the
 /// element exists, carries a mark and is not already approved are the engine's decisions.
 #[derive(Debug, Clone, PartialEq)]
@@ -5730,5 +6197,183 @@ mod tests {
         zero.bolt.origin_mm[0] = -0.0;
         assert_eq!(zero.content_fingerprint().unwrap(), base);
         assert_eq!(group.clone().content_fingerprint().unwrap(), base);
+    }
+
+    /// A washered bolt definition and the digest standing in for its pinned content.
+    fn bolt_group_inputs() -> BoltGroupInputs {
+        let fastener = FastenerSpec {
+            designation: Some("M16".into()),
+            standard: None,
+            grade: None,
+            display_name: None,
+            kind: crate::fastener::FastenerKind::Bolt,
+            head_kind: crate::fastener::HeadKind::Hex,
+            nominal_diameter_mm: 16.0,
+            head_across_flats_mm: 24.0,
+            head_height_mm: 10.0,
+            nut_across_flats_mm: Some(24.0),
+            nut_height_mm: Some(14.8),
+            washer: Some(crate::fastener::WasherSpec {
+                outer_diameter_mm: 30.0,
+                inner_diameter_mm: 17.0,
+                thickness_mm: 3.0,
+            }),
+            hole_clearance_mm: 2.0,
+            lengths_mm: vec![45.0, 50.0, 60.0, 80.0],
+            thread_protrusion_mm: 5.0,
+            washer_under_head: true,
+            washer_under_nut: true,
+            hole_mode: crate::fastener::HoleMode::Generate,
+            mass_each_kg: None,
+        };
+        fastener.validate().unwrap();
+        BoltGroupInputs {
+            parts: vec![id(2), id(3)],
+            fastener_digest: ContentDigest::from_bytes([7u8; 32]),
+            fastener,
+            point1_mm: [0.0, 0.0, 0.0],
+            point2_mm: [400.0, 0.0, 0.0],
+            plane_normal_mm: [0.0, 0.0, 1.0],
+            rotation_rad: 0.0,
+            on_plane_mm: 0.0,
+            depth_mm: 0.0,
+            offset_start_mm: 50.0,
+            spacing: BoltSpacing::Spacings(vec![80.0, 90.0]),
+            washer_under_head: None,
+            washer_under_nut: None,
+            length: BoltLength::Auto,
+        }
+    }
+
+    #[test]
+    fn bolt_group_inputs_admit_two_parts_spacings_and_generators() {
+        let inputs = bolt_group_inputs();
+        assert!(inputs.validate_arguments().is_ok());
+        let group = CreateBoltGroup {
+            new_id: id(1),
+            name: "G1".into(),
+            inputs: inputs.clone(),
+        };
+        assert!(group.validate_arguments().is_ok());
+        let base = group.content_fingerprint().unwrap();
+        assert!(
+            UpdateBoltGroup {
+                target_id: id(1),
+                inputs: inputs.clone(),
+            }
+            .validate_arguments()
+            .is_ok()
+        );
+        // Every input and the part order are part of the content; equal inputs are equal.
+        let variant = |mutate: &dyn Fn(&mut BoltGroupInputs)| {
+            let mut v = inputs.clone();
+            mutate(&mut v);
+            CreateBoltGroup {
+                new_id: id(1),
+                name: "G1".into(),
+                inputs: v,
+            }
+            .content_fingerprint()
+            .unwrap()
+        };
+        for different in [
+            variant(&|v| v.parts.reverse()),
+            variant(&|v| v.point2_mm = [500.0, 0.0, 0.0]),
+            variant(&|v| v.rotation_rad = 1.5),
+            variant(&|v| v.on_plane_mm = 10.0),
+            variant(&|v| v.depth_mm = -4.0),
+            variant(&|v| v.offset_start_mm = 60.0),
+            variant(&|v| {
+                v.spacing = BoltSpacing::Pitch {
+                    count: 3,
+                    pitch_mm: 80.0,
+                }
+            }),
+            variant(&|v| {
+                v.spacing = BoltSpacing::OffsetEnd {
+                    count: 3,
+                    offset_end_mm: 50.0,
+                }
+            }),
+            variant(&|v| v.washer_under_head = Some(false)),
+            variant(&|v| v.length = BoltLength::Fixed(50.0)),
+            variant(&|v| {
+                v.fastener_digest = ContentDigest::from_bytes([8u8; 32]);
+            }),
+        ] {
+            assert_ne!(different, base);
+        }
+        assert_eq!(
+            CreateBoltGroup {
+                new_id: id(1),
+                name: "G1".into(),
+                inputs: inputs.clone(),
+            }
+            .content_fingerprint()
+            .unwrap(),
+            base
+        );
+    }
+
+    #[test]
+    fn bolt_group_inputs_refusals_name_their_field() {
+        let field = |mutate: &dyn Fn(&mut BoltGroupInputs)| {
+            let mut v = bolt_group_inputs();
+            mutate(&mut v);
+            v.validate_arguments().unwrap_err().field
+        };
+        assert_eq!(
+            field(&|v| v.parts = vec![id(2)]),
+            "parts",
+            "one part is no group"
+        );
+        assert_eq!(
+            field(&|v| v.parts = vec![id(2), id(2)]),
+            "parts",
+            "parts are distinct"
+        );
+        assert_eq!(field(&|v| v.point2_mm = v.point1_mm), "point2_mm");
+        assert_eq!(
+            field(&|v| v.plane_normal_mm = [0.0, 0.0, 2.0]),
+            "plane_normal_mm"
+        );
+        assert_eq!(field(&|v| v.rotation_rad = f64::NAN), "rotation_rad");
+        assert_eq!(
+            field(&|v| v.offset_start_mm = -1.0),
+            "offset_start_mm",
+            "the offset start is a distance"
+        );
+        assert_eq!(
+            field(&|v| v.spacing = BoltSpacing::Spacings(vec![])),
+            "spacings_mm"
+        );
+        assert_eq!(
+            field(&|v| v.spacing = BoltSpacing::Spacings(vec![0.0])),
+            "spacings_mm"
+        );
+        assert_eq!(
+            field(&|v| v.spacing = BoltSpacing::Pitch {
+                count: 0,
+                pitch_mm: 80.0
+            }),
+            "count"
+        );
+        assert_eq!(
+            field(&|v| v.spacing = BoltSpacing::OffsetEnd {
+                count: 1,
+                offset_end_mm: 50.0
+            }),
+            "count",
+            "an offset end needs a row"
+        );
+        assert_eq!(
+            field(&|v| v.length = BoltLength::Fixed(55.0)),
+            "length_mm",
+            "a fixed length is listed"
+        );
+        // A fixed length the definition lists is admitted.
+        let mut v = bolt_group_inputs();
+        v.length = BoltLength::Fixed(50.0);
+        assert!(v.validate_arguments().is_ok());
     }
 }
