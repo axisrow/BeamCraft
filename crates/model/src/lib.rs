@@ -21,6 +21,7 @@ pub mod limits;
 pub mod prim;
 pub mod reference;
 pub mod section;
+pub mod sheet;
 
 pub use error::ErrorCode;
 

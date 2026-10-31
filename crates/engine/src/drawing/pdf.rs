@@ -201,6 +201,7 @@ mod tests {
             },
             drafting: Vec::new(),
             views: Vec::new(),
+            sheet: None,
         })
         .unwrap()
     }

@@ -36,6 +36,7 @@ fn intent(pin: SourceModelPin) -> Drawing {
         },
         drafting: Vec::new(),
         views: Vec::new(),
+        sheet: None,
     })
     .unwrap()
 }

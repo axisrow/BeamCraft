@@ -11,8 +11,10 @@ pub mod drafting;
 pub mod pdf;
 pub mod print;
 pub mod projection;
+pub mod sheet;
 pub mod svg;
 
+pub use beamcraft_model::sheet::{SheetFrame, SheetSpec, TitleBlock};
 pub use drafting::{
     DraftingGeometry, DraftingSpec, HatchPattern, MAX_DRAFTING_ENTITIES, PaperSymbol,
 };
@@ -29,8 +31,8 @@ pub const MAX_PAPER_MM: f64 = 10_000.0;
 /// Largest number of placed views beyond the primary view in one document.
 pub const MAX_VIEWS: usize = 16;
 /// Largest prim count of the closed one-page drawing intent, equal to the layer reader's page
-/// ceiling: three fixed prims, one optional scope per non-empty collection, and every placed
-/// view and drawn object.
+/// ceiling: three fixed prims, one optional scope per non-empty collection (sheet, placed
+/// views, drawn objects), and every placed view and drawn object.
 pub const MAX_INTENT_PAGE_ITEMS: usize = 64;
 /// Largest scale denominator; the first slice admits scales from 1:1 through 1:10000.
 pub const MAX_SCALE_DENOMINATOR: f64 = 10_000.0;
@@ -119,6 +121,10 @@ pub struct DrawingSpec {
     pub dimension: DimensionSpec,
     /// Drawn paper-space objects owned by the document, never by the model.
     pub drafting: Vec<DraftingSpec>,
+    /// The sheet this document is laid out on, when its caller chose one. Absent keeps the
+    /// loose unbounded paper of the earlier contract; present, every export surface renders
+    /// the same fixed sheet.
+    pub sheet: Option<SheetSpec>,
 }
 
 /// Validated immutable intent. Admission grants no claim that the referenced geometry exists.
@@ -221,10 +227,14 @@ impl Drawing {
                 "dimension endpoints must be distinct semantic references",
             ));
         }
+        if let Some(sheet) = &spec.sheet {
+            sheet.admit()?;
+        }
         Self::validate_paper_objects(
             &spec.id,
             &spec.view.id,
             &spec.dimension.id,
+            spec.sheet.as_ref(),
             &spec.views,
             &spec.drafting,
         )?;
@@ -238,6 +248,7 @@ impl Drawing {
         drawing: &DrawingId,
         view: &DrawingViewId,
         dimension: &DimensionId,
+        sheet: Option<&SheetSpec>,
         views: &[ViewSpec],
         drafting: &[DraftingSpec],
     ) -> Result<(), CommandError> {
@@ -258,6 +269,7 @@ impl Drawing {
         // The whole intent must stay within one closed reader page: the fixed document prims,
         // one optional scope per non-empty collection and the objects themselves.
         let page_items = 3
+            + usize::from(sheet.is_some())
             + usize::from(!views.is_empty())
             + usize::from(!drafting.is_empty())
             + views.len()
@@ -330,6 +342,35 @@ impl Drawing {
         &self.0
     }
 
+    /// Borrows the sheet this document is laid out on, when one was chosen.
+    pub fn sheet(&self) -> Option<&SheetSpec> {
+        self.0.sheet.as_ref()
+    }
+
+    /// Lays this document on a sheet, retaining every other document object, its identity
+    /// and its source pin. This is a whole-document intent operation: the engineering model
+    /// is neither read nor touched.
+    pub fn with_sheet(mut self, sheet: SheetSpec) -> Result<Self, CommandError> {
+        sheet.admit()?;
+        Self::validate_paper_objects(
+            &self.0.id,
+            &self.0.view.id,
+            &self.0.dimension.id,
+            Some(&sheet),
+            &self.0.views,
+            &self.0.drafting,
+        )?;
+        self.0.sheet = Some(sheet);
+        Ok(self)
+    }
+
+    /// Removes the sheet, returning the document to loose unbounded paper. This is a
+    /// whole-document intent operation: the engineering model is neither read nor touched.
+    pub fn without_sheet(mut self) -> Self {
+        self.0.sheet = None;
+        Self(self.0)
+    }
+
     /// Borrows the drawn objects of this document.
     pub fn drafting(&self) -> &[DraftingSpec] {
         &self.0.drafting
@@ -348,6 +389,7 @@ impl Drawing {
             &self.0.id,
             &self.0.view.id,
             &self.0.dimension.id,
+            self.0.sheet.as_ref(),
             &self.0.views,
             &entities,
         )?;
@@ -363,6 +405,7 @@ impl Drawing {
             &self.0.id,
             &self.0.view.id,
             &self.0.dimension.id,
+            self.0.sheet.as_ref(),
             &views,
             &self.0.drafting,
         )?;

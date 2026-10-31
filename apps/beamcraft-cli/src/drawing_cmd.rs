@@ -13,7 +13,7 @@ use beamcraft_engine::drawing::projection::{
 };
 use beamcraft_engine::drawing::{
     DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
-    Plane, SourceModelPin, ViewSpec, print, svg,
+    Plane, SheetFrame, SheetSpec, SourceModelPin, TitleBlock, ViewSpec, print, sheet, svg,
 };
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_host::revision::{ExpectedBase, RevisionStore};
@@ -24,6 +24,7 @@ use beamcraft_model::id::{
     ActorId, DimensionId, DocumentVersionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId,
     OpId, ProjectId, RevisionId, Uuid7,
 };
+use beamcraft_model::sheet::Sheet;
 use std::io::Write;
 use std::{collections::BTreeMap, ffi::OsString};
 
@@ -47,6 +48,7 @@ pub fn handles(command: &OsString) -> bool {
                 | "refresh-drawing"
                 | "edit-drafting"
                 | "edit-views"
+                | "edit-sheet"
                 | "publish-drawing"
                 | "inspect-drawing"
                 | "inspect-drawing-versions"
@@ -198,6 +200,11 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
                     | "--origin"
                     | "--offset"
                     | "--decimals"
+                    | "--sheet-size"
+                    | "--sheet-frame"
+                    | "--sheet-project"
+                    | "--sheet-author"
+                    | "--sheet-remove"
                     | "--op-id"
                     | "--revision-id"
                     | "--actor-id"
@@ -290,6 +297,34 @@ fn placed_view_specs(values: &[&str]) -> Run<Vec<ViewSpec>> {
         .collect()
 }
 
+/// Builds the sheet intent from `--sheet-size` and its companion options. A `--sheet-size`
+/// requires the project and author fields; every bound is re-checked by engine admission.
+fn document_sheet(options: &BTreeMap<&str, &str>) -> Run<Option<SheetSpec>> {
+    let Some(size) = options.get("--sheet-size") else {
+        return Ok(None);
+    };
+    let required = |key: &str| {
+        options
+            .get(key)
+            .copied()
+            .ok_or_else(|| invalid("required drawing option is missing"))
+    };
+    let size = Sheet::parse(size).ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+    let inset = options.get("--sheet-frame").map_or(Ok(10.0), |value| {
+        value
+            .parse::<f64>()
+            .map_err(|_| invalid("invalid sheet frame inset"))
+    })?;
+    Ok(Some(SheetSpec {
+        size,
+        frame: SheetFrame { inset_mm: inset },
+        title: TitleBlock {
+            project: required("--sheet-project")?.to_owned(),
+            author: required("--sheet-author")?.to_owned(),
+        },
+    }))
+}
+
 fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> Run<Drawing> {
     let required = |key| {
         options
@@ -351,6 +386,7 @@ fn document_drawing(options: &BTreeMap<&str, &str>, source: SourceModelPin) -> R
         },
         drafting: Vec::new(),
         views: Vec::new(),
+        sheet: document_sheet(options)?,
     })
     .map_err(Into::into)
 }
@@ -365,6 +401,40 @@ fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) 
         (
             "drawing_id",
             Json::text(revision.drawing.spec().id.to_string()),
+        ),
+        ("name", Json::text(revision.drawing.spec().name.clone())),
+        (
+            "view",
+            Json::object([
+                (
+                    "id",
+                    Json::text(revision.drawing.spec().view.id.to_string()),
+                ),
+                (
+                    "plane",
+                    Json::text(revision.drawing.spec().view.plane.as_str()),
+                ),
+                (
+                    "scale_denominator",
+                    num(revision.drawing.spec().view.scale_denominator)?,
+                ),
+                (
+                    "paper_origin_mm",
+                    point(revision.drawing.spec().view.paper_origin_mm)?,
+                ),
+            ]),
+        ),
+        (
+            "sheet",
+            match revision.drawing.sheet() {
+                None => Json::Null,
+                Some(sheet) => Json::object([
+                    ("size", Json::text(sheet.size.as_str())),
+                    ("frame_inset_mm", num(sheet.frame.inset_mm)?),
+                    ("project", Json::text(sheet.title.project.clone())),
+                    ("author", Json::text(sheet.title.author.clone())),
+                ]),
+            },
         ),
         (
             "state",
@@ -620,6 +690,83 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             )?;
             Ok(document_json(&revised)?)
         }
+        "edit-sheet" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let expected = ExpectedBase::Revision(
+                beamcraft_host::revision::Uuid7::parse(required("--expected-head")?)
+                    .map_err(|_| invalid("expected head must be UUIDv7"))?,
+            );
+            let op = OpId::parse(required("--op-id")?)
+                .map_err(|_| invalid("operation id must be UUIDv7"))?;
+            let revision = Uuid7::parse(required("--revision-id")?)
+                .map_err(|_| invalid("revision id must be UUIDv7"))?;
+            let actor = ActorId::parse(required("--actor-id")?)
+                .map_err(|_| invalid("actor id must be UUIDv7"))?;
+            if options
+                .get("--sheet-remove")
+                .is_some_and(|value| *value != "true")
+            {
+                return Err(invalid("--sheet-remove must be true"));
+            }
+            let remove = options.contains_key("--sheet-remove");
+            if remove && options.contains_key("--sheet-size") {
+                return Err(invalid("choose either --sheet-remove true or a new sheet"));
+            }
+            let sheet = if remove {
+                None
+            } else {
+                document_sheet(options)?
+            };
+            // Same replay discipline as edit-views: the fingerprint binds the incoming sheet,
+            // so a retry that drops or changes it is a different request.
+            if let Some(previous) = documents.query(&op)? {
+                let candidate = match sheet.clone() {
+                    Some(value) => previous.drawing.clone().with_sheet(value)?,
+                    None if remove => previous.drawing.clone().without_sheet(),
+                    None => previous.drawing.clone(),
+                };
+                let request = request_fingerprint(
+                    &candidate,
+                    State::Draft,
+                    None,
+                    previous.latest_published,
+                    actor,
+                    &expected,
+                )?;
+                if previous.request == request {
+                    return document_json(&previous);
+                }
+                return Err(PlateError {
+                    rule_id: None,
+                    code: ErrorCode::OpIdReuse,
+                    message: "document operation id was already used for another request",
+                });
+            }
+            let current = documents.head()?;
+            let edited = match sheet {
+                Some(value) => current.drawing.clone().with_sheet(value)?,
+                None if remove => current.drawing.clone().without_sheet(),
+                None => {
+                    return Err(invalid(
+                        "edit-sheet requires --sheet-size with its fields or --sheet-remove true",
+                    ));
+                }
+            };
+            let (_, revised) = documents.commit(
+                &expected,
+                DocumentWrite {
+                    revision,
+                    operation: op,
+                    actor,
+                    drawing: &edited,
+                    source: &current.source,
+                    state: State::Draft,
+                    version: None,
+                    latest_published: current.latest_published,
+                },
+            )?;
+            Ok(document_json(&revised)?)
+        }
         "publish-drawing" => {
             let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
             let expected = ExpectedBase::Revision(
@@ -690,11 +837,31 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let projection = projection::resolve(&published.drawing, &snapshot)?;
             let format = options.get("--format").copied().unwrap_or("svg");
             let bytes = match format {
-                "svg" => svg::export(&published.drawing, version, &projection)?,
+                // A sheet document renders its whole sheet; a loose document keeps the
+                // earlier tight-bounds export. Both stay bound to the exact version.
+                "svg" => match published.drawing.sheet() {
+                    Some(_) => {
+                        let mut bodies = Vec::with_capacity(published.drawing.views().len());
+                        for view in published.drawing.views() {
+                            bodies.push(projection::resolve_view(
+                                &published.drawing,
+                                view,
+                                &snapshot,
+                            )?);
+                        }
+                        sheet::export_svg(&published.drawing, version, &projection, &bodies)?
+                    }
+                    None => svg::export(&published.drawing, version, &projection)?,
+                },
                 "pdf" => {
-                    let sheet =
-                        print::Sheet::parse(options.get("--sheet").copied().unwrap_or("a4"))
-                            .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+                    let sheet = print::Sheet::parse(
+                        options
+                            .get("--sheet")
+                            .copied()
+                            .or_else(|| published.drawing.sheet().map(|sheet| sheet.size.as_str()))
+                            .unwrap_or("a4"),
+                    )
+                    .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
                     print::export(&published.drawing, version, &projection, sheet)?
                 }
                 _ => return Err(invalid("format must be svg or pdf")),
@@ -906,6 +1073,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         dimension,
         drafting: Vec::new(),
         views: Vec::new(),
+        sheet: None,
     })?;
     // Admission precedes the strict kernel-derived inspection. The same opened revision supplies
     // both the complete source pin and the snapshot; a concurrent model head never mixes them.

@@ -45,7 +45,7 @@ fn invalid(message: &'static str) -> CommandError {
 }
 
 /// Escapes text for XML character content, covering every markup-significant character.
-fn escape(text: &str) -> String {
+pub(super) fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         match ch {
@@ -126,6 +126,139 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             SEGMENT_RIGHT_BOTTOM,
             SEGMENT_BOTTOM,
         ]),
+        // Contributor-original angular capitals on the same 2.0 × 3.5 box as the digits:
+        // straight strokes only, so a title block renders without any font resource.
+        'A' => Some(&[
+            [[0.0, 0.0], [1.0, 3.5]],
+            [[1.0, 3.5], [2.0, 0.0]],
+            [[0.4, 1.2], [1.6, 1.2]],
+        ]),
+        'B' => Some(&[
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 3.5], [1.8, 3.5]],
+            [[1.8, 3.5], [1.8, 1.75]],
+            [[0.0, 1.75], [1.8, 1.75]],
+            [[1.8, 1.75], [1.8, 0.0]],
+            [[0.0, 0.0], [1.8, 0.0]],
+        ]),
+        'C' => Some(&[
+            [[2.0, 3.5], [0.0, 3.5]],
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 0.0], [2.0, 0.0]],
+        ]),
+        'D' => Some(&[
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 3.5], [1.6, 3.5]],
+            [[1.6, 3.5], [2.0, 2.5]],
+            [[2.0, 2.5], [2.0, 1.0]],
+            [[2.0, 1.0], [1.6, 0.0]],
+            [[1.6, 0.0], [0.0, 0.0]],
+        ]),
+        'E' => Some(&[
+            [[2.0, 3.5], [0.0, 3.5]],
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 0.0], [2.0, 0.0]],
+            [[0.0, 1.75], [1.5, 1.75]],
+        ]),
+        'F' => Some(&[
+            [[2.0, 3.5], [0.0, 3.5]],
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 1.75], [1.5, 1.75]],
+        ]),
+        'G' => Some(&[
+            [[2.0, 3.5], [0.0, 3.5]],
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 0.0], [2.0, 0.0]],
+            [[2.0, 0.0], [2.0, 1.2]],
+            [[2.0, 1.2], [1.2, 1.2]],
+        ]),
+        'H' => Some(&[
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[2.0, 3.5], [2.0, 0.0]],
+            [[0.0, 1.75], [2.0, 1.75]],
+        ]),
+        'I' => Some(&[
+            [[1.0, 3.5], [1.0, 0.0]],
+            [[0.4, 3.5], [1.6, 3.5]],
+            [[0.4, 0.0], [1.6, 0.0]],
+        ]),
+        'J' => Some(&[[[1.8, 3.5], [1.8, 0.0]], [[1.8, 0.0], [0.2, 0.0]]]),
+        'K' => Some(&[
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 1.9], [2.0, 3.5]],
+            [[0.0, 1.9], [2.0, 0.0]],
+        ]),
+        'L' => Some(&[[[0.0, 3.5], [0.0, 0.0]], [[0.0, 0.0], [2.0, 0.0]]]),
+        'M' => Some(&[
+            [[0.0, 0.0], [0.0, 3.5]],
+            [[0.0, 3.5], [1.0, 1.75]],
+            [[1.0, 1.75], [2.0, 3.5]],
+            [[2.0, 3.5], [2.0, 0.0]],
+        ]),
+        'N' => Some(&[
+            [[0.0, 0.0], [0.0, 3.5]],
+            [[0.0, 3.5], [2.0, 0.0]],
+            [[2.0, 0.0], [2.0, 3.5]],
+        ]),
+        'O' => Some(&[
+            [[0.0, 3.5], [2.0, 3.5]],
+            [[2.0, 3.5], [2.0, 0.0]],
+            [[2.0, 0.0], [0.0, 0.0]],
+            [[0.0, 0.0], [0.0, 3.5]],
+        ]),
+        'P' => Some(&[
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 3.5], [1.8, 3.5]],
+            [[1.8, 3.5], [1.8, 1.75]],
+            [[1.8, 1.75], [0.0, 1.75]],
+        ]),
+        'Q' => Some(&[
+            [[0.0, 3.5], [2.0, 3.5]],
+            [[2.0, 3.5], [2.0, 0.0]],
+            [[2.0, 0.0], [0.0, 0.0]],
+            [[0.0, 0.0], [0.0, 3.5]],
+            [[1.2, 1.2], [2.0, 0.0]],
+        ]),
+        'R' => Some(&[
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 3.5], [1.8, 3.5]],
+            [[1.8, 3.5], [1.8, 1.75]],
+            [[1.8, 1.75], [0.0, 1.75]],
+            [[1.0, 1.75], [2.0, 0.0]],
+        ]),
+        'S' => Some(&[
+            [[2.0, 3.5], [0.0, 3.5]],
+            [[0.0, 3.5], [0.0, 1.75]],
+            [[0.0, 1.75], [2.0, 1.75]],
+            [[2.0, 1.75], [2.0, 0.0]],
+            [[2.0, 0.0], [0.0, 0.0]],
+        ]),
+        'T' => Some(&[[[0.0, 3.5], [2.0, 3.5]], [[1.0, 3.5], [1.0, 0.0]]]),
+        'U' => Some(&[
+            [[0.0, 3.5], [0.0, 0.0]],
+            [[0.0, 0.0], [2.0, 0.0]],
+            [[2.0, 0.0], [2.0, 3.5]],
+        ]),
+        'V' => Some(&[[[0.0, 3.5], [1.0, 0.0]], [[1.0, 0.0], [2.0, 3.5]]]),
+        'W' => Some(&[
+            [[0.0, 3.5], [0.5, 0.0]],
+            [[0.5, 0.0], [1.0, 2.0]],
+            [[1.0, 2.0], [1.5, 0.0]],
+            [[1.5, 0.0], [2.0, 3.5]],
+        ]),
+        'X' => Some(&[[[0.0, 3.5], [2.0, 0.0]], [[0.0, 0.0], [2.0, 3.5]]]),
+        'Y' => Some(&[
+            [[0.0, 3.5], [1.0, 1.75]],
+            [[2.0, 3.5], [1.0, 1.75]],
+            [[1.0, 1.75], [1.0, 0.0]],
+        ]),
+        'Z' => Some(&[
+            [[0.0, 3.5], [2.0, 3.5]],
+            [[2.0, 3.5], [0.0, 0.0]],
+            [[0.0, 0.0], [2.0, 0.0]],
+        ]),
+        ':' => Some(&[[[1.0, 2.4], [1.0, 2.0]]]),
+        '-' => Some(&[[[0.3, 1.75], [1.7, 1.75]]]),
         _ => None,
     }
 }
@@ -168,6 +301,32 @@ pub(super) fn label_strokes(
         } else if let Some(segments) = glyph(ch) {
             for [[ax, ay], [bx, by]] in segments {
                 strokes.push([[x + ax, bottom + ay], [x + bx, bottom + by]]);
+            }
+        }
+        x += advance;
+    }
+    strokes
+}
+
+/// Left-aligned glyph strokes of one bounded text run with its bottom-left corner at
+/// `origin`. ASCII lowercase folds onto its capital and a `.` draws its dot, so admissible
+/// title-block text keeps every mark; a character without any glyph advances a blank gap
+/// instead of a fabricated mark, changing only the spacing, never the drawn strokes.
+pub(super) fn text_strokes(text: &str, origin: [f64; 2]) -> Vec<[[f64; 2]; 2]> {
+    let mut strokes = Vec::new();
+    let mut x = origin[0];
+    for ch in text.chars() {
+        let folded = ch.to_ascii_uppercase();
+        let advance = if folded == '.' {
+            DOT_ADVANCE
+        } else {
+            GLYPH_WIDTH + GLYPH_GAP
+        };
+        if folded == '.' {
+            strokes.push([[x + 0.9, origin[1]], [x + 1.1, origin[1]]]);
+        } else if let Some(segments) = glyph(folded) {
+            for [[ax, ay], [bx, by]] in segments {
+                strokes.push([[x + ax, origin[1] + ay], [x + bx, origin[1] + by]]);
             }
         }
         x += advance;
@@ -219,7 +378,7 @@ pub(super) fn normalized(strokes: Vec<[[f64; 2]; 2]>) -> Result<Vec<[[f64; 2]; 2
 }
 
 /// Renders one stroke list as absolute-move/line subpath data at fixed four-decimal precision.
-fn path(strokes: &[[[f64; 2]; 2]]) -> String {
+pub(super) fn path(strokes: &[[[f64; 2]; 2]]) -> String {
     let mut text = String::new();
     for [[sx, sy], [ex, ey]] in strokes {
         text.push_str(&format!(
@@ -400,6 +559,7 @@ mod tests {
             },
             drafting: Vec::new(),
             views: Vec::new(),
+            sheet: None,
         })
         .unwrap()
     }
@@ -494,5 +654,19 @@ mod tests {
             .nth(1)
             .unwrap_or_default();
         assert_eq!(label.matches("M ").count(), 14);
+    }
+
+    #[test]
+    fn title_text_folds_ascii_case_and_draws_the_dot_instead_of_blanking() {
+        // Admissible mixed-case text with a dot keeps every mark: "st. mary" folds onto its
+        // capitals and draws the same strokes as its uppercase form.
+        assert_eq!(
+            text_strokes("st. mary", [0.0, 0.0]),
+            text_strokes("ST. MARY", [0.0, 0.0])
+        );
+        // Five capitals, the dot and nothing for the space.
+        assert_eq!(text_strokes("st. mary", [0.0, 0.0]).len(), 23);
+        // A space or a character without a glyph still advances blank, never fabricated.
+        assert!(text_strokes("    ", [0.0, 0.0]).is_empty());
     }
 }

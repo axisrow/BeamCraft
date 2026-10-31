@@ -42,6 +42,7 @@ pub mod publish;
 pub mod render;
 pub mod scene;
 pub mod selection;
+pub mod sheet;
 pub mod shell;
 pub mod shortcuts;
 pub mod source;
