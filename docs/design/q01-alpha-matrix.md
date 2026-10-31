@@ -21,12 +21,16 @@ steps ran and passed on this machine.
 |---|---|---|
 | Modelling: frame with plates | `create-member` x3, `cut-by-plane`, `create-plate` x2 with `--hole-rect`; closed-form volumes 5,000,000 / 5,000,000 / 4,750,000 / 396,000 / 396,000 mm3 | Passed |
 | Model tools | `split-part` (column at mid height, halves sum to the closed-form volume), `copy-element` (copy equals source volume), `chamfer-part` (volume strictly decreases, every other part unchanged) | Passed |
+| Member holes (A04.2, G14.1 slice) | `add-hole` on a member (`--axis-point`, `--axis-direction`, `--diameter`): a through d = 20 hole removes the regular 32-gon area times the 100 mm section width; a transverse coordinate outside the section refuses with the head unchanged | Passed |
 | Workspace history | `undo-workspace` / `redo-workspace` around the chamfer: the undone volume returns, redo restores it | Passed |
 | Model data: grids and levels | `create-grid` (`0 1000` u-expression), `create-level` (elevation 1000), `list-grids` / `levels` | Passed |
+| User attributes (I04) | `attribute-define` (choice with options, number with a unit), `attribute-set`, `attribute-get`, `attributes`; an undefined name (`NOT_FOUND`) and an off-choice value (`INVALID_ARGUMENT`) refuse | Passed |
 | Connections and assembly | `create-assembly`, `attach-to-assembly` x7, `create-bolt`, `create-weld` | Passed |
 | Numbering | `preview-numbering` + `approve-numbering`, 8 marks (7 parts + assembly) | Passed |
+| Schedules (I05) | `schedule-export` over the numbered head: CSV, group totals that keep unknown cells counted, and HTML reproduce byte for byte; an unknown attribute column stays visible and is reported; a kind filter narrows to one row | Passed |
 | Views/filters (real store) | `export-view` twice for one head: byte-identical bundles; a repeat export into an existing file is refused without overwriting | Passed |
 | Views/filters (kind filter) | `snapshot-view --hide support` over the synthetic kernel plate scene; hidden kind recorded in the reply | Passed (stand-in, see below) |
+| Filters (V14, real store) | `query-elements` typed rules over the frame, including an `all`/`any` combination; a query never writes; a missing attribute value never satisfies `ne`; an unknown attribute refuses instead of matching silently | Passed |
 | Exact stored outputs, reopen | After `publish-workspace`: every part's volume and `mesh_digest` equal the draft-side values; `export-bom` + `--summary` reproduce byte for byte | Passed |
 | Published drawings (D03 fresh path) | `create-drawing` (primary view titled `COLUMN A` at 1:20), `publish-drawing`, `inspect-drawing` freshness `current` over the published head | Passed |
 | Drawing views (D04) | `edit-views` places a top view, a right section (cut through the column axis, positive side) and a detail over the placed view; every view carries its own title and display scale (1:20 primary, 1:10, 1:5, 1:2) | Passed |
@@ -53,8 +57,6 @@ tests without kittest, and visual acceptance belongs to the owner's eyes.
 |---|---|
 | Windows, Linux (native UI and packaging) | No such machine in this workspace; the acceptance rule forbids replacing OS/GPU matrix cells with mocks. |
 | GPU variety beyond Apple M5/Metal 4 | Single-GPU hardware. Vulkan and D3D12 rendering paths of the native viewport did not execute here. |
-| User attributes and attribute schedules | Fork issues [#316](https://github.com/axisrow/BeamCraft/issues/316) (I04) and [#317](https://github.com/axisrow/BeamCraft/issues/317) (I05) are open. The story carries the actual schedule surface that exists today: `export-bom --summary`. |
-| Member holes | Fork issue [#315](https://github.com/axisrow/BeamCraft/issues/315) (A04.2) is open; holes in this story are plate holes (`--hole-rect`). |
 | Oblique member holes and curved-wall geometry (G14.2) | Fork issue [#314](https://github.com/axisrow/BeamCraft/issues/314) is open; those cases stay out of the story until it closes, and no mock stands in for the blocked geometry. |
 | Item (I01-I03) | Deferred by the owner-approved MVP; the upstream issue records the same. |
 | `snapshot-view` over a real model | The command runs on the synthetic kernel plate scene because P01 does not exist; the output marks itself `synthetic: true`. The real-store view path is `export-view` (V03), which this story exercises. |

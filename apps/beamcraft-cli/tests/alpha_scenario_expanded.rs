@@ -3,9 +3,10 @@
 // Contributor-original synthetic frame and closed-form references, MPL-2.0.
 
 //! Expanded Q01 (fork issue axisrow/BeamCraft#318, upstream issue #334): one real-binary story that extends the
-//! delivered alpha scenario into the model tools, views/filters, grids/levels, invalid-input and
-//! cancellation regressions, and exact stored outputs. Every command starts a fresh process; no
-//! mock storage, renderer or geometry is used. The original scenario stays in `alpha_scenario.rs`;
+//! delivered alpha scenario into the model tools, member holes, views/filters, user attributes
+//! and schedules, grids/levels, invalid-input and cancellation regressions, and exact stored
+//! outputs. Every command starts a fresh process; no mock storage, renderer or geometry is
+//! used. The original scenario stays in `alpha_scenario.rs`;
 //! `docs/design/q01-alpha-matrix.md` records what this covers and what stays open with reasons.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
@@ -30,6 +31,7 @@ const SPLIT_HALF: &str = "019a7bf0-0000-7000-8000-00000000aa15";
 const SPLIT_OP: &str = "019a7bf0-0000-7000-8000-00000000aa20";
 const GRID: &str = "019a7bf0-0000-7000-8000-00000000aa21";
 const LEVEL: &str = "019a7bf0-0000-7000-8000-00000000aa22";
+const MEMBER_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa24";
 
 /// Closed-form volumes of the five parts before any tool touches them (as in the original
 /// scenario): two columns, the cut beam, and two plates with one rectangular hole each.
@@ -320,6 +322,219 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         volume_of(&after_chamfer, PARTS[3]),
     );
 
+    // Member holes (A04.2, the G14.1 transverse slice): a through round hole along the
+    // section width (u) direction at the section centre, half way up the first column. The
+    // stored polygon is the geometry: d = 20 takes the regular 32-gon of F06 section 2, so
+    // the hole removes its area times the 100 mm width from the gross column volume.
+    let holed = s.ok(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            PARTS[0],
+            "--operation-id",
+            MEMBER_HOLE_OP,
+            "--axis-point",
+            "0,0,500",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "20",
+        ],
+    );
+    assert_eq!(text(&holed, "outcome"), "hole_added");
+    let holed_member = at(&holed, &["element"]);
+    let hole_records = at(holed_member, &["hole_records"]).array().unwrap();
+    assert_eq!(hole_records.len(), 1);
+    assert_eq!(text(&hole_records[0], "extent"), "through");
+    let hole_area = 1600.0 * (std::f64::consts::PI / 16.0).sin();
+    close(
+        at(holed_member, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        5_000_000.0 - hole_area * 100.0,
+    );
+    // A transverse coordinate outside the section leaves no fit and writes nothing.
+    let head_before_hole = s.head("draft");
+    let refused_hole = s.run(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            PARTS[0],
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000aa25",
+            "--axis-point",
+            "0,500,500",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "20",
+        ],
+        2,
+    );
+    assert_eq!(text(&refused_hole, "code"), "INVALID_ARGUMENT");
+    assert_eq!(s.head("draft"), head_before_hole);
+
+    // User attributes (I04): definitions are project data, values ride on any element, and
+    // an undefined name or an off-choice value is refused, never stored silently.
+    s.ok(
+        "draft",
+        "attribute-define",
+        &[
+            "--name",
+            "Paint_status",
+            "--type",
+            "choice",
+            "--options",
+            "New,Done",
+        ],
+    );
+    s.ok(
+        "draft",
+        "attribute-define",
+        &["--name", "Weight", "--type", "number", "--unit", "kg"],
+    );
+    assert_eq!(
+        s.ok("draft", "attributes", &[])
+            .get("attributes")
+            .unwrap()
+            .array()
+            .unwrap()
+            .len(),
+        2
+    );
+    for (id, paint, weight) in [(PARTS[0], "New", "12.5"), (PARTS[3], "Done", "8.25")] {
+        let set = s.ok(
+            "draft",
+            "attribute-set",
+            &["--element", id, "--name", "Paint_status", "--value", paint],
+        );
+        assert_eq!(text(&set, "outcome"), "attribute_set");
+        s.ok(
+            "draft",
+            "attribute-set",
+            &["--element", id, "--name", "Weight", "--value", weight],
+        );
+    }
+    let readback = s.ok("draft", "attribute-get", &["--element", PARTS[0]]);
+    let entries = at(&readback, &["attributes"]).array().unwrap();
+    assert_eq!(entries.len(), 2);
+    for entry in entries.iter() {
+        let name = text(entry, "name");
+        if name == "Paint_status" {
+            assert!(entry.get("defined").unwrap().boolean().unwrap());
+            assert_eq!(text(entry, "value"), "New");
+        } else {
+            assert_eq!(name, "Weight");
+            assert!(entry.get("defined").unwrap().boolean().unwrap());
+            close(entry.get("value").unwrap().float().unwrap(), 12.5);
+        }
+    }
+    let refused_attribute = s.run(
+        "draft",
+        "attribute-set",
+        &["--element", PARTS[0], "--name", "Nope", "--value", "x"],
+        2,
+    );
+    assert_eq!(text(&refused_attribute, "code"), "NOT_FOUND");
+    let refused_choice = s.run(
+        "draft",
+        "attribute-set",
+        &[
+            "--element",
+            PARTS[0],
+            "--name",
+            "Paint_status",
+            "--value",
+            "painted",
+        ],
+        2,
+    );
+    assert_eq!(text(&refused_choice, "code"), "INVALID_ARGUMENT");
+
+    // Filters (V14): typed rules over the real frame through the engine evaluator. A query
+    // never writes, a missing value never satisfies ne, and an unknown attribute refuses
+    // instead of matching silently.
+    let pinned_head = s.head("draft");
+    fs::write(
+        s.path("rule-plates.json"),
+        r#"{"field":"type","op":"eq","value":"plate"}"#,
+    )
+    .unwrap();
+    let plates = s.ok(
+        "draft",
+        "query-elements",
+        &["--rule", &s.path("rule-plates.json")],
+    );
+    let plate_ids: Vec<String> = plates
+        .get("elements")
+        .unwrap()
+        .array()
+        .unwrap()
+        .iter()
+        .map(|e| e.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(plate_ids.len(), 3);
+    for id in [PARTS[3], PARTS[4]] {
+        assert!(plate_ids.iter().any(|found| found == id), "{id}");
+    }
+    assert!(plate_ids.iter().any(|found| found == copy_id.as_str()));
+    fs::write(
+        s.path("rule-paint.json"),
+        r#"{"field":"attribute","attribute":"Paint_status","op":"ne","value":"Done"}"#,
+    )
+    .unwrap();
+    let painted = s.ok(
+        "draft",
+        "query-elements",
+        &["--rule", &s.path("rule-paint.json")],
+    );
+    let painted_ids: Vec<String> = painted
+        .get("elements")
+        .unwrap()
+        .array()
+        .unwrap()
+        .iter()
+        .map(|e| e.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(painted_ids, vec![PARTS[0].to_owned()]);
+    fs::write(
+        s.path("rule-combined.json"),
+        r#"{"all":[{"field":"type","op":"eq","value":"column"},{"any":[{"field":"attribute","attribute":"Paint_status","op":"eq","value":"New"},{"field":"name","op":"contains","value":"no-such-name"}]}]}"#,
+    )
+    .unwrap();
+    let combined = s.ok(
+        "draft",
+        "query-elements",
+        &["--rule", &s.path("rule-combined.json")],
+    );
+    let combined_ids: Vec<String> = combined
+        .get("elements")
+        .unwrap()
+        .array()
+        .unwrap()
+        .iter()
+        .map(|e| e.string().unwrap().to_owned())
+        .collect();
+    assert_eq!(combined_ids, vec![PARTS[0].to_owned()]);
+    fs::write(
+        s.path("rule-unknown.json"),
+        r#"{"field":"attribute","attribute":"Missing","op":"eq","value":1}"#,
+    )
+    .unwrap();
+    s.run(
+        "draft",
+        "query-elements",
+        &["--rule", &s.path("rule-unknown.json")],
+        2,
+    );
+    assert_eq!(s.head("draft"), pinned_head);
+
+    // The draft reference for the publication round trip: the frame as it stands now,
+    // including the member hole; attribute edits below never touch a mesh.
+    let final_parts = parts(&s.ok("draft", "inspect-elements", &[]));
+
     // Grids and levels are storey model data the real store carries (T01/D2).
     s.ok(
         "draft",
@@ -424,8 +639,8 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
 
     // Reopen: every part keeps its exact volume and mesh across the publication round trip.
     let reopened = parts(&s.ok("published", "inspect-elements", &[]));
-    assert_eq!(reopened.len(), after_redo.len());
-    for (id, volume, digest) in &after_redo {
+    assert_eq!(reopened.len(), final_parts.len());
+    for (id, volume, digest) in &final_parts {
         let found = reopened.iter().find(|(other, _, _)| other == id).unwrap();
         close(found.1, *volume);
         assert_eq!(found.2, *digest, "{id} mesh must survive the round trip");
@@ -506,6 +721,143 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         fs::read(s.path("bom-summary-1.csv")).unwrap(),
         fs::read(s.path("bom-summary-2.csv")).unwrap()
     );
+
+    // Schedules (I05): the same pinned head renders a typed template — attribute columns,
+    // group totals that keep unknown cells visible, and HTML — byte-identically on repeat.
+    // Four members share Q01-RECT and three plates share the plate profile, so two groups.
+    fs::write(
+        s.path("schedule.json"),
+        r#"{"version":1,"columns":[{"column":"mark"},{"column":"profile"},{"attribute":"Paint_status"},{"attribute":"Weight","total":true}],"group_by":["profile"],"sort_by":["mark"]}"#,
+    )
+    .unwrap();
+    let template_path = s.path("schedule.json");
+    let schedule_out = s.path("schedule-1.csv");
+    let schedule_groups = s.path("schedule-groups-1.csv");
+    let schedule_html = s.path("schedule-1.html");
+    let schedule_args = [
+        "--template",
+        template_path.as_str(),
+        "--out",
+        schedule_out.as_str(),
+        "--summary",
+        schedule_groups.as_str(),
+        "--html",
+        schedule_html.as_str(),
+    ];
+    let scheduled = s.ok("published", "schedule-export", &schedule_args);
+    assert_eq!(text(&scheduled, "outcome"), "schedule_exported");
+    assert_eq!(scheduled.get("elements").unwrap().unsigned().unwrap(), 7);
+    assert_eq!(scheduled.get("groups").unwrap().unsigned().unwrap(), 2);
+    assert_eq!(
+        at(&scheduled, &["unknown_columns"]).array().unwrap().len(),
+        0
+    );
+    let elements_csv = fs::read_to_string(s.path("schedule-1.csv")).unwrap();
+    assert_eq!(elements_csv.lines().count(), 8);
+    assert_eq!(elements_csv.matches(",New,").count(), 1);
+    assert_eq!(elements_csv.matches(",Done,").count(), 1);
+    let groups_csv = fs::read_to_string(s.path("schedule-groups-1.csv")).unwrap();
+    let group_lines: Vec<&str> = groups_csv.lines().collect();
+    assert_eq!(group_lines.len(), 3);
+    assert_eq!(group_lines[0], "profile,count,Weight,Weight_unknown");
+    assert_eq!(
+        group_lines
+            .iter()
+            .find(|line| line.starts_with("Q01-RECT,"))
+            .unwrap(),
+        &"Q01-RECT,4,12.5,3"
+    );
+    let plate_group = group_lines
+        .iter()
+        .find(|line| !line.starts_with("profile,") && !line.starts_with("Q01-RECT,"))
+        .unwrap();
+    assert!(plate_group.ends_with(",3,8.25,2"), "{plate_group:?}");
+    let page = fs::read_to_string(s.path("schedule-1.html")).unwrap();
+    assert!(
+        page.contains("<h2>Elements</h2>")
+            && page.contains("<h2>Groups</h2>")
+            && page.contains("<th>Paint_status</th>"),
+        "{page}"
+    );
+    s.ok(
+        "published",
+        "schedule-export",
+        &[
+            "--template",
+            s.path("schedule.json").as_str(),
+            "--out",
+            s.path("schedule-2.csv").as_str(),
+            "--summary",
+            s.path("schedule-groups-2.csv").as_str(),
+            "--html",
+            s.path("schedule-2.html").as_str(),
+        ],
+    );
+    for (first, second) in [
+        ("schedule-1.csv", "schedule-2.csv"),
+        ("schedule-groups-1.csv", "schedule-groups-2.csv"),
+        ("schedule-1.html", "schedule-2.html"),
+    ] {
+        assert_eq!(
+            fs::read(s.path(first)).unwrap(),
+            fs::read(s.path(second)).unwrap(),
+            "{first} must reproduce byte for byte"
+        );
+    }
+    // An unknown attribute column stays in the schedule, renders empty and is reported;
+    // a filter narrows the rows through the engine's own evaluator.
+    fs::write(
+        s.path("schedule-ghost.json"),
+        r#"{"version":1,"columns":[{"column":"mark"},{"attribute":"Ghost"}]}"#,
+    )
+    .unwrap();
+    let ghost = s.ok(
+        "published",
+        "schedule-export",
+        &[
+            "--template",
+            s.path("schedule-ghost.json").as_str(),
+            "--out",
+            s.path("schedule-ghost.csv").as_str(),
+        ],
+    );
+    assert_eq!(
+        at(&ghost, &["unknown_columns"])
+            .array()
+            .unwrap()
+            .first()
+            .unwrap()
+            .string()
+            .unwrap(),
+        "Ghost"
+    );
+    assert_eq!(
+        fs::read_to_string(s.path("schedule-ghost.csv"))
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+        "mark,Ghost"
+    );
+    fs::write(
+        s.path("schedule-beams.json"),
+        r#"{"version":1,"columns":[{"column":"kind"}],"filter":{"key":"kind","op":"eq","value":"beam"}}"#,
+    )
+    .unwrap();
+    let beams = s.ok(
+        "published",
+        "schedule-export",
+        &[
+            "--template",
+            s.path("schedule-beams.json").as_str(),
+            "--out",
+            s.path("schedule-beams.csv").as_str(),
+        ],
+    );
+    assert_eq!(beams.get("elements").unwrap().unsigned().unwrap(), 1);
+    let beams_csv = fs::read_to_string(s.path("schedule-beams.csv")).unwrap();
+    assert_eq!(beams_csv.lines().count(), 2);
+    assert_eq!(beams_csv.lines().nth(1).unwrap(), "beam");
 
     // The full drawing document surface over the numbered frame (the stale/version cycle
     // lives in the original scenario; this checks the fresh path end to end and then grows
