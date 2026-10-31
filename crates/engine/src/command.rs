@@ -885,6 +885,17 @@ pub(crate) fn replay_cuts(
     base: SolidMesh,
     cuts: &[CutRecord],
 ) -> Result<SolidMesh, CommandError> {
+    replay_cuts_with_body(body, base, cuts).map(|(solid, _)| solid)
+}
+
+/// [`replay_cuts`] with the final certified `Body` after the last record, for the caller that
+/// keeps operating on the body (the member-hole replay). `None` means no record was applied and
+/// the plain body `body` is still the state.
+pub(crate) fn replay_cuts_with_body(
+    body: &Body,
+    base: SolidMesh,
+    cuts: &[CutRecord],
+) -> Result<(SolidMesh, Option<Body>), CommandError> {
     let mut body = body.clone();
     let mut last = None;
     for cut in cuts {
@@ -893,8 +904,8 @@ pub(crate) fn replay_cuts(
         last = Some(applied);
     }
     match last {
-        Some(applied) => Ok(SolidMesh::from_operation(&applied)),
-        None => Ok(base),
+        Some(applied) => Ok((SolidMesh::from_operation(&applied), Some(body))),
+        None => Ok((base, None)),
     }
 }
 
@@ -1052,6 +1063,14 @@ fn add_hole_at(
     next_ordinal: Option<usize>,
 ) -> Result<(AuthoredPlate, PlateBody), CommandError> {
     command.validate_arguments()?;
+    // A member generator targets a member (A04.2); it never authors a plate hole.
+    if matches!(command.hole, beamcraft_model::command::HoleSpec::Member(_)) {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "hole",
+            "a member hole needs a member target",
+        ));
+    }
     if operation_id_used(command.operation_id) {
         return Err(CommandError::new(
             ErrorCode::DuplicateId,
@@ -1125,6 +1144,17 @@ pub fn update_hole(
     command: &beamcraft_model::command::UpdateHole,
 ) -> Result<(AuthoredPlate, PlateBody), CommandError> {
     command.validate_arguments()?;
+    // The same generator guard as `add_hole_at`: a member generator targets a member.
+    if matches!(
+        command.hole.hole,
+        beamcraft_model::command::HoleSpec::Member(_)
+    ) {
+        return Err(CommandError::new(
+            ErrorCode::InvalidArgument,
+            "hole",
+            "a member hole needs a member target",
+        ));
+    }
     if head.id != command.hole.target_id {
         return Err(CommandError::new(
             ErrorCode::NotFound,
@@ -1788,6 +1818,24 @@ mod tests {
         let error =
             add_hole(&full, &record(op(9), square(300.0, 300.0, 10.0)), &unused).unwrap_err();
         assert_eq!(error.code, ErrorCode::LimitExceeded);
+    }
+
+    #[test]
+    fn a_member_generator_needs_a_member_target() {
+        let head = AuthoredPlate::from_command(&command(rect(1000.0, 500.0), 10.0));
+        let member_spec = AddHole {
+            target_id: head.id,
+            operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000aa").unwrap(),
+            hole: HoleSpec::Member(beamcraft_model::command::MemberHole {
+                axis_point_mm: [0.0; 3],
+                axis_direction: [1.0, 0.0, 0.0],
+                extent: beamcraft_model::command::HoleExtent::Through,
+                diameter_mm: 20.0,
+            }),
+        };
+        let error = add_hole(&head, &member_spec, &|_| false).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert_eq!(error.field, "hole");
     }
 
     #[test]

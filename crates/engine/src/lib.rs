@@ -41,6 +41,7 @@ pub mod limits;
 pub mod loft_plate;
 pub mod measure;
 pub mod member;
+pub mod member_hole;
 pub mod numbering;
 pub mod numbering_approval;
 pub mod plate_draft;

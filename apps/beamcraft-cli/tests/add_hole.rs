@@ -256,7 +256,7 @@ fn a_retry_replays_and_a_reused_id_refuses_without_writing() {
 }
 
 #[test]
-fn a_member_target_is_unsupported_and_an_absent_one_is_not_found() {
+fn a_member_target_takes_a_member_hole_and_a_polygon_generator_stays_unsupported() {
     let f = Fixture::new();
     let profile = text(
         at(
@@ -281,6 +281,7 @@ fn a_member_target_is_unsupported_and_an_absent_one_is_not_found() {
         ],
     );
     let member_id = text(at(&member, &["member"]), "element_id");
+    // A plate generator on a member target stays refused (F06 member-hole amendment section 3).
     let code = f.rejected(
         "add-hole",
         &[
@@ -293,6 +294,75 @@ fn a_member_target_is_unsupported_and_an_absent_one_is_not_found() {
         ],
     );
     assert_eq!(code, "UNSUPPORTED_GEOMETRY");
+    // A member hole: a through round hole along X_r at the section centre. The member frame of
+    // an X-axis beam is X_r = element +Y, Y_r = element +Z, Z_m = +X, so the hole removes
+    // polygon area x width (200 mm) from the 200x300x6000 gross.
+    let added = f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &member_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000d1",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "100",
+        ],
+    );
+    let element = at(&added, &["element"]);
+    let records = at(element, &["hole_records"]).array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(num(&records[0], &["ordinal"]), 0.0);
+    assert_eq!(text(&records[0], "extent"), "through");
+    // The 0.05 mm chord bound gives d = 100 seventy-two segments; area x 200 is about
+    // 1,568,803 mm3 of the 360,000,000 gross.
+    assert!((num(element, &["quantities", "volume", "mm3"]) - 358_431_196.6).abs() <= 10.0);
+    // Update keeps the identity and the ordinal and changes the volume.
+    let updated = f.ok(
+        "update-hole",
+        &[
+            "--id",
+            &member_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000d1",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "200",
+        ],
+    );
+    let element = at(&updated, &["element"]);
+    let records = at(element, &["hole_records"]).array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        num(&records[0], &["ordinal"]),
+        0.0,
+        "update keeps the ordinal"
+    );
+    // d = 200 takes one hundred segments; area x 200 is about 6,279,052 mm3.
+    assert!((num(element, &["quantities", "volume", "mm3"]) - 353_720_948.0).abs() <= 10.0);
+    // Removal restores the gross volume end to end.
+    let removed = f.ok(
+        "remove-hole",
+        &[
+            "--id",
+            &member_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000d1",
+        ],
+    );
+    let element = at(&removed, &["element"]);
+    assert!(at(element, &["hole_records"]).array().unwrap().is_empty());
+    assert_eq!(
+        num(element, &["quantities", "volume", "mm3"]),
+        360_000_000.0
+    );
+    // An absent target is still not found.
     let code = f.rejected(
         "add-hole",
         &[
@@ -300,11 +370,105 @@ fn a_member_target_is_unsupported_and_an_absent_one_is_not_found() {
             "019a7bf0-0000-7000-8000-0000000000d1",
             "--operation-id",
             "019a7bf0-0000-7000-8000-0000000000d2",
-            "--hole-rect",
-            "100,100,100,100",
+            "--axis-point",
+            "0,0,0",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
         ],
     );
     assert_eq!(code, "NOT_FOUND");
+}
+
+#[test]
+fn a_member_hole_that_no_longer_fits_refuses_and_a_ranged_one_waits_for_the_kernel() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "200", "--height", "300"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let member = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "Beam B2",
+        ],
+    );
+    let member_id = text(at(&member, &["member"]), "element_id");
+    // The transverse coordinate beyond the section (v = 500 > height 300) leaves no fit, the
+    // same typed refusal a plate hole gets.
+    let code = f.rejected(
+        "add-hole",
+        &[
+            "--id",
+            &member_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000d5",
+            "--axis-point",
+            "0,500,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
+        ],
+    );
+    assert_eq!(code, "INVALID_ARGUMENT");
+    // A range ends the cutter inside the body: the kernel slice G14.1 certifies it later.
+    let code = f.rejected(
+        "add-hole",
+        &[
+            "--id",
+            &member_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000d6",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
+            "--from",
+            "10",
+            "--to",
+            "100",
+        ],
+    );
+    assert_eq!(code, "UNSUPPORTED_GEOMETRY");
+    // Neither refusal wrote anything: a fit hole is still accepted afterwards.
+    let added = f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &member_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000d7",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
+        ],
+    );
+    assert_eq!(
+        at(&added, &["element", "hole_records"])
+            .array()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]

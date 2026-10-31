@@ -1408,6 +1408,115 @@ pub enum HoleSpec {
         /// Extent along +Y, finite and greater than zero.
         height_mm: f64,
     },
+    /// A round hole in a member (A04.2, the F06 member-hole amendment): a straight prism
+    /// cutter perpendicular to the member axis, stored in the member frame and replayed with
+    /// the member's records. A polygon generator is not admitted for a member in this slice.
+    Member(MemberHole),
+}
+
+/// How far the member-hole cutter reaches along its axis (F06 member-hole amendment section 1):
+/// past the whole body, or an explicit range that must end in free space.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HoleExtent {
+    /// The cutter reaches past the body on both sides.
+    Through,
+    /// A range measured along `axis_direction` from `axis_point_mm`; `from_mm < to_mm`. A range
+    /// that ends inside material would be a blind hole, which is `UNSUPPORTED_GEOMETRY`.
+    Range {
+        /// Range start in millimetres along the axis direction.
+        from_mm: f64,
+        /// Range end in millimetres along the axis direction, greater than `from_mm`.
+        to_mm: f64,
+    },
+}
+
+impl HoleExtent {
+    /// Admits finiteness, the coordinate cap and `from < to`.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        match self {
+            Self::Through => Ok(()),
+            Self::Range { from_mm, to_mm } => {
+                hole_values_finite([*from_mm, *to_mm].into_iter())?;
+                hole_values_in_cap([*from_mm, *to_mm].into_iter())?;
+                if from_mm < to_mm {
+                    Ok(())
+                } else {
+                    Err(CommandError::new(
+                        ErrorCode::InvalidArgument,
+                        "hole",
+                        "a hole range needs from below to",
+                    ))
+                }
+            }
+        }
+    }
+
+    /// The wire token.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Through => "through",
+            Self::Range { .. } => "range",
+        }
+    }
+
+    /// Parses the wire token with its range values; anything else is `None`.
+    pub fn parse(token: &str, from_mm: f64, to_mm: f64) -> Option<Self> {
+        match token {
+            "through" => Some(Self::Through),
+            "range" => Some(Self::Range { from_mm, to_mm }),
+            _ => None,
+        }
+    }
+}
+
+/// The arguments of one member hole (F06 member-hole amendment section 1). The record is stored
+/// in the member frame, so it follows the member when it is moved or rotated: the origin is the
+/// first axis point, `u` along `X_r`, `v` along `Y_r`, `w` along the member axis `Z_m`,
+/// including the roll.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberHole {
+    /// A point `(u, v, w)` on the hole axis in the member frame, finite, within the coordinate
+    /// cap.
+    pub axis_point_mm: [f64; 3],
+    /// The unit direction of the hole axis in the member frame. The first slice admits exactly
+    /// one of `(+-1, 0, 0)` or `(0, +-1, 0)`, the section directions; any other direction,
+    /// including one with a component along the member axis, is `UNSUPPORTED_GEOMETRY` until
+    /// G14.2.
+    pub axis_direction: [f64; 3],
+    /// How far the cutter reaches.
+    pub extent: HoleExtent,
+    /// The round generator's diameter in millimetres, finite and greater than zero. The stored
+    /// polygon is authoritative (F06 section 1): the regular inscribed `N`-gon of
+    /// [`HoleSpec::polygon`], with vertex 0 on `+Z_m` from the axis point.
+    pub diameter_mm: f64,
+}
+
+impl MemberHole {
+    /// Admits finiteness, the caps, a positive diameter, a section direction and the extent.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        hole_values_finite(self.axis_point_mm.iter().copied())?;
+        hole_values_in_cap(self.axis_point_mm.iter().copied())?;
+        hole_values_finite([self.diameter_mm].into_iter())?;
+        if self.diameter_mm <= 0.0 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "hole",
+                "a hole diameter must be positive",
+            ));
+        }
+        let is_section_direction = matches!(
+            self.axis_direction,
+            [1.0, 0.0, 0.0] | [-1.0, 0.0, 0.0] | [0.0, 1.0, 0.0] | [0.0, -1.0, 0.0]
+        );
+        if !is_section_direction {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole.axis_direction",
+                "only a section direction (+-X_r, +-Y_r) is supported until G14.2",
+            ));
+        }
+        self.extent.validate()
+    }
 }
 
 /// The largest radius each permitted segment count serves (F06 section 2, A-2): the row at
@@ -1557,6 +1666,7 @@ impl HoleSpec {
                 }
                 Ok(())
             }
+            Self::Member(member) => member.validate(),
         }
     }
 
@@ -1606,6 +1716,14 @@ impl HoleSpec {
                 [x + width_mm, y + height_mm],
                 [x + width_mm, *y],
             ]),
+            // The authoritative member-hole polygon, relative to the axis point in the plane
+            // perpendicular to the axis: the plate round generator at the origin, whose vertex 0
+            // is the hole frame's +x, i.e. `+Z_m` from the axis point (F06 section 1).
+            Self::Member(member) => Self::Round {
+                centre_mm: [0.0, 0.0],
+                diameter_mm: member.diameter_mm,
+            }
+            .polygon(),
         }
     }
 }
@@ -1660,6 +1778,33 @@ pub struct HoleRecord {
     pub kind: HoleKind,
 }
 
+/// One member-hole operation record of a member (A04.2, the F06 member-hole amendment): an
+/// owned record with an engine-assigned ordinal, stored entirely in the member frame, so it
+/// follows the member when it is moved or rotated. The records of one member are replayed from
+/// the base shape in ordinal order. Ordinals are never reused or renumbered; `UpdateHole` and
+/// `RemoveHole` address a record by its `operation_id`. Member records live on the member, so
+/// they never conflate with the plate records (A04) or polygon cuts (A13) under
+/// `update-hole`/`remove-hole`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemberHoleRecord {
+    /// Full UUIDv7 of the record, unused in the project (`DUPLICATE_ID`).
+    pub operation_id: OpId,
+    /// The per-member ordinal in creation order, starting at zero. It names the record's
+    /// FeatureIds (`cut:f.h<ordinal>...`).
+    pub ordinal: usize,
+    /// A point `(u, v, w)` on the hole axis in the member frame.
+    pub axis_point_mm: [f64; 3],
+    /// The unit direction of the hole axis in the member frame: a section direction of the
+    /// first slice (`(+-1, 0, 0)` or `(0, +-1, 0)`).
+    pub axis_direction: [f64; 3],
+    /// How far the cutter reaches.
+    pub extent: HoleExtent,
+    /// The authoritative clockwise polygon relative to the axis point in the plane
+    /// perpendicular to the axis, hole-frame XY (x along `+Z_m`, y along `axis_direction x
+    /// +Z_m`), vertex 0 on `+Z_m`.
+    pub polygon_mm: Vec<[f64; 2]>,
+}
+
 /// Replace one existing hole's authoritative polygon, preserving its identity and ordinal.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateHole {
@@ -1709,15 +1854,16 @@ impl RemoveHole {
     }
 }
 
-/// F04 section 7 `AddHole`: one through-hole operation record on a valid plate (A04). The
-/// record's `operation_id` is also the logical command id: a retry with identical content
-/// replays the recorded result, different content under an accepted id is `OP_ID_REUSE`, and
-/// an id that already names a record of the project is `DUPLICATE_ID`. The engine assigns the
-/// ordinal from the plate's per-element counter; other hole types (member holes, slots, blind
-/// holes) are explicitly unsupported and refused as F06 section 2 failures.
+/// F04 section 7 `AddHole`: one through-hole operation record on a valid plate (A04) or member
+/// (A04.2, the F06 member-hole amendment). The record's `operation_id` is also the logical
+/// command id: a retry with identical content replays the recorded result, different content
+/// under an accepted id is `OP_ID_REUSE`, and an id that already names a record of the project
+/// is `DUPLICATE_ID`. The engine assigns the ordinal from the target's per-element counter. A
+/// member target carries a [`HoleSpec::Member`] generator; a polygon generator on a member is
+/// `UNSUPPORTED_GEOMETRY` in this slice.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AddHole {
-    /// The plate that will own the record; a member target is `UNSUPPORTED_GEOMETRY`.
+    /// The plate or member that will own the record.
     pub target_id: ElementId,
     /// Full UUIDv7 of the record, unused in the project.
     pub operation_id: OpId,
@@ -1774,6 +1920,27 @@ impl AddHole {
                 bytes.push(2);
                 for v in corner_mm.iter().copied().chain([*width_mm, *height_mm]) {
                     bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                }
+            }
+            HoleSpec::Member(member) => {
+                bytes.push(3);
+                for v in member
+                    .axis_point_mm
+                    .iter()
+                    .copied()
+                    .chain(member.axis_direction.iter().copied())
+                    .chain([member.diameter_mm])
+                {
+                    bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                }
+                bytes.push(match member.extent {
+                    HoleExtent::Through => 0,
+                    HoleExtent::Range { .. } => 1,
+                });
+                if let HoleExtent::Range { from_mm, to_mm } = member.extent {
+                    for v in [from_mm, to_mm] {
+                        bytes.extend_from_slice(&canonical_f64_bytes(v).map_err(|_| bad())?);
+                    }
                 }
             }
         }

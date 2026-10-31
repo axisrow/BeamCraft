@@ -69,9 +69,9 @@ use beamcraft_layer_engine::{
     Prim, Profile, Reader, Value,
 };
 use beamcraft_model::command::{
-    BendRecord, BendSpec, CommandError, CornerTreatment, CreatePlate, CutRecord, HoleKind,
-    HoleRecord, KeepSide, MAX_BENDS, MemberKind, PlateCorner, PlateSide, SectionDepthPosition,
-    SectionPlacement, SectionPlanePosition,
+    BendRecord, BendSpec, CommandError, CornerTreatment, CreatePlate, CutRecord, HoleExtent,
+    HoleKind, HoleRecord, KeepSide, MAX_BENDS, MemberHoleRecord, MemberKind, PlateCorner,
+    PlateSide, SectionDepthPosition, SectionPlacement, SectionPlanePosition,
 };
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
@@ -388,6 +388,8 @@ fn element_meta(
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Decoded {
     pub(crate) hole_history:
+        BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::HoleHistory>,
+    pub(crate) member_hole_history:
         BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::HoleHistory>,
     pub(crate) cut_history:
         BTreeMap<ElementId, beamcraft_layer_engine::authored::cut_history::CutHistory>,
@@ -894,6 +896,117 @@ fn decode_cut(prim: &Prim) -> Result<Vec<CutRecord>, PlateError> {
         .collect()
 }
 
+/// The member-hole operation records of a committed member (A04.2): all nine attributes or
+/// none, aligned with each other, the polygons cut by the vertex counts, every ordinal strictly
+/// increasing and every id a full UUIDv7. A damaged or half-authored record is an integrity
+/// error, never a default.
+fn decode_member_hole_records(prim: &Prim) -> Result<Vec<MemberHoleRecord>, PlateError> {
+    const FIELDS: [&str; 9] = [
+        "steel:mhole:pointsMm",
+        "steel:mhole:vertexCounts",
+        "steel:mhole:operationIds",
+        "steel:mhole:ordinals",
+        "steel:mhole:axisPointsMm",
+        "steel:mhole:axisDirections",
+        "steel:mhole:extents",
+        "steel:mhole:extentFromMm",
+        "steel:mhole:extentToMm",
+    ];
+    let bad = || integrity("committed member has inconsistent hole record attributes");
+    let declared = |name: &str| prim.properties.iter().any(|p| p.name == name);
+    let count = FIELDS.iter().filter(|name| declared(name)).count();
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    if count != FIELDS.len() {
+        return Err(bad());
+    }
+    let polygons = decode_polygons(
+        prim,
+        FIELDS[0],
+        FIELDS[1],
+        beamcraft_model::command::MAX_HOLES,
+        "committed member has inconsistent hole record attributes",
+    )?;
+    let ids: Vec<String> = match property(prim, FIELDS[2]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| text(v).map(str::to_owned).ok_or_else(bad))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad()),
+    };
+    let ordinals: Vec<usize> = match property(prim, FIELDS[3]) {
+        Some(Value::Array(values)) => values
+            .iter()
+            .map(|v| usize::try_from(integer(v).ok_or_else(bad)?).map_err(|_| bad()))
+            .collect::<Result<_, _>>()?,
+        _ => return Err(bad()),
+    };
+    let mut axis_points = Vec::new();
+    let mut directions = Vec::new();
+    for (field, sink) in [(FIELDS[4], &mut axis_points), (FIELDS[5], &mut directions)] {
+        match property(prim, field) {
+            Some(Value::Array(values)) => {
+                for v in values.iter() {
+                    sink.push(numbers::<3>(v).ok_or_else(bad)?);
+                }
+            }
+            _ => return Err(bad()),
+        }
+    }
+    let doubles = |field: &str| -> Result<Vec<f64>, PlateError> {
+        match property(prim, field) {
+            Some(Value::Array(values)) => {
+                values.iter().map(|v| number(v).ok_or_else(bad)).collect()
+            }
+            _ => Err(bad()),
+        }
+    };
+    let extents: Vec<HoleExtent> = match property(prim, FIELDS[6]) {
+        Some(Value::Array(values)) => {
+            let from = doubles(FIELDS[7])?;
+            let to = doubles(FIELDS[8])?;
+            values
+                .iter()
+                .zip(from)
+                .zip(to)
+                .map(|((v, start), end)| {
+                    HoleExtent::parse(text(v).ok_or_else(bad)?, start, end).ok_or_else(bad)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        _ => return Err(bad()),
+    };
+    if polygons.len() != ids.len()
+        || polygons.len() != ordinals.len()
+        || polygons.len() != axis_points.len()
+        || polygons.len() != directions.len()
+        || polygons.len() != extents.len()
+    {
+        return Err(bad());
+    }
+    polygons
+        .into_iter()
+        .zip(ids)
+        .zip(ordinals)
+        .zip(axis_points)
+        .zip(directions)
+        .zip(extents)
+        .map(
+            |(((((polygon_mm, id), ordinal), axis_point_mm), axis_direction), extent)| {
+                Ok(MemberHoleRecord {
+                    operation_id: OpId::parse(&id).map_err(|_| bad())?,
+                    ordinal,
+                    axis_point_mm,
+                    axis_direction,
+                    extent,
+                    polygon_mm,
+                })
+            },
+        )
+        .collect()
+}
+
 /// The through-hole polygons of a committed plate: the flat point array cut by the vertex counts.
 /// Both attributes or neither; every count is at least three and every `z` is zero.
 fn decode_holes(prim: &Prim) -> Result<Vec<Vec<[f64; 2]>>, PlateError> {
@@ -1335,8 +1448,25 @@ pub(crate) fn decode(
             ))
         })
         .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
+    let member_hole_history = prims
+        .iter()
+        .filter_map(|p| {
+            p.element_id
+                .as_deref()
+                .and_then(|id| ElementId::parse(id).ok())
+                .map(|id| (id, p))
+        })
+        .filter(|(id, _)| cut_history.contains_key(id))
+        .map(|(id, p)| {
+            Ok((
+                id,
+                beamcraft_layer_engine::authored::cut_history::read_member_holes(p)?,
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>, PlateError>>()?;
     Ok(Decoded {
         hole_history,
+        member_hole_history,
         cut_history,
         plates,
         members,
@@ -1413,6 +1543,7 @@ fn decode_member(
         },
         material: decode_material(prim)?,
         cuts: decode_cut(prim)?,
+        hole_records: decode_member_hole_records(prim)?,
     })
 }
 

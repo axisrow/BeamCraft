@@ -21,7 +21,7 @@
 
 use crate::command::{
     AreaSource, CUT_VOLUME_ALGORITHM, MaterialInfo, MaterialLookup, Quantities, Volumes, map_cut,
-    quantities_with_material, replay_cuts,
+    quantities_with_material, replay_cuts, replay_cuts_with_body,
 };
 use crate::footprint::Footprint;
 use crate::solid::SolidMesh;
@@ -33,8 +33,8 @@ use beamcraft_kernel::section::{Representation, SectionFailure, SectionMember, s
 use beamcraft_kernel::sweep::{Sweep, SweepFailure, SweepPath, sweep};
 use beamcraft_kernel::{StraightMember, straight_member};
 use beamcraft_model::command::{
-    CommandError, CreatePolybeam, CreateStraightMember, CutRecord, MemberKind, Placement,
-    SectionPlacement,
+    CommandError, CreatePolybeam, CreateStraightMember, CutRecord, MemberHoleRecord, MemberKind,
+    Placement, SectionPlacement,
 };
 use beamcraft_model::definition::{
     DeclaredAreaWarning, RectangleProfileSpec, SectionProfileSpec, SectionProperties,
@@ -183,6 +183,10 @@ pub struct AuthoredMember {
     /// The owned `plane_cut` operation records (A03, amendment A-2), replayed in ascending
     /// ordinal order. Empty means an uncut member.
     pub cuts: Vec<CutRecord>,
+    /// The owned member-hole operation records (A04.2, the F06 member-hole amendment), stored
+    /// in the member frame and replayed in ascending ordinal order after the plane cuts. Empty
+    /// means a member without holes.
+    pub hole_records: Vec<MemberHoleRecord>,
 }
 
 impl AuthoredMember {
@@ -201,6 +205,7 @@ impl AuthoredMember {
             placement: command.placement,
             material: command.material_digest,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         }
     }
 
@@ -219,6 +224,7 @@ impl AuthoredMember {
             placement: command.placement,
             material: command.material_digest,
             cuts: Vec::new(),
+            hole_records: Vec::new(),
         }
     }
 
@@ -572,6 +578,17 @@ pub fn evaluate_member(
     profile: ProfileInfo,
 ) -> Result<MemberBody, CommandError> {
     authored.placement.validate()?;
+    // A hole record replays through the kernel's through-hole operation, which this slice
+    // serves on a straight rectangle-profile member only; everything else waits for G14.1.
+    if !authored.hole_records.is_empty()
+        && (authored.curved
+            || authored.axis_points_mm.len() > 2
+            || !matches!(profile, ProfileInfo::Rectangle { .. }))
+    {
+        return Err(crate::member_hole::pending_member_holes(
+            "the member hole needs the kernel slice G14.1: only a straight rectangle-profile member is served in this slice",
+        ));
+    }
     let points: Vec<Point3> = authored
         .axis_points_mm
         .iter()
@@ -643,11 +660,24 @@ pub fn evaluate_member(
                 let axis_length_mm = frame.scale().axis_length_mm() + length_delta_mm;
                 // The cuts replace both the mesh and the analytic volume with the certified replay
                 // result; without one the P-Mass `area x length` volume stands.
-                let (solid, cut_volume) = if authored.cuts.is_empty() {
+                let (solid, cut_volume) = if authored.cuts.is_empty()
+                    && authored.hole_records.is_empty()
+                {
                     (SolidMesh::from_box(&result), None)
                 } else {
                     let body = Body::from_plate(&result).map_err(|f: OpFailure| map_cut(&f))?;
-                    let solid = replay_cuts(&body, SolidMesh::from_box(&result), &authored.cuts)?;
+                    let (solid, cut_body) =
+                        replay_cuts_with_body(&body, SolidMesh::from_box(&result), &authored.cuts)?;
+                    let solid = if authored.hole_records.is_empty() {
+                        solid
+                    } else {
+                        let body = cut_body.unwrap_or(body);
+                        crate::member_hole::replay_member_holes(
+                            &frame.frame(),
+                            &body,
+                            &authored.hole_records,
+                        )?
+                    };
                     let volume = solid.volume_mm3();
                     (solid, Some(volume))
                 };
@@ -1301,6 +1331,7 @@ mod tests {
             material: None,
             class: 0,
             cuts: vec![record([3000.0, 0.0, 0.0])],
+            hole_records: Vec::new(),
         };
         let body = evaluate_member(&authored, profile.clone()).unwrap();
         // The kept half is 3000 mm long: 3000 * 200 * 300 = 180,000,000 mm3 = 0.18 m3; the cut
