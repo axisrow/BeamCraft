@@ -1121,6 +1121,27 @@ read.
 apply-view --file FILE --name TEXT
 ```
 
+## annotation
+
+### annotation-create
+
+write.
+
+```text
+annotation-create --store ROOT --name TEXT --kind dimension|mark|leader --new-id UUID
+    [--from FEATURE_ID] [--to FEATURE_ID] [--anchor FEATURE_ID] [--attribute TEXT] [--text TEXT]
+    [--end X,Y,Z] [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
+    [--workspace-id UUID]
+```
+
+### annotation-list
+
+read.
+
+```text
+annotation-list --store ROOT
+```
+
 ## history
 
 ### inspect-history
