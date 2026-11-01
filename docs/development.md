@@ -128,9 +128,15 @@ PR #157), and never wait with sleeps — wait on the condition.
 
 ## Faster test execution
 
-The test profile optimizes only `beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel` and
-`openusd` at level 1. These libraries handle the repeated geometry certification, blob hashing
-and USD parsing in the integration tests. Other workspace packages, GUI dependencies and host
+The test profile optimizes only `beamcraft-geom`, `beamcraft-model`, `beamcraft-kernel`,
+`steel` and `openusd`. These libraries handle the repeated geometry certification, blob hashing
+and USD parsing in the integration tests; the first four sit at level 1, while `openusd` sits
+at level 3 because every CLI/store command re-parses the whole revision layer stack and the
+per-element cost of that parse (SDF path validation and friends) dominated the write-path
+profile — ~16 ms per stored element per command at level 1 against ~3.7 ms at level 3, which
+took the full unfiltered workspace run from ~200 s to ~115–130 s warm on the reference Apple
+M5 ([#285](https://github.com/axisrow/BeamCraft/issues/285), 2026-11-01). Other workspace
+packages, GUI dependencies and host
 build tools keep Cargo's default optimization settings. Debug assertions and overflow
 checks remain enabled, and the test cases, fuzz seeds, iteration counts and independent oracles
 are unchanged. The first test build recompiles the selected libraries and their dependants;
@@ -142,13 +148,14 @@ no partition or platform is excluded.
 Compare runtime on the same machine and toolchain after building both variants with
 `cargo test --workspace --no-run --locked`. Time the subsequent `cargo test --workspace --locked`
 commands separately from compilation. To reproduce the unoptimized baseline without editing
-the manifest, pass all four overrides to **both** the build and timed commands:
+the manifest, pass all five overrides to **both** the build and timed commands:
 
 ```sh
 cargo test --workspace --locked \
   --config 'profile.test.package.beamcraft-geom.opt-level=0' \
   --config 'profile.test.package.beamcraft-model.opt-level=0' \
   --config 'profile.test.package.beamcraft-kernel.opt-level=0' \
+  --config 'profile.test.package.steel.opt-level=0' \
   --config 'profile.test.package.openusd.opt-level=0'
 ```
 

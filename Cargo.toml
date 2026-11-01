@@ -42,12 +42,16 @@ indexing_slicing = "warn"
 # Test workloads repeatedly hash blobs, certify meshes and parse USD. Optimize these
 # hot packages while keeping applications and GUI dependencies cheap to build.
 # Debug assertions and overflow checks stay enabled through the test profile.
+# openusd sits at 3, one above the rest: every CLI/store command re-parses the whole
+# revision layer stack, and the per-element cost of that parse (SDF path validation
+# and friends) is what the integration suites spend their time on — at 1 it measured
+# ~16 ms per stored element per write command, at 3 ~3.7 ms (#285, 2026-11-01).
 [profile.test.package]
 beamcraft-geom = { opt-level = 1 }
 beamcraft-kernel = { opt-level = 1 }
 beamcraft-model = { opt-level = 1 }
 steel = { opt-level = 1 }
-openusd = { opt-level = 1 }
+openusd = { opt-level = 3 }
 
 [profile.release]
 # Local optimized builds prioritize compile time. Distribution builds retain the
