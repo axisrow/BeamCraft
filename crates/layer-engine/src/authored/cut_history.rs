@@ -49,7 +49,7 @@ pub type HoleHistory = CutHistory;
 /// parallel within one family, so a member hole (A04.2) never mixes with a plate hole (A04) or
 /// a plane cut (A03) even though the history shape is one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Family {
+pub enum Family {
     /// The owned plane cuts of a plate, beam or column.
     Cut,
     /// The hole and polygon-cut records of a plate.
@@ -57,7 +57,9 @@ pub(super) enum Family {
     /// The member-hole records of a beam or column.
     MemberHole,
 }
-pub(super) fn fields(family: Family) -> (&'static str, &'static str, &'static str, &'static str) {
+/// The attribute names of one record family: the next-ordinal and retired fields plus the
+/// record list's own id and ordinal attributes; the seam's history field map.
+pub fn fields(family: Family) -> (&'static str, &'static str, &'static str, &'static str) {
     match family {
         Family::Cut => (NEXT, RETIRED, "steel:cut:operationId", "steel:cut:ordinal"),
         Family::PlateHole => (

@@ -131,8 +131,9 @@ pub fn definition<'a>(p: &Prim, prims: &'a [Prim]) -> Result<Option<&'a Prim>, D
     Ok(Some(source))
 }
 
-/// Checks a creation's reference to an existing canonical owned part.
-pub(super) fn validate_source<'a>(
+/// Checks a creation's reference to an existing canonical owned part; the seam the instance
+/// shape hook validates its definition through.
+pub fn validate_source<'a>(
     id: &str,
     kind: PartKind,
     prims: &'a [Prim],
@@ -240,7 +241,9 @@ pub fn resolve(prims: Vec<Prim>) -> Result<Vec<Prim>, Diagnostic> {
     Ok(out)
 }
 
-pub(super) fn author(
+/// Authors the `bim:instanceOf` relationship of one instance towards its canonical part; the
+/// seam the instance shape hook writes through.
+pub fn author(
     data: &mut sdf::Data,
     path: &str,
     source: &str,

@@ -94,7 +94,8 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
     }
     Ok(())
 }
-pub(super) fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagnostic> {
+/// Refuses the first non-finite value; the seam's finiteness gate.
+pub fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| !n.is_finite()) {
         return Err(
             fail(ErrorCode::NonFiniteNumber, "non-finite authored value").with_rule("DV-ATTR-003"),
@@ -102,7 +103,8 @@ pub(super) fn finite(values: impl IntoIterator<Item = f64>) -> Result<(), Diagno
     }
     Ok(())
 }
-pub(super) fn cap(values: impl IntoIterator<Item = f64>, max: f64) -> Result<(), Diagnostic> {
+/// Caps every value's magnitude; the seam's magnitude gate.
+pub fn cap(values: impl IntoIterator<Item = f64>, max: f64) -> Result<(), Diagnostic> {
     if values.into_iter().any(|n| n.abs() > max) {
         return Err(limit().with_rule("DV-LIM-001"));
     }
@@ -193,14 +195,16 @@ pub(super) fn optional<'a>(
         Some(_) => Err(invalid()),
     }
 }
-pub(super) fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Diagnostic> {
+/// An optional `double` property; the seam's optional-number read.
+pub fn optional_number(prim: &Prim, name: &str) -> Result<Option<f64>, Diagnostic> {
     match optional(prim, name, "double")? {
         None => Ok(None),
         Some(Value::Number(n)) => Ok(Some(*n)),
         Some(_) => Err(invalid()),
     }
 }
-pub(super) fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, Diagnostic> {
+/// An optional `string` property; the seam's optional-text read.
+pub fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, Diagnostic> {
     match optional(prim, name, "string")? {
         None => Ok(None),
         Some(Value::Text(s)) => Ok(Some(s.clone())),
@@ -437,7 +441,8 @@ pub(super) fn owned(prims: &[Prim], path: &str, descendants: bool) -> Result<(),
     }
     Ok(())
 }
-pub(super) fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagnostic> {
+/// A required property of an exact USD type; the seam's typed property read.
+pub fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a Value, Diagnostic> {
     let p = prim
         .properties
         .iter()
@@ -451,19 +456,22 @@ pub(super) fn required<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a V
         .filter(|v| !matches!(v, Value::Block))
         .ok_or_else(|| invalid().with_rule("DV-ATTR-001"))
 }
-pub(super) fn text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Diagnostic> {
+/// A required property read as exact text; the seam's token/string read.
+pub fn text<'a>(prim: &'a Prim, name: &str, ty: &str) -> Result<&'a str, Diagnostic> {
     match required(prim, name, ty)? {
         Value::Text(s) => Ok(s),
         _ => Err(invalid().with_rule("DV-ATTR-002")),
     }
 }
-pub(super) fn number(prim: &Prim, name: &str) -> Result<f64, Diagnostic> {
+/// A required `double` property; the seam's number read.
+pub fn number(prim: &Prim, name: &str) -> Result<f64, Diagnostic> {
     match required(prim, name, "double")? {
         Value::Number(n) => Ok(*n),
         _ => Err(invalid()),
     }
 }
-pub(super) fn points(prim: &Prim, name: &str) -> Result<Vec<[f64; 3]>, Diagnostic> {
+/// A required `double3[]` property as point triples; the seam's point-array read.
+pub fn points(prim: &Prim, name: &str) -> Result<Vec<[f64; 3]>, Diagnostic> {
     let Value::Array(values) = required(prim, name, "double3[]")? else {
         return Err(invalid());
     };
@@ -567,7 +575,8 @@ fn plate(points: &[[f64; 3]], thickness: f64) -> Result<(), Diagnostic> {
     // Planarity, exact topology and rectangle support are deliberately the engine's F06 gate.
     Ok(())
 }
-pub(super) fn relationship<'a>(prim: &'a Prim, name: &str) -> Option<&'a Relationship> {
+/// Finds one composed relationship, if authored; the seam's relationship read.
+pub fn relationship<'a>(prim: &'a Prim, name: &str) -> Option<&'a Relationship> {
     prim.relationships.iter().find(|r| r.name == name)
 }
 /// The optional through-hole polygons of a loaded plate: either both attributes or neither, the
@@ -949,7 +958,9 @@ pub(super) fn element_cut(prim: &Prim) -> Result<Vec<CutRecord>, Diagnostic> {
         .collect::<Result<Vec<_>, Diagnostic>>()?;
     Ok(records)
 }
-fn resource<'a>(
+/// Verifies a stored definition prim at a digest: its kind, canonical bytes and pinned digest.
+/// The seam a discipline hook resolves and re-checks pinned definitions through.
+pub fn resource<'a>(
     prims: &'a [Prim],
     digest: ContentDigest,
     kinds: &[&str],
@@ -979,7 +990,9 @@ fn resource<'a>(
     }
     Ok(p)
 }
-fn link<'a>(
+/// Resolves a definition relationship of a prim to its stored, verified definition prim; the
+/// seam a discipline hook follows `bim:profile` and `bim:material` links with.
+pub fn link<'a>(
     p: &Prim,
     prims: &'a [Prim],
     name: &str,
@@ -2717,7 +2730,9 @@ pub(super) fn changes(
     }
     Ok((reads, writes))
 }
-pub(super) fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
+/// Bounds a point array by count and total values against the batch budgets; the seam's
+/// point-budget gate.
+pub fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
     if points.len() > 1024 || points.len().saturating_mul(3) > b.array_items {
         return Err(limit());
     }
