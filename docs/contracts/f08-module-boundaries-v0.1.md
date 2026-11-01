@@ -159,8 +159,9 @@ by the named task with real code. Allowed dependencies are those of the owning r
   member engines, cuts, bends, welds, bolts, edits, copies, quantities) and the steel half of the
   layer engine. The platform never depends on it: `layer-engine` authors and validates elements
   through the discipline hooks and answers its read-back questions through the installable
-  discipline registry (`authored::register`; the built-in steel discipline installs first), so
-  only the apps depend on steel. It is kind `discipline`, and only an app or a tool may depend
+  discipline registry (`authored::disciplines::register`; the registry starts empty, and the
+  apps install the built-in steel discipline through `steel::layer::install()`), so only the
+  apps depend on steel. It is kind `discipline`, and only an app or a tool may depend
   on one (`docs/design/platform-and-steel.md`).
 - **`beamcraft-engine` (`crates/engine`, native library)**, created by V02 with the real, tested
   view snapshot and query contract: a pinned `ViewSnapshot` built from sealed kernel plate
