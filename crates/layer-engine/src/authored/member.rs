@@ -6,11 +6,12 @@
 //! and `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the
 //! same.
 
-use super::edit::{CUT_FIELDS, MEMBER_PLACEMENT, attr, attribute, points, relationship};
+use super::edit::{attr, attribute, points, relationship};
 use super::hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
     ValidateCx,
 };
+use super::steel_write::{CUT_FIELDS, MEMBER_PLACEMENT};
 use super::validate::{cap, cut_values, finite};
 use super::*;
 use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;

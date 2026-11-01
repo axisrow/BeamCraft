@@ -6,11 +6,9 @@
 //! plate and member hole records. Each body is the arm it replaces in `edit.rs` and
 //! `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the same.
 
-use super::edit::{
-    CUT_FIELDS, MHOLE_FIELDS, attr, author_bends, author_corners, author_cuts,
-    author_record_history, points,
-};
+use super::edit::{attr, author_record_history, points};
 use super::hook::{ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange};
+use super::steel_write::{CUT_FIELDS, MHOLE_FIELDS, author_bends, author_corners, author_cuts};
 use super::validate::{cap, count_points, cut_values, finite};
 use super::*;
 use openusd::sdf;
