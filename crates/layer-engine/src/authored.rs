@@ -28,10 +28,10 @@ mod reference;
 /// The surface a discipline crate's hooks use to author and validate through this platform.
 pub mod seam;
 mod steel_defs;
-mod steel_read;
 /// The steel authoring facade: free constructors for the steel shapes and changes, the module
 /// that moves to `crates/steel` when the dependency flips (#388).
 pub mod steel_layer;
+mod steel_read;
 mod validate;
 
 pub use connection::ReplaceBoltGroup;
