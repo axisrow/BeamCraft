@@ -9,7 +9,9 @@ use openusd::{
 };
 use std::io::{self, Write};
 
-pub(super) fn path(text: &str) -> Result<sdf::Path, Diagnostic> {
+/// Parses an authored prim or property path; the seam a discipline hook builds target paths
+/// with.
+pub fn path(text: &str) -> Result<sdf::Path, Diagnostic> {
     sdf::Path::new(text).map_err(|_| corrupt())
 }
 pub(super) fn data(asset: &Asset) -> Result<sdf::Data, Diagnostic> {
@@ -192,7 +194,9 @@ pub(super) fn container(
     }
     Ok(())
 }
-pub(super) fn attribute(
+/// Authors one attribute opinion on a prim; the seam a discipline hook writes its attributes
+/// with.
+pub fn attribute(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -228,7 +232,8 @@ pub(super) fn attribute(
     }
     Ok(())
 }
-pub(super) fn attr(
+/// Authors one custom attribute value; the seam's value-writing shorthand.
+pub fn attr(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -237,7 +242,9 @@ pub(super) fn attr(
 ) -> Result<(), Diagnostic> {
     attribute(data, p, name, ty, Opinion::Value(v), true)
 }
-pub(super) fn relationship(
+/// Authors a definition-target relationship (`bim:material`, `bim:profile`); the seam a
+/// discipline hook links immutable definitions with.
+pub fn relationship(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -258,7 +265,8 @@ pub(super) fn relationship(
     relationship_targets(data, p, name, targets)
 }
 /// Authors an explicit relationship target list, or removes the relationship spec (`None`).
-pub(super) fn relationship_targets(
+/// The seam a discipline hook writes its element relationships with.
+pub fn relationship_targets(
     data: &mut sdf::Data,
     p: &str,
     name: &str,
@@ -298,7 +306,8 @@ pub(super) fn relationship_targets(
     );
     Ok(())
 }
-pub(super) fn points(values: &[[f64; 3]]) -> sdf::Value {
+/// Builds the `double3[]` value of a point list; the seam's point-array encoding.
+pub fn points(values: &[[f64; 3]]) -> sdf::Value {
     sdf::Value::Vec3dVec(values.iter().map(|p| (*p).into()).collect())
 }
 pub(super) fn pose(data: &mut sdf::Data, p: &str, value: &Placement) -> Result<(), Diagnostic> {
@@ -730,7 +739,9 @@ fn create(
     pose(data, &p, &e.placement)
 }
 
-pub(super) fn author_record_history(
+/// Authors the persistent ordinal and retired-identity bookkeeping of one operation-record
+/// family; the seam a discipline hook keeps its record history through.
+pub fn author_record_history(
     data: &mut sdf::Data,
     p: &str,
     source: Option<&Prim>,

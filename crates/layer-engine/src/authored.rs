@@ -25,6 +25,8 @@ mod plate;
 mod plate_change;
 pub mod rebase;
 mod reference;
+/// The surface a discipline crate's hooks use to author and validate through this platform.
+pub mod seam;
 mod validate;
 
 pub use connection::ReplaceBoltGroup;
@@ -1129,7 +1131,9 @@ impl Reader {
     }
 }
 
-pub(super) fn element_path(id: &str, category: ElementCategory) -> Result<String, Diagnostic> {
+/// The authored prim path of an element identity in a category; the seam a discipline hook
+/// resolves target paths with.
+pub fn element_path(id: &str, category: ElementCategory) -> Result<String, Diagnostic> {
     beamcraft_model::id::ElementId::parse(id)
         .map(|id| id.prim_path(category))
         .map_err(|_| {
@@ -1163,7 +1167,7 @@ fn change_path(id: &str, input: &Prepare, prims: &[Prim]) -> Result<String, Diag
 }
 /// Resolve a relationship by identity before checking its semantic kind. A missing identity
 /// retains its expected-category path so the candidate reports a dangling relationship.
-pub(super) fn target_path(
+pub fn target_path(
     id: &str,
     category: ElementCategory,
     input: &Prepare,
@@ -1189,7 +1193,8 @@ fn definition_category(definition: &Definition) -> DefinitionCategory {
 pub(super) fn definition_path(digest: ContentDigest, category: DefinitionCategory) -> String {
     category.path(digest)
 }
-pub(super) fn invalid() -> Diagnostic {
+/// The refusal for an invalid authored field value; the seam's generic rejection.
+pub fn invalid() -> Diagnostic {
     fail(ErrorCode::InvalidArgument, "invalid authored field value")
 }
 

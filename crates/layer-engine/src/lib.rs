@@ -54,20 +54,23 @@ pub struct Diagnostic {
     pub message: &'static str,
 }
 
-pub(crate) fn fail(code: ErrorCode, message: &'static str) -> Diagnostic {
+/// Builds a bounded diagnostic with a stable code; the seam a discipline hook refuses with.
+pub fn fail(code: ErrorCode, message: &'static str) -> Diagnostic {
     Diagnostic {
         code,
         message,
         rule_id: None,
     }
 }
-pub(crate) fn limit() -> Diagnostic {
+/// The refusal a discipline hook returns when a batch budget is exceeded.
+pub fn limit() -> Diagnostic {
     fail(ErrorCode::LimitExceeded, "stage budget exceeded")
 }
 pub(crate) fn corrupt() -> Diagnostic {
     fail(ErrorCode::IntegrityError, "invalid layer bytes or manifest")
 }
-pub(crate) fn unsupported() -> Diagnostic {
+/// The refusal a discipline hook returns for an encoding outside the static read profile.
+pub fn unsupported() -> Diagnostic {
     fail(
         ErrorCode::UnsupportedProperty,
         "encoding or composition outside static read profile",
@@ -663,7 +666,9 @@ pub(crate) fn label_char_forbidden(c: char) -> bool {
     c <= '\u{1f}' || c == '\u{7f}'
 }
 
-pub(crate) fn uuid7(s: &str) -> bool {
+/// Recognizes a full lowercase RFC 9562 version 7 identity; the seam a discipline hook checks
+/// caller-supplied element ids with.
+pub fn uuid7(s: &str) -> bool {
     s.len() == 36
         && s.bytes().enumerate().all(|(i, b)| match i {
             8 | 13 | 18 | 23 => b == b'-',
