@@ -58,7 +58,7 @@ iteration. Install the pinned version with `cargo install cargo-nextest --versio
 A standalone nextest invocation does not include doctests or produce the gate receipt.
 
 ```sh
-# Inner loop: workspace libs and the quick CLI suites (~1 min warm on the reference Apple M5).
+# Inner loop: workspace libs and the quick CLI suites (~80 s warm on the reference Apple M5).
 cargo nextest run --profile fast
 
 # One crate, suite or test while working on it.
@@ -69,14 +69,21 @@ Use `--no-fail-fast` for whole-workspace iteration sweeps. Use the recorded runn
 final result, including doctests and source identity.
 
 The `fast`
-profile (`.config/nextest.toml`) skips only the integration suites that each measure at least
-~40 s of serial time on the reference Apple M5 (baseline 2026-10-25): in
-`beamcraft-cli` `export_ifc`, `numbering_approval`, `numbering`, `libraries`, `environments`
-and `pick`; in `beamcraft-host` `recovery`, `revision` and `compaction`; in `beamcraft-kernel`
-`g09_budget_fuzz` and `g05_profile_extrusion`. The render/viewport suites in `beamcraft-ui`
-measured fast enough to stay in the inner loop. Nothing is removed or permanently skipped: the
-unfiltered `default` profile and CI always run everything, and an explicit command-line filter
-overrides the profile's `default-filter`.
+profile (`.config/nextest.toml`) skips the IO-heavy integration suites that keep the inner
+loop's remaining serial mass near ~800 s — about 80 s of wall clock warm on the reference
+Apple M5 (re-measured 2026-11-01 with interleaved A/B runs,
+[issue #285](https://github.com/axisrow/BeamCraft/issues/285)): in `beamcraft-cli`
+`export_ifc`, `numbering_approval`, `numbering`, `libraries`, `environments` and `pick`; in
+`beamcraft-host` `recovery`, `revision` and `compaction`. `environments` stays out for its
+30-64 s tail even at a ~38 s median. The kernel's `g09_budget_fuzz` and `g05_profile_extrusion`
+fell to 12-16 s of serial time after the one-binary consolidation and run in the inner loop
+again. Longer cli suites such as `alpha_scenario_expanded`, `offline_clients`, `reference`,
+`bolt_groups` and `rebase` measured wall-neutral in the loop — they fill parallel slack — so
+excluding them would buy no time and lose signal; cutting the wall further needs less serial
+work, not a longer exclusion list. Wall clock degrades to 110-140 s under unrelated machine
+load, not under suite growth. Nothing is removed or permanently skipped: the unfiltered
+`default` profile and CI always run everything, and an explicit command-line filter overrides
+the profile's `default-filter`.
 
 The `beamcraft-cli` integration suites build into one `cli` test binary (`tests/cli.rs`, one
 module per suite file), so they link once and `cargo test` runs all their cases on one thread
