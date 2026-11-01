@@ -121,6 +121,14 @@ fn draft(entries: Vec<LayerEntry>, n: u32) -> RevisionDraft {
     }
 }
 
+/// A filler revision: the layers keep one constant content, and the store is content-addressed,
+/// so one blob set serves every filler revision and only the ids advance — what these
+/// histories exercise (window boundaries, replay and reuse refusal) never depends on the
+/// payload differing per revision, and the manifest digest stays unique through the ids.
+fn filler(store: &RevisionStore, n: u32) -> RevisionDraft {
+    draft(layers(store, 0), n)
+}
+
 fn expect(n: u32) -> ExpectedBase {
     if n == 0 {
         ExpectedBase::Initial
@@ -503,7 +511,7 @@ fn old_ops_beyond_the_window_resolve_by_revision_id_or_fall_back_to_the_base_che
     let total = u32::try_from(REPLAY_LOOKBACK).unwrap() + 2;
     let mut drafts = Vec::new();
     for n in 1..=total {
-        let d = draft(layers(&store, n), n);
+        let d = filler(&store, n);
         store.commit(&d, &expect(n - 1)).unwrap();
         drafts.push(d);
     }
@@ -517,7 +525,7 @@ fn old_ops_beyond_the_window_resolve_by_revision_id_or_fall_back_to_the_base_che
     assert_eq!(old.info.sequence(), 2);
     // An old op id with another revision id is, with the durable ledger (U07), recognised as
     // committed and rejected as reuse ...
-    let mut unknown = draft(layers(&store, 2), 2);
+    let mut unknown = filler(&store, 2);
     unknown.revision = id(900);
     assert_eq!(
         err(store.commit(&unknown, &expect(1))),
@@ -539,14 +547,14 @@ fn a_revision_id_cannot_be_reused_beyond_the_replay_window() {
     let store = fx.store();
     let total = u32::try_from(REPLAY_LOOKBACK).unwrap() + 2;
     for n in 1..=total {
-        commit_n(&store, n);
+        store.commit(&filler(&store, n), &expect(n - 1)).unwrap();
     }
     let head = store.head().unwrap().unwrap();
     assert_eq!(head.sequence(), u64::from(total));
 
     // A new operation on the current head tries to reuse revision 1's UUID (more than
     // REPLAY_LOOKBACK records back). It must be refused, not published at sequence 67.
-    let mut reuse = draft(layers(&store, total + 1), total + 1);
+    let mut reuse = filler(&store, total + 1);
     reuse.revision = id(101);
     let error = err(store.commit(&reuse, &expect(total)));
     assert_eq!(error, RevisionError::RevisionIdReuse);
@@ -554,7 +562,7 @@ fn a_revision_id_cannot_be_reused_beyond_the_replay_window() {
     assert!(!fx.log(u64::from(total) + 1).exists());
 
     // Hence a stale writer that still expects revision 1 can never match the head by UUID.
-    let stale = draft(layers(&store, total + 2), total + 2);
+    let stale = filler(&store, total + 2);
     assert_eq!(
         err(store.commit(&stale, &expect(1))),
         RevisionError::BaseMismatch
@@ -563,7 +571,7 @@ fn a_revision_id_cannot_be_reused_beyond_the_replay_window() {
 
     // An unreadable record means uniqueness cannot be established: fail closed.
     fs::write(fx.log(5), b"garbage").unwrap();
-    let fresh = draft(layers(&store, total + 3), total + 3);
+    let fresh = filler(&store, total + 3);
     assert_eq!(
         err(store.commit(&fresh, &expect(total))),
         RevisionError::TornRoot
@@ -604,16 +612,18 @@ fn a_retry_with_a_different_expected_base_is_not_a_replay() {
     );
 }
 
-#[test]
-fn a_lost_race_replay_also_compares_the_expected_base() {
+/// The lost-race replay case, sharded four rounds per test so the shards run in parallel
+/// (issue #285). Every round makes the same assertions the single loop made; the per-round
+/// setup uses one constant filler content, which no assertion reads.
+fn a_lost_race_replay_also_compares_the_expected_base_rounds(rounds: std::ops::Range<usize>) {
     // Two writers with the same op but different bases: exactly one commit, never two, and the
     // other gets OP_ID_REUSE (different canonical request) or a base conflict, never Replayed.
-    for round in 0..20 {
+    for round in rounds {
         let fx = Fixture::new();
         let store = fx.store();
-        commit_n(&store, 1);
-        commit_n(&store, 2);
-        let d = draft(layers(&store, 3), 3);
+        store.commit(&filler(&store, 1), &expect(0)).unwrap();
+        store.commit(&filler(&store, 2), &expect(1)).unwrap();
+        let d = filler(&store, 3);
         let barrier = Barrier::new(2);
         let bases = [expect(2), ExpectedBase::Revision(id(999))];
         let results: Vec<_> = std::thread::scope(|scope| {
@@ -647,6 +657,23 @@ fn a_lost_race_replay_also_compares_the_expected_base() {
         ));
         assert_eq!(store.head().unwrap().unwrap().sequence(), 3);
     }
+}
+
+macro_rules! lost_race_shards {
+    ($($name:ident => $from:literal .. $to:literal),* $(,)?) => { $(
+        #[test]
+        fn $name() {
+            a_lost_race_replay_also_compares_the_expected_base_rounds($from..$to);
+        }
+    )* };
+}
+
+lost_race_shards! {
+    a_lost_race_replay_also_compares_the_expected_base_rounds_00_03 => 0..4,
+    a_lost_race_replay_also_compares_the_expected_base_rounds_04_07 => 4..8,
+    a_lost_race_replay_also_compares_the_expected_base_rounds_08_11 => 8..12,
+    a_lost_race_replay_also_compares_the_expected_base_rounds_12_15 => 12..16,
+    a_lost_race_replay_also_compares_the_expected_base_rounds_16_19 => 16..20,
 }
 
 #[test]

@@ -1188,10 +1188,29 @@ fn open_recovered_returns_the_verified_root_with_the_report() {
 
 // ---- review findings: capacity, outcome proofs, attempt identity -----------------------------
 
+/// A filler revision: the layers keep one constant content, and the store is content-addressed,
+/// so one blob set serves every filler revision and only the ids advance — what these
+/// histories exercise (window boundaries, ledger accounting) never depends on the payload
+/// differing per revision, and the manifest digest stays unique through the ids.
+fn filler_draft(store: &RevisionStore, n: u32) -> RevisionDraft {
+    RevisionDraft {
+        project: id(1),
+        workspace: id(2),
+        revision: id(100 + n),
+        op: id(200 + n),
+        workspace_generation: 40 + u64::from(n),
+        schema: digest("synthetic schema identity"),
+        root_layer: "root.usda".into(),
+        entries: layers(store, 0),
+    }
+}
+
 /// Commits `count` revisions 1..=count.
 fn commit_many(store: &RevisionStore, count: u32) {
     for n in 1..=count {
-        commit_n(store, n);
+        store
+            .commit(&filler_draft(store, n), &expect(n - 1))
+            .unwrap();
     }
 }
 
@@ -1429,7 +1448,9 @@ fn an_identical_retry_after_a_crash_at_the_switch_replays_even_after_the_root_mo
     crash_at(&store, &d, &expect(1), CommitPoint::Switched);
     // Other operations push revision 2 far out of the replay window while its intent is open.
     for n in 3..u32::try_from(REPLAY_LOOKBACK).unwrap() + 6 {
-        commit_n(&store, n);
+        store
+            .commit(&filler_draft(&store, n), &expect(n - 1))
+            .unwrap();
     }
     assert_eq!(fx.scan().open_intents().count(), 1);
     let before = store.head().unwrap().unwrap();
