@@ -46,10 +46,9 @@ use beamcraft_host::revision::{
     Manifest, Revision, RevisionError, RevisionStore, Uuid7, VerifyRequest,
 };
 use beamcraft_layer_engine::Property;
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
-    Change, Element, Group as LayerGroup, Placement as LayerPlacement, PlateShape, Prepare,
-    Prepared, StoredQuantities, project_record, schema_identity,
+    Change, Element, Group as LayerGroup, Placement as LayerPlacement, Prepare, Prepared,
+    StoredQuantities, project_record, schema_identity,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{Asset, Control, Opened, Prim, Reader, Value};
@@ -74,6 +73,8 @@ use steel::engine::quantity::{
     Assessment, Freshness, QuantityRecord, StoredRecord, assess, is_superseded_algorithm,
 };
 use steel::engine::transaction::{Admission, PriorOp, admit_create_plate};
+use steel::layer as steel_layer;
+use steel::layer::PlateShape;
 use steel::model::command::{
     BendRecord, BendSpec, CornerTreatment, CreatePlate, CutRecord, HoleExtent, HoleKind,
     HoleRecord, KeepSide, MAX_BENDS, MemberHoleRecord, MemberKind, PlateCorner, PlateSide,
@@ -1176,7 +1177,7 @@ pub(crate) fn decode(
             None => break,
         }
     }
-    let links = beamcraft_layer_engine::authored::instance::links(&prims)?;
+    let links = steel::layer::links(&prims)?;
     let parts = prims
         .iter()
         .filter_map(|p| {

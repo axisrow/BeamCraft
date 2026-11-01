@@ -66,7 +66,9 @@ pub fn fail(code: ErrorCode, message: &'static str) -> Diagnostic {
 pub fn limit() -> Diagnostic {
     fail(ErrorCode::LimitExceeded, "stage budget exceeded")
 }
-pub(crate) fn corrupt() -> Diagnostic {
+/// The refusal when a stored layer or manifest fails its own identity: a digest that its
+/// content no longer recomputes to, or a pinned definition read back as other content.
+pub fn corrupt() -> Diagnostic {
     fail(ErrorCode::IntegrityError, "invalid layer bytes or manifest")
 }
 /// The refusal a discipline hook returns for an encoding outside the static read profile.

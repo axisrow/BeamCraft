@@ -2,24 +2,127 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The connection family behind the discipline hook (#795): the weld (A06), the A05 bolt group
-//! and the A14.3 bolt group. Each body is the arm it replaces in `edit.rs` and `validate.rs`,
-//! moved unchanged, so the bytes written and the refusals returned are the same.
+//! and the A14.3 bolt group. Each body is the arm it replaced in the platform's `edit.rs` and
+//! `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the same.
+//! The facade constructors in [`super`] build the platform `Shape` and `Change` from these
+//! hooks.
 
-use super::edit::{attr, attribute, path, points, relationship_targets};
-use super::hook::{
-    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
-    ValidateCx,
-};
-use super::steel_read::{
+use super::read::{
     bolt_group_against, bolt_group_connects, bolt_group_values, fastener_definition,
     weld_path_points, weld_size, weld_tokens,
 };
-use super::steel_write::author_bolt_group;
-use super::target_path;
-use super::validate::{cap, finite};
-use super::*;
+use super::write::author_bolt_group;
+use beamcraft_layer_engine::authored::seam::author::{
+    attr, attribute, path, points, relationship_targets,
+};
+use beamcraft_layer_engine::authored::seam::read::{cap, finite};
+use beamcraft_layer_engine::authored::{
+    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, Element, Footprint, Group, Opinion,
+    ShapeHook, ValidateCx, invalid, target_path,
+};
+use beamcraft_layer_engine::{Diagnostic, fail, limit, unsupported, uuid7};
+use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::prim::ElementCategory;
 use openusd::sdf;
 use std::any::Any;
+
+/// The authored inputs of a weld (A06). Tokens are the exact stored values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Weld {
+    /// Full UUIDv7 of the main part, then of the part welded to it. Distinct, each a plate, beam
+    /// or column; the order is significant.
+    pub connects: [String; 2],
+    /// `fillet`, the only supported type.
+    pub weld_type: String,
+    /// Nominal size in millimetres, in `(0, 1000]`.
+    pub size_mm: f64,
+    /// `workshop` or `site`.
+    pub location: String,
+    /// `arrow`, `other` or `both`.
+    pub side: String,
+    /// Optional geometry (A15): the path the weld runs along and its symbol data. `None` authors
+    /// an A06 weld without a body; `Some` also derives a solid under the connection.
+    pub geometry: Option<WeldPath>,
+}
+
+/// The authored geometry of one weld (A15). The path is an ordered world polyline in
+/// millimetres; the symbol tokens are the exact stored values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeldPath {
+    /// Ordered world points of the path, 2 to 1024, each within the coordinate cap.
+    pub points_mm: Vec<[f64; 3]>,
+    /// All-around symbol. Symbol data only.
+    pub all_around: bool,
+    /// `none`, `flush`, `concave` or `convex`.
+    pub contour: String,
+}
+
+/// The authored inputs of a bolt group (A05). The group is `count` bolts in a straight world line
+/// `origin + direction * (pitch * i)`; the direction is a stored unit vector.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bolt {
+    /// Full UUIDv7 of the main part, then of the part bolted to it. Distinct, each a plate, beam
+    /// or column; the order is significant.
+    pub connects: [String; 2],
+    /// Nominal bolt diameter in millimetres, in `(0, 1000]`.
+    pub diameter_mm: f64,
+    /// Bolts in the group, 1 to 512.
+    pub count: usize,
+    /// Centre-to-centre distance along the line in millimetres, in `(0, 1000000]`.
+    pub pitch_mm: f64,
+    /// World position of the first bolt in millimetres, each component within the coordinate cap.
+    pub origin_mm: [f64; 3],
+    /// Unit world direction of the line: finite, squared norm within 1e-6 of one.
+    pub direction_mm: [f64; 3],
+}
+
+/// The authored inputs of an A14.3 bolt group (bolt amendment section 4): two points, a
+/// reference plane with rotation, the position values, the offsets and the authoritative
+/// spacings over a pinned fastener definition addressed by its digest. Every engine decision
+/// (crossing, length) has already run; this library stores, bounds and re-reads the record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoltGroup {
+    /// Full UUIDv7 of every connected part, main part first: 2 to 1024 distinct plates, beams
+    /// or columns.
+    pub connects: Vec<String>,
+    /// Content digest of the pinned fastener definition the group places.
+    pub fastener: ContentDigest,
+    /// World start of the row in millimetres, each component within the coordinate cap.
+    pub point1_mm: [f64; 3],
+    /// World end of the row.
+    pub point2_mm: [f64; 3],
+    /// Unit normal of the reference plane at zero rotation.
+    pub plane_normal_mm: [f64; 3],
+    /// Rotation about the row in radians.
+    pub rotation_rad: f64,
+    /// Offset of the whole group along the plane axis in millimetres.
+    pub on_plane_mm: f64,
+    /// Offset of the whole group along the shank axis in millimetres.
+    pub depth_mm: f64,
+    /// Distance along the row from `point1` to the first fastener, in millimetres.
+    pub offset_start_mm: f64,
+    /// `spacings`, `pitch` or `offset_end`: the stored pattern a moved `point2` re-expands.
+    pub spacing_mode: String,
+    /// The value of a `pitch` or `offset_end` pattern; `0.0` for `spacings`.
+    pub spacing_value_mm: f64,
+    /// The authoritative distances between neighbouring fasteners, one to 511 values.
+    pub spacings_mm: Vec<f64>,
+    /// `auto` or `fixed`.
+    pub length_mode: String,
+    /// The resolved shank length in millimetres, one for the whole group.
+    pub length_mm: f64,
+    /// Whether a washer sits under the head.
+    pub washer_under_head: bool,
+    /// Whether a washer sits under the nut.
+    pub washer_under_nut: bool,
+    /// `generate` or `none` (bolt amendment section 5): whether the group cuts holes in the
+    /// parts it passes through.
+    pub hole_mode: String,
+    /// The clearance the generated holes use beyond the nominal diameter; `Some` exactly when
+    /// `hole_mode` is `generate`, `None` reading as the pinned definition's clearance.
+    pub hole_clearance_mm: Option<f64>,
+}
 
 pub(super) const WELD: &[(&str, &str)] = &[
     ("steel:connection:type", "token"),
@@ -58,53 +161,6 @@ pub(super) const BOLT_GROUP: &[(&str, &str)] = &[
     ("steel:bolt:holeMode", "token"),
     ("steel:bolt:holeClearanceMm", "double"),
 ];
-
-impl Shape {
-    /// A06 weld: a `connection` element with explicitly authored weld properties and one
-    /// `bim:connects` record towards two distinct parts. No material and no derived body; its
-    /// placement must be the identity in this slice.
-    pub fn weld(weld: Weld) -> Self {
-        Self::Discipline(HookedShape::new(weld))
-    }
-
-    /// A05 bolt group: a `connection` element with explicitly authored bolt properties and one
-    /// `bim:connects` record towards two distinct parts. Like a weld it has no material, no
-    /// derived body and the identity placement in this slice.
-    pub fn bolt(bolt: Bolt) -> Self {
-        Self::Discipline(HookedShape::new(bolt))
-    }
-
-    /// A14.3 bolt group (bolt amendment sections 4 and 6): a `connection` element that places
-    /// one row of identical fasteners of a pinned definition between 2 to 1024 parts. Like an
-    /// A05 group it has no material, no derived body and the identity placement; the definition
-    /// travels by its digest. With `hole_mode = generate` (A14.4) the connected plates carry the
-    /// group-owned hole records this group decides.
-    pub fn bolt_group(group: BoltGroup) -> Self {
-        Self::Discipline(HookedShape::new(group))
-    }
-
-    /// The weld of a hook shape, when it is one.
-    pub fn as_weld(&self) -> Option<&Weld> {
-        self.hook::<Weld>()
-    }
-
-    /// The A05 bolt group of a hook shape, when it is one.
-    pub fn as_bolt(&self) -> Option<&Bolt> {
-        self.hook::<Bolt>()
-    }
-
-    /// The A14.3 bolt group of a hook shape, when it is one.
-    pub fn as_bolt_group(&self) -> Option<&BoltGroup> {
-        self.hook::<BoltGroup>()
-    }
-
-    fn hook<T: 'static>(&self) -> Option<&T> {
-        match self {
-            Self::Discipline(h) => h.0.as_any().downcast_ref::<T>(),
-            _ => None,
-        }
-    }
-}
 
 /// A connection takes no material and sits at the identity pose.
 fn identity_connection(e: &Element) -> Result<(), Diagnostic> {
@@ -458,13 +514,6 @@ pub struct ReplaceBoltGroup {
     pub id: String,
     /// The complete new record.
     pub group: BoltGroup,
-}
-
-impl Change {
-    /// Replace the complete authored record of an A14.3 bolt group; see [`ReplaceBoltGroup`].
-    pub fn bolt_group(id: String, group: BoltGroup) -> Self {
-        Self::Discipline(HookedChange::new(ReplaceBoltGroup { id, group }))
-    }
 }
 
 impl ChangeHook for ReplaceBoltGroup {

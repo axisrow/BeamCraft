@@ -8,6 +8,11 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use beamcraft_layer_engine::{authored::*, *};
+use steel::layer as steel_layer;
+use steel::layer::*;
+use steel::model::command::{BendSpec, CutRecord, HoleRecord};
+use steel::model::definition::SectionProperties;
+
 use beamcraft_model::{
     digest::{ContentDigest, Sha256},
     error::ErrorCode,
@@ -30,6 +35,7 @@ fn digest(bytes: &[u8]) -> ContentDigest {
     Sha256::digest(bytes).unwrap()
 }
 fn control() -> Control {
+    steel_layer::install();
     Control {
         cancellation: Cancellation::default(),
         deadline: Instant::now() + Duration::from_secs(90),
@@ -107,12 +113,7 @@ fn pose() -> Placement {
 }
 fn resources() -> Vec<Resource> {
     vec![
-        Resource::new(Definition::RectangleProfile {
-            width_mm: 100.0,
-            height_mm: 50.0,
-            section: SectionProperties::default(),
-        })
-        .unwrap(),
+        Resource::new(rectangle(100.0, 50.0, SectionProperties::default())).unwrap(),
         Resource::new(Definition::Material {
             density_kg_m3: Some(1000.0),
             grade: None,
@@ -128,7 +129,7 @@ fn elements() -> Vec<Change> {
         Change::Create(Element {
             id: PLATE.into(),
             name: "Plate Ω".into(),
-            shape: Shape::plate(PlateShape {
+            shape: steel_layer::plate(PlateShape {
                 contour_mm: vec![
                     [0.0, 0.0, 0.0],
                     [1000.0, 0.0, 0.0],
@@ -149,7 +150,7 @@ fn elements() -> Vec<Change> {
         Change::Create(Element {
             id: MEMBER.into(),
             name: "Member".into(),
-            shape: Shape::member(MemberShape {
+            shape: steel_layer::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
@@ -342,31 +343,23 @@ fn f10_definition_admission_preserves_model_rules() {
                 standard: None,
                 display_name: None,
             },
-            Definition::RectangleProfile {
-                width_mm: value,
-                height_mm: 50.0,
-                section: SectionProperties::default(),
-            },
-            Definition::RectangleProfile {
-                width_mm: 100.0,
-                height_mm: 50.0,
-                section: SectionProperties {
+            rectangle(value, 50.0, SectionProperties::default()),
+            rectangle(
+                100.0,
+                50.0,
+                SectionProperties {
                     area_mm2: Some(value),
                     ..SectionProperties::default()
                 },
-            },
+            ),
         ] {
             let error = Resource::new(definition).unwrap_err();
             assert_eq!(error.code, ErrorCode::NonFiniteNumber);
             assert_eq!(error.rule_id, Some("DV-ATTR-003"));
         }
     }
-    let error = Resource::new(Definition::RectangleProfile {
-        width_mm: 1_000_001.0,
-        height_mm: 50.0,
-        section: SectionProperties::default(),
-    })
-    .unwrap_err();
+    let error =
+        Resource::new(rectangle(1_000_001.0, 50.0, SectionProperties::default())).unwrap_err();
     assert_eq!(error.code, ErrorCode::LimitExceeded);
     assert_eq!(error.rule_id, Some("DV-LIM-001"));
     // A pinned resource with a mismatched digest is integrity failure, not a domain finding.
@@ -572,7 +565,7 @@ fn absence_block_removal_reveal_weaker_defaults_without_flattening() {
         let expected_local = opinion.clone();
         let p = a
             .prepare(
-                batch(&o.context, vec![Change::roll(MEMBER.into(), opinion)]),
+                batch(&o.context, vec![steel_layer::roll(MEMBER.into(), opinion)]),
                 &control(),
             )
             .unwrap();
@@ -649,7 +642,7 @@ fn foreign_reference_overrides_and_foreign_ancestor_writes_fail_atomically() {
             id: PLATE.into(),
             name: "Attempt".into(),
         },
-        Change::thickness(PLATE.into(), 10.0),
+        steel_layer::thickness(PLATE.into(), 10.0),
         Change::Material {
             id: PLATE.into(),
             opinion: MaterialOpinion::Empty,
@@ -732,7 +725,7 @@ fn mismatched_schema_pin_corruption_and_nonfinite_never_change_live_state() {
         };
         assert_eq!(
             a.prepare(
-                batch(&o.context, vec![Change::thickness(PLATE.into(), mm)]),
+                batch(&o.context, vec![steel_layer::thickness(PLATE.into(), mm)]),
                 &control()
             )
             .unwrap_err()
@@ -907,7 +900,7 @@ fn hundred_serialized_changes_invalidate_contexts_and_derive_semantic_groups() {
     assert_eq!(o.context.identity().generation, 143);
     let p = a
         .prepare(
-            batch(&o.context, vec![Change::thickness(PLATE.into(), 12.0)]),
+            batch(&o.context, vec![steel_layer::thickness(PLATE.into(), 12.0)]),
             &control(),
         )
         .unwrap();
@@ -952,7 +945,7 @@ fn duplicate_keys_wrong_kind_bad_mesh_and_missing_or_forged_definitions_fail() {
         a.prepare(
             batch(
                 &o.context,
-                vec![Change::roll(PLATE.into(), Opinion::Value(0.0))]
+                vec![steel_layer::roll(PLATE.into(), Opinion::Value(0.0))]
             ),
             &control()
         )
@@ -1050,13 +1043,11 @@ fn material_empty_remove_profile_pin_and_loaded_unknown_schema_preservation() {
             )
             .unwrap();
     }
-    let r = Resource::new(Definition::RectangleProfile {
-        width_mm: 120.0,
-        height_mm: 60.0,
-        section: SectionProperties::default(),
-    })
-    .unwrap();
-    let mut input = batch(&o.context, vec![Change::profile(MEMBER.into(), r.digest)]);
+    let r = Resource::new(rectangle(120.0, 60.0, SectionProperties::default())).unwrap();
+    let mut input = batch(
+        &o.context,
+        vec![steel_layer::profile(MEMBER.into(), r.digest)],
+    );
     input.resources = vec![r];
     let p = a.prepare(input, &control()).unwrap();
     assert!(p.reads.contains(&Footprint {
@@ -1190,7 +1181,7 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
             id: PLATE.into(),
             name: "would be valid".into(),
         },
-        Change::thickness(PLATE.into(), f64::INFINITY),
+        steel_layer::thickness(PLATE.into(), f64::INFINITY),
     ];
     assert_eq!(
         a.prepare(batch(&o.context, bad), &control())
@@ -1201,7 +1192,10 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
     assert_eq!(snapshot(&a, &o.context), before);
     let p = a
         .prepare(
-            batch(&o.context, vec![Change::thickness(PLATE.into(), 0.001)]),
+            batch(
+                &o.context,
+                vec![steel_layer::thickness(PLATE.into(), 0.001)],
+            ),
             &control(),
         )
         .unwrap();
@@ -1337,7 +1331,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
     Change::Create(Element {
         id: PLATE.into(),
         name: "Holed".into(),
-        shape: Shape::plate(PlateShape {
+        shape: steel_layer::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -1470,7 +1464,7 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
     use steel::model::command::{CornerTreatment, PlateCorner};
     let treated = |corners: Vec<PlateCorner>| {
-        Shape::plate(PlateShape {
+        steel_layer::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -1659,7 +1653,7 @@ fn bend_records_are_authored_as_seven_parallel_arrays_and_bounded() {
     use beamcraft_model::id::OpId;
     use steel::model::command::BendRecord;
     let bent = |bends: Vec<BendRecord>| {
-        Shape::plate(PlateShape {
+        steel_layer::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -1769,7 +1763,7 @@ fn a_bend_record_refuses_an_out_of_range_angle_or_radius_before_writing() {
     use beamcraft_model::id::OpId;
     use steel::model::command::BendRecord;
     let bent = |bends: Vec<BendRecord>| {
-        Shape::plate(PlateShape {
+        steel_layer::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -1871,7 +1865,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         keep,
     };
     let cuts = |records: Vec<CutRecord>| {
-        Shape::plate(PlateShape {
+        steel_layer::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -1947,7 +1941,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         vec![Change::Create(Element {
             id: MEMBER.into(),
             name: "Cut beam".into(),
-            shape: Shape::member(MemberShape {
+            shape: steel_layer::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
@@ -2047,7 +2041,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
     );
     // A zero normal never reaches the layer engine either.
     assert_eq!(
-        refuse(Shape::member(MemberShape {
+        refuse(steel_layer::member(MemberShape {
             kind: MemberKind::Beam,
             curved: false,
             axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
@@ -2727,7 +2721,7 @@ fn assemblies_and_part_of_records_are_authored_on_the_part_and_validated() {
         Some(ErrorCode::DanglingRelationship)
     );
     // An assembly has no shape and no material, and an identity placement in this slice.
-    let unsupported = refused(&mut a, &o, vec![Change::thickness(FRAME.into(), 5.0)]);
+    let unsupported = refused(&mut a, &o, vec![steel_layer::thickness(FRAME.into(), 5.0)]);
     assert_eq!(unsupported, Some(ErrorCode::UnsupportedProperty));
     let mut moved = assembly("0199e7a0-0000-7000-8000-000000000103", "Moved");
     if let Change::Create(e) = &mut moved {
@@ -2853,7 +2847,7 @@ fn create_weld(id: &str, w: Weld) -> Change {
     Change::Create(Element {
         id: id.into(),
         name: "W1".into(),
-        shape: Shape::weld(w),
+        shape: steel_layer::weld(w),
         placement: Placement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -2948,7 +2942,7 @@ fn a_weld_authors_its_properties_and_connects_record_and_writes_only_itself() {
         }],
     );
     for change in [
-        Change::thickness(WELD.into(), 5.0),
+        steel_layer::thickness(WELD.into(), 5.0),
         Change::Placement {
             id: WELD.into(),
             placement: Placement {
@@ -3212,7 +3206,7 @@ fn create_bolt(id: &str, b: Bolt) -> Change {
     Change::Create(Element {
         id: id.into(),
         name: "B1".into(),
-        shape: Shape::bolt(b),
+        shape: steel_layer::bolt(b),
         placement: Placement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -3448,21 +3442,21 @@ fn wrong_bolt_inputs_targets_and_loaded_records_are_refused() {
 
 #[test]
 fn section_profiles_round_trip_and_tampering_is_refused() {
-    use steel::model::section::{CustomSection, ParametricSection, SectionFamily};
+    use steel::model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
     let (mut a, mut o) = populated();
-    let i_shape = Resource::new(Definition::SectionProfile {
-        shape: SectionShape::Parametric(
+    let i_shape = Resource::new(steel_layer::section(
+        SectionShape::Parametric(
             ParametricSection::new(SectionFamily::IShape, vec![300.0, 150.0, 7.0, 10.0, 15.0])
                 .unwrap(),
         ),
-        section: SectionProperties {
+        SectionProperties {
             designation: Some("EX-I300".into()),
             ..SectionProperties::default()
         },
-    })
+    ))
     .unwrap();
-    let custom = Resource::new(Definition::SectionProfile {
-        shape: SectionShape::Custom(CustomSection {
+    let custom = Resource::new(steel_layer::section(
+        SectionShape::Custom(CustomSection {
             outer: vec![[-50.0, -50.0], [50.0, -50.0], [50.0, 50.0], [-50.0, 50.0]],
             cavities: vec![vec![
                 [-10.0, -10.0],
@@ -3471,12 +3465,15 @@ fn section_profiles_round_trip_and_tampering_is_refused() {
                 [10.0, -10.0],
             ]],
         }),
-        section: SectionProperties::default(),
-    })
+        SectionProperties::default(),
+    ))
     .unwrap();
     // The member ends linked to the custom outline; only linked definitions are validated.
     for r in [i_shape, custom] {
-        let mut input = batch(&o.context, vec![Change::profile(MEMBER.into(), r.digest)]);
+        let mut input = batch(
+            &o.context,
+            vec![steel_layer::profile(MEMBER.into(), r.digest)],
+        );
         input.resources = vec![r];
         let p = a.prepare(input, &control()).unwrap();
         o = a
@@ -3651,7 +3648,7 @@ fn levels_and_level_records_are_authored_on_the_element_and_validated() {
         ),
         // A level has no shape inputs, no body, a bounded finite elevation and the identity pose.
         (
-            vec![Change::thickness(STOREY.into(), 5.0)],
+            vec![steel_layer::thickness(STOREY.into(), 5.0)],
             ErrorCode::UnsupportedProperty,
         ),
         (
@@ -4124,12 +4121,12 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
     let Change::Create(e) = changes.first_mut().unwrap() else {
         panic!("create");
     };
-    let Some(plate) = e.shape.as_plate() else {
+    let Some(plate) = steel_layer::as_plate(&e.shape) else {
         panic!("plate");
     };
     let mut plate = plate.clone();
     plate.cuts.push(record);
-    e.shape = Shape::plate(plate);
+    e.shape = steel_layer::plate(plate);
     let mut create = batch(&o.context, changes);
     create.resources = resources();
     let p = a.prepare(create, &control()).unwrap();
@@ -4142,7 +4139,10 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
             &control(),
         )
         .unwrap();
-    let mut b = batch(&o.context, vec![Change::cuts(PLATE.into(), Vec::new())]);
+    let mut b = batch(
+        &o.context,
+        vec![steel_layer::cuts(PLATE.into(), Vec::new())],
+    );
     b.op_id = "019a7bf0-0000-7000-8000-00000000cf02".into();
     let p = a.prepare(b, &control()).unwrap();
     let o = a
@@ -4186,7 +4186,10 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
         value(&prims, PLATE, "steel:cut:operationId"),
         Some(&Value::Array(Vec::new()))
     );
-    let mut b = batch(&o.context, vec![Change::cuts(PLATE.into(), vec![record])]);
+    let mut b = batch(
+        &o.context,
+        vec![steel_layer::cuts(PLATE.into(), vec![record])],
+    );
     b.op_id = "019a7bf0-0000-7000-8000-00000000cf03".into();
     assert!(a.prepare(b, &control()).is_err());
     assert_eq!(
@@ -4226,12 +4229,12 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     let Change::Create(e) = changes.first_mut().unwrap() else {
         panic!("create");
     };
-    let Some(plate) = e.shape.as_plate() else {
+    let Some(plate) = steel_layer::as_plate(&e.shape) else {
         panic!("plate");
     };
     let mut plate = plate.clone();
     plate.hole_records.push(record.clone());
-    e.shape = Shape::plate(plate);
+    e.shape = steel_layer::plate(plate);
     let mut b = batch(&o.context, changes);
     b.resources = resources();
     let prepared = a.prepare(b, &control()).unwrap();
@@ -4250,7 +4253,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     let (mut a, o) = open(input);
     let mut b = batch(
         &o.context,
-        vec![Change::hole_records(PLATE.into(), Vec::new())],
+        vec![steel_layer::hole_records(PLATE.into(), Vec::new())],
     );
     b.op_id = "019a7bf0-0000-7000-8000-00000000af02".into();
     let prepared = a.prepare(b, &control()).unwrap();
@@ -4277,7 +4280,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     );
     let mut b = batch(
         &o.context,
-        vec![Change::hole_records(PLATE.into(), vec![record])],
+        vec![steel_layer::hole_records(PLATE.into(), vec![record])],
     );
     b.op_id = "019a7bf0-0000-7000-8000-00000000af03".into();
     assert!(a.prepare(b, &control()).is_err());
@@ -4289,7 +4292,7 @@ fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
         Change::Create(Element {
             id: MEMBER.into(),
             name: "arc".into(),
-            shape: Shape::member(MemberShape {
+            shape: steel_layer::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: true,
                 axis_mm: points,
@@ -4369,7 +4372,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
     ] {
         assert!(
             a.prepare(
-                batch(&o.context, vec![Change::corners(id.into(), corners)]),
+                batch(&o.context, vec![steel_layer::corners(id.into(), corners)]),
                 &control()
             )
             .is_err()
@@ -4379,7 +4382,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
         .prepare(
             batch(
                 &o.context,
-                vec![Change::corners(PLATE.into(), vec![corner(0)])],
+                vec![steel_layer::corners(PLATE.into(), vec![corner(0)])],
             ),
             &control(),
         )
@@ -4395,7 +4398,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
         .unwrap();
     let mut input = batch(
         &installed.context,
-        vec![Change::corners(PLATE.into(), vec![])],
+        vec![steel_layer::corners(PLATE.into(), vec![])],
     );
     input.op_id = "0199e7a0-0000-7000-8000-000000000099".into();
     let clear = a.prepare(input, &control()).unwrap();

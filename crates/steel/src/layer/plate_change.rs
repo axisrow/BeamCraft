@@ -3,14 +3,22 @@
 
 //! The edits of a plate, its holes and its cuts behind the discipline hook (#795): the contour,
 //! the thickness and its side, the corner treatments, the bend records, the cut records and the
-//! plate and member hole records. Each body is the arm it replaces in `edit.rs` and
-//! `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the same.
+//! plate and member hole records. Each body is the arm it replaced in the platform's `edit.rs`
+//! and `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the
+//! same. The facade constructors in [`super`] build the platform `Change` from these hooks.
 
-use super::edit::{attr, author_record_history, points};
-use super::hook::{ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange};
-use super::steel_write::{CUT_FIELDS, MHOLE_FIELDS, author_bends, author_corners, author_cuts};
-use super::validate::{cap, count_points, cut_values, finite};
-use super::*;
+use super::read::cut_values;
+use super::write::{CUT_FIELDS, MHOLE_FIELDS, author_bends, author_corners, author_cuts};
+use crate::model::command::{
+    BendRecord, BendSpec, CutRecord, HoleExtent, HoleRecord, MAX_BENDS, MemberHoleRecord,
+    PlateCorner, PlateSide,
+};
+use beamcraft_layer_engine::authored::seam::author::{attr, author_record_history, points};
+use beamcraft_layer_engine::authored::seam::read::{cap, count_points, finite};
+use beamcraft_layer_engine::authored::{
+    ChangeAuthorCx, ChangeHook, ChangeValidateCx, Group, cut_history, invalid,
+};
+use beamcraft_layer_engine::{Diagnostic, limit};
 use openusd::sdf;
 use std::any::Any;
 
@@ -22,7 +30,7 @@ const SHAPE_INPUT_GROUPS: (&[Group], &[Group]) = (
 );
 
 macro_rules! plate_change {
-    ($(#[$meta:meta])* $name:ident { $field:ident : $ty:ty }, $ctor:ident) => {
+    ($(#[$meta:meta])* $name:ident { $field:ident : $ty:ty }) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq)]
         pub struct $name {
@@ -30,13 +38,6 @@ macro_rules! plate_change {
             pub id: String,
             /// The new value.
             pub $field: $ty,
-        }
-
-        impl Change {
-            #[doc = concat!("The edit [`", stringify!($name), "`].")]
-            pub fn $ctor(id: String, $field: $ty) -> Self {
-                Self::Discipline(HookedChange::new($name { id, $field }))
-            }
         }
     };
 }
@@ -75,36 +76,36 @@ macro_rules! common {
 
 plate_change!(
     /// Replace the complete contour; engineering validity is a host prerequisite.
-    SetContour { points_mm: Vec<[f64; 3]> }, contour
+    SetContour { points_mm: Vec<[f64; 3]> }
 );
 plate_change!(
     /// Replace a required plate thickness.
-    SetThickness { mm: f64 }, thickness
+    SetThickness { mm: f64 }
 );
 plate_change!(
     /// Complete sparse replacement of the plate's corner treatments (A12.2): the list authors
     /// every treated contour vertex as a whole, an empty list clears them all back to sharp.
-    SetCorners { corners: Vec<PlateCorner> }, corners
+    SetCorners { corners: Vec<PlateCorner> }
 );
 plate_change!(
     /// Complete replacement of the plate's bend records (A10).
-    SetBends { bends: Vec<BendRecord> }, bends
+    SetBends { bends: Vec<BendRecord> }
 );
 plate_change!(
     /// Replace the plate's thickness side (A12.1).
-    SetThicknessSide { side: PlateSide }, thickness_side
+    SetThicknessSide { side: PlateSide }
 );
 plate_change!(
     /// Replace the owned cut records of a plate, beam or column (A03).
-    SetCuts { cuts: Vec<CutRecord> }, cuts
+    SetCuts { cuts: Vec<CutRecord> }
 );
 plate_change!(
     /// Replace the plate's hole records (A04).
-    SetHoleRecords { records: Vec<HoleRecord> }, hole_records
+    SetHoleRecords { records: Vec<HoleRecord> }
 );
 plate_change!(
     /// Replace the member's hole records (A04.2).
-    SetMemberHoles { records: Vec<MemberHoleRecord> }, member_holes
+    SetMemberHoles { records: Vec<MemberHoleRecord> }
 );
 
 impl ChangeHook for SetContour {

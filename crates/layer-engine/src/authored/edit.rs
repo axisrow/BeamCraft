@@ -1,13 +1,37 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-use super::steel_write::{author_cuts, optional_number, optional_text, section_properties};
 use super::*;
 use openusd::{
     sdf::{self, AbstractData},
     usda::TextWriter,
 };
 use std::io::{self, Write};
+
+/// The optional `double` of a definition the platform authors itself; absent stores nothing.
+fn optional_number(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    value: Option<f64>,
+) -> Result<(), Diagnostic> {
+    match value {
+        Some(v) => attr(data, p, name, "double", sdf::Value::Double(v)),
+        None => Ok(()),
+    }
+}
+/// The optional `string` of a definition the platform authors itself; absent stores nothing.
+fn optional_text(
+    data: &mut sdf::Data,
+    p: &str,
+    name: &str,
+    value: &Option<String>,
+) -> Result<(), Diagnostic> {
+    match value {
+        Some(v) => attr(data, p, name, "string", sdf::Value::String(v.clone())),
+        None => Ok(()),
+    }
+}
 
 /// Parses an authored prim or property path; the seam a discipline hook builds target paths
 /// with.
@@ -366,92 +390,6 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
     )?;
     attr(data, p, "bim:units", "token", sdf::Value::token("mm"))?;
     match value {
-        Definition::RectangleProfile {
-            width_mm,
-            height_mm,
-            section,
-        } => {
-            attr(
-                data,
-                p,
-                "bim:definitionKind",
-                "token",
-                sdf::Value::token("rectangle"),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:profile:widthMm",
-                "double",
-                sdf::Value::Double(*width_mm),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:profile:heightMm",
-                "double",
-                sdf::Value::Double(*height_mm),
-            )?;
-            section_properties(data, p, section)?;
-        }
-        Definition::SectionProfile { shape, section } => {
-            attr(
-                data,
-                p,
-                "bim:definitionKind",
-                "token",
-                sdf::Value::token(shape.token()),
-            )?;
-            match shape {
-                SectionShape::Parametric(parametric) => {
-                    let names = parametric.family().parameters();
-                    for (name, value) in names.iter().zip(parametric.values()) {
-                        attr(
-                            data,
-                            p,
-                            &format!("steel:profile:{name}Mm"),
-                            "double",
-                            sdf::Value::Double(*value),
-                        )?;
-                    }
-                }
-                SectionShape::Custom(custom) => {
-                    let flat = |c: &[[f64; 2]]| c.iter().map(|[x, y]| [*x, *y, 0.0]).collect();
-                    let outer: Vec<[f64; 3]> = flat(&custom.outer);
-                    attr(
-                        data,
-                        p,
-                        "steel:profile:outerPointsMm",
-                        "double3[]",
-                        points(&outer),
-                    )?;
-                    if !custom.cavities.is_empty() {
-                        let cavities: Vec<[f64; 3]> =
-                            custom.cavities.iter().flat_map(|c| flat(c)).collect();
-                        let counts = custom
-                            .cavities
-                            .iter()
-                            .map(|c| i32::try_from(c.len()).map_err(|_| limit()))
-                            .collect::<Result<Vec<_>, _>>()?;
-                        attr(
-                            data,
-                            p,
-                            "steel:profile:cavityPointsMm",
-                            "double3[]",
-                            points(&cavities),
-                        )?;
-                        attr(
-                            data,
-                            p,
-                            "steel:profile:cavityVertexCounts",
-                            "int[]",
-                            sdf::Value::IntVec(counts),
-                        )?;
-                    }
-                }
-            }
-            section_properties(data, p, section)?;
-        }
         Definition::Material {
             density_kg_m3,
             grade,
@@ -469,119 +407,14 @@ fn definition(data: &mut sdf::Data, p: &str, value: &Definition) -> Result<(), D
             optional_text(data, p, "bim:materialGrade", grade)?;
             optional_text(data, p, "bim:materialStandard", standard)?;
         }
-        Definition::Fastener { spec } => {
-            attr(
-                data,
-                p,
-                "bim:definitionKind",
-                "token",
-                sdf::Value::token("fastener"),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:kind",
-                "token",
-                sdf::Value::token(spec.kind.token()),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:headKind",
-                "token",
-                sdf::Value::token(spec.head_kind.token()),
-            )?;
-            for (name, value) in [
-                ("nominalDiameterMm", spec.nominal_diameter_mm),
-                ("headAcrossFlatsMm", spec.head_across_flats_mm),
-                ("headHeightMm", spec.head_height_mm),
-            ] {
-                attr(
-                    data,
-                    p,
-                    &format!("steel:fastener:{name}"),
-                    "double",
-                    sdf::Value::Double(value),
-                )?;
-            }
-            optional_number(
-                data,
-                p,
-                "steel:fastener:nutAcrossFlatsMm",
-                spec.nut_across_flats_mm,
-            )?;
-            optional_number(data, p, "steel:fastener:nutHeightMm", spec.nut_height_mm)?;
-            if let Some(washer) = &spec.washer {
-                for (name, value) in [
-                    ("washerOuterDiameterMm", washer.outer_diameter_mm),
-                    ("washerInnerDiameterMm", washer.inner_diameter_mm),
-                    ("washerThicknessMm", washer.thickness_mm),
-                ] {
-                    attr(
-                        data,
-                        p,
-                        &format!("steel:fastener:{name}"),
-                        "double",
-                        sdf::Value::Double(value),
-                    )?;
-                }
-            }
-            attr(
-                data,
-                p,
-                "steel:fastener:holeClearanceMm",
-                "double",
-                sdf::Value::Double(spec.hole_clearance_mm),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:lengthsMm",
-                "double[]",
-                sdf::Value::DoubleVec(spec.lengths_mm.clone()),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:threadProtrusionMm",
-                "double",
-                sdf::Value::Double(spec.thread_protrusion_mm),
-            )?;
-            optional_number(data, p, "steel:fastener:massEachKg", spec.mass_each_kg)?;
-            attr(
-                data,
-                p,
-                "steel:fastener:washerUnderHead",
-                "bool",
-                sdf::Value::Bool(spec.washer_under_head),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:washerUnderNut",
-                "bool",
-                sdf::Value::Bool(spec.washer_under_nut),
-            )?;
-            attr(
-                data,
-                p,
-                "steel:fastener:holeMode",
-                "token",
-                sdf::Value::token(spec.hole_mode.token()),
-            )?;
-            optional_text(data, p, "steel:fastener:designation", &spec.designation)?;
-            optional_text(data, p, "steel:fastener:standard", &spec.standard)?;
-            optional_text(data, p, "steel:fastener:grade", &spec.grade)?;
-        }
+        Definition::Discipline(hook) => hook.0.author(data, p)?,
     }
     let display_name = match value {
-        Definition::RectangleProfile { section, .. }
-        | Definition::SectionProfile { section, .. } => &section.display_name,
-        Definition::Material { display_name, .. } => display_name,
-        Definition::Fastener { spec } => &spec.display_name,
+        Definition::Material { display_name, .. } => display_name.as_deref(),
+        Definition::Discipline(hook) => hook.0.display_name(),
     };
     if let Some(name) = display_name {
-        field(data, p, "displayName", sdf::Value::String(name.clone()))?;
+        field(data, p, "displayName", sdf::Value::String(name.to_owned()))?;
     }
     Ok(())
 }
@@ -688,9 +521,9 @@ fn create(
         relationship(data, &p, "bim:material", MaterialOpinion::Target(d))?;
     }
     // The owned plane-cut records of a plate, beam or column (A03, amendment A-2), as five
-    // parallel attributes in ascending ordinal order.
-    if !e.shape.cuts().is_empty() {
-        author_cuts(data, &p, e.shape.cuts(), None)?;
+    // parallel attributes in ascending ordinal order; the hook writes them, or nothing.
+    if let Shape::Discipline(hook) = &e.shape {
+        hook.0.author_cuts(data, &p)?;
     }
     pose(data, &p, &e.placement)
 }

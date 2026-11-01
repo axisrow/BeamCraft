@@ -2,15 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The plate family behind the discipline hook (#795): an extruded plate (P01, A02, A04, A10,
-//! A12) and a lofted plate (A11). Each body is the arm it replaces in `edit.rs` and
-//! `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the same.
+//! A12) and a lofted plate (A11). Each body is the arm it replaced in the platform's `edit.rs`
+//! and `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the
+//! same. The facade constructors in [`super`] build the platform `Shape` from these hooks.
 
-use super::edit::{attr, author_record_history, points};
-use super::hook::{AuthorCx, HookedShape, ShapeHook, ValidateCx};
-use super::steel_read::{MAX_HOLE_POINTS, MAX_HOLES};
-use super::steel_write::{CUT_FIELDS, author_bends, author_corners};
-use super::validate::{cap, count_points, cut_values, finite};
-use super::*;
+use super::read::{MAX_HOLE_POINTS, MAX_HOLES, cut_values};
+use super::write::{CUT_FIELDS, author_bends, author_corners, author_cuts};
+use crate::model::command::{
+    BendRecord, BendSpec, CornerTreatment, CutRecord, HoleRecord, MAX_BENDS, PlateCorner, PlateSide,
+};
+use beamcraft_layer_engine::authored::seam::author::{attr, author_record_history, points};
+use beamcraft_layer_engine::authored::seam::read::{cap, count_points, finite};
+use beamcraft_layer_engine::authored::{AuthorCx, ShapeHook, ValidateCx, cut_history, invalid};
+use beamcraft_layer_engine::{Diagnostic, limit};
+use beamcraft_model::prim::ElementCategory;
 use openusd::sdf;
 use std::any::Any;
 
@@ -54,34 +59,6 @@ pub struct LoftedPlateShape {
     pub end_mm: Vec<[f64; 3]>,
 }
 
-impl Shape {
-    /// An extruded plate of the given shape; see [`PlateShape`].
-    pub fn plate(plate: PlateShape) -> Self {
-        Self::Discipline(HookedShape::new(plate))
-    }
-
-    /// A lofted plate of the given shape; see [`LoftedPlateShape`].
-    pub fn lofted_plate(plate: LoftedPlateShape) -> Self {
-        Self::Discipline(HookedShape::new(plate))
-    }
-
-    /// The extruded plate of a hook shape, when it is one.
-    pub fn as_plate(&self) -> Option<&PlateShape> {
-        match self {
-            Self::Discipline(h) => h.0.as_any().downcast_ref::<PlateShape>(),
-            _ => None,
-        }
-    }
-
-    /// The lofted plate of a hook shape, when it is one.
-    pub fn as_lofted_plate(&self) -> Option<&LoftedPlateShape> {
-        match self {
-            Self::Discipline(h) => h.0.as_any().downcast_ref::<LoftedPlateShape>(),
-            _ => None,
-        }
-    }
-}
-
 impl ShapeHook for PlateShape {
     fn as_any(&self) -> &dyn Any {
         self
@@ -99,8 +76,8 @@ impl ShapeHook for PlateShape {
         ElementCategory::Part
     }
 
-    fn cuts(&self) -> &[CutRecord] {
-        &self.cuts
+    fn author_cuts(&self, data: &mut sdf::Data, path: &str) -> Result<(), Diagnostic> {
+        author_cuts(data, path, &self.cuts, None)
     }
 
     fn classed(&self) -> bool {

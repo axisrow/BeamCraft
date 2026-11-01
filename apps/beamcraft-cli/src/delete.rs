@@ -27,7 +27,6 @@ use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{Change, schema_identity};
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{CommandError, DeleteElement};
@@ -38,6 +37,7 @@ use session::pipeline::{
     Base, RevisionSummary, control, digest_of, host_uuid, load_base, open_base, summarize,
 };
 use steel::engine::transaction::PriorOp;
+use steel::layer as steel_layer;
 
 /// Inputs of one `delete_element` call beyond the command itself.
 #[derive(Debug, Clone)]

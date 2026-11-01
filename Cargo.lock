@@ -205,7 +205,6 @@ version = "0.0.1"
 dependencies = [
  "beamcraft-model",
  "openusd",
- "steel",
 ]
 
 [[package]]
@@ -2566,7 +2565,9 @@ dependencies = [
  "beamcraft-engine",
  "beamcraft-geom",
  "beamcraft-kernel",
+ "beamcraft-layer-engine",
  "beamcraft-model",
+ "openusd",
 ]
 
 [[package]]

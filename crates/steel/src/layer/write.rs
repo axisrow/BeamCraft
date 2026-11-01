@@ -2,11 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The steel write helpers (#388 slice): the profile section properties and the cut, corner,
-//! bend and bolt-group authors of the authored layer. Extracted from `edit.rs` unchanged; the
-//! discipline reversal moves this file to `crates/steel`.
+//! bend and bolt-group authors of the authored layer. Extracted from the platform's `edit.rs`
+//! unchanged; the discipline reversal moved this file to `crates/steel`, where the hooks write
+//! their attributes through it.
 
-use super::edit::{attr, attribute, author_record_history, points};
-use super::*;
+use super::BoltGroup;
+use crate::model::command::{BendRecord, CutRecord, PlateCorner};
+use crate::model::definition::SectionProperties;
+use beamcraft_layer_engine::authored::seam::author::{
+    attr, attribute, author_record_history, points,
+};
+use beamcraft_layer_engine::authored::{Opinion, cut_history};
+use beamcraft_layer_engine::{Diagnostic, Prim, limit};
 use openusd::sdf;
 
 /// The optional declared designation, standard and section numbers of any profile definition.
@@ -234,8 +241,8 @@ pub(super) fn author_corners(
         vertices.push(i32::try_from(corner.vertex).map_err(|_| limit())?);
         kinds.push(corner.treatment.kind());
         let (d1, d2, radius) = match corner.treatment {
-            steel::model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => (d1_mm, d2_mm, 0.0),
-            steel::model::command::CornerTreatment::Round { radius_mm } => (0.0, 0.0, radius_mm),
+            crate::model::command::CornerTreatment::Chamfer { d1_mm, d2_mm } => (d1_mm, d2_mm, 0.0),
+            crate::model::command::CornerTreatment::Round { radius_mm } => (0.0, 0.0, radius_mm),
         };
         d1s.push(d1);
         d2s.push(d2);
@@ -298,13 +305,13 @@ pub(super) fn author_bends(
         ids.push(bend.operation_id.to_string());
         kinds.push(bend.spec.kind());
         let (a, b, radius, radius_b, angle) = match bend.spec {
-            steel::model::command::BendSpec::Fold {
+            crate::model::command::BendSpec::Fold {
                 a_mm,
                 b_mm,
                 radius_mm,
                 angle_rad,
             } => (a_mm, b_mm, radius_mm, radius_mm, angle_rad),
-            steel::model::command::BendSpec::Roll {
+            crate::model::command::BendSpec::Roll {
                 a_mm,
                 b_mm,
                 radius_mm,

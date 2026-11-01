@@ -17,11 +17,13 @@ use crate::support;
 use support::{at, text};
 
 use beamcraft_json::{Json, Limits};
-use beamcraft_layer_engine::authored::{Definition, Resource, SectionProperties};
+use beamcraft_layer_engine::authored::{Definition, Resource};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use steel::layer as steel_layer;
+use steel::model::definition::SectionProperties;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -326,14 +328,14 @@ fn a_definition_is_immutable_and_publishing_it_again_writes_nothing() {
     assert_eq!(text(at(&first, &["definition"]), "kind"), "rectangle");
     assert_eq!(text(at(&first, &["definition"]), "units"), "mm");
     // The default display name is part of the content, hence of the digest.
-    let expected = Resource::new(Definition::RectangleProfile {
-        width_mm: 200.0,
-        height_mm: 300.0,
-        section: SectionProperties {
+    let expected = Resource::new(steel_layer::rectangle(
+        200.0,
+        300.0,
+        SectionProperties {
             display_name: Some("RECT 200x300".into()),
             ..Default::default()
         },
-    })
+    ))
     .unwrap()
     .digest
     .to_string();

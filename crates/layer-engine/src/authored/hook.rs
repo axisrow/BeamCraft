@@ -70,9 +70,12 @@ pub trait ShapeHook: Debug + Send + Sync {
     ) -> Result<(), Diagnostic> {
         Ok(())
     }
-    /// The owned `plane_cut` records authored with the element (A03); none by default.
-    fn cuts(&self) -> &[CutRecord] {
-        &[]
+    /// Writes the element's owned `plane_cut` records (A03, amendment A-2) into the authored
+    /// layer, after the material relationship and before the pose; none by default. The
+    /// platform calls this at the one place the records may appear, so the stored attribute
+    /// order is the same whatever discipline owns the element.
+    fn author_cuts(&self, _data: &mut sdf::Data, _path: &str) -> Result<(), Diagnostic> {
+        Ok(())
     }
     /// Whether the element carries the authored part class `steel:class`.
     fn classed(&self) -> bool {
@@ -195,6 +198,11 @@ pub trait DefinitionHook: Debug + Send + Sync {
     /// Writes the definition's own attributes into its prim, after the platform's own
     /// definition fields.
     fn author(&self, data: &mut sdf::Data, path: &str) -> Result<(), Diagnostic>;
+    /// The readable name (prim `displayName` metadata) of the definition, part of the
+    /// definition content; `None` stores no name.
+    fn display_name(&self) -> Option<&str> {
+        None
+    }
     /// The `(name, type)` of every attribute the definition writes beyond the platform's own.
     fn attributes(&self) -> Vec<(&'static str, &'static str)>;
     /// Engineering bounds of the definition's own values.

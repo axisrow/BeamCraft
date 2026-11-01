@@ -20,6 +20,8 @@ beamcraft-geom.workspace = true
 beamcraft-model.workspace = true
 beamcraft-kernel = { path = "../kernel", version = "0.0.1" }
 beamcraft-engine = { path = "../engine", version = "0.0.1" }
+beamcraft-layer-engine = { path = "../layer-engine", version = "0.0.1" }
+openusd = { version = "=0.8.0", default-features = false }
 
 [lints]
 workspace = true

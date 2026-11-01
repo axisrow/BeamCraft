@@ -31,10 +31,9 @@ use crate::plate::{
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
-    Bolt as LayerBolt, BoltGroup as LayerBoltGroup, Change, Element, Placement as LayerPlacement,
-    Prepare, Resource, schema_identity, validate_layers,
+    Change, Element, Placement as LayerPlacement, Prepare, Resource, schema_identity,
+    validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::CommandError;
@@ -51,6 +50,8 @@ use steel::engine::bolt::Bounds;
 use steel::engine::committed::PlateRecord;
 use steel::engine::transaction::PriorOp;
 use steel::engine::weld::{PartKind, Parts};
+use steel::layer as steel_layer;
+use steel::layer::{Bolt as LayerBolt, BoltGroup as LayerBoltGroup};
 use steel::model::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CreateBolt, CreateBoltGroup, HoleKind,
     HoleRecord, MAX_HOLES, UpdateBoltGroup,
