@@ -7,7 +7,8 @@
 
 use super::edit::{CUT_FIELDS, attr, author_bends, author_corners, author_record_history, points};
 use super::hook::{AuthorCx, HookedShape, ShapeHook, ValidateCx};
-use super::validate::{MAX_HOLE_POINTS, MAX_HOLES, cap, count_points, cut_values, finite};
+use super::steel_read::{MAX_HOLE_POINTS, MAX_HOLES};
+use super::validate::{cap, count_points, cut_values, finite};
 use super::*;
 use openusd::sdf;
 use std::any::Any;
