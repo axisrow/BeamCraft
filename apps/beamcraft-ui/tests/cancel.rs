@@ -9,7 +9,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 /// One random value per process boot: this standalone binary has no shared support module, and
-/// a pid alone is not unique across runs (the #157/#408 recycling class).
+/// a pid alone is not unique across runs (the #157/#408 recycling class). Unix-only like the
+/// test it names, so non-unix targets never see it unused.
+#[cfg(unix)]
 fn boot_nonce() -> u64 {
     use std::hash::{BuildHasher, RandomState};
     static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
