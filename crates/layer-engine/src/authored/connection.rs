@@ -10,11 +10,12 @@ use super::hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
     ValidateCx,
 };
-use super::target_path;
-use super::validate::{
-    bolt_group_against, bolt_group_connects, bolt_group_values, cap, fastener_definition, finite,
+use super::steel_read::{
+    bolt_group_against, bolt_group_connects, bolt_group_values, fastener_definition,
     weld_path_points, weld_size, weld_tokens,
 };
+use super::target_path;
+use super::validate::{cap, finite};
 use super::*;
 use openusd::sdf;
 use std::any::Any;
