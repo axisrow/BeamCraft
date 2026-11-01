@@ -106,10 +106,12 @@ What moved, in order:
   `Change::Discipline` with the definition hook beside them, the re-exported surface a hook may
   use (`authored::seam`), and the facade of free constructors the apps build steel shapes and
   changes with, so no call site outside the facade names a steel variant.
-- A discipline installs itself through the installable registry (`authored::register`,
-  pointer-deduplicated, registration order preserved; the built-in steel discipline installs
-  first), and every read-back question — part kinds, part and connection validation, write
-  groups, delete attributes, definition read-back — is answered by the registered disciplines.
+- A discipline installs itself through the installable registry
+  (`authored::disciplines::register`, pointer-deduplicated, registration order preserved; the
+  registry starts empty — the apps install the steel discipline through
+  `steel::layer::install()` at startup), and every read-back question — part kinds, part and
+  connection validation, write groups, delete attributes, definition read-back — is answered by
+  the registered disciplines.
 
 The stored format is untouched: the `steel:*` attributes, the prim paths and the schema
 descriptor are byte-identical, so stores written before the reversal read back (the F04 and U03
