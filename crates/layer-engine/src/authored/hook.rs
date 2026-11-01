@@ -176,3 +176,109 @@ impl PartialEq for HookedChange {
         self.0.same_as(other.0.as_ref())
     }
 }
+
+/// The discipline half of a contributed definition (#795): everything about a definition prim
+/// beyond the platform's own definition fields is answered by the definition's own hook, so the
+/// platform never matches on a definition kind of a discipline.
+///
+/// A definition is self-contained content, not a batch item: it authors from its own values
+/// alone, so the hook needs no authoring or validation context.
+pub trait DefinitionHook: Debug + Send + Sync {
+    /// The hook as `Any`, so equality can compare concrete types.
+    fn as_any(&self) -> &dyn Any;
+    /// Whether `other` is the same concrete definition with equal content.
+    fn same_as(&self, other: &dyn DefinitionHook) -> bool;
+    /// The `bim:definitionKind` token of the contributed definition.
+    fn kind_token(&self) -> &'static str;
+    /// The definition prim category (and so the path prefix) of the contributed definition.
+    fn category(&self) -> beamcraft_model::prim::DefinitionCategory;
+    /// Writes the definition's own attributes into its prim, after the platform's own
+    /// definition fields.
+    fn author(&self, data: &mut sdf::Data, path: &str) -> Result<(), Diagnostic>;
+    /// The `(name, type)` of every attribute the definition writes beyond the platform's own.
+    fn attributes(&self) -> Vec<(&'static str, &'static str)>;
+    /// Engineering bounds of the definition's own values.
+    fn validate(&self) -> Result<(), Diagnostic>;
+    /// Every number of the definition is finite.
+    fn check_finite(&self) -> Result<(), Diagnostic>;
+    /// Charges the definition's arrays against the batch budget; `count(items, bytes_per_item)`.
+    fn charge(
+        &self,
+        _count: &mut dyn FnMut(usize, usize) -> Result<(), Diagnostic>,
+    ) -> Result<(), Diagnostic> {
+        Ok(())
+    }
+}
+
+/// A hook definition as the platform holds it: cheap to clone, comparable.
+#[derive(Debug, Clone)]
+pub struct HookedDefinition(pub Arc<dyn DefinitionHook>);
+
+impl HookedDefinition {
+    /// Wraps a discipline definition.
+    pub fn new(hook: impl DefinitionHook + 'static) -> Self {
+        Self(Arc::new(hook))
+    }
+}
+
+impl PartialEq for HookedDefinition {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.same_as(other.0.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One dummy contributed definition, so the hook wrapper's equality is the concrete
+    /// content equality, as for shapes and changes.
+    #[derive(Debug, PartialEq)]
+    struct Probe(&'static str);
+
+    impl DefinitionHook for Probe {
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn same_as(&self, other: &dyn DefinitionHook) -> bool {
+            other.as_any().downcast_ref::<Self>() == Some(self)
+        }
+
+        fn kind_token(&self) -> &'static str {
+            "disciplines-probe-definition"
+        }
+
+        fn category(&self) -> beamcraft_model::prim::DefinitionCategory {
+            beamcraft_model::prim::DefinitionCategory::Profile
+        }
+
+        fn author(&self, _data: &mut sdf::Data, _path: &str) -> Result<(), Diagnostic> {
+            Ok(())
+        }
+
+        fn attributes(&self) -> Vec<(&'static str, &'static str)> {
+            Vec::new()
+        }
+
+        fn validate(&self) -> Result<(), Diagnostic> {
+            Ok(())
+        }
+
+        fn check_finite(&self) -> Result<(), Diagnostic> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn hooked_definitions_compare_by_content() {
+        assert_eq!(
+            HookedDefinition::new(Probe("a")),
+            HookedDefinition::new(Probe("a"))
+        );
+        assert_ne!(
+            HookedDefinition::new(Probe("a")),
+            HookedDefinition::new(Probe("b"))
+        );
+    }
+}
