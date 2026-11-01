@@ -21,11 +21,11 @@
 )]
 
 use beamcraft_cli::changeset::{Applied, apply_changeset};
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::revision::{CommitPoint, NoFault, RevisionInfo, RevisionStore};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::id::ActorId;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -246,7 +246,7 @@ impl Fixture {
     }
 
     /// The same delivery in-process, for a caller that needs the typed result.
-    fn deliver_in_process(&self, digest: &str) -> Result<Applied, PlateError> {
+    fn deliver_in_process(&self, digest: &str) -> Result<Applied, Refusal> {
         apply_changeset(
             &store(&self.path("published")),
             &store(&self.path("workspaces/b")),

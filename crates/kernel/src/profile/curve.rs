@@ -97,7 +97,7 @@ fn round_up_to_four(n: u32) -> u32 {
 }
 
 /// Smallest admissible edge count per full turn whose sagitta bound meets the request.
-pub(crate) fn choose_segments(
+pub fn choose_segments(
     curvature_radius: f64,
     spec: CurveSpec,
 ) -> Result<(u32, f64), ProfileFailure> {
@@ -141,7 +141,7 @@ fn taylor(num: u64, den: u64) -> (f64, f64) {
 }
 
 /// `(cos, sin)` of the angle `2*pi*k/n`, exactly symmetric under the dihedral group of the square.
-pub(crate) fn unit_direction(k: u64, n: u64) -> (f64, f64) {
+pub fn unit_direction(k: u64, n: u64) -> (f64, f64) {
     if n == 0 {
         return (1.0, 0.0);
     }

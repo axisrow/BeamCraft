@@ -24,7 +24,6 @@
 use beamcraft_cli::history_compact::{
     backup_store, collect_pins, hold_coordinator_lease, is_workspace_store,
 };
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::compaction::{
     Blocker, Compacted, CompactionError, Keep, NoFault, Pin, PinStatus, Plan, Request, Safeguard,
     Stats, compact, plan, stats,
@@ -34,6 +33,7 @@ use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -46,14 +46,14 @@ const FORGOTTEN_CAP: usize = 64;
 const DEFAULT_GRACE_SECS: u64 = 3600;
 
 struct Failure {
-    error: PlateError,
+    error: Refusal,
     diagnostics: Vec<Json>,
 }
 
 type Run<T> = Result<T, Failure>;
 
-impl From<PlateError> for Failure {
-    fn from(error: PlateError) -> Self {
+impl From<Refusal> for Failure {
+    fn from(error: Refusal) -> Self {
         Self {
             error,
             diagnostics: Vec::new(),
@@ -68,7 +68,7 @@ impl From<CompactionError> for Failure {
             _ => Vec::new(),
         };
         Self {
-            error: PlateError {
+            error: Refusal {
                 rule_id: None,
                 code: error.code(),
                 message: error.message(),
@@ -79,7 +79,7 @@ impl From<CompactionError> for Failure {
 }
 
 fn invalid(message: &'static str) -> Failure {
-    PlateError {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -96,7 +96,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 /// The refusal printed when a coordinator cannot take its store lease.
-pub fn lease_refusal(error: PlateError) -> (Json, u8) {
+pub fn lease_refusal(error: Refusal) -> (Json, u8) {
     crate::report::report(Err(error))
 }
 
@@ -203,7 +203,7 @@ fn open_store(parsed: &Parsed<'_>) -> Run<(PathBuf, RevisionStore)> {
         .values
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",

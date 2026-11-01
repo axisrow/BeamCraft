@@ -9,13 +9,13 @@
 //! Nothing here decides what is kept or deleted: the host engine does, and refuses what is unsafe.
 //! This module only supplies facts (which revisions workspaces are based on) and safeguards.
 
-use crate::plate::PlateError;
 use crate::workspace::read_meta;
 use beamcraft_host::compaction::{CompactionError, Pin};
 use beamcraft_host::lease::{LeaseError, StoreLease};
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,11 +27,11 @@ const MAX_BACKUP_ENTRIES: usize = 2_000_000;
 /// Deepest directory nesting a store has (`blobs/ab/<digest>` is two below the root).
 const MAX_DEPTH: usize = 4;
 
-fn refuse(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError::new(code, message)
+fn refuse(code: ErrorCode, message: &'static str) -> Refusal {
+    Refusal::new(code, message)
 }
 
-fn invalid(message: &'static str) -> PlateError {
+fn invalid(message: &'static str) -> Refusal {
     refuse(ErrorCode::InvalidArgument, message)
 }
 
@@ -51,11 +51,11 @@ pub fn collect_pins(
     store: &Path,
     roots: &[PathBuf],
     dirs: &[PathBuf],
-) -> Result<Vec<Pin>, PlateError> {
+) -> Result<Vec<Pin>, Refusal> {
     let own = fs::canonicalize(store).ok();
     let mut seen = BTreeSet::new();
     let mut pins = Vec::new();
-    let mut add = |dir: &Path, required: bool| -> Result<(), PlateError> {
+    let mut add = |dir: &Path, required: bool| -> Result<(), Refusal> {
         let canonical = fs::canonicalize(dir)
             .map_err(|_| refuse(ErrorCode::NotFound, "a workspace directory does not exist"))?;
         if own.as_ref() == Some(&canonical) {
@@ -262,9 +262,7 @@ fn copy_and_verify(store: &Path, destination: &Path) -> Result<(), CompactionErr
 /// The lease a running `serve-coordinator` holds on its store for as long as it serves, so that a
 /// compaction cannot start under it. `Ok(None)` for every other command, and when the `--store`
 /// value is missing or unusable (the command then reports its own error).
-pub fn hold_coordinator_lease(
-    args: &[std::ffi::OsString],
-) -> Result<Option<StoreLease>, PlateError> {
+pub fn hold_coordinator_lease(args: &[std::ffi::OsString]) -> Result<Option<StoreLease>, Refusal> {
     if args
         .first()
         .is_none_or(|command| command != "serve-coordinator")

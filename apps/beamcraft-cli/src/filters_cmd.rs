@@ -6,18 +6,18 @@
 //! codes as the plate commands.
 
 use beamcraft_cli::filters;
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -30,7 +30,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 fn read_rule(path: &str) -> Run<Json> {
-    let bytes = beamcraft_cli::source_file::read_file(path, 65536).map_err(|code| PlateError {
+    let bytes = beamcraft_cli::source_file::read_file(path, 65536).map_err(|code| Refusal {
         rule_id: None,
         code,
         message: "filter rule file is not usable",
@@ -77,7 +77,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -92,7 +92,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     if let Some(expected) = expected
         && expected != pin.as_deref()
     {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::StaleWorkspace,
             message: "filter model pin differs",

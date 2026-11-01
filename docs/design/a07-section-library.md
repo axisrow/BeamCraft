@@ -283,7 +283,7 @@ Deviations and limits, recorded rather than hidden:
   were replaced by the model profile ([layer budgets](layer-budgets-model-profile.md)).
 * No placement offsets, no rotated placement (P03 rule), no member holes or cuts.
 
-Evidence: `cargo test -p beamcraft-model section`, `cargo test -p beamcraft-kernel --test section`
+Evidence: `cargo test -p beamcraft-model section`, `cargo test -p steel --test steel -- kernel_section::`
 (closed-form areas of every family in both representations, bounding-box centring, member bounds
 in the F06 frame, divergence-theorem volume, determinism, custom and refusal codes), the
 layer-engine round trip and tamper test, the engine unit test, and `cargo test -p beamcraft-cli

@@ -34,11 +34,7 @@ impl Shell {
         crate::app::inter(&cc.egui_ctx);
         crate::theme::install(&cc.egui_ctx);
         Self {
-            appearance: Some(crate::appearance::Appearance::new(
-                cli.clone(),
-                config_dir.clone(),
-                Arc::clone(&stats),
-            )),
+            appearance: Some(crate::appearance::Appearance::new(config_dir.clone())),
             start: StartPage::new(cli.clone(), config_dir, Arc::clone(&stats)),
             app: None,
             cli,

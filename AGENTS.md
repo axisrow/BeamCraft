@@ -146,9 +146,18 @@ New outbound network access is the owner's decision, not an agent's.
   [milestones](https://github.com/Apibim-com/BeamCraft/milestones) to group delivery work.
   Keep task IDs (F04, U06, A03, ...) stable; do not maintain a second task table in the repository.
   Create or change tasks only within the code owner's explicit authorization.
-  `ROADMAP.md` remains the stage, MVP scope and acceptance-gate overview; owner decisions
-  remain in `docs/plan/decisions.md`. Changes to repository scope, contracts, plans or gate
-  verdicts still need a docs-only PR.
+  `ROADMAP.md` is the stage, the acceptance-gate verdicts and the MVP scope with its deferrals;
+  it lists no tasks and no task status. Find what to work on, its order and its state in the
+  issues, milestones and the GitHub Project, never in `ROADMAP.md`. Owner decisions remain in
+  `docs/plan/decisions.md`. Changes to repository scope, contracts, plans or gate verdicts still
+  need a docs-only PR.
+- When you start work on an issue, add the label `in progress` to it
+  (`gh issue edit N --add-label "in progress"`) before the first commit; the workflow
+  "Label to Project Status" then sets the Project Status, so never edit the Project by hand.
+  If the issue already carries the label, someone else is working on it: stop and tell the owner
+  instead of taking it over. Remove the label when you stop without a merged PR (abandoned,
+  blocked, handed over); a merged PR with `Fixes #N` closes the issue and ends the work. Only the
+  issues you actually work on get the label, not the whole catalogue.
 - Each implementation-plan task (for example F01 or F03) gets its own focused pull request.
   Do not combine independent task IDs into one PR. Split a large task into named sub-tasks when
   needed; completing a sub-task does not complete its parent acceptance gate.

@@ -9,9 +9,12 @@ use beamcraft_geom::tolerance::Tolerance;
 /// Successful rectangular primitive evaluation, available only after self-checks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlateResult {
-    pub(crate) mesh: PlateMesh,
-    pub(crate) volume_mm3: f64,
-    pub(crate) tolerance: Tolerance,
+    /// The sealed mesh.
+    pub mesh: PlateMesh,
+    /// The analytic volume in cubic millimetres.
+    pub volume_mm3: f64,
+    /// The local-size policy.
+    pub tolerance: Tolerance,
 }
 
 impl PlateResult {

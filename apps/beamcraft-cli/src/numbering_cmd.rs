@@ -11,7 +11,6 @@ use beamcraft_cli::numbering::{NumberingView, numbering_preview};
 use beamcraft_cli::numbering_approval::{
     ApprovalContext, Approved, StatusView, approve_numbering, numbering_status,
 };
-use beamcraft_cli::plate::PlateError;
 use beamcraft_engine::numbering::{GroupKind, Series, Settings, unnumbered};
 use beamcraft_engine::numbering_approval::{ApproveNumbering, Report, compare_group};
 use beamcraft_host::{
@@ -22,10 +21,11 @@ use beamcraft_host::{
 use beamcraft_json::Json;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
 /// Groups listed per page.
 const DEFAULT_LIMIT: usize = 64;
@@ -33,8 +33,8 @@ const MAX_LIMIT: usize = 256;
 /// Members listed per group.
 const MAX_MEMBERS: usize = 32;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -206,7 +206,7 @@ fn run(args: &[OsString]) -> Run<Json> {
 }
 
 fn open_store(root: &str) -> Run<RevisionStore> {
-    let blobs = BlobStore::new(root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -217,7 +217,7 @@ fn open_store(root: &str) -> Run<RevisionStore> {
 fn context_of(options: &BTreeMap<&str, &str>) -> Run<ApprovalContext> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",

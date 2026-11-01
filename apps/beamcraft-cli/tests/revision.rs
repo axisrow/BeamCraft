@@ -20,8 +20,8 @@ use beamcraft_host::{
 use beamcraft_json::{Json, Limits};
 use beamcraft_layer_engine::{
     authored::{
-        Author, Change, Decision, Definition, EditTargets, Element, MemberKind, Mesh, Placement,
-        Prepare, Resource, Shape, schema_identity, validate_layers,
+        Author, Change, Decision, Definition, EditTargets, Element, MemberKind, MemberShape, Mesh,
+        Placement, PlateShape, Prepare, Resource, Shape, schema_identity, validate_layers,
     },
     index::{Completeness, ElementIndex, IndexBuilder},
     *,
@@ -179,7 +179,7 @@ fn authored_batch() -> Vec<Change> {
         Change::Create(Element {
             id: PLATE.into(),
             name: "Plate".into(),
-            shape: Shape::Plate {
+            shape: Shape::plate(PlateShape {
                 contour_mm: vec![
                     [0.0, 0.0, 0.0],
                     [1000.0, 0.0, 0.0],
@@ -193,14 +193,14 @@ fn authored_batch() -> Vec<Change> {
                 holes: Vec::new(),
                 hole_records: Vec::new(),
                 cuts: Vec::new(),
-            },
+            }),
             placement: pose(),
             material: Some(r[1].digest),
         }),
         Change::Create(Element {
             id: MEMBER.into(),
             name: "Member".into(),
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
@@ -208,7 +208,7 @@ fn authored_batch() -> Vec<Change> {
                 roll_rad: Some(0.125),
                 placement: None,
                 cuts: Vec::new(),
-            },
+            }),
             placement: pose(),
             material: None,
         }),

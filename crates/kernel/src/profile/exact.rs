@@ -15,7 +15,7 @@ use core::cmp::Ordering;
 
 /// An exact sign could not be decided (non-finite or out-of-range coordinate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Uncertain;
+pub struct Uncertain;
 
 const LIMBS: usize = 80;
 const OPERAND_LIMBS: usize = 40;

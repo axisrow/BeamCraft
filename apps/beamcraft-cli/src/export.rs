@@ -12,10 +12,7 @@
 //! The report lists every element with its GlobalId, representation, quantity freshness and
 //! omissions, plus the findings of the contract in its deterministic order.
 
-use crate::plate::{
-    ElementMeta, Inspection, PlacementRead, PlateError, inspect_revision, kernel_mesh,
-};
-use beamcraft_engine::quantity::Freshness;
+use crate::plate::{ElementMeta, Inspection, PlacementRead, inspect_revision, kernel_mesh};
 use beamcraft_host::output::{Installed, OutputError, Staged, resolve_destination, stage_file};
 use beamcraft_host::revision::{Revision, RevisionError, RevisionStore};
 use beamcraft_ifc::{
@@ -26,8 +23,10 @@ use beamcraft_ifc::{
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, Uuid7};
+use session::Refusal;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use steel::engine::quantity::Freshness;
 
 use crate::definition::DefinitionRecord;
 
@@ -42,8 +41,8 @@ pub const MAX_LISTED_FINDINGS: usize = 256;
 /// Findings counted at most (F10 section 6.3).
 const MAX_COUNTED_FINDINGS: usize = 1_000_000;
 
-fn error(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError::new(code, message)
+fn error(code: ErrorCode, message: &'static str) -> Refusal {
+    Refusal::new(code, message)
 }
 
 /// The options of one export (E01 section 15.3).
@@ -210,7 +209,7 @@ pub struct ExportReport {
 }
 
 /// Whether the request is one this contract version serves (`IFCX-VER-001`, `-002`).
-pub fn validate_request(request: &ExportRequest) -> Result<(), PlateError> {
+pub fn validate_request(request: &ExportRequest) -> Result<(), Refusal> {
     if request.contract_version != CONTRACT_VERSION || request.schema != SCHEMA {
         return Err(error(
             ErrorCode::UnsupportedVersion,
@@ -254,14 +253,14 @@ pub fn ifc_code_of(code: ErrorCode) -> &'static str {
     }
 }
 
-fn open_revision(store: &RevisionStore, wanted: Option<Uuid7>) -> Result<Revision, PlateError> {
+fn open_revision(store: &RevisionStore, wanted: Option<Uuid7>) -> Result<Revision, Refusal> {
     let Some(wanted) = wanted else {
         return store.open().map_err(|e| match e {
             RevisionError::NoRevision => error(
                 ErrorCode::DependencyUnavailable,
                 "the store has no revision to export",
             ),
-            other => PlateError::from(other),
+            other => Refusal::from(other),
         });
     };
     let sequence = store
@@ -273,12 +272,12 @@ fn open_revision(store: &RevisionStore, wanted: Option<Uuid7>) -> Result<Revisio
     Ok(store.open_at(sequence)?)
 }
 
-fn revision_id(revision: &Revision) -> Result<Uuid7, PlateError> {
+fn revision_id(revision: &Revision) -> Result<Uuid7, Refusal> {
     Uuid7::parse(revision.info().revision().as_str())
         .map_err(|_| error(ErrorCode::InvalidId, "the revision id is not a UUIDv7"))
 }
 
-fn mesh_of(record: &beamcraft_engine::solid::SolidMesh) -> Result<Mesh, PlateError> {
+fn mesh_of(record: &beamcraft_engine::solid::SolidMesh) -> Result<Mesh, Refusal> {
     let bad = || error(ErrorCode::IntegrityError, "a mesh index is out of range");
     let derived = kernel_mesh(record)?;
     let index = |v: i64| u32::try_from(v).map_err(|_| bad());
@@ -288,7 +287,7 @@ fn mesh_of(record: &beamcraft_engine::solid::SolidMesh) -> Result<Mesh, PlateErr
         .0
         .iter()
         .map(|&[a, b, c]| Ok([index(a)?, index(b)?, index(c)?]))
-        .collect::<Result<Vec<_>, PlateError>>()?;
+        .collect::<Result<Vec<_>, Refusal>>()?;
     Ok(Mesh {
         points: derived.points,
         triangles,
@@ -316,12 +315,12 @@ struct Built {
 /// Everything about one plate, beam or column the model needs, resolved from the inspection.
 struct Body<'a> {
     entity: Entity,
-    mesh: Result<Mesh, PlateError>,
+    mesh: Result<Mesh, Refusal>,
     placement: beamcraft_model::command::Placement,
     material: Option<ContentDigest>,
     profile: Option<ContentDigest>,
     holes: Option<u32>,
-    quantities: &'a beamcraft_engine::command::Quantities,
+    quantities: &'a steel::engine::command::Quantities,
 }
 
 fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
@@ -346,8 +345,8 @@ fn bodies(inspection: &Inspection) -> BTreeMap<ElementId, Body<'_>> {
             r.authored.id,
             Body {
                 entity: match r.authored.kind {
-                    beamcraft_model::command::MemberKind::Beam => Entity::Beam,
-                    beamcraft_model::command::MemberKind::Column => Entity::Column,
+                    steel::model::command::MemberKind::Beam => Entity::Beam,
+                    steel::model::command::MemberKind::Column => Entity::Column,
                 },
                 mesh: mesh_of(&r.body.solid),
                 placement,
@@ -381,7 +380,7 @@ fn build(
     inspection: &Inspection,
     request: &ExportRequest,
     revision: &Revision,
-) -> Result<Built, PlateError> {
+) -> Result<Built, Refusal> {
     let project_text = inspection.project_record.as_deref().ok_or_else(|| {
         error(
             ErrorCode::DependencyUnavailable,
@@ -530,7 +529,7 @@ fn body_element(
     level: Option<ElementId>,
     row: &mut ElementReport,
     findings: &mut Vec<Finding>,
-) -> Result<ElementData, PlateError> {
+) -> Result<ElementData, Refusal> {
     let pose = Pose::from_quaternion(
         body.placement.translation_mm,
         body.placement.orientation_xyzw,
@@ -749,7 +748,7 @@ fn first_fatal(findings: &[Finding]) -> Option<&Finding> {
         .min_by_key(|f| rank(f))
 }
 
-fn write_error(error_value: WriteError) -> PlateError {
+fn write_error(error_value: WriteError) -> Refusal {
     match error_value {
         WriteError::Invalid(m) => error(ErrorCode::InvalidArgument, m),
         WriteError::Limit(m) => error(ErrorCode::LimitExceeded, m),
@@ -772,7 +771,7 @@ pub fn export_ifc(
     store: &RevisionStore,
     request: &ExportRequest,
     out: &Path,
-) -> Result<ExportReport, PlateError> {
+) -> Result<ExportReport, Refusal> {
     export_with_limits(store, request, out, &Limits::DEFAULT)
 }
 
@@ -782,7 +781,7 @@ pub fn export_with_limits(
     request: &ExportRequest,
     out: &Path,
     limits: &Limits,
-) -> Result<ExportReport, PlateError> {
+) -> Result<ExportReport, Refusal> {
     let prepared = prepare_export_with_limits(store, request, out, limits)?;
     let report = prepared.report.clone();
     prepared.install()?;
@@ -800,7 +799,7 @@ pub struct PreparedExport {
 
 impl PreparedExport {
     /// Installs the file under its final name.
-    pub fn install(self) -> Result<Installed, PlateError> {
+    pub fn install(self) -> Result<Installed, Refusal> {
         self.staged.install().map_err(|e| error(e.code, e.message))
     }
 }
@@ -812,7 +811,7 @@ pub fn check_destinations(
     store: &RevisionStore,
     out: &Path,
     report: Option<&Path>,
-) -> Result<(), PlateError> {
+) -> Result<(), Refusal> {
     let refuse = |e: OutputError| error(e.code, e.message);
     let root = store.blobs().canonical_root();
     let first = resolve_destination(out).map_err(refuse)?;
@@ -841,7 +840,7 @@ pub fn prepare_export(
     store: &RevisionStore,
     request: &ExportRequest,
     out: &Path,
-) -> Result<PreparedExport, PlateError> {
+) -> Result<PreparedExport, Refusal> {
     prepare_export_with_limits(store, request, out, &Limits::DEFAULT)
 }
 
@@ -851,7 +850,7 @@ pub fn prepare_export_with_limits(
     request: &ExportRequest,
     out: &Path,
     limits: &Limits,
-) -> Result<PreparedExport, PlateError> {
+) -> Result<PreparedExport, Refusal> {
     validate_request(request)?;
     check_destinations(store, out, None)?;
     let revision = open_revision(store, request.revision)?;
@@ -942,7 +941,7 @@ pub fn prepare_export_with_limits(
 
 /// The GlobalId of an ElementId text, for `ifc-guid --id` (`INVALID_ID` for anything that is not
 /// a canonical lowercase UUIDv7, with no repair, `IFCX-GUID-002`).
-pub fn ifc_guid_of(text: &str) -> Result<String, PlateError> {
+pub fn ifc_guid_of(text: &str) -> Result<String, Refusal> {
     let id = Uuid7::parse(text)
         .map_err(|_| error(ErrorCode::InvalidId, "the id is not a canonical UUIDv7"))?;
     Ok(global_id(&id).as_str().to_owned())
@@ -950,7 +949,7 @@ pub fn ifc_guid_of(text: &str) -> Result<String, PlateError> {
 
 /// The UUID text behind a GlobalId, for `ifc-guid --decode` (`INVALID_ARGUMENT` for anything else,
 /// `IFCX-GUID-003`). The 128-bit value is printed even when it is not a valid UUIDv7.
-pub fn ifc_guid_decode(text: &str) -> Result<String, PlateError> {
+pub fn ifc_guid_decode(text: &str) -> Result<String, Refusal> {
     let bytes = guid::decode(text)
         .map_err(|_| error(ErrorCode::InvalidArgument, "not an IfcGloballyUniqueId"))?;
     let mut out = String::with_capacity(36);

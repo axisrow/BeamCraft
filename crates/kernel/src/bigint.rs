@@ -16,11 +16,11 @@ pub(crate) const LIMBS: usize = 72;
 
 /// A computation exceeded the fixed capacity (never reachable under the caps).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Overflow;
+pub struct Overflow;
 
 /// Sign-and-magnitude integer; `mag[len..]` is always zero and `len` is minimal.
 #[derive(Clone)]
-pub(crate) struct Big {
+pub struct Big {
     neg: bool,
     len: usize,
     mag: [u64; LIMBS],
@@ -28,7 +28,7 @@ pub(crate) struct Big {
 
 impl Big {
     /// The integer zero.
-    pub(crate) const ZERO: Self = Self {
+    pub const ZERO: Self = Self {
         neg: false,
         len: 0,
         mag: [0; LIMBS],
@@ -64,7 +64,7 @@ impl Big {
     }
 
     /// Returns -1, 0 or 1.
-    pub(crate) const fn sign(&self) -> i8 {
+    pub const fn sign(&self) -> i8 {
         if self.len == 0 {
             0
         } else if self.neg {
@@ -75,7 +75,7 @@ impl Big {
     }
 
     /// Negated copy.
-    pub(crate) fn negated(&self) -> Self {
+    pub fn negated(&self) -> Self {
         let mut out = self.clone();
         if out.len != 0 {
             out.neg = !out.neg;
@@ -87,7 +87,8 @@ impl Big {
         self.mag.get(..self.len).unwrap_or(&[])
     }
 
-    pub(crate) fn cmp_mag(&self, other: &Self) -> core::cmp::Ordering {
+    /// Shared with the steel crate.
+    pub fn cmp_mag(&self, other: &Self) -> core::cmp::Ordering {
         self.len.cmp(&other.len).then_with(|| {
             self.limbs()
                 .iter()
@@ -139,7 +140,7 @@ impl Big {
     }
 
     /// Exact sum.
-    pub(crate) fn add(&self, other: &Self) -> Result<Self, Overflow> {
+    pub fn add(&self, other: &Self) -> Result<Self, Overflow> {
         if self.len == 0 {
             return Ok(other.clone());
         }
@@ -157,12 +158,12 @@ impl Big {
     }
 
     /// Exact difference.
-    pub(crate) fn sub(&self, other: &Self) -> Result<Self, Overflow> {
+    pub fn sub(&self, other: &Self) -> Result<Self, Overflow> {
         self.add(&other.negated())
     }
 
     /// Exact product by schoolbook multiplication.
-    pub(crate) fn mul(&self, other: &Self) -> Result<Self, Overflow> {
+    pub fn mul(&self, other: &Self) -> Result<Self, Overflow> {
         if self.len == 0 || other.len == 0 {
             return Ok(Self::ZERO);
         }
@@ -218,7 +219,7 @@ impl Big {
     /// valid outward bound `[0, 2^top]` (or its negative) instead of `None`, where
     /// `2^top` (at least `MIN_POSITIVE`) exceeds `|value|`. Normal values always
     /// take the exact enclosure. Overflow is still `None`.
-    pub(crate) fn enclose_clamped(&self, pow2: i32) -> Option<Enclosure> {
+    pub fn enclose_clamped(&self, pow2: i32) -> Option<Enclosure> {
         if let Some(e) = self.enclose(pow2) {
             return Some(e);
         }
@@ -242,7 +243,7 @@ impl Big {
 
     /// Encloses `self * 2^pow2` in binary64, or `None` when the result is
     /// not a normal finite value (overflow or loss to underflow).
-    pub(crate) fn enclose(&self, pow2: i32) -> Option<Enclosure> {
+    pub fn enclose(&self, pow2: i32) -> Option<Enclosure> {
         if self.len == 0 {
             return Some(Enclosure::point(0.0));
         }

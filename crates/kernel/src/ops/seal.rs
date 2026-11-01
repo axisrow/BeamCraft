@@ -32,22 +32,33 @@ pub enum OpKind {
 }
 
 /// An uncertified candidate in operation-local numbering.
-pub(crate) struct Candidate {
-    pub(crate) vertices: Vec<[f64; 3]>,
-    pub(crate) triangles: Vec<[u32; 3]>,
-    pub(crate) faces: Vec<u16>,
-    pub(crate) face_ids: Vec<String>,
-    pub(crate) normals: Vec<Option<[f64; 3]>>,
+pub struct Candidate {
+    /// The vertices.
+    pub vertices: Vec<[f64; 3]>,
+    /// The triangles.
+    pub triangles: Vec<[u32; 3]>,
+    /// The faces.
+    pub faces: Vec<u16>,
+    /// The face ids.
+    pub face_ids: Vec<String>,
+    /// The normals.
+    pub normals: Vec<Option<[f64; 3]>>,
 }
 
 /// What the sealed candidate must satisfy beyond the generic G06 certificate.
-pub(crate) struct Expect {
-    pub(crate) kind: OpKind,
-    pub(crate) euler: Option<i64>,
-    pub(crate) genus: Option<u32>,
-    pub(crate) analytic_volume: Option<Enclosure>,
-    pub(crate) plane_deviation_mm: Option<f64>,
-    pub(crate) stats: OpStats,
+pub struct Expect {
+    /// The kind.
+    pub kind: OpKind,
+    /// The euler.
+    pub euler: Option<i64>,
+    /// The genus.
+    pub genus: Option<u32>,
+    /// The analytic volume.
+    pub analytic_volume: Option<Enclosure>,
+    /// The plane deviation mm.
+    pub plane_deviation_mm: Option<f64>,
+    /// The stats.
+    pub stats: OpStats,
 }
 
 /// A sealed operation result: a new certified [`Body`] with its blob, digest and quantities.
@@ -293,7 +304,7 @@ fn canonicalise(c: Candidate, limits: &OpLimits) -> Result<Canonical, OpFailure>
 
 /// Canonicalises, parses back, certifies and measures a candidate; seals it only if every
 /// proof holds.
-pub(crate) fn seal(
+pub fn seal(
     candidate: Candidate,
     tolerance: Tolerance,
     limits: &OpLimits,

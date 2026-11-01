@@ -3,17 +3,18 @@
 
 //! Read-only V08 work-plane construction, including a real face pick.
 use crate::plate_cmd::{invalid, triple};
-use beamcraft_cli::plate::{PlateError, inspect};
+use beamcraft_cli::plate::inspect;
 use beamcraft_engine::work_plane::{WorkPlane, pick_work_plane};
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
+use session::Refusal;
 use std::{collections::BTreeMap, ffi::OsString};
 
 /// Construct a session plane without writing to the model.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     crate::report::report(run(args))
 }
-fn run(args: &[OsString]) -> Result<Json, PlateError> {
+fn run(args: &[OsString]) -> Result<Json, Refusal> {
     let args = args
         .iter()
         .map(|s| {
@@ -134,7 +135,7 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
             .copied()
             .ok_or_else(|| invalid("missing plane option"))
     };
-    let numbers = |text: &str| -> Result<Vec<f64>, PlateError> {
+    let numbers = |text: &str| -> Result<Vec<f64>, Refusal> {
         if text.len() > 384 {
             return Err(invalid("plane text exceeds limit"));
         }
@@ -177,7 +178,7 @@ fn run(args: &[OsString]) -> Result<Json, PlateError> {
         };
         WorkPlane::vertical([*a, *b, *c], [*d, *e, *f])?
     } else {
-        let blobs = BlobStore::new(get("--store")?).map_err(|e| PlateError {
+        let blobs = BlobStore::new(get("--store")?).map_err(|e| Refusal {
             code: e.code(),
             rule_id: None,
             message: "store root is not usable",

@@ -9,11 +9,11 @@
 //! face table (local feature ids and outward normals) that travels beside the BCMESH01 blob.
 
 use super::diagnostic::{OpCode, OpDefect, OpFailure, OpField};
+use crate::PlateResult;
 use crate::diagnostic::Stage;
 use crate::enclosure::Enclosure;
 use crate::measure::measure;
 use crate::profile::{Extrusion, FaceRole};
-use crate::result::PlateResult;
 use crate::topology::{Analysis, Limits, analyze_with_tolerance};
 use crate::trimesh::{Space, TriMesh};
 use beamcraft_geom::Vec3;
@@ -250,7 +250,7 @@ impl Body {
     }
 }
 
-fn unit(n: Vec3) -> [f64; 3] {
+pub(crate) fn unit(n: Vec3) -> [f64; 3] {
     [n.x(), n.y(), n.z()]
 }
 

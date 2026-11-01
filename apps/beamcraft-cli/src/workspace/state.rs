@@ -4,19 +4,19 @@
 //! C03.6: serialized compare-and-swap of workspace metadata, independent of draft commits.
 
 use super::{META_CAP, META_FILE, WorkspaceMeta, meta_path, unusable};
-use crate::plate::PlateError;
 use beamcraft_host::lease::{StoreLease, WorkspaceLease};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-fn changed() -> PlateError {
-    PlateError::new(ErrorCode::BaseRevisionMismatch, "workspace metadata moved")
+fn changed() -> Refusal {
+    Refusal::new(ErrorCode::BaseRevisionMismatch, "workspace metadata moved")
 }
 
-pub(super) fn read(dir: &Path) -> Result<Option<WorkspaceMeta>, PlateError> {
+pub(super) fn read(dir: &Path) -> Result<Option<WorkspaceMeta>, Refusal> {
     let path = meta_path(dir);
     let metadata = match fs::symlink_metadata(&path) {
         Ok(metadata) => metadata,
@@ -52,13 +52,13 @@ impl WorkspaceState {
     /// Locks the existing local directory and reads bounded metadata. `None` is an uninitialized
     /// workspace; malformed existing metadata fails. A concurrent holder returns immediately
     /// with `BACKEND_UNAVAILABLE`; no polling, stale lock deletion or external service is used.
-    pub fn open(dir: &Path) -> Result<Self, PlateError> {
+    pub fn open(dir: &Path) -> Result<Self, Refusal> {
         let store = BlobStore::new(dir)
-            .map_err(|error| PlateError::new(error.code(), "workspace directory is not usable"))?;
+            .map_err(|error| Refusal::new(error.code(), "workspace directory is not usable"))?;
         let maintenance = StoreLease::shared(&store)
-            .map_err(|error| PlateError::new(error.code(), "workspace is in use or not usable"))?;
+            .map_err(|error| Refusal::new(error.code(), "workspace is in use or not usable"))?;
         let lease = WorkspaceLease::exclusive(&store).map_err(|error| {
-            PlateError::new(error.code(), "workspace state is in use or not usable")
+            Refusal::new(error.code(), "workspace state is in use or not usable")
         })?;
         let mut state = Self {
             dir: dir.to_owned(),
@@ -87,7 +87,7 @@ impl WorkspaceState {
     pub fn stage_rebase(
         &self,
         receipt: &super::rebase_receipt::RebaseReceipt,
-    ) -> Result<beamcraft_host::revision::EvidencePin, PlateError> {
+    ) -> Result<beamcraft_host::revision::EvidencePin, Refusal> {
         super::pending::stage(self, receipt)
     }
 
@@ -95,7 +95,7 @@ impl WorkspaceState {
     /// An absent/lost CAS slot removes an abandoned intent without changing metadata. Missing or
     /// corrupt history/evidence refuses and retains the intent. `open` also runs this recovery
     /// before exposing any workspace state. No revision or published store is changed here.
-    pub fn finish_rebase(&mut self) -> Result<Option<crate::plate::RevisionSummary>, PlateError> {
+    pub fn finish_rebase(&mut self) -> Result<Option<session::pipeline::RevisionSummary>, Refusal> {
         super::pending::recover(self)
     }
 
@@ -110,7 +110,7 @@ impl WorkspaceState {
         &mut self,
         expected: Option<&WorkspaceMeta>,
         next: &WorkspaceMeta,
-    ) -> Result<bool, PlateError> {
+    ) -> Result<bool, Refusal> {
         let current = read(&self.dir)?;
         if current.as_ref() != expected || current != self.meta {
             return Err(changed());
@@ -124,7 +124,7 @@ impl WorkspaceState {
                     || next.rebase_sequence < old.rebase_sequence
             })
         {
-            return Err(PlateError::new(
+            return Err(Refusal::new(
                 ErrorCode::InvalidArgument,
                 "workspace identity, published prefix or rebase boundary cannot move backwards",
             ));

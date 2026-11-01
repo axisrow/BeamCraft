@@ -56,7 +56,7 @@ beamcraft inspect-elements --store ROOT   (plates and members, one pinned view s
 
 ## Evidence
 
-* `cargo test -p beamcraft-kernel --test member` (6 tests), model, engine and `beamcraft-cli` unit
+* `cargo test -p steel --test steel -- kernel_member::` (6 tests), model, engine and `beamcraft-cli` unit
   tests, and `cargo test -p beamcraft-cli --test cli -- members::` (real binary): a 6000 mm beam of
   200 x 300 mm is 0.36 m3 and 2826 kg at 7850 kg/m3; fresh-process reopen, world bounds from the
   pinned snapshot, a rolled column, plates and members together, `NOT_FOUND`, `INVALID_ARGUMENT`,

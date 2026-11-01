@@ -61,7 +61,7 @@ fn decompose(x: f64) -> (i64, i32) {
 }
 
 /// Smallest binary exponent among the nonzero values, or 0 if all are zero.
-pub(crate) fn min_exponent(values: impl IntoIterator<Item = f64>) -> i32 {
+pub fn min_exponent(values: impl IntoIterator<Item = f64>) -> i32 {
     values
         .into_iter()
         .map(decompose)
@@ -72,7 +72,7 @@ pub(crate) fn min_exponent(values: impl IntoIterator<Item = f64>) -> i32 {
 }
 
 /// The exact integer `x * 2^-e_min`; requires `e_min <= exponent(x)`.
-pub(crate) fn scaled(x: f64, e_min: i32) -> Result<Big, Overflow> {
+pub fn scaled(x: f64, e_min: i32) -> Result<Big, Overflow> {
     let (m, e) = decompose(x);
     if m == 0 {
         return Ok(Big::ZERO);
@@ -116,12 +116,7 @@ pub(crate) fn triangle_det(e: i32, a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> Res
 }
 
 /// Exact `(b - a) x (c - a)` in units of `2^(2e)`.
-pub(crate) fn triangle_cross(
-    e: i32,
-    a: [f64; 3],
-    b: [f64; 3],
-    c: [f64; 3],
-) -> Result<[Big; 3], Overflow> {
+pub fn triangle_cross(e: i32, a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> Result<[Big; 3], Overflow> {
     let a = scaled3(a, e)?;
     cross_big(&diff3(&scaled3(b, e)?, &a)?, &diff3(&scaled3(c, e)?, &a)?)
 }
@@ -158,7 +153,7 @@ const fn sign_of(x: f64) -> i8 {
 ///
 /// The 2D orientation of a projected triangle then has the sign of the
 /// triangle's normal component `n_k`.
-pub(crate) const fn project(p: [f64; 3], k: usize) -> [f64; 2] {
+pub const fn project(p: [f64; 3], k: usize) -> [f64; 2] {
     let [x, y, z] = p;
     match k {
         0 => [y, z],

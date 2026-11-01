@@ -10,7 +10,7 @@
 //! it. Like an A06 weld it has no material and no derived body; unlike a weld it carries a world
 //! placement of its bolts, and the engine refuses a group whose bolts do not lie on both parts
 //! (conservative bounds, see the A05 design note). The record lives with the group, so the parts
-//! are only read. The engine ([`beamcraft_engine::bolt`]) decides the identity, the parts' kinds
+//! are only read. The engine ([`steel::engine::bolt`]) decides the identity, the parts' kinds
 //! and the reachability from the head model; the layer engine re-checks the structural rules on
 //! the candidate and the strict verifier checks the committed bytes.
 //!
@@ -25,30 +25,35 @@
 use crate::assembly::read_prims;
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    PlateError, RevisionSummary, base_of, check_footprint, control, decode, digest_of,
-    evaluate_decoded, host_uuid, integrity, load_base, mesh_change, number, open_base,
-    plate_record, prior_op_with, property, replay_summary, summarize, text,
+    check_footprint, decode, evaluate_decoded, mesh_change, number, plate_record, prior_op_with,
+    property, replay_summary, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
-use beamcraft_engine::bolt::Bounds;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::query::committed::PlateRecord;
-use beamcraft_engine::transaction::PriorOp;
-use beamcraft_engine::weld::{PartKind, Parts};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Bolt as LayerBolt, BoltGroup as LayerBoltGroup, Change, Element, Placement as LayerPlacement,
     Prepare, Resource, Shape, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
-use beamcraft_model::command::{
-    BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CommandError, CreateBolt, CreateBoltGroup,
-    HoleKind, HoleRecord, MAX_HOLES, UpdateBoltGroup,
-};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    RevisionSummary, base_of, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
+};
 use std::collections::BTreeMap;
+use steel::engine::bolt::Bounds;
+use steel::engine::committed::PlateRecord;
+use steel::engine::transaction::PriorOp;
+use steel::engine::weld::{PartKind, Parts};
+use steel::model::command::{
+    BoltGroupInputs, BoltLength, BoltSpacing, BoltSpec, CreateBolt, CreateBoltGroup, HoleKind,
+    HoleRecord, MAX_HOLES, UpdateBoltGroup,
+};
 
 /// Identities of one A05 call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -114,10 +119,10 @@ fn bolt_of(
     prim: &beamcraft_layer_engine::Prim,
     id: ElementId,
     by_path: &BTreeMap<&str, ElementId>,
-) -> Result<BoltView, PlateError> {
+) -> Result<BoltView, Refusal> {
     let damaged = || integrity("bolt record is not readable");
     let number_of = |name| property(prim, name).and_then(number).ok_or_else(damaged);
-    let vec3 = |name: &str| -> Result<[f64; 3], PlateError> {
+    let vec3 = |name: &str| -> Result<[f64; 3], Refusal> {
         match property(prim, name) {
             Some(Value::Array(items)) => match items.as_slice() {
                 [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
@@ -216,10 +221,10 @@ fn bolt_group_of(
     prim: &beamcraft_layer_engine::Prim,
     id: ElementId,
     by_path: &BTreeMap<&str, ElementId>,
-) -> Result<BoltGroupView, PlateError> {
+) -> Result<BoltGroupView, Refusal> {
     let damaged = || integrity("bolt group record is not readable");
     let number_of = |name| property(prim, name).and_then(number).ok_or_else(damaged);
-    let vec3 = |name: &str| -> Result<[f64; 3], PlateError> {
+    let vec3 = |name: &str| -> Result<[f64; 3], Refusal> {
         match property(prim, name) {
             Some(Value::Array(items)) => match items.as_slice() {
                 [Value::Number(x), Value::Number(y), Value::Number(z)] => Ok([*x, *y, *z]),
@@ -232,7 +237,7 @@ fn bolt_group_of(
         Some(Value::Bool(value)) => Ok(*value),
         _ => Err(damaged()),
     };
-    let token = |name: &str| -> Result<String, PlateError> {
+    let token = |name: &str| -> Result<String, Refusal> {
         property(prim, name)
             .and_then(text)
             .map(str::to_owned)
@@ -306,9 +311,9 @@ type Geometry = (
 /// a non-identity placement rotation is refused as unsupported rather than bounded wrongly.
 /// Alongside the bounds it collects every part's world translation and the member identities
 /// the hole decision (A14.4) needs.
-fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, PlateError> {
+fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
     let unsupported = || {
-        PlateError::from(CommandError::new(
+        Refusal::from(CommandError::new(
             ErrorCode::UnsupportedGeometry,
             "placement.orientation_xyzw",
             "rotated part placement is not supported for bolts in this slice",
@@ -391,7 +396,7 @@ fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, PlateError>
     Ok((bounds, translations, members))
 }
 
-fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateError> {
+fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> {
     // The structural rules (A05-V01 and A06-V01 among them) run before anything is read, so a
     // damaged record is refused rather than reported or replayed.
     validate_layers(request.clone(), schema_identity()?, control)?;
@@ -468,7 +473,7 @@ fn created_by(
     sequence: u64,
     id: &ElementId,
     control: &Control,
-) -> Result<Option<BoltView>, PlateError> {
+) -> Result<Option<BoltView>, Refusal> {
     let at = store.open_at(sequence)?;
     let model = model_of(&open_base(&base_of(&at)?)?, control)?;
     let Some(bolt) = model.bolts.into_iter().find(|b| b.id == *id) else {
@@ -493,7 +498,7 @@ pub(crate) fn is_bolt(
     request: &OpenRequest,
     id: &ElementId,
     control: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     let model = model_of(request, control)?;
     Ok(model.bolts.iter().any(|b| b.id == *id) || model.groups.iter().any(|g| g.id == *id))
 }
@@ -501,7 +506,7 @@ pub(crate) fn is_bolt(
 /// Whether the host ledger already accepted this operation. A retry of an accepted edit
 /// reaches the replay comparison instead of a command-line argument guard, so its content —
 /// not its argument shape — decides between `bolt_group_replayed` and `OP_ID_REUSE`.
-pub fn op_accepted(store: &RevisionStore, op_id: &OpId) -> Result<bool, PlateError> {
+pub fn op_accepted(store: &RevisionStore, op_id: &OpId) -> Result<bool, Refusal> {
     let op_host = host_uuid(&op_id.to_string())?;
     let (prior, _) = prior_op_with(store, &op_host, || {
         digest_of(b"the accepted request is decided from the operation's revision")
@@ -510,7 +515,7 @@ pub fn op_accepted(store: &RevisionStore, op_id: &OpId) -> Result<bool, PlateErr
 }
 
 /// The bolt groups of the verified head (empty for a store without a revision).
-pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, PlateError> {
+pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -526,7 +531,7 @@ pub fn bolts(store: &RevisionStore) -> Result<Vec<BoltView>, PlateError> {
 }
 
 /// The placed A14.3 bolt groups of the verified head (empty for a store without a revision).
-pub fn bolt_groups(store: &RevisionStore) -> Result<Vec<BoltGroupView>, PlateError> {
+pub fn bolt_groups(store: &RevisionStore) -> Result<Vec<BoltGroupView>, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -546,7 +551,7 @@ pub fn bolt_groups(store: &RevisionStore) -> Result<Vec<BoltGroupView>, PlateErr
 /// the hole mode and clearance follow the inputs and the definition (A14.4).
 fn expected_spec(
     inputs: &BoltGroupInputs,
-    placed: &beamcraft_engine::bolt::BoltGroupPlaced,
+    placed: &steel::engine::bolt::BoltGroupPlaced,
 ) -> GroupSpec {
     let (spacing_mode, spacing_value_mm) = match &inputs.spacing {
         BoltSpacing::Spacings(_) => ("spacings".to_owned(), 0.0),
@@ -573,14 +578,12 @@ fn expected_spec(
         washer_under_head: placed.washer_under_head,
         washer_under_nut: placed.washer_under_nut,
         hole_mode: match inputs.resolved_hole_mode() {
-            beamcraft_model::fastener::HoleMode::Generate => "generate".to_owned(),
-            beamcraft_model::fastener::HoleMode::None => "none".to_owned(),
+            steel::model::fastener::HoleMode::Generate => "generate".to_owned(),
+            steel::model::fastener::HoleMode::None => "none".to_owned(),
         },
         hole_clearance_mm: match inputs.resolved_hole_mode() {
-            beamcraft_model::fastener::HoleMode::Generate => {
-                Some(inputs.resolved_hole_clearance_mm())
-            }
-            beamcraft_model::fastener::HoleMode::None => None,
+            steel::model::fastener::HoleMode::Generate => Some(inputs.resolved_hole_clearance_mm()),
+            steel::model::fastener::HoleMode::None => None,
         },
     }
 }
@@ -589,7 +592,7 @@ fn expected_spec(
 /// operation's UUIDv7 with its random bits replaced by the hash of the pair. A retry of the
 /// same operation authors the same record identities, so the committed result never depends
 /// on where fresh ids would come from.
-fn derived_op_id(op: OpId, index: usize) -> Result<OpId, PlateError> {
+fn derived_op_id(op: OpId, index: usize) -> Result<OpId, Refusal> {
     let mut seed = Vec::with_capacity(24);
     seed.extend_from_slice(op.as_bytes());
     seed.extend_from_slice(&(index as u64).to_le_bytes());
@@ -615,18 +618,18 @@ fn derived_op_id(op: OpId, index: usize) -> Result<OpId, PlateError> {
 fn hole_changes(
     op_id: OpId,
     group: ElementId,
-    holes: &[beamcraft_engine::bolt::GeneratedHole],
+    holes: &[steel::engine::bolt::GeneratedHole],
     keep: &dyn Fn(&HoleRecord) -> bool,
     base_request: &OpenRequest,
     control: &Control,
     footprint: Footprint,
-) -> Result<(Vec<Change>, Footprint), PlateError> {
+) -> Result<(Vec<Change>, Footprint), Refusal> {
     let mut reader = Reader::default();
     let opened = reader.open(base_request.clone(), control)?;
     let decoded = decode(&reader, &opened, control)?;
     let (plates, _) = evaluate_decoded(&decoded)?;
     let materials = material_lookup(&decoded.definitions);
-    let mut by_part: BTreeMap<ElementId, Vec<&beamcraft_engine::bolt::GeneratedHole>> =
+    let mut by_part: BTreeMap<ElementId, Vec<&steel::engine::bolt::GeneratedHole>> =
         BTreeMap::new();
     for hole in holes {
         by_part.entry(hole.part).or_default().push(hole);
@@ -688,7 +691,7 @@ fn hole_changes(
         }
         next.hole_records.sort_by_key(|r| r.ordinal);
         // The replay is the refusal gate: a hole that does not fit refuses the command.
-        let body = beamcraft_engine::command::evaluate_plate(&next)?;
+        let body = steel::engine::command::evaluate_plate(&next)?;
         let quantities =
             body.quantities_for(next.material.as_ref().map(&materials).transpose()?)?;
         let record = PlateRecord {
@@ -696,10 +699,10 @@ fn hole_changes(
             body: body.clone(),
             quantities,
         };
-        changes.push(Change::HoleRecords {
-            id: part.to_string(),
-            records: next.hole_records.clone(),
-        });
+        changes.push(Change::hole_records(
+            part.to_string(),
+            next.hole_records.clone(),
+        ));
         changes.push(mesh_change(&part, &body.solid, &plate_record(&record))?);
         footprint = footprint.union(Footprint::for_update(
             part, false, false, true, false, None,
@@ -717,7 +720,7 @@ fn group_at(
     sequence: u64,
     id: &ElementId,
     control: &Control,
-) -> Result<Option<(bool, BoltGroupView)>, PlateError> {
+) -> Result<Option<(bool, BoltGroupView)>, Refusal> {
     let at = store.open_at(sequence)?;
     let model = model_of(&open_base(&base_of(&at)?)?, control)?;
     let Some(group) = model.groups.into_iter().find(|g| g.id == *id) else {
@@ -756,7 +759,7 @@ pub struct GroupChange {
 fn definition_resource(
     definition: &crate::definition::DefinitionRecord,
     command_digest: ContentDigest,
-) -> Result<Resource, PlateError> {
+) -> Result<Resource, Refusal> {
     let resource = definition.resource()?;
     if resource.digest != command_digest {
         return Err(integrity(
@@ -769,7 +772,7 @@ fn definition_resource(
 /// Authors the A14.3 shape of one command's inputs and placement.
 fn layer_group(
     inputs: &BoltGroupInputs,
-    placed: &beamcraft_engine::bolt::BoltGroupPlaced,
+    placed: &steel::engine::bolt::BoltGroupPlaced,
 ) -> LayerBoltGroup {
     LayerBoltGroup {
         connects: inputs.parts.iter().map(|part| part.to_string()).collect(),
@@ -800,14 +803,12 @@ fn layer_group(
         washer_under_head: placed.washer_under_head,
         washer_under_nut: placed.washer_under_nut,
         hole_mode: match inputs.resolved_hole_mode() {
-            beamcraft_model::fastener::HoleMode::Generate => "generate".to_owned(),
-            beamcraft_model::fastener::HoleMode::None => "none".to_owned(),
+            steel::model::fastener::HoleMode::Generate => "generate".to_owned(),
+            steel::model::fastener::HoleMode::None => "none".to_owned(),
         },
         hole_clearance_mm: match inputs.resolved_hole_mode() {
-            beamcraft_model::fastener::HoleMode::Generate => {
-                Some(inputs.resolved_hole_clearance_mm())
-            }
-            beamcraft_model::fastener::HoleMode::None => None,
+            steel::model::fastener::HoleMode::Generate => Some(inputs.resolved_hole_clearance_mm()),
+            steel::model::fastener::HoleMode::None => None,
         },
     }
 }
@@ -823,7 +824,7 @@ pub fn create_bolt_group(
     command: &CreateBoltGroup,
     definition: &crate::definition::DefinitionRecord,
     hook: &mut dyn CommitHook,
-) -> Result<GroupChange, PlateError> {
+) -> Result<GroupChange, Refusal> {
     command.validate_arguments()?;
     let resource = definition_resource(definition, command.inputs.fastener_digest)?;
     let control = control();
@@ -844,7 +845,7 @@ pub fn create_bolt_group(
     // The replay comparison needs the placement; a request that no longer places (its parts
     // moved away) is not a replay of anything, so a failure here just means "not the same".
     let expected = || {
-        beamcraft_engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
+        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
             .map(|placed| expected_spec(&command.inputs, &placed))
             .ok()
     };
@@ -884,7 +885,7 @@ pub fn create_bolt_group(
     let (placed, footprint) = model.parts.create_bolt_group(command, &model.bounds)?;
     // The hole decision shares the transaction: generate writes one record per crossing
     // fastener on every plate, none writes no part (A14.4).
-    let holes = beamcraft_engine::bolt::generate_holes(
+    let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
         &placed,
         &model.bounds,
@@ -915,7 +916,7 @@ pub fn create_bolt_group(
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
-        shape: Shape::BoltGroup(layer_group(&command.inputs, &placed)),
+        shape: Shape::bolt_group(layer_group(&command.inputs, &placed)),
         placement: LayerPlacement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -974,7 +975,7 @@ pub fn update_bolt_group(
     command: &UpdateBoltGroup,
     definition: &crate::definition::DefinitionRecord,
     hook: &mut dyn CommitHook,
-) -> Result<GroupChange, PlateError> {
+) -> Result<GroupChange, Refusal> {
     command.validate_arguments()?;
     let resource = definition_resource(definition, command.inputs.fastener_digest)?;
     let control = control();
@@ -1004,7 +1005,7 @@ pub fn update_bolt_group(
     })?;
     // A request that no longer places is not a replay of anything (see the create).
     let expected = || {
-        beamcraft_engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
+        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
             .map(|placed| expected_spec(&command.inputs, &placed))
             .ok()
     };
@@ -1044,7 +1045,7 @@ pub fn update_bolt_group(
     // Editing regenerates the holes (bolt amendment section 6): the new decision replaces the
     // group's old records in the same transaction, and turning generate off removes them. A
     // group that never generated and stays quiet touches no part.
-    let holes = beamcraft_engine::bolt::generate_holes(
+    let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
         &placed,
         &model.bounds,
@@ -1076,10 +1077,10 @@ pub fn update_bolt_group(
     }
     let (mut author, opened) =
         crate::scope::open_author(store, base_request, false, schema, &control)?;
-    let mut changes = vec![Change::BoltGroup {
-        id: command.target_id.to_string(),
-        group: layer_group(&command.inputs, &placed),
-    }];
+    let mut changes = vec![Change::bolt_group(
+        command.target_id.to_string(),
+        layer_group(&command.inputs, &placed),
+    )];
     changes.extend(hole_writes);
     let prepared = author.prepare(
         Prepare {
@@ -1134,7 +1135,7 @@ pub fn create_bolt(
     context: &BoltContext,
     command: &CreateBolt,
     hook: &mut dyn CommitHook,
-) -> Result<BoltChange, PlateError> {
+) -> Result<BoltChange, Refusal> {
     command.validate_arguments()?;
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
@@ -1197,7 +1198,7 @@ pub fn create_bolt(
             changes: vec![Change::Create(Element {
                 id: command.new_id.to_string(),
                 name: command.name.clone(),
-                shape: Shape::Bolt(LayerBolt {
+                shape: Shape::bolt(LayerBolt {
                     connects: [
                         command.main_id.to_string(),
                         command.secondary_id.to_string(),

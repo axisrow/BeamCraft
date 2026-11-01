@@ -21,7 +21,6 @@
 //! that context from its token. A moved head is refused; this does not implement C03 rebase or
 //! C04 conflict resolution. A legacy or unverified source interval never earns precise evidence.
 
-use crate::plate::{PlateError, RevisionSummary, integrity, open_request, summarize};
 use crate::workspace::{WorkspaceMeta, read_meta, write_meta};
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, ExpectedBase, LayerEntry, LayerRole as HostRole, Revision,
@@ -38,6 +37,8 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use beamcraft_model::limits::MAX_FOOTPRINT_ENTRIES;
+use session::Refusal;
+use session::pipeline::{RevisionSummary, integrity, open_request, summarize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -84,12 +85,12 @@ fn control() -> Control {
     }
 }
 
-fn host_id(id: &Uuid7) -> Result<beamcraft_model::id::Uuid7, PlateError> {
+fn host_id(id: &Uuid7) -> Result<beamcraft_model::id::Uuid7, Refusal> {
     beamcraft_model::id::Uuid7::parse(id.as_str())
         .map_err(|_| integrity("identity is not a UUIDv7"))
 }
 
-fn as_host(text: &str) -> Result<Uuid7, PlateError> {
+fn as_host(text: &str) -> Result<Uuid7, Refusal> {
     Ok(Uuid7::parse(text)?)
 }
 
@@ -110,7 +111,7 @@ fn host_role(role: LayerRole) -> HostRole {
 }
 
 /// Every prim of a committed revision, read through the bounded layer engine.
-fn prims_of(revision: &Revision) -> Result<Vec<Prim>, PlateError> {
+fn prims_of(revision: &Revision) -> Result<Vec<Prim>, Refusal> {
     let content = revision.manifest().content();
     let assets = content
         .entries()
@@ -122,7 +123,7 @@ fn prims_of(revision: &Revision) -> Result<Vec<Prim>, PlateError> {
                 bytes: revision.layer_bytes(e.name())?,
             })
         })
-        .collect::<Result<Vec<_>, PlateError>>()?;
+        .collect::<Result<Vec<_>, Refusal>>()?;
     // Foreign sources (R01) stay read-only: only the external layers are not owned.
     let external = content
         .entries()
@@ -255,7 +256,7 @@ fn definition_targets(state: &ElementState<'_>) -> Vec<ContentDigest> {
 /// reads its unchanged source, a move reads the shape), and per-command footprints are not
 /// journaled. Until they are, the changeset reads every group of every element and every
 /// definition of the base and the head, which is a superset of any operation's reads.
-fn footprint(base: &[Prim], head: &[Prim]) -> Result<Vec<Dependency>, PlateError> {
+fn footprint(base: &[Prim], head: &[Prim]) -> Result<Vec<Dependency>, Refusal> {
     let mut set = BTreeSet::new();
     let mut add = |target, group, access| {
         set.insert(Dependency {
@@ -360,7 +361,7 @@ fn footprint(base: &[Prim], head: &[Prim]) -> Result<Vec<Dependency>, PlateError
         );
     }
     if set.len() > MAX_FOOTPRINT_ENTRIES {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the conservative changeset footprint exceeds 4096 entries",
@@ -379,7 +380,7 @@ pub fn create_changeset(
     workspace: &RevisionStore,
     dir: &Path,
     request: &CreateChangeset,
-) -> Result<StoredChangeset, PlateError> {
+) -> Result<StoredChangeset, Refusal> {
     let state = crate::workspace::WorkspaceState::open(dir)?;
     let meta = state.meta().ok_or_else(crate::workspace::unusable)?;
     let draft = workspace.open()?;
@@ -390,7 +391,7 @@ pub fn create_changeset(
         ));
     }
     if head_sequence <= meta.synced_sequence {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the workspace has nothing to send",
@@ -402,7 +403,7 @@ pub fn create_changeset(
     }
     let unsent = head_sequence - meta.synced_sequence;
     if usize::try_from(unsent).map_or(true, |n| n > MAX_OPERATIONS) {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "too many unsent revisions for one changeset",
@@ -430,7 +431,7 @@ pub fn create_changeset(
         .as_ref()
         .is_some_and(|work| work.reads().is_empty() && work.writes().is_empty())
     {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the unsent work was renounced; there is nothing to package",
@@ -484,7 +485,7 @@ pub fn create_changeset(
         assets: assets.into_iter().collect(),
     };
     let bytes = changeset.encode()?;
-    let (digest, _) = workspace.blobs().publish(&bytes).map_err(|e| PlateError {
+    let (digest, _) = workspace.blobs().publish(&bytes).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "changeset blob could not be stored",
@@ -496,11 +497,11 @@ pub fn create_changeset(
 pub fn read_changeset(
     workspace: &RevisionStore,
     digest: &ContentDigest,
-) -> Result<StoredChangeset, PlateError> {
+) -> Result<StoredChangeset, Refusal> {
     let bytes = workspace
         .blobs()
         .read_capped(digest, MAX_CHANGESET_BYTES)
-        .map_err(|e| PlateError {
+        .map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "changeset blob is not available",
@@ -519,7 +520,7 @@ fn advance_workspace(
     meta: WorkspaceMeta,
     changeset: &Changeset,
     published: &beamcraft_host::revision::RevisionInfo,
-) -> Result<(), PlateError> {
+) -> Result<(), Refusal> {
     if changeset.workspace.to_string() != meta.workspace_id.as_str()
         || changeset.base_revision.to_string() != meta.base_revision.as_str()
     {
@@ -563,7 +564,7 @@ pub fn apply_changeset(
     digest: &ContentDigest,
     trusted_actor: &ActorId,
     hook: &mut dyn CommitHook,
-) -> Result<Applied, PlateError> {
+) -> Result<Applied, Refusal> {
     let StoredChangeset { changeset, digest } = read_changeset(workspace, digest)?;
     let id = as_host(&changeset.changeset_id.to_string())?;
     let receipt = changeset.admit(trusted_actor, published.changeset_claim(&id)?)?;
@@ -610,7 +611,7 @@ pub fn apply_changeset(
         {
             return Ok(replayed(workspace, dir, &changeset, &info, digest));
         }
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head is not the changeset's base",
@@ -679,7 +680,7 @@ pub fn apply_changeset(
         } else {
             published.blobs().read(&layer.digest)
         }
-        .map_err(|e| PlateError {
+        .map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "a changeset layer is not available",
@@ -693,18 +694,15 @@ pub fn apply_changeset(
         entries.push(entry);
     }
     for asset in &changeset.assets {
-        let bytes = workspace
-            .blobs()
-            .read(&asset.digest)
-            .map_err(|e| PlateError {
-                rule_id: None,
-                code: e.code(),
-                message: "a changeset asset is not available",
-            })?;
+        let bytes = workspace.blobs().read(&asset.digest).map_err(|e| Refusal {
+            rule_id: None,
+            code: e.code(),
+            message: "a changeset asset is not available",
+        })?;
         if u64::try_from(bytes.len()).ok() != Some(asset.size) {
             return Err(integrity("a changeset asset has another size"));
         }
-        published.blobs().publish(&bytes).map_err(|e| PlateError {
+        published.blobs().publish(&bytes).map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "a changeset asset could not be stored",
@@ -713,7 +711,7 @@ pub fn apply_changeset(
     let generation = content
         .workspace_generation()
         .checked_add(1)
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "generation exhausted",
@@ -749,7 +747,7 @@ pub fn apply_changeset(
     })
 }
 
-fn reuse() -> PlateError {
+fn reuse() -> Refusal {
     CommandError::new(
         ErrorCode::OpIdReuse,
         "changeset_id",
@@ -762,7 +760,7 @@ fn reuse() -> PlateError {
 fn published_as(
     published: &RevisionStore,
     id: &Uuid7,
-) -> Result<Option<beamcraft_host::revision::RevisionInfo>, PlateError> {
+) -> Result<Option<beamcraft_host::revision::RevisionInfo>, Refusal> {
     match published.query_outcome(id)? {
         beamcraft_host::ledger::Outcome::Committed { sequence, .. } => {
             Ok(Some(published.info_at(sequence)?))

@@ -13,12 +13,13 @@
 //! grants no authority. The routing is derived again for every command from trusted inputs
 //! (the verified manifest and the workspace metadata), never taken from the request.
 
-use crate::plate::{AUTHORED_LAYER, DERIVED_LAYER, PlateError};
 use crate::workspace::peek_meta;
 use beamcraft_engine::scope::{self, WorkspaceScope};
 use beamcraft_host::revision::{Revision, RevisionInfo, RevisionStore};
 use beamcraft_layer_engine::authored::{Author, EditScope, EditTargets, SchemaIdentity};
 use beamcraft_layer_engine::{Control, OpenRequest, Opened};
+use session::Refusal;
+use session::pipeline::{AUTHORED_LAYER, DERIVED_LAYER};
 use std::collections::BTreeSet;
 
 /// How the edit commands of one command run route their authoring.
@@ -29,7 +30,7 @@ pub(crate) enum EditRouting {
     /// Authorized scope: the element routing plus the optional shared grids/levels routing.
     Scoped(Box<ScopedRouting>),
     /// A sectioned store without an authorized workspace scope; the error says why.
-    Unauthorized(PlateError),
+    Unauthorized(Refusal),
 }
 
 /// The routed targets and scopes of one authorized workspace.
@@ -51,7 +52,7 @@ impl EditRouting {
     }
 
     /// The targets and scope of an ordinary element command.
-    pub(crate) fn element(&self) -> Result<(EditTargets, Option<EditScope>), PlateError> {
+    pub(crate) fn element(&self) -> Result<(EditTargets, Option<EditScope>), Refusal> {
         match self {
             EditRouting::Classic => Ok((Self::classic(), None)),
             EditRouting::Scoped(routing) => {
@@ -62,12 +63,12 @@ impl EditRouting {
     }
 
     /// The targets and scope of an explicitly shared grid/level command.
-    pub(crate) fn shared(&self) -> Result<(EditTargets, Option<EditScope>), PlateError> {
+    pub(crate) fn shared(&self) -> Result<(EditTargets, Option<EditScope>), Refusal> {
         match self {
             EditRouting::Classic => Ok((Self::classic(), None)),
             EditRouting::Scoped(routing) => match &routing.shared {
                 Some((targets, scope)) => Ok((targets.clone(), Some(scope.clone()))),
-                None => Err(PlateError {
+                None => Err(Refusal {
                     rule_id: Some(scope::RULE_SHARED_AUTHORIZED),
                     code: beamcraft_model::error::ErrorCode::PermissionDenied,
                     message: "the workspace is not authorized for the shared grids and levels",
@@ -78,16 +79,16 @@ impl EditRouting {
     }
 }
 
-const fn unauthorized(message: &'static str) -> PlateError {
-    PlateError {
+const fn unauthorized(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: Some(scope::RULE_SCOPE_AUTHORIZED),
         code: beamcraft_model::error::ErrorCode::PermissionDenied,
         message,
     }
 }
 
-const fn integrity(message: &'static str) -> PlateError {
-    PlateError {
+const fn integrity(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: beamcraft_model::error::ErrorCode::IntegrityError,
         message,
@@ -182,10 +183,10 @@ pub(crate) fn open_author(
     shared: bool,
     schema: SchemaIdentity,
     control: &Control,
-) -> Result<(Author, Opened), PlateError> {
+) -> Result<(Author, Opened), Refusal> {
     // A store without a revision is still classic: its first command builds the initial
     // base (P01), which no section layout can exist for yet.
-    let routing = match store.head().map_err(PlateError::from)? {
+    let routing = match store.head().map_err(Refusal::from)? {
         Some(head) => routing_of(store, &head),
         None => EditRouting::Classic,
     };
@@ -194,19 +195,17 @@ pub(crate) fn open_author(
     } else {
         routing.element()?
     };
-    Author::open(request, targets, scope, schema, control).map_err(PlateError::from)
+    Author::open(request, targets, scope, schema, control).map_err(Refusal::from)
 }
 
 /// The edit targets of the rebase and compensation materializers: the workspace's own
 /// recorded delta is replayed into its authorized section layer (U19). Without a scope this
 /// is the classic 0.1 pair.
-pub(crate) fn materializer_targets(
-    scope: &Option<WorkspaceScope>,
-) -> Result<EditTargets, PlateError> {
+pub(crate) fn materializer_targets(scope: &Option<WorkspaceScope>) -> Result<EditTargets, Refusal> {
     match scope {
         None => Ok(EditRouting::classic()),
         Some(layout) => {
-            let section = layout.section_layer().map_err(PlateError::from)?;
+            let section = layout.section_layer().map_err(Refusal::from)?;
             Ok(EditTargets {
                 authored: section,
                 derived: DERIVED_LAYER.into(),
@@ -219,13 +218,13 @@ pub(crate) fn materializer_targets(
 /// (`DV-SCOPE-004`): a definition is store-wide shared data, its resource batch carries no
 /// element change for the scope admission to see, and the separately authorized shared
 /// definition scope arrives with the F12 registry work (U20). Classic stores are unchanged.
-pub(crate) fn refuse_definitions(store: &RevisionStore) -> Result<(), PlateError> {
-    let Some(head) = store.head().map_err(PlateError::from)? else {
+pub(crate) fn refuse_definitions(store: &RevisionStore) -> Result<(), Refusal> {
+    let Some(head) = store.head().map_err(Refusal::from)? else {
         return Ok(());
     };
     match routing_of(store, &head) {
         EditRouting::Classic => Ok(()),
-        EditRouting::Scoped(_) | EditRouting::Unauthorized(_) => Err(PlateError {
+        EditRouting::Scoped(_) | EditRouting::Unauthorized(_) => Err(Refusal {
             rule_id: Some(scope::RULE_SHARED_AUTHORIZED),
             code: beamcraft_model::error::ErrorCode::PermissionDenied,
             message: "definitions are shared data and are not writable from a section scope",
@@ -236,8 +235,8 @@ pub(crate) fn refuse_definitions(store: &RevisionStore) -> Result<(), PlateError
 /// Validates a scope a workspace asks to be authorized for against the published head's
 /// layout: the codes must be valid and both the section and the shared layer must already
 /// participate in the store (`DV-SCOPE-001`: explicit authorization against the store).
-pub(crate) fn authorize(layout: &WorkspaceScope, head: &Revision) -> Result<(), PlateError> {
-    layout.validate().map_err(PlateError::from)?;
+pub(crate) fn authorize(layout: &WorkspaceScope, head: &Revision) -> Result<(), Refusal> {
+    layout.validate().map_err(Refusal::from)?;
     let names: BTreeSet<&str> = head
         .manifest()
         .content()
@@ -245,10 +244,10 @@ pub(crate) fn authorize(layout: &WorkspaceScope, head: &Revision) -> Result<(), 
         .iter()
         .map(|e| e.name())
         .collect();
-    let section = layout.section_layer().map_err(PlateError::from)?;
-    let grids = layout.grids_layer().map_err(PlateError::from)?;
+    let section = layout.section_layer().map_err(Refusal::from)?;
+    let grids = layout.grids_layer().map_err(Refusal::from)?;
     if !names.contains(section.as_str()) || !names.contains(grids.as_str()) {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             beamcraft_model::error::ErrorCode::NotFound,
             "the store has no layer for the requested section or zone scope",
         ));

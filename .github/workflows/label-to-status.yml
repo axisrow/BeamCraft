@@ -1,0 +1,66 @@
+name: Label to Project Status
+
+# When the "in progress" label is added to an issue or PR, set Status = "In progress"
+# in the Apibim-com project #1. Requires the PROJECT_TOKEN repository secret
+# (PAT or GitHub App token with Organization "Projects: Read and write").
+
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  set-status:
+    if: github.event.label.name == 'in progress'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set project Status
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          ORG: Apibim-com
+          PROJECT_NUMBER: "1"
+          STATUS_NAME: In progress
+          NODE_ID: ${{ github.event.issue.node_id || github.event.pull_request.node_id }}
+        run: |
+          set -euo pipefail
+
+          DATA=$(gh api graphql -f query='
+            query($org:String!,$num:Int!){
+              organization(login:$org){
+                projectV2(number:$num){
+                  id
+                  field(name:"Status"){
+                    ... on ProjectV2SingleSelectField { id options { id name } }
+                  }
+                }
+              }
+            }' -f org="$ORG" -F num="$PROJECT_NUMBER")
+
+          PROJECT_ID=$(jq -r '.data.organization.projectV2.id' <<<"$DATA")
+          FIELD_ID=$(jq -r '.data.organization.projectV2.field.id' <<<"$DATA")
+          OPTION_ID=$(jq -r --arg n "$STATUS_NAME" \
+            '.data.organization.projectV2.field.options[] | select(.name==$n) | .id' <<<"$DATA")
+
+          if [ -z "$OPTION_ID" ] || [ "$OPTION_ID" = "null" ]; then
+            echo "Status option '$STATUS_NAME' not found in project" >&2
+            exit 1
+          fi
+
+          # Adds the item to the project if missing; returns the existing item otherwise
+          ITEM_ID=$(gh api graphql -f query='
+            mutation($p:ID!,$c:ID!){
+              addProjectV2ItemById(input:{projectId:$p,contentId:$c}){ item { id } }
+            }' -f p="$PROJECT_ID" -f c="$NODE_ID" \
+            --jq '.data.addProjectV2ItemById.item.id')
+
+          gh api graphql -f query='
+            mutation($p:ID!,$i:ID!,$f:ID!,$o:String!){
+              updateProjectV2ItemFieldValue(input:{
+                projectId:$p, itemId:$i, fieldId:$f,
+                value:{ singleSelectOptionId:$o }
+              }){ projectV2Item { id } }
+            }' -f p="$PROJECT_ID" -f i="$ITEM_ID" -f f="$FIELD_ID" -f o="$OPTION_ID"

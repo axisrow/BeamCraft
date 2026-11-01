@@ -418,7 +418,10 @@ impl ElementIndex {
         {
             // A duplicate is a loose independent part. P11 instance creation authors its
             // canonical definition link explicitly; an ordinary duplicate drops that link.
-            if matches!(entry.kind.as_deref(), Some("plate" | "beam" | "column"))
+            if entry
+                .kind
+                .as_deref()
+                .is_some_and(crate::authored::is_part_kind)
                 && link.source_path == entry.path
                 && matches!(
                     link.name.as_str(),

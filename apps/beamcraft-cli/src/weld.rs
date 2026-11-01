@@ -8,7 +8,7 @@
 //! explicitly authored weld properties (type, size, workshop or site, side) and one
 //! `bim:connects` record naming the main part, then the part welded to it. It has no material and
 //! no derived body: no solid weld geometry is promised. The record lives with the weld, so the
-//! parts are only read. The engine ([`beamcraft_engine::weld`]) decides the identity and the
+//! parts are only read. The engine ([`steel::engine::weld`]) decides the identity and the
 //! parts' kinds from the head model; the layer engine re-checks the same rules on the candidate
 //! and the strict verifier on the committed bytes.
 //!
@@ -20,29 +20,32 @@
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    PlateError, RevisionSummary, base_of, check_footprint, control, digest_of, host_uuid,
-    integrity, load_base, mesh_change, number, numbers, open_base, prior_op_with, property,
-    replay_summary, summarize, text,
+    check_footprint, mesh_change, number, numbers, prior_op_with, property, replay_summary, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::quantity::QuantityRecord;
-use beamcraft_engine::transaction::PriorOp;
-use beamcraft_engine::weld::{PartKind, Parts};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Change, Element, Placement as LayerPlacement, Prepare, Shape, Weld, WeldPath, schema_identity,
     validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader, Value};
-use beamcraft_model::command::{
-    CommandError, CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec,
-    WeldSymbol, WeldType,
-};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    RevisionSummary, base_of, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
+};
 use std::collections::BTreeMap;
+use steel::engine::quantity::QuantityRecord;
+use steel::engine::transaction::PriorOp;
+use steel::engine::weld::{PartKind, Parts};
+use steel::model::command::{
+    CreateWeld, WeldContour, WeldGeometry, WeldLocation, WeldSide, WeldSpec, WeldSymbol, WeldType,
+};
 
 /// Identities of one A06 call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -114,7 +117,7 @@ fn weld_of(
     id: ElementId,
     by_path: &BTreeMap<&str, ElementId>,
     prims: &[Prim],
-) -> Result<WeldView, PlateError> {
+) -> Result<WeldView, Refusal> {
     let damaged = || integrity("weld record is not readable");
     let token = |name| property(prim, name).and_then(text).ok_or_else(damaged);
     let spec = WeldSpec {
@@ -154,7 +157,7 @@ fn weld_of(
                 .and_then(number)
                 .ok_or_else(damaged)?;
             Some(WeldSolidView {
-                length_mm: beamcraft_engine::weld::path_length(&path_mm),
+                length_mm: steel::engine::weld::path_length(&path_mm),
                 volume_mm3,
                 geometry: WeldGeometry {
                     path_mm,
@@ -187,7 +190,7 @@ fn weld_of(
     })
 }
 
-fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateError> {
+fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> {
     // The structural rules (A06-V01 among them) run before the welds are read, so a damaged
     // record is refused rather than reported or replayed.
     validate_layers(request.clone(), schema_identity()?, control)?;
@@ -246,7 +249,7 @@ fn created_by(
     sequence: u64,
     id: &ElementId,
     control: &Control,
-) -> Result<Option<WeldView>, PlateError> {
+) -> Result<Option<WeldView>, Refusal> {
     let at = store.open_at(sequence)?;
     let model = model_of(&open_base(&base_of(&at)?)?, control)?;
     let Some(weld) = model.welds.into_iter().find(|w| w.id == *id) else {
@@ -270,7 +273,7 @@ pub(crate) fn is_weld(
     request: &OpenRequest,
     id: &ElementId,
     control: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     Ok(model_of(request, control)?
         .welds
         .iter()
@@ -279,7 +282,7 @@ pub(crate) fn is_weld(
 
 /// The quantity record of a weld solid (A15): the analytic volume with its shape signature; a
 /// weld has no material, so its mass is unknown and that absence is part of the mass inputs.
-fn weld_record(solid: &beamcraft_engine::weld::WeldSolid) -> Result<QuantityRecord, PlateError> {
+fn weld_record(solid: &steel::engine::weld::WeldSolid) -> Result<QuantityRecord, Refusal> {
     let damaged = || integrity("the weld solid signature could not be extended");
     let shape = solid.shape_signature();
     let mass = |tag: &[u8]| {
@@ -307,7 +310,7 @@ fn weld_record(solid: &beamcraft_engine::weld::WeldSolid) -> Result<QuantityReco
 }
 
 /// The welds of the verified head (empty for a store without a revision).
-pub fn welds(store: &RevisionStore) -> Result<Vec<WeldView>, PlateError> {
+pub fn welds(store: &RevisionStore) -> Result<Vec<WeldView>, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -334,7 +337,7 @@ pub fn create_weld(
     context: &WeldContext,
     command: &CreateWeld,
     hook: &mut dyn CommitHook,
-) -> Result<WeldChange, PlateError> {
+) -> Result<WeldChange, Refusal> {
     command.validate_arguments()?;
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
@@ -388,10 +391,7 @@ pub fn create_weld(
     // The optional A15 solid: built by the engine from the same authored inputs, so a segment
     // the kernel refuses refuses the command before anything is written.
     let solid = match &command.geometry {
-        Some(geometry) => Some(beamcraft_engine::weld::solid(
-            command.weld.size_mm,
-            geometry,
-        )?),
+        Some(geometry) => Some(steel::engine::weld::solid(command.weld.size_mm, geometry)?),
         None => None,
     };
     let schema = schema_identity()?;
@@ -400,7 +400,7 @@ pub fn create_weld(
     let mut changes = vec![Change::Create(Element {
         id: command.new_id.to_string(),
         name: command.name.clone(),
-        shape: Shape::Weld(Weld {
+        shape: Shape::weld(Weld {
             connects: [
                 command.main_id.to_string(),
                 command.secondary_id.to_string(),

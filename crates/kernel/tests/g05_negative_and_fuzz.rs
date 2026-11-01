@@ -13,7 +13,7 @@
     clippy::panic
 )]
 
-mod common;
+use crate::common;
 
 use beamcraft_kernel::diagnostic::Stage;
 use beamcraft_kernel::profile::diagnostic::{Defect, ProfileCode, ProfileFailure, ProfileField};

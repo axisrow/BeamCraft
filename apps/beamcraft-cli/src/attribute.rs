@@ -16,14 +16,10 @@
 //! the rebase property mapping refuses them as unsupported deltas.
 
 use crate::assembly::read_prims;
-use crate::plate::{
-    Base, PlateError, RevisionSummary, check_footprint, control, digest_of, host_uuid, integrity,
-    load_base, open_base, prior_op_with, property, replay_summary, summarize, text,
-};
+use crate::plate::{check_footprint, prior_op_with, property, replay_summary, text};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::attribute::{ElementValues, Schema};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     ATTR_SCHEMA_PATH, Change, Prepare, schema_identity, validate_layers,
@@ -36,7 +32,13 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
+};
 use std::collections::BTreeMap;
+use steel::engine::transaction::PriorOp;
 
 /// Identities of one I04 call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -157,7 +159,7 @@ fn presence(value: &Scalar) -> Option<AttrValue> {
 pub(crate) fn attr_model_of(
     request: &OpenRequest,
     control: &Control,
-) -> Result<AttrModel, PlateError> {
+) -> Result<AttrModel, Refusal> {
     // Stored bytes are verified, not interpreted: the structural rules run before the attributes
     // are read, so a damaged graph is refused rather than reported or replayed.
     validate_layers(request.clone(), schema_identity()?, control)?;
@@ -259,7 +261,7 @@ pub(crate) fn attr_model_of(
 }
 
 /// The attribute state of the verified head (empty for a store without a revision).
-pub(crate) fn attr_model(store: &RevisionStore) -> Result<AttrModel, PlateError> {
+pub(crate) fn attr_model(store: &RevisionStore) -> Result<AttrModel, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -275,15 +277,12 @@ pub(crate) fn attr_model(store: &RevisionStore) -> Result<AttrModel, PlateError>
 }
 
 /// Every definition of the head, in name order.
-pub fn definitions(store: &RevisionStore) -> Result<Vec<AttrDef>, PlateError> {
+pub fn definitions(store: &RevisionStore) -> Result<Vec<AttrDef>, Refusal> {
     Ok(attr_model(store)?.schema.iter().cloned().collect())
 }
 
 /// The values of one element, defined and unknown, in name order.
-pub fn values_of(
-    store: &RevisionStore,
-    element: &ElementId,
-) -> Result<Vec<ValueEntry>, PlateError> {
+pub fn values_of(store: &RevisionStore, element: &ElementId) -> Result<Vec<ValueEntry>, Refusal> {
     let model = attr_model(store)?;
     let id_text = element.to_string();
     let mut defined: Vec<ValueEntry> = model
@@ -332,9 +331,9 @@ fn publish(
     context: &AttrContext,
     command_fingerprint: ContentDigest,
     same_state: impl Fn(&AttrModel) -> bool,
-    change: impl FnOnce(&AttrModel) -> Result<(Footprint, Change), PlateError>,
+    change: impl FnOnce(&AttrModel) -> Result<(Footprint, Change), Refusal>,
     hook: &mut dyn CommitHook,
-) -> Result<AttrChange, PlateError> {
+) -> Result<AttrChange, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let before: BTreeMap<String, _> = base
@@ -431,7 +430,7 @@ pub fn define_attribute(
     context: &AttrContext,
     command: &DefineAttribute,
     hook: &mut dyn CommitHook,
-) -> Result<AttrChange, PlateError> {
+) -> Result<AttrChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     publish(
         store,
@@ -457,7 +456,7 @@ pub fn undefine_attribute(
     context: &AttrContext,
     command: &UndefineAttribute,
     hook: &mut dyn CommitHook,
-) -> Result<AttrChange, PlateError> {
+) -> Result<AttrChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     publish(
         store,
@@ -483,7 +482,7 @@ pub fn set_attribute(
     context: &AttrContext,
     command: &SetAttribute,
     hook: &mut dyn CommitHook,
-) -> Result<AttrChange, PlateError> {
+) -> Result<AttrChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     publish(
         store,
@@ -511,7 +510,7 @@ pub fn clear_attribute(
     context: &AttrContext,
     command: &ClearAttribute,
     hook: &mut dyn CommitHook,
-) -> Result<AttrChange, PlateError> {
+) -> Result<AttrChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     publish(
         store,
@@ -539,8 +538,8 @@ pub fn clear_attribute(
 }
 
 /// Parses a `--value` text under a definition's type.
-pub fn parse_value(ty: AttrType, raw: &str) -> Result<AttrValue, PlateError> {
-    let invalid = || PlateError {
+pub fn parse_value(ty: AttrType, raw: &str) -> Result<AttrValue, Refusal> {
+    let invalid = || Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message: "the value does not fit the attribute's type",
@@ -559,6 +558,6 @@ pub fn parse_value(ty: AttrType, raw: &str) -> Result<AttrValue, PlateError> {
 }
 
 /// The definition of one attribute name in the head, for the command layer.
-pub fn definition_of(store: &RevisionStore, name: &str) -> Result<Option<AttrDef>, PlateError> {
+pub fn definition_of(store: &RevisionStore, name: &str) -> Result<Option<AttrDef>, Refusal> {
     Ok(attr_model(store)?.schema.get(name).cloned())
 }

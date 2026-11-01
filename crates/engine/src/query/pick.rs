@@ -337,10 +337,12 @@ pub struct PickResult {
 fn non_finite() -> ViewError {
     ViewError::new(ViewCode::NonFinite)
 }
-fn input() -> ViewError {
+/// Shared with the steel crate.
+pub fn input() -> ViewError {
     ViewError::new(ViewCode::PickInputInvalid)
 }
-fn limit() -> ViewError {
+/// Shared with the steel crate.
+pub fn limit() -> ViewError {
     ViewError::new(ViewCode::PickLimit)
 }
 fn uncertain() -> ViewError {
@@ -1258,43 +1260,6 @@ pub struct MemberSnapAxis {
     pub element_id: ElementId,
     /// Authored reference points, transformed to world millimetres.
     pub points_mm: Vec<[f64; 3]>,
-}
-
-/// Compute reference axes from evaluated records, without inferring them from a section mesh.
-pub fn member_snap_axes(
-    records: &[crate::query::committed::MemberRecord],
-) -> Result<Vec<MemberSnapAxis>, ViewError> {
-    if records.len() > MAX_SCANNED_ELEMENTS {
-        return Err(limit());
-    }
-    let mut budget = 1_048_576usize;
-    for record in records {
-        let count = record.authored.axis_points_mm.len();
-        if !(2..=beamcraft_model::limits::CONTOUR_POINT_CAP).contains(&count) {
-            return Err(input());
-        }
-        budget = budget.checked_sub(count).ok_or_else(limit)?;
-    }
-    Ok(records
-        .iter()
-        .map(|record| {
-            let placement = &record.authored.placement;
-            MemberSnapAxis {
-                element_id: record.authored.id,
-                points_mm: record
-                    .authored
-                    .axis_points_mm
-                    .iter()
-                    .map(|p| {
-                        add(
-                            rotate_vector(*p, placement.orientation_xyzw),
-                            placement.translation_mm,
-                        )
-                    })
-                    .collect(),
-            }
-        })
-        .collect())
 }
 
 /// Source gates are independent of point kinds. Grid guides belong to reference geometry;

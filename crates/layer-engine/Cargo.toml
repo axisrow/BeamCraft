@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 beamcraft-model.workspace = true
+steel = { path = "../steel", version = "0.0.1" }
 openusd = { version = "=0.8.0", default-features = false }
 
 [lints]

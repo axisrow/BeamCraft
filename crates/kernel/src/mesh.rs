@@ -29,11 +29,16 @@ pub const PLATE_TRIANGLE_FACES: [u16; 12] = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
 /// Sealed standard plate mesh; counts and memory use are independent of input.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlateMesh {
-    pub(crate) vertices: [Point3; 8],
-    pub(crate) face_ids: &'static [&'static str; 6],
-    pub(crate) normals: [Vec3; 6],
-    pub(crate) blob: [u8; 392],
-    pub(crate) digest: ContentDigest,
+    /// The vertices.
+    pub vertices: [Point3; 8],
+    /// The face ids.
+    pub face_ids: &'static [&'static str; 6],
+    /// The normals.
+    pub normals: [Vec3; 6],
+    /// The blob.
+    pub blob: [u8; 392],
+    /// The digest.
+    pub digest: ContentDigest,
 }
 
 impl PlateMesh {
@@ -75,7 +80,8 @@ impl PlateMesh {
     }
 }
 
-pub(crate) fn self_check(
+/// Shared with the steel crate.
+pub fn self_check(
     vertices: &[Point3; 8],
     triangles: &[[u32; 3]; 12],
     face_normals: &[Vec3; 6],
@@ -157,7 +163,8 @@ fn edges(triangles: &[[u32; 3]; 12]) -> impl Iterator<Item = (u32, u32)> + '_ {
         .flat_map(|[a, b, c]| [(*a, *b), (*b, *c), (*c, *a)])
 }
 
-pub(crate) fn encode(vertices: &[Point3; 8]) -> Result<([u8; 392], ContentDigest), Failure> {
+/// Shared with the steel crate.
+pub fn encode(vertices: &[Point3; 8]) -> Result<([u8; 392], ContentDigest), Failure> {
     let fail = || Failure::one(Code::SelfCheckFailed, Field::Mesh, Stage::Build);
     let mut blob = [0u8; 392];
     let header = *b"BCMESH01";

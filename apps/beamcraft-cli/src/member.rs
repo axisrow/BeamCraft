@@ -13,28 +13,31 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    Base, PlateError, Recorded, RevisionSummary, check_footprint, control, decode, digest_of,
-    evaluate_decoded, host_uuid, load_base, member_record, mesh_change, open_base, prior_op_with,
-    replay_summary, summarize,
+    Recorded, check_footprint, decode, evaluate_decoded, member_record, mesh_change, prior_op_with,
+    replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{
-    AuthoredMember, MemberAdmission, admit_create_member, admit_create_polybeam,
-};
-use beamcraft_engine::query::committed::{MemberRecord, ids};
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, ExpectedBase, Revision, RevisionStore, Uuid7,
 };
 use beamcraft_layer_engine::OpenRequest;
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Change, Element, MemberKind as LayerKind, Placement as LayerPlacement, Prepare, Shape,
-    schema_identity,
+    Change, Element, MemberKind as LayerKind, MemberShape, Placement as LayerPlacement, Prepare,
+    Shape, schema_identity,
 };
-use beamcraft_model::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, control, digest_of, host_uuid, load_base, open_base, summarize,
+};
+use steel::engine::committed::{MemberRecord, ids};
+use steel::engine::member::{
+    AuthoredMember, MemberAdmission, admit_create_member, admit_create_polybeam,
+};
+use steel::model::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 
 /// Inputs of one `create_member` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -84,7 +87,7 @@ pub struct CreateCurvedBeamRequest {
     /// Workspace of a store that has no revision yet. Ignored otherwise.
     pub workspace: WorkspaceId,
     /// The command.
-    pub command: beamcraft_model::command::CreateCurvedBeam,
+    pub command: steel::model::command::CreateCurvedBeam,
 }
 
 /// Result of `create_member` and `create_polybeam`.
@@ -107,7 +110,7 @@ pub struct CreatedMember {
 fn replay_fingerprint(
     committed: &AuthoredMember,
     straight: bool,
-) -> Result<ContentDigest, PlateError> {
+) -> Result<ContentDigest, Refusal> {
     let command = if straight {
         committed.to_command().map(|c| c.content_fingerprint())
     } else {
@@ -131,7 +134,7 @@ struct MemberBase {
 }
 
 impl MemberBase {
-    fn open(base: Base) -> Result<(Self, OpenRequest), PlateError> {
+    fn open(base: Base) -> Result<(Self, OpenRequest), Refusal> {
         let base_request = open_base(&base)?;
         let Base {
             project,
@@ -198,7 +201,7 @@ pub fn create_member(
     store: &RevisionStore,
     request: &CreateMemberRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedMember, PlateError> {
+) -> Result<CreatedMember, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     let (member_base, base_request) = MemberBase::open(base)?;
@@ -251,7 +254,7 @@ pub fn create_polybeam(
     store: &RevisionStore,
     request: &CreatePolybeamRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedMember, PlateError> {
+) -> Result<CreatedMember, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     let (member_base, base_request) = MemberBase::open(base)?;
@@ -301,11 +304,11 @@ pub fn create_curved_beam(
     store: &RevisionStore,
     request: &CreateCurvedBeamRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedMember, PlateError> {
+) -> Result<CreatedMember, Refusal> {
     request.command.validate_arguments()?;
     let fingerprint = request.command.content_fingerprint()?;
     let op_host = host_uuid(&request.op_id.to_string())?;
-    let replay = || -> Result<Option<CreatedMember>, PlateError> {
+    let replay = || -> Result<Option<CreatedMember>, Refusal> {
         match store.query_outcome(&op_host)? {
             beamcraft_host::ledger::Outcome::Committed {
                 sequence,
@@ -318,12 +321,13 @@ pub fn create_curved_beam(
                     || revision.manifest().content().revision() != &accepted_revision
                     || revision.manifest().content().op() != &op_host
                 {
-                    return Err(crate::plate::integrity(
+                    return Err(session::pipeline::integrity(
                         "accepted revision manifest mismatch",
                     ));
                 }
-                let evidence = crate::command_evidence::read(&revision)?
-                    .ok_or_else(|| crate::plate::integrity("accepted request evidence missing"))?;
+                let evidence = crate::command_evidence::read(&revision)?.ok_or_else(|| {
+                    session::pipeline::integrity("accepted request evidence missing")
+                })?;
                 if evidence.fingerprint != fingerprint {
                     return Err(beamcraft_model::command::CommandError::new(
                         beamcraft_model::error::ErrorCode::OpIdReuse,
@@ -337,7 +341,9 @@ pub fn create_curved_beam(
                     .members
                     .into_iter()
                     .find(|m| m.authored.id == request.command.member.new_id)
-                    .ok_or_else(|| crate::plate::integrity("accepted curved member missing"))?;
+                    .ok_or_else(|| {
+                        session::pipeline::integrity("accepted curved member missing")
+                    })?;
                 Ok(Some(CreatedMember {
                     replayed: true,
                     member,
@@ -373,13 +379,13 @@ pub fn create_curved_beam(
     };
     let mut existing = ids(&head_plates);
     existing.extend(head_members.iter().map(|m| m.authored.id));
-    let outcome = beamcraft_engine::member::create_curved_beam(
+    let outcome = steel::engine::member::create_curved_beam(
         &request.command,
         &|id| existing.contains(id),
         &profile_lookup(&definitions),
         &material_lookup(&definitions),
     )?;
-    let admission = MemberAdmission::Apply(Box::new(beamcraft_engine::member::MemberTransaction {
+    let admission = MemberAdmission::Apply(Box::new(steel::engine::member::MemberTransaction {
         op_id: request.op_id,
         outcome,
     }));
@@ -412,14 +418,16 @@ fn finish_member(
     create: MemberCreate<'_>,
     op_host: Uuid7,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedMember, PlateError> {
+) -> Result<CreatedMember, Refusal> {
     let transaction = match admission {
         MemberAdmission::Replay => {
             let member = head_members
                 .into_iter()
                 .find(|r| r.authored.id == new_id_of(&create))
                 .ok_or_else(|| {
-                    crate::plate::integrity("replayed element is absent from the head revision")
+                    session::pipeline::integrity(
+                        "replayed element is absent from the head revision",
+                    )
                 })?;
             return Ok(CreatedMember {
                 replayed: true,
@@ -456,7 +464,7 @@ fn finish_member(
                 Change::Create(Element {
                     id: outcome.authored.id.to_string(),
                     name: outcome.authored.name.clone(),
-                    shape: Shape::Member {
+                    shape: Shape::member(MemberShape {
                         kind: match outcome.authored.kind {
                             MemberKind::Beam => LayerKind::Beam,
                             MemberKind::Column => LayerKind::Column,
@@ -467,7 +475,7 @@ fn finish_member(
                         roll_rad: outcome.authored.roll_rad,
                         placement: outcome.authored.section_placement,
                         cuts: Vec::new(),
-                    },
+                    }),
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,
                         orientation_xyzw: [qx, qy, qz, qw],

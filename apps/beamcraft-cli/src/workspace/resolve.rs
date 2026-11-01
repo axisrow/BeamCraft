@@ -12,10 +12,7 @@
 //! outcome exactly once, and the same identity with another payload is refused.
 
 use super::{WorkspaceMeta, WorkspaceState, rebase_receipt::RevisionPin, unusable};
-use crate::{
-    command_evidence as evidence,
-    plate::{PlateError, RevisionSummary, host_uuid, integrity, summarize},
-};
+use crate::command_evidence as evidence;
 use beamcraft_host::{
     ledger::Outcome,
     revision::{
@@ -28,16 +25,18 @@ use beamcraft_model::{
     error::ErrorCode,
     id::OpId,
 };
+use session::Refusal;
+use session::pipeline::{RevisionSummary, host_uuid, integrity, summarize};
 use std::path::Path;
 
 const MAGIC: &str = "beamcraft-workspace-discard 1";
 
-fn bad() -> PlateError {
+fn bad() -> Refusal {
     integrity("discard receipt is not usable")
 }
 
-fn reuse() -> PlateError {
-    PlateError::new(
+fn reuse() -> Refusal {
+    Refusal::new(
         ErrorCode::OpIdReuse,
         "resolve identity is bound to another request",
     )
@@ -88,7 +87,7 @@ pub struct DiscardReceipt {
 }
 
 impl DiscardReceipt {
-    fn encode(&self) -> Result<Vec<u8>, PlateError> {
+    fn encode(&self) -> Result<Vec<u8>, Refusal> {
         if self.op_id == self.discarded || self.at == 0 {
             return Err(bad());
         }
@@ -112,7 +111,7 @@ impl DiscardReceipt {
 
     /// Strict bounded parser: closed keys, full identities and a byte-identical canonical
     /// re-encoding. A parsed receipt alone is not provenance proof.
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, PlateError> {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, Refusal> {
         if bytes.len() as u64 > MAX_OPERATION_EVIDENCE_BYTES {
             return Err(bad());
         }
@@ -121,7 +120,7 @@ impl DiscardReceipt {
         if lines.next() != Some(MAGIC) {
             return Err(bad());
         }
-        let mut field = |key: &str| -> Result<&str, PlateError> {
+        let mut field = |key: &str| -> Result<&str, Refusal> {
             lines
                 .next()
                 .and_then(|line| line.strip_prefix(key))
@@ -162,10 +161,7 @@ impl DiscardReceipt {
     }
 }
 
-fn fingerprint(
-    request: &ResolveRequest,
-    meta: &WorkspaceMeta,
-) -> Result<ContentDigest, PlateError> {
+fn fingerprint(request: &ResolveRequest, meta: &WorkspaceMeta) -> Result<ContentDigest, Refusal> {
     // Bind caller arguments and immutable context. The receipt separately binds the actual pins.
     let text = format!(
         "beamcraft-resolve-call 1\nworkspace {}\nactor {}\nop {}\ndiscarded {}\nexpected {}\n",
@@ -179,12 +175,12 @@ fn replay(
     workspace: &RevisionStore,
     meta: &WorkspaceMeta,
     request: &ResolveRequest,
-) -> Result<Option<Resolved>, PlateError> {
+) -> Result<Option<Resolved>, Refusal> {
     let op = host_uuid(&request.op_id.to_string())?;
     let sequence = match workspace.query_outcome(&op)? {
         Outcome::Committed { sequence, .. } => Some(sequence),
         Outcome::Unknown => Some(workspace.sequence_of(&op)?.ok_or_else(|| {
-            PlateError::new(
+            Refusal::new(
                 ErrorCode::OutcomeUnknown,
                 "resolve outcome is unknown; recover the revision store",
             )
@@ -255,11 +251,11 @@ pub fn resolve_workspace(
     dir: &Path,
     request: &ResolveRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Resolved, PlateError> {
+) -> Result<Resolved, Refusal> {
     let state = WorkspaceState::open(dir)?;
     let meta = state.meta().cloned().ok_or_else(unusable)?;
     if request.actor != meta.user_id {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::PermissionDenied,
             "resolve actor does not own the workspace",
         ));
@@ -272,13 +268,13 @@ pub fn resolve_workspace(
     let head = workspace.open()?;
     let info = head.info();
     if info.revision().as_str() != request.expected_draft.as_str() {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::BaseRevisionMismatch,
             "the draft head moved since the resolution was planned",
         ));
     }
     if info.sequence() <= meta.synced_sequence {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "there is no unsent work to renounce",
         ));
@@ -289,14 +285,14 @@ pub fn resolve_workspace(
         .iter()
         .rposition(|operation| operation.op_id == request.discarded)
         .ok_or_else(|| {
-            PlateError::new(
+            Refusal::new(
                 ErrorCode::InvalidArgument,
                 "the named operation is not unsent work of this draft",
             )
         })?;
     let at = meta.synced_sequence.saturating_add(position as u64 + 1);
     if meta.rebase_sequence == at {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "a rebase candidate is not an editable command",
         ));
@@ -310,7 +306,7 @@ pub fn resolve_workspace(
         let revision = workspace.open_at(sequence)?;
         let Some(bytes) = revision.operation_evidence()? else {
             if sequence >= at {
-                return Err(PlateError::new(
+                return Err(Refusal::new(
                     ErrorCode::InvalidArgument,
                     "the renounced range contains a revision without command evidence; redo or recommit it first",
                 ));
@@ -320,7 +316,7 @@ pub fn resolve_workspace(
         if bytes.starts_with(b"beamcraft-workspace-discard ")
             && DiscardReceipt::decode(&bytes)?.at <= at
         {
-            return Err(PlateError::new(
+            return Err(Refusal::new(
                 ErrorCode::InvalidArgument,
                 "the named operation is already renounced by a recorded resolution",
             ));
@@ -328,13 +324,13 @@ pub fn resolve_workspace(
     }
     let discarded = workspace.open_at(at)?;
     let captured = evidence::read(&discarded)?.ok_or_else(|| {
-        PlateError::new(
+        Refusal::new(
             ErrorCode::InvalidArgument,
             "the named operation carries no command evidence",
         )
     })?;
     if captured.op_id != request.discarded {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "the named operation is not an editable command of this draft",
         ));
@@ -353,7 +349,7 @@ pub fn resolve_workspace(
     let (digest, _) = workspace
         .blobs()
         .publish(&bytes)
-        .map_err(|e| PlateError::new(e.code(), "discard receipt blob could not be stored"))?;
+        .map_err(|e| Refusal::new(e.code(), "discard receipt blob could not be stored"))?;
     let pin = EvidencePin::new(digest, bytes.len() as u64)?;
     let restored = workspace.open_at(at.saturating_sub(1))?;
     // The resolution revision is an undo boundary: the marker lands in the undo log before the
@@ -374,7 +370,7 @@ pub fn resolve_workspace(
     let generation = content
         .workspace_generation()
         .checked_add(1)
-        .ok_or_else(|| PlateError::new(ErrorCode::LimitExceeded, "generation exhausted"))?;
+        .ok_or_else(|| Refusal::new(ErrorCode::LimitExceeded, "generation exhausted"))?;
     let next = RevisionDraft {
         project: content.project().clone(),
         workspace: content.workspace().clone(),

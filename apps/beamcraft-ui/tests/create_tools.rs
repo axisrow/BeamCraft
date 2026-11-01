@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-mod support;
+use crate::support;
 
 fn cli() -> Option<PathBuf> {
     support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))
@@ -140,8 +140,7 @@ fn a_duplicate_model_name_explains_how_to_recover() {
 }
 
 #[test]
-#[ignore = "the window still runs a removed CLI command, see #763"]
-fn automatic_new_model_names_use_the_same_unique_creation_as_the_cli() {
+fn automatic_new_model_names_are_the_ones_the_unique_creation_takes() {
     let Some(cli) = cli() else { return };
     let stores = Stores::new();
     let config = stores.root.join("config");
@@ -153,18 +152,8 @@ fn automatic_new_model_names_use_the_same_unique_creation_as_the_cli() {
         None,
     );
     for expected in ["New Model", "New Model 1", "New Model 2"] {
-        let out = Command::new(&cli)
-            .args([
-                "suggest-project-name",
-                "--parent",
-                stores.root.to_str().unwrap(),
-                "--name",
-                "New Model",
-            ])
-            .output()
-            .unwrap();
         assert_eq!(
-            beamcraft_ui::start::parse_project_name(out.status.code(), &out.stdout).unwrap(),
+            session::project::next_project_name(&stores.root, "New Model").unwrap(),
             expected
         );
         let out = Command::new(&cli).args(&args).output().unwrap();

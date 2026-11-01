@@ -12,7 +12,6 @@ use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, id_error, num, revision_json};
 use beamcraft_cli::coordination;
 use beamcraft_cli::coordination::{Applied, ConnectionStatus, PinRequest, ResolvedElement};
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -23,14 +22,15 @@ use beamcraft_model::coordination::{SectionRecord, ZoneRecord};
 use beamcraft_model::descriptor::{self, ConnectionPlacement, ProjectDescriptor, ScopeSelection};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ConnectionId, ProjectId, RevisionId, SectionId, ZoneId};
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -120,7 +120,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -133,7 +133,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     };
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",

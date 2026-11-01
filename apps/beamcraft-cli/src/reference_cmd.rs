@@ -16,7 +16,6 @@ use crate::plate_cmd::{
     Run, footprint_json, id_error, invalid, num, revision_json, translation, triple,
 };
 use crate::report::report;
-use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::reference::{
     AttachRequest, Attached, Edited, Ids, MeasuredReference, ReferenceInspection, Wrapper,
     attach_reference, correct_wrapper_units, inspect_references, measure_references, move_wrapper,
@@ -36,6 +35,7 @@ use beamcraft_model::reference::{
     CorrectReferenceUnits, ForeignTarget, MoveReference, UnitsInterpretation, UpAxis, WriteForeign,
     check_source_path,
 };
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
@@ -104,12 +104,12 @@ fn run(args: &[OsString]) -> Run<Json> {
         let source = options
             .get("--source")
             .ok_or_else(|| invalid("--source is required"))?;
-        check_source_path(source).map_err(PlateError::from)?;
+        check_source_path(source).map_err(Refusal::from)?;
     }
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -129,7 +129,7 @@ fn run(args: &[OsString]) -> Run<Json> {
 fn ids(options: &BTreeMap<&str, &str>) -> Run<Ids> {
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -185,7 +185,7 @@ fn attach_command(store: &RevisionStore, options: &BTreeMap<&str, &str>) -> Run<
         Some(text) => ElementId::parse(text).map_err(id_error)?,
         None => {
             let mut source = IdSource::system();
-            ElementId::from_uuid(source.next_id().map_err(|_| PlateError {
+            ElementId::from_uuid(source.next_id().map_err(|_| Refusal {
                 rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",

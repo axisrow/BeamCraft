@@ -10,16 +10,26 @@
 //! The start page lists the recently opened projects, the projects of a folder, and creates a new
 //! project from a template. Shared (cloud) projects are not available yet; the tab says so.
 //!
-//! Everything here runs the same CLI commands a user types (`show-settings`, `set-settings`,
-//! `list-environment`, `list-recent`, `add-recent`, `list-project`, `create-project`), each in a
-//! separate process on a worker thread; replies are read with `crate::tools::rejection` so a
-//! refusal is shown with the CLI's code and message. Nothing here reads a store directly.
+//! The settings, the environments, the recent list, the projects of a folder and the next free
+//! project name come from the `session` crate, called in this process on a worker thread. Creating
+//! a project is a command: it runs `create-project` in a separate process, and its reply is read
+//! with `crate::tools::rejection` so a refusal is shown with the CLI's code and message.
 
 use crate::command;
 use crate::stats::Stats;
 use crate::theme::{self, Icon, Kind, Palette};
 use crate::tools::{ToolError, decode, rejection, text};
+use beamcraft_host::ids::IdSource;
 use beamcraft_json::Json;
+use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::Uuid7;
+use session::Refusal;
+use session::environment::{
+    EnvironmentEntry, EnvironmentState, environment_folders, list_environments,
+};
+use session::project::{ProjectInfo, ProjectState, list_projects, next_project_name};
+use session::recent::{RecentError, recent_projects, remember_project};
+use session::settings::{self, Settings, SettingsError};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -43,7 +53,7 @@ pub struct Profile {
     pub email: String,
 }
 
-/// The user's settings as `show-settings` reports them.
+/// The user's settings as the page shows them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SettingsView {
     /// Appearance, with the system used for older settings replies.
@@ -60,7 +70,7 @@ pub struct SettingsView {
     pub models_dir: Option<String>,
 }
 
-/// One environment as `list-environment` reports it.
+/// One environment as the page lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentView {
     /// Its id, `None` when it does not read.
@@ -90,7 +100,7 @@ impl EnvironmentView {
     }
 }
 
-/// One project folder as `list-project`, `list-recent` or `create-project` report it.
+/// One project folder as the page lists it, or as `create-project` reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectView {
     /// The folder name.
@@ -135,79 +145,166 @@ fn reply(exit_code: Option<i32>, stdout: &[u8], outcome: &str) -> Result<Json, T
     Ok(reply)
 }
 
-fn optional_text(json: &Json, key: &str) -> Result<Option<String>, ToolError> {
-    match json.get(key).map_err(|_| unreadable())? {
-        Json::Null => Ok(None),
-        value => Ok(Some(value.string().map_err(|_| unreadable())?.to_owned())),
-    }
-}
-
 fn optional_uint(json: &Json, key: &str) -> Option<u64> {
     json.get(key).ok().and_then(|v| v.unsigned().ok())
 }
 
-/// Reads the reply of `show-settings` or `set-settings`.
-pub fn parse_settings(exit_code: Option<i32>, stdout: &[u8]) -> Result<SettingsView, ToolError> {
-    let reply = match reply(exit_code, stdout, "settings") {
-        Err(e) if e.code == "UNREADABLE_REPLY" => reply(exit_code, stdout, "settings_saved")?,
-        other => other?,
-    };
-    let settings = reply.get("settings").map_err(|_| unreadable())?;
-    let profile = match settings.get("profile").map_err(|_| unreadable())? {
-        Json::Null => None,
-        p => Some(Profile {
-            actor_id: text(p, "actor_id").ok_or_else(unreadable)?,
-            name: text(p, "name").ok_or_else(unreadable)?,
-            email: text(p, "email").ok_or_else(unreadable)?,
-        }),
-    };
-    Ok(SettingsView {
-        theme: match settings.get("theme") {
-            Ok(value) => crate::appearance::parse(value.string().map_err(|_| unreadable())?)?,
-            Err(_) => egui::ThemePreference::System,
-        },
-        config_dir: text(&reply, "config_dir").ok_or_else(unreadable)?,
-        profile,
-        environment: optional_text(settings, "environment")?,
-        skip_launcher: settings
-            .get("skip_launcher")
-            .and_then(Json::boolean)
-            .map_err(|_| unreadable())?,
-        models_dir: optional_text(settings, "models_dir")?,
+/// A typed failure of the platform crate as the page shows it: the stable code and its message.
+fn failure(code: ErrorCode, message: &str) -> ToolError {
+    ToolError::local(code.as_str(), message)
+}
+
+fn settings_failure(error: SettingsError) -> ToolError {
+    failure(error.code, error.message)
+}
+
+fn refusal(error: Refusal) -> ToolError {
+    failure(error.code, error.message)
+}
+
+fn recent_failure(error: RecentError) -> ToolError {
+    failure(error.code(), error.message())
+}
+
+/// The configuration directory: the one named, else the current user's.
+fn resolve_config_dir(config_dir: Option<&Path>) -> Result<PathBuf, ToolError> {
+    config_dir
+        .map(Path::to_path_buf)
+        .or_else(settings::default_dir)
+        .ok_or_else(|| failure(ErrorCode::NotFound, "no configuration directory is known"))
+}
+
+fn fresh_actor() -> Result<Uuid7, SettingsError> {
+    IdSource::system().next_id().map_err(|_| SettingsError {
+        code: ErrorCode::BackendUnavailable,
+        message: "no identity could be generated",
     })
 }
 
-/// Reads the reply of `list-environment`.
-pub fn parse_environments(
-    exit_code: Option<i32>,
-    stdout: &[u8],
-) -> Result<Vec<EnvironmentView>, ToolError> {
-    let reply = reply(exit_code, stdout, "environments")?;
-    let list = reply
-        .get("environments")
-        .and_then(Json::array)
-        .map_err(|_| unreadable())?;
-    list.iter()
-        .map(|e| {
-            Ok(EnvironmentView {
-                id: optional_text(e, "id")?,
-                title: optional_text(e, "title")?,
-                origin: text(e, "origin").ok_or_else(unreadable)?,
-                shadowed: e
-                    .get("shadowed")
-                    .and_then(Json::boolean)
-                    .map_err(|_| unreadable())?,
-                refused: match e.get("refused").map_err(|_| unreadable())? {
-                    Json::Null => None,
-                    r => Some(format!(
-                        "{}: {}",
-                        text(r, "code").unwrap_or_default(),
-                        text(r, "message").unwrap_or_default()
-                    )),
-                },
-            })
+fn settings_view(dir: &Path, settings: &Settings) -> SettingsView {
+    SettingsView {
+        theme: crate::appearance::egui_theme(settings.theme),
+        config_dir: dir.to_string_lossy().into_owned(),
+        profile: settings.profile.as_ref().map(|p| Profile {
+            actor_id: p.actor.to_string(),
+            name: p.name.clone(),
+            email: p.email.clone(),
+        }),
+        environment: settings.environment.clone(),
+        skip_launcher: settings.skip_launcher,
+        models_dir: settings
+            .models_dir
+            .as_ref()
+            .map(|d| d.to_string_lossy().into_owned()),
+    }
+}
+
+fn environment_views(entries: &[EnvironmentEntry]) -> Vec<EnvironmentView> {
+    entries
+        .iter()
+        .map(|entry| match &entry.state {
+            EnvironmentState::Ready {
+                id,
+                title,
+                shadowed,
+            } => EnvironmentView {
+                id: Some(id.clone()),
+                title: title.clone(),
+                origin: entry.origin.to_owned(),
+                shadowed: *shadowed,
+                refused: None,
+            },
+            EnvironmentState::Refused(why) => EnvironmentView {
+                id: None,
+                title: None,
+                origin: entry.origin.to_owned(),
+                shadowed: false,
+                refused: Some(format!("{}: {}", why.code.as_str(), why.message)),
+            },
         })
         .collect()
+}
+
+fn project_view(info: &ProjectInfo) -> ProjectView {
+    let (state, created_ms, modified_ms) = match &info.state {
+        ProjectState::Ready {
+            created_ms,
+            modified_ms,
+            ..
+        } => ("ready".to_owned(), Some(*created_ms), Some(*modified_ms)),
+        ProjectState::Empty => ("empty".to_owned(), None, None),
+        ProjectState::Missing => ("missing".to_owned(), None, None),
+        ProjectState::Unreadable(code) => (code.as_str().to_owned(), None, None),
+    };
+    ProjectView {
+        name: info.name.clone(),
+        path: info.path.to_string_lossy().into_owned(),
+        state,
+        created_ms,
+        modified_ms,
+    }
+}
+
+fn recent_views(dir: &Path) -> Result<Vec<ProjectView>, ToolError> {
+    let recent = recent_projects(dir).map_err(recent_failure)?;
+    Ok(recent.iter().map(|r| project_view(&r.project)).collect())
+}
+
+/// Everything the page shows at start: the settings, the environments and the recent projects.
+fn load_state(
+    config_dir: Option<&Path>,
+) -> Result<(SettingsView, Vec<EnvironmentView>, Vec<ProjectView>), ToolError> {
+    let dir = resolve_config_dir(config_dir)?;
+    let settings = Settings::load(&dir).map_err(settings_failure)?;
+    let (folders, _) = environment_folders(Some(&dir));
+    let environments = environment_views(&list_environments(&folders));
+    Ok((
+        settings_view(&dir, &settings),
+        environments,
+        recent_views(&dir)?,
+    ))
+}
+
+/// Saves the start window's choices and returns the settings and the recent projects.
+fn save_choices(
+    config_dir: Option<&Path>,
+    name: &str,
+    email: &str,
+    environment: &str,
+    skip_launcher: bool,
+) -> Result<(SettingsView, Vec<ProjectView>), ToolError> {
+    let dir = resolve_config_dir(config_dir)?;
+    let settings = Settings::update(&dir, |settings| {
+        settings.set_profile(name, email, fresh_actor)?;
+        settings.environment = Some(environment.to_owned());
+        settings.skip_launcher = skip_launcher;
+        Ok(true)
+    })
+    .map_err(settings_failure)?;
+    Ok((settings_view(&dir, &settings), recent_views(&dir)?))
+}
+
+/// Remembers `folder` as the models folder, then lists the projects in it. The folder is saved
+/// first and a failure to save it does not stop the listing.
+fn list_folder_projects(
+    config_dir: Option<&Path>,
+    folder: &str,
+) -> Result<Vec<ProjectView>, ToolError> {
+    if let Ok(dir) = resolve_config_dir(config_dir) {
+        let _ = Settings::update(&dir, |settings| {
+            settings.models_dir = Some(PathBuf::from(folder));
+            Ok(true)
+        });
+    }
+    let (projects, _truncated) = list_projects(Path::new(folder)).map_err(refusal)?;
+    Ok(projects.iter().map(project_view).collect())
+}
+
+/// Remembers the project at `path` as opened now and returns it.
+fn remember(config_dir: Option<&Path>, path: &str) -> Result<ProjectView, ToolError> {
+    let dir = resolve_config_dir(config_dir)?;
+    let info = remember_project(&dir, Path::new(path), now_ms()).map_err(recent_failure)?;
+    Ok(project_view(&info))
 }
 
 fn project_of(json: &Json) -> Result<ProjectView, ToolError> {
@@ -224,42 +321,7 @@ fn project_of(json: &Json) -> Result<ProjectView, ToolError> {
     })
 }
 
-/// Reads the reply of `list-project`.
-pub fn parse_projects(
-    exit_code: Option<i32>,
-    stdout: &[u8],
-) -> Result<Vec<ProjectView>, ToolError> {
-    let reply = reply(exit_code, stdout, "projects")?;
-    reply
-        .get("projects")
-        .and_then(Json::array)
-        .map_err(|_| unreadable())?
-        .iter()
-        .map(project_of)
-        .collect()
-}
-
-/// Reads the reply of `list-recent`.
-pub fn parse_recent(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<ProjectView>, ToolError> {
-    let reply = reply(exit_code, stdout, "recent")?;
-    reply
-        .get("recent")
-        .and_then(Json::array)
-        .map_err(|_| unreadable())?
-        .iter()
-        .map(|r| project_of(r.get("project").map_err(|_| unreadable())?))
-        .collect()
-}
-
-/// Reads a bounded read-only project-name suggestion.
-pub fn parse_project_name(exit_code: Option<i32>, stdout: &[u8]) -> Result<String, ToolError> {
-    let reply = reply(exit_code, stdout, "project_name")?;
-    text(&reply, "name")
-        .filter(|name| !name.is_empty() && name.len() <= 256)
-        .ok_or_else(unreadable)
-}
-
-/// Reads the reply of `create-project` or `add-recent`: the project.
+/// Reads the reply of `create-project`: the project.
 pub fn parse_project(
     exit_code: Option<i32>,
     stdout: &[u8],
@@ -280,28 +342,6 @@ fn with_config(mut args: Vec<String>, config_dir: Option<&Path>) -> Vec<String> 
         args.push(dir.to_string_lossy().into_owned());
     }
     args
-}
-
-/// The `set-settings` arguments that save the start window's choices.
-pub fn settings_set_args(
-    config_dir: Option<&Path>,
-    name: &str,
-    email: &str,
-    environment: &str,
-    skip_launcher: bool,
-) -> Vec<String> {
-    let args = vec![
-        "set-settings".to_owned(),
-        "--name".into(),
-        name.to_owned(),
-        "--email".into(),
-        email.to_owned(),
-        "--environment".into(),
-        environment.to_owned(),
-        "--skip-launcher".into(),
-        skip_launcher.to_string(),
-    ];
-    with_config(args, config_dir)
 }
 
 /// The `create-project` arguments of the Create tab.
@@ -476,14 +516,20 @@ impl StartPage {
         self.settings.environment.as_deref()
     }
 
+    /// Runs a command of the CLI (a separate process) on a worker thread.
     fn spawn(&mut self, work: impl FnOnce(&Path, &Stats) -> Reply + Send + 'static) {
-        let (tx, rx) = std::sync::mpsc::channel();
         let cli = self.cli.clone();
         let stats = Arc::clone(&self.stats);
+        self.run_worker(move || work(&cli, &stats));
+    }
+
+    /// Runs `work` on a worker thread; the page polls for its reply.
+    fn run_worker(&mut self, work: impl FnOnce() -> Reply + Send + 'static) {
+        let (tx, rx) = std::sync::mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-start".into())
             .spawn(move || {
-                let _ = tx.send(work(&cli, &stats));
+                let _ = tx.send(work());
             });
         if spawned.is_ok() {
             self.job = Some(rx);
@@ -495,21 +541,7 @@ impl StartPage {
 
     fn load(&mut self) {
         let config = self.config_dir.clone();
-        self.spawn(move |cli, stats| {
-            let run = |args: Vec<String>| {
-                command::run(cli, &with_config(args, config.as_deref()), DEADLINE, stats)
-            };
-            let loaded = (|| {
-                let out = run(vec!["show-settings".into()])?;
-                let settings = parse_settings(out.code, &out.stdout)?;
-                let out = run(vec!["list-environment".into()])?;
-                let environments = parse_environments(out.code, &out.stdout)?;
-                let out = run(vec!["list-recent".into()])?;
-                let recent = parse_recent(out.code, &out.stdout)?;
-                Ok((settings, environments, recent))
-            })();
-            Reply::Loaded(loaded)
-        });
+        self.run_worker(move || Reply::Loaded(load_state(config.as_deref())));
     }
 
     fn save_launcher(&mut self) {
@@ -517,27 +549,18 @@ impl StartPage {
             self.note = Some(Err("choose an environment".into()));
             return;
         };
-        let args = settings_set_args(
-            self.config_dir.as_deref(),
-            self.name.trim(),
-            self.email.trim(),
-            &environment,
-            self.skip,
-        );
         let config = self.config_dir.clone();
-        self.spawn(move |cli, stats| {
-            let saved = (|| {
-                let out = command::run(cli, &args, DEADLINE, stats)?;
-                let settings = parse_settings(out.code, &out.stdout)?;
-                let out = command::run(
-                    cli,
-                    &with_config(vec!["list-recent".into()], config.as_deref()),
-                    DEADLINE,
-                    stats,
-                )?;
-                Ok((settings, parse_recent(out.code, &out.stdout)?))
-            })();
-            Reply::Saved(saved)
+        let name = self.name.trim().to_owned();
+        let email = self.email.trim().to_owned();
+        let skip = self.skip;
+        self.run_worker(move || {
+            Reply::Saved(save_choices(
+                config.as_deref(),
+                &name,
+                &email,
+                &environment,
+                skip,
+            ))
         });
     }
 
@@ -548,31 +571,13 @@ impl StartPage {
             return;
         }
         // The folder is remembered for the next start; the list does not wait for that.
-        let remember = with_config(
-            vec!["set-settings".into(), "--models-dir".into(), folder.clone()],
-            self.config_dir.as_deref(),
-        );
-        self.spawn(move |cli, stats| {
-            let _ = command::run(cli, &remember, DEADLINE, stats);
-            let args = vec!["list-project".to_owned(), "--dir".into(), folder];
-            Reply::Listed(
-                command::run(cli, &args, DEADLINE, stats)
-                    .and_then(|out| parse_projects(out.code, &out.stdout)),
-            )
-        });
+        let config = self.config_dir.clone();
+        self.run_worker(move || Reply::Listed(list_folder_projects(config.as_deref(), &folder)));
     }
 
     fn open_project(&mut self, path: String) {
-        let args = with_config(
-            vec!["add-recent".into(), "--store".into(), path],
-            self.config_dir.as_deref(),
-        );
-        self.spawn(move |cli, stats| {
-            Reply::Opened(
-                command::run(cli, &args, DEADLINE, stats)
-                    .and_then(|out| parse_project(out.code, &out.stdout, "recent_added")),
-            )
-        });
+        let config = self.config_dir.clone();
+        self.run_worker(move || Reply::Opened(remember(config.as_deref(), &path)));
     }
 
     /// Shows the system's folder dialog, starting at the folder typed so far; the chosen folder,
@@ -607,16 +612,8 @@ impl StartPage {
         }
         let parent = self.new_parent.trim().to_owned();
         let previous = self.new_name.clone();
-        self.spawn(move |cli, stats| {
-            let args = vec![
-                "suggest-project-name".into(),
-                "--parent".into(),
-                parent.clone(),
-                "--name".into(),
-                DEFAULT_MODEL_NAME.into(),
-            ];
-            let name = command::run(cli, &args, DEADLINE, stats)
-                .and_then(|out| parse_project_name(out.code, &out.stdout));
+        self.run_worker(move || {
+            let name = next_project_name(Path::new(&parent), DEFAULT_MODEL_NAME).map_err(refusal);
             Reply::Suggested {
                 parent,
                 previous,
@@ -1766,11 +1763,16 @@ mod tests {
 
     use super::*;
 
+    /// A configuration directory of its own, so a test never reads or writes the user's settings.
+    fn scratch_config(tag: &str) -> Option<PathBuf> {
+        Some(std::env::temp_dir().join(format!("ui-start-{tag}-{}", std::process::id())))
+    }
+
     #[test]
     fn new_model_entry_suggests_a_name_and_keeps_user_edits_during_the_reply() {
         let mut page = StartPage::new(
             PathBuf::from("missing-test-cli"),
-            None,
+            scratch_config("page"),
             Arc::new(Stats::default()),
         );
         page.job = None;
@@ -1798,7 +1800,7 @@ mod tests {
         theme::install(&ctx);
         let mut page = StartPage::new(
             PathBuf::from("missing-test-cli"),
-            None,
+            scratch_config("page"),
             Arc::new(Stats::default()),
         );
         page.job = None;
@@ -1880,7 +1882,7 @@ mod tests {
         theme::install(&ctx);
         let mut page = StartPage::new(
             PathBuf::from("beamcraft-test-missing-cli"),
-            None,
+            scratch_config("library"),
             Arc::new(Stats::default()),
         );
         page.job = None;
@@ -1957,39 +1959,76 @@ mod tests {
     }
 
     #[test]
-    fn reads_settings_replies() {
-        let out = br#"{"config_dir":"/c","outcome":"settings","settings":{"environment":"blank","models_dir":null,"profile":{"actor_id":"0199e7a0-0000-7000-8000-000000000001","email":"a@b.cl","name":"Ana"},"recent":[],"skip_launcher":true,"version":1}}"#;
-        let s = parse_settings(Some(0), out).unwrap();
-        assert_eq!(s.environment.as_deref(), Some("blank"));
-        assert_eq!(s.profile.unwrap().name, "Ana");
-        assert!(s.skip_launcher && s.models_dir.is_none());
-        let saved = String::from_utf8(out.to_vec())
-            .unwrap()
-            .replace("\"settings\",", "\"settings_saved\",");
-        assert!(parse_settings(Some(0), saved.as_bytes()).is_ok());
-        let refused = br#"{"code":"INVALID_ARGUMENT","diagnostics":[],"message":"bad e-mail","observed_context":null,"outcome":"rejected"}"#;
-        let e = parse_settings(Some(2), refused).unwrap_err();
+    fn shows_settings_as_the_page_reads_them() {
+        let mut settings = Settings::default();
+        settings
+            .set_profile("Ana", "a@b.cl", || {
+                Uuid7::parse("0199e7a0-0000-7000-8000-000000000001").map_err(|_| SettingsError {
+                    code: ErrorCode::InvalidArgument,
+                    message: "id",
+                })
+            })
+            .unwrap();
+        settings.environment = Some("blank".into());
+        settings.skip_launcher = true;
+        settings.theme = session::settings::ThemePreference::Dark;
+        let view = settings_view(Path::new("/c"), &settings);
+        assert_eq!(view.environment.as_deref(), Some("blank"));
+        assert_eq!(view.theme, egui::ThemePreference::Dark);
+        let profile = view.profile.unwrap();
+        assert_eq!(profile.name, "Ana");
+        assert_eq!(profile.actor_id, "0199e7a0-0000-7000-8000-000000000001");
+        assert!(view.skip_launcher && view.models_dir.is_none());
+        assert_eq!(view.config_dir, Path::new("/c").to_string_lossy());
+    }
+
+    #[test]
+    fn a_missing_configuration_directory_is_a_typed_refusal() {
+        // An explicit directory always resolves; only the fallback can fail.
         assert_eq!(
-            (e.code.as_str(), e.message.as_str()),
-            ("INVALID_ARGUMENT", "bad e-mail")
+            resolve_config_dir(Some(Path::new("/c"))).unwrap(),
+            Path::new("/c")
         );
     }
 
     #[test]
-    fn reads_environments_and_projects() {
-        let out = br#"{"environments":[{"id":"blank","origin":"builtin","path":"/e","refused":null,"shadowed":false,"title":"Blank"},{"id":null,"origin":"user","path":"/u","refused":{"code":"INVALID_ARGUMENT","message":"no id"},"shadowed":false,"title":null}],"outcome":"environments","user_dir":null}"#;
-        let envs = parse_environments(Some(0), out).unwrap();
+    fn shows_environments_and_projects() {
+        let ready = EnvironmentEntry {
+            path: PathBuf::from("/e"),
+            origin: "builtin",
+            state: EnvironmentState::Ready {
+                id: "blank".into(),
+                title: Some("Blank".into()),
+                shadowed: false,
+            },
+        };
+        let refused = EnvironmentEntry {
+            path: PathBuf::from("/u"),
+            origin: "user",
+            state: EnvironmentState::Refused(Refusal::invalid("no id")),
+        };
+        let envs = environment_views(&[ready, refused]);
         assert_eq!(envs[0].label(), "Blank (blank)");
         assert_eq!(envs[0].usable_id(), Some("blank"));
         assert_eq!(envs[1].usable_id(), None);
         assert!(envs[1].refused.as_deref().unwrap().contains("no id"));
-        let out = br#"{"dir":"/m","outcome":"projects","projects":[{"created_ms":1792799652530,"modified_ms":1792799652605,"name":"A","path":"/m/A","project_id":"x","revision":null,"state":"ready"},{"created_ms":null,"modified_ms":null,"name":"B","path":"/m/B","project_id":null,"revision":null,"state":{"unreadable":"INTEGRITY_ERROR"}}],"truncated":false}"#;
-        let projects = parse_projects(Some(0), out).unwrap();
-        assert!(projects[0].ready());
-        assert_eq!(projects[1].state, "INTEGRITY_ERROR");
-        assert!(!projects[1].ready());
+        let unreadable = project_view(&ProjectInfo {
+            path: PathBuf::from("/m/B"),
+            name: "B".into(),
+            state: ProjectState::Unreadable(ErrorCode::IntegrityError),
+        });
+        assert_eq!(unreadable.state, "INTEGRITY_ERROR");
+        assert!(!unreadable.ready());
+        let missing = project_view(&ProjectInfo {
+            path: PathBuf::from("/m/C"),
+            name: "C".into(),
+            state: ProjectState::Missing,
+        });
+        assert_eq!(
+            (missing.state.as_str(), missing.created_ms),
+            ("missing", None)
+        );
     }
-
     #[test]
     fn builds_arguments() {
         let args = project_create_args(Some(Path::new("/c")), "/m", "Nave 1", Some("id"), None);
@@ -2020,8 +2059,6 @@ mod tests {
                 "starter"
             ]
         );
-        let args = settings_set_args(None, "Ana", "a@b.cl", "blank", false);
-        assert_eq!(args.last().map(String::as_str), Some("false"));
     }
 
     #[test]

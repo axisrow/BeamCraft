@@ -5,7 +5,6 @@
 
 use super::{Metadata, State};
 use crate::drawing::{archive::SourceArchive, codec, derived};
-use crate::plate::{PlateError, control, host_uuid, integrity};
 use beamcraft_engine::drawing::Drawing;
 use beamcraft_engine::drawing::projection::{self, BodyProjection, DimensionProjection};
 use beamcraft_host::lease::StoreLease;
@@ -21,6 +20,8 @@ use beamcraft_layer_engine::{
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, DocumentVersionId, DrawingId, OpId, Uuid7};
+use session::Refusal;
+use session::pipeline::{control, host_uuid, integrity};
 use std::fs;
 use std::path::Path;
 
@@ -77,8 +78,8 @@ pub struct DocumentWrite<'a> {
     pub latest_published: Option<DocumentVersionId>,
 }
 
-fn bad(message: &'static str) -> PlateError {
-    PlateError {
+fn bad(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -97,7 +98,7 @@ fn field<'a>(
     prim: &'a beamcraft_layer_engine::Prim,
     name: &str,
     kind: &str,
-) -> Result<&'a Value, PlateError> {
+) -> Result<&'a Value, Refusal> {
     let prop = prim
         .properties
         .iter()
@@ -112,14 +113,14 @@ fn field_text<'a>(
     prim: &'a beamcraft_layer_engine::Prim,
     name: &str,
     kind: &str,
-) -> Result<&'a str, PlateError> {
+) -> Result<&'a str, Refusal> {
     match field(prim, name, kind)? {
         Value::Text(value) => Ok(value),
         _ => Err(integrity("document metadata field is not text")),
     }
 }
 
-fn metadata_from_root(root: &Asset, revision: &Revision) -> Result<Metadata, PlateError> {
+fn metadata_from_root(root: &Asset, revision: &Revision) -> Result<Metadata, Refusal> {
     let content = revision.manifest().content();
     let identity = Identity {
         project: content.project().to_string(),
@@ -155,7 +156,7 @@ fn metadata_from_root(root: &Asset, revision: &Revision) -> Result<Metadata, Pla
                     bytes: revision.layer_bytes(entry.name())?,
                 })
             })
-            .collect::<Result<Vec<_>, PlateError>>()?,
+            .collect::<Result<Vec<_>, Refusal>>()?,
         owned_layers: ["root.usda", INTENT_LAYER, "drawing-derived.usda"]
             .into_iter()
             .map(str::to_owned)
@@ -165,7 +166,7 @@ fn metadata_from_root(root: &Asset, revision: &Revision) -> Result<Metadata, Pla
         profile: Profile::StaticLocal,
         budgets: Budgets::FIRST_SLICE,
     };
-    request.manifest = request.manifest_digest().map_err(PlateError::from)?;
+    request.manifest = request.manifest_digest().map_err(Refusal::from)?;
     let control = control();
     let opened = reader.open(request, &control)?;
     let page = reader.read(&opened.context, None, &control)?;
@@ -217,7 +218,7 @@ fn metadata_from_root(root: &Asset, revision: &Revision) -> Result<Metadata, Pla
 
 impl DocumentStore {
     /// Creates a new dedicated document directory. Existing paths are never adopted implicitly.
-    pub fn create(root: &Path) -> Result<Self, PlateError> {
+    pub fn create(root: &Path) -> Result<Self, Refusal> {
         if !root.is_absolute() {
             return Err(bad("document directory must be an absolute path"));
         }
@@ -226,7 +227,7 @@ impl DocumentStore {
     }
 
     /// Opens an existing dedicated document directory.
-    pub fn open(root: &Path) -> Result<Self, PlateError> {
+    pub fn open(root: &Path) -> Result<Self, Refusal> {
         let blobs = BlobStore::new(root).map_err(|_| bad("document directory is not usable"))?;
         Ok(Self {
             revisions: RevisionStore::new(blobs),
@@ -234,13 +235,13 @@ impl DocumentStore {
     }
 
     /// Reopens and strictly verifies the current immutable document revision.
-    pub fn head(&self) -> Result<DocumentRevision, PlateError> {
+    pub fn head(&self) -> Result<DocumentRevision, Refusal> {
         let revision = self.revisions.open()?;
         self.verify_revision(revision)
     }
 
     /// Reopens every retained sequence in order; compacted history is omitted explicitly.
-    pub fn history(&self) -> Result<Vec<DocumentRevision>, PlateError> {
+    pub fn history(&self) -> Result<Vec<DocumentRevision>, Refusal> {
         let Some(head) = self.revisions.head()? else {
             return Ok(Vec::new());
         };
@@ -259,21 +260,21 @@ impl DocumentStore {
         &self,
         version: DocumentVersionId,
         through: u64,
-    ) -> Result<(), PlateError> {
+    ) -> Result<(), Refusal> {
         // The host caps the sequence at MAX_REVISIONS. Keep only one verified revision in
         // memory and retain the caller's maintenance lease until the candidate CAS completes.
         // Skipping a compacted prefix would turn missing evidence into permission to reuse IDs.
         let control = control();
         for sequence in 1..=through {
             if std::time::Instant::now() >= control.deadline {
-                return Err(PlateError {
+                return Err(Refusal {
                     rule_id: None,
                     code: ErrorCode::Cancelled,
                     message: "document version history verification deadline expired",
                 });
             }
             let revision = self.revisions.open_at(sequence).map_err(|error| match error {
-                beamcraft_host::revision::RevisionError::Compacted => PlateError {
+                beamcraft_host::revision::RevisionError::Compacted => Refusal {
                     rule_id: None,
                     code: ErrorCode::DependencyUnavailable,
                     message: "complete document history is required to verify version uniqueness",
@@ -282,7 +283,7 @@ impl DocumentStore {
             })?;
             let previous = self.verify_revision(revision)?;
             if previous.version == Some(version) {
-                return Err(PlateError {
+                return Err(Refusal {
                     rule_id: None,
                     code: ErrorCode::DuplicateId,
                     message: "document version id was already published",
@@ -292,7 +293,7 @@ impl DocumentStore {
         Ok(())
     }
 
-    fn verify_revision(&self, revision: Revision) -> Result<DocumentRevision, PlateError> {
+    fn verify_revision(&self, revision: Revision) -> Result<DocumentRevision, Refusal> {
         let content = revision.manifest().content();
         if content.schema() != super::schema_identity()?
             || content.root_layer() != "root.usda"
@@ -398,13 +399,12 @@ impl DocumentStore {
         &self,
         expected: &ExpectedBase,
         write: DocumentWrite<'_>,
-    ) -> Result<(CommitOutcome, DocumentRevision), PlateError> {
-        let _maintenance =
-            StoreLease::shared(self.revisions.blobs()).map_err(|error| PlateError {
-                rule_id: None,
-                code: error.code(),
-                message: "document maintenance guard is unavailable",
-            })?;
+    ) -> Result<(CommitOutcome, DocumentRevision), Refusal> {
+        let _maintenance = StoreLease::shared(self.revisions.blobs()).map_err(|error| Refusal {
+            rule_id: None,
+            code: error.code(),
+            message: "document maintenance guard is unavailable",
+        })?;
         let DocumentWrite {
             revision,
             operation,
@@ -431,7 +431,7 @@ impl DocumentStore {
         };
         if let Some(previous) = replay {
             if previous.request != request {
-                return Err(PlateError {
+                return Err(Refusal {
                     rule_id: None,
                     code: ErrorCode::OpIdReuse,
                     message: "document operation id was already used for another request",
@@ -442,7 +442,7 @@ impl DocumentStore {
         let previous = match expected {
             ExpectedBase::Initial => None,
             ExpectedBase::Revision(id) => {
-                let sequence = self.revisions.sequence_of(id)?.ok_or(PlateError {
+                let sequence = self.revisions.sequence_of(id)?.ok_or(Refusal {
                     rule_id: None,
                     code: ErrorCode::BaseRevisionMismatch,
                     message: "expected document base is unavailable",
@@ -489,7 +489,7 @@ impl DocumentStore {
             if matches!(checked.body, BodyProjection::Unresolved(_))
                 || matches!(checked.dimension, DimensionProjection::Unresolved(_))
             {
-                return Err(PlateError {
+                return Err(Refusal {
                     rule_id: None,
                     code: ErrorCode::InvalidArgument,
                     message: "unresolved drawing geometry cannot be published",
@@ -504,7 +504,7 @@ impl DocumentStore {
             self.revisions
                 .blobs()
                 .publish(&asset.bytes)
-                .map_err(|error| PlateError {
+                .map_err(|error| Refusal {
                     rule_id: None,
                     code: error.code(),
                     message: "document layer could not be stored",
@@ -532,7 +532,7 @@ impl DocumentStore {
     }
 
     /// Answers a previously submitted operation from the host outcome ledger.
-    pub fn query(&self, operation: &OpId) -> Result<Option<DocumentRevision>, PlateError> {
+    pub fn query(&self, operation: &OpId) -> Result<Option<DocumentRevision>, Refusal> {
         match self
             .revisions
             .query_outcome(&host_uuid(&operation.to_string())?)?
@@ -552,7 +552,7 @@ impl DocumentStore {
                 Ok(Some(checked))
             }
             Outcome::Aborted { .. } | Outcome::NotFound => Ok(None),
-            Outcome::Unknown => Err(PlateError {
+            Outcome::Unknown => Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::OutcomeUnknown,
                 message: "document operation outcome is unknown",
@@ -569,7 +569,7 @@ pub fn request_fingerprint(
     latest_published: Option<DocumentVersionId>,
     actor: ActorId,
     expected: &ExpectedBase,
-) -> Result<ContentDigest, PlateError> {
+) -> Result<ContentDigest, Refusal> {
     let intent = codec::encode(drawing)?;
     let mut bytes = Vec::with_capacity(intent.bytes.len() + 128);
     bytes.extend_from_slice(b"beamcraft-drawing-request/1\0");
@@ -604,7 +604,7 @@ pub fn request_fingerprint(
 }
 
 /// Converts a document sequence into the host's exact expected-base token.
-pub fn expected_base(info: Option<&RevisionInfo>) -> Result<ExpectedBase, PlateError> {
+pub fn expected_base(info: Option<&RevisionInfo>) -> Result<ExpectedBase, Refusal> {
     info.map_or(Ok(ExpectedBase::Initial), |info| {
         Ok(ExpectedBase::Revision(host_uuid(
             &info.revision().to_string(),
@@ -613,6 +613,6 @@ pub fn expected_base(info: Option<&RevisionInfo>) -> Result<ExpectedBase, PlateE
 }
 
 /// Parses a document's stable drawing identity from a canonical UUIDv7 string.
-pub fn drawing_id(text: &str) -> Result<DrawingId, PlateError> {
+pub fn drawing_id(text: &str) -> Result<DrawingId, Refusal> {
     DrawingId::parse(text).map_err(|_| bad("drawing id is malformed"))
 }

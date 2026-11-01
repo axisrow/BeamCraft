@@ -17,17 +17,18 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use crate::support;
+use session::Refusal;
 
 use support::{at, text};
 
-use beamcraft_cli::plate::{CreateRequest, PlateError, create_plate, inspect};
+use beamcraft_cli::plate::{CreateRequest, create_plate, inspect};
 use beamcraft_host::{
     ids::IdSource,
     revision::{CommitPoint, Injected, NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
 use beamcraft_json::{Json, Limits};
-use beamcraft_model::command::{CreatePlate, Placement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use std::collections::{BTreeMap, BTreeSet};
@@ -35,6 +36,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use steel::model::command::CreatePlate;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -956,7 +958,7 @@ fn a_library_error_is_typed_and_a_failed_commit_leaves_the_old_revision() {
             Ok(())
         }
     };
-    let error: PlateError = create_plate(&store, &second, &mut fail).unwrap_err();
+    let error: Refusal = create_plate(&store, &second, &mut fail).unwrap_err();
     assert_eq!(error.code, ErrorCode::Cancelled);
     assert_eq!(inspect(&store).unwrap().revision, before);
     // The same operation then succeeds exactly once.

@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
+use super::disciplines::is_part_kind;
 use super::*;
-use beamcraft_model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
 use beamcraft_model::id::OpId;
 use beamcraft_model::limits::{
     MAX_FASTENER_LENGTHS, MAX_MEMBER_PATH_POINTS, MAX_RELATIONSHIP_TARGETS, MIN_WELD_SEGMENT_MM,
 };
-use beamcraft_model::section::{
+use steel::model::fastener::{FastenerKind, HeadKind, HoleMode, WasherSpec};
+use steel::model::section::{
     CustomSection, MAX_CUSTOM_CAVITIES, MAX_CUSTOM_POINTS, ParametricSection, SectionFamily,
 };
 
@@ -61,25 +62,8 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 if e.name.len() > 256 {
                     return Err(limit().with_rule("DV-BASE-003"));
                 }
-                if let Shape::Plate {
-                    contour_mm, holes, ..
-                } = &e.shape
-                {
-                    count(contour_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?;
-                    let hole_points = holes.iter().map(Vec::len).sum::<usize>();
-                    count(hole_points.checked_mul(3).ok_or_else(limit)?, 8)?;
-                    count(holes.len(), 4)?;
-                }
-                if let Shape::LoftedPlate { start_mm, end_mm } = &e.shape {
-                    count(
-                        start_mm
-                            .len()
-                            .checked_add(end_mm.len())
-                            .ok_or_else(limit)?
-                            .checked_mul(3)
-                            .ok_or_else(limit)?,
-                        8,
-                    )?;
+                if let Shape::Discipline(hook) = &e.shape {
+                    hook.0.charge(&mut count)?;
                 }
             }
             Change::Label { name, .. } if name.len() > 256 => {
@@ -99,9 +83,7 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
             Change::AttachReference(r) if r.name.len() > 256 => {
                 return Err(limit().with_rule("DV-BASE-003"));
             }
-            Change::Contour { points_mm, .. } => {
-                count(points_mm.len().checked_mul(3).ok_or_else(limit)?, 8)?
-            }
+            Change::Discipline(hook) => hook.0.charge(&mut count)?,
             Change::Mesh(m) => {
                 count(m.points_mm.len().checked_mul(3).ok_or_else(limit)?, 4)?;
                 count(m.face_counts.len(), 4)?;
@@ -164,7 +146,7 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
             width_mm,
             height_mm,
             section,
-        } => beamcraft_model::definition::RectangleProfileSpec {
+        } => steel::model::definition::RectangleProfileSpec {
             width_mm: *width_mm,
             height_mm: *height_mm,
             section: section.clone(),
@@ -172,7 +154,7 @@ pub(super) fn definition(d: &Definition) -> Result<(), Diagnostic> {
         .validate()
         .map_err(refused),
         Definition::SectionProfile { shape, section } => {
-            beamcraft_model::definition::SectionProfileSpec {
+            steel::model::definition::SectionProfileSpec {
                 shape: shape.clone(),
                 section: section.clone(),
             }
@@ -736,8 +718,8 @@ fn plate_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     Ok(())
 }
 /// Most through holes of one plate and most points of one hole.
-const MAX_HOLES: usize = 64;
-const MAX_HOLE_POINTS: usize = 1024;
+pub(super) const MAX_HOLES: usize = 64;
+pub(super) const MAX_HOLE_POINTS: usize = 1024;
 
 /// The optional member-hole operation records of a loaded beam or column (A04.2): all nine
 /// attributes or none, the counts add up to the points, every polygon has at least three
@@ -1146,10 +1128,10 @@ pub(super) fn snapshot(
         if text(p, "bim:geometryMode", "token")? != "parametric" {
             continue;
         }
-        if !matches!(
-            text(p, "bim:elementKind", "token")?,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
-        ) {
+        let element_kind = text(p, "bim:elementKind", "token")?;
+        if !(is_part_kind(element_kind)
+            || matches!(element_kind, "assembly" | "connection" | "level" | "grid"))
+        {
             continue;
         }
         if p.path
@@ -1181,12 +1163,10 @@ pub(super) fn snapshot(
         if p.type_name.as_deref() != Some("Xform") {
             return Err(unsupported());
         }
-        if !matches!(kind, "plate" | "beam" | "column")
-            && p.properties.iter().any(|p| p.name == "steel:class")
-        {
+        if !is_part_kind(kind) && p.properties.iter().any(|p| p.name == "steel:class") {
             return Err(unsupported());
         }
-        if matches!(kind, "plate" | "beam" | "column")
+        if is_part_kind(kind)
             && let Some(prop) = p.properties.iter().find(|a| a.name == "steel:class")
             && (prop.type_name != "int"
                 || !matches!(prop.value, Some(Value::Int(v)) if i32::try_from(v).is_ok()))
@@ -1194,145 +1174,11 @@ pub(super) fn snapshot(
             return Err(invalid());
         }
         if instance::definition(p, prims)?.is_none() {
-            if matches!(kind, "plate" | "beam" | "column") {
-                let hole_history = cut_history::read_holes(p)?;
-                let member_history = cut_history::read_member_holes(p)?;
-                let history = cut_history::read(p)?;
-                for id in history
-                    .retired
-                    .into_iter()
-                    .chain(hole_history.retired)
-                    .chain(member_history.retired)
-                    .chain(cut_history::ids(p, "steel:cut:operationId")?)
-                    .chain(cut_history::ids(p, "steel:hole:operationIds")?)
-                    .chain(cut_history::ids(p, "steel:mhole:operationIds")?)
-                {
-                    if !operation_ids.insert(id) {
-                        return Err(invalid());
-                    }
-                }
+            if is_part_kind(kind) {
+                disciplines::validate_part(kind, p, prims, &mut operation_ids)?;
             }
             match kind {
-                "plate" => {
-                    // The form token discriminates the stored record: a lofted plate (A11)
-                    // carries the three loft attributes and no plate extrusion inputs; an
-                    // extruded plate stores neither the token nor the loft attributes.
-                    let lofted = match p.properties.iter().find(|a| a.name == "steel:plate:form") {
-                        None => {
-                            if p.properties.iter().any(|a| {
-                                matches!(
-                                    a.name.as_str(),
-                                    "steel:plate:loftStartMm" | "steel:plate:loftEndMm"
-                                )
-                            }) {
-                                return Err(invalid());
-                            }
-                            false
-                        }
-                        Some(_) => {
-                            if text(p, "steel:plate:form", "token")? != "lofted" {
-                                return Err(invalid());
-                            }
-                            if p.properties.iter().any(|a| {
-                                matches!(
-                                    a.name.as_str(),
-                                    "steel:plate:contourPointsMm" | "steel:plate:thicknessMm"
-                                )
-                            }) {
-                                return Err(invalid());
-                            }
-                            true
-                        }
-                    };
-                    if lofted {
-                        lofted_plate(
-                            &points(p, "steel:plate:loftStartMm")?,
-                            &points(p, "steel:plate:loftEndMm")?,
-                        )?;
-                    } else {
-                        plate(
-                            &points(p, "steel:plate:contourPointsMm")?,
-                            number(p, "steel:plate:thicknessMm")?,
-                        )?;
-                    }
-                    plate_corner_records(p)?;
-                    plate_holes(p)?;
-                    plate_hole_records(p)?;
-                    element_cut(p)?;
-                }
-                "beam" | "column" => {
-                    let axis = points(p, "bim:axisPointsMm")?;
-                    if let Some(prop) = p
-                        .properties
-                        .iter()
-                        .find(|v| v.name == "steel:member:pathType")
-                    {
-                        if prop.type_name != "token"
-                            || text(p, "steel:member:pathType", "token")? != "arc"
-                            || axis.len() != 3
-                        {
-                            return Err(invalid());
-                        }
-                        if p.properties
-                            .iter()
-                            .any(|v| v.name == "steel:member:rollRad")
-                        {
-                            return Err(invalid());
-                        }
-                    }
-                    if axis.len() < 2 || axis.len() > MAX_MEMBER_PATH_POINTS {
-                        return Err(invalid());
-                    }
-                    let profile =
-                        link(p, prims, "bim:profile", &PROFILE_KINDS, true)?.ok_or_else(invalid)?;
-                    let profile =
-                        read_definition(profile, text(profile, "bim:definitionKind", "token")?)?;
-                    definition(&profile)?;
-                    let (width, height) = match &profile {
-                        Definition::RectangleProfile {
-                            width_mm,
-                            height_mm,
-                            ..
-                        } => (*width_mm, *height_mm),
-                        Definition::SectionProfile { shape, .. } => shape.extent_mm(),
-                        // A member pins a section profile, never a material or a fastener.
-                        Definition::Material { .. } | Definition::Fastener { .. } => {
-                            return Err(invalid());
-                        }
-                    };
-                    // The size reference is the total path length for a polybeam and the one
-                    // chord for a straight member; both sum the same first chord.
-                    let mut length = 0.0;
-                    for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
-                        length += norm(difference(*b, *a));
-                    }
-                    let half_width = width / 2.0;
-                    let half_height = height / 2.0;
-                    let size =
-                        length.max((half_width * half_width + half_height * half_height).sqrt());
-                    if size > 1e6 {
-                        return Err(limit());
-                    }
-                    let eps = 0.001f64.max(size / 4194304.0);
-                    // Every chord, not only the total, must clear the geometric floor.
-                    let mut short = length < eps;
-                    for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
-                        short |= norm(difference(*b, *a)) < eps;
-                    }
-                    if short || width < eps || height < eps {
-                        return Err(invalid());
-                    }
-                    if let Some(Value::Number(n)) = p
-                        .properties
-                        .iter()
-                        .find(|v| v.name == "steel:member:rollRad")
-                        .and_then(|v| v.value.as_ref())
-                    {
-                        cap([*n], std::f64::consts::TAU)?;
-                    }
-                    element_cut(p)?;
-                    member_hole_records(p)?;
-                }
+                k if is_part_kind(k) => {}
                 // An assembly has no shape inputs and no material of its own; a connection is a weld
                 // (A06) or a bolt group (A05) with its own properties and no material either.
                 "grid" => {
@@ -1346,22 +1192,7 @@ pub(super) fn snapshot(
                         return Err(invalid());
                     }
                     if kind == "connection" {
-                        let connection_type = text(p, "steel:connection:type", "token")?;
-                        let has =
-                            |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
-                        let placed = has("steel:bolt:fastener");
-                        match connection_type {
-                            "weld" if !has("steel:bolt:") => weld_properties(p)?,
-                            // An A05 annotation group and an A14.3 group are discriminated by
-                            // the definition digest; a mixed property set is never guessed.
-                            "bolt_group" if !has("steel:weld:") && placed => {
-                                bolt_group_properties(p, prims)?
-                            }
-                            "bolt_group" if !has("steel:weld:") && !has("steel:bolt:point1Mm") => {
-                                bolt_properties(p)?
-                            }
-                            _ => return Err(invalid().with_rule("DV-ATTR-002")),
-                        }
+                        disciplines::validate_connection(p, prims)?;
                     }
                     if kind == "level" {
                         elevation(number(p, "bim:elevationMm")?)?;
@@ -1536,12 +1367,8 @@ fn supported_kind(p: &Prim) -> Option<&str> {
     if version != "0.1.0" || token("bim:geometryMode")? != "parametric" {
         return None;
     }
-    token("bim:elementKind").filter(|k| {
-        matches!(
-            *k,
-            "plate" | "beam" | "column" | "assembly" | "connection" | "level" | "grid"
-        )
-    })
+    token("bim:elementKind")
+        .filter(|k| is_part_kind(k) || matches!(*k, "assembly" | "connection" | "level" | "grid"))
 }
 
 /// The values of an A09 mark: a series of at most 16 letters, digits, `_` and `-`, a number in
@@ -1580,7 +1407,7 @@ fn marks(prims: &[Prim]) -> Result<(), Diagnostic> {
         match (series, number, basis) {
             (None, None, None) => {}
             (Some(Value::Text(series)), Some(number), Some(Value::Text(basis))) => {
-                if !matches!(kind, "plate" | "beam" | "column" | "assembly") {
+                if !(is_part_kind(kind) || matches!(kind, "assembly")) {
                     return Err(unsupported());
                 }
                 let number = match number {
@@ -1638,7 +1465,7 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
                 .with_rule("DV-REL-004"));
             }
         };
-        if !matches!(kind, "plate" | "beam" | "column") {
+        if !is_part_kind(kind) {
             return Err(fail(
                 ErrorCode::InvalidArgument,
                 "only a plate, beam or column is assigned to a level",
@@ -1683,7 +1510,7 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
 
 /// The A15 weld path rules shared by the loaded-content and candidate checks: 2 to 1024 points,
 /// finite and within the coordinate cap, consecutive points at least the minimum apart.
-fn weld_path_points(points: &[[f64; 3]]) -> Result<(), Diagnostic> {
+pub(super) fn weld_path_points(points: &[[f64; 3]]) -> Result<(), Diagnostic> {
     if !(2..=1024).contains(&points.len()) {
         return Err(invalid());
     }
@@ -1741,7 +1568,7 @@ fn weld_properties(p: &Prim) -> Result<(), Diagnostic> {
     }
     Ok(())
 }
-fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagnostic> {
+pub(super) fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagnostic> {
     if weld_type != "fillet" {
         return Err(unsupported());
     }
@@ -1750,7 +1577,7 @@ fn weld_tokens(weld_type: &str, location: &str, side: &str) -> Result<(), Diagno
     }
     Ok(())
 }
-fn weld_size(mm: f64) -> Result<(), Diagnostic> {
+pub(super) fn weld_size(mm: f64) -> Result<(), Diagnostic> {
     finite([mm])?;
     if mm <= 0.0 {
         return Err(invalid());
@@ -1844,7 +1671,7 @@ fn bolt_f64s(p: &Prim, name: &str) -> Result<Vec<f64>, Diagnostic> {
 
 /// The `connects` identities of an A14.3 group: 2 to 1024 full UUIDv7s, distinct, never the
 /// group itself (`DV-REL-004`, `DV-REL-006`, `DV-REL-007`).
-fn bolt_group_connects(connects: &[String], self_id: &str) -> Result<(), Diagnostic> {
+pub(super) fn bolt_group_connects(connects: &[String], self_id: &str) -> Result<(), Diagnostic> {
     if connects.len() < 2 || connects.len() > MAX_RELATIONSHIP_TARGETS {
         return Err(fail(
             ErrorCode::DependencyConflict,
@@ -1882,7 +1709,7 @@ fn bolt_group_connects(connects: &[String], self_id: &str) -> Result<(), Diagnos
 /// length record consistent with its mode. The engine's crossing, grip and length decisions
 /// have already run; this re-checks the stored form so a damaged or forged record is refused,
 /// never guessed.
-fn bolt_group_values(b: &BoltGroup) -> Result<(), Diagnostic> {
+pub(super) fn bolt_group_values(b: &BoltGroup) -> Result<(), Diagnostic> {
     finite(b.point1_mm)?;
     finite(b.point2_mm)?;
     cap(b.point1_mm, 1e9)?;
@@ -1964,7 +1791,7 @@ fn bolt_group_values(b: &BoltGroup) -> Result<(), Diagnostic> {
 /// Consistency of a stored A14.3 group with its pinned definition (bolt amendment sections 2
 /// and 4): the resolved length is one of the definition's standard lengths, a washer switch is
 /// true only for a washer the definition carries, and under a nut only for a bolt.
-fn bolt_group_against(spec: &FastenerSpec, b: &BoltGroup) -> Result<(), Diagnostic> {
+pub(super) fn bolt_group_against(spec: &FastenerSpec, b: &BoltGroup) -> Result<(), Diagnostic> {
     if !spec.lengths_mm.contains(&b.length_mm) {
         return Err(invalid());
     }
@@ -1979,7 +1806,7 @@ fn bolt_group_against(spec: &FastenerSpec, b: &BoltGroup) -> Result<(), Diagnost
 
 /// The fastener definition a group places: one this batch pins as a resource, or the pinned
 /// definition the model already holds. Anything else is a dangling reference.
-fn fastener_definition(
+pub(super) fn fastener_definition(
     input: &Prepare,
     prims: &[Prim],
     digest: ContentDigest,
@@ -2136,7 +1963,7 @@ fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
                     )
                     .with_rule("DV-REL-001"));
                 }
-                Some((_, "plate" | "beam" | "column")) => {}
+                Some((_, kind)) if is_part_kind(kind) => {}
                 Some((_, "assembly")) => return Err(unsupported()),
                 Some(_) => {
                     return Err(fail(
@@ -2522,64 +2349,43 @@ pub(super) fn changes(
                     return Err(unsupported());
                 }
                 let valid = match change {
-                    Change::Contour { .. }
-                    | Change::Thickness { .. }
-                    | Change::Corners { .. }
-                    | Change::Bends { .. } => kind == "plate",
-                    Change::HoleRecords { .. } => kind == "plate",
-                    Change::MemberHoles { .. } => matches!(kind, "beam" | "column"),
-                    Change::Axis { .. } | Change::Roll { .. } | Change::Profile { .. } => {
-                        matches!(kind, "beam" | "column")
-                    }
-                    Change::PartClass { .. } => matches!(kind, "plate" | "beam" | "column"),
+                    Change::PartClass { .. } => is_part_kind(kind),
                     Change::Grid { .. } => kind == "grid",
-                    Change::BoltGroup { .. } => kind == "connection",
+                    Change::Discipline(hook) => hook.0.targets_kind(kind),
                     Change::Mesh(m) if kind == "grid" => m.quantities.is_none(),
                     Change::ReferenceUnits { .. } => wrapper,
                     // A rename and a move are the only edits a wrapper takes as an element; an
                     // assembly can be renamed, deleted and be a part, never moved (identity pose).
                     Change::Placement { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "reference" | "grid")
+                        is_part_kind(kind) || matches!(kind, "reference" | "grid")
                     }
                     Change::Label { .. } => {
-                        matches!(
-                            kind,
-                            "plate"
-                                | "beam"
-                                | "column"
-                                | "reference"
-                                | "assembly"
-                                | "connection"
-                                | "level"
-                                | "grid"
-                        )
+                        is_part_kind(kind)
+                            || matches!(
+                                kind,
+                                "reference" | "assembly" | "connection" | "level" | "grid"
+                            )
                     }
                     Change::Delete { .. } => {
-                        matches!(
-                            kind,
-                            "plate"
-                                | "beam"
-                                | "column"
-                                | "assembly"
-                                | "connection"
-                                | "level"
-                                | "grid"
-                                | "construction"
-                                | "annotation"
-                        )
+                        is_part_kind(kind)
+                            || matches!(
+                                kind,
+                                "assembly"
+                                    | "connection"
+                                    | "level"
+                                    | "grid"
+                                    | "construction"
+                                    | "annotation"
+                            )
                     }
-                    Change::PartOf { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "assembly")
-                    }
+                    Change::PartOf { .. } => is_part_kind(kind) || matches!(kind, "assembly"),
                     // The main-part record lives on the assembly; only it is a source.
                     Change::MainPart { .. } => kind == "assembly",
-                    Change::Level { .. } => matches!(kind, "plate" | "beam" | "column"),
-                    Change::Mark { .. } => {
-                        matches!(kind, "plate" | "beam" | "column" | "assembly")
-                    }
+                    Change::Level { .. } => is_part_kind(kind),
+                    Change::Mark { .. } => is_part_kind(kind) || matches!(kind, "assembly"),
                     // A user attribute is carried by any element kind, including a wrapper.
                     Change::AttrSet { .. } => true,
-                    _ => matches!(kind, "plate" | "beam" | "column"),
+                    _ => is_part_kind(kind),
                 };
                 if !valid {
                     return Err(unsupported());
@@ -2625,10 +2431,7 @@ pub(super) fn changes(
             ),
             // The complete authored inputs and the `connects` record are replaced as a whole
             // (A14.3); a connection derives no body, so no derived group is written.
-            Change::BoltGroup { .. } => (
-                &[Group::Lifecycle, Group::ShapeInputs, Group::Relationship],
-                &[Group::ShapeInputs, Group::Relationship],
-            ),
+            Change::Discipline(hook) => hook.0.groups(),
             Change::Material { .. } => (
                 &[Group::Lifecycle, Group::Derived],
                 &[Group::Material, Group::Relationship, Group::Derived],
@@ -2791,165 +2594,6 @@ pub(super) fn changes(
                 label(&e.name)?;
                 pose(&e.placement)?;
                 match &e.shape {
-                    Shape::Plate {
-                        contour_mm,
-                        thickness_mm,
-                        // A parsed side is one of three closed tokens; nothing to bound.
-                        thickness_side: _,
-                        corners,
-                        bends,
-                        holes,
-                        hole_records,
-                        cuts,
-                    } => {
-                        count_points(contour_mm, b)?;
-                        cap(contour_mm.iter().flatten().copied(), 1e9)?;
-                        cap([*thickness_mm], 1e6)?;
-                        // Corner treatments (A12.2): at most one per vertex, each naming a
-                        // vertex of this contour with bounded values; whether the corner
-                        // really turns and the treatments fit the edges are the engine's.
-                        if corners.len() > contour_mm.len() {
-                            return Err(limit());
-                        }
-                        let mut seen = Vec::new();
-                        for corner in corners {
-                            if corner.vertex >= contour_mm.len() || seen.contains(&corner.vertex) {
-                                return Err(invalid());
-                            }
-                            seen.push(corner.vertex);
-                            let values = match corner.treatment {
-                                CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
-                                CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
-                            };
-                            if values.iter().any(|v| *v <= 0.0) {
-                                return Err(invalid());
-                            }
-                            cap(values, 1e9)?;
-                        }
-                        if holes.len() + hole_records.len() > MAX_HOLES {
-                            return Err(limit());
-                        }
-                        for hole in holes {
-                            if hole.len() > MAX_HOLE_POINTS {
-                                return Err(limit());
-                            }
-                            if hole.len() < 3 || hole.iter().any(|p| p[2] != 0.0) {
-                                return Err(invalid());
-                            }
-                            cap(hole.iter().flatten().copied(), 1e9)?;
-                        }
-                        for record in hole_records {
-                            // Record polygons are planar XY pairs by type; winding, placement
-                            // and clearance are the engine's replay decision.
-                            if record.polygon_mm.len() > MAX_HOLE_POINTS
-                                || record.polygon_mm.len() < 3
-                            {
-                                return Err(invalid());
-                            }
-                            cap(record.polygon_mm.iter().flatten().copied(), 1e9)?;
-                        }
-                        cut_values(cuts)?;
-                        // Bend records (A10): structural bounds only — finiteness and caps for
-                        // the line points and radii, a finite angle inside (-pi, pi); whether
-                        // the records form one supported bent body is the engine's replay
-                        // decision.
-                        if bends.len() > MAX_BENDS {
-                            return Err(limit());
-                        }
-                        for bend in bends {
-                            let (lines, radii, angle): ([[f64; 3]; 2], &[f64], Option<f64>) =
-                                match bend.spec {
-                                    BendSpec::Fold {
-                                        a_mm,
-                                        b_mm,
-                                        radius_mm,
-                                        angle_rad,
-                                    } => ([a_mm, b_mm], &[radius_mm][..], Some(angle_rad)),
-                                    BendSpec::Roll {
-                                        a_mm,
-                                        b_mm,
-                                        radius_mm,
-                                        radius_b_mm,
-                                    } => (
-                                        [a_mm, b_mm],
-                                        match radius_b_mm {
-                                            Some(rb) => &[radius_mm, rb][..],
-                                            None => &[radius_mm][..],
-                                        },
-                                        None,
-                                    ),
-                                };
-                            cap(lines.iter().flatten().copied(), 1e9)?;
-                            if radii.iter().any(|v| *v <= 0.0) {
-                                return Err(invalid());
-                            }
-                            cap(radii.iter().copied(), 1e9)?;
-                            // A cone with equal radii is a cylinder, and the stored encoding
-                            // keeps one radius for a cylinder: equal radii would read back as
-                            // a cylinder and refuse their own sector blank.
-                            if let BendSpec::Roll {
-                                radius_mm,
-                                radius_b_mm: Some(radius_b),
-                                ..
-                            } = bend.spec
-                                && radius_b == radius_mm
-                            {
-                                return Err(invalid());
-                            }
-                            if let Some(angle) = angle
-                                && (!angle.is_finite()
-                                    || angle == 0.0
-                                    || angle.abs() >= core::f64::consts::PI)
-                            {
-                                return Err(invalid());
-                            }
-                        }
-                    }
-                    Shape::LoftedPlate { start_mm, end_mm } => {
-                        // Both contours of a lofted plate (A11): the shared contour bounds;
-                        // the equal vertex count, floor, winding and planarity are the
-                        // engine's, and the certification refuses a twisted correspondence.
-                        for contour in [start_mm, end_mm] {
-                            count_points(contour, b)?;
-                            cap(contour.iter().flatten().copied(), 1e9)?;
-                        }
-                    }
-                    Shape::Member {
-                        curved,
-                        axis_mm,
-                        roll_rad,
-                        profile,
-                        placement,
-                        cuts,
-                        ..
-                    } => {
-                        if axis_mm.len() < 2 || axis_mm.len() > MAX_MEMBER_PATH_POINTS {
-                            return Err(invalid());
-                        }
-                        if *curved && (axis_mm.len() != 3 || roll_rad.is_some()) {
-                            return Err(invalid());
-                        }
-                        cap(axis_mm.iter().flatten().copied(), 1e9)?;
-                        if let Some(n) = roll_rad {
-                            cap([*n], std::f64::consts::TAU)?;
-                        }
-                        if let Some(p) = placement {
-                            cap(
-                                [
-                                    p.plane_offset_mm,
-                                    p.depth_offset_mm,
-                                    p.start_offset_mm,
-                                    p.end_offset_mm,
-                                ],
-                                1e6,
-                            )?;
-                        }
-                        cut_values(cuts)?;
-                        reads.insert(Footprint {
-                            identity: profile.to_string(),
-                            group: Group::Relationship,
-                        });
-                    }
                     Shape::Assembly => {
                         if e.material.is_some()
                             || e.placement.translation_mm != [0.0; 3]
@@ -2958,143 +2602,13 @@ pub(super) fn changes(
                             return Err(unsupported());
                         }
                     }
-                    Shape::Weld(w) => {
-                        if e.material.is_some()
-                            || e.placement.translation_mm != [0.0; 3]
-                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
-                        {
-                            return Err(unsupported());
-                        }
-                        weld_tokens(&w.weld_type, &w.location, &w.side)?;
-                        weld_size(w.size_mm)?;
-                        if let Some(geometry) = &w.geometry {
-                            weld_path_points(&geometry.points_mm)?;
-                            if !matches!(
-                                geometry.contour.as_str(),
-                                "none" | "flush" | "concave" | "convex"
-                            ) {
-                                return Err(invalid());
-                            }
-                        }
-                        let [main, secondary] = &w.connects;
-                        if !uuid7(main) || !uuid7(secondary) {
-                            return Err(fail(
-                                ErrorCode::InvalidId,
-                                "invalid full element identity",
-                            )
-                            .with_rule("DV-BASE-001"));
-                        }
-                        if main == secondary || main == &e.id || secondary == &e.id {
-                            return Err(fail(
-                                ErrorCode::InvalidArgument,
-                                "a weld connects two distinct other parts",
-                            )
-                            .with_rule(if main == secondary {
-                                "DV-REL-007"
-                            } else {
-                                "DV-REL-006"
-                            }));
-                        }
-                        // The parts' existence and kinds decide acceptance; they are only read.
-                        for part in [main, secondary] {
-                            reads.insert(Footprint {
-                                identity: part.clone(),
-                                group: Group::Lifecycle,
-                            });
-                        }
-                    }
-                    Shape::Bolt(b) => {
-                        if e.material.is_some()
-                            || e.placement.translation_mm != [0.0; 3]
-                            || e.placement.orientation_xyzw != [0.0, 0.0, 0.0, 1.0]
-                        {
-                            return Err(unsupported());
-                        }
-                        finite([b.diameter_mm])?;
-                        if b.diameter_mm <= 0.0 {
-                            return Err(invalid());
-                        }
-                        cap([b.diameter_mm], 1000.0)?;
-                        if b.count == 0 || b.count > 512 {
-                            return Err(invalid());
-                        }
-                        finite([b.pitch_mm])?;
-                        if b.pitch_mm <= 0.0 {
-                            return Err(invalid());
-                        }
-                        cap([b.pitch_mm], 1e6)?;
-                        finite(b.origin_mm)?;
-                        cap(b.origin_mm, 1e9)?;
-                        finite(b.direction_mm)?;
-                        let squared = b.direction_mm.iter().map(|v| v * v).sum::<f64>();
-                        if (squared - 1.0).abs() > 1e-6 {
-                            return Err(invalid());
-                        }
-                        let [main, secondary] = &b.connects;
-                        if !uuid7(main) || !uuid7(secondary) {
-                            return Err(fail(
-                                ErrorCode::InvalidId,
-                                "invalid full element identity",
-                            )
-                            .with_rule("DV-BASE-001"));
-                        }
-                        if main == secondary || main == &e.id || secondary == &e.id {
-                            return Err(fail(
-                                ErrorCode::InvalidArgument,
-                                "a bolt group connects two distinct other parts",
-                            )
-                            .with_rule(if main == secondary {
-                                "DV-REL-007"
-                            } else {
-                                "DV-REL-006"
-                            }));
-                        }
-                        // The parts' existence and kinds decide acceptance; they are only read.
-                        for part in [main, secondary] {
-                            reads.insert(Footprint {
-                                identity: part.clone(),
-                                group: Group::Lifecycle,
-                            });
-                        }
-                    }
-                    Shape::BoltGroup(b) => {
-                        bolt_group_connects(&b.connects, &e.id)?;
-                        bolt_group_values(b)?;
-                        // The pinned definition travels by digest: either this batch pins it as
-                        // a resource or the model already holds it. Either way the stored
-                        // record must agree with the definition's own values.
-                        let spec = fastener_definition(input, prims, b.fastener)?;
-                        bolt_group_against(&spec, b)?;
-                        for part in &b.connects {
-                            reads.insert(Footprint {
-                                identity: part.clone(),
-                                group: Group::Lifecycle,
-                            });
-                        }
-                        reads.insert(Footprint {
-                            identity: b.fastener.to_string(),
-                            group: Group::Relationship,
-                        });
-                    }
-                    Shape::Instance { kind, definition } => {
-                        if e.id == *definition || e.material.is_some() {
-                            return Err(invalid());
-                        }
-                        instance::validate_source(definition, *kind, prims)?;
-                        for group in [
-                            Group::Lifecycle,
-                            Group::Label,
-                            Group::ShapeInputs,
-                            Group::Placement,
-                            Group::Material,
-                            Group::Relationship,
-                        ] {
-                            reads.insert(Footprint {
-                                identity: definition.clone(),
-                                group,
-                            });
-                        }
-                    }
+                    Shape::Discipline(hook) => hook.0.validate(&mut hook::ValidateCx {
+                        budgets: b,
+                        element: e,
+                        input,
+                        prims,
+                        reads: &mut reads,
+                    })?,
                     Shape::Grid(g) => {
                         grid::validate_record(g)?;
                         if e.id != g.id.to_string()
@@ -3165,108 +2679,17 @@ pub(super) fn changes(
                 }
             }
             Change::PartClass { .. } => {}
-            Change::BoltGroup { id, group } => {
-                bolt_group_connects(&group.connects, id)?;
-                bolt_group_values(group)?;
-                // A repin in the same batch or the pinned definition the model already holds.
-                let spec = fastener_definition(input, prims, group.fastener)?;
-                bolt_group_against(&spec, group)?;
-                for part in &group.connects {
-                    reads.insert(Footprint {
-                        identity: part.clone(),
-                        group: Group::Lifecycle,
-                    });
-                }
-                reads.insert(Footprint {
-                    identity: group.fastener.to_string(),
-                    group: Group::Relationship,
-                });
-            }
+            Change::Discipline(hook) => hook.0.validate(&mut hook::ChangeValidateCx {
+                budgets: b,
+                input,
+                prims,
+                reads: &mut reads,
+            })?,
             Change::Label { name, .. } => label(name)?,
             Change::AttachReference(r) => reference::check_new(r)?,
             Change::ReferenceUnits { interpretation, .. } => {
                 reference::check_units(interpretation)?
             }
-            Change::Contour { points_mm, .. } => {
-                count_points(points_mm, b)?;
-                cap(points_mm.iter().flatten().copied(), 1e9)?;
-            }
-            Change::Corners { corners, .. } => {
-                if corners.len() > 1024 {
-                    return Err(limit());
-                }
-                let mut seen = Vec::new();
-                for corner in corners {
-                    if corner.vertex >= 1024 || seen.contains(&corner.vertex) {
-                        return Err(invalid());
-                    }
-                    seen.push(corner.vertex);
-                    corner.validate().map_err(|_| invalid())?;
-                }
-            }
-            Change::Thickness { mm, .. } => cap([*mm], 1e6)?,
-            Change::Bends { bends, .. } => {
-                // Structural bounds only: finiteness, caps, positive radii and a finite angle
-                // inside (-pi, pi); whether the records form one supported bent body is the
-                // engine's replay decision.
-                if bends.len() > MAX_BENDS {
-                    return Err(limit());
-                }
-                for bend in bends {
-                    let (lines, radii, angle): ([[f64; 3]; 2], &[f64], Option<f64>) =
-                        match bend.spec {
-                            BendSpec::Fold {
-                                a_mm,
-                                b_mm,
-                                radius_mm,
-                                angle_rad,
-                            } => ([a_mm, b_mm], &[radius_mm][..], Some(angle_rad)),
-                            BendSpec::Roll {
-                                a_mm,
-                                b_mm,
-                                radius_mm,
-                                radius_b_mm,
-                            } => (
-                                [a_mm, b_mm],
-                                match radius_b_mm {
-                                    Some(rb) => &[radius_mm, rb][..],
-                                    None => &[radius_mm][..],
-                                },
-                                None,
-                            ),
-                        };
-                    cap(lines.iter().flatten().copied(), 1e9)?;
-                    if radii.iter().any(|v| *v <= 0.0) {
-                        return Err(invalid());
-                    }
-                    cap(radii.iter().copied(), 1e9)?;
-                    // A cone with equal radii is a cylinder, and the stored encoding keeps one
-                    // radius for a cylinder: equal radii would read back as a cylinder and
-                    // refuse their own sector blank.
-                    if let BendSpec::Roll {
-                        radius_mm,
-                        radius_b_mm: Some(radius_b),
-                        ..
-                    } = bend.spec
-                        && radius_b == radius_mm
-                    {
-                        return Err(invalid());
-                    }
-                    if let Some(angle) = angle
-                        && (!angle.is_finite()
-                            || angle == 0.0
-                            || angle.abs() >= core::f64::consts::PI)
-                    {
-                        return Err(invalid());
-                    }
-                }
-            }
-            Change::Cuts { cuts, .. } => cut_values(cuts)?,
-            Change::Axis { points_mm, .. } => cap(points_mm.iter().flatten().copied(), 1e9)?,
-            Change::Roll {
-                opinion: Opinion::Value(n),
-                ..
-            } => cap([*n], std::f64::consts::TAU)?,
             Change::Placement { placement, .. } => pose(placement)?,
             Change::Material {
                 opinion: MaterialOpinion::Target(d),
@@ -3274,12 +2697,6 @@ pub(super) fn changes(
             } => {
                 reads.insert(Footprint {
                     identity: d.to_string(),
-                    group: Group::Relationship,
-                });
-            }
-            Change::Profile { digest, .. } => {
-                reads.insert(Footprint {
-                    identity: digest.to_string(),
                     group: Group::Relationship,
                 });
             }
@@ -3300,7 +2717,7 @@ pub(super) fn changes(
     }
     Ok((reads, writes))
 }
-fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
+pub(super) fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
     if points.len() > 1024 || points.len().saturating_mul(3) > b.array_items {
         return Err(limit());
     }
@@ -3312,7 +2729,7 @@ fn count_points(points: &[[f64; 3]], b: Budgets) -> Result<(), Diagnostic> {
 /// The authored plane-cut records of a created plate or member (A03): finite and within the
 /// coordinate cap, with a non-zero normal, in ascending ordinals at most 999. Whether a plane
 /// crosses the element is the engine's gate.
-fn cut_values(cuts: &[CutRecord]) -> Result<(), Diagnostic> {
+pub(super) fn cut_values(cuts: &[CutRecord]) -> Result<(), Diagnostic> {
     let mut last_ordinal = None;
     for cut in cuts {
         // The record admission keeps the model's codes: non-finite and a zero normal are
@@ -3342,117 +2759,9 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     .chain(e.placement.orientation_xyzw),
             )?;
             match &e.shape {
-                Shape::Plate {
-                    contour_mm,
-                    thickness_mm,
-                    thickness_side: _,
-                    corners,
-                    bends,
-                    holes,
-                    hole_records,
-                    cuts,
-                } => finite(
-                    contour_mm
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .chain(holes.iter().flatten().flatten().copied())
-                        .chain(
-                            hole_records
-                                .iter()
-                                .flat_map(|r| r.polygon_mm.iter().flatten().copied()),
-                        )
-                        .chain([*thickness_mm])
-                        .chain(
-                            cuts.iter()
-                                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-                        )
-                        .chain(corners.iter().flat_map(|c| match c.treatment {
-                            CornerTreatment::Chamfer { d1_mm, d2_mm } => [d1_mm, d2_mm],
-                            CornerTreatment::Round { radius_mm } => [radius_mm, radius_mm],
-                        }))
-                        .chain(bends.iter().flat_map(|b| {
-                            match b.spec {
-                                BendSpec::Fold {
-                                    a_mm,
-                                    b_mm,
-                                    radius_mm,
-                                    angle_rad,
-                                } => a_mm
-                                    .into_iter()
-                                    .chain(b_mm)
-                                    .chain([radius_mm, angle_rad])
-                                    .collect::<Vec<_>>(),
-                                BendSpec::Roll {
-                                    a_mm,
-                                    b_mm,
-                                    radius_mm,
-                                    radius_b_mm,
-                                } => a_mm
-                                    .into_iter()
-                                    .chain(b_mm)
-                                    .chain([radius_mm, radius_b_mm.unwrap_or(radius_mm)])
-                                    .collect::<Vec<_>>(),
-                            }
-                        })),
-                ),
-                Shape::Member {
-                    axis_mm,
-                    roll_rad,
-                    placement,
-                    cuts,
-                    ..
-                } => finite(
-                    axis_mm
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .chain(roll_rad.iter().copied())
-                        .chain(placement.iter().flat_map(|p| {
-                            [
-                                p.plane_offset_mm,
-                                p.depth_offset_mm,
-                                p.start_offset_mm,
-                                p.end_offset_mm,
-                            ]
-                        }))
-                        .chain(
-                            cuts.iter()
-                                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-                        ),
-                ),
                 Shape::Assembly => Ok(()),
-                Shape::LoftedPlate { start_mm, end_mm } => finite(
-                    start_mm
-                        .iter()
-                        .flatten()
-                        .copied()
-                        .chain(end_mm.iter().flatten().copied()),
-                ),
-                Shape::Weld(w) => finite([w.size_mm]),
-                Shape::Bolt(b) => finite(
-                    [b.diameter_mm, b.pitch_mm]
-                        .into_iter()
-                        .chain(b.origin_mm)
-                        .chain(b.direction_mm),
-                ),
-                Shape::BoltGroup(b) => finite(
-                    b.point1_mm
-                        .into_iter()
-                        .chain(b.point2_mm)
-                        .chain(b.plane_normal_mm)
-                        .chain([
-                            b.rotation_rad,
-                            b.on_plane_mm,
-                            b.depth_mm,
-                            b.offset_start_mm,
-                            b.spacing_value_mm,
-                            b.length_mm,
-                        ])
-                        .chain(b.spacings_mm.iter().copied()),
-                ),
+                Shape::Discipline(hook) => hook.0.check_finite(),
                 Shape::Level { elevation_mm } => finite([*elevation_mm]),
-                Shape::Instance { .. } => Ok(()),
                 Shape::Grid(g) => grid::validate_record(g),
                 Shape::Construction(o) => construction::validate_record(o),
                 Shape::Annotation(a) => annotation::validate_record(a),
@@ -3469,33 +2778,7 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
         Change::ReferenceUnits { interpretation, .. } => {
             finite(interpretation.iter().map(|i| i.meters_per_unit))
         }
-        Change::Contour { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
-        Change::BoltGroup { group, .. } => finite(
-            group
-                .point1_mm
-                .into_iter()
-                .chain(group.point2_mm)
-                .chain(group.plane_normal_mm)
-                .chain([
-                    group.rotation_rad,
-                    group.on_plane_mm,
-                    group.depth_mm,
-                    group.offset_start_mm,
-                    group.spacing_value_mm,
-                    group.length_mm,
-                ])
-                .chain(group.spacings_mm.iter().copied()),
-        ),
-        Change::Cuts { cuts, .. } => finite(
-            cuts.iter()
-                .flat_map(|c| c.point_mm.into_iter().chain(c.normal)),
-        ),
-        Change::Axis { points_mm, .. } => finite(points_mm.iter().flatten().copied()),
-        Change::Thickness { mm, .. } => finite([*mm]),
-        Change::Roll {
-            opinion: Opinion::Value(n),
-            ..
-        } => finite([*n]),
+        Change::Discipline(hook) => hook.0.check_finite(),
         Change::Placement { placement, .. } => finite(
             placement
                 .translation_mm
@@ -3618,13 +2901,13 @@ fn plate_corner_records(p: &Prim) -> Result<(), Diagnostic> {
         let (d1, d2, r) = (number(d1)?, number(d2)?, number(r)?);
         let treatment = match k {
             Value::Text(k) if k == "chamfer" && r == 0. => {
-                beamcraft_model::command::CornerTreatment::Chamfer {
+                steel::model::command::CornerTreatment::Chamfer {
                     d1_mm: d1,
                     d2_mm: d2,
                 }
             }
             Value::Text(k) if k == "round" && d1 == 0. && d2 == 0. => {
-                beamcraft_model::command::CornerTreatment::Round { radius_mm: r }
+                steel::model::command::CornerTreatment::Round { radius_mm: r }
             }
             _ => return Err(invalid()),
         };
@@ -3634,6 +2917,171 @@ fn plate_corner_records(p: &Prim) -> Result<(), Diagnostic> {
         }
         .validate()
         .map_err(|_| invalid())?;
+    }
+    Ok(())
+}
+
+/// Validates one owned plate, beam or column prim of a loaded layer: the operation history, the
+/// shape inputs and the owned records. Moved unchanged from [`snapshot`].
+pub(super) fn steel_part(
+    kind: &str,
+    p: &Prim,
+    prims: &[Prim],
+    operation_ids: &mut std::collections::BTreeSet<beamcraft_model::id::OpId>,
+) -> Result<(), Diagnostic> {
+    let hole_history = cut_history::read_holes(p)?;
+    let member_history = cut_history::read_member_holes(p)?;
+    let history = cut_history::read(p)?;
+    for id in history
+        .retired
+        .into_iter()
+        .chain(hole_history.retired)
+        .chain(member_history.retired)
+        .chain(cut_history::ids(p, "steel:cut:operationId")?)
+        .chain(cut_history::ids(p, "steel:hole:operationIds")?)
+        .chain(cut_history::ids(p, "steel:mhole:operationIds")?)
+    {
+        if !operation_ids.insert(id) {
+            return Err(invalid());
+        }
+    }
+    match kind {
+        "plate" => {
+            // The form token discriminates the stored record: a lofted plate (A11)
+            // carries the three loft attributes and no plate extrusion inputs; an
+            // extruded plate stores neither the token nor the loft attributes.
+            let lofted = match p.properties.iter().find(|a| a.name == "steel:plate:form") {
+                None => {
+                    if p.properties.iter().any(|a| {
+                        matches!(
+                            a.name.as_str(),
+                            "steel:plate:loftStartMm" | "steel:plate:loftEndMm"
+                        )
+                    }) {
+                        return Err(invalid());
+                    }
+                    false
+                }
+                Some(_) => {
+                    if text(p, "steel:plate:form", "token")? != "lofted" {
+                        return Err(invalid());
+                    }
+                    if p.properties.iter().any(|a| {
+                        matches!(
+                            a.name.as_str(),
+                            "steel:plate:contourPointsMm" | "steel:plate:thicknessMm"
+                        )
+                    }) {
+                        return Err(invalid());
+                    }
+                    true
+                }
+            };
+            if lofted {
+                lofted_plate(
+                    &points(p, "steel:plate:loftStartMm")?,
+                    &points(p, "steel:plate:loftEndMm")?,
+                )?;
+            } else {
+                plate(
+                    &points(p, "steel:plate:contourPointsMm")?,
+                    number(p, "steel:plate:thicknessMm")?,
+                )?;
+            }
+            plate_corner_records(p)?;
+            plate_holes(p)?;
+            plate_hole_records(p)?;
+            element_cut(p)?;
+        }
+        "beam" | "column" => {
+            let axis = points(p, "bim:axisPointsMm")?;
+            if let Some(prop) = p
+                .properties
+                .iter()
+                .find(|v| v.name == "steel:member:pathType")
+            {
+                if prop.type_name != "token"
+                    || text(p, "steel:member:pathType", "token")? != "arc"
+                    || axis.len() != 3
+                {
+                    return Err(invalid());
+                }
+                if p.properties
+                    .iter()
+                    .any(|v| v.name == "steel:member:rollRad")
+                {
+                    return Err(invalid());
+                }
+            }
+            if axis.len() < 2 || axis.len() > MAX_MEMBER_PATH_POINTS {
+                return Err(invalid());
+            }
+            let profile =
+                link(p, prims, "bim:profile", &PROFILE_KINDS, true)?.ok_or_else(invalid)?;
+            let profile = read_definition(profile, text(profile, "bim:definitionKind", "token")?)?;
+            definition(&profile)?;
+            let (width, height) = match &profile {
+                Definition::RectangleProfile {
+                    width_mm,
+                    height_mm,
+                    ..
+                } => (*width_mm, *height_mm),
+                Definition::SectionProfile { shape, .. } => shape.extent_mm(),
+                // A member pins a section profile, never a material or a fastener.
+                Definition::Material { .. } | Definition::Fastener { .. } => {
+                    return Err(invalid());
+                }
+            };
+            // The size reference is the total path length for a polybeam and the one
+            // chord for a straight member; both sum the same first chord.
+            let mut length = 0.0;
+            for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
+                length += norm(difference(*b, *a));
+            }
+            let half_width = width / 2.0;
+            let half_height = height / 2.0;
+            let size = length.max((half_width * half_width + half_height * half_height).sqrt());
+            if size > 1e6 {
+                return Err(limit());
+            }
+            let eps = 0.001f64.max(size / 4194304.0);
+            // Every chord, not only the total, must clear the geometric floor.
+            let mut short = length < eps;
+            for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
+                short |= norm(difference(*b, *a)) < eps;
+            }
+            if short || width < eps || height < eps {
+                return Err(invalid());
+            }
+            if let Some(Value::Number(n)) = p
+                .properties
+                .iter()
+                .find(|v| v.name == "steel:member:rollRad")
+                .and_then(|v| v.value.as_ref())
+            {
+                cap([*n], std::f64::consts::TAU)?;
+            }
+            element_cut(p)?;
+            member_hole_records(p)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Validates the properties of a weld or bolt-group connection prim; the rest of a connection
+/// is the platform's. Moved unchanged from [`snapshot`].
+pub(super) fn steel_connection(p: &Prim, prims: &[Prim]) -> Result<(), Diagnostic> {
+    let connection_type = text(p, "steel:connection:type", "token")?;
+    let has = |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
+    let placed = has("steel:bolt:fastener");
+    match connection_type {
+        "weld" if !has("steel:bolt:") => weld_properties(p)?,
+        // An A05 annotation group and an A14.3 group are discriminated by
+        // the definition digest; a mixed property set is never guessed.
+        "bolt_group" if !has("steel:weld:") && placed => bolt_group_properties(p, prims)?,
+        "bolt_group" if !has("steel:weld:") && !has("steel:bolt:point1Mm") => bolt_properties(p)?,
+        _ => return Err(invalid().with_rule("DV-ATTR-002")),
     }
     Ok(())
 }

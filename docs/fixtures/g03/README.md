@@ -120,7 +120,7 @@ general mesh validator or an accuracy certificate for arbitrary solids.
 ## Reproduction
 
 ```sh
-cargo test -p beamcraft-kernel --test g03_fixtures
+cargo test -p beamcraft-kernel --test kernel -- g03_fixtures::
 cargo test --workspace
 ```
 

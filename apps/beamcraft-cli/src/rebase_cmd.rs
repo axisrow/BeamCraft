@@ -4,13 +4,10 @@
 //! Explicit C03 rebase; all engineering/storage decisions stay in the application API.
 
 use crate::plate_cmd::revision_json;
-use beamcraft_cli::{
-    plate::PlateError,
-    workspace::{
-        conflicts::conflict_json,
-        read_meta,
-        rebase::{RebaseRequest, RebaseResult, rebase_workspace},
-    },
+use beamcraft_cli::workspace::{
+    conflicts::conflict_json,
+    read_meta,
+    rebase::{RebaseRequest, RebaseResult, rebase_workspace},
 };
 use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
@@ -18,10 +15,11 @@ use beamcraft_host::{
 };
 use beamcraft_json::Json;
 use beamcraft_model::{error::ErrorCode, id::OpId};
+use session::Refusal;
 use std::{collections::BTreeMap, ffi::OsString, path::Path};
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -35,7 +33,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     }
 }
 
-fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
+fn run(args: &[OsString]) -> Result<(Json, u8), Refusal> {
     let args = args
         .iter()
         .map(|s| {
@@ -81,7 +79,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
     let at = |path: &Path| {
         BlobStore::new(path)
             .map(RevisionStore::new)
-            .map_err(|error| PlateError {
+            .map_err(|error| Refusal {
                 rule_id: None,
                 code: error.code(),
                 message: "rebase store is not usable",

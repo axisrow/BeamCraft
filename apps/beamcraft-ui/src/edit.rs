@@ -3,14 +3,13 @@
 
 //! V05.2 edit tools, as pure logic: selecting by a mouse click, moving, copying and deleting the
 //! selected element, and undo and redo. Every action is the argument list of the same CLI command
-//! a user types (`pick`, `update-element --translation`, `copy-element --offset`,
+//! a user types (`update-element --translation`, `copy-element --offset`,
 //! `delete-element`, `undo-workspace`, `redo-workspace`); the reply is read back into a result or
 //! the CLI's own refusal. Nothing here touches a window, a GPU or a process.
 //!
 //! The UI computes no engineering result. The one piece of arithmetic is the display ray through a
 //! clicked pixel (camera math, like the projection in [`crate::camera`]); what the ray hits is the
-//! engine's `pick`. The window runs that query itself on the snapshot it shows ([`pick_in`], the
-//! same engine call the CLI's `pick` makes), so a click selects what is on screen and starts no
+//! engine's `pick`. The window runs that query itself on the snapshot it shows ([`pick_in`]), so a click selects what is on screen and starts no
 //! process for it. A move is the absolute translation the user types (the form is pre-filled with
 //! the element's present translation as the engine reports it), so the UI adds nothing up itself.
 //! Property editing is V06.
@@ -88,51 +87,9 @@ pub fn ray_through(view: &View, ndc: [f32; 2], origin_mm: [f64; 3]) -> Option<Ra
     })
 }
 
-fn triple(values: [f64; 3]) -> String {
-    format!("{},{},{}", values[0], values[1], values[2])
-}
-
-/// The arguments of the CLI `pick` command for a ray: the nearest face hit only.
-pub fn pick_args(store: &Path, ray: &Ray) -> Vec<String> {
-    vec![
-        "pick".into(),
-        "--store".into(),
-        store.to_string_lossy().into_owned(),
-        "--origin".into(),
-        triple(ray.origin),
-        "--direction".into(),
-        triple(ray.direction),
-        "--targets".into(),
-        "face".into(),
-        "--max-hits".into(),
-        "1".into(),
-    ]
-}
-
-/// Reads the reply of `pick`: the element under the ray, or `None` for empty space.
-pub fn parse_pick(exit_code: Option<i32>, stdout: &[u8]) -> Result<Option<String>, ToolError> {
-    let reply = decode(stdout)?;
-    if let Some(error) = rejection(&reply, exit_code) {
-        return Err(error);
-    }
-    let unreadable = || ToolError {
-        code: "UNREADABLE_REPLY".into(),
-        message: "the CLI reply lacks a field".into(),
-    };
-    let hits = reply
-        .get("hits")
-        .and_then(Json::array)
-        .map_err(|_| unreadable())?;
-    match hits.first() {
-        None => Ok(None),
-        Some(hit) => Ok(Some(text(hit, "element_id").ok_or_else(unreadable)?)),
-    }
-}
-
-/// What the CLI's `pick` with [`pick_args`] answers for `ray`, computed in this process on
-/// `snapshot` by the same engine query: the element of the nearest front face along the ray, or
-/// `None` for empty space. `selection` is the window's switches (V11): a class that is off is
-/// never the answer. A refusal carries the engine's code, as the CLI's reply would.
+/// The element under `ray`, computed in this process on `snapshot` by the engine's pick: the
+/// element of the nearest front face along the ray, or `None` for empty space. `selection` is the window's switches (V11): a class that is off is
+/// never the answer. A refusal carries the engine's code.
 pub fn pick_in(
     snapshot: &ViewSnapshot,
     ray: &Ray,
@@ -805,50 +762,6 @@ mod tests {
             .unwrap();
         assert!(ray_through(&view, [1.5, 0.0], origin_mm).is_none());
         assert!(ray_through(&view, [f32::NAN, 0.0], origin_mm).is_none());
-    }
-
-    #[test]
-    fn pick_arguments_are_the_cli_pick_command() {
-        let ray = Ray {
-            origin: [500.0, 250.5, 1000.0],
-            direction: [0.0, 0.0, -1.0],
-        };
-        assert_eq!(
-            pick_args(Path::new("S"), &ray),
-            [
-                "pick",
-                "--store",
-                "S",
-                "--origin",
-                "500,250.5,1000",
-                "--direction",
-                "0,0,-1",
-                "--targets",
-                "face",
-                "--max-hits",
-                "1"
-            ]
-        );
-    }
-
-    #[test]
-    fn a_pick_reply_gives_the_element_or_nothing() {
-        let hit = br#"{"hits":[{"element_id":"019a7bf0-0000-7000-8000-000000000001","feature_kind":"face"}],"outcome":"picked"}"#;
-        assert_eq!(
-            parse_pick(Some(0), hit).unwrap().as_deref(),
-            Some("019a7bf0-0000-7000-8000-000000000001")
-        );
-        assert_eq!(
-            parse_pick(Some(0), br#"{"hits":[],"outcome":"picked"}"#).unwrap(),
-            None
-        );
-        let refused = br#"{"code":"NOT_FOUND","message":"no revision","outcome":"rejected"}"#;
-        assert_eq!(parse_pick(Some(2), refused).unwrap_err().code, "NOT_FOUND");
-        assert_eq!(
-            parse_pick(Some(0), b"nope").unwrap_err().code,
-            "UNREADABLE_REPLY"
-        );
-        assert!(parse_pick(Some(0), br#"{"outcome":"picked"}"#).is_err());
     }
 
     #[test]

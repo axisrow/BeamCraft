@@ -68,6 +68,16 @@ version = "0.0.1"
 allow = ["MPL-2.0"]
 
 [[licenses.exceptions]]
+name = "session"
+version = "0.0.1"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
+name = "steel"
+version = "0.0.1"
+allow = ["MPL-2.0"]
+
+[[licenses.exceptions]]
 name = "beamcraft-cli"
 version = "0.0.1"
 allow = ["MPL-2.0"]

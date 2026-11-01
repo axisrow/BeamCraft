@@ -34,7 +34,7 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 const PLATE: &str = "019a7bf0-0000-7000-8000-00000000b001";
 const BEAM: &str = "019a7bf0-0000-7000-8000-00000000b002";
 
-mod support;
+use crate::support;
 
 fn cli() -> Option<PathBuf> {
     support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))

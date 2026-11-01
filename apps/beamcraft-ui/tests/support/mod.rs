@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Required real-binary prerequisites; absence is a failed acceptance check.
+
+// A module of the `ui` test binary: the suites' own allows do not reach it.
+#![allow(clippy::expect_used)]
 use std::path::{Path, PathBuf};
 
 /// Resolves the real CLI adjacent to the UI executable or fails the test explicitly.

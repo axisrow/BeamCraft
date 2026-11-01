@@ -9,10 +9,22 @@ rust-version.workspace = true
 repository.workspace = true
 authors.workspace = true
 publish = false
+autotests = false
 
 [[bin]]
 name = "beamcraft-ui"
 path = "src/main.rs"
+
+# The integration suites build into one `ui` test binary (`tests/ui.rs`): the GUI stack (eframe,
+# egui, wgpu, winit) is linked once instead of once per suite. `cancel` stays its own target: it
+# relies on being alone in its process (`tests/cancel.rs`).
+[[test]]
+name = "ui"
+path = "tests/ui.rs"
+
+[[test]]
+name = "cancel"
+path = "tests/cancel.rs"
 
 # Exact pins. Default features off, so egui's `default_fonts` (Ubuntu/Bitstream licences) is
 # never enabled; the UI font is the admitted Inter read at run time from assets/fonts/inter.
@@ -25,8 +37,10 @@ path = "src/main.rs"
 # (`app::load_icon`).
 [dependencies]
 beamcraft-model.workspace = true
+steel = { path = "../../crates/steel", version = "0.0.1" }
 beamcraft-json.workspace = true
 beamcraft-host = { path = "../../crates/host", version = "0.0.1" }
+session = { path = "../../crates/session", version = "0.0.1" }
 beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }
 egui = { version = "=0.37.0", default-features = false }
 # No hyperlink widgets or OpenUrl commands: the "links" feature only pulls the

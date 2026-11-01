@@ -6,7 +6,6 @@
 //! resolves a grid-line plane view at save time.
 
 use beamcraft_cli::grid::grids;
-use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::source_file::read_file;
 use beamcraft_engine::views::{self, NamedView, PlaneSpec, ViewBook, ViewPose, WorkArea};
 use beamcraft_host::revision::RevisionStore;
@@ -15,40 +14,41 @@ use beamcraft_host::views as views_json;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
 /// The session file is a small JSON document.
 const FILE_CAP: usize = 1024 * 1024;
 
-fn from_engine(e: CommandError) -> PlateError {
-    PlateError {
+fn from_engine(e: CommandError) -> Refusal {
+    Refusal {
         rule_id: e.rule_id,
         code: e.code,
         message: e.message,
     }
 }
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
 }
 
-fn backend(message: &'static str) -> PlateError {
-    PlateError {
+fn backend(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::BackendUnavailable,
         message,
     }
 }
 
-fn unknown() -> PlateError {
-    PlateError {
+fn unknown() -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::NotFound,
         message: "VIEW_UNKNOWN",
@@ -88,7 +88,7 @@ fn load(path: &str, allow_missing: bool) -> Run<ViewBook> {
         Ok(bytes) => bytes,
         Err(ErrorCode::NotFound) if allow_missing => return Ok(ViewBook::new()),
         Err(code) => {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code,
                 message: "the view file could not be read",
@@ -308,7 +308,7 @@ fn save_view(options: &BTreeMap<&str, &str>, name: &str) -> Run<(NamedView, View
     let (plane, pose) = if grid_line {
         let store_root =
             get("--store").ok_or_else(|| invalid("--store is required to resolve a grid line"))?;
-        let store = RevisionStore::new(BlobStore::new(store_root).map_err(|e| PlateError {
+        let store = RevisionStore::new(BlobStore::new(store_root).map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "store root is not usable",

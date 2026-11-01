@@ -20,14 +20,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// One boundary loop: mesh vertex ids and their positions.
 #[derive(Debug, Clone)]
-pub(crate) struct CapLoop {
-    pub(crate) ids: Vec<u32>,
-    pub(crate) xyz: Vec<[f64; 3]>,
+pub struct CapLoop {
+    /// Local vertex ids around the loop.
+    pub ids: Vec<u32>,
+    /// Vertex coordinates around the loop.
+    pub xyz: Vec<[f64; 3]>,
 }
 
 /// Why a set of directed boundary edges is not a set of simple loops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChainError {
+pub enum ChainError {
     /// A vertex has no matching in/out edge: the surface does not close.
     Open,
     /// A vertex is entered or left more than once: the boundary touches itself.
@@ -37,10 +39,7 @@ pub(crate) enum ChainError {
 }
 
 /// Chains directed edges into closed loops (each vertex exactly one out and one in edge).
-pub(crate) fn chain_loops(
-    edges: &[(u32, u32)],
-    max_loops: usize,
-) -> Result<Vec<Vec<u32>>, ChainError> {
+pub fn chain_loops(edges: &[(u32, u32)], max_loops: usize) -> Result<Vec<Vec<u32>>, ChainError> {
     let mut next: BTreeMap<u32, u32> = BTreeMap::new();
     let mut ends: BTreeSet<u32> = BTreeSet::new();
     for &(a, b) in edges {
@@ -90,10 +89,7 @@ fn cmp_point(a: &[f64; 3], b: &[f64; 3]) -> Ordering {
 
 /// Builds a loop that starts at its lexicographically smallest vertex, so the cap
 /// triangulation never depends on how the input mesh happened to be numbered.
-pub(crate) fn canonical_loop(
-    ring: &[u32],
-    position: impl Fn(u32) -> Option<[f64; 3]>,
-) -> Option<CapLoop> {
+pub fn canonical_loop(ring: &[u32], position: impl Fn(u32) -> Option<[f64; 3]>) -> Option<CapLoop> {
     let points: Vec<[f64; 3]> = ring.iter().map(|&i| position(i)).collect::<Option<_>>()?;
     let first = (0..points.len()).min_by(|&i, &j| match (points.get(i), points.get(j)) {
         (Some(a), Some(b)) => cmp_point(a, b).then(ring.get(i).cmp(&ring.get(j))),
@@ -119,7 +115,7 @@ pub(crate) fn sort_loops(loops: &mut [CapLoop]) {
 }
 
 /// Exact sign of twice the signed area of a closed 2-D polygon: filtered first, integers after.
-pub(crate) fn area_sign(points: &[[f64; 2]], budget: &mut ExactBudget) -> Result<i8, OpFailure> {
+pub fn area_sign(points: &[[f64; 2]], budget: &mut ExactBudget) -> Result<i8, OpFailure> {
     const U: f64 = 1.110_223_024_625_156_5e-16;
     let mut sum = 0.0;
     let mut permanent = 0.0;
@@ -149,7 +145,7 @@ pub(crate) fn area_sign(points: &[[f64; 2]], budget: &mut ExactBudget) -> Result
 
 /// Splits projected loops into the single outer loop (positive area, counter-clockwise) and
 /// the holes (negative area, clockwise). Several outer loops or a zero-area loop are refused.
-pub(crate) fn split_loops(
+pub fn split_loops(
     loops: Vec<CapLoop>,
     project: impl Fn([f64; 3]) -> [f64; 2],
     multiple: OpDefect,
@@ -186,7 +182,7 @@ pub(crate) fn split_loops(
 /// Triangulates `outer` with `holes` (all already oriented: outer counter-clockwise, holes
 /// clockwise in the projected frame). Triangles are counter-clockwise in that frame and use
 /// the loops' mesh vertex ids. `section` selects the failure vocabulary of a plane cut.
-pub(crate) fn triangulate_cap(
+pub fn triangulate_cap(
     outer: &CapLoop,
     holes: &[CapLoop],
     project: impl Fn([f64; 3]) -> [f64; 2],

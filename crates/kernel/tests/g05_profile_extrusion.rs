@@ -13,7 +13,7 @@
     clippy::panic
 )]
 
-mod common;
+use crate::common;
 
 use beamcraft_kernel::profile::{
     Cavity, CurveKind, CurveSpec, FaceRole, Point2, Profile, VolumeStatus, extrude,

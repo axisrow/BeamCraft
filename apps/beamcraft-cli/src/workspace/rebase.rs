@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{
     command_evidence as evidence,
-    plate::{self, PlateError, RevisionSummary, integrity, summarize},
+    plate::{self},
 };
 use beamcraft_engine::rebase::{Conflict, Decision, plan};
 use beamcraft_host::{
@@ -29,6 +29,8 @@ use beamcraft_model::{
     error::ErrorCode,
     id::OpId,
 };
+use session::Refusal;
+use session::pipeline::{RevisionSummary, integrity, summarize};
 use std::path::Path;
 
 /// Immutable caller inputs. The CLI actor is trusted local context; a coordinator must derive it
@@ -65,14 +67,14 @@ pub enum RebaseResult {
     Conflicted(Vec<Conflict>),
 }
 
-fn reuse() -> PlateError {
-    PlateError::new(
+fn reuse() -> Refusal {
+    Refusal::new(
         ErrorCode::OpIdReuse,
         "rebase identity is bound to another request",
     )
 }
-fn mismatch() -> PlateError {
-    PlateError::new(ErrorCode::BaseRevisionMismatch, "a rebase input head moved")
+fn mismatch() -> Refusal {
+    Refusal::new(ErrorCode::BaseRevisionMismatch, "a rebase input head moved")
 }
 
 fn fingerprint(
@@ -80,7 +82,7 @@ fn fingerprint(
     meta: &WorkspaceMeta,
     project: &Uuid7,
     schema: ContentDigest,
-) -> Result<ContentDigest, PlateError> {
+) -> Result<ContentDigest, Refusal> {
     // Bind caller arguments and immutable context. A later observed head changes preconditions,
     // not the original call. The receipt separately binds every actual input pin and metadata.
     let text = format!(
@@ -99,12 +101,12 @@ fn replay(
     store: &RevisionStore,
     state: &WorkspaceState,
     request: &RebaseRequest,
-) -> Result<Option<Rebased>, PlateError> {
-    let op = plate::host_uuid(&request.op_id.to_string())?;
+) -> Result<Option<Rebased>, Refusal> {
+    let op = session::pipeline::host_uuid(&request.op_id.to_string())?;
     let sequence = match store.query_outcome(&op)? {
         Outcome::Committed { sequence, .. } => Some(sequence),
         Outcome::Unknown => Some(store.sequence_of(&op)?.ok_or_else(|| {
-            PlateError::new(
+            Refusal::new(
                 ErrorCode::OutcomeUnknown,
                 "rebase outcome is unknown; recover the revision store",
             )
@@ -159,8 +161,8 @@ fn replay(
     }))
 }
 
-fn opened(revision: &Revision) -> Result<beamcraft_layer_engine::OpenRequest, PlateError> {
-    plate::open_base(&plate::base_of(revision)?)
+fn opened(revision: &Revision) -> Result<beamcraft_layer_engine::OpenRequest, Refusal> {
+    session::pipeline::open_base(&session::pipeline::base_of(revision)?)
 }
 
 /// Rebase a personal draft onto an exact accepted head, retaining every independent unsent edit.
@@ -175,12 +177,12 @@ pub fn rebase_workspace(
     dir: &Path,
     request: &RebaseRequest,
     hook: &mut dyn CommitHook,
-) -> Result<RebaseResult, PlateError> {
+) -> Result<RebaseResult, Refusal> {
     let canonical = std::fs::canonicalize(dir).map_err(|_| unusable())?;
     if canonical != workspace.blobs().canonical_root()
         || canonical == published.blobs().canonical_root()
     {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "rebase stores must be distinct and match the workspace directory",
         ));
@@ -188,7 +190,7 @@ pub fn rebase_workspace(
     let mut state = WorkspaceState::open(dir)?;
     let meta = state.meta().cloned().ok_or_else(unusable)?;
     if request.actor != meta.user_id {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::PermissionDenied,
             "rebase actor does not own the workspace",
         ));
@@ -197,7 +199,7 @@ pub fn rebase_workspace(
         return Ok(RebaseResult::Rebased(Box::new(prior)));
     }
     let _accepted_guard = PublicationLease::exclusive(published.blobs())
-        .map_err(|error| PlateError::new(error.code(), "accepted store is busy or unavailable"))?;
+        .map_err(|error| Refusal::new(error.code(), "accepted store is busy or unavailable"))?;
     let accepted = published.open()?;
     let draft = workspace.open()?;
     let (draft_pin, accepted_pin) = (
@@ -205,7 +207,7 @@ pub fn rebase_workspace(
         RevisionPin::from_info(accepted.info()),
     );
     let content = draft.manifest().content();
-    let op = plate::host_uuid(&request.op_id.to_string())?;
+    let op = session::pipeline::host_uuid(&request.op_id.to_string())?;
     workspace.claim_changeset(
         &op,
         &fingerprint(request, &meta, content.project(), content.schema())?,
@@ -216,7 +218,7 @@ pub fn rebase_workspace(
         return Err(mismatch());
     }
     if meta.base_revision == accepted_pin.revision || draft_pin.sequence <= meta.synced_sequence {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "rebase requires unsent work and a newer accepted basis",
         ));
@@ -241,13 +243,13 @@ pub fn rebase_workspace(
     let intervening = evidence::interval(published, base.info().sequence(), accepted_pin.sequence)?;
     let remote = evidence::aggregate(published, base.info().sequence(), &intervening)?;
     let footprint = source.footprint.ok_or_else(|| {
-        PlateError::new(
+        Refusal::new(
             ErrorCode::DependencyUnavailable,
             "draft has no complete command evidence",
         )
     })?;
     if remote.footprint.is_none() {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::DependencyUnavailable,
             "accepted interval has no complete command evidence",
         ));
@@ -284,10 +286,10 @@ pub fn rebase_workspace(
             &opened(&accepted)?,
             &evidence::dependencies(&footprint),
             &crate::scope::materializer_targets(&meta.scope)?,
-            &plate::control(),
+            &session::pipeline::control(),
         )?;
         let mut reader = Reader::default();
-        let control = plate::control();
+        let control = session::pipeline::control();
         let (view, _) = reader.open_validated(candidate.clone(), schema_identity()?, &control)?;
         let decoded = plate::decode(&reader, &view, &control)?;
         let (plates, members) = plate::evaluate_decoded(&decoded)?;
@@ -334,25 +336,25 @@ pub fn rebase_workspace(
         // The receipt describes the whole source interval; renounced work is excluded from
         // the planning and materialization footprint, not from the receipt.
         footprint: source.raw_footprint.ok_or_else(|| {
-            PlateError::new(
+            Refusal::new(
                 ErrorCode::DependencyUnavailable,
                 "draft has no complete command evidence",
             )
         })?,
     };
-    let next =
-        RevisionDraft {
-            project: receipt.project.clone(),
-            workspace: receipt.old_meta.workspace_id.clone(),
-            revision: op.clone(),
-            op,
-            workspace_generation: content.workspace_generation().checked_add(1).ok_or_else(
-                || PlateError::new(ErrorCode::LimitExceeded, "draft generation exhausted"),
-            )?,
-            schema: receipt.schema,
-            root_layer: content.root_layer().into(),
-            entries,
-        };
+    let next = RevisionDraft {
+        project: receipt.project.clone(),
+        workspace: receipt.old_meta.workspace_id.clone(),
+        revision: op.clone(),
+        op,
+        workspace_generation: content
+            .workspace_generation()
+            .checked_add(1)
+            .ok_or_else(|| Refusal::new(ErrorCode::LimitExceeded, "draft generation exhausted"))?,
+        schema: receipt.schema,
+        root_layer: content.root_layer().into(),
+        entries,
+    };
     let pin = state.stage_rebase(&receipt)?;
     let committed = crate::publication::commit_verified_with_evidence(
         workspace,

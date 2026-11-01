@@ -19,10 +19,7 @@
 
 use crate::assembly::read_prims;
 use crate::level::LevelContext;
-use crate::plate::{
-    Base, PlateError, ROOT_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid,
-    integrity, load_base, numbers, open_base, open_request, property, summarize,
-};
+use crate::plate::{numbers, property};
 use crate::publication::commit_verified_with_evidence;
 use beamcraft_host::ledger::Outcome;
 use beamcraft_host::revision::{
@@ -38,6 +35,11 @@ use beamcraft_model::descriptor::{
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ConnectionId, ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, ROOT_LAYER, RevisionSummary, base_of, control, digest_of, host_uuid, integrity,
+    load_base, open_base, open_request, summarize,
+};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -53,24 +55,24 @@ fn role_of(name: &str) -> LayerRole {
     }
 }
 
-fn diagnostic_fail(error: Diagnostic) -> PlateError {
-    PlateError {
+fn diagnostic_fail(error: Diagnostic) -> Refusal {
+    Refusal {
         rule_id: error.rule_id,
         code: error.code,
         message: error.message,
     }
 }
 
-fn model_fail(error: beamcraft_model::command::CommandError) -> PlateError {
-    PlateError {
+fn model_fail(error: beamcraft_model::command::CommandError) -> Refusal {
+    Refusal {
         rule_id: error.rule_id,
         code: error.code,
         message: error.message,
     }
 }
 
-fn limit_fail(message: &'static str) -> PlateError {
-    PlateError {
+fn limit_fail(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::LimitExceeded,
         message,
@@ -79,7 +81,7 @@ fn limit_fail(message: &'static str) -> PlateError {
 
 /// The applied answer to the exact retry of an already accepted operation: the recorded
 /// revision, its descriptor and no changes (PC-COORD-002). `None` when the operation is new.
-fn replayed_applied(store: &RevisionStore, op: &OpId) -> Result<Option<Applied>, PlateError> {
+fn replayed_applied(store: &RevisionStore, op: &OpId) -> Result<Option<Applied>, Refusal> {
     let op = host_uuid(&op.to_string())?;
     if let Outcome::Committed { sequence, .. } =
         store.query_outcome(&op).map_err(dependency_error)?
@@ -117,14 +119,14 @@ fn prefix_of(connection: ConnectionId) -> String {
 
 /// Maps a source-store failure onto the F12 closure codes: a missing pinned blob is
 /// `DEPENDENCY_UNAVAILABLE`, damaged bytes are `INTEGRITY_ERROR` (PC-REV-001).
-fn dependency_error(error: RevisionError) -> PlateError {
+fn dependency_error(error: RevisionError) -> Refusal {
     match error {
-        RevisionError::MissingBlob { .. } => PlateError {
+        RevisionError::MissingBlob { .. } => Refusal {
             rule_id: Some("PC-REV-001"),
             code: ErrorCode::DependencyUnavailable,
             message: "a pinned source layer blob is missing",
         },
-        RevisionError::CorruptBlob { .. } | RevisionError::SizeMismatch { .. } => PlateError {
+        RevisionError::CorruptBlob { .. } | RevisionError::SizeMismatch { .. } => Refusal {
             rule_id: Some("PC-REV-001"),
             code: ErrorCode::IntegrityError,
             message: "a pinned source layer does not match its manifest",
@@ -138,13 +140,13 @@ fn dependency_error(error: RevisionError) -> PlateError {
 fn fresh_descriptor(
     context: &LevelContext,
     schema: &SchemaIdentity,
-) -> Result<ProjectDescriptor, PlateError> {
+) -> Result<ProjectDescriptor, Refusal> {
     ProjectDescriptor::new(context.project, &schema.digest.to_string()).map_err(model_fail)
 }
 
 /// Reads the descriptor of a base (the verified head, or the empty store's first-revision
 /// layers), with full structural validation.
-fn descriptor_of_base(base: &Base) -> Result<Option<ProjectDescriptor>, PlateError> {
+fn descriptor_of_base(base: &Base) -> Result<Option<ProjectDescriptor>, Refusal> {
     let control = control();
     let request = open_base(base)?;
     let schema = schema_identity()?;
@@ -171,7 +173,7 @@ enum RequestedScope<'a> {
 
 /// Reads the pinned revision's descriptor, or an empty registry for a source that carries
 /// none yet (only the whole project resolves there).
-fn pinned_registry(revision: &Revision) -> Result<ProjectDescriptor, PlateError> {
+fn pinned_registry(revision: &Revision) -> Result<ProjectDescriptor, Refusal> {
     let control = control();
     let base = base_of(revision)?;
     let request = open_base(&base)?;
@@ -201,9 +203,9 @@ fn resolve_pin(
     scope: RequestedScope<'_>,
     placement: Option<ConnectionPlacement>,
     label: &str,
-) -> Result<ResolvedPin, PlateError> {
+) -> Result<ResolvedPin, Refusal> {
     // An exact revision id is the only admitted pin: there is no `latest` (PC-COORD-001).
-    let blobs = beamcraft_host::storage::BlobStore::new(source_dir).map_err(|e| PlateError {
+    let blobs = beamcraft_host::storage::BlobStore::new(source_dir).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "the source store root is not usable",
@@ -212,7 +214,7 @@ fn resolve_pin(
     let sequence = source
         .sequence_of(&host_uuid(&source_revision.to_string())?)
         .map_err(dependency_error)?
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::NotFound,
             message: "the source store has no such revision",
@@ -221,13 +223,13 @@ fn resolve_pin(
     let manifest = revision.manifest();
     let content = manifest.content();
     if content.project().as_str() != source_project.to_string() {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: Some("PC-ID-002"),
             code: ErrorCode::InvalidArgument,
             message: "the source store revision belongs to another project",
         });
     }
-    let unresolved = |message: &'static str| PlateError {
+    let unresolved = |message: &'static str| Refusal {
         rule_id: Some("PC-ID-001"),
         code: ErrorCode::InvalidArgument,
         message,
@@ -317,11 +319,11 @@ enum PinChange {
 fn commit_descriptor(
     store: &RevisionStore,
     context: &LevelContext,
-    update: impl FnOnce(Option<ProjectDescriptor>) -> Result<ProjectDescriptor, PlateError>,
+    update: impl FnOnce(Option<ProjectDescriptor>) -> Result<ProjectDescriptor, Refusal>,
     change: PinChange,
     changed_connection: Option<ConnectionId>,
     hook: &mut dyn CommitHook,
-) -> Result<Applied, PlateError> {
+) -> Result<Applied, Refusal> {
     let schema = schema_identity()?;
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let descriptor = update(descriptor_of_base(&base)?)?;
@@ -332,7 +334,7 @@ fn commit_descriptor(
         .find(|a| a.name == ROOT_LAYER)
         .ok_or_else(|| integrity("the base has no root layer"))?;
     let root_bytes = write_root_descriptor(&root_asset.bytes, Some(&descriptor))?;
-    store.blobs().publish(&root_bytes).map_err(|e| PlateError {
+    store.blobs().publish(&root_bytes).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "the root layer blob could not be stored",
@@ -358,14 +360,11 @@ fn commit_descriptor(
         if asset.name == ROOT_LAYER || asset.name.starts_with(PIN_PREFIX) {
             continue;
         }
-        store
-            .blobs()
-            .publish(&asset.bytes)
-            .map_err(|e| PlateError {
-                rule_id: None,
-                code: e.code(),
-                message: "a carried layer blob could not be stored",
-            })?;
+        store.blobs().publish(&asset.bytes).map_err(|e| Refusal {
+            rule_id: None,
+            code: e.code(),
+            message: "a carried layer blob could not be stored",
+        })?;
         let role = roles
             .get(asset.name.as_str())
             .copied()
@@ -407,14 +406,11 @@ fn commit_descriptor(
             .find(|c| Some(c.id) == changed_connection)
             .ok_or_else(|| integrity("the changed connection is not in the descriptor"))?;
         for layer in layers {
-            store
-                .blobs()
-                .publish(&layer.bytes)
-                .map_err(|e| PlateError {
-                    rule_id: None,
-                    code: e.code(),
-                    message: "a pinned source layer blob could not be stored",
-                })?;
+            store.blobs().publish(&layer.bytes).map_err(|e| Refusal {
+                rule_id: None,
+                code: e.code(),
+                message: "a pinned source layer blob could not be stored",
+            })?;
             entries.push(LayerEntry::from_bytes(
                 &entry_name(record, &layer.source_name),
                 LayerRole::External,
@@ -427,14 +423,11 @@ fn commit_descriptor(
     for record in &descriptor.connections {
         for (source_layer, digest) in &record.layers {
             let name = entry_name(record, source_layer);
-            let entry = entries
-                .iter()
-                .find(|e| e.name() == name)
-                .ok_or(PlateError {
-                    rule_id: Some("PC-REV-001"),
-                    code: ErrorCode::DependencyUnavailable,
-                    message: "a connection record has no pinned entry",
-                })?;
+            let entry = entries.iter().find(|e| e.name() == name).ok_or(Refusal {
+                rule_id: Some("PC-REV-001"),
+                code: ErrorCode::DependencyUnavailable,
+                message: "a connection record has no pinned entry",
+            })?;
             if entry.digest().to_string() != *digest {
                 return Err(integrity(
                     "a connection record disagrees with its pinned entry",
@@ -484,7 +477,7 @@ pub fn set_metadata(
     name: Option<&str>,
     organization: Option<&str>,
     hook: &mut dyn CommitHook,
-) -> Result<Applied, PlateError> {
+) -> Result<Applied, Refusal> {
     let schema = schema_identity()?;
     commit_descriptor(
         store,
@@ -511,7 +504,7 @@ pub fn define_section(
     context: &LevelContext,
     section: SectionRecord,
     hook: &mut dyn CommitHook,
-) -> Result<Applied, PlateError> {
+) -> Result<Applied, Refusal> {
     let schema = schema_identity()?;
     commit_descriptor(
         store,
@@ -538,7 +531,7 @@ pub fn define_zone(
     context: &LevelContext,
     zone: ZoneRecord,
     hook: &mut dyn CommitHook,
-) -> Result<Applied, PlateError> {
+) -> Result<Applied, Refusal> {
     let schema = schema_identity()?;
     commit_descriptor(
         store,
@@ -582,11 +575,11 @@ pub fn connect_project(
     connection: ConnectionId,
     request: &PinRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Applied, PlateError> {
+) -> Result<Applied, Refusal> {
     if let Some(placement) = &request.placement {
         placement.validate().map_err(model_fail)?;
     }
-    let label = request.label.as_deref().ok_or(PlateError {
+    let label = request.label.as_deref().ok_or(Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message: "--label is required for a new connection",
@@ -634,7 +627,7 @@ pub fn update_connection(
     expected_revision: RevisionId,
     request: &PinRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Applied, PlateError> {
+) -> Result<Applied, Refusal> {
     if let Some(placement) = &request.placement {
         placement.validate().map_err(model_fail)?;
     }
@@ -648,14 +641,14 @@ pub fn update_connection(
     let record = current
         .as_ref()
         .and_then(|d| d.connections.iter().find(|c| c.id == connection))
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: Some("PC-COORD-002"),
             code: ErrorCode::NotFound,
             message: "no connection of this identity exists",
         })?
         .clone();
     if record.source_revision != expected_revision {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: Some("PC-COORD-002"),
             code: ErrorCode::DependencyConflict,
             message: "the expected source pin differs from the pinned revision",
@@ -704,12 +697,12 @@ pub fn remove_connection(
     context: &LevelContext,
     connection: ConnectionId,
     hook: &mut dyn CommitHook,
-) -> Result<Applied, PlateError> {
+) -> Result<Applied, Refusal> {
     commit_descriptor(
         store,
         context,
         |current| {
-            let mut descriptor = current.ok_or(PlateError {
+            let mut descriptor = current.ok_or(Refusal {
                 rule_id: Some("PC-KEEP-001"),
                 code: ErrorCode::NotFound,
                 message: "the store has no descriptor with connections",
@@ -732,14 +725,14 @@ pub struct ConnectionStatus {
     pub record: ConnectionRecord,
     /// Resolved pin entries as `(source layer, digest)`; a missing or disagreeing pin is a
     /// typed refusal, never a silently partial list.
-    pub resolution: Result<Vec<(String, String)>, PlateError>,
+    pub resolution: Result<Vec<(String, String)>, Refusal>,
 }
 
 /// The descriptor of the verified head with every connection resolved against its manifest.
 pub fn show(
     store: &RevisionStore,
     context: &LevelContext,
-) -> Result<(Option<ProjectDescriptor>, Vec<ConnectionStatus>), PlateError> {
+) -> Result<(Option<ProjectDescriptor>, Vec<ConnectionStatus>), Refusal> {
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let descriptor = descriptor_of_base(&base)?;
     let Some(descriptor) = descriptor else {
@@ -749,7 +742,7 @@ pub fn show(
     for record in &descriptor.connections {
         let resolution = match &head {
             Some(head) => resolve_entries(head, record),
-            None => Err(PlateError {
+            None => Err(Refusal {
                 rule_id: Some("PC-REV-001"),
                 code: ErrorCode::DependencyUnavailable,
                 message: "the store has no revision to resolve pins against",
@@ -766,7 +759,7 @@ pub fn show(
 fn resolve_entries(
     head: &Revision,
     record: &ConnectionRecord,
-) -> Result<Vec<(String, String)>, PlateError> {
+) -> Result<Vec<(String, String)>, Refusal> {
     let mut out = Vec::new();
     for (source_layer, digest) in &record.layers {
         let name = entry_name(record, source_layer);
@@ -776,7 +769,7 @@ fn resolve_entries(
             .entries()
             .iter()
             .find(|e| e.name() == name)
-            .ok_or(PlateError {
+            .ok_or(Refusal {
                 rule_id: Some("PC-REV-001"),
                 code: ErrorCode::DependencyUnavailable,
                 message: "a pinned source layer entry is missing",
@@ -794,7 +787,7 @@ fn resolve_entries(
 /// The descriptor of a revision's own root layer, with full structural validation.
 pub(crate) fn revision_descriptor(
     revision: &Revision,
-) -> Result<Option<ProjectDescriptor>, PlateError> {
+) -> Result<Option<ProjectDescriptor>, Refusal> {
     descriptor_of_base(&base_of(revision)?)
 }
 
@@ -806,7 +799,7 @@ pub(crate) fn revision_descriptor(
 pub(crate) fn pinned_prims(
     revision: &Revision,
     record: &ConnectionRecord,
-) -> Result<Vec<Prim>, PlateError> {
+) -> Result<Vec<Prim>, Refusal> {
     let control = control();
     resolve_entries(revision, record)?;
     let mut assets = Vec::new();
@@ -843,8 +836,8 @@ pub(crate) fn pinned_prims(
 pub(crate) fn pinned_prims_of(
     revision: &Revision,
     connection: ConnectionId,
-) -> Result<(ConnectionRecord, Vec<Prim>), PlateError> {
-    let descriptor = revision_descriptor(revision)?.ok_or(PlateError {
+) -> Result<(ConnectionRecord, Vec<Prim>), Refusal> {
+    let descriptor = revision_descriptor(revision)?.ok_or(Refusal {
         rule_id: None,
         code: ErrorCode::NotFound,
         message: "the store has no project descriptor",
@@ -853,7 +846,7 @@ pub(crate) fn pinned_prims_of(
         .connections
         .iter()
         .find(|c| c.id == connection)
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::NotFound,
             message: "no connection of this identity exists",
@@ -866,10 +859,7 @@ pub(crate) fn pinned_prims_of(
 /// Whether a pinned coordination connection of this store authors the element identity.
 /// Pinned content is foreign bytes (PC-OWN-002): the identity exists there and every write
 /// aimed at it is `FOREIGN_READ_ONLY`, never a local miss (T01.5).
-pub(crate) fn pinned_owns_element(
-    store: &RevisionStore,
-    id: &ElementId,
-) -> Result<bool, PlateError> {
+pub(crate) fn pinned_owns_element(store: &RevisionStore, id: &ElementId) -> Result<bool, Refusal> {
     let head = match store.open() {
         Ok(revision) => revision,
         Err(RevisionError::NoRevision) => return Ok(false),
@@ -909,9 +899,9 @@ pub fn resolve(
     store: &RevisionStore,
     context: &LevelContext,
     connection: ConnectionId,
-) -> Result<(ConnectionRecord, Vec<ResolvedElement>), PlateError> {
+) -> Result<(ConnectionRecord, Vec<ResolvedElement>), Refusal> {
     let (_, base) = load_base(store, &context.project, &context.workspace)?;
-    let descriptor = descriptor_of_base(&base)?.ok_or(PlateError {
+    let descriptor = descriptor_of_base(&base)?.ok_or(Refusal {
         rule_id: None,
         code: ErrorCode::NotFound,
         message: "the store has no project descriptor",
@@ -920,13 +910,13 @@ pub fn resolve(
         .connections
         .iter()
         .find(|c| c.id == connection)
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::NotFound,
             message: "no connection of this identity exists",
         })?
         .clone();
-    let placement = record.placement.ok_or(PlateError {
+    let placement = record.placement.ok_or(Refusal {
         rule_id: Some("PC-FRAME-001"),
         code: ErrorCode::DependencyUnavailable,
         message: "the connection has no declared placement (unknown alignment)",

@@ -44,7 +44,6 @@
 //! symbolic link or name that leaves it).
 
 use crate::changeset::{apply_changeset, read_changeset};
-use crate::plate::PlateError;
 use crate::workspace::{
     compensation::{CompensationRequest, CompensationResult, compensate_workspace},
     conflicts::conflict_json,
@@ -57,6 +56,7 @@ use beamcraft_json::Json;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::OpId;
+use session::Refusal;
 use std::path::{Path, PathBuf};
 
 /// The publish handler of one coordinator.
@@ -69,13 +69,13 @@ pub struct PublishHandler {
     canonical_root: PathBuf,
 }
 
-fn refused(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError::new(code, message)
+fn refused(code: ErrorCode, message: &'static str) -> Refusal {
+    Refusal::new(code, message)
 }
 
 impl PublishHandler {
     /// A handler publishing into `published` from workspaces under `workspaces_root`.
-    pub fn new(published: RevisionStore, workspaces_root: &Path) -> Result<Self, PlateError> {
+    pub fn new(published: RevisionStore, workspaces_root: &Path) -> Result<Self, Refusal> {
         let canonical_root = workspaces_root.canonicalize().map_err(|_| {
             refused(
                 ErrorCode::NotFound,
@@ -101,7 +101,7 @@ impl PublishHandler {
     }
 
     /// The directory of a named workspace, contained in the root.
-    fn workspace(&self, name: &str) -> Result<PathBuf, PlateError> {
+    fn workspace(&self, name: &str) -> Result<PathBuf, Refusal> {
         let simple = (1..=64).contains(&name.len())
             && !name.starts_with('.')
             && name
@@ -131,7 +131,7 @@ impl PublishHandler {
         Ok(dir)
     }
 
-    fn head(&self) -> Result<Option<String>, PlateError> {
+    fn head(&self) -> Result<Option<String>, Refusal> {
         match self.published.open() {
             Ok(revision) => Ok(Some(revision.info().revision().as_str().to_owned())),
             Err(RevisionError::NoRevision) => Ok(None),
@@ -139,8 +139,8 @@ impl PublishHandler {
         }
     }
 
-    fn dispatch(&mut self, request: Request) -> Result<Json, PlateError> {
-        let text = |key: &str| -> Result<&str, PlateError> {
+    fn dispatch(&mut self, request: Request) -> Result<Json, Refusal> {
+        let text = |key: &str| -> Result<&str, Refusal> {
             match request.fields.get(key) {
                 Some(Json::String(s)) => Ok(s.as_str()),
                 _ => Err(refused(
@@ -191,7 +191,7 @@ impl PublishHandler {
             let target_revision = Uuid7::parse(text("target_revision")?)?;
             let expected_head = Uuid7::parse(text("expected_head")?)?;
             let dir = self.workspace(text("workspace")?)?;
-            let blobs = BlobStore::new(&dir).map_err(|e| PlateError {
+            let blobs = BlobStore::new(&dir).map_err(|e| Refusal {
                 rule_id: None,
                 code: e.code(),
                 message: "workspace store is not usable",
@@ -280,7 +280,7 @@ impl PublishHandler {
             let expected_head = Uuid7::parse(text("expected_head")?)?;
             let expected_draft = Uuid7::parse(text("expected_draft")?)?;
             let dir = self.workspace(text("workspace")?)?;
-            let blobs = BlobStore::new(&dir).map_err(|e| PlateError {
+            let blobs = BlobStore::new(&dir).map_err(|e| Refusal {
                 rule_id: None,
                 code: e.code(),
                 message: "workspace store is not usable",
@@ -363,7 +363,7 @@ impl PublishHandler {
             .parse::<ContentDigest>()
             .map_err(|_| refused(ErrorCode::InvalidArgument, "changeset is not a SHA-256"))?;
         let expected = text("expected_head")?;
-        let blobs = BlobStore::new(&dir).map_err(|e| PlateError {
+        let blobs = BlobStore::new(&dir).map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "workspace store is not usable",

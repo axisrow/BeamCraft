@@ -38,20 +38,23 @@
 //! The kernel call is the headless API: the CLI commands that wrap these operations (A03 plane
 //! cut, A04 hole) and their end-to-end gates are owned by those tasks, as for G02 and G05.
 
-mod body;
-mod cut;
-mod diagnostic;
-mod hole;
-mod member_hole;
-mod plane;
-pub(crate) mod seal;
-mod section;
+/// Shared with the steel crate.
+pub mod body;
+pub(crate) mod cut;
+/// Shared with the steel crate.
+pub mod diagnostic;
+/// Shared with the steel crate.
+pub mod hole;
+pub(crate) mod plane;
+/// Shared with the steel crate.
+pub mod seal;
+/// Shared with the steel crate.
+pub mod section;
 
 pub use body::{Body, MAX_LOCAL_ID_BYTES, MAX_ORDINAL};
 pub use cut::{Keep, plane_cut, plane_cut_with};
 pub use diagnostic::{OpCode, OpDefect, OpFailure, OpField};
 pub use hole::{HoleCutter, through_hole, through_hole_with};
-pub use member_hole::{MemberHoleCutter, member_through_hole, member_through_hole_with};
 pub use plane::CutPlane;
 pub use seal::{OpKind, OpResult};
 
@@ -103,10 +106,8 @@ pub struct OpStats {
     pub exact_predicates: u64,
 }
 
-pub(crate) fn poll(
-    cancelled: &mut impl FnMut(Stage) -> bool,
-    stage: Stage,
-) -> Result<(), OpFailure> {
+/// Shared with the steel crate.
+pub fn poll(cancelled: &mut impl FnMut(Stage) -> bool, stage: Stage) -> Result<(), OpFailure> {
     if cancelled(stage) {
         Err(OpFailure::cancelled(stage))
     } else {
@@ -116,21 +117,24 @@ pub(crate) fn poll(
 
 /// Counter for the operation's exact-integer fallbacks.
 #[derive(Debug)]
-pub(crate) struct ExactBudget {
+pub struct ExactBudget {
     used: u64,
     limit: u64,
 }
 
 impl ExactBudget {
-    pub(crate) const fn new(limit: u64) -> Self {
+    /// Shared with the steel crate.
+    pub const fn new(limit: u64) -> Self {
         Self { used: 0, limit }
     }
 
-    pub(crate) const fn used(&self) -> u64 {
+    /// Shared with the steel crate.
+    pub const fn used(&self) -> u64 {
         self.used
     }
 
-    pub(crate) fn charge(&mut self) -> Result<(), OpFailure> {
+    /// Shared with the steel crate.
+    pub fn charge(&mut self) -> Result<(), OpFailure> {
         if self.used >= self.limit {
             return Err(OpFailure::numeric(
                 OpField::Limits,

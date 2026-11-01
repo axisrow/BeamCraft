@@ -7,22 +7,23 @@ use super::{
     WorkspaceMeta, WorkspaceState,
     rebase_receipt::{RebaseReceipt, RevisionPin},
 };
-use crate::plate::{PlateError, RevisionSummary, integrity, summarize};
 use beamcraft_host::revision::{EvidencePin, MAX_OPERATION_EVIDENCE_BYTES, RevisionStore};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
+use session::pipeline::{RevisionSummary, integrity, summarize};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
 
 const FILE: &str = "rebase.pending";
 
-fn bad() -> PlateError {
+fn bad() -> Refusal {
     integrity("pending workspace rebase is not usable")
 }
 
-fn read(dir: &Path) -> Result<Option<Vec<u8>>, PlateError> {
+fn read(dir: &Path) -> Result<Option<Vec<u8>>, Refusal> {
     let path = dir.join(FILE);
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -41,14 +42,11 @@ fn read(dir: &Path) -> Result<Option<Vec<u8>>, PlateError> {
     Ok(Some(bytes))
 }
 
-fn store(dir: &Path) -> Result<RevisionStore, PlateError> {
+fn store(dir: &Path) -> Result<RevisionStore, Refusal> {
     Ok(RevisionStore::new(BlobStore::new(dir).map_err(|_| bad())?))
 }
 
-pub(super) fn verify_source(
-    store: &RevisionStore,
-    receipt: &RebaseReceipt,
-) -> Result<(), PlateError> {
+pub(super) fn verify_source(store: &RevisionStore, receipt: &RebaseReceipt) -> Result<(), Refusal> {
     let info = store.info_at(receipt.draft.sequence)?;
     if RevisionPin::from_info(&info) != receipt.draft
         || info.manifest().content().project() != &receipt.project
@@ -70,7 +68,7 @@ pub(super) fn verify_source(
     Ok(())
 }
 
-fn next_meta(receipt: &RebaseReceipt) -> Result<WorkspaceMeta, PlateError> {
+fn next_meta(receipt: &RebaseReceipt) -> Result<WorkspaceMeta, Refusal> {
     let sequence = receipt.draft.sequence.checked_add(1).ok_or_else(bad)?;
     Ok(WorkspaceMeta {
         base_revision: receipt.accepted.revision.clone(),
@@ -83,9 +81,9 @@ fn next_meta(receipt: &RebaseReceipt) -> Result<WorkspaceMeta, PlateError> {
 pub(super) fn stage(
     state: &WorkspaceState,
     receipt: &RebaseReceipt,
-) -> Result<EvidencePin, PlateError> {
+) -> Result<EvidencePin, Refusal> {
     if state.meta() != Some(&receipt.old_meta) {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::BaseRevisionMismatch,
             "workspace metadata moved",
         ));
@@ -96,7 +94,7 @@ pub(super) fn stage(
     verify_source(&store, receipt)?;
     let head = store.head()?.ok_or_else(bad)?;
     if RevisionPin::from_info(&head) != receipt.draft {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::BaseRevisionMismatch,
             "draft moved before rebase intent",
         ));
@@ -128,7 +126,7 @@ pub(super) fn stage(
     Ok(pin)
 }
 
-pub(super) fn recover(state: &mut WorkspaceState) -> Result<Option<RevisionSummary>, PlateError> {
+pub(super) fn recover(state: &mut WorkspaceState) -> Result<Option<RevisionSummary>, Refusal> {
     let dir = state.directory().to_owned();
     let Some(bytes) = read(&dir)? else {
         return Ok(None);

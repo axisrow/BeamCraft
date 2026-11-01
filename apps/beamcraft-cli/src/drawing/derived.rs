@@ -4,13 +4,14 @@
 //! D02 derived drawing USD: ordinary linear BasisCurves and exact double dimension metadata.
 //! Values are always recomputed through the engine before writing or verifying saved bytes.
 
-use crate::plate::{PlateError, integrity};
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::drawing::Drawing;
 use beamcraft_engine::drawing::projection::{self, BodyProjection, DimensionProjection};
 use beamcraft_layer_engine::Asset;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
+use session::pipeline::integrity;
 
 /// Derived asset name, composed separately from authored intent.
 pub const DERIVED_LAYER: &str = "drawing-derived.usda";
@@ -22,14 +23,14 @@ pub const MAX_DERIVED_BYTES: usize = 16_384;
 pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-derived/1;linear-BasisCurves;paper-mm-XY;display-points=point3f;exact-points=double3[];dimension=projected-model-mm-double;resolved-or-unresolved;recompute-before-verify";
 
 /// Derived drawing schema digest.
-pub fn schema_identity() -> Result<ContentDigest, PlateError> {
+pub fn schema_identity() -> Result<ContentDigest, Refusal> {
     Sha256::digest(SCHEMA_DESCRIPTOR.as_bytes())
         .map_err(|_| integrity("derived drawing schema digest failed"))
 }
 
-fn asset(name: &str, text: String) -> Result<Asset, PlateError> {
+fn asset(name: &str, text: String) -> Result<Asset, Refusal> {
     if text.len() > MAX_DERIVED_BYTES {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "derived drawing byte cap exceeded",
@@ -44,7 +45,7 @@ fn asset(name: &str, text: String) -> Result<Asset, PlateError> {
 }
 
 /// Static ordinary USD root; model archives are deliberately absent from its sublayers.
-pub fn root() -> Result<Asset, PlateError> {
+pub fn root() -> Result<Asset, Refusal> {
     asset(ROOT_LAYER, "#usda 1.0\n(\n    defaultPrim = \"Drawing\"\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    subLayers = [@drawing.usda@, @drawing-derived.usda@]\n)\n".to_owned())
 }
 
@@ -63,7 +64,7 @@ fn curves(text: &mut String, segments: &[[[f64; 2]; 2]]) {
 /// Derives geometry from the admitted intent and its exact source snapshot, not caller-supplied
 /// coordinates. Standard point3f display geometry accompanies exact double3 points and double
 /// measurement metadata. Missing geometry has a typed reason and no successful numeric value.
-pub fn encode(drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<Asset, PlateError> {
+pub fn encode(drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<Asset, Refusal> {
     let projection = projection::resolve(drawing, snapshot)?;
     let mut text = format!(
         "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n)\nover \"Drawing\"\n{{\n    custom string drawing:derivedSchema = \"{}\"\n    custom string drawing:algorithm = \"{}\"\n    custom string drawing:derivedSourceManifest = \"{}\"\n    over \"View\"\n    {{\n",
@@ -96,9 +97,9 @@ pub fn encode(drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<Asset, Plate
 
 /// Checks saved geometry against a fresh engine resolution of the exact archived source. A
 /// self-consistent rehash of fabricated coordinates or an old dimension value is insufficient.
-pub fn verify(saved: &Asset, drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<(), PlateError> {
+pub fn verify(saved: &Asset, drawing: &Drawing, snapshot: &ViewSnapshot) -> Result<(), Refusal> {
     if saved.bytes.len() > MAX_DERIVED_BYTES {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "derived drawing byte cap exceeded",

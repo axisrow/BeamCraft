@@ -19,11 +19,12 @@
 
 use crate::plate_cmd::{definitions_json, id_error, inspection_json};
 use crate::report::report;
-use beamcraft_cli::plate::{PlateError, inspect};
+use beamcraft_cli::plate::inspect;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
@@ -49,7 +50,7 @@ pub enum Output {
 }
 
 /// A reply exactly as the command that owns it prints it (the CLI's `print_json`).
-fn printed(result: Result<Json, PlateError>) -> Vec<u8> {
+fn printed(result: Result<Json, Refusal>) -> Vec<u8> {
     let (json, _) = report(result);
     json.encode(&beamcraft_json::Limits::DEFAULT)
         .unwrap_or_else(|_| {
@@ -59,9 +60,9 @@ fn printed(result: Result<Json, PlateError>) -> Vec<u8> {
 }
 
 /// Appends `reply` with its length; `None` is a reply that was not asked for.
-fn section(head: &mut Vec<u8>, reply: Option<&[u8]>) -> Result<(), PlateError> {
+fn section(head: &mut Vec<u8>, reply: Option<&[u8]>) -> Result<(), Refusal> {
     let reply = reply.unwrap_or_default();
-    let length = u32::try_from(reply.len()).map_err(|_| PlateError {
+    let length = u32::try_from(reply.len()).map_err(|_| Refusal {
         rule_id: None,
         code: ErrorCode::LimitExceeded,
         message: "a framed reply is too large",
@@ -71,8 +72,8 @@ fn section(head: &mut Vec<u8>, reply: Option<&[u8]>) -> Result<(), PlateError> {
     Ok(())
 }
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -102,7 +103,7 @@ pub fn execute(args: &[OsString]) -> Output {
     }
 }
 
-fn run(args: &[OsString]) -> Result<Output, PlateError> {
+fn run(args: &[OsString]) -> Result<Output, Refusal> {
     let args: Vec<&str> = args
         .iter()
         .skip(1)
@@ -151,7 +152,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
     if framed && *out != "-" {
         return Err(invalid("a framed reply needs --out -"));
     }
-    let blobs = BlobStore::new(store).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -162,7 +163,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         return Err(error);
     }
     let snapshot = &inspection.snapshot;
-    let bundle = snapshot.to_bundle().map_err(|e| PlateError {
+    let bundle = snapshot.to_bundle().map_err(|e| Refusal {
         rule_id: None,
         code: e.f04_code(),
         message: "the view snapshot could not be bundled",
@@ -182,7 +183,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         if with_grids {
             let grids = printed(
                 crate::grid_cmd::views_json(&inspection.grids).and_then(|grids| {
-                    let axes = beamcraft_engine::query::pick::member_snap_axes(&inspection.members)
+                    let axes = steel::engine::snap::member_snap_axes(&inspection.members)
                         .map_err(|_| invalid("member snap reference limit exceeded"))?;
                     let axes = axes
                         .iter()
@@ -203,7 +204,7 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
                                 ("points_mm", Json::Array(points)),
                             ]))
                         })
-                        .collect::<Result<Vec<_>, PlateError>>()?;
+                        .collect::<Result<Vec<_>, Refusal>>()?;
                     Ok(Json::object([
                         ("outcome", Json::text("grids")),
                         ("grids", grids),
@@ -222,14 +223,14 @@ fn run(args: &[OsString]) -> Result<Output, PlateError> {
         .write(true)
         .create_new(true)
         .open(out)
-        .map_err(|_| PlateError {
+        .map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the output file exists or cannot be created",
         })?;
     file.write_all(&bundle)
         .and_then(|()| file.sync_all())
-        .map_err(|_| PlateError {
+        .map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "the bundle could not be written",

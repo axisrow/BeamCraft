@@ -5,7 +5,6 @@
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
 use beamcraft_cli::grid::{GridContext, create_grid, grids};
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -18,17 +17,18 @@ use beamcraft_model::grid::{
     parse_grid_expression, parse_grid_labels,
 };
 use beamcraft_model::id::{ConnectionId, ElementId, Uuid7};
+use session::Refusal;
 use std::{collections::BTreeMap, ffi::OsString};
-type Run<T> = Result<T, PlateError>;
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+type Run<T> = Result<T, Refusal>;
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
 }
-fn error(code: ErrorCode, message: &'static str) -> PlateError {
-    PlateError {
+fn error(code: ErrorCode, message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code,
         message,

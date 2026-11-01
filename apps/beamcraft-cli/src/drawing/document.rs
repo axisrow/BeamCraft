@@ -7,11 +7,12 @@
 //! with the authored intent, derived projection, and exact source archive in one revision.
 
 use crate::drawing::derived::{self, ROOT_LAYER};
-use crate::plate::{PlateError, integrity};
 use beamcraft_layer_engine::Asset;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, DocumentVersionId, OpId};
+use session::Refusal;
+use session::pipeline::integrity;
 
 pub mod store;
 pub use store::{DocumentRevision, DocumentStore, DocumentWrite};
@@ -57,7 +58,7 @@ pub struct Metadata {
 }
 
 /// Stable schema identity for document revisions. It is never the model schema digest.
-pub fn schema_identity() -> Result<ContentDigest, PlateError> {
+pub fn schema_identity() -> Result<ContentDigest, Refusal> {
     Sha256::digest(SCHEMA_DESCRIPTOR.as_bytes())
         .map_err(|_| integrity("document schema digest failed"))
 }
@@ -82,13 +83,13 @@ fn optional(value: Option<impl ToString>) -> String {
 
 /// Produces the canonical composition root with state metadata and the two drawing layers.
 /// Source model assets are never sublayers and are not exposed to USD composition.
-pub fn encode(metadata: Metadata) -> Result<Asset, PlateError> {
+pub fn encode(metadata: Metadata) -> Result<Asset, Refusal> {
     if (metadata.state == State::Published) != metadata.version.is_some()
         || metadata
             .version
             .is_some_and(|version| Some(version) != metadata.latest_published)
     {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "published drawing version metadata is inconsistent",
@@ -111,7 +112,7 @@ pub fn encode(metadata: Metadata) -> Result<Asset, PlateError> {
         .map_err(|_| integrity("document root allocation failed"))?;
     bytes.extend_from_slice(insertion.as_bytes());
     if bytes.len() > MAX_DOCUMENT_ROOT_BYTES {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "document root byte cap exceeded",
@@ -126,7 +127,7 @@ pub fn encode(metadata: Metadata) -> Result<Asset, PlateError> {
 }
 
 /// Requires persisted root bytes to be the unique canonical encoding of the supplied metadata.
-pub fn verify(saved: &Asset, metadata: Metadata) -> Result<(), PlateError> {
+pub fn verify(saved: &Asset, metadata: Metadata) -> Result<(), Refusal> {
     if saved.name != ROOT_LAYER || saved.bytes.len() > MAX_DOCUMENT_ROOT_BYTES {
         return Err(integrity("document root identity or size disagrees"));
     }

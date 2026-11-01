@@ -256,7 +256,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        # The account runs at most five macOS jobs at once. A sixth shard always waited for
+        # another to finish (30-80 s in the runs of 2026-10-31), so five shards finish sooner.
+        shard: [1, 2, 3, 4, 5]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -286,6 +288,8 @@ jobs:
   build-timings:
     needs: plan
     name: cold release (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.prose != 'true'
     runs-on: ${{ matrix.os }}
     # The cold-build gate rides master pushes (and dispatch): a release is cut
     # from a master tag, so master has always passed the gate before a release.
@@ -294,9 +298,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
-          - { os: macos-latest, target: aarch64-apple-darwin }
+        # The macOS leg is build-time evidence (#153), not a test gate. On pull requests it took
+        # one of the five macOS runners while the macOS test shards waited, so it runs on pushes
+        # to master and on manual runs. The Linux leg still builds the release profile on every
+        # pull request.
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"}]' || '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","target":"aarch64-apple-darwin"}]') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -324,6 +330,8 @@ jobs:
   wasm:
     needs: plan
     name: wasm32 check
+    needs: changes
+    if: needs.changes.outputs.prose != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -343,6 +351,42 @@ jobs:
           echo "portable crates: $list"
           test -n "$list"
           cargo check --locked --target wasm32-unknown-unknown $list
+
+  # Runs instead of the builds when a pull request changes only prose: the checks whose inputs are
+  # documents (the F08 table, the F07 fixture derivation, the generated command reference), in
+  # case a document became an input without the classifier knowing.
+  docs-checks:
+    name: document checks
+    needs: changes
+    if: needs.changes.outputs.prose == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # Same as test-archive-ubuntu, so the cache key below is that job's key.
+      CARGO_PROFILE_TEST_DEBUG: 0
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+
+      # This job never runs on master, so a cache of its own would never be saved where pull
+      # requests can restore it. It reads test-archive-ubuntu's cache (same key, same profile
+      # and environment) and saves nothing.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: test-archive-ubuntu
+          save-if: false
+
+      - name: Check module boundaries
+        run: cargo run --locked -p beamcraft-boundaries -- check
+
+      - name: Verify original fixtures
+        run: cargo run --locked -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
+
+      - name: Command reference matches the registry
+        run: "cargo test --locked -p beamcraft-cli --test cli -- 'registry::'"
 
   deny:
     needs: plan

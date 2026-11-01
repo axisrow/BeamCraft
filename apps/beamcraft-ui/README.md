@@ -81,7 +81,7 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   Command arguments, revision hashes and Preview/Commit steps are absent from normal object workflows.
 - Theme is chosen on the welcome screen, not repeated in the library or model title bars:
   **System** (default), **Light**, **Dark**. System follows live OS theme changes. The preference
-  persists in the user's settings through `beamcraft set-settings --theme system|light|dark`;
+  persists in the user's settings file through the `session` crate, on a worker thread;
   `--config-dir` also scopes appearance when supplied to the start page. Load/save errors are
   visible with Retry. `BEAMCRAFT_THEME=light|dark` is a non-persistent override; the selector is
   disabled while it is active.
@@ -89,7 +89,7 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   without maximize or a subtitle. Theme changes discard a mixed-style frame so backgrounds,
   inputs and dropdowns switch together without color animation; a fresh launch restores the
   saved preference automatically.
-- New model uses the CLI's `suggest-project-name` and numbered default names (`New Model`,
+- New model uses `session::project::next_project_name` and numbered default names (`New Model`,
   `New Model 1`, etc.). Suggestions run off-thread and never overwrite a typed name; the
   CLI's final exclusive-create check remains authoritative.
 - The native Menu follows the prototype's dark 232-point navigation, section headings and

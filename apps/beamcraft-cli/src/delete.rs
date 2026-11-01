@@ -21,12 +21,10 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    Base, PlateError, RevisionSummary, control, decode, digest_of, evaluate_decoded, host_uuid,
-    load_base, mesh_change, open_base, plate_record, prior_op_with, replay_summary, summarize,
+    decode, evaluate_decoded, mesh_change, plate_record, prior_op_with, replay_summary,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Change, schema_identity};
@@ -34,6 +32,11 @@ use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{CommandError, DeleteElement};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, control, digest_of, host_uuid, load_base, open_base, summarize,
+};
+use steel::engine::transaction::PriorOp;
 
 /// Inputs of one `delete_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -90,8 +93,8 @@ pub struct Deleted {
     pub changed_layers: Vec<String>,
 }
 
-fn not_found() -> PlateError {
-    PlateError::from(CommandError::new(
+fn not_found() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::NotFound,
         "target_id",
         "the element is not in the head revision",
@@ -108,7 +111,7 @@ pub fn delete_element(
     store: &RevisionStore,
     request: &DeleteRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Deleted, PlateError> {
+) -> Result<Deleted, Refusal> {
     let command = &request.command;
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
@@ -198,7 +201,7 @@ pub fn delete_element(
         // A pinned coordination grid is foreign bytes: the refusal precedes the local miss,
         // because no authority of this store can reach another project's content (PC-OWN-002).
         if crate::coordination::pinned_owns_element(store, &command.target_id)? {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: Some("PC-OWN-002"),
                 code: ErrorCode::ForeignReadOnly,
                 message: "the element belongs to a pinned coordination project and is read-only",
@@ -247,18 +250,18 @@ pub fn delete_element(
             let mut next = plate.authored.clone();
             next.hole_records
                 .retain(|r| r.owner != Some(command.target_id));
-            let body = beamcraft_engine::command::evaluate_plate(&next)?;
+            let body = steel::engine::command::evaluate_plate(&next)?;
             let quantities =
                 body.quantities_for(next.material.as_ref().map(&materials).transpose()?)?;
-            let record = beamcraft_engine::query::committed::PlateRecord {
+            let record = steel::engine::committed::PlateRecord {
                 authored: next.clone(),
                 body: body.clone(),
                 quantities,
             };
-            changes.push(Change::HoleRecords {
-                id: next.id.to_string(),
-                records: next.hole_records.clone(),
-            });
+            changes.push(Change::hole_records(
+                next.id.to_string(),
+                next.hole_records.clone(),
+            ));
             changes.push(mesh_change(&next.id, &body.solid, &plate_record(&record))?);
             footprint = footprint.union(Footprint::for_update(
                 next.id, false, false, true, false, None,

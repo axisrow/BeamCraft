@@ -7,22 +7,20 @@
 //! prints one JSON object with the same error shape and exit codes as the other commands.
 
 use crate::bom_cmd::{reserve_all, write_sync};
-use beamcraft_cli::{
-    plate::{PlateError, inspect},
-    schedules,
-};
+use beamcraft_cli::{plate::inspect, schedules};
 use beamcraft_engine::limits::MAX_ELEMENTS;
 use beamcraft_engine::schedule::{build, elements_csv, groups_csv, html};
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::ffi::OsString;
 use std::io::Read;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -68,7 +66,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         })
         .map_err(|_| invalid("the schedule template cannot be read"))?;
     let template_json = schedules::decode(&template_bytes)?;
-    let blobs = BlobStore::new(store).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",

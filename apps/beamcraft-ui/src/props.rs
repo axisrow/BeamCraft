@@ -225,7 +225,7 @@ pub fn parse_details(
                     .and_then(Json::unsigned)
                     .map_err(|_| unreadable())?;
                 let count = usize::try_from(count).map_err(|_| unreadable())?;
-                if !(2..=beamcraft_model::instance::MAX_PART_INSTANCES + 1).contains(&count) {
+                if !(2..=steel::model::instance::MAX_PART_INSTANCES + 1).contains(&count) {
                     return Err(unreadable());
                 }
                 Some((owner, count))

@@ -19,26 +19,26 @@ use beamcraft_cli::bolt::{
 };
 use beamcraft_cli::definition::{DefinitionRecord, head_definitions};
 use beamcraft_cli::library::{Lookup, Source, load_fastener};
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
-use beamcraft_model::command::{
-    BoltGroupInputs, BoltLength, BoltSpacing, CreateBoltGroup, UpdateBoltGroup,
-};
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::fastener::HoleMode;
 use beamcraft_model::id::{ElementId, OpId};
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use steel::model::command::{
+    BoltGroupInputs, BoltLength, BoltSpacing, CreateBoltGroup, UpdateBoltGroup,
+};
+use steel::model::fastener::HoleMode;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -62,7 +62,7 @@ fn vec3(text: &str) -> Run<[f64; 3]> {
     let v: [f64; 3] = <[f64; 3]>::try_from(values.as_slice())
         .map_err(|_| invalid("the vector is three comma-separated numbers"))?;
     if v.iter().any(|n| !n.is_finite()) {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::NonFiniteNumber,
             message: "the vector is three comma-separated numbers",
@@ -312,7 +312,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let store_root = options
         .get("--store")
         .ok_or_else(|| invalid("--store is required"))?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -331,7 +331,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     }
     let mut source = IdSource::system();
     let mut fresh = || {
-        source.next_id().map_err(|_| PlateError {
+        source.next_id().map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "no identity could be generated",
@@ -640,7 +640,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     // --hole-clearance keeps the stored value only when the group keeps generating.
     let stored_hole_mode = current
         .as_ref()
-        .and_then(|g| beamcraft_model::fastener::HoleMode::from_token(&g.spec.hole_mode));
+        .and_then(|g| steel::model::fastener::HoleMode::from_token(&g.spec.hole_mode));
     let hole_mode = match given("--hole-mode") {
         Some(text) => Some(hole_mode(text)?),
         None => stored_hole_mode,

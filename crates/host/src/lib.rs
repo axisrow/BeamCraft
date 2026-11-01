@@ -12,6 +12,5 @@ pub mod lease;
 pub mod ledger;
 pub mod output;
 pub mod revision;
-pub mod settings;
 pub mod storage;
 pub mod views;

@@ -7,7 +7,6 @@
 //! USD difference. The host pins its bytes in the immutable manifest. Decoding checks structure
 //! and the creating operation identity; it grants no permissions or missing command provenance.
 
-use crate::plate::{PlateError, integrity};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_host::revision::{
     EvidencePin, MAX_MANIFEST_BYTES, MAX_OPERATION_EVIDENCE_BYTES, Manifest, Revision,
@@ -21,6 +20,8 @@ use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::limits::MAX_FOOTPRINT_ENTRIES;
+use session::Refusal;
+use session::pipeline::integrity;
 use std::fmt::Write as _;
 
 const MAGIC: &str = "beamcraft-command-footprint 1";
@@ -185,7 +186,7 @@ impl CapturedFootprint {
 
 /// Reads pinned evidence from a verified revision and checks that it names this operation.
 /// Legacy absence is explicit; malformed evidence is an integrity error, never an empty set.
-pub fn read(revision: &Revision) -> Result<Option<CapturedFootprint>, PlateError> {
+pub fn read(revision: &Revision) -> Result<Option<CapturedFootprint>, Refusal> {
     let Some(bytes) = revision.operation_evidence()? else {
         return Ok(None);
     };
@@ -200,7 +201,7 @@ pub fn read(revision: &Revision) -> Result<Option<CapturedFootprint>, PlateError
 pub(crate) fn accepted(
     store: &RevisionStore,
     op: &Uuid7,
-) -> Result<Option<(CapturedFootprint, Revision)>, PlateError> {
+) -> Result<Option<(CapturedFootprint, Revision)>, Refusal> {
     match store.query_outcome(op)? {
         beamcraft_host::ledger::Outcome::Committed {
             sequence,
@@ -217,14 +218,14 @@ pub(crate) fn accepted(
                 return Err(integrity("ledger request and accepted revision disagree"));
             }
             let evidence = read(&opened)?.ok_or_else(|| {
-                PlateError::new(
+                Refusal::new(
                     ErrorCode::DependencyUnavailable,
                     "accepted operation has no compatible request evidence",
                 )
             })?;
             Ok(Some((evidence, opened)))
         }
-        beamcraft_host::ledger::Outcome::Unknown => Err(PlateError::new(
+        beamcraft_host::ledger::Outcome::Unknown => Err(Refusal::new(
             ErrorCode::OutcomeUnknown,
             "operation outcome requires recovery",
         )),
@@ -232,7 +233,7 @@ pub(crate) fn accepted(
     }
 }
 
-fn decode_for(bytes: &[u8], op: &Uuid7) -> Result<CapturedFootprint, PlateError> {
+fn decode_for(bytes: &[u8], op: &Uuid7) -> Result<CapturedFootprint, Refusal> {
     let captured = if bytes.starts_with(b"beamcraft-workspace-rebase ") {
         let receipt = crate::workspace::rebase_receipt::RebaseReceipt::decode(bytes)
             .map_err(|_| integrity("rebase evidence is malformed"))?;
@@ -258,7 +259,7 @@ pub(crate) fn store(
     op: &Uuid7,
     fingerprint: ContentDigest,
     footprint: &Footprint,
-) -> Result<EvidencePin, PlateError> {
+) -> Result<EvidencePin, Refusal> {
     let captured = CapturedFootprint {
         op_id: OpId::parse(op.as_str()).map_err(|_| integrity("operation identity is invalid"))?,
         fingerprint,
@@ -268,7 +269,7 @@ pub(crate) fn store(
     let (digest, _) = store
         .blobs()
         .publish(&bytes)
-        .map_err(|e| PlateError::new(e.code(), "operation evidence blob could not be stored"))?;
+        .map_err(|e| Refusal::new(e.code(), "operation evidence blob could not be stored"))?;
     Ok(EvidencePin::new(digest, bytes.len() as u64)?)
 }
 
@@ -290,9 +291,9 @@ pub(crate) fn aggregate(
     store: &RevisionStore,
     after: u64,
     operations: &[Operation],
-) -> Result<SourceInterval, PlateError> {
+) -> Result<SourceInterval, Refusal> {
     if operations.is_empty() || operations.len() > MAX_OPERATIONS {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::LimitExceeded,
             "operation interval is empty or exceeds its cap",
         ));
@@ -426,7 +427,7 @@ pub(crate) fn aggregate(
                     .saturating_add(captured.footprint.reads().len())
                     .saturating_add(captured.footprint.writes().len());
                 if raw_entries > MAX_FOOTPRINT_ENTRIES {
-                    return Err(PlateError::new(
+                    return Err(Refusal::new(
                         ErrorCode::LimitExceeded,
                         "aggregate operation footprint exceeds 4096 entries",
                     ));
@@ -454,12 +455,12 @@ pub(crate) fn interval(
     store: &RevisionStore,
     after: u64,
     through: u64,
-) -> Result<Vec<Operation>, PlateError> {
+) -> Result<Vec<Operation>, Refusal> {
     let count = through
         .checked_sub(after)
         .filter(|n| *n > 0 && *n <= MAX_OPERATIONS as u64)
         .ok_or_else(|| {
-            PlateError::new(
+            Refusal::new(
                 ErrorCode::LimitExceeded,
                 "source interval exceeds operation limits",
             )

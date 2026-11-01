@@ -3,9 +3,9 @@
 
 //! Identical identity-option parsing shared by domain command adapters.
 
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::revision::Uuid7;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
 use std::collections::BTreeMap;
 
 pub(crate) const CONTEXT_OPTIONS: [&str; 5] = [
@@ -27,8 +27,8 @@ pub(crate) struct CommandContext {
 /// Parse in the established order, generating only absent identities from the caller's source.
 pub(crate) fn parse(
     options: &BTreeMap<&str, &str>,
-    fresh: &mut impl FnMut() -> Result<beamcraft_model::id::Uuid7, PlateError>,
-) -> Result<CommandContext, PlateError> {
+    fresh: &mut impl FnMut() -> Result<beamcraft_model::id::Uuid7, Refusal>,
+) -> Result<CommandContext, Refusal> {
     let given = |key: &str| options.get(key).copied();
     Ok(CommandContext {
         op_id: match given("--op-id") {
@@ -40,8 +40,8 @@ pub(crate) fn parse(
             None => RevisionId::from_uuid(fresh()?),
         },
         actor: match given("--actor-id") {
-            Some(text) => Uuid7::parse(text).map_err(PlateError::from)?,
-            None => Uuid7::parse(&fresh()?.to_string()).map_err(PlateError::from)?,
+            Some(text) => Uuid7::parse(text).map_err(Refusal::from)?,
+            None => Uuid7::parse(&fresh()?.to_string()).map_err(Refusal::from)?,
         },
         project: match given("--project-id") {
             Some(text) => ProjectId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn source_failure_keeps_the_original_code_and_message() {
-        let expected = PlateError {
+        let expected = Refusal {
             rule_id: None,
             code: beamcraft_model::error::ErrorCode::BackendUnavailable,
             message: "no identity could be generated",

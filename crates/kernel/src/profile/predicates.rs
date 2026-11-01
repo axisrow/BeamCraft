@@ -13,7 +13,7 @@ use core::cmp::Ordering;
 
 /// Exact relation of two closed segments.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SegRel {
+pub enum SegRel {
     /// The closed segments share no point.
     Disjoint,
     /// They share exactly one point and do not cross properly (endpoint touch).
@@ -40,12 +40,7 @@ fn opposite(a: Ordering, b: Ordering) -> bool {
 }
 
 /// Exact relation of the closed segments `a-b` and `c-d` (both nondegenerate).
-pub(crate) fn segment_relation(
-    a: Point2,
-    b: Point2,
-    c: Point2,
-    d: Point2,
-) -> Result<SegRel, Uncertain> {
+pub fn segment_relation(a: Point2, b: Point2, c: Point2, d: Point2) -> Result<SegRel, Uncertain> {
     let o1 = orient2d(a, b, c)?;
     let o2 = orient2d(a, b, d)?;
     if o1 == Ordering::Equal && o2 == Ordering::Equal {
@@ -77,7 +72,7 @@ pub(crate) fn segment_relation(
 }
 
 /// Exact point-in-polygon test by winding number; the point must not lie on the boundary.
-pub(crate) fn winding_contains(p: Point2, polygon: &[Point2]) -> Result<bool, Uncertain> {
+pub fn winding_contains(p: Point2, polygon: &[Point2]) -> Result<bool, Uncertain> {
     let mut winding = 0i32;
     for (a, b) in polygon.iter().zip(polygon.iter().cycle().skip(1)) {
         if a.y <= p.y {
@@ -93,7 +88,7 @@ pub(crate) fn winding_contains(p: Point2, polygon: &[Point2]) -> Result<bool, Un
 
 /// Whether the axis-aligned boxes of two segments are farther apart than `margin` (a clear
 /// rejection for both intersection and floor-distance work; the margin is a safe over-estimate).
-pub(crate) fn boxes_apart(a: Point2, b: Point2, c: Point2, d: Point2, margin: f64) -> bool {
+pub fn boxes_apart(a: Point2, b: Point2, c: Point2, d: Point2, margin: f64) -> bool {
     let gap_x = (a.x.min(b.x) - c.x.max(d.x)).max(c.x.min(d.x) - a.x.max(b.x));
     let gap_y = (a.y.min(b.y) - c.y.max(d.y)).max(c.y.min(d.y) - a.y.max(b.y));
     gap_x > margin || gap_y > margin
@@ -117,7 +112,7 @@ pub(crate) fn point_segment_distance(p: Point2, a: Point2, b: Point2) -> f64 {
 }
 
 /// Distance between two non-intersecting closed segments.
-pub(crate) fn segment_distance(a: Point2, b: Point2, c: Point2, d: Point2) -> f64 {
+pub fn segment_distance(a: Point2, b: Point2, c: Point2, d: Point2) -> f64 {
     point_segment_distance(a, c, d)
         .min(point_segment_distance(b, c, d))
         .min(point_segment_distance(c, a, b))

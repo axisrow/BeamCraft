@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The native theme selector writes and reloads real CLI settings in an isolated directory.
+//! The native theme selector writes and reloads the real settings file in an isolated directory.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use beamcraft_ui::appearance::Appearance;
-use beamcraft_ui::stats::Stats;
+use session::settings::Settings;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 struct Fixture(PathBuf);
@@ -105,14 +103,16 @@ fn settle(ctx: &egui::Context, appearance: &mut Appearance) -> egui::FullOutput 
         if !appearance.busy() {
             return output;
         }
-        assert!(Instant::now() < deadline, "appearance CLI did not finish");
+        assert!(
+            Instant::now() < deadline,
+            "appearance settings did not finish"
+        );
         output.drop_without_applying_deltas();
         std::thread::sleep(Duration::from_millis(10));
     }
 }
 
 #[test]
-#[ignore = "the window still runs a removed CLI command, see #763"]
 fn native_selector_saves_and_reloads_all_preferences() {
     if matches!(
         std::env::var("BEAMCRAFT_THEME").as_deref(),
@@ -121,20 +121,12 @@ fn native_selector_saves_and_reloads_all_preferences() {
         eprintln!("SKIP appearance interaction: BEAMCRAFT_THEME explicitly overrides the selector");
         return;
     }
-    let cli = Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))
-        .parent()
-        .unwrap()
-        .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
-    if !cli.is_file() {
-        panic!("required CLI binary is missing; build beamcraft-cli before UI acceptance");
-    }
     let config = Fixture(
         Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("appearance-{}", std::process::id())),
     );
     std::fs::create_dir(&config.0).unwrap();
     let ctx = context();
-    let stats = Arc::new(Stats::default());
-    let mut appearance = Appearance::new(cli.clone(), Some(config.0.clone()), Arc::clone(&stats));
+    let mut appearance = Appearance::new(Some(config.0.clone()));
     let mut output = settle(&ctx, &mut appearance);
     for (before, label, expected) in [
         ("System", "Dark", egui::ThemePreference::Dark),
@@ -149,39 +141,29 @@ fn native_selector_saves_and_reloads_all_preferences() {
         click(&ctx, &mut appearance, at).drop_without_applying_deltas();
         output = settle(&ctx, &mut appearance);
         assert_eq!(ctx.options(|options| options.theme_preference), expected);
-        let saved = Command::new(&cli)
-            .args(["show-settings", "--config-dir"])
-            .arg(&config.0)
-            .output()
-            .unwrap();
-        assert!(saved.status.success());
-        let settings = beamcraft_ui::start::parse_settings(Some(0), &saved.stdout).unwrap();
-        assert_eq!(settings.theme, expected);
-        let profile_saved = Command::new(&cli)
-            .args([
-                "set-settings",
-                "--name",
-                "UI Test",
-                "--email",
-                "ui@example.test",
-                "--environment",
-                "blank",
-                "--skip-launcher",
-                "true",
-                "--config-dir",
-            ])
-            .arg(&config.0)
-            .output()
-            .unwrap();
-        assert!(profile_saved.status.success());
+        let settings = Settings::load(&config.0).unwrap();
         assert_eq!(
-            beamcraft_ui::start::parse_settings(Some(0), &profile_saved.stdout)
-                .unwrap()
-                .theme,
+            beamcraft_ui::appearance::egui_theme(settings.theme),
             expected
         );
+        // The start window saves its own fields into the same file; the theme must survive that.
+        let after = Settings::update(&config.0, |settings| {
+            settings.set_profile("UI Test", "ui@example.test", || {
+                beamcraft_model::id::Uuid7::parse("0199e7a0-0000-7000-8000-000000000001").map_err(
+                    |_| session::settings::SettingsError {
+                        code: beamcraft_model::ErrorCode::InvalidArgument,
+                        message: "id",
+                    },
+                )
+            })?;
+            settings.environment = Some("blank".into());
+            settings.skip_launcher = true;
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(beamcraft_ui::appearance::egui_theme(after.theme), expected);
         let restart = context();
-        let mut reloaded = Appearance::new(cli.clone(), Some(config.0.clone()), Arc::clone(&stats));
+        let mut reloaded = Appearance::new(Some(config.0.clone()));
         settle(&restart, &mut reloaded).drop_without_applying_deltas();
         assert_eq!(
             restart.options(|options| options.theme_preference),

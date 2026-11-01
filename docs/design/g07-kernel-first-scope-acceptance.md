@@ -318,7 +318,7 @@ vertices, hostile planes and cutters, maximum-size inputs) found nothing besides
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo test -p beamcraft-kernel --test g07_acceptance
+cargo test -p steel --test steel -- g07_acceptance::
 python tests/g03/write_fixtures.py --check
 cargo run --release -p beamcraft-kernel --example g07_bench
 cargo run -p beamcraft-cli -- --version

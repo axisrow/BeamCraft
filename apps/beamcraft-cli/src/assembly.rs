@@ -21,14 +21,10 @@
 //! is not implemented. Deleting an assembly that still has parts is `DEPENDENCY_CONFLICT`; there
 //! is no cascade. An assembly cannot be renamed or moved yet.
 
-use crate::plate::{
-    Base, PlateError, RevisionSummary, base_of, check_footprint, control, host_uuid, integrity,
-    load_base, open_base, prior_op_with, property, replay_summary, summarize, text,
-};
+use crate::plate::{check_footprint, prior_op_with, property, replay_summary, text};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::assembly::{Membership, PartKind};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Change, Element, Placement as LayerPlacement, Prepare, Shape, schema_identity, validate_layers,
@@ -41,7 +37,12 @@ use beamcraft_model::command::{
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, base_of, control, host_uuid, integrity, load_base, open_base, summarize,
+};
 use std::collections::BTreeMap;
+use steel::engine::transaction::PriorOp;
 
 /// Identities of one A01 call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -100,7 +101,7 @@ pub(crate) fn read_prims(
     reader: &Reader,
     context: &beamcraft_layer_engine::Context,
     control: &Control,
-) -> Result<Vec<Prim>, PlateError> {
+) -> Result<Vec<Prim>, Refusal> {
     let mut prims = Vec::new();
     let mut cursor = None;
     loop {
@@ -114,7 +115,7 @@ pub(crate) fn read_prims(
     Ok(prims)
 }
 
-fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, PlateError> {
+fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> {
     // Stored bytes are verified, not interpreted: the structural rules (A01-V01 among them) run
     // before the hierarchy is read, so a damaged graph is refused rather than reported or replayed.
     validate_layers(request.clone(), schema_identity()?, control)?;
@@ -201,7 +202,7 @@ pub(crate) fn is_main_part(
     request: &OpenRequest,
     id: &ElementId,
     control: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     let model = model_of(request, control)?;
     Ok(model
         .membership
@@ -214,12 +215,12 @@ pub(crate) fn is_assembly(
     request: &OpenRequest,
     id: &ElementId,
     control: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     Ok(model_of(request, control)?.membership.kind(id) == Some(PartKind::Assembly))
 }
 
 /// The assemblies of the verified head (empty for a store without a revision).
-pub fn assemblies(store: &RevisionStore) -> Result<Vec<AssemblyView>, PlateError> {
+pub fn assemblies(store: &RevisionStore) -> Result<Vec<AssemblyView>, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -241,7 +242,7 @@ struct Plan {
     footprint: Footprint,
 }
 
-fn reuse() -> PlateError {
+fn reuse() -> Refusal {
     CommandError::new(
         ErrorCode::OpIdReuse,
         "op_id",
@@ -256,8 +257,8 @@ fn introduced_by(
     sequence: u64,
     holds: &dyn Fn(&Model) -> bool,
     control: &Control,
-) -> Result<bool, PlateError> {
-    let model_at = |sequence: u64| -> Result<Model, PlateError> {
+) -> Result<bool, Refusal> {
+    let model_at = |sequence: u64| -> Result<Model, Refusal> {
         let revision = store.open_at(sequence)?;
         model_of(&open_base(&base_of(&revision)?)?, control)
     };
@@ -279,9 +280,9 @@ fn apply(
     fingerprint: ContentDigest,
     needs_head: bool,
     in_head: &dyn Fn(&Model) -> bool,
-    plan: &dyn Fn(&Model) -> Result<Plan, PlateError>,
+    plan: &dyn Fn(&Model) -> Result<Plan, Refusal>,
     hook: &mut dyn CommitHook,
-) -> Result<AssemblyChange, PlateError> {
+) -> Result<AssemblyChange, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     if needs_head && head.is_none() {
@@ -378,7 +379,7 @@ pub fn create_assembly(
     context: &AssemblyContext,
     command: &CreateAssembly,
     hook: &mut dyn CommitHook,
-) -> Result<AssemblyChange, PlateError> {
+) -> Result<AssemblyChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     apply(
         store,
@@ -419,7 +420,7 @@ pub fn attach(
     context: &AssemblyContext,
     command: &AttachToAssembly,
     hook: &mut dyn CommitHook,
-) -> Result<AssemblyChange, PlateError> {
+) -> Result<AssemblyChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     apply(
         store,
@@ -447,7 +448,7 @@ pub fn detach(
     context: &AssemblyContext,
     command: &DetachFromAssembly,
     hook: &mut dyn CommitHook,
-) -> Result<AssemblyChange, PlateError> {
+) -> Result<AssemblyChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     apply(
         store,
@@ -479,7 +480,7 @@ pub fn set_main_part(
     context: &AssemblyContext,
     command: &SetAssemblyMainPart,
     hook: &mut dyn CommitHook,
-) -> Result<AssemblyChange, PlateError> {
+) -> Result<AssemblyChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     apply(
         store,
@@ -508,7 +509,7 @@ pub fn explode(
     context: &AssemblyContext,
     command: &ExplodeAssembly,
     hook: &mut dyn CommitHook,
-) -> Result<AssemblyChange, PlateError> {
+) -> Result<AssemblyChange, Refusal> {
     let fingerprint = command.content_fingerprint()?;
     apply(
         store,

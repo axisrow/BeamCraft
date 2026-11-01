@@ -28,15 +28,17 @@ Dependencies point one way, down the table. `beamcraft-boundaries` checks this i
 | Layer | Crate | What it does |
 |-------|-------|--------------|
 | 0 | `geom` | Points, vectors, planes, rigid transforms, tolerances, canonical f64 encoding |
-| 1 | `model` | Identities (UUIDv7, SHA-256), commands and their validation, definitions, section families, error codes, limits |
-| 2 | `kernel` | Geometry kernel: plate and member bodies, profile extrusion, plane cuts, through holes, meshes, exact volumes and measurements |
-| 2 | `layer-engine` | Our wrapper over `openusd`: reads and writes the project's USD layers, the schema, validation and the UUID index |
+| 1 | `model` | Identities (UUIDv7, SHA-256), the commands every discipline shares and their validation, material definitions, error codes, limits, grids, levels, assemblies |
+| 2 | `kernel` | Geometry kernel: the box primitive, profile extrusion, plane cuts, through holes, meshes, exact volumes and measurements |
 | 2 | `json` | Bounded JSON of the CLI output, read back by the UI and the coordinator |
 | 2 | `ifc` | IFC4 STEP writer and GlobalId encoding; no file system |
-| 3 | `engine` | Applies commands: builds the new authored state, asks the kernel for bodies, computes quantities, footprints, numbering, picking and the view snapshot |
+| 3 | `engine` | Queries and presentation: picking, snapping, the view snapshot, scenes, drawings, views, filters, schedules, grids, levels, assemblies |
 | 4 | `host` | Disk: content-addressed blobs, atomic revision commit, journal and recovery, workspaces' storage, coordinator, compaction |
-| 5 | `beamcraft-cli` (binary `beamcraft`) | Every user command; ties the crates together |
-| 5 | `beamcraft-ui` (binary `beamcraft-ui`) | Native window: viewport, tools, properties panel |
+| 4 | `steel` | The structural steel discipline: plates, members, holes, bends, welds, bolts and fasteners with their commands (`model`), bodies (`kernel`) and engine (`engine`). Kind `native` until the element interface lands (#795), then `discipline` |
+| 5 | `layer-engine` | Our wrapper over `openusd`: reads and writes the project's USD layers, the schema, validation and the UUID index. It writes the steel elements, so it sits above `steel` for now |
+| 6 | `session` | Platform state that is not storage: settings, recent projects, project folders and environments (#763); later the command registry and a long-lived session over a verified revision. Discipline-agnostic, hence no `beamcraft-` prefix |
+| 7 | `beamcraft-cli` (binary `beamcraft`) | Every user command; ties the crates together |
+| 7 | `beamcraft-ui` (binary `beamcraft-ui`) | Native window: viewport, tools, properties panel |
 
 `geom`, `model` and `kernel` are pure: no file system, OS or runtime, and they build for WASM. The
 rest is desktop-native.
@@ -47,16 +49,27 @@ flowchart TD
     ui["beamcraft-ui<br/>window"] -. "runs as a process" .-> cli
     cli["beamcraft-cli<br/>every command"]
 
+    cli --> session
     cli --> host
     cli --> engine
     cli --> le
     cli --> ifc
+    cli --> steel
+    ui --> session
     ui --> engine
+    ui --> steel
+
+    session["session<br/>settings, projects, environments"] --> host
+    session --> le
 
     host["host<br/>store, commit, journal"] --> engine
     host --> json
     engine["engine<br/>applies commands"] --> kernel
     le["layer-engine<br/>USD read/write"] --> model
+    le --> steel
+    steel["steel<br/>plates, members, bolts, welds"] --> engine
+    steel --> kernel
+    steel --> model
     ifc["ifc<br/>IFC4 writer"] --> model
     json["json<br/>bounded JSON"] --> model
     kernel["kernel<br/>geometry"] --> model
@@ -71,7 +84,7 @@ Some direct edges to `model` and `geom` are left out for readability; the exact 
 ## What happens on a command
 
 Every editing command (`create-plate`, `create-member`, `update-element`, `copy-element`,
-`delete-element`, `create-bolt`, `approve-numbering`, ...) follows the same path:
+`delete-element`, `create-bolt-group`, `approve-numbering`, ...) follows the same path:
 
 1. **Parse and validate.** The CLI turns arguments into a typed `model` command. Bad numbers,
    limits, identities and references are refused here with an error code; nothing is read yet.
@@ -93,7 +106,7 @@ Every editing command (`create-plate`, `create-member`, `update-element`, `copy-
 
 A crash at any step leaves either the old or the new complete revision; `recover-revision` closes
 an interrupted commit. Read commands (`inspect-elements`, `definitions`, `preview-numbering`,
-`export-ifc`, `export-bom`, `pick`, `export-view`, ...) do steps 1–2 only.
+`export-ifc`, `export-bom`, `export-view`, ...) do steps 1–2 only.
 
 ## The window
 
@@ -108,6 +121,18 @@ process on the snapshot on screen, reading the element's details from one
 follow-up](design/issue-26-viewport-performance.md)). Create, move, copy, delete, property edits,
 undo and publish run the same CLI commands a user would type; the window shows the result or the
 engine's refusal as it is.
+
+The window's own state is not a CLI command. Settings, recent projects, project folders, the
+next free project name and the list of environments come from `session`, called in the window's
+process on a worker thread; the cursor aids (picking, snapping) call the engine on the snapshot on
+screen. The window therefore opens no project layers, but it reads the small environment layers
+through `session`. It never depends on `beamcraft-cli`: an app does not depend on an app.
+
+The direction is one command layer under both apps, as in a headless-first design where every
+action is a registered command that the CLI, the window and agents all call: the commands now in
+the CLI move into libraries below the apps (platform crates plus one crate per discipline), the
+CLI shrinks to argument parsing and printing, and `session` gains the registry and a long-lived
+session over a verified revision. Until then modelling commands and `export-view` stay processes.
 
 ## Geometry
 

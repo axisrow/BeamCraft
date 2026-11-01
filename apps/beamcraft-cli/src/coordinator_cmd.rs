@@ -11,13 +11,13 @@
 //! the command line, where other users could read them.
 
 use beamcraft_cli::coordinator::PublishHandler;
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::coordinator::{Client, Coordinator, CoordinatorError, Token, call};
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ActorId;
+use session::Refusal;
 use std::ffi::OsString;
 use std::io::Write;
 use std::net::SocketAddr;
@@ -30,8 +30,8 @@ struct Failure {
     message: &'static str,
 }
 
-impl From<PlateError> for Failure {
-    fn from(e: PlateError) -> Self {
+impl From<Refusal> for Failure {
+    fn from(e: Refusal) -> Self {
         Self {
             rule_id: e.rule_id,
             code: e.code,
@@ -82,7 +82,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
             };
             (json, exit)
         }
-        Err(e) => crate::report::report(Err(beamcraft_cli::plate::PlateError {
+        Err(e) => crate::report::report(Err(session::Refusal {
             rule_id: e.rule_id,
             code: e.code,
             message: e.message,
@@ -184,7 +184,7 @@ fn run(args: &[OsString]) -> Run<Json> {
             })
             .transpose()?;
         let store_root = required("--store", "--store is required")?;
-        let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+        let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "store root is not usable",
