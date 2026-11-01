@@ -49,11 +49,11 @@ impl Discipline for Steel {
         prims: &[Prim],
         operation_ids: &mut BTreeSet<beamcraft_model::id::OpId>,
     ) -> Result<(), Diagnostic> {
-        validate::steel_part(kind, prim, prims, operation_ids)
+        steel_read::steel_part(kind, prim, prims, operation_ids)
     }
 
     fn validate_connection(&self, prim: &Prim, prims: &[Prim]) -> Result<(), Diagnostic> {
-        validate::steel_connection(prim, prims)
+        steel_read::steel_connection(prim, prims)
     }
 
     fn property_group(&self, name: &str) -> Option<beamcraft_model::changeset::DependencyGroup> {
