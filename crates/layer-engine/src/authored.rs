@@ -27,6 +27,7 @@ pub mod rebase;
 mod reference;
 /// The surface a discipline crate's hooks use to author and validate through this platform.
 pub mod seam;
+mod steel_defs;
 mod validate;
 
 pub use connection::ReplaceBoltGroup;
