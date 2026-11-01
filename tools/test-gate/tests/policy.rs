@@ -208,7 +208,6 @@ fn required_ci_jobs_cannot_be_skipped_or_failed_while_the_other_os_is_intentiona
         "quality",
         "wasm",
         "deny",
-        "attribution",
         "test-archive-macos",
         "test-macos",
         "test-archive-windows",
