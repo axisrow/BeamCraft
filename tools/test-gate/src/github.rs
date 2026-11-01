@@ -196,14 +196,8 @@ pub fn verdict(needs: &Value, oses: &[String], event: &str) -> Result<()> {
     for job in ["plan", "quality", "wasm", "deny"] {
         require(job, "success")?;
     }
-    require(
-        "attribution",
-        if event == "pull_request" {
-            "success"
-        } else {
-            "skipped"
-        },
-    )?;
+    // Repository-specific policy checks (an attribution guard, for example) run as
+    // separate workflow files beside this pipeline, so they are not required lanes.
     require(
         "build-timings",
         if event == "pull_request" {
