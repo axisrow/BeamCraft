@@ -273,6 +273,9 @@ pub fn member_through_hole_with(
     // range is crossed only where the footprint lies strictly inside its region; a face the
     // footprint passes beyond is free space. Curved and sloped faces must clear the range.
     let mut crossed: Vec<CrossedFace> = Vec::new();
+    // The curved, faceted or sloped wall faces inside the cutter range: served by the
+    // strip registry when they form multi-facet chains, refused otherwise.
+    let mut faceted: Vec<u16> = Vec::new();
     let (p_min_y, p_max_y) = points
         .iter()
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
@@ -399,15 +402,12 @@ pub fn member_through_hole_with(
         let flat_y =
             y_lo == y_hi && normal.is_some_and(|n| n[0] == 0.0 && n[2] == 0.0 && n[1].abs() == 1.0);
         if !flat_z && !flat_y {
-            // A curved or sloped wall face: clear only when the whole face lies beyond the
-            // range by at least the floor; serving it is the strip registry's work (the
-            // later G14.2 slices).
+            // A curved, faceted or sloped wall face: clear only when the whole face lies
+            // beyond the range by at least the floor. A face inside the range goes to the
+            // strip registry: faceted walls (a tube) are served by the chains of this
+            // slice, sloped single-plane walls stay refused there.
             if t_hi >= zf - eps && t_lo <= zt + eps {
-                return Err(OpFailure::unsupported(
-                    OpField::Body,
-                    OpDefect::BodyWallUnsupported,
-                    Stage::Ranges,
-                ));
+                faceted.push(*face);
             }
             continue;
         }
@@ -504,6 +504,35 @@ pub fn member_through_hole_with(
                 return Err(refusal);
             }
         }
+    }
+    // A cutter through faceted walls: the strip registry carves the chains. A mix of
+    // crossed flat faces and crossed chains is not served in this slice.
+    if !faceted.is_empty() {
+        #[cfg(g142_debug)]
+        eprintln!("faceted faces: {} crossed flats: {}", faceted.len(), crossed.len());
+        if !crossed.is_empty() {
+            return Err(OpFailure::unsupported(
+                OpField::Body,
+                OpDefect::BodyWallUnsupported,
+                Stage::Ranges,
+            ));
+        }
+        return cut_through_chains(
+            body,
+            &solid,
+            points,
+            dy,
+            dz,
+            zf,
+            zt,
+            cutter,
+            eps,
+            &project,
+            &to_body,
+            limits,
+            &mut budget,
+            &mut cancelled,
+        );
     }
     crossed.sort_by(|a, b| {
         a.t_mid
@@ -927,6 +956,1835 @@ fn flat_point(p: [f64; 3], project: &impl Fn([f64; 3]) -> [f64; 2]) -> Point2 {
     Point2::new(x, y)
 }
 
+/// A strip of one wall face: the triangles of the face lying on one exact section-line
+/// plane, with the plane carried as the outward unit normal `(ny, nz)` and the offset `c`.
+/// A face re-triangulated by an earlier hole contributes one strip again (the exact
+/// collinearity filter re-merges the plane), and a face whose triangles lie on several
+/// planes (a curve-approximated cavity wall) contributes one strip per plane.
+struct Strip {
+    face: u16,
+    ny: f64,
+    nz: f64,
+    c: f64,
+}
+
+impl Strip {
+    /// `m = n . d`: the strip is parallel to the cutter axis exactly when this is zero,
+    /// which the placement refuses before any height is read.
+    fn axis_dot(&self, dy: f64, dz: f64) -> f64 {
+        self.ny.mul_add(dy, self.nz * dz)
+    }
+
+    /// The plane's height line over the footprint: solving `n . p = c` and `b = p . e2`
+    /// for the section point at `b` gives `t = p . d = gamma*b + delta` with
+    /// `gamma = (dy*nz - dz*ny)/(n . d)` and `delta = c/(n . d)`.
+    fn gamma_delta(&self, dy: f64, dz: f64) -> (f64, f64) {
+        let m = self.axis_dot(dy, dz);
+        let w = dy * self.nz - dz * self.ny;
+        (w / m, self.c / m)
+    }
+}
+
+/// One chain: strips joined by soft kinks (turns of at most `pi/4` between the strip
+/// planes), one smooth authoring surface. `soft` lists the kink edges of the chain's
+/// strips as pairs of strip indices (sorted by strip index) with the mesh vertex pair of
+/// the edge; every other strip boundary is a hard edge or a chain border.
+struct Chain {
+    strips: Vec<usize>,
+    soft: Vec<(usize, usize)>,
+}
+
+/// A clip piece: the part of the footprint that lies in one crossed strip's region. `poly`
+/// is counter-clockwise in the `(a, b)` plane; the piece touches the strip's boundary only
+/// at registered kink points.
+struct ClipPiece {
+    face: u16,
+    poly: Vec<Point2>,
+}
+
+/// How a chain relates to the cutter range.
+enum ChainPlacement {
+    /// The chain's height interval over the footprint clears the range by the floor.
+    Beyond,
+    /// The footprint lies entirely in the union of the chain's strip regions and the
+    /// chain's height interval is inside the range: the cutter crosses here.
+    Crossed {
+        t_mid: f64,
+        entry: bool,
+        clips: Vec<ClipPiece>,
+    },
+}
+
+/// The shared-kink registry: one body point per contour crossing of a mesh edge, seen by
+/// both faces of the edge as the identical vertex. The point lies exactly on the edge
+/// (its `(y, z)` is the edge's line, its `a` coordinate the contour crossing position).
+struct KinkPoints {
+    points: Vec<([f64; 3], u32)>,
+}
+
+impl KinkPoints {
+    /// The registered point at `at`, creating it on the first visit: the vertex lands in
+    /// `vertices` under the returned id, so both faces of the edge share one mesh vertex.
+    fn point(
+        &mut self,
+        at: [f64; 3],
+        vertices: &mut Vec<[f64; 3]>,
+        next_vertex: &mut u32,
+    ) -> Result<u32, OpFailure> {
+        if let Some((_, id)) = self
+            .points
+            .iter()
+            .find(|(p, _)| p[0] == at[0] && p[1] == at[1] && p[2] == at[2])
+        {
+            return Ok(*id);
+        }
+        let id = *next_vertex;
+        *next_vertex = next_vertex.checked_add(1).ok_or_else(|| {
+            OpFailure::numeric(OpField::Mesh, OpDefect::NumericRange, Stage::Build)
+        })?;
+        self.points.push((at, id));
+        vertices.push(at);
+        Ok(id)
+    }
+}
+
+/// Whether the turn between two strip planes is a soft kink (at most `pi/4`, the steepest
+/// turn the curve approximation emits) or a hard edge.
+fn is_soft_kink(n1: (f64, f64), n2: (f64, f64)) -> bool {
+    let dot = (n1.0 * n2.0 + n1.1 * n2.1).clamp(-1.0, 1.0);
+    dot >= std::f64::consts::FRAC_1_SQRT_2
+}
+
+/// Groups the triangles of one wall face into strips by their exact section-line plane:
+/// two triangles share a strip when their YZ projections are exactly collinear (the
+/// `area_sign` filter), so a face re-triangulated by an earlier hole is re-merged. Returns
+/// the strips and, for every triangle, the local index of its strip. The plane normal comes
+/// from the triangles' winding and faces away from the material.
+fn face_strips(
+    body: &Body,
+    triangles: &[[u32; 3]],
+    face: u16,
+    budget: &mut ExactBudget,
+) -> Result<(Vec<Strip>, Vec<usize>), OpFailure> {
+    let internal = || OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build);
+    let numeric = || OpFailure::numeric(OpField::Body, OpDefect::NumericRange, Stage::Build);
+    let vertex = |i: u32| -> Result<[f64; 3], OpFailure> {
+        body.mesh()
+            .vertices()
+            .get(usize::try_from(i).ok().ok_or_else(internal)?)
+            .copied()
+            .ok_or_else(internal)
+    };
+    let yz = |p: [f64; 3]| [p[1], p[2]];
+    // Groups of triangle indices whose YZ projections are exactly collinear; the first two
+    // vertices of a group's first triangle define the line the others must reproduce.
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut assignment = vec![0usize; triangles.len()];
+    for (index, tri) in triangles.iter().enumerate() {
+        let points = [yz(vertex(tri[0])?), yz(vertex(tri[1])?), yz(vertex(tri[2])?)];
+        let mut placed = false;
+        'groups: for (local, group) in groups.iter_mut().enumerate() {
+            let first = triangles
+                .get(*group.first().ok_or_else(internal)?)
+                .ok_or_else(internal)?;
+            // The collinearity base: two YZ-distinct vertices of the group's first
+            // triangle (a wall triangle may repeat a YZ point on its two axial corners).
+            let first_yz = [
+                yz(vertex(*first.first().ok_or_else(internal)?)?),
+                yz(vertex(*first.get(1).ok_or_else(internal)?)?),
+                yz(vertex(*first.get(2).ok_or_else(internal)?)?),
+            ];
+            let mut g1 = first_yz[0];
+            let mut g2 = None;
+            for candidate in first_yz.iter().skip(1) {
+                if candidate[0] != g1[0] || candidate[1] != g1[1] {
+                    g2 = Some(*candidate);
+                    break;
+                }
+            }
+            let Some(g2) = g2 else {
+                return Err(internal());
+            };
+            for p in &points {
+                if area_sign(&[g1, g2, *p], budget)? != 0 {
+                    continue 'groups;
+                }
+            }
+            group.push(index);
+            assignment[index] = local;
+            placed = true;
+            break;
+        }
+        if !placed {
+            groups.push(vec![index]);
+            assignment[index] = groups.len() - 1;
+        }
+    }
+    let mut strips = Vec::with_capacity(groups.len());
+    for group in &groups {
+        // The two farthest-apart vertices of the group define the line numerically; the
+        // triangles' 3-D winding decides which normal direction faces away from the
+        // material (the X part of a wall triangle's normal is zero up to rounding, so its
+        // YZ part is the section-line normal).
+        let (mut p1, mut p2, mut best) = ([0.0; 2], [0.0; 2], -1.0f64);
+        for &tri_index in group {
+            let tri = triangles.get(tri_index).ok_or_else(internal)?;
+            for (first, second) in tri.iter().zip(tri.iter().cycle().skip(1)) {
+                let (u, v) = (yz(vertex(*first)?), yz(vertex(*second)?));
+                let (d_y, d_z) = (v[0] - u[0], v[1] - u[1]);
+                let span = d_y.mul_add(d_y, d_z * d_z);
+                if span > best {
+                    best = span;
+                    p1 = u;
+                    p2 = v;
+                }
+            }
+        }
+        if !(best > 0.0 && best.is_finite()) {
+            return Err(internal());
+        }
+        let (d_y, d_z) = (p2[0] - p1[0], p2[1] - p1[1]);
+        let length = (d_y * d_y + d_z * d_z).sqrt();
+        if !(length > 0.0 && length.is_finite()) {
+            return Err(internal());
+        }
+        let (ny_pos, nz_pos) = (-d_z / length, d_y / length);
+        let mut winding = 0.0f64;
+        for &tri_index in group {
+            let tri = triangles.get(tri_index).ok_or_else(internal)?;
+            let (u, v, w) = (vertex(tri[0])?, vertex(tri[1])?, vertex(tri[2])?);
+            let (e1, e2) = (
+                [v[0] - u[0], v[1] - u[1], v[2] - u[2]],
+                [w[0] - u[0], w[1] - u[1], w[2] - u[2]],
+            );
+            let (n_y, n_z) = (
+                e1[2].mul_add(e2[0], -e1[0] * e2[2]),
+                e1[0].mul_add(e2[1], -e1[1] * e2[0]),
+            );
+            winding += ny_pos.mul_add(n_y, nz_pos * n_z);
+        }
+        if !winding.is_finite() || winding == 0.0 {
+            return Err(internal());
+        }
+        let (ny, nz) = if winding > 0.0 {
+            (ny_pos, nz_pos)
+        } else {
+            (-ny_pos, -nz_pos)
+        };
+        // The offset from the group's vertices: every vertex lies on the exact line, so the
+        // mean keeps the rounding of `c` small without picking a favourite vertex.
+        let mut c_sum = 0.0f64;
+        let mut count = 0u32;
+        for &tri_index in group {
+            let tri = triangles.get(tri_index).ok_or_else(internal)?;
+            for &i in tri {
+                let p = yz(vertex(i)?);
+                c_sum += ny.mul_add(p[0], nz * p[1]);
+                count = count.checked_add(1).ok_or_else(numeric)?;
+            }
+        }
+        let c = c_sum / f64::from(count);
+        if !c.is_finite() {
+            return Err(numeric());
+        }
+        strips.push(Strip { face, ny, nz, c });
+    }
+    Ok((strips, assignment))
+}
+
+/// Where a clip-piece vertex comes from, so the construction can map it back to the body.
+#[derive(Debug, Clone, Copy)]
+enum ClipSrc {
+    /// A footprint vertex: a new vertex on the crossed strip's plane.
+    Footprint(usize),
+    /// A body vertex of the strip region (kept, never duplicated).
+    Body(u32),
+    /// A contour crossing of a kink edge: its `(y, z)` is the edge's line and its `a` the
+    /// crossing position; both faces of the edge see the identical registered point.
+    Kink([f64; 3]),
+}
+
+/// One vertex of a clip piece: the `(a, b)` position and where it came from.
+#[derive(Debug, Clone, Copy)]
+struct ClipVertex {
+    ab: Point2,
+    src: ClipSrc,
+}
+
+/// The exact left-of-edge side of a point in the `(a, b)` plane.
+fn left_of(a: Point2, b: Point2, p: Point2) -> f64 {
+    (b.x - a.x).mul_add(p.y - a.y, -(b.y - a.y) * (p.x - a.x))
+}
+
+/// Builds the strips of every wall face and chains them by soft kinks across the mesh
+/// edges that two wall triangles of different strips share. Every mesh edge whose two
+/// triangles lie in different strips is a kink: soft turns (at most `pi/4`) join their
+/// strips into one chain, hard ones never do.
+fn build_walls(
+    body: &Body,
+    solid: &Solid,
+    budget: &mut ExactBudget,
+) -> Result<(Vec<Strip>, Vec<Chain>, Vec<Vec<[u32; 3]>>), OpFailure> {
+    let internal = || OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build);
+    let mut strips: Vec<Strip> = Vec::new();
+    let mut strips_tris: Vec<Vec<[u32; 3]>> = Vec::new();
+    // The global strip index of every wall triangle, keyed by its face and its own three
+    // vertices (the same key the kink walk matches mesh edges by).
+    let mut tri_strip: std::collections::BTreeMap<(u16, [u32; 3]), usize> =
+        std::collections::BTreeMap::new();
+    for (face, triangles) in &solid.walls {
+        let (face_strips_list, assignment) = face_strips(body, triangles, *face, budget)?;
+        let base = strips.len();
+        strips.extend(face_strips_list);
+        strips_tris.resize_with(strips.len(), Vec::new);
+        for (index, tri) in triangles.iter().enumerate() {
+            let local = *assignment.get(index).ok_or_else(internal)?;
+            let global = base.checked_add(local).ok_or_else(internal)?;
+            tri_strip.insert((*face, *tri), global);
+            if let Some(bucket) = strips_tris.get_mut(global) {
+                bucket.push(*tri);
+            }
+        }
+    }
+    // The kink edges: mesh edges shared by two wall triangles of different strips.
+    let mut edges: std::collections::BTreeMap<[u32; 2], Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for ((_, tri), strip) in &tri_strip {
+        for (first, second) in tri.iter().zip(tri.iter().cycle().skip(1)) {
+            let key = if first <= second {
+                [*first, *second]
+            } else {
+                [*second, *first]
+            };
+            edges.entry(key).or_default().push(*strip);
+        }
+    }
+    // Union-find over the strips, merged by soft kinks only.
+    let mut parent: Vec<usize> = (0..strips.len()).collect();
+    fn root(parent: &[usize], mut at: usize) -> usize {
+        while parent[at] != at {
+            at = parent[at];
+        }
+        at
+    }
+    let mut soft: Vec<(usize, usize)> = Vec::new();
+    for owners in edges.values() {
+        let [a, b] = owners.as_slice() else {
+            continue;
+        };
+        if a == b {
+            continue;
+        }
+        let (strip_a, strip_b) = (
+            strips.get(*a).ok_or_else(internal)?,
+            strips.get(*b).ok_or_else(internal)?,
+        );
+        if is_soft_kink((strip_a.ny, strip_a.nz), (strip_b.ny, strip_b.nz)) {
+            let (ra, rb) = (root(&parent, *a), root(&parent, *b));
+            if ra != rb {
+                parent[ra.max(rb)] = ra.min(rb);
+            }
+            soft.push((*a.min(b), *a.max(b)));
+        }
+    }
+    // The chains: strips grouped by root, in strip order, with their soft kink edges.
+    let mut order: Vec<usize> = (0..strips.len()).collect();
+    order.sort_by_key(|&s| (root(&parent, s), s));
+    let mut chains: Vec<Chain> = Vec::new();
+    let mut chain_of_strip: Vec<usize> = vec![0; strips.len()];
+    for group in order.chunk_by(|a, b| root(&parent, *a) == root(&parent, *b)) {
+        let id = chains.len();
+        for &strip in group {
+            if let Some(slot) = chain_of_strip.get_mut(strip) {
+                *slot = id;
+            }
+        }
+        chains.push(Chain {
+            strips: group.to_vec(),
+            soft: Vec::new(),
+        });
+    }
+    for (a, b) in soft {
+        let (Some(ca), Some(cb)) = (
+            chain_of_strip.get(a).copied(),
+            chain_of_strip.get(b).copied(),
+        ) else {
+            continue;
+        };
+        if ca == cb {
+            if let Some(chain) = chains.get_mut(ca) {
+                chain.soft.push((a, b));
+            }
+        }
+    }
+    Ok((strips, chains, strips_tris))
+}
+
+/// The `(a, b)` outer region of one strip: the outer loop of its triangles' boundary,
+/// counter-clockwise (reversed from the face winding when the strip's normal faces the
+/// cutter start), with every vertex tagged by its mesh id. Returns the region, the strip's
+/// hole loops (clockwise, from an earlier hole in the same face) and the strip's vertical
+/// mesh edges as their `b` line, body `(y, z)` and `x` span.
+fn strip_region(
+    body: &Body,
+    tris: &[[u32; 3]],
+    faces_out: bool,
+    project: &impl Fn([f64; 3]) -> [f64; 2],
+    limits: &OpLimits,
+    budget: &mut ExactBudget,
+) -> Result<(Vec<(Point2, u32)>, Vec<Vec<(Point2, u32)>>, Vec<(f64, [f64; 2], f64, f64)>), OpFailure> {
+    let position = |i: u32| {
+        body.mesh()
+            .vertices()
+            .get(usize::try_from(i).ok()?)
+            .copied()
+    };
+    let mut directed: Vec<(u32, u32)> = tris
+        .iter()
+        .flat_map(|[a, b, c]| [(*a, *b), (*b, *c), (*c, *a)])
+        .collect();
+    directed.sort_unstable();
+    let boundary: Vec<(u32, u32)> = directed
+        .iter()
+        .filter(|(a, b)| directed.binary_search(&(*b, *a)).is_err())
+        .map(|&(a, b)| if faces_out { (b, a) } else { (a, b) })
+        .collect();
+    let rings = chain_loops(&boundary, limits.max_loops).map_err(|e| match e {
+        ChainError::TooManyLoops => OpFailure::new(
+            OpCode::AboveLimit,
+            OpField::Limits,
+            OpDefect::BudgetLoops,
+            Stage::Build,
+        ),
+        _ => OpFailure::unsupported(OpField::Body, OpDefect::BodyLoops, Stage::Build),
+    })?;
+    let positioned = rings
+        .iter()
+        .map(|r| canonical_loop(r, position))
+        .collect::<Option<_>>()
+        .ok_or_else(|| OpFailure::unsupported(OpField::Body, OpDefect::BodyLoops, Stage::Build))?;
+    let (outer, holes) = split_loops(
+        positioned,
+        |p| project(p),
+        OpDefect::BodyLoops,
+        OpField::Body,
+        budget,
+    )?;
+    let tag = |loop_: &CapLoop| -> Vec<(Point2, u32)> {
+        loop_
+            .ids
+            .iter()
+            .zip(loop_.xyz.iter())
+            .map(|(id, p)| (flat_point(*p, project), *id))
+            .collect()
+    };
+    // The kink lines: the strip's vertical mesh edges, as their `b` line, `(y, z)` and
+    // the `x` span the edge covers.
+    let mut kink_lines: Vec<(f64, [f64; 2], f64, f64)> = Vec::new();
+    let mut seen: std::collections::BTreeSet<[u32; 2]> = std::collections::BTreeSet::new();
+    for (a, b) in tris.iter().flat_map(|t| t.iter().zip(t.iter().cycle().skip(1))) {
+        let key = if a <= b { [*a, *b] } else { [*b, *a] };
+        if !seen.insert(key) {
+            continue;
+        }
+        let (u, v) = (position(key[0]), position(key[1]));
+        let (Some(u), Some(v)) = (u, v) else {
+            continue;
+        };
+        if u[1] == v[1] && u[2] == v[2] {
+            let p = flat_point(u, project);
+            kink_lines.push((p.y, [u[1], u[2]], u[0].min(v[0]), u[0].max(v[0])));
+        }
+    }
+    kink_lines.sort_by(|x, y| x.0.total_cmp(&y.0));
+    Ok((tag(&outer), holes.iter().map(tag).collect(), kink_lines))
+}
+
+/// Clips the CCW `subject` polygon against every half-plane left of a CCW `region` edge
+/// (Sutherland–Hodgman). Returns the empty clip when the polygons are disjoint. A crossing
+/// against a horizontal region edge (a kink line) interpolates through the canonical
+/// `t = (line - p.y)/(q.y - p.y)`, so the clip vertices and the band events agree bit for
+/// bit on the registered kink points.
+fn clip_region(subject: &[Point2], region: &[Point2]) -> Vec<Point2> {
+    let mut out: Vec<Point2> = subject.to_vec();
+    for (a, b) in region.iter().zip(region.iter().cycle().skip(1)) {
+        if out.is_empty() {
+            return out;
+        }
+        let horizontal = a.y == b.y;
+        let mut next = Vec::with_capacity(out.len() + 1);
+        for (index, p) in out.iter().enumerate() {
+            let q = out
+                .get((index + 1) % out.len())
+                .copied()
+                .unwrap_or(*p);
+            let (sp, sq) = (left_of(*a, *b, *p), left_of(*a, *b, q));
+            if sp >= 0.0 {
+                next.push(*p);
+            }
+            if (sp > 0.0) != (sq > 0.0) && sp != 0.0 && sq != 0.0 {
+                let t = if horizontal {
+                    (a.y - p.y) / (q.y - p.y)
+                } else {
+                    sp / (sp - sq)
+                };
+                next.push(Point2::new(
+                    p.x + t * (q.x - p.x),
+                    p.y + t * (q.y - p.y),
+                ));
+            }
+        }
+        out = next;
+    }
+    out
+}
+
+/// One event of the cutter band along the footprint contour: a footprint vertex or a
+/// contour crossing of a kink line, ordered along the contour by edge index and parameter.
+struct Event {
+    edge: usize,
+    t: f64,
+    ab: Point2,
+    /// The kink points the event sits on, one per owning chain when several chains'
+    /// edges share the same footprint line (the near and far wall of a section).
+    kinks: Vec<[f64; 3]>,
+}
+
+/// Serves a cutter whose crossed walls include faceted chains: builds the strip registry,
+/// places the chains, carves every crossed face through the shared kink vertices and
+/// seals the result. The flat axis-aligned faces of slice 1 are not handled here.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+fn cut_through_chains(
+    body: &Body,
+    solid: &Solid,
+    points: &[Point2],
+    dy: f64,
+    dz: f64,
+    zf: f64,
+    zt: f64,
+    cutter: &MemberHoleCutter,
+    eps: f64,
+    project: &impl Fn([f64; 3]) -> [f64; 2],
+    to_body: &impl Fn(f64, f64, f64) -> [f64; 3],
+    limits: &OpLimits,
+    budget: &mut ExactBudget,
+    cancelled: &mut impl FnMut(Stage) -> bool,
+) -> Result<OpResult, OpFailure> {
+    let internal = || {
+        #[cfg(g142_debug)]
+        eprintln!(
+            "INTERNAL:\n{}",
+            std::backtrace::Backtrace::force_capture()
+        );
+        OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build)
+    };
+    poll(cancelled, Stage::Build)?;
+    let (strips, chains, strips_tris) = build_walls(body, solid, budget)?;
+    #[cfg(g142_debug)]
+    eprintln!("walls: {} strips, {} chains", strips.len(), chains.len());
+    let mut crossed = place_chains(
+        body, &chains, &strips, &strips_tris, points, dy, dz, zf, zt, eps, project, limits,
+        budget,
+    )?;
+    #[cfg(g142_debug)]
+    eprintln!("crossed chains: {}", crossed.len());
+    for (i, c) in crossed.iter().enumerate() {
+        #[cfg(g142_debug)]
+        eprintln!(
+            "chain {i}: t=[{}, {}] mid {} entry {} pieces {}",
+            c.t_lo,
+            c.t_hi,
+            c.t_mid,
+            c.entry,
+            c.pieces.len()
+        );
+    }
+    if crossed.is_empty() {
+        return Err(OpFailure::new(
+            OpCode::OpNoEffect,
+            OpField::Cutter,
+            OpDefect::None,
+            Stage::Build,
+        ));
+    }
+    // Whole chains only: they alternate entering and leaving material, start with an
+    // entry and end with an exit.
+    let ends_blind = match (crossed.first(), crossed.last()) {
+        (Some(first), Some(last)) => !crossed.len().is_multiple_of(2) || !first.entry || last.entry,
+        _ => true,
+    };
+    if ends_blind {
+        return Err(OpFailure::new(
+            OpCode::OpUnsupported,
+            OpField::Body,
+            OpDefect::CutterNotThrough,
+            Stage::Ranges,
+        ));
+    }
+    crossed
+        .chunks(2)
+        .map(|pair| match pair {
+            [in_chain, out_chain]
+                if in_chain.entry && !out_chain.entry && out_chain.t_mid > in_chain.t_mid =>
+            {
+                Some(())
+            }
+            _ => None,
+        })
+        .collect::<Option<Vec<()>>>()
+        .ok_or_else(internal)?;
+    let count = i64::try_from(crossed.len() / 2).map_err(|_| internal())?;
+    poll(cancelled, Stage::Checks)?;
+
+    // The band events: the footprint vertices plus the contour crossings of every kink
+    // line of the crossed chains, ordered along the contour. A line shared by two chains'
+    // bands (the near and the far wall of a section) contributes one crossing per chain,
+    // merged into one event that carries both kink points.
+    let mut events: Vec<Event> = points
+        .iter()
+        .enumerate()
+        .map(|(i, p)| Event {
+            edge: i,
+            t: 0.0,
+            ab: *p,
+            kinks: Vec::new(),
+        })
+        .collect();
+    for chain in &crossed {
+        for piece in &chain.pieces {
+            for (line_b, line_yz, x_lo, x_hi) in &piece.kinks {
+                for (j, pair) in points
+                    .iter()
+                    .zip(points.iter().cycle().skip(1))
+                    .enumerate()
+                {
+                    let (p, q) = pair;
+                    let (d_b, at) = (q.y - p.y, p.y - line_b);
+                    if d_b == 0.0 || !(at < 0.0) == (q.y - line_b < 0.0) {
+                        continue;
+                    }
+                    // The canonical crossing parameter, identical to the clip's own
+                    // interpolation against a kink line, so both sides compute the exact
+                    // same registered point.
+                    let t = (line_b - p.y) / d_b;
+                    if !(0.0..=1.0).contains(&t) {
+                        continue;
+                    }
+                    let a = p.x + t * (q.x - p.x);
+                    if !(x_lo - eps..=x_hi + eps).contains(&a) {
+                        continue;
+                    }
+                    events.push(Event {
+                        edge: j,
+                        t,
+                        ab: Point2::new(a, *line_b),
+                        kinks: vec![[a, line_yz[0], line_yz[1]]],
+                    });
+                }
+            }
+        }
+    }
+    // A footprint vertex sitting on a kink line is the same registered point as the edge
+    // crossing there, for every chain owning that line.
+    for event in &mut events {
+        for chain in &crossed {
+            for piece in &chain.pieces {
+                for (line_b, line_yz, x_lo, x_hi) in &piece.kinks {
+                    if (event.ab.y - line_b).abs() <= eps
+                        && (*x_lo - eps..=*x_hi + eps).contains(&event.ab.x)
+                    {
+                        let kink = [event.ab.x, line_yz[0], line_yz[1]];
+                        if !event.kinks.iter().any(|k| k[0] == kink[0] && k[1] == kink[1] && k[2] == kink[2]) {
+                            event.kinks.push(kink);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    events.sort_by(|a, b| a.edge.cmp(&b.edge).then(a.t.total_cmp(&b.t)));
+    // Events of the same contour point merge their kink points: chains whose bands share
+    // the footprint line produce identical crossings with their own body edges.
+    let mut unique: Vec<Event> = Vec::with_capacity(events.len());
+    for event in events {
+        match unique.last_mut() {
+            Some(last)
+                if last.edge == event.edge
+                    && (last.t - event.t).abs() <= 1e-12
+                    && (last.ab.x - event.ab.x).abs() <= eps =>
+            {
+                for kink in event.kinks {
+                    if !last
+                        .kinks
+                        .iter()
+                        .any(|k| k[0] == kink[0] && k[1] == kink[1] && k[2] == kink[2])
+                    {
+                        last.kinks.push(kink);
+                    }
+                }
+            }
+            _ => unique.push(event),
+        }
+    }
+    let events = unique;
+    if events.len() < 3 {
+        return Err(internal());
+    }
+
+    // New vertices: one ring per crossed chain, on that chain's surface, with the kink
+    // points registered once and shared.
+    let base = u32::try_from(body.mesh().vertices().len()).map_err(|_| internal())?;
+    let mut vertices: Vec<[f64; 3]> = body.mesh().vertices().to_vec();
+    let mut next_vertex = base;
+    let mut kinks = KinkPoints { points: Vec::new() };
+    let mut rings: Vec<Vec<(u32, [f64; 3])>> = Vec::with_capacity(crossed.len());
+    for chain in &crossed {
+        let mut ring: Vec<(u32, [f64; 3])> = Vec::with_capacity(events.len());
+        for event in &events {
+            // The chain's own kink point: the one whose body edge belongs to this chain
+            // (two chains' bands may share the footprint line).
+            let own_kink = event.kinks.iter().copied().find(|k| {
+                chain.pieces.iter().any(|p| {
+                    strips.get(p.strip).is_some_and(|strip| {
+                        let (ny, nz, c) = (strip.ny, strip.nz, strip.c);
+                        (ny.mul_add(k[1], nz * k[2]) - c).abs() <= eps
+                    })
+                })
+            });
+            let (id, xyz) = match own_kink {
+                Some(at) => {
+                    let id = kinks.point(at, &mut vertices, &mut next_vertex)?;
+                    (id, at)
+                }
+                None => {
+                    let piece = chain
+                        .pieces
+                        .iter()
+                        .find(|p| {
+                            let region_pts: Vec<Point2> =
+                                p.region.iter().map(|(rp, _)| *rp).collect();
+                            winding_contains(event.ab, &region_pts).unwrap_or(false)
+                        })
+                        .ok_or_else(internal)?;
+                    let xyz = to_body(event.ab.x, event.ab.y, piece.gamma.mul_add(event.ab.y, piece.delta));
+                    let id = next_vertex;
+                    next_vertex = next_vertex.checked_add(1).ok_or_else(internal)?;
+                    vertices.push(xyz);
+                    (id, xyz)
+                }
+            };
+            ring.push((id, xyz));
+        }
+        rings.push(ring);
+    }
+    let ring_id = |ring: &[(u32, [f64; 3])], event_index: usize| -> Result<u32, OpFailure> {
+        ring.get(event_index)
+            .map(|(id, _)| *id)
+            .ok_or_else(internal)
+    };
+
+    // Every crossed strip is carved: its outer loop (the boundary of its own triangles)
+    // is cut open at the kink crossings and spliced with the clip piece, or a swallowed
+    // strip disappears whole. A face with several strips (a curve-approximated cavity
+    // wall) is carved strip by strip under the same face id.
+    let mut crossed_strips: std::collections::BTreeMap<usize, &ChainPiece> =
+        std::collections::BTreeMap::new();
+    let mut chain_of_strip: std::collections::BTreeMap<usize, usize> =
+        std::collections::BTreeMap::new();
+    for (ci, chain) in crossed.iter().enumerate() {
+        for piece in &chain.pieces {
+            crossed_strips.insert(piece.strip, piece);
+            chain_of_strip.insert(piece.strip, ci);
+        }
+    }
+    // A face carved through several of its own strips (a curve-approximated cavity wall,
+    // whose band seams never line up with the flat bands) is the merge-walk slice's work.
+    let mut crossed_face_strips: std::collections::BTreeMap<u16, usize> =
+        std::collections::BTreeMap::new();
+    for chain in &crossed {
+        for piece in &chain.pieces {
+            *crossed_face_strips.entry(piece.face).or_default() += 1;
+        }
+    }
+    if crossed_face_strips.values().any(|count| *count > 1) {
+        return Err(OpFailure::unsupported(
+            OpField::Body,
+            OpDefect::BodyWallUnsupported,
+            Stage::Build,
+        ));
+    }
+    // The body keeps every triangle except those of the carved strips' faces.
+    let mut triangles: Vec<[u32; 3]> = Vec::new();
+    let mut faces: Vec<u16> = Vec::new();
+    for (tri, face) in body
+        .mesh()
+        .triangles()
+        .iter()
+        .zip(body.mesh().faces())
+    {
+        if !crossed_face_strips.contains_key(face) {
+            triangles.push(*tri);
+            faces.push(*face);
+        }
+    }
+    let mut loops = 0usize;
+    let mut cap_points = 0usize;
+    'strip: for (strip_index, piece_ref) in &crossed_strips {
+        let piece: &ChainPiece = piece_ref;
+        let face = piece.face;
+        let Some(chain_index) = chain_of_strip.get(strip_index).copied() else {
+            return Err(internal());
+        };
+        let chain_ring = rings.get(chain_index).ok_or_else(internal)?;
+        let Some(strip) = strips.get(*strip_index) else {
+            return Err(internal());
+        };
+        let Some(tris) = strips_tris.get(*strip_index) else {
+            return Err(internal());
+        };
+        let reverse = strip.axis_dot(dy, dz) < 0.0;
+        let (mut outer, mut holes) = face_loops(body, tris, reverse, |p| project(p), limits, budget)?;
+        // A strip whose every contour vertex lies inside its own clip piece disappears
+        // whole: the opening swallows it.
+        let outer_inside = !outer.ids.is_empty()
+            && outer.xyz.iter().all(|p| {
+                let fp = flat_point(*p, project);
+                winding_contains(fp, &piece.clip).unwrap_or(false)
+            });
+        if outer_inside {
+            continue;
+        }
+        // Map every clip vertex of this strip to a mesh vertex id.
+        let mut clip_ids: Vec<Vec<u32>> = Vec::with_capacity(1);
+        {
+            #[cfg(g142_debug)]
+            {
+                let contacts_dbg: Vec<(usize, String)> = piece
+                    .tagged
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, t)| !matches!(t.src, ClipSrc::Footprint(_)))
+                    .map(|(i, t)| (i, format!("{:?}", t.src)))
+                    .collect();
+                eprintln!(
+                    "carve strip {} face {}: outer {} clip {} contacts {:?}",
+                    piece.strip,
+                    face,
+                    outer.ids.len(),
+                    piece.clip.len(),
+                    contacts_dbg
+                );
+            }
+            let mut ids: Vec<u32> = Vec::with_capacity(piece.tagged.len());
+            for tagged in &piece.tagged {
+                let id = match tagged.src {
+                    ClipSrc::Body(id) => id,
+                    ClipSrc::Kink(at) => kinks.point(at, &mut vertices, &mut next_vertex)?,
+                    ClipSrc::Footprint(index) => {
+                        let mut found = None;
+                        for (ei, e) in events.iter().enumerate() {
+                            if e.edge == index
+                                && e.t == 0.0
+                                && e.ab.x == tagged.ab.x
+                                && e.ab.y == tagged.ab.y
+                            {
+                                found = Some(ei);
+                                break;
+                            }
+                        }
+                        ring_id(chain_ring, found.ok_or_else(internal)?)?
+                    }
+                };
+                ids.push(id);
+            }
+            clip_ids.push(ids);
+        }
+        // Splice the clip piece into the strip's outer loop or add it as one more hole.
+        for (clip_index, piece) in std::slice::from_ref(piece).iter().enumerate() {
+            let ids = clip_ids.get(clip_index).ok_or_else(internal)?;
+            // The boundary contact points of the clip, in clip order: the same physical
+            // point (a clip loop that starts and ends on one boundary edge) is one contact.
+            let mut contacts: Vec<usize> = Vec::new();
+            for (i, tagged) in piece.tagged.iter().enumerate() {
+                if !matches!(tagged.src, ClipSrc::Footprint(_)) {
+                    let duplicate = contacts.iter().any(|&c| {
+                        let prev = &piece.tagged[c];
+                        (prev.ab.x - tagged.ab.x).abs() <= eps
+                            && (prev.ab.y - tagged.ab.y).abs() <= eps
+                    });
+                    if !duplicate {
+                        contacts.push(i);
+                    }
+                }
+            }
+            #[cfg(g142_debug)]
+            eprintln!("splice contacts: face {face} {:?}", contacts);
+            if contacts.is_empty() {
+                // A closed opening: one more clockwise hole; the strip's own loop (never
+                // touched) is re-triangulated with it right here.
+                holes.push(CapLoop {
+                    ids: ids.clone(),
+                    xyz: piece
+                        .clip
+                        .iter()
+                        .map(|p| to_body(p.x, p.y, piece.gamma.mul_add(p.y, piece.delta)))
+                        .collect(),
+                });
+                let carved = triangulate_cap(
+                    &outer,
+                    &holes,
+                    |p| project(p),
+                    limits,
+                    body.tolerance(),
+                    OpField::Cap,
+                    false,
+                )
+                .map_err(|e| cutter_field(e, holes.len()))?;
+                loops += 1 + holes.len();
+                cap_points += outer.ids.len() + holes.iter().map(|h| h.ids.len()).sum::<usize>();
+                for [a, b, c] in carved {
+                    triangles.push(if reverse { [a, c, b] } else { [a, b, c] });
+                    faces.push(face);
+                }
+                continue 'strip;
+            }
+            // The generalized splice: every contact lands in the outer loop; then each
+            // pair of consecutive contacts in clip order either keeps the outer path
+            // between them (it runs outside the opening) or has that path thrown and the
+            // clip's own arc spliced in. An opening touching both boundary edges of a
+            // narrow band cuts it in two; the assembly below yields both pieces.
+            let at_of = |i: usize| -> Result<[f64; 3], OpFailure> {
+                match piece.tagged.get(i).map(|t| t.src) {
+                    Some(ClipSrc::Kink(at)) => Ok(at),
+                    Some(ClipSrc::Body(id)) => body
+                        .mesh()
+                        .vertices()
+                        .get(usize::try_from(id).ok().ok_or_else(internal)?)
+                        .copied()
+                        .ok_or_else(internal),
+                    _ => Err(internal()),
+                }
+            };
+            // Insert a contact id into the outer loop at the vertical edge it lies on.
+            let insert = |outer: &mut CapLoop, id: u32, at: [f64; 3]| -> Result<(), OpFailure> {
+                if outer.ids.contains(&id) {
+                    return Ok(());
+                }
+                let n = outer.xyz.len();
+                let mut slot = None;
+                for (k, pair) in outer
+                    .xyz
+                    .iter()
+                    .zip(outer.xyz.iter().cycle().skip(1))
+                    .enumerate()
+                {
+                    let (before, after) = pair;
+                    if before[1] == at[1]
+                        && before[2] == at[2]
+                        && after[1] == at[1]
+                        && after[2] == at[2]
+                        && at[0] >= before[0].min(after[0])
+                        && at[0] <= before[0].max(after[0])
+                    {
+                        slot = Some((k + 1) % n);
+                        break;
+                    }
+                }
+                let Some(next) = slot else {
+                    return Err(internal());
+                };
+                outer.ids.insert(next, id);
+                outer.xyz.insert(next, at);
+                Ok(())
+            };
+            for &ci in &contacts {
+                let id = *ids.get(ci).ok_or_else(internal)?;
+                insert(&mut outer, id, at_of(ci)?)?;
+            }
+            let clip_pts: Vec<Point2> = piece.tagged.iter().map(|t| t.ab).collect();
+            let clip_border_dist = |p: Point2| -> f64 {
+                clip_pts
+                    .iter()
+                    .zip(clip_pts.iter().cycle().skip(1))
+                    .map(|(r, s)| segment_distance(p, p, *r, *s))
+                    .fold(f64::INFINITY, f64::min)
+            };
+            // The outer path between two contacts is kept when it runs outside the
+            // opening (its first edge's midpoint is off the clip and off its boundary)
+            // and thrown when it runs through the opening.
+            let throws = |path: &[usize]| -> Result<bool, OpFailure> {
+                for w in 0..path.len().saturating_sub(1) {
+                    let (Some(pa), Some(pb)) = (
+                        outer.xyz.get(path[w]).copied(),
+                        outer.xyz.get(path[w + 1]).copied(),
+                    ) else {
+                        return Err(internal());
+                    };
+                    let mid3 = [
+                        (pa[0] + pb[0]) / 2.0,
+                        (pa[1] + pb[1]) / 2.0,
+                        (pa[2] + pb[2]) / 2.0,
+                    ];
+                    let mid_ab = flat_point(mid3, &project);
+                    if winding_contains(mid_ab, &clip_pts).unwrap_or(false)
+                        || clip_border_dist(mid_ab) <= eps
+                    {
+                        return Ok(true);
+                    }
+                    return Ok(false);
+                }
+                Ok(false)
+            };
+            let n = outer.ids.len();
+            // The contacts in outer order (rotated from the smallest slot).
+            let mut ring: Vec<(usize, usize)> = Vec::with_capacity(contacts.len());
+            for &ci in &contacts {
+                let id = *ids.get(ci).ok_or_else(internal)?;
+                let Some(at) = outer.ids.iter().position(|&i| i == id) else {
+                    return Err(internal());
+                };
+                ring.push((ci, at));
+            }
+            let base = ring.iter().map(|(_, at)| *at).min().ok_or_else(internal)?;
+            ring.sort_by_key(|(_, at)| (*at + n - base) % n);
+            let n_clip = contacts.len();
+            // The kept outer paths: one per contact when the opening cuts the strip (a
+            // touch on two boundary edges leaves two pieces), or the single round trip
+            // when it only notches one edge.
+            let mut keeps: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+            for i in 0..n_clip {
+                let (ci, ai) = ring[i];
+                let (cj, aj) = ring[(i + 1) % n_clip];
+                let mut path = vec![ai];
+                let mut at = (ai + 1) % n;
+                while at != aj {
+                    path.push(at);
+                    at = (at + 1) % n;
+                }
+                path.push(aj);
+                if !throws(&path)? {
+                    keeps.push((ci, cj, path));
+                }
+            }
+            // The opening's arcs: the clip slots between consecutive contacts, in clip
+            // order; a straight chord between neighbours contributes none.
+            let m = piece.tagged.len();
+            let mut arcs: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+            for i in 0..n_clip {
+                let (ci, cj) = (contacts[i], contacts[(i + 1) % n_clip]);
+                let mut slots = Vec::new();
+                let mut at = (ci + 1) % m;
+                while at != cj {
+                    slots.push(at);
+                    at = (at + 1) % m;
+                }
+                if !slots.is_empty() {
+                    arcs.push((ci, cj, slots));
+                }
+            }
+            #[cfg(g142_debug)]
+            {
+                eprintln!(
+                    "assemble: face {face} contacts {:?} ring {:?} keeps {:?} arcs {:?}",
+                    contacts,
+                    ring,
+                    keeps.iter().map(|(a, b, p)| (*a, *b, p.len())).collect::<Vec<_>>(),
+                    arcs.iter().map(|(a, b, s)| (*a, *b, s.len())).collect::<Vec<_>>(),
+                );
+            }
+            // Every contact must carry exactly one kept path and one arc; otherwise the
+            // opening's relation to the strip's boundary is not a servable cut.
+            if keeps.len() != arcs.len() || keeps.is_empty() {
+                #[cfg(g142_debug)]
+                eprintln!("splice refuse: face {face} keeps {} arcs {}", keeps.len(), arcs.len());
+                return Err(OpFailure::unsupported(
+                    OpField::Body,
+                    OpDefect::BodyWallUnsupported,
+                    Stage::Build,
+                ));
+            }
+            // Assemble the pieces: alternate a kept path with the opening's arc at every
+            // contact. A notch yields one piece; a cut through a band yields two.
+            let clip_at = |i: usize| -> Result<([f64; 3], u32), OpFailure> {
+                let ab = piece
+                    .tagged
+                    .get(i)
+                    .map(|t| t.ab)
+                    .ok_or_else(internal)?;
+                let id = *ids.get(i).ok_or_else(internal)?;
+                let xyz = to_body(ab.x, ab.y, piece.gamma.mul_add(ab.y, piece.delta));
+                Ok((xyz, id))
+            };
+            let mut used_keep = vec![false; keeps.len()];
+            let mut used_arc = vec![false; arcs.len()];
+            let mut pieces_out: Vec<CapLoop> = Vec::new();
+            #[cfg(g142_debug)]
+            {
+                for (a, b, p) in &keeps {
+                    eprintln!("keep: {} -> {} slots {:?}", a, b, p.len());
+                }
+                for (a, b, s) in &arcs {
+                    eprintln!("arc: {} -> {} slots {:?}", a, b, s.len());
+                }
+            }
+            for start in 0..keeps.len() {
+                if used_keep[start] {
+                    continue;
+                }
+                used_keep[start] = true;
+                let mut piece_loop = CapLoop {
+                    ids: Vec::new(),
+                    xyz: Vec::new(),
+                };
+                // Walk the first kept path in its own (outer, counter-clockwise) order.
+                let (_, mut end, mut path) = keeps[start].clone();
+                for slot in &path {
+                    let (Some(id), Some(xyz)) = (
+                        outer.ids.get(*slot).copied(),
+                        outer.xyz.get(*slot).copied(),
+                    ) else {
+                        return Err(internal());
+                    };
+                    piece_loop.ids.push(id);
+                    piece_loop.xyz.push(xyz);
+                }
+                loop {
+                    // The arc at the path's end contact, walked away from it.
+                    let Some(ai) = (0..arcs.len()).find(|&i| {
+                        !used_arc[i] && (arcs[i].0 == end || arcs[i].1 == end)
+                    }) else {
+                        return Err(internal());
+                    };
+                    used_arc[ai] = true;
+                    let (a, b, slots) = &arcs[ai];
+                    if *a == end {
+                        for slot in slots {
+                            let (xyz, id) = clip_at(*slot)?;
+                            piece_loop.ids.push(id);
+                            piece_loop.xyz.push(xyz);
+                        }
+                        end = *b;
+                    } else {
+                        for slot in slots.iter().rev() {
+                            let (xyz, id) = clip_at(*slot)?;
+                            piece_loop.ids.push(id);
+                            piece_loop.xyz.push(xyz);
+                        }
+                        end = *a;
+                    }
+                    // The kept path at the arc's far end, if one is left there.
+                    let Some(ki) = (0..keeps.len()).find(|&i| {
+                        !used_keep[i] && (keeps[i].0 == end || keeps[i].1 == end)
+                    }) else {
+                        break;
+                    };
+                    used_keep[ki] = true;
+                    let (a, b, keep_slots) = &keeps[ki];
+                    if *a == end {
+                        for slot in keep_slots.iter().skip(1) {
+                            let (Some(id), Some(xyz)) = (
+                                outer.ids.get(*slot).copied(),
+                                outer.xyz.get(*slot).copied(),
+                            ) else {
+                                return Err(internal());
+                            };
+                            piece_loop.ids.push(id);
+                            piece_loop.xyz.push(xyz);
+                        }
+                        end = *b;
+                    } else {
+                        for slot in keep_slots.iter().rev().skip(1) {
+                            let (Some(id), Some(xyz)) = (
+                                outer.ids.get(*slot).copied(),
+                                outer.xyz.get(*slot).copied(),
+                            ) else {
+                                return Err(internal());
+                            };
+                            piece_loop.ids.push(id);
+                            piece_loop.xyz.push(xyz);
+                        }
+                        end = *a;
+                    }
+                }
+                // The piece must be a counter-clockwise simple polygon.
+                let flat: Vec<[f64; 2]> =
+                    piece_loop.xyz.iter().map(|p| project(*p)).collect();
+                #[cfg(g142_debug)]
+                eprintln!(
+                    "piece: face {face} pts {} {:?}",
+                    piece_loop.ids.len(),
+                    piece_loop
+                        .ids
+                        .iter()
+                        .zip(flat.iter())
+                        .map(|(i, p)| (*i, (p[0], p[1])))
+                        .collect::<Vec<_>>()
+                );
+                if area_sign(&flat, budget)? < 0 {
+                    piece_loop.ids.reverse();
+                    piece_loop.xyz.reverse();
+                }
+                pieces_out.push(piece_loop);
+            }
+            // Triangulate every piece under the strip's own face id.
+            for piece_loop in pieces_out {
+                let carved = triangulate_cap(
+                    &piece_loop,
+                    &holes,
+                    |p| project(p),
+                    limits,
+                    body.tolerance(),
+                    OpField::Cap,
+                    false,
+                )
+                .map_err(|e| {
+                    #[cfg(g142_debug)]
+                    eprintln!("piece tri fail: face {face} {:?}", e);
+                    cutter_field(e, holes.len())
+                })?;
+                loops += 1 + holes.len();
+                cap_points += piece_loop.ids.len() + holes.iter().map(|h| h.ids.len()).sum::<usize>();
+                for [a, b, c] in carved {
+                    triangles.push(if reverse { [a, c, b] } else { [a, b, c] });
+                    faces.push(face);
+                }
+            }
+            continue 'strip;
+        }
+        // Re-triangulate the carved face with the clip openings as holes.
+        #[cfg(g142_debug)]
+        eprintln!(
+            "carve face {face}: outer {:?} holes {}",
+            outer
+                .ids
+                .iter()
+                .zip(outer.xyz.iter())
+                .map(|(i, p)| (*i, (p[0], p[1], p[2])))
+                .collect::<Vec<_>>(),
+            holes.len()
+        );
+        let carved = triangulate_cap(
+            &outer,
+            &holes,
+            |p| project(p),
+            limits,
+            body.tolerance(),
+            OpField::Cap,
+            false,
+        )
+        .map_err(|e| cutter_field(e, holes.len()))?;
+        loops += 1 + holes.len();
+        cap_points += outer.ids.len() + holes.iter().map(|h| h.ids.len()).sum::<usize>();
+        for [a, b, c] in carved {
+            triangles.push(if reverse { [a, c, b] } else { [a, b, c] });
+            faces.push(face);
+        }
+    }
+
+    // The cutter's own wall: one band per crossed chain pair, walked along the events.
+    let mut face_ids = body.face_table().to_vec();
+    let mut normals = body.face_normals().to_vec();
+    let mut bands: Vec<Vec<[u32; 3]>> = Vec::new();
+    for k in 0..usize::try_from(count).map_err(|_| internal())? {
+        let entry_ring = rings.get(2 * k).ok_or_else(internal)?;
+        let exit_ring = rings.get(2 * k + 1).ok_or_else(internal)?;
+        let mut band = Vec::with_capacity(2 * events.len());
+        // The face id of each band side: the footprint edge it walks, with a run suffix
+        // after the first planar run of the side.
+        for s in 0..events.len() {
+            let s1 = (s + 1) % events.len();
+            let (e0, e1) = (
+                events.get(s).ok_or_else(internal)?,
+                events.get(s1).ok_or_else(internal)?,
+            );
+            let j = e0.edge;
+            let run = if e1.edge == j && e0.t == 0.0 { "" } else { ".p1" };
+            face_ids.push(format!("cut:f.h{}.w{k}.s{j}{run}", cutter.ordinal));
+            // The in-frame side normal (db, -da) of the event edge, mapped back to body
+            // coordinates as in the slice-1 bands.
+            let (da, db) = (e1.ab.x - e0.ab.x, e1.ab.y - e0.ab.y);
+            let length = (da * da + db * db).sqrt();
+            if !(length > 0.0 && length.is_finite()) {
+                return Err(internal());
+            }
+            let n = [db / length, -da * dz / length, da * dy / length];
+            normals.push(Some(n.map(|v| if v == 0.0 { 0.0 } else { v })));
+            let in_id = ring_id(entry_ring, s)?;
+            let in_id1 = ring_id(entry_ring, s1)?;
+            let out_id = ring_id(exit_ring, s)?;
+            let out_id1 = ring_id(exit_ring, s1)?;
+            triangles.push([in_id, in_id1, out_id1]);
+            triangles.push([in_id, out_id1, out_id]);
+            faces.push(u16::try_from(face_ids.len() - 1).map_err(|_| internal())?);
+            faces.push(u16::try_from(face_ids.len() - 1).map_err(|_| internal())?);
+            band.push([in_id, in_id1, out_id1]);
+            band.push([in_id, out_id1, out_id]);
+        }
+        bands.push(band);
+    }
+    let rings_cap: Vec<CapLoop> = rings
+        .iter()
+        .map(|ring| CapLoop {
+            ids: ring.iter().map(|(id, _)| *id).collect(),
+            xyz: ring.iter().map(|(_, xyz)| *xyz).collect(),
+        })
+        .collect();
+    let removed = removed_volume(&cutter.cavity, &vertices, &rings_cap, &bands)?;
+    let negated = Enclosure {
+        lo: -removed.hi,
+        hi: -removed.lo,
+    };
+    let analytic = body.volume_mm3().add(negated).ok_or_else(|| {
+        OpFailure::numeric(OpField::Volume, OpDefect::NumericRange, Stage::Quantities)
+    })?;
+    #[cfg(g142_debug)]
+    {
+        let mut edges: std::collections::BTreeMap<[u32; 2], usize> =
+            std::collections::BTreeMap::new();
+        for tri in &triangles {
+            for (first, second) in tri.iter().zip(tri.iter().cycle().skip(1)) {
+                let key = if first <= second {
+                    [*first, *second]
+                } else {
+                    [*second, *first]
+                };
+                *edges.entry(key).or_default() += 1;
+            }
+        }
+        let open: Vec<([u32; 2], [f64; 3], [f64; 3])> = edges
+            .iter()
+            .filter(|(_, count)| **count != 2)
+            .map(|(key, _)| {
+                let at = |i: u32| {
+                    vertices
+                        .get(usize::try_from(i).ok().unwrap_or(0))
+                        .copied()
+                        .unwrap_or([0.0; 3])
+                };
+                (*key, at(key[0]), at(key[1]))
+            })
+            .collect();
+        eprintln!(
+            "pre-seal: tris {} verts {} edges {} open {}",
+            triangles.len(),
+            vertices.len(),
+            edges.len(),
+            open.len()
+        );
+        for (key, p, q) in &open {
+            eprintln!("open: {:?} {:?} {:?}", key, p, q);
+        }
+        let mut sorted: Vec<[f64; 3]> = vertices.clone();
+        sorted.sort_by(|a, b| {
+            a[0].total_cmp(&b[0])
+                .then(a[1].total_cmp(&b[1]))
+                .then(a[2].total_cmp(&b[2]))
+        });
+        let dups: Vec<[f64; 3]> = sorted
+            .windows(2)
+            .filter(|w| w[0] == w[1])
+            .map(|w| w[0])
+            .collect();
+        eprintln!("exact duplicate vertices: {}", dups.len());
+        for d in dups.iter().take(6) {
+            eprintln!("dup: {:?}", d);
+        }
+        let hit = triangles
+            .iter()
+            .enumerate()
+            .filter(|(_, tri)| tri.contains(&10u32))
+            .collect::<Vec<_>>();
+        eprintln!("tris with v10: {:?}", hit);
+    }
+    let shell = body.analysis().shells().first().ok_or_else(internal)?;
+    let stats = OpStats {
+        triangles_in: body.mesh().triangles().len(),
+        triangles_out: 0,
+        new_vertices: vertices.len().saturating_sub(usize::try_from(base).map_err(|_| internal())?),
+        loops,
+        cap_points,
+        exact_predicates: budget.used(),
+    };
+    seal(
+        Candidate {
+            vertices,
+            triangles,
+            faces,
+            face_ids,
+            normals,
+        },
+        body.tolerance(),
+        limits,
+        Expect {
+            kind: OpKind::MemberThroughHole,
+            euler: shell.euler_characteristic.checked_sub(2 * count),
+            genus: shell
+                .genus
+                .and_then(|g| u32::try_from(count).ok().and_then(|w| g.checked_add(w))),
+            analytic_volume: Some(analytic),
+            plane_deviation_mm: None,
+            stats,
+        },
+        cancelled,
+    )
+}
+
+fn big_area2(poly: &[Point2], e: i32) -> Result<Big, OpFailure> {
+    let range = || {
+        #[cfg(g142_debug)]
+        eprintln!("big_area2 range fail: e={e} n={}", poly.len());
+        OpFailure::numeric(OpField::Cutter, OpDefect::NumericRange, Stage::Ranges)
+    };
+    let scale = |x: f64| -> Result<Big, OpFailure> { scaled(x, e).map_err(|_| range()) };
+    let mut sum = Big::ZERO;
+    for (k, (p, q)) in poly
+        .iter()
+        .zip(poly.iter().cycle().skip(1))
+        .enumerate()
+    {
+        let (px, py, qx, qy) = (scale(p.x), scale(p.y), scale(q.x), scale(q.y));
+        let (px, py, qx, qy) = match (px, py, qx, qy) {
+            (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
+            _ => {
+                #[cfg(g142_debug)]
+                eprintln!(
+                    "  scale fail at {k}: e={e} p=({:e},{:e}) q=({:e},{:e})",
+                    p.x, p.y, q.x, q.y
+                );
+                return Err(range());
+            }
+        };
+        let left = px.mul(&py);
+        let right = qx.mul(&qy);
+        let (left, right) = match (left, right) {
+            (Ok(a), Ok(b)) => (a, b),
+            _ => {
+                #[cfg(g142_debug)]
+                eprintln!("  mul fail at {k}: e={e}");
+                return Err(range());
+            }
+        };
+        match left.sub(&right) {
+            Ok(term) => match sum.add(&term) {
+                Ok(next) => sum = next,
+                _ => {
+                    #[cfg(g142_debug)]
+                    eprintln!("  add fail at {k}: e={e}");
+                    return Err(range());
+                }
+            },
+            _ => {
+                #[cfg(g142_debug)]
+                eprintln!("  sub fail at {k}: e={e}");
+                return Err(range());
+            }
+        }
+    }
+    if sum.sign() < 0 {
+        sum = sum.negated();
+    }
+    Ok(sum)
+}
+
+/// One crossed chain's placement, resolved: the strips to carve, the clip pieces and the
+/// chain's height interval over the footprint.
+struct CrossedChain {
+    /// The strips of the chain, with their clip pieces.
+    pieces: Vec<ChainPiece>,
+    /// The height interval midpoint (the crossing order key).
+    t_mid: f64,
+    /// Whether the chain's outer-facing side looks at the cutter range start.
+    entry: bool,
+    /// The chain's exact height interval over the clip-piece vertices.
+    t_lo: f64,
+    t_hi: f64,
+}
+
+/// One crossed strip of a chain: its clip piece and its plane's height line over `b`.
+struct ChainPiece {
+    strip: usize,
+    face: u16,
+    gamma: f64,
+    delta: f64,
+    clip: Vec<Point2>,
+    /// The tagged clip vertices in order, for the construction's vertex mapping.
+    tagged: Vec<ClipVertex>,
+    /// The strip's `(a, b)` region (outer loop, tagged), holes and kink lines.
+    region: Vec<(Point2, u32)>,
+    holes: Vec<Vec<(Point2, u32)>>,
+    /// The strip's vertical mesh edges: `b` line, body `(y, z)`, `x` span.
+    kinks: Vec<(f64, [f64; 2], f64, f64)>,
+}
+
+/// Classifies every chain against the cutter range with the union-aware placement:
+/// a chain the footprint covers entirely (the exact clip areas sum to the footprint area)
+/// and whose height interval lies inside the range is crossed; a chain the footprint
+/// clears is beyond; a partial cover or a hard-edge contact refuses.
+#[allow(clippy::too_many_arguments)]
+fn place_chains(
+    body: &Body,
+    chains: &[Chain],
+    strips: &[Strip],
+    strips_tris: &[Vec<[u32; 3]>],
+    points: &[Point2],
+    dy: f64,
+    dz: f64,
+    zf: f64,
+    zt: f64,
+    eps: f64,
+    project: &impl Fn([f64; 3]) -> [f64; 2],
+    limits: &OpLimits,
+    budget: &mut ExactBudget,
+) -> Result<Vec<CrossedChain>, OpFailure> {
+    let internal = || OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build);
+    let refused = |defect| OpFailure::new(OpCode::OpUnsupported, OpField::Body, defect, Stage::Ranges);
+    let contour = || OpFailure::new(OpCode::ContourInvalid, OpField::Cutter, OpDefect::None, Stage::Ranges);
+    // The footprint's exact doubled area and its `b` extremes.
+    let e = min_exponent(
+        points
+            .iter()
+            .flat_map(|p| [p.x, p.y])
+            .chain(body.mesh().vertices().iter().flatten().copied()),
+    );
+    let (b_lo, b_hi) = points
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), p| {
+            (lo.min(p.y), hi.max(p.y))
+        });
+    let mut crossed: Vec<CrossedChain> = Vec::new();
+    for chain in chains {
+        // A strip parallel to the cutter axis cannot carry the opening's height: its
+        // section segment is parallel to `d` and the G14.1 breach applies.
+        if chain.strips.iter().any(|&s| {
+            strips
+                .get(s)
+                .map_or(false, |strip| strip.axis_dot(dy, dz).abs() <= f64::EPSILON * 64.0)
+        }) {
+            return Err(contour());
+        }
+        // The strips' regions and the coarse height skip over the footprint's `b` extremes.
+        let mut pieces: Vec<ChainPiece> = Vec::new();
+        let (mut t_c_lo, mut t_c_hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        for &strip_index in &chain.strips {
+            let strip = strips.get(strip_index).ok_or_else(internal)?;
+            let tris = strips_tris.get(strip_index).ok_or_else(internal)?;
+            let faces_out = strip.axis_dot(dy, dz) < 0.0;
+            let (region, holes, kinks) =
+                strip_region(body, tris, faces_out, project, limits, budget)?;
+            let (gamma, delta) = strip.gamma_delta(dy, dz);
+            let t_at = |b: f64| gamma.mul_add(b, delta);
+            t_c_lo = t_c_lo.min(t_at(b_lo).min(t_at(b_hi)));
+            t_c_hi = t_c_hi.max(t_at(b_lo).max(t_at(b_hi)));
+            pieces.push(ChainPiece {
+                strip: strip_index,
+                face: strip.face,
+                gamma,
+                delta,
+                clip: Vec::new(),
+                tagged: Vec::new(),
+                region,
+                holes,
+                kinks,
+            });
+        }
+        if !t_c_lo.is_finite() || !t_c_hi.is_finite() {
+            return Err(internal());
+        }
+        if t_clear(t_c_lo, t_c_hi, zf, zt, eps) {
+            continue;
+        }
+        // A chain of one strip is a single sloped plane: the flat-wall slice keeps its
+        // refusal, and the merge-walk slice takes it.
+        if chain.strips.len() < 2 {
+            return Err(OpFailure::unsupported(
+                OpField::Body,
+                OpDefect::BodyWallUnsupported,
+                Stage::Ranges,
+            ));
+        }
+        // The clip pieces first: the exact areas below need the scale over the clip
+        // interpolations, whose coordinates may carry deeper mantissas than the body's
+        // own vertices.
+        let mut perim = 0.0f64;
+        for piece in &mut pieces {
+            let region_pts: Vec<Point2> = piece.region.iter().map(|(p, _)| *p).collect();
+            let clip = clip_region(points, &region_pts);
+            if clip.is_empty() {
+                continue;
+            }
+            perim += clip
+                .iter()
+                .zip(clip.iter().cycle().skip(1))
+                .map(|(p, q)| {
+                    let (d_x, d_y) = (q.x - p.x, q.y - p.y);
+                    d_x.hypot(d_y)
+                })
+                .sum::<f64>();
+            piece.clip = clip;
+        }
+        let any = pieces.iter().any(|p| !p.clip.is_empty());
+        if !any {
+            continue;
+        }
+        let e = min_exponent(
+            points
+                .iter()
+                .flat_map(|p| [p.x, p.y])
+                .chain(pieces.iter().flat_map(|p| p.clip.iter().flat_map(|c| [c.x, c.y]))),
+        );
+        let mut covered2 = Big::ZERO;
+        for piece in &mut pieces {
+            if piece.clip.is_empty() {
+                continue;
+            }
+            #[cfg(g142_debug)]
+            eprintln!("clip area: strip {} pts {}", piece.strip, piece.clip.len());
+            let area2 = big_area2(&piece.clip, e)?;
+            covered2 = covered2.add(&area2).map_err(|_| internal())?;
+        }
+        let footprint2 = big_area2(points, e)?;
+        let scale = 2.0f64.powi(e);
+        let bound = 32.0
+            * f64::EPSILON
+            * scale
+            * perim
+            * f64::from(u32::try_from(points.len() * 2).map_err(|_| internal())?);
+        let diff = footprint2.sub(&covered2).map_err(|_| internal())?;
+        let diff_enc = diff
+            .enclose_clamped(e.checked_sub(1).ok_or_else(internal)?)
+            .ok_or_else(internal)?;
+        if diff_enc.lo > bound || diff_enc.hi < -bound {
+            // The footprint is not exactly covered: free space or a sub-floor reach past
+            // the union, refused as the G14.1 edge-touching footprint.
+            #[cfg(g142_debug)]
+            {
+                let lo = diff_enc.lo;
+                let hi = diff_enc.hi;
+                eprintln!("coverage fail: diff=[{lo}, {hi}] bound={bound}");
+            }
+            if covered2.sign() == 0 {
+                continue;
+            }
+            return Err(contour());
+        }
+        // The clip vertices: tagged by source, and the floor kept from the region's hard
+        // edges (kink lines may be touched).
+        let mut t_lo = f64::INFINITY;
+        let mut t_hi = f64::NEG_INFINITY;
+        for piece in &mut pieces {
+            let region_pts: Vec<Point2> =
+                piece.region.iter().map(|(p, _)| *p).collect();
+            let tag = |p: &Point2| -> Result<ClipVertex, OpFailure> {
+                // A kink line first: a footprint vertex that sits on the line (up to the
+                // geometric floor) is the same registered point as the contour crossing
+                // there, so the clip never carries a duplicate a few ulps away.
+                for (line_b, line_yz, x_lo, x_hi) in &piece.kinks {
+                    if (p.y - line_b).abs() <= eps && (*x_lo - eps..=*x_hi + eps).contains(&p.x) {
+                        return Ok(ClipVertex {
+                            ab: Point2::new(p.x, *line_b),
+                            src: ClipSrc::Kink([p.x, line_yz[0], line_yz[1]]),
+                        });
+                    }
+                }
+                if let Some((index, fp)) = points
+                    .iter()
+                    .enumerate()
+                    .find(|(_, fp)| fp.x == p.x && fp.y == p.y)
+                {
+                    return Ok(ClipVertex {
+                        ab: *fp,
+                        src: ClipSrc::Footprint(index),
+                    });
+                }
+                if let Some((_, id)) = piece.region.iter().find(|(rp, _)| rp.x == p.x && rp.y == p.y) {
+                    return Ok(ClipVertex {
+                        ab: *p,
+                        src: ClipSrc::Body(*id),
+                    });
+                }
+                // An interpolated vertex: exactly one kink line it may sit on; touching a
+                // hard edge instead is the G14.1 refusal.
+                #[cfg(g142_debug)]
+                eprintln!(
+                    "tag fail: p=({},{}) lines {:?} region {:?}",
+                    p.x,
+                    p.y,
+                    piece.kinks,
+                    piece.region
+                );
+                Err(contour())
+            };
+            for p in &piece.clip {
+                piece.tagged.push(tag(p)?);
+            }
+            // Vertices registered to the same kink point are one vertex: consecutive
+            // duplicates and duplicates across the loop's closure collapse to the first.
+            let mut deduped: Vec<ClipVertex> = Vec::with_capacity(piece.tagged.len());
+            for vertex in piece.tagged.drain(..) {
+                let duplicate = deduped.iter().any(|prev| {
+                    (prev.ab.x - vertex.ab.x).abs() <= eps && (prev.ab.y - vertex.ab.y).abs() <= eps
+                });
+                if !duplicate {
+                    deduped.push(vertex);
+                }
+            }
+            piece.tagged = deduped;
+            #[cfg(g142_debug)]
+            eprintln!(
+                "tagged: strip {} {} {:?}",
+                piece.strip,
+                piece.tagged.len(),
+                piece
+                    .tagged
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (i, (t.ab.x, t.ab.y)))
+                    .collect::<Vec<_>>()
+            );
+            let t_at = |b: f64| piece.gamma.mul_add(b, piece.delta);
+            for p in &piece.clip {
+                let t = t_at(p.y);
+                t_lo = t_lo.min(t);
+                t_hi = t_hi.max(t);
+            }
+            // The floor: every clip edge clears the region's hard edges; the region's own
+            // holes and the kink lines are exempt from the hole half only.
+            for (p, q) in piece.clip.iter().zip(piece.clip.iter().cycle().skip(1)) {
+                for (rp, rq) in region_pts.iter().zip(region_pts.iter().cycle().skip(1)) {
+                    if boxes_apart(*p, *q, *rp, *rq, eps) {
+                        continue;
+                    }
+                    let on_kink = piece
+                        .kinks
+                        .iter()
+                        .any(|(line_b, _, _, _)| (rp.y - line_b).abs() <= eps && (rq.y - line_b).abs() <= eps);
+                    if on_kink {
+                        continue;
+                    }
+                    match segment_relation(*p, *q, *rp, *rq) {
+                        Ok(SegRel::Disjoint) => {
+                            if segment_distance(*p, *q, *rp, *rq) < eps {
+                                return Err(contour());
+                            }
+                        }
+                        Ok(_) => return Err(contour()),
+                        Err(_) => {
+                            budget.charge()?;
+                            return Err(contour());
+                        }
+                    }
+                }
+            }
+        }
+        // The crossed pieces grouped into sides: clips on strips adjacent through the
+        // chain's own soft-kink order form one crossing; separated zones of a ring wall
+        // (a tube's near and far wall) are distinct sides and cross the range as an entry
+        // and an exit of their own.
+        let mut crossed_pieces: Vec<ChainPiece> = pieces
+            .into_iter()
+            .filter(|p| !p.clip.is_empty())
+            .collect();
+        // The chain's strip order, walking the soft-kink adjacency end to end (a ring
+        // wall walks its full circle, an open chain walks from its first strip).
+        let mut adjacency: std::collections::BTreeMap<usize, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (a, b) in &chain.soft {
+            adjacency.entry(*a).or_default().push(*b);
+            adjacency.entry(*b).or_default().push(*a);
+        }
+        let mut order: Vec<usize> = Vec::with_capacity(chain.strips.len());
+        if let Some(&start) = chain.strips.first() {
+            let (mut at, mut prev) = (start, None);
+            for _ in 0..chain.strips.len() {
+                order.push(at);
+                let next = adjacency
+                    .get(&at)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .find(|n| Some(*n) != prev);
+                match next {
+                    Some(n) => {
+                        prev = Some(at);
+                        at = n;
+                    }
+                    None => break,
+                }
+            }
+        }
+        let mut hit: Vec<usize> = order
+            .iter()
+            .filter(|s| crossed_pieces.iter().any(|p| p.strip == **s))
+            .copied()
+            .collect();
+        hit.sort_by_key(|s| order.iter().position(|o| o == s).unwrap_or(usize::MAX));
+        let mut sides: Vec<Vec<ChainPiece>> = Vec::new();
+        for strip in hit {
+            let Some(piece) = crossed_pieces
+                .iter()
+                .position(|p| p.strip == strip)
+                .map(|at| crossed_pieces.remove(at))
+            else {
+                continue;
+            };
+            // Adjacent through a soft kink means the same side; a gap in the chain's own
+            // strip order starts a new one.
+            let continues = sides.last().is_some_and(|side| {
+                side.last()
+                    .and_then(|p| adjacency.get(&p.strip))
+                    .is_some_and(|nexts| nexts.contains(&strip))
+            });
+            match (continues, sides.last_mut()) {
+                (true, Some(side)) => side.push(piece),
+                _ => sides.push(vec![piece]),
+            }
+        }
+        #[cfg(g142_debug)]
+        eprintln!("sides: {}", sides.len());
+        for side in sides {
+            let mut s_lo = f64::INFINITY;
+            let mut s_hi = f64::NEG_INFINITY;
+            for piece in &side {
+                let t_at = |b: f64| piece.gamma.mul_add(b, piece.delta);
+                for p in &piece.clip {
+                    let t = t_at(p.y);
+                    s_lo = s_lo.min(t);
+                    s_hi = s_hi.max(t);
+                }
+            }
+            if !s_lo.is_finite() || !s_hi.is_finite() {
+                return Err(internal());
+            }
+            // The blind, tangent and sub-floor interval refusals of G14.1.
+            if s_lo < zf - eps || s_hi > zt + eps {
+                return Err(refused(OpDefect::CutterNotThrough));
+            }
+            let gap = (s_lo - zf).min(zt - s_hi);
+            if gap == 0.0 {
+                return Err(refused(OpDefect::CutterTangent));
+            }
+            if gap < eps {
+                return Err(refused(OpDefect::CutterMargin));
+            }
+            // The entry direction: the side's first strip's outward normal.
+            let entry = side
+                .first()
+                .and_then(|p| strips.get(p.strip))
+                .is_some_and(|s| s.ny.mul_add(dy, s.nz * dz) < 0.0);
+            crossed.push(CrossedChain {
+                pieces: side,
+                t_mid: (s_lo + s_hi) / 2.0,
+                entry,
+                t_lo: s_lo,
+                t_hi: s_hi,
+            });
+        }
+    }
+    crossed.sort_by(|a, b| a.t_mid.partial_cmp(&b.t_mid).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(crossed)
+}
+
 /// Whether a `t` extent clears the cutter range by at least the floor.
 fn t_clear(t_lo: f64, t_hi: f64, zf: f64, zt: f64, eps: f64) -> bool {
     t_hi < zf - eps || t_lo > zt + eps
@@ -994,7 +2852,11 @@ fn removed_volume(
     bands: &[Vec<[u32; 3]>],
 ) -> Result<Enclosure, OpFailure> {
     let range = || OpFailure::numeric(OpField::Volume, OpDefect::NumericRange, Stage::Quantities);
-    let broken = || OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build);
+    let broken = || {
+        #[cfg(g142_debug)]
+        eprintln!("removed_volume broken");
+        OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build)
+    };
     let points = cavity.points();
     let e = min_exponent(
         rings
