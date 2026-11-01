@@ -2,11 +2,16 @@
 # SPDX-License-Identifier: MPL-2.0
 # Sync the fork with upstream: merge upstream/master into the local fork master,
 # gate the result on the recorded full local gate, then push origin/master.
-# Conflicting files keep their entire fork version (including fork deletions);
-# cleanly merged files take the normal Git merge result. After a
-# green sync the fork-only commits upstream does not have yet are listed with
-# the exact upstream-PR commands; the script never opens a PR itself. See
-# CONTRIBUTING.md, "Keep the fork aligned".
+# A conflict on a fork-only path keeps the entire fork version (including fork
+# deletions); cleanly merged files take the normal Git merge result. Any other
+# conflict stops the run for manual integration: auto-keeping the fork side
+# there silently drops upstream work (the 2026-11 steel-wave cron runs deleted
+# the new upstream crate that way). After a green sync the fork-only commits
+# upstream does not have yet are listed with the exact upstream-PR commands;
+# the script never opens a PR itself. Never land a sync merge through a
+# squash-merged PR: the squash drops the merge ancestry and every later sync
+# re-merges a phantom upstream delta. See CONTRIBUTING.md, "Keep the fork
+# aligned".
 set -euo pipefail
 
 usage() {
@@ -20,9 +25,9 @@ Modes:
            tested tree into the merge commit message, push
            origin/master, then delete merged sync/* branches. No PR: master is
            the integration branch.
-           Conflicting files keep their entire fork version; other files merge
-           normally. Skipped upstream changes require manual integration.
-           An unresolved conflict stops the run with exit 2.
+           A conflict on a fork-only path keeps the entire fork version; any
+           other conflict stops the run with exit 2 for manual integration:
+           auto-keeping the fork side would silently drop upstream work.
   status   read-only: divergence counts, pending upstream commits, tree
            cleanliness, best-effort conflict prediction.
 
@@ -106,10 +111,12 @@ is_fork_only() {
 }
 
 # Best-effort conflict prediction; prints the conflicting paths, one per line.
-# merge-tree prints the merged tree OID on line 1, conflicted paths after it.
+# merge-tree prints the merged tree OID on line 1, conflicted paths after it;
+# --no-messages keeps the localized informational prose off stdout (it used to
+# leak into the status and dry-run listings).
 predict_conflicts() {
     local out
-    out="$(git merge-tree --write-tree "$1" upstream/master 2>/dev/null || true)"
+    out="$(git merge-tree --write-tree --name-only --no-messages "$1" upstream/master 2>/dev/null || true)"
     printf '%s\n' "$out" | tail -n +2
 }
 
@@ -143,31 +150,56 @@ align_master() {
     fi
 }
 
-# Skip upstream changes to the entire conflicted path, including clean hunks.
-# HEAD is the pre-merge fork tree; absence there preserves a fork deletion.
-resolve_one() {
+# Keep the fork version of one conflicted path, clean upstream hunks included;
+# a path absent from HEAD keeps the fork deletion. Only ever called for
+# fork-only paths, where "keep the fork side" is the documented standing
+# decision: upstream does not carry the path at all.
+keep_fork_version() {
     local path=$1
     if git cat-file -e "HEAD:$path" 2>/dev/null; then
-        git checkout HEAD -- "$path" || return 1
+        git checkout HEAD -- "$path" || { report_unresolved "$path"; return 1; }
     else
-        git rm -f --quiet -- "$path" || return 1
+        git rm -f --quiet -- "$path" || { report_unresolved "$path"; return 1; }
     fi
-    echo "fork-sync: skipped upstream changes to conflicted file (kept fork): $path"
+    echo "fork-sync: kept the fork version of the fork-only conflicted file: $path"
 }
 
+# Loud diagnosis for a path that resisted resolution: the stages git still
+# holds. The 2026-11-01 cron run lost two paths with no error line at all, so
+# a silent failure must be impossible.
+report_unresolved() {
+    echo "fork-sync: could not keep the fork version of $1; unmerged stages:" >&2
+    git ls-files -u -- "$1" >&2 || true
+}
+
+# A conflict is a decision. Fork-only paths have a standing decision (keep the
+# fork version); every other conflict stops the run for manual integration:
+# auto-keeping the fork side silently drops upstream work, and deleting paths
+# the fork never had erased whole upstream crates during the 2026-11 steel
+# wave. The unmerged set is snapshotted before any mutation — a streaming read
+# of the list raced the index writes below on that cron run — and re-checked
+# after the loop so a missed or late listing cannot slip through.
 resolve_conflicts() {
-    local path left=""
-    while IFS= read -r -d '' path; do
-        resolve_one "$path" || { left="$left  $path"$'\n'; continue; }
-    done < <(git diff --name-only --diff-filter=U -z)
-    if [ -z "$left" ]; then
-        # Belt for a resolution that claimed success but left a stage behind.
-        left="$(git diff --name-only --diff-filter=U)"
-        [ -z "$left" ] || left="$(printf '  %s\n' "$left")"
-    fi
-    if [ -n "$left" ]; then
-        echo "fork-sync: could not preserve conflicted files; integrate manually in a separate branch:" >&2
-        printf '%s' "$left" >&2
+    local path listing hand="" failed=""
+    listing="$(git diff --name-only --diff-filter=U)"
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        if is_fork_only "$path"; then
+            keep_fork_version "$path" || failed="$failed$path"$'\n'
+        else
+            hand="$hand$path"$'\n'
+        fi
+    done < <(printf '%s\n' "$listing")
+    # Belt: whatever is still unmerged joins the manual list, deduped below.
+    while IFS= read -r path; do
+        hand="$hand$path"$'\n'
+    done < <(git diff --name-only --diff-filter=U)
+    if [ -n "$hand$failed" ]; then
+        {
+            echo "fork-sync: conflicts need integration by hand; nothing was merged or pushed:"
+            printf '%s' "$hand" | sort -u | sed 's/^/  needs decision: /'
+            printf '%s' "$failed" | sort -u | sed 's/^/  unresolved: /'
+        } >&2
         git merge --abort || die "cannot abort failed merge" $EXIT_PUSH
         exit $EXIT_CONFLICT
     fi
@@ -229,7 +261,7 @@ do_sync() {
         if [ -n "$conflicts" ]; then
             echo "fork-sync: dry-run predicts conflicts in:"
             echo "  ${conflicts//$'\n'/$'\n'  }"
-            echo "fork-sync: a sync skips upstream changes to these entire files and keeps the fork versions"
+            echo "fork-sync: a sync keeps the fork version of fork-only conflicts and stops on the rest"
         else
             echo "fork-sync: dry-run predicts a clean merge"
         fi
@@ -258,7 +290,7 @@ do_sync() {
             fi
             die "merge failed without file conflicts" $EXIT_PUSH
         fi
-        echo "fork-sync: skipping conflicted files; keeping their fork versions"
+        echo "fork-sync: keeping the fork version of fork-only conflicts; other conflicts stop for a human"
         resolve_conflicts
     fi
 
@@ -338,6 +370,7 @@ do_status() {
     ahead="$(git rev-list --count upstream/master..master)"
     echo "upstream commits not in master: $behind"
     echo "fork commits not in upstream (pending upstreaming): $ahead"
+    echo "merge base with upstream: $(git log -1 --no-decorate --format='%h %s' "$(git merge-base master upstream/master)")"
     local local_head origin_head
     local_head="$(git rev-parse master)"
     origin_head="$(git rev-parse origin/master)"
@@ -355,6 +388,9 @@ do_status() {
         pending_log="$(git log --oneline --no-decorate "$base..upstream/master")"
         echo "pending upstream commits:"
         echo "  ${pending_log//$'\n'/$'\n'  }"
+        echo "a squash-merged sync PR drops merge ancestry: if this list carries commits whose"
+        echo "content master already has, verify per path (git diff <upstream-sha> master) and"
+        echo "repair ancestry before the next sync: git merge -s ours --no-ff <verified-sha>"
         conflicts="$(predict_conflicts "$base")"
         if [ -n "$conflicts" ]; then
             echo "conflict prediction:"

@@ -26,12 +26,13 @@ Thanks for helping. Humans and AI agents follow the same rules.
 5. Open a PR with the template filled in. CI must be green.
 6. Keep the fork aligned with upstream: `bash tools/fork-sync.sh status` inspects the
    divergence, `bash tools/fork-sync.sh sync` merges `upstream/master`, gates it on the local
-   recorded full gate and pushes `master`. Conflicting files keep their entire fork version
-   (including fork deletions); other files merge normally. Skipped upstream changes need
-   manual integration in a separate branch: the merge records upstream commits as integrated,
-   so later syncs do not retry those skipped changes. If a conflict cannot be cleared, sync aborts
-   the merge and exits 2 with the file list; after a green sync it lists the
-   fork-only commits upstream does not have yet, with the exact commands for their upstream
+   recorded full gate and pushes `master`. A conflict on a fork-only path keeps the fork
+   version (including fork deletions); other files merge normally. Any other conflict aborts
+   the merge and exits 2 with the file list: it needs manual integration in a separate branch,
+   because auto-keeping the fork side would silently drop upstream work. After a green sync it
+   lists the fork-only commits upstream does not have yet, with the exact commands for their
+   upstream PR. Never land a sync merge through a squash-merged PR: the squash drops the merge
+   ancestry, and every later sync re-merges a phantom upstream delta against a stale base.
    Upstream commits that touch `.github/workflows/` can only be pushed by the
    optional `FORK_SYNC_TOKEN` secret (a PAT with repo and workflow scopes):
    granting the default token the `workflows` permission makes GitHub reject
