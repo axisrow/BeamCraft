@@ -27,6 +27,7 @@ pub mod read {
 
 pub use super::{
     element_path, hook::AuthorCx, hook::ChangeAuthorCx, hook::ChangeHook, hook::ChangeValidateCx,
-    hook::HookedChange, hook::HookedShape, hook::ShapeHook, hook::ValidateCx, invalid, target_path,
+    hook::DefinitionHook, hook::HookedChange, hook::HookedDefinition, hook::HookedShape,
+    hook::ShapeHook, hook::ValidateCx, invalid, target_path,
 };
 pub use crate::{fail, limit, unsupported, uuid7};

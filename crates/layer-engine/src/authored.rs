@@ -29,14 +29,17 @@ mod reference;
 pub mod seam;
 mod steel_defs;
 mod steel_read;
+/// The steel authoring facade: free constructors for the steel shapes and changes, the module
+/// that moves to `crates/steel` when the dependency flips (#388).
+pub mod steel_layer;
 mod validate;
 
 pub use connection::ReplaceBoltGroup;
 pub use disciplines::{Discipline, is_part_kind};
 pub use guard::WriteGrant;
 pub use hook::{
-    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
-    ValidateCx,
+    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, DefinitionHook, HookedChange,
+    HookedDefinition, HookedShape, ShapeHook, ValidateCx,
 };
 pub use instance_shape::InstanceShape;
 pub use member::{MemberShape, SetAxis, SetProfile, SetRoll};

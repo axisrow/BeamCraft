@@ -616,7 +616,7 @@ pub(super) fn snapshot(
     instance::links(prims)?;
     part_of(prims)?;
     main_part(prims)?;
-    connects(prims)?;
+    disciplines::validate_connections(prims)?;
     level_links(prims)?;
     marks(prims)?;
     for p in prims
@@ -905,7 +905,7 @@ fn level_links(prims: &[Prim]) -> Result<(), Diagnostic> {
 /// never itself (`DV-REL-006`), each an active owned plate, beam or column (`DV-REL-001`
 /// dangling, `DV-REL-003` kind). An assembly is a valid target in the vocabulary but not for a
 /// weld or a bolt group in this slice.
-fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
+pub(super) fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
     let elements: BTreeMap<&str, (&Prim, &str)> = prims
         .iter()
         .filter_map(|p| supported_kind(p).map(|k| (p.path.as_str(), (p, k))))
