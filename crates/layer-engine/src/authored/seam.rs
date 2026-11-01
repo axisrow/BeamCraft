@@ -6,9 +6,9 @@
 //! [`crate::authored`].
 //!
 //! The seam is split by direction, because authoring and reading each have a `points` and a
-//! `relationship`: [`author`] builds layer values, [`read`] inspects composed prims. Everything
-//! re-exported here is stable platform behaviour a hook may rely on; anything else in the
-//! platform's private modules is not.
+//! `relationship`: the `author` submodule builds layer values, the `read` submodule inspects
+//! composed prims. Everything re-exported here is stable platform behaviour a hook may rely
+//! on; anything else in the platform's private modules is not.
 
 /// The authoring half of the seam: writing fields into the layer being built.
 pub mod author {
