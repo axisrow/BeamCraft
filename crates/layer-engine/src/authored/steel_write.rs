@@ -53,8 +53,6 @@ pub(super) fn optional_number(
         None => Ok(()),
     }
 }
-/// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
-/// typed empty arrays, masking weaker opinions; fresh uncut elements still author no cuts.
 /// Authors the connection type and the seventeen bolt-group attributes of an A14.3 group
 /// (bolt amendment sections 4 and 5), replaced as a whole on every write. The `connects`
 /// record is the caller's: it maps identities through the batch.
@@ -181,6 +179,8 @@ pub(super) fn author_bolt_group(
     Ok(())
 }
 
+/// Writes the five parallel cut-record attributes of one element (A03). An empty list removes
+/// typed empty arrays, masking weaker opinions; fresh uncut elements still author no cuts.
 pub(super) fn author_cuts(
     data: &mut sdf::Data,
     p: &str,
