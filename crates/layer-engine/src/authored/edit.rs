@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-use super::connection::{BOLT, BOLT_GROUP, WELD};
 use super::steel_write::{author_cuts, optional_number, optional_text, section_properties};
 use super::*;
 use openusd::{
@@ -1384,33 +1383,7 @@ fn capture(
                     ("bim:schemaVersion", "string"),
                     ("bim:createdBy", "string"),
                     ("bim:material", "rel"),
-                    ("steel:plate:contourPointsMm", "double3[]"),
-                    ("steel:plate:thicknessMm", "double"),
-                    ("steel:plate:holePointsMm", "double3[]"),
-                    ("steel:plate:holeVertexCounts", "int[]"),
-                    ("steel:cut:operationId", "string[]"),
-                    ("steel:cut:ordinal", "int[]"),
-                    ("steel:cut:pointMm", "double3[]"),
-                    ("steel:cut:normal", "double3[]"),
-                    ("steel:cut:keep", "token[]"),
-                    (cut_history::NEXT, "int"),
-                    (cut_history::RETIRED, "string[]"),
-                    ("steel:hole:pointsMm", "double3[]"),
-                    ("steel:hole:vertexCounts", "int[]"),
-                    ("steel:hole:operationIds", "string[]"),
-                    ("steel:hole:ordinals", "int[]"),
-                    (cut_history::HOLE_NEXT, "int"),
-                    (cut_history::HOLE_RETIRED, "string[]"),
-                    ("bim:axisPointsMm", "double3[]"),
-                    ("steel:member:pathType", "token"),
-                    ("steel:member:rollRad", "double"),
-                    ("steel:member:planePosition", "token"),
-                    ("steel:member:planeOffsetMm", "double"),
-                    ("steel:member:depthPosition", "token"),
-                    ("steel:member:depthOffsetMm", "double"),
-                    ("steel:member:startOffsetMm", "double"),
-                    ("steel:member:endOffsetMm", "double"),
-                    ("bim:profile", "rel"),
+                    ("bim:connects", "rel"),
                     ("bim:partOf", "rel"),
                     (instance::RELATIONSHIP, "rel"),
                     ("bim:mainPart", "rel"),
@@ -1422,14 +1395,12 @@ fn capture(
                 ] {
                     add(name, ty, 0);
                 }
-                for &(name, ty) in WELD {
-                    add(name, ty, 0);
-                }
-                for &(name, ty) in BOLT {
-                    add(name, ty, 0);
-                }
-                for &(name, ty) in BOLT_GROUP {
-                    add(name, ty, 0);
+                // The attribute names of the registered disciplines: a deleted part or
+                // connection reports their removal opinions too.
+                for discipline in disciplines::registered() {
+                    for &(name, ty) in discipline.delete_attributes() {
+                        add(name, ty, 0);
+                    }
                 }
                 for &(name, ty) in POSE {
                     add(name, ty, 0);

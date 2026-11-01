@@ -57,7 +57,7 @@ impl ShapeHook for InstanceShape {
         if cx.element.id == *definition || cx.element.material.is_some() {
             return Err(invalid());
         }
-        instance::validate_source(definition, self.kind, cx.prims)?;
+        instance::validate_source(definition, self.kind.token(), cx.prims)?;
         for group in [
             Group::Lifecycle,
             Group::Label,

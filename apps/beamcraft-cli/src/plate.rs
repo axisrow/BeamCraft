@@ -46,9 +46,10 @@ use beamcraft_host::revision::{
     Manifest, Revision, RevisionError, RevisionStore, Uuid7, VerifyRequest,
 };
 use beamcraft_layer_engine::Property;
+use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
     Change, Element, Group as LayerGroup, Placement as LayerPlacement, PlateShape, Prepare,
-    Prepared, Shape, StoredQuantities, project_record, schema_identity,
+    Prepared, StoredQuantities, project_record, schema_identity,
 };
 use beamcraft_layer_engine::index::Completeness;
 use beamcraft_layer_engine::{Asset, Control, Opened, Prim, Reader, Value};
@@ -2064,7 +2065,7 @@ pub fn create_plate(
                 Change::Create(Element {
                     id: id_text,
                     name: outcome.authored.name.clone(),
-                    shape: Shape::plate(PlateShape {
+                    shape: steel_layer::plate(PlateShape {
                         contour_mm: outcome.authored.contour_points_mm.clone(),
                         thickness_mm: outcome.authored.thickness_mm,
                         thickness_side: outcome.authored.thickness_side,

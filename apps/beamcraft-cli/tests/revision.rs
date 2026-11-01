@@ -18,10 +18,11 @@ use beamcraft_host::{
     storage::BlobStore,
 };
 use beamcraft_json::{Json, Limits};
+use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::{
     authored::{
         Author, Change, Decision, Definition, EditTargets, Element, MemberKind, MemberShape, Mesh,
-        Placement, PlateShape, Prepare, Resource, Shape, schema_identity, validate_layers,
+        Placement, PlateShape, Prepare, Resource, schema_identity, validate_layers,
     },
     index::{Completeness, ElementIndex, IndexBuilder},
     *,
@@ -179,7 +180,7 @@ fn authored_batch() -> Vec<Change> {
         Change::Create(Element {
             id: PLATE.into(),
             name: "Plate".into(),
-            shape: Shape::plate(PlateShape {
+            shape: steel_layer::plate(PlateShape {
                 contour_mm: vec![
                     [0.0, 0.0, 0.0],
                     [1000.0, 0.0, 0.0],
@@ -200,7 +201,7 @@ fn authored_batch() -> Vec<Change> {
         Change::Create(Element {
             id: MEMBER.into(),
             name: "Member".into(),
-            shape: Shape::member(MemberShape {
+            shape: steel_layer::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
