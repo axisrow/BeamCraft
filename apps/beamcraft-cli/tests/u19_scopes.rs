@@ -618,3 +618,45 @@ fn shared_grids_answer_only_to_authorized_shared_commands() {
         zone_layer,
     );
 }
+
+#[test]
+fn the_reserved_grids_section_code_cannot_merge_the_two_write_scopes() {
+    let f = Fixture::new();
+    // A section named Grids would name its layer exactly like a partition's grids/levels
+    // layer; the layout refuses it at creation.
+    let parent = f.shared.root.join("models");
+    std::fs::create_dir_all(&parent).unwrap();
+    let refused = f.raw_rejected(&[
+        "create-project",
+        "--parent",
+        parent.to_str().unwrap(),
+        "--name",
+        "Colliding",
+        "--code",
+        "2403-DEMO",
+        "--sections",
+        "KM,Grids",
+        "--actor-id",
+        ACTOR,
+        "--config-dir",
+        f.shared.root.join("config").to_str().unwrap(),
+    ]);
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+
+    // A workspace scope with the reserved section code is refused at authorization, against
+    // a store that exists and holds the unzoned partition the scope would claim.
+    let store = f.project("Reserved", "2404-DEMO", "KM");
+    let dir = f.shared.root.join("w-grids");
+    let refused = f.raw_rejected(&[
+        "create-workspace",
+        "--store",
+        &store,
+        "--workspace-dir",
+        dir.to_str().unwrap(),
+        "--scope-code",
+        "2404-DEMO",
+        "--scope-section",
+        "Grids",
+    ]);
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+}

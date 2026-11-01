@@ -77,7 +77,9 @@ holes:
 - Codes are labels (`2401-DEMO`, `KM`, `K1`): the section and zone registries with their
   UUIDv7 identities are U20/#364 on top of U22's `SectionRecord`/`ZoneRecord`; the
   workspace metadata carries the code until then, and the layer-participation check is
-  what makes a mislabelled scope unusable rather than authoritative.
+  what makes a mislabelled scope unusable rather than authoritative. The section code
+  `Grids` is reserved (`section_layer` refuses it): it would name a section layer exactly
+  like the partition's grids/levels layer and collapse the two write scopes into one file.
 - Definitions (materials, profiles) and user-attribute schemas are shared data: on a
   sectioned store both are refused this slice (`--environment` seeding with them), until
   the shared definition scope arrives with the registry work. Members of a sectioned
