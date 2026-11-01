@@ -1268,13 +1268,17 @@ two_writer_shards! {
     two_writers_on_one_base_never_both_win_rounds_090_099 => 90..100,
 }
 
-#[test]
-fn two_writers_with_the_same_op_commit_once_and_the_other_replays() {
-    for round in 0..20 {
+/// The same-op race, sharded four rounds per test so the shards run in parallel (issue #285).
+/// Every round makes the same assertions the single loop made; the per-round setup uses one
+/// constant filler content, which no assertion reads.
+fn two_writers_with_the_same_op_commit_once_and_the_other_replays_rounds(
+    rounds: std::ops::Range<usize>,
+) {
+    for round in rounds {
         let fx = Fixture::new();
         let store = fx.store();
-        commit_n(&store, 1);
-        let d = draft(layers(&store, 2), 2);
+        store.commit(&filler(&store, 1), &expect(0)).unwrap();
+        let d = filler(&store, 2);
         let barrier = Barrier::new(2);
         let results: Vec<_> = std::thread::scope(|scope| {
             (0..2)
@@ -1299,4 +1303,21 @@ fn two_writers_with_the_same_op_commit_once_and_the_other_replays() {
         assert_eq!(store.open().unwrap().info().sequence(), 2);
         assert!(!fx.log(3).exists());
     }
+}
+
+macro_rules! same_op_shards {
+    ($($name:ident => $from:literal .. $to:literal),* $(,)?) => { $(
+        #[test]
+        fn $name() {
+            two_writers_with_the_same_op_commit_once_and_the_other_replays_rounds($from..$to);
+        }
+    )* };
+}
+
+same_op_shards! {
+    two_writers_with_the_same_op_commit_once_and_the_other_replays_rounds_00_03 => 0..4,
+    two_writers_with_the_same_op_commit_once_and_the_other_replays_rounds_04_07 => 4..8,
+    two_writers_with_the_same_op_commit_once_and_the_other_replays_rounds_08_11 => 8..12,
+    two_writers_with_the_same_op_commit_once_and_the_other_replays_rounds_12_15 => 12..16,
+    two_writers_with_the_same_op_commit_once_and_the_other_replays_rounds_16_19 => 16..20,
 }
