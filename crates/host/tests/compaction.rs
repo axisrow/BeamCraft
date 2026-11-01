@@ -720,9 +720,17 @@ fn a_failed_backup_refuses_the_compaction_before_anything_changes() {
     assert_eq!(fx.snapshot(), before);
 }
 
-#[test]
-fn a_crash_at_every_step_leaves_the_old_or_the_new_store_and_a_rerun_finishes() {
-    // First count the steps of an uninterrupted run.
+/// One uninterrupted compaction of the standard five-revision store: the step list every
+/// crash shard indexes into, the commit point that switches the observable history, and the
+/// final state a finished rerun must reproduce.
+struct Uninterrupted {
+    points: Vec<CompactionPoint>,
+    commit_point: usize,
+    final_records: Vec<String>,
+    final_blobs: Vec<String>,
+}
+
+fn uninterrupted_compaction() -> Uninterrupted {
     let counted = Fixture::new();
     let mut points = Vec::new();
     {
@@ -741,94 +749,143 @@ fn a_crash_at_every_step_leaves_the_old_or_the_new_store_and_a_rerun_finishes() 
         )
         .unwrap();
     }
-    assert_eq!(points.len(), 23, "{points:?}");
     let commit_point = points
         .iter()
         .position(|p| *p == CompactionPoint::FloorInstalled)
         .unwrap();
-    let final_records = counted.records();
-    let final_blobs = counted.blob_files();
-
-    for (crash_at, point) in points.iter().enumerate() {
-        let fx = Fixture::new();
-        let store = fx.store();
-        build(&store, 5);
-        store.blobs().publish(b"orphan bytes").unwrap();
-        let old_head = store.head().unwrap().unwrap();
-        let old_manifest_of_two = store.info_at(2).unwrap();
-
-        let mut calls = 0usize;
-        let result = compact(
-            &store,
-            &request(Keep::Last(2), &[]),
-            true,
-            Safeguard::NoBackup,
-            &mut |_| {
-                let now = calls;
-                calls += 1;
-                if now == crash_at {
-                    Err(Injected)
-                } else {
-                    Ok(())
-                }
-            },
-        );
-        assert_eq!(
-            result.unwrap_err(),
-            CompactionError::Interrupted(*point),
-            "step {crash_at}"
-        );
-
-        // A fresh handle, as after a restart: the head is the same complete revision.
-        let fresh = fx.store();
-        let head = fresh.head().unwrap().unwrap();
-        assert_eq!(head, old_head, "step {crash_at}");
-        fresh.open().unwrap();
-        // Before the commit point the whole old history reads; after it the new one does. Never
-        // a mix: the revision at the new floor and the head always read.
-        assert!(
-            fresh.open_at(4).is_ok() && fresh.open_at(5).is_ok(),
-            "step {crash_at}"
-        );
-        if crash_at < commit_point {
-            assert_eq!(fresh.first_sequence().unwrap(), Some(1), "step {crash_at}");
-            assert_eq!(fresh.info_at(2).unwrap(), old_manifest_of_two);
-            fresh.open_at(1).unwrap();
-        } else {
-            assert_eq!(fresh.first_sequence().unwrap(), Some(4), "step {crash_at}");
-            assert_eq!(fresh.info_at(2).unwrap_err(), RevisionError::Compacted);
-        }
-        // Recovery agrees with the root and does not mistake the ledger for damage.
-        let report = fresh.recover(RecoveryPolicy::quiescent()).unwrap();
-        assert!(report.disagreements.is_empty(), "step {crash_at}");
-        assert!(report.root_error.is_none(), "step {crash_at}");
-        assert!(matches!(
-            fresh.query_outcome(&id(205)).unwrap(),
-            Outcome::Committed { .. }
-        ));
-        let s = stats(&fresh, &[]).unwrap();
-        assert_eq!(s.head_sequence, 5, "step {crash_at}");
-        assert_eq!(s.missing_blobs, 0, "step {crash_at}");
-
-        // Running the same compaction again finishes the work, to the same final state.
-        run(&fresh, Keep::Last(2)).unwrap();
-        assert_eq!(fx.records(), final_records, "step {crash_at}");
-        assert_eq!(fx.blob_files(), final_blobs, "step {crash_at}");
-        let finished = plan(&fresh, &request(Keep::Last(2), &[])).unwrap();
-        assert_eq!(
-            (
-                finished.records_to_remove,
-                finished.blobs_to_delete,
-                finished.ledger.rotated
-            ),
-            (0, 0, false),
-            "step {crash_at}"
-        );
-        fresh.open().unwrap();
-        // And the store takes new commits.
-        let entries = layers(&fresh, 6);
-        fresh.commit(&draft(entries, 6), &expect(5)).unwrap();
+    Uninterrupted {
+        commit_point,
+        final_records: counted.records(),
+        final_blobs: counted.blob_files(),
+        points,
     }
+}
+
+#[test]
+fn an_uninterrupted_compaction_reports_exactly_twenty_three_steps() {
+    let done = uninterrupted_compaction();
+    assert_eq!(done.points.len(), 23, "{:?}", done.points);
+}
+
+/// The crash-at-every-step case, one step per test so the shards run in parallel: each shard
+/// crashes its own store at one step of the compaction and asserts what the single loop
+/// asserted there (issue #285: the 23-step loop was a 28 s serial straggler).
+fn a_crash_at_step_leaves_the_old_or_the_new_store_and_a_rerun_finishes(crash_at: usize) {
+    let done = uninterrupted_compaction();
+    let point = done.points[crash_at];
+    let fx = Fixture::new();
+    let store = fx.store();
+    build(&store, 5);
+    store.blobs().publish(b"orphan bytes").unwrap();
+    let old_head = store.head().unwrap().unwrap();
+    let old_manifest_of_two = store.info_at(2).unwrap();
+
+    let mut calls = 0usize;
+    let result = compact(
+        &store,
+        &request(Keep::Last(2), &[]),
+        true,
+        Safeguard::NoBackup,
+        &mut |_| {
+            let now = calls;
+            calls += 1;
+            if now == crash_at {
+                Err(Injected)
+            } else {
+                Ok(())
+            }
+        },
+    );
+    assert_eq!(
+        result.unwrap_err(),
+        CompactionError::Interrupted(point),
+        "step {crash_at}"
+    );
+
+    // A fresh handle, as after a restart: the head is the same complete revision.
+    let fresh = fx.store();
+    let head = fresh.head().unwrap().unwrap();
+    assert_eq!(head, old_head, "step {crash_at}");
+    fresh.open().unwrap();
+    // Before the commit point the whole old history reads; after it the new one does. Never
+    // a mix: the revision at the new floor and the head always read.
+    assert!(
+        fresh.open_at(4).is_ok() && fresh.open_at(5).is_ok(),
+        "step {crash_at}"
+    );
+    if crash_at < done.commit_point {
+        assert_eq!(fresh.first_sequence().unwrap(), Some(1), "step {crash_at}");
+        assert_eq!(fresh.info_at(2).unwrap(), old_manifest_of_two);
+        fresh.open_at(1).unwrap();
+    } else {
+        assert_eq!(fresh.first_sequence().unwrap(), Some(4), "step {crash_at}");
+        assert_eq!(fresh.info_at(2).unwrap_err(), RevisionError::Compacted);
+    }
+    // Recovery agrees with the root and does not mistake the ledger for damage.
+    let report = fresh.recover(RecoveryPolicy::quiescent()).unwrap();
+    assert!(report.disagreements.is_empty(), "step {crash_at}");
+    assert!(report.root_error.is_none(), "step {crash_at}");
+    assert!(matches!(
+        fresh.query_outcome(&id(205)).unwrap(),
+        Outcome::Committed { .. }
+    ));
+    let s = stats(&fresh, &[]).unwrap();
+    assert_eq!(s.head_sequence, 5, "step {crash_at}");
+    assert_eq!(s.missing_blobs, 0, "step {crash_at}");
+
+    // Running the same compaction again finishes the work, to the same final state.
+    run(&fresh, Keep::Last(2)).unwrap();
+    assert_eq!(fx.records(), done.final_records, "step {crash_at}");
+    assert_eq!(fx.blob_files(), done.final_blobs, "step {crash_at}");
+    let finished = plan(&fresh, &request(Keep::Last(2), &[])).unwrap();
+    assert_eq!(
+        (
+            finished.records_to_remove,
+            finished.blobs_to_delete,
+            finished.ledger.rotated
+        ),
+        (0, 0, false),
+        "step {crash_at}"
+    );
+    fresh.open().unwrap();
+    // And the store takes new commits.
+    let entries = layers(&fresh, 6);
+    fresh.commit(&draft(entries, 6), &expect(5)).unwrap();
+}
+
+macro_rules! crash_step_shards {
+    ($($name:ident => $step:literal),* $(,)?) => { $(
+        #[test]
+        fn $name() {
+            a_crash_at_step_leaves_the_old_or_the_new_store_and_a_rerun_finishes($step);
+        }
+    )* };
+}
+
+crash_step_shards! {
+    crash_at_step_00_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 0,
+    crash_at_step_01_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 1,
+    crash_at_step_02_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 2,
+    crash_at_step_03_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 3,
+    crash_at_step_04_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 4,
+    crash_at_step_05_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 5,
+    crash_at_step_06_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 6,
+    crash_at_step_07_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 7,
+    crash_at_step_08_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 8,
+    crash_at_step_09_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 9,
+    crash_at_step_10_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 10,
+    crash_at_step_11_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 11,
+    crash_at_step_12_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 12,
+    crash_at_step_13_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 13,
+    crash_at_step_14_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 14,
+    crash_at_step_15_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 15,
+    crash_at_step_16_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 16,
+    crash_at_step_17_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 17,
+    crash_at_step_18_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 18,
+    crash_at_step_19_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 19,
+    crash_at_step_20_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 20,
+    crash_at_step_21_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 21,
+    crash_at_step_22_leaves_the_old_or_the_new_store_and_a_rerun_finishes => 22,
 }
 
 #[test]
