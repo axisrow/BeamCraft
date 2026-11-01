@@ -13,7 +13,9 @@
 //! while remaining separate writable sections, and enabling a module never widens a scope.
 //!
 //! The authored layer of one section/zone scope is named `<code>[_<zone>]_<section>.usda` with
-//! the project code. A code feeds a file name, so its charset is restricted to ASCII
+//! the project code, and the partition's grids and levels live in
+//! `<code>[_<zone>]_Grids.usda` (T01 §5.2/§6). A code feeds a file name, so its charset is
+//! restricted to ASCII
 //! alphanumerics and `-`; the F12 registries may widen the label rules for display names, which
 //! never enter a layer name.
 
@@ -24,6 +26,10 @@ use beamcraft_model::error::ErrorCode;
 
 /// Longest project, section or zone code, in bytes.
 pub const MAX_CODE_BYTES: usize = 32;
+
+/// The section code that would name a section layer exactly like a partition's grids/levels
+/// layer (`<code>[_<zone>]_Grids.usda`); [`section_layer`] refuses it.
+pub const RESERVED_SECTION_CODE: &str = "Grids";
 
 /// `DV-SCOPE-001`: the workspace scope is authorized by the trusted context, never claimed.
 pub const RULE_SCOPE_AUTHORIZED: &str = "DV-SCOPE-001";
@@ -57,12 +63,19 @@ pub fn check_code(code: &str) -> Result<(), CommandError> {
 }
 
 /// The authored layer name of one section/zone scope: `<code>[_<zone>]_<section>.usda`.
+/// The section code `Grids` is refused: it would name the section layer exactly like the
+/// partition's grids/levels layer and collapse the two write scopes into one file.
 pub fn section_layer(
     code: &str,
     zone: Option<&str>,
     section: &str,
 ) -> Result<String, CommandError> {
     check_code(code)?;
+    if section == RESERVED_SECTION_CODE {
+        return Err(invalid(
+            "the section code Grids is reserved for the grids and levels layer",
+        ));
+    }
     check_code(section)?;
     if let Some(zone) = zone {
         check_code(zone)?;
@@ -72,10 +85,16 @@ pub fn section_layer(
     }
 }
 
-/// The shared layer that holds the common grids and levels of one project
-/// (`<code>_Grids.usda`); sections reference it without gaining edit rights.
-pub fn grids_layer(code: &str) -> Result<String, CommandError> {
+/// The grids/levels layer of one zone partition (T01 §5.2/§6): the unzoned partition keeps the
+/// common grids in `<code>_Grids.usda`, a zone partition keeps its own grids and levels in
+/// `<code>_<zone>_Grids.usda`. The zone of a grid or level is the layer it is stored in;
+/// sections reference the layer without gaining edit rights.
+pub fn grids_layer(code: &str, zone: Option<&str>) -> Result<String, CommandError> {
     check_code(code)?;
+    if let Some(zone) = zone {
+        check_code(zone)?;
+        return Ok(format!("{code}_{zone}_Grids.usda"));
+    }
     Ok(format!("{code}_Grids.usda"))
 }
 
@@ -98,18 +117,16 @@ pub struct WorkspaceScope {
 }
 
 impl WorkspaceScope {
-    /// Validates the codes and the single-partition rule.
+    /// Validates the scope's codes and the single-partition rule by naming both of its
+    /// layers, so a scope that cannot produce usable layer names (the reserved `Grids`
+    /// section code included) is refused wherever the scope is validated.
     pub fn validate(&self) -> Result<(), CommandError> {
-        check_code(&self.code)?;
-        check_code(&self.section)?;
+        section_layer(&self.code, self.zone(), &self.section)?;
         if self.zones.len() > 1 {
             return Err(refused(
                 "a workspace is authorized for one zone partition, because element creation \
                  needs one write layer",
             ));
-        }
-        for zone in &self.zones {
-            check_code(zone)?;
         }
         Ok(())
     }
@@ -125,9 +142,10 @@ impl WorkspaceScope {
         section_layer(&self.code, self.zone(), &self.section)
     }
 
-    /// The shared grids/levels layer of the project.
+    /// The grids/levels layer of the authorized partition: the common layer for the unzoned
+    /// partition, the zone's own layer otherwise (T01 §6).
     pub fn grids_layer(&self) -> Result<String, CommandError> {
-        grids_layer(&self.code)
+        grids_layer(&self.code, self.zone())
     }
 }
 
@@ -146,11 +164,50 @@ mod tests {
             section_layer("2401-DEMO", None, "KM").unwrap(),
             "2401-DEMO_KM.usda"
         );
-        assert_eq!(grids_layer("2401-DEMO").unwrap(), "2401-DEMO_Grids.usda");
+        assert_eq!(
+            grids_layer("2401-DEMO", None).unwrap(),
+            "2401-DEMO_Grids.usda"
+        );
+        assert_eq!(
+            grids_layer("2401-DEMO", Some("K1")).unwrap(),
+            "2401-DEMO_K1_Grids.usda"
+        );
+        assert!(grids_layer("2401-DEMO", Some("K_1")).is_err());
         for bad in ["", "a_b", "a.b", "a/b", "a b", "КМ", &"x".repeat(33)] {
             assert!(check_code(bad).is_err(), "{bad:?}");
         }
         assert!(check_code("KM").is_ok() && check_code("2401-DEMO").is_ok());
+    }
+
+    #[test]
+    fn the_reserved_section_code_cannot_collide_with_the_grids_layer() {
+        // A section named Grids would name its layer exactly like the partition's
+        // grids/levels layer and collapse the two write scopes into one file.
+        for zone in [None, Some("K1")] {
+            let error = section_layer("2401-DEMO", zone, RESERVED_SECTION_CODE).unwrap_err();
+            assert_eq!(error.code, ErrorCode::InvalidArgument);
+        }
+        // Every scope whose section carries the code is refused where it is validated...
+        let scope = WorkspaceScope {
+            code: "2401-DEMO".into(),
+            section: RESERVED_SECTION_CODE.into(),
+            zones: BTreeSet::new(),
+            shared: false,
+        };
+        assert_eq!(
+            scope.validate().unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        let zoned = WorkspaceScope {
+            zones: BTreeSet::from(["K1".to_owned()]),
+            ..scope
+        };
+        assert_eq!(
+            zoned.validate().unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
+        // ...while a zone named Grids stays fine: its layers carry the code twice.
+        assert!(section_layer("2401-DEMO", Some(RESERVED_SECTION_CODE), "KM").is_ok());
     }
 
     #[test]
@@ -163,12 +220,13 @@ mod tests {
         };
         scope.validate().unwrap();
         assert_eq!(scope.section_layer().unwrap(), "2401-DEMO_K1_KMD.usda");
-        assert_eq!(scope.grids_layer().unwrap(), "2401-DEMO_Grids.usda");
+        assert_eq!(scope.grids_layer().unwrap(), "2401-DEMO_K1_Grids.usda");
         let unzoned = WorkspaceScope {
             zones: BTreeSet::new(),
             ..scope
         };
         assert_eq!(unzoned.section_layer().unwrap(), "2401-DEMO_KMD.usda");
+        assert_eq!(unzoned.grids_layer().unwrap(), "2401-DEMO_Grids.usda");
         let multi = WorkspaceScope {
             zones: BTreeSet::from(["K1".to_owned(), "K2".to_owned()]),
             ..unzoned

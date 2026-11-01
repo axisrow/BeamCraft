@@ -6,7 +6,8 @@
 //!
 //! A store whose manifest still carries the classic `authored.usda` keeps the unscoped 0.1
 //! behaviour (`EditRouting::Classic`). A store organized into authored section/zone scopes
-//! (`<code>[_<zone>]_<section>.usda` plus the shared `<code>_Grids.usda`) answers only to a
+//! (`<code>[_<zone>]_<section>.usda` plus the partition's grids/levels layer
+//! `<code>[_<zone>]_Grids.usda`, T01 §5.2/§6) answers only to a
 //! workspace whose metadata authorizes one active section and zone partition; anything else
 //! is refused with `PERMISSION_DENIED` — a file name, an installed module or a store path
 //! grants no authority. The routing is derived again for every command from trusted inputs

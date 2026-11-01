@@ -52,8 +52,11 @@ pub const ENVIRONMENTS_DIR: &str = "environments";
 pub const PROJECT_ENVIRONMENT_DIR: &str = "environment";
 
 /// The section/zone scopes of a new sectioned project (U19): one authored layer per scope
-/// named `<code>[_<zone>]_<section>.usda` plus the shared `<code>_Grids.usda`. The codes are
-/// labels; the section and zone registries of F12 are a later package.
+/// named `<code>[_<zone>]_<section>.usda`, plus the grids/levels layer
+/// `<code>[_<zone>]_Grids.usda` of every zone partition the layout names (T01 §5.2/§6): the
+/// unzoned scopes keep the common grids in `<code>_Grids.usda`, each zone keeps its own in
+/// `<code>_<zone>_Grids.usda`. The codes are labels; the section and zone registries of F12
+/// are a later package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectLayout {
     /// The project code the layer names are built from.
@@ -88,11 +91,24 @@ impl ProjectLayout {
         })
     }
 
-    /// The authored layer names of the layout: the shared grids/levels layer and one per
-    /// section/zone scope, deduplicated and sorted; the derived layer is not included.
+    /// The authored layer names of the layout: one grids/levels layer per zone partition the
+    /// scopes name and one layer per section/zone scope, deduplicated and sorted; the derived
+    /// layer is not included. A partition whose grids layer is absent could never hold a grid,
+    /// because a workspace is authorized only for a partition that has both of its layers.
     pub fn layer_names(&self) -> Result<Vec<String>, PlateError> {
         let mut names = std::collections::BTreeSet::new();
-        names.insert(beamcraft_engine::scope::grids_layer(&self.code).map_err(PlateError::from)?);
+        let mut grids = |zone: Option<&str>| -> Result<(), PlateError> {
+            names.insert(
+                beamcraft_engine::scope::grids_layer(&self.code, zone).map_err(PlateError::from)?,
+            );
+            Ok(())
+        };
+        if self.scopes.iter().any(|(zone, _)| zone.is_none()) {
+            grids(None)?;
+        }
+        for zone in self.scopes.iter().filter_map(|(zone, _)| zone.as_deref()) {
+            grids(Some(zone))?;
+        }
         for (zone, section) in &self.scopes {
             names.insert(
                 beamcraft_engine::scope::section_layer(&self.code, zone.as_deref(), section)
@@ -720,5 +736,45 @@ mod tests {
         ] {
             assert!(check_project_name(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_layout_names_one_grids_layer_per_zone_partition() {
+        // Every partition the scopes name gets its grids layer: the common layer for the
+        // unzoned scopes, the zone's own layer for each zone (T01 §5.2/§6).
+        let mixed = ProjectLayout::parse("2401-DEMO", &["KM", "K1:KMD", "K2:KMD"]).unwrap();
+        assert_eq!(
+            mixed.layer_names().unwrap(),
+            [
+                "2401-DEMO_Grids.usda",
+                "2401-DEMO_K1_Grids.usda",
+                "2401-DEMO_K1_KMD.usda",
+                "2401-DEMO_K2_Grids.usda",
+                "2401-DEMO_K2_KMD.usda",
+                "2401-DEMO_KM.usda",
+            ]
+        );
+        // A layout without an unzoned scope has no common layer: nothing is authorized for a
+        // partition whose section layer the store does not contain.
+        let zoned = ProjectLayout::parse("2401-DEMO", &["K1:KM", "K2:KM"]).unwrap();
+        assert_eq!(
+            zoned.layer_names().unwrap(),
+            [
+                "2401-DEMO_K1_Grids.usda",
+                "2401-DEMO_K1_KM.usda",
+                "2401-DEMO_K2_Grids.usda",
+                "2401-DEMO_K2_KM.usda",
+            ]
+        );
+        // An unzoned project keeps the U19 shape: one common grids layer.
+        let plain = ProjectLayout::parse("2402-DEMO", &["KM", "KMD"]).unwrap();
+        assert_eq!(
+            plain.layer_names().unwrap(),
+            [
+                "2402-DEMO_Grids.usda",
+                "2402-DEMO_KM.usda",
+                "2402-DEMO_KMD.usda"
+            ]
+        );
     }
 }
