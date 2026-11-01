@@ -14,33 +14,34 @@
 //! record is removed by undoing its command; there is no removal command in this slice.
 
 use crate::definition::material_lookup;
-use crate::plate::{
-    Base, PlateError, RevisionSummary, check_footprint, control, decode, evaluate_decoded,
-    host_uuid, integrity, load_base, mesh_change, open_base, plate_record, summarize,
-};
+use crate::plate::{check_footprint, decode, evaluate_decoded, mesh_change, plate_record};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
-use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::query::committed::PlateRecord;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Change, Prepare, schema_identity};
-use beamcraft_model::command::BendPlate;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, control, host_uuid, integrity, load_base, open_base, summarize,
+};
 use std::collections::BTreeMap;
+use steel::engine::command::evaluate_plate;
+use steel::engine::committed::PlateRecord;
+use steel::model::command::BendPlate;
 
-fn not_found() -> PlateError {
-    PlateError::from(beamcraft_model::command::CommandError::new(
+fn not_found() -> Refusal {
+    Refusal::from(beamcraft_model::command::CommandError::new(
         ErrorCode::NotFound,
         "target_id",
         "the element is not in the head revision",
     ))
 }
 
-fn reuse() -> PlateError {
-    PlateError::from(beamcraft_model::command::CommandError::new(
+fn reuse() -> Refusal {
+    Refusal::from(beamcraft_model::command::CommandError::new(
         ErrorCode::OpIdReuse,
         "op_id",
         "operation id was accepted with different content",
@@ -89,7 +90,7 @@ pub fn bend_plate_record(
     store: &RevisionStore,
     request: &BendRequest,
     hook: &mut dyn CommitHook,
-) -> Result<BendApplied, PlateError> {
+) -> Result<BendApplied, Refusal> {
     let command = &request.command;
     command.validate_arguments()?;
     let fingerprint = command.content_fingerprint()?;
@@ -141,9 +142,8 @@ pub fn bend_plate_record(
                 .chain(r.authored.bends.iter().map(|c| c.operation_id))
         })
         .collect();
-    let outcome = beamcraft_engine::bend::bend_plate(command, Some(&record.authored), &|id| {
-        used.contains(id)
-    })?;
+    let outcome =
+        steel::engine::bend::bend_plate(command, Some(&record.authored), &|id| used.contains(id))?;
     let materials = material_lookup(&definitions);
     let material = outcome
         .authored
@@ -161,10 +161,10 @@ pub fn bend_plate_record(
     let mut footprint = outcome.footprint.clone();
     footprint = footprint.union(instances.dependencies(command.target_id)?)?;
     let mut changes = vec![
-        Change::Bends {
-            id: command.target_id.to_string(),
-            bends: element.authored.bends.clone(),
-        },
+        Change::bends(
+            command.target_id.to_string(),
+            element.authored.bends.clone(),
+        ),
         mesh_change(
             &element.authored.id,
             &element.body.solid,
@@ -249,7 +249,7 @@ fn replay(
     store: &RevisionStore,
     request: &BendRequest,
     fingerprint: ContentDigest,
-) -> Result<Option<BendApplied>, PlateError> {
+) -> Result<Option<BendApplied>, Refusal> {
     let op = host_uuid(&request.op_id.to_string())?;
     let Some((evidence, revision)) = crate::command_evidence::accepted(store, &op)? else {
         return Ok(None);

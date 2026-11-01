@@ -3,11 +3,11 @@
 
 //! Shared JSON result envelope for commands using the standard store-command contract.
 
-use beamcraft_cli::plate::PlateError;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
 /// The shared result shape of the store commands: the JSON object and the exit code (0 success,
 /// 2 rejection, 3 backend unavailable, 4 outcome unknown).
@@ -55,7 +55,7 @@ mod tests {
     #[test]
     fn every_error_code_keeps_its_outcome_and_process_status() {
         for code in ErrorCode::ALL {
-            let (json, exit) = report(Err(PlateError {
+            let (json, exit) = report(Err(Refusal {
                 rule_id: None,
                 code,
                 message: "command-specific message",
@@ -81,7 +81,7 @@ mod tests {
     fn supplied_diagnostics_survive_reporting_and_encoding() {
         let diagnostics = vec![Json::object([("candidate", Json::text("original value"))])];
         let (json, exit) = report_with(
-            Err(PlateError {
+            Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::InvalidArgument,
                 message: "ambiguous name",

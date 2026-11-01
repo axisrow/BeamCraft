@@ -6,24 +6,25 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    Base, DerivedMesh, PlateError, check_footprint, control, decode, digest_of, host_uuid,
-    integrity, load_base, mesh_change, open_base, prior_op_with, replay_summary, summarize,
+    DerivedMesh, check_footprint, decode, mesh_change, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::loft_plate::{
-    AuthoredLoftedPlate, LOFT_VOLUME_ALGORITHM, create_lofted_plate,
-};
-use beamcraft_engine::quantity::{StoredRecord, lofted_plate_record};
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Change, Element, Placement as LayerPlacement, Prepare, Shape, schema_identity,
+    Change, Element, LoftedPlateShape, Placement as LayerPlacement, Prepare, Shape, schema_identity,
 };
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, control, digest_of, host_uuid, integrity, load_base, open_base, summarize,
+};
+use steel::engine::loft_plate::{AuthoredLoftedPlate, LOFT_VOLUME_ALGORITHM, create_lofted_plate};
+use steel::engine::quantity::{StoredRecord, lofted_plate_record};
+use steel::engine::transaction::PriorOp;
 
 /// Inputs of one `create-lofted-plate` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -39,7 +40,7 @@ pub struct LoftRequest {
     /// Workspace of a store that has no revision yet. Ignored otherwise.
     pub workspace: WorkspaceId,
     /// The command.
-    pub command: beamcraft_model::command::CreateLoftedPlate,
+    pub command: steel::model::command::CreateLoftedPlate,
 }
 
 /// Result of `create_lofted_plate`.
@@ -58,7 +59,7 @@ pub struct CreatedLoft {
     /// Triangles of the certified mesh.
     pub triangles: usize,
     /// The revision that holds it.
-    pub revision: crate::plate::RevisionSummary,
+    pub revision: session::pipeline::RevisionSummary,
     /// The footprint the engine declared; `None` for a replay, which applies nothing.
     pub footprint: Option<Footprint>,
 }
@@ -74,7 +75,7 @@ pub fn create_lofted(
     store: &RevisionStore,
     request: &LoftRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedLoft, PlateError> {
+) -> Result<CreatedLoft, Refusal> {
     request.command.validate_arguments()?;
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
@@ -160,10 +161,10 @@ pub fn create_lofted(
                 Change::Create(Element {
                     id: outcome.authored.id.to_string(),
                     name: outcome.authored.name.clone(),
-                    shape: Shape::LoftedPlate {
+                    shape: Shape::lofted_plate(LoftedPlateShape {
                         start_mm: outcome.authored.start_points_mm.clone(),
                         end_mm: outcome.authored.end_points_mm.clone(),
-                    },
+                    }),
                     placement: LayerPlacement {
                         translation_mm: placement.translation_mm,
                         orientation_xyzw: placement.orientation_xyzw,
@@ -228,7 +229,7 @@ pub struct LoftedView {
 }
 
 /// The committed lofted plates of the verified head (empty for a store without a revision).
-pub fn lofted_plates(store: &RevisionStore) -> Result<Vec<LoftedView>, PlateError> {
+pub fn lofted_plates(store: &RevisionStore) -> Result<Vec<LoftedView>, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -260,7 +261,7 @@ pub fn lofted_plates(store: &RevisionStore) -> Result<Vec<LoftedView>, PlateErro
                 triangles: mesh_triangles(&decoded, &authored.id)?,
             })
         })
-        .collect::<Result<Vec<_>, PlateError>>()?;
+        .collect::<Result<Vec<_>, Refusal>>()?;
     views.sort_by_key(|v| v.id);
     Ok(views)
 }
@@ -269,7 +270,7 @@ pub fn lofted_plates(store: &RevisionStore) -> Result<Vec<LoftedView>, PlateErro
 fn authored_quantities(
     decoded: &crate::plate::Decoded,
     id: &ElementId,
-) -> Result<Option<StoredRecord>, PlateError> {
+) -> Result<Option<StoredRecord>, Refusal> {
     Ok(decoded
         .lofted
         .iter()
@@ -279,7 +280,7 @@ fn authored_quantities(
 }
 
 /// The stored triangle count of one decoded element's mesh; zero when none is stored.
-fn mesh_triangles(decoded: &crate::plate::Decoded, id: &ElementId) -> Result<usize, PlateError> {
+fn mesh_triangles(decoded: &crate::plate::Decoded, id: &ElementId) -> Result<usize, Refusal> {
     Ok(decoded
         .lofted
         .iter()
@@ -290,7 +291,7 @@ fn mesh_triangles(decoded: &crate::plate::Decoded, id: &ElementId) -> Result<usi
 }
 
 /// The stored shape key (the mesh digest at publish) of one decoded element.
-fn mesh_shape_key(decoded: &crate::plate::Decoded, id: &ElementId) -> Result<String, PlateError> {
+fn mesh_shape_key(decoded: &crate::plate::Decoded, id: &ElementId) -> Result<String, Refusal> {
     Ok(decoded
         .lofted
         .iter()

@@ -12,7 +12,8 @@ is archived in GitHub rather than maintained as a second backlog.
 | [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474) | Stable task IDs linked to their issues and historical records |
 | [decisions.md](decisions.md) | Owner decisions with dates, and the decisions still open |
 
-[`ROADMAP.md`](../../ROADMAP.md) is the short public summary (stage, gate table, MVP, next work).
+[`ROADMAP.md`](../../ROADMAP.md) is the short public summary (stage, gate verdicts, MVP scope and deferrals). It lists no tasks:
+work and its status are read from the issues, milestones and the GitHub Project.
 What a merged task actually does is in its note under [`docs/design/`](../design/); the
 contracts it implements are under [`docs/contracts/`](../contracts/). Update authorized task cards
 directly in GitHub. Repository scope, contract, plan and gate-verdict changes use docs-only PRs.

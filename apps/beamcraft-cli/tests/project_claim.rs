@@ -9,7 +9,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use beamcraft_cli::level::{LevelContext, create_level, levels};
-use beamcraft_cli::plate::{claim_project, ensure_project};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore, Uuid7},
@@ -18,6 +17,7 @@ use beamcraft_host::{
 use beamcraft_model::command::CreateLevel;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::pipeline::{claim_project, ensure_project};
 use std::path::PathBuf;
 
 const PROJECT_A: &str = "019a7bf0-0000-7000-8000-00000000e001";

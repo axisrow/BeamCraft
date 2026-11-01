@@ -20,7 +20,7 @@
 use super::{WorkspaceState, rebase_receipt::RevisionPin, unusable};
 use crate::{
     command_evidence as evidence,
-    plate::{self, PlateError, RevisionSummary, integrity, summarize},
+    plate::{self},
     workspace::rebase_receipt::RebaseReceipt,
 };
 use beamcraft_engine::rebase::{Conflict, Decision, Operation as PlannedOperation, plan};
@@ -35,6 +35,8 @@ use beamcraft_model::{
     changeset::MAX_OPERATIONS, digest::Sha256, error::ErrorCode, id::OpId,
     limits::MAX_FOOTPRINT_ENTRIES,
 };
+use session::Refusal;
+use session::pipeline::{RevisionSummary, integrity, summarize};
 use std::path::Path;
 
 /// Immutable caller inputs. The CLI actor is trusted local context; a coordinator derives it
@@ -71,19 +73,19 @@ pub enum CompensationResult {
     Conflicted(Vec<Conflict>),
 }
 
-fn reuse() -> PlateError {
-    PlateError::new(
+fn reuse() -> Refusal {
+    Refusal::new(
         ErrorCode::OpIdReuse,
         "compensation identity is bound to another request",
     )
 }
 
-fn mismatch() -> PlateError {
-    PlateError::new(ErrorCode::BaseRevisionMismatch, "the accepted head moved")
+fn mismatch() -> Refusal {
+    Refusal::new(ErrorCode::BaseRevisionMismatch, "the accepted head moved")
 }
 
-fn unavailable() -> PlateError {
-    PlateError::new(
+fn unavailable() -> Refusal {
+    Refusal::new(
         ErrorCode::DependencyUnavailable,
         "the compensation target has no complete command evidence",
     )
@@ -93,7 +95,7 @@ fn compensation_fingerprint(
     request: &CompensationRequest,
     workspace_id: &Uuid7,
     target: &RevisionPin,
-) -> Result<beamcraft_model::digest::ContentDigest, PlateError> {
+) -> Result<beamcraft_model::digest::ContentDigest, Refusal> {
     // Bind caller arguments and the exact accepted target pin. A later observed head changes
     // preconditions, not the original call.
     let text = format!(
@@ -113,13 +115,13 @@ fn replay(
     workspace: &RevisionStore,
     request: &CompensationRequest,
     workspace_id: &Uuid7,
-) -> Result<Option<Compensated>, PlateError> {
-    let op = plate::host_uuid(&request.op_id.to_string())?;
+) -> Result<Option<Compensated>, Refusal> {
+    let op = session::pipeline::host_uuid(&request.op_id.to_string())?;
     let sequence = match workspace.query_outcome(&op)? {
         beamcraft_host::ledger::Outcome::Committed { sequence, .. } => Some(sequence),
         beamcraft_host::ledger::Outcome::Unknown => {
             Some(workspace.sequence_of(&op)?.ok_or_else(|| {
-                PlateError::new(
+                Refusal::new(
                     ErrorCode::OutcomeUnknown,
                     "compensation outcome is unknown; recover the revision store",
                 )
@@ -163,10 +165,10 @@ fn later_operations(
     store: &RevisionStore,
     after: u64,
     through: u64,
-) -> Result<Vec<PlannedOperation>, PlateError> {
+) -> Result<Vec<PlannedOperation>, Refusal> {
     let count = through.saturating_sub(after);
     if count > MAX_OPERATIONS as u64 {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::LimitExceeded,
             "the accepted interval after the target exceeds the operation cap",
         ));
@@ -192,7 +194,7 @@ fn later_operations(
             .saturating_add(footprint.reads().len())
             .saturating_add(footprint.writes().len());
         if entries > MAX_FOOTPRINT_ENTRIES {
-            return Err(PlateError::new(
+            return Err(Refusal::new(
                 ErrorCode::LimitExceeded,
                 "the accepted interval footprint exceeds 4096 entries",
             ));
@@ -209,8 +211,8 @@ fn later_operations(
 
 fn opened(
     revision: &beamcraft_host::revision::Revision,
-) -> Result<beamcraft_layer_engine::OpenRequest, PlateError> {
-    plate::open_base(&plate::base_of(revision)?)
+) -> Result<beamcraft_layer_engine::OpenRequest, Refusal> {
+    session::pipeline::open_base(&session::pipeline::base_of(revision)?)
 }
 
 /// Compensates one accepted operation of this workspace with a new forward draft operation,
@@ -226,12 +228,12 @@ pub fn compensate_workspace(
     dir: &Path,
     request: &CompensationRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CompensationResult, PlateError> {
+) -> Result<CompensationResult, Refusal> {
     let canonical = std::fs::canonicalize(dir).map_err(|_| unusable())?;
     if canonical != workspace.blobs().canonical_root()
         || canonical == published.blobs().canonical_root()
     {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "compensation stores must be distinct and match the workspace directory",
         ));
@@ -239,7 +241,7 @@ pub fn compensate_workspace(
     let state = WorkspaceState::open(dir)?;
     let meta = state.meta().cloned().ok_or_else(unusable)?;
     if request.actor != meta.user_id {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::PermissionDenied,
             "compensation actor does not own the workspace",
         ));
@@ -251,17 +253,17 @@ pub fn compensate_workspace(
     let draft = workspace.open()?;
     let accepted_pin = RevisionPin::from_info(accepted.info());
     let draft_pin = RevisionPin::from_info(draft.info());
-    let op = plate::host_uuid(&request.op_id.to_string())?;
+    let op = session::pipeline::host_uuid(&request.op_id.to_string())?;
     let target_sequence = published
         .sequence_of(&request.target_revision)?
         .ok_or_else(|| {
-            PlateError::new(
+            Refusal::new(
                 ErrorCode::InvalidArgument,
                 "the compensation target is not in the published store",
             )
         })?;
     if target_sequence < 2 {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "the first accepted revision has no basis to restore",
         ));
@@ -276,7 +278,7 @@ pub fn compensate_workspace(
         return Err(mismatch());
     }
     if meta.base_revision != accepted_pin.revision {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "compensation requires the workspace at the current accepted head; rebase first",
         ));
@@ -286,7 +288,7 @@ pub fn compensate_workspace(
     // explicit recorded resolution first — the C03/C04 discipline; merging it here is a
     // follow-up, not an implicit loss.
     if draft_pin.sequence > meta.synced_sequence {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::InvalidArgument,
             "compensation requires a clean draft; publish, undo or explicitly resolve the \
              unsent operations first",
@@ -335,10 +337,10 @@ pub fn compensate_workspace(
         &opened(&accepted)?,
         &evidence::dependencies(&captured.footprint),
         &crate::scope::materializer_targets(&meta.scope)?,
-        &plate::control(),
+        &session::pipeline::control(),
     )?;
     let mut reader = Reader::default();
-    let control = plate::control();
+    let control = session::pipeline::control();
     let (view, _) = reader.open_validated(candidate.clone(), schema_identity()?, &control)?;
     let decoded = plate::decode(&reader, &view, &control)?;
     let (plates, members) = plate::evaluate_decoded(&decoded)?;
@@ -370,9 +372,10 @@ pub fn compensate_workspace(
         workspace: meta.workspace_id.clone(),
         revision: op.clone(),
         op,
-        workspace_generation: d.workspace_generation().checked_add(1).ok_or_else(|| {
-            PlateError::new(ErrorCode::LimitExceeded, "draft generation exhausted")
-        })?,
+        workspace_generation: d
+            .workspace_generation()
+            .checked_add(1)
+            .ok_or_else(|| Refusal::new(ErrorCode::LimitExceeded, "draft generation exhausted"))?,
         schema: d.schema(),
         root_layer: d.root_layer().into(),
         entries,

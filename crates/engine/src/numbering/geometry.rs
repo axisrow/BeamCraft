@@ -4,9 +4,8 @@
 //! Canonical evaluated geometry for numbering, independent of mesh indices and placement.
 
 use super::NumberingError;
-use crate::member::{AuthoredMember, MemberBody};
 use crate::solid::SolidMesh;
-use beamcraft_geom::{Frame3, MemberFrame, Point3};
+use beamcraft_geom::Frame3;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 
 /// The surface of an evaluated part in its own frame. Triangle and vertex numbering, face
@@ -40,31 +39,11 @@ impl PartGeometry {
         Self::from_solid(solid, Frame3::IDENTITY)
     }
 
-    /// Evaluated member geometry in its first section frame, without scene placement. The
-    /// final solid includes sweeps and replayed cuts, rather than just the authored axis.
-    pub fn member(authored: &AuthoredMember, body: &MemberBody) -> Result<Self, NumberingError> {
-        let (Some([sx, sy, sz]), Some([ex, ey, ez])) = (
-            authored.axis_points_mm.first(),
-            authored.axis_points_mm.get(1),
-        ) else {
-            return Err(NumberingError("member axis has no first segment"));
-        };
-        let frame = MemberFrame::new(
-            Point3::new(*sx, *sy, *sz),
-            Point3::new(*ex, *ey, *ez),
-            body.width_mm,
-            body.height_mm,
-            authored.roll_rad,
-        )
-        .map_err(|_| NumberingError("member numbering frame is invalid"))?;
-        Self::from_solid(&body.solid, frame.frame())
-    }
-
     /// Normalizes a certified local solid into the supplied orthonormal part frame, subtracts
     /// its bounding-box minimum and hashes its sorted surface triangles. Tessellation remains
     /// part of the signature; this is an evaluated-mesh identity, not a general solid isometry
     /// solver. A different digest falls back to the configured millimetre tolerance.
-    fn from_solid(solid: &SolidMesh, frame: Frame3) -> Result<Self, NumberingError> {
+    pub fn from_solid(solid: &SolidMesh, frame: Frame3) -> Result<Self, NumberingError> {
         let fail = || NumberingError("numbering geometry is invalid or too large");
         let origin = solid.vertices().first().ok_or_else(fail)?;
         let axes = [

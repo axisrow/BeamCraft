@@ -6,21 +6,21 @@
 //! object with the same error shape and exit codes as the other commands.
 
 use beamcraft_cli::bom::rows;
-use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::plate::inspect;
 use beamcraft_engine::bom::{elements_csv, summary_csv, tables};
 use beamcraft_engine::limits::MAX_ELEMENTS;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::Write;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -45,7 +45,7 @@ fn reserve(path: &str) -> Run<std::fs::File> {
 pub(crate) fn write_sync(file: &mut std::fs::File, bytes: &str) -> Run<()> {
     file.write_all(bytes.as_bytes())
         .and_then(|()| file.sync_all())
-        .map_err(|_| PlateError {
+        .map_err(|_| Refusal {
             rule_id: None,
             code: ErrorCode::BackendUnavailable,
             message: "the report could not be written",
@@ -114,7 +114,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let out = options
         .get("--out")
         .ok_or_else(|| invalid("--out is required"))?;
-    let blobs = BlobStore::new(store).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",

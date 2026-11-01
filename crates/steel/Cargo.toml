@@ -1,0 +1,25 @@
+[package]
+name = "steel"
+description = "Structural steel: plates, members, holes, bends, welds, bolts and fasteners, with their commands, bodies and engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+# The integration suites build into one `steel` test binary (`tests/steel.rs`): one link
+# instead of eleven, and the shared `common*` helpers compile once.
+autotests = false
+
+[[test]]
+name = "steel"
+path = "tests/steel.rs"
+
+[dependencies]
+beamcraft-geom.workspace = true
+beamcraft-model.workspace = true
+beamcraft-kernel = { path = "../kernel", version = "0.0.1" }
+beamcraft-engine = { path = "../engine", version = "0.0.1" }
+
+[lints]
+workspace = true

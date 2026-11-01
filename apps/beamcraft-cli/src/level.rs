@@ -18,15 +18,10 @@
 //! elements use is `DEPENDENCY_CONFLICT`; there is no cascade.
 
 use crate::assembly::read_prims;
-use crate::plate::{
-    Base, PlateError, RevisionSummary, base_of, check_footprint, control, digest_of, host_uuid,
-    integrity, load_base, number, open_base, prior_op_with, property, replay_summary, summarize,
-    text,
-};
+use crate::plate::{check_footprint, number, prior_op_with, property, replay_summary, text};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::level::{HolderKind, LevelRecord, Levels};
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Change, Element, Placement as LayerPlacement, Prepare, Shape, schema_identity, validate_layers,
@@ -35,7 +30,13 @@ use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::command::{CommandError, CreateLevel};
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, base_of, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
+};
 use std::collections::BTreeMap;
+use steel::engine::transaction::PriorOp;
 
 /// Identities of one D2 call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -82,7 +83,7 @@ pub struct LevelChange {
 
 /// The kinds, levels and level records of a pinned set of prims. Elements of foreign or unknown
 /// kinds count as used identities and nothing else.
-pub(crate) fn levels_of(prims: &[Prim]) -> Result<Levels, PlateError> {
+pub(crate) fn levels_of(prims: &[Prim]) -> Result<Levels, Refusal> {
     let by_path: BTreeMap<&str, ElementId> = prims
         .iter()
         .filter_map(|p| {
@@ -147,7 +148,7 @@ pub(crate) fn levels_of(prims: &[Prim]) -> Result<Levels, PlateError> {
     Ok(levels)
 }
 
-pub(crate) fn model_of(request: &OpenRequest, control: &Control) -> Result<Levels, PlateError> {
+pub(crate) fn model_of(request: &OpenRequest, control: &Control) -> Result<Levels, Refusal> {
     // Stored bytes are verified, not interpreted: the structural rules (D2-V01 among them) run
     // before the levels are read, so a damaged graph is refused rather than reported or replayed.
     validate_layers(request.clone(), schema_identity()?, control)?;
@@ -174,13 +175,13 @@ pub(crate) fn is_level(
     request: &OpenRequest,
     id: &ElementId,
     control: &Control,
-) -> Result<bool, PlateError> {
+) -> Result<bool, Refusal> {
     Ok(model_of(request, control)?.level(id).is_some())
 }
 
 /// The levels of the verified head (empty for a store without a revision), in ascending identity
 /// order.
-pub fn levels(store: &RevisionStore) -> Result<Vec<LevelView>, PlateError> {
+pub fn levels(store: &RevisionStore) -> Result<Vec<LevelView>, Refusal> {
     let control = control();
     let revision = match store.open() {
         Ok(revision) => revision,
@@ -203,7 +204,7 @@ fn created_by(
     sequence: u64,
     id: &ElementId,
     control: &Control,
-) -> Result<Option<LevelRecord>, PlateError> {
+) -> Result<Option<LevelRecord>, Refusal> {
     let at = store.open_at(sequence)?;
     let model = model_of(&open_base(&base_of(&at)?)?, control)?;
     let Some(record) = model.level(id).cloned() else {
@@ -230,7 +231,7 @@ pub fn create_level(
     context: &LevelContext,
     command: &CreateLevel,
     hook: &mut dyn CommitHook,
-) -> Result<LevelChange, PlateError> {
+) -> Result<LevelChange, Refusal> {
     command.validate_arguments()?;
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;

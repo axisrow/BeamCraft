@@ -9,24 +9,24 @@
 use crate::report::report;
 use beamcraft_cli::definition::DefinitionRecord;
 use beamcraft_cli::library::{Lookup, Source, load_fastener};
-use beamcraft_cli::plate::PlateError;
-use beamcraft_engine::fastener::{
-    ComponentQuantity, FastenerBuild, FastenerSolid, MassSource, prototype, quantities,
-};
 use beamcraft_json::Json;
 use beamcraft_model::ErrorCode;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use steel::engine::fastener::{
+    ComponentQuantity, FastenerBuild, FastenerSolid, MassSource, prototype, quantities,
+};
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
 /// Runs the fastener geometry command and returns the JSON result and the exit code.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
     report(run(args))
 }
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -186,8 +186,8 @@ fn run(args: &[OsString]) -> Run<Json> {
     let washer_under_head = washer_under_head.unwrap_or(spec.washer_under_head);
     let washer_under_nut = washer_under_nut.unwrap_or(spec.washer_under_nut);
     let build =
-        prototype(spec, length, washer_under_head, washer_under_nut).map_err(PlateError::from)?;
-    let computed = quantities(spec, &build, count, density).map_err(PlateError::from)?;
+        prototype(spec, length, washer_under_head, washer_under_nut).map_err(Refusal::from)?;
+    let computed = quantities(spec, &build, count, density).map_err(Refusal::from)?;
     let components = computed
         .components
         .iter()

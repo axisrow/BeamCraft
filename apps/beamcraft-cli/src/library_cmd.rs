@@ -10,10 +10,11 @@
 use crate::plate_cmd::{Run, definition_json, fit_page, invalid, page_of, profile_record};
 use crate::report::report;
 use beamcraft_cli::library::{
-    EnvironmentInfo, LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed,
-    Source, add_entry, load_fastener, open_lookup,
+    LibraryEntry, LibraryInfo, Lookup, NewLibrary, RejectedEntry, Shadowed, Source, add_entry,
+    load_fastener, open_lookup,
 };
 use beamcraft_json::Json;
+use session::environment::EnvironmentInfo;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 

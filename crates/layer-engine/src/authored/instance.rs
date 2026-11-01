@@ -3,11 +3,9 @@
 
 //! P11 canonical definition links and bounded materialization for model readers.
 use super::*;
-use beamcraft_model::{
-    id::ElementId,
-    instance::{InstanceLink, MAX_PART_INSTANCES, PartKind},
-};
+use beamcraft_model::id::ElementId;
 use openusd::sdf;
+use steel::model::instance::{InstanceLink, MAX_PART_INSTANCES, PartKind};
 
 /// Persistent shared-definition relationship name.
 pub const RELATIONSHIP: &str = "bim:instanceOf";

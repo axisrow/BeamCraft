@@ -76,8 +76,8 @@ the head, with identical counting:
   than on the store's head at the moment of the click: the same engine query on the same bytes
   the CLI would read, without opening, verifying and re-evaluating the revision. The details are
   then read from the head; an element that is gone by then is `NOT_FOUND`, as before. The click
-  test checks that the in-process pick and the CLI's `pick` name the same element for the same
-  rays.
+  test checks that the in-process pick names the expected element for rays through known
+  points (the CLI `pick` it was first compared with was removed with #763).
 - **Cancel only reads.** A lookup's answer can be dropped at no cost, so its process can be
   killed; a change command is never cancelled, since killing it could leave its outcome unknown.
   The flag is checked before the process starts and every 10 ms while it runs.

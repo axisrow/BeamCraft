@@ -3,11 +3,11 @@
 
 //! Shared prepared-layer publication and verified revision commit boundary.
 
+use session::Refusal;
+use session::pipeline::{DERIVED_LAYER, ROOT_LAYER, host_uuid, integrity};
 use std::collections::BTreeMap;
 
-use crate::plate::{
-    DERIVED_LAYER, PlateError, PlateVerifier, ROOT_LAYER, check_footprint, host_uuid, integrity,
-};
+use crate::plate::{PlateVerifier, check_footprint};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, Committed, ExpectedBase, LayerEntry, LayerRole, RevisionDraft,
@@ -59,20 +59,17 @@ pub(crate) fn publish_revision(
     store: &RevisionStore,
     request: &PublishRequest<'_>,
     hook: &mut dyn CommitHook,
-) -> Result<Committed, PlateError> {
-    let generation = request
-        .base_generation
-        .checked_add(1)
-        .ok_or(PlateError::new(
-            ErrorCode::LimitExceeded,
-            "generation exhausted",
-        ))?;
+) -> Result<Committed, Refusal> {
+    let generation = request.base_generation.checked_add(1).ok_or(Refusal::new(
+        ErrorCode::LimitExceeded,
+        "generation exhausted",
+    ))?;
     let mut entries = Vec::new();
     for layer in &request.prepared.layers {
         store
             .blobs()
             .publish(&layer.bytes)
-            .map_err(|e| PlateError::new(e.code(), "layer blob could not be stored"))?;
+            .map_err(|e| Refusal::new(e.code(), "layer blob could not be stored"))?;
         entries.push(LayerEntry::from_bytes(
             &layer.name,
             role_of(&layer.name),
@@ -86,7 +83,7 @@ pub(crate) fn publish_revision(
         store
             .blobs()
             .publish(&layer.bytes)
-            .map_err(|e| PlateError::new(e.code(), "foreign layer blob could not be stored"))?;
+            .map_err(|e| Refusal::new(e.code(), "foreign layer blob could not be stored"))?;
         entries.push(LayerEntry::from_bytes(
             &layer.name,
             LayerRole::External,
@@ -144,7 +141,7 @@ pub(crate) fn prepare_and_publish(
     before: &BTreeMap<String, ContentDigest>,
     tail: PublicationTail<'_>,
     hook: &mut dyn CommitHook,
-) -> Result<(Committed, Vec<String>), PlateError> {
+) -> Result<(Committed, Vec<String>), Refusal> {
     let prepared = author.prepare(
         Prepare {
             context: opened.context.clone(),
@@ -188,7 +185,7 @@ pub(crate) fn commit_verified(
     draft: &RevisionDraft,
     expected: &ExpectedBase,
     hook: &mut dyn CommitHook,
-) -> Result<Committed, PlateError> {
+) -> Result<Committed, Refusal> {
     commit_verified_with_evidence(store, draft, expected, None, hook)
 }
 
@@ -198,6 +195,6 @@ pub(crate) fn commit_verified_with_evidence(
     expected: &ExpectedBase,
     evidence: Option<beamcraft_host::revision::EvidencePin>,
     hook: &mut dyn CommitHook,
-) -> Result<Committed, PlateError> {
+) -> Result<Committed, Refusal> {
     Ok(store.commit_with_evidence(draft, expected, evidence, Some(&PlateVerifier), hook)?)
 }

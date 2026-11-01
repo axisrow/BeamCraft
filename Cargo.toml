@@ -46,6 +46,7 @@ indexing_slicing = "warn"
 beamcraft-geom = { opt-level = 1 }
 beamcraft-kernel = { opt-level = 1 }
 beamcraft-model = { opt-level = 1 }
+steel = { opt-level = 1 }
 openusd = { opt-level = 1 }
 
 [profile.release]
@@ -73,6 +74,7 @@ beamcraft-kernel = { opt-level = 3 }
 beamcraft-layer-engine = { opt-level = 3 }
 beamcraft-model = { opt-level = 3 }
 beamcraft-ui = { opt-level = 3 }
+steel = { opt-level = 3 }
 
 [profile.dist]
 inherits = "release"

@@ -9,7 +9,6 @@ use crate::plate_cmd::revision_json;
 use beamcraft_cli::changeset::{
     CreateChangeset, StoredChangeset, apply_changeset, create_changeset, read_changeset,
 };
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -20,14 +19,15 @@ use beamcraft_model::changeset::{Access, DependencyTarget};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ActorId, OpId, RevisionId};
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -41,7 +41,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 fn store_at(path: &Path, message: &'static str) -> Run<RevisionStore> {
-    let blobs = BlobStore::new(path).map_err(|e| PlateError {
+    let blobs = BlobStore::new(path).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message,
@@ -115,7 +115,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
     if *command == "create-changeset" {
         let mut source = IdSource::system();
         let mut fresh = || {
-            source.next_id().map_err(|_| PlateError {
+            source.next_id().map_err(|_| Refusal {
                 rule_id: None,
                 code: ErrorCode::BackendUnavailable,
                 message: "no identity could be generated",

@@ -9,7 +9,7 @@
 
 use crate::attribute::{AttrModel, attr_model_of};
 use crate::bom;
-use crate::plate::{self, Inspection, PlateError};
+use crate::plate::Inspection;
 use beamcraft_engine::bom::BomRow;
 use beamcraft_engine::schedule::{
     CellKind, CellValue, Column, Field, InputRow, MAX_COLUMNS, Rule, StandardField, Template,
@@ -18,10 +18,11 @@ use beamcraft_host::revision::RevisionStore;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::attribute::{AttrType, AttrValue};
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
 use std::collections::BTreeMap;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError::new(ErrorCode::InvalidArgument, message)
+fn invalid(message: &'static str) -> Refusal {
+    Refusal::new(ErrorCode::InvalidArgument, message)
 }
 
 /// One template column plus the attribute name an attribute column resolved to, if any; the
@@ -58,11 +59,14 @@ fn cell_kind(kind: AttrType) -> CellKind {
 
 /// The pinned attribute state of the head, with the exact revision it was read from, so the
 /// command can require the same revision as the report rows.
-pub fn pinned(store: &RevisionStore) -> Result<(AttrModel, String), PlateError> {
-    let revision = store.open().map_err(PlateError::from)?;
-    let id = plate::summarize(revision.info()).revision_id;
-    let base = plate::base_of(&revision)?;
-    let model = attr_model_of(&plate::open_base(&base)?, &plate::control())?;
+pub fn pinned(store: &RevisionStore) -> Result<(AttrModel, String), Refusal> {
+    let revision = store.open().map_err(Refusal::from)?;
+    let id = session::pipeline::summarize(revision.info()).revision_id;
+    let base = session::pipeline::base_of(&revision)?;
+    let model = attr_model_of(
+        &session::pipeline::open_base(&base)?,
+        &session::pipeline::control(),
+    )?;
     Ok((model, id))
 }
 
@@ -72,7 +76,7 @@ pub fn pinned(store: &RevisionStore) -> Result<(AttrModel, String), PlateError> 
 pub fn template(
     json: &Json,
     model: &AttrModel,
-) -> Result<(Template, Vec<ColumnSpec>, Vec<String>), PlateError> {
+) -> Result<(Template, Vec<ColumnSpec>, Vec<String>), Refusal> {
     let mut admitted = vec!["version", "columns"];
     for optional in ["filter", "group_by", "sort_by"] {
         if json.get(optional).is_ok() {
@@ -87,7 +91,7 @@ pub fn template(
         .map_err(|_| invalid("schedule template version is missing"))?
         != 1
     {
-        return Err(PlateError::new(
+        return Err(Refusal::new(
             ErrorCode::UnsupportedVersion,
             "unsupported schedule template version",
         ));
@@ -175,7 +179,7 @@ pub fn template(
 }
 
 /// Resolves an optional key list to column indices: first matching column wins.
-fn indices(json: &Json, key: &str, keys: &[String]) -> Result<Vec<usize>, PlateError> {
+fn indices(json: &Json, key: &str, keys: &[String]) -> Result<Vec<usize>, Refusal> {
     let Ok(list) = json.get(key) else {
         return Ok(Vec::new());
     };
@@ -202,7 +206,7 @@ fn indices(json: &Json, key: &str, keys: &[String]) -> Result<Vec<usize>, PlateE
 /// Decodes a filter rule JSON into the engine's rule over the template's columns; the
 /// literal is checked against the column's value type, with no unit conversion — a number
 /// compares against the stored value in the definition's unit.
-pub fn decode_rule(json: &Json, columns: &[Column]) -> Result<Rule, PlateError> {
+pub fn decode_rule(json: &Json, columns: &[Column]) -> Result<Rule, Refusal> {
     if json.get("all").is_ok() || json.get("any").is_ok() {
         let key = if json.get("all").is_ok() {
             "all"
@@ -314,7 +318,7 @@ pub fn rows(
     model: &AttrModel,
     filter: Option<&(Template, Rule)>,
     specs: &[ColumnSpec],
-) -> Result<Vec<InputRow>, PlateError> {
+) -> Result<Vec<InputRow>, Refusal> {
     let defined = types(model);
     let mut out = Vec::with_capacity(source.len());
     for row in source {
@@ -332,7 +336,7 @@ pub fn rows(
             .collect();
         let input = InputRow { id: row.id, cells };
         if let Some((template, rule)) = filter
-            && !rule.matches(template, &input).map_err(PlateError::from)?
+            && !rule.matches(template, &input).map_err(Refusal::from)?
         {
             continue;
         }
@@ -345,7 +349,7 @@ pub fn rows(
 pub const TEMPLATE_BOUND: usize = 65_536;
 
 /// The template JSON bound acknowledged by the command: bounded bytes and a closed object.
-pub fn decode(bytes: &[u8]) -> Result<Json, PlateError> {
+pub fn decode(bytes: &[u8]) -> Result<Json, Refusal> {
     if bytes.len() > TEMPLATE_BOUND {
         return Err(invalid("the schedule template exceeds its JSON bound"));
     }
@@ -362,12 +366,12 @@ pub fn prepare(
     marks: &[beamcraft_engine::numbering_approval::StoredMark],
     model: &AttrModel,
     template_json: &Json,
-) -> Result<(Template, Vec<InputRow>, Vec<String>), PlateError> {
+) -> Result<(Template, Vec<InputRow>, Vec<String>), Refusal> {
     let (template, specs, unknown_columns) = template(template_json, model)?;
     let filter = match template_json.get("filter") {
         Ok(rule) => {
             let rule = decode_rule(rule, &template.columns)?;
-            rule.admit(&template).map_err(PlateError::from)?;
+            rule.admit(&template).map_err(Refusal::from)?;
             Some((template.clone(), rule))
         }
         Err(_) => None,

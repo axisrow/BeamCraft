@@ -14,16 +14,13 @@ pub mod descriptor;
 pub mod digest;
 pub mod drawing;
 pub mod error;
-pub mod fastener;
 pub mod grid;
 pub mod grid_edit;
 pub mod grid_update;
 pub mod id;
-pub mod instance;
 pub mod limits;
 pub mod prim;
 pub mod reference;
-pub mod section;
 pub mod sheet;
 
 pub use error::ErrorCode;

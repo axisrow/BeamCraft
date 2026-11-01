@@ -11,6 +11,7 @@
     clippy::panic
 )]
 
+use beamcraft_engine::query::pick::{SnapContext, SnapKind, SnapQuery, snap_with_context};
 use beamcraft_json::{Json, Limits};
 use beamcraft_ui::camera::Camera;
 use beamcraft_ui::grid::{GridForm, GridScene};
@@ -453,7 +454,6 @@ fn growing_both_coordinate_families_keeps_every_line_across_the_whole_grid() {
 }
 
 #[test]
-#[ignore = "the window still runs a removed CLI command, see #763"]
 fn edited_rotated_rectangle_uses_master_queries_and_preserves_placed_parts() {
     let f = Fixture::new();
     let store = f.root.join("ui");
@@ -506,6 +506,15 @@ fn edited_rotated_rectangle_uses_master_queries_and_preserves_placed_parts() {
     let after = f.ok(&["inspect-elements", "--store", path]);
     assert_eq!(before.get("plates"), after.get("plates"));
     let head = f.head(&store);
+    // The window snaps in its own process, on the snapshot and the grids it shows.
+    let snapshot = source::load(&f.cli, &store, &Stats::default()).unwrap();
+    let shown = source::reload(&f.cli, &store, &Known::default(), None, &Stats::default())
+        .grids
+        .unwrap();
+    let context = SnapContext {
+        grids: &shown.query_grids,
+        ..Default::default()
+    };
     // Every crossing, including newly added outer axes, must resolve and snap in world XY.
     let angle = 30.0_f64.to_radians();
     for (u, x) in [("1", -3000.0), ("6", 27000.0)] {
@@ -528,32 +537,17 @@ fn edited_rotated_rectangle_uses_master_queries_and_preserves_placed_parts() {
             for (value, expected) in xy.iter().zip(expected) {
                 assert!((value.float().unwrap() - expected).abs() < 1e-7);
             }
-            let point = format!("{},{},3500", xy[0].float().unwrap(), xy[1].float().unwrap());
-            let snapped = f.ok(&[
-                "snap",
-                "--store",
-                path,
-                "--point",
-                &point,
-                "--radius",
-                "0",
-                "--kinds",
-                "grid_intersection",
-                "--grids",
-                &created.id,
-            ]);
-            let hits = snapped.get("candidates").unwrap().array().unwrap();
-            assert_eq!(hits.len(), 1, "{snapped:?}");
-            assert_eq!(
-                at(&hits[0], &["grid", "grid_id"]).string().unwrap(),
-                created.id
-            );
-            assert_eq!(
-                at(&hits[0], &["point_world_mm"]).array().unwrap()[2]
-                    .float()
-                    .unwrap(),
-                3500.0
-            );
+            let query = SnapQuery {
+                point_mm: [xy[0].float().unwrap(), xy[1].float().unwrap(), 3500.0],
+                radius_mm: 0.0,
+                kinds: vec![SnapKind::GridIntersection],
+                max_hits: 16,
+            };
+            let snapped = snap_with_context(&snapshot, &query, &context).unwrap();
+            assert_eq!(snapped.candidates.len(), 1, "{snapped:?}");
+            let hit = &snapped.candidates[0];
+            assert_eq!(hit.element_id.to_string(), created.id);
+            assert_eq!(hit.point_world_mm[2], 3500.0);
         }
     }
     assert_eq!(head, f.head(&store), "grid queries must not publish edits");

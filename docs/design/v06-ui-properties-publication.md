@@ -39,7 +39,7 @@ beamcraft workspace-publish --store PUBLISHED --workspace-dir DIR
    rule, the selection box and the Move/Copy/Delete/Undo/Redo panel are V05.2's and are reused
    unchanged. This slice's first version had its own ray and pick mapping; it was deleted in the
    merge (`camera::pick_ray` and `props::pick_args`/`parse_pick` are gone, `edit::ray_through`
-   and `edit::parse_pick` are the one implementation). A pick now additionally fetches the full
+   and `edit::pick_in` are the one implementation). A pick now additionally fetches the full
    properties of what it hit, so the properties panel is alive from the first click.
 2. **The properties are a report, not a form binding.** Every value shown (including volume and
    mass with their `current`/`unknown` statuses and the profile and material display names) is

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Start commands: `create-project` and `list-project`. They call `beamcraft_host::settings` and
+//! Start commands: `create-project` and `list-project`. They call `session::settings` and
 //! `beamcraft_cli::project` and print one JSON object with the same error shape and exit codes as
 //! the plate commands.
 //!
@@ -12,36 +12,37 @@
 
 use crate::plate_cmd::revision_json;
 use beamcraft_cli::definition::{DefineRequest, DefinitionRecord, define};
-use beamcraft_cli::plate::PlateError;
 use beamcraft_cli::project::{
-    ENVIRONMENTS_DIR, EnvironmentState, ProjectContext, ProjectInfo, ProjectLayout, ProjectState,
-    builtin_environment_dirs, create_project, create_project_scoped, create_project_unique,
-    install_environment, list_environments, list_projects,
+    EnvironmentState, ProjectContext, ProjectInfo, ProjectLayout, ProjectState, create_project,
+    create_project_scoped, create_project_unique, environment_folders, install_environment,
+    list_environments, list_projects,
 };
 use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::{NoFault, RevisionStore, Uuid7 as HostUuid7};
-use beamcraft_host::settings::{Settings, SettingsError, default_dir};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
+use session::Refusal;
+use session::pipeline::summarize;
+use session::settings::{Settings, SettingsError, default_dir};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-const fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+const fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
     }
 }
 
-fn settings_error(error: SettingsError) -> PlateError {
-    PlateError {
+fn settings_error(error: SettingsError) -> Refusal {
+    Refusal {
         rule_id: None,
         code: error.code,
         message: error.message,
@@ -97,7 +98,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let config_dir = || -> Run<PathBuf> {
         match given("--config-dir") {
             Some(dir) => Ok(PathBuf::from(dir)),
-            None => default_dir().ok_or(PlateError {
+            None => default_dir().ok_or(Refusal {
                 rule_id: None,
                 code: ErrorCode::NotFound,
                 message: "no configuration directory is known; name one with --config-dir",
@@ -242,7 +243,7 @@ fn run(args: &[OsString]) -> Run<Json> {
 }
 
 fn fresh_id() -> Run<beamcraft_model::id::Uuid7> {
-    IdSource::system().next_id().map_err(|_| PlateError {
+    IdSource::system().next_id().map_err(|_| Refusal {
         rule_id: None,
         code: ErrorCode::BackendUnavailable,
         message: "no identity could be generated",
@@ -256,11 +257,12 @@ fn now_ms() -> u64 {
 }
 
 fn remember(dir: &Path, project: &Path) -> Run<()> {
-    let mut settings = Settings::load(dir).map_err(settings_error)?;
-    settings
-        .touch_recent(project.to_path_buf(), now_ms())
-        .map_err(settings_error)?;
-    settings.save(dir).map_err(settings_error)
+    Settings::update(dir, |settings| {
+        settings.touch_recent(project.to_path_buf(), now_ms())?;
+        Ok(true)
+    })
+    .map(|_| ())
+    .map_err(settings_error)
 }
 
 fn boolean(text: &str) -> Run<bool> {
@@ -283,13 +285,13 @@ fn project_json(info: &ProjectInfo) -> Run<Json> {
             project_id,
             created_ms,
             modified_ms,
-            revision,
+            head,
         } => (
             Json::text("ready"),
             Json::text(project_id.clone()),
             Json::uint(*created_ms),
             Json::uint(*modified_ms),
-            revision_json(revision),
+            revision_json(&summarize(head)),
         ),
         ProjectState::Empty => (
             Json::text("empty"),
@@ -335,24 +337,6 @@ struct Seeded {
     materials: u64,
 }
 
-/// The folders `list-environment` reads (built-in first, then the user's) and the user's folder.
-fn environment_folders(
-    config_dir: Option<&str>,
-) -> (Vec<(PathBuf, &'static str)>, Option<PathBuf>) {
-    let mut folders: Vec<(PathBuf, &'static str)> = builtin_environment_dirs()
-        .into_iter()
-        .map(|d| (d, "builtin"))
-        .collect();
-    let user = config_dir
-        .map(PathBuf::from)
-        .or_else(default_dir)
-        .map(|d| d.join(ENVIRONMENTS_DIR));
-    if let Some(user) = &user {
-        folders.push((user.clone(), "user"));
-    }
-    (folders, user)
-}
-
 /// Gives the new project at `dir` its environment and its default materials: the environment `id`
 /// is copied into the project folder (`environment/`), so later commands resolve profile names
 /// against it without any option, and the two default materials are published, one revision each.
@@ -364,7 +348,7 @@ fn seed_project(
     config_dir: Option<&str>,
     context: &ProjectContext,
 ) -> Run<Seeded> {
-    let (folders, _) = environment_folders(config_dir);
+    let (folders, _) = environment_folders(config_dir.map(Path::new));
     let file = list_environments(&folders)
         .into_iter()
         .find_map(|entry| match entry.state {
@@ -375,7 +359,7 @@ fn seed_project(
             } if ready == id => Some(entry.path),
             _ => None,
         })
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::NotFound,
             message: "the environment is not among the built-in or user environments",
@@ -385,7 +369,7 @@ fn seed_project(
         .ok_or(invalid("the environment path is not UTF-8"))?;
     // Read and admitted first; a refused environment copies nothing.
     install_environment(dir, Path::new(file))?;
-    let blobs = BlobStore::new(dir).map_err(|e| PlateError {
+    let blobs = BlobStore::new(dir).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -397,7 +381,7 @@ fn seed_project(
             &DefineRequest {
                 revision_id: RevisionId::from_uuid(fresh_id()?),
                 op_id: OpId::from_uuid(fresh_id()?),
-                actor: HostUuid7::parse(&context.actor.to_string()).map_err(PlateError::from)?,
+                actor: HostUuid7::parse(&context.actor.to_string()).map_err(Refusal::from)?,
                 project: context.project,
                 workspace: context.workspace,
                 definition,

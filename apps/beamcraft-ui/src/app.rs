@@ -30,14 +30,15 @@ use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::RenderMode;
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
-use beamcraft_engine::member::{AuthoredMember, ProfileInfo};
 use beamcraft_engine::views::{NamedView, ViewBook, WorkArea};
-use beamcraft_model::command::{MemberKind as ModelMemberKind, Placement};
+use beamcraft_model::command::Placement;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
+use steel::engine::member::{AuthoredMember, ProfileInfo};
+use steel::model::command::MemberKind as ModelMemberKind;
 
 /// Where a `--perf-run` report goes: the JSON object and whether every phase succeeded.
 pub type PerfReport = Sender<(String, bool)>;
@@ -742,8 +743,7 @@ impl App {
         perf: Option<(Vec<PerfPhase>, PerfReport)>,
         stats: Arc<Stats>,
     ) -> Result<Self, Error> {
-        let appearance =
-            crate::appearance::Appearance::new(source.cli.clone(), None, Arc::clone(&stats));
+        let appearance = crate::appearance::Appearance::new(None);
         let mut app = Self::open(
             &cc.egui_ctx,
             cc.wgpu_render_state.as_ref(),
@@ -2785,7 +2785,7 @@ impl App {
             cuts: Vec::new(),
             hole_records: Vec::new(),
         };
-        let body = beamcraft_engine::member::evaluate_member(
+        let body = steel::engine::member::evaluate_member(
             &authored,
             ProfileInfo::Rectangle {
                 width_mm: rect[0],

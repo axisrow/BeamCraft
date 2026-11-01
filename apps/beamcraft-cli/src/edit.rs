@@ -20,27 +20,32 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    Base, PlateError, RevisionSummary, control, decode, digest_of, evaluate_decoded, host_uuid,
-    integrity, load_base, member_record, mesh_change, open_base, plate_record, prior_op_with,
-    replay_summary, summarize,
+    decode, evaluate_decoded, member_record, mesh_change, plate_record, prior_op_with,
+    replay_summary,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
-use beamcraft_engine::command::evaluate_plate;
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::member::{evaluate_member, member_quantities};
-use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
-use beamcraft_engine::transaction::PriorOp;
-use beamcraft_engine::update::{UpdateEffect, effect, patch_member, patch_plate};
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
     Change, MaterialOpinion, Opinion, Placement as LayerPlacement, schema_identity,
 };
-use beamcraft_model::command::{CommandError, UpdateElement};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
+};
 use std::collections::BTreeMap;
+use steel::engine::command::evaluate_plate;
+use steel::engine::committed::{MemberRecord, PlateRecord};
+use steel::engine::member::{evaluate_member, member_quantities};
+use steel::engine::transaction::PriorOp;
+use steel::engine::update::{UpdateEffect, effect, patch_member, patch_plate};
+use steel::model::command::UpdateElement;
 
 /// Inputs of one `update_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -52,7 +57,7 @@ pub struct UpdateRequest {
     /// The acting user (trusted context).
     pub actor: Uuid7,
     /// Project of a store that has no revision yet; an update of such a store is `NOT_FOUND`. A
-    /// store with a revision ignores it (see `plate::ensure_project`).
+    /// store with a revision ignores it (see `session::pipeline::ensure_project`).
     pub project: ProjectId,
     /// Workspace of a store that has no revision yet.
     pub workspace: WorkspaceId,
@@ -86,8 +91,8 @@ pub struct Updated {
     pub changed_layers: Vec<String>,
 }
 
-fn not_found() -> PlateError {
-    PlateError::from(CommandError::new(
+fn not_found() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::NotFound,
         "target_id",
         "the element is not in the head revision",
@@ -105,7 +110,7 @@ pub fn update_element(
     store: &RevisionStore,
     request: &UpdateRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Updated, PlateError> {
+) -> Result<Updated, Refusal> {
     let command = &request.command;
     command.validate_arguments()?;
     let control = control();
@@ -177,7 +182,7 @@ pub fn update_element(
             Some(level) => levels
                 .assign(command.target_id, level)
                 .err()
-                .map_or_else(not_found, PlateError::from),
+                .map_or_else(not_found, Refusal::from),
             None => not_found(),
         })?;
     let (head_element, next) = match target {
@@ -294,7 +299,7 @@ pub fn update_element(
     let shared = patch_effect.material || patch_effect.shape;
     let mut shared_records = Vec::new();
     if shared {
-        let patch = beamcraft_model::command::ElementPatch {
+        let patch = steel::model::command::ElementPatch {
             material: command.patch.material,
             thickness_mm: command.patch.thickness_mm,
             corners: command.patch.corners.clone(),
@@ -391,52 +396,34 @@ pub fn update_element(
         });
     }
     if let Some(mm) = command.patch.thickness_mm {
-        changes.push(Change::Thickness {
-            id: definition_text.clone(),
-            mm,
-        });
+        changes.push(Change::thickness(definition_text.clone(), mm));
     }
     // The contour is a shape input of the canonical definition, like the thickness: the
     // instances of the group read their bodies from it and take mesh updates below.
     if let Some(points) = &command.patch.contour_points_mm {
-        changes.push(Change::Contour {
-            id: definition_text.clone(),
-            points_mm: points.clone(),
-        });
+        changes.push(Change::contour(definition_text.clone(), points.clone()));
     }
     if let Some(corners) = &command.patch.corners {
-        changes.push(Change::Corners {
-            id: definition_text.clone(),
-            corners: corners.clone(),
-        });
+        changes.push(Change::corners(definition_text.clone(), corners.clone()));
     }
     if let Some(side) = command.patch.thickness_side {
-        changes.push(Change::ThicknessSide {
-            id: definition_text.clone(),
-            side,
-        });
+        changes.push(Change::thickness_side(definition_text.clone(), side));
     }
     // A member path change (P12) is authored on the canonical part, like a thickness change:
     // the instances of the group read their shape inputs from it.
     if let (UpdatedElement::Member(record), true) = (&next, patch_effect.shape) {
-        changes.push(Change::Axis {
-            id: definition_text.clone(),
-            points_mm: record.authored.axis_points_mm.clone(),
-        });
+        changes.push(Change::axis(
+            definition_text.clone(),
+            record.authored.axis_points_mm.clone(),
+        ));
         // A bent member carries no authored roll: the polybeam sweep has no roll input, so
         // the old straight member's opinion is removed instead of being silently ignored.
         if record.authored.axis_points_mm.len() > 2 {
-            changes.push(Change::Roll {
-                id: definition_text.clone(),
-                opinion: Opinion::Remove,
-            });
+            changes.push(Change::roll(definition_text.clone(), Opinion::Remove));
         }
     }
     if let Some(digest) = command.patch.profile {
-        changes.push(Change::Profile {
-            id: definition_text.clone(),
-            digest,
-        });
+        changes.push(Change::profile(definition_text.clone(), digest));
     }
     // A mirror (T03) re-encodes the local body: the plate's side flips and the cuts of either
     // part kind reflect, both authored on the canonical part.
@@ -444,18 +431,15 @@ pub fn update_element(
         if let UpdatedElement::Plate(record) = &next
             && let Some(side) = record.authored.thickness_side
         {
-            changes.push(Change::ThicknessSide {
-                id: definition_text.clone(),
-                side,
-            });
+            changes.push(Change::thickness_side(definition_text.clone(), side));
         }
-        changes.push(Change::Cuts {
-            id: definition_text.clone(),
-            cuts: match &next {
+        changes.push(Change::cuts(
+            definition_text.clone(),
+            match &next {
                 UpdatedElement::Plate(r) => r.authored.cuts.clone(),
                 UpdatedElement::Member(r) => r.authored.cuts.clone(),
             },
-        });
+        ));
     }
     if patch_effect.placement || patch_effect.orientation {
         let placement = match &next {

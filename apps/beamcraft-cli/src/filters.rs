@@ -11,7 +11,7 @@
 //! so a query and a bound view cannot disagree.
 
 use crate::assembly::read_prims;
-use crate::plate::{PlateError, control, integrity, load_base, open_base, property, text};
+use crate::plate::{property, text};
 use beamcraft_engine::attribute::Schema;
 use beamcraft_engine::filter::{Dataset, Field, Operator, Record, Rule};
 use beamcraft_host::revision::{RevisionError, RevisionStore};
@@ -22,10 +22,12 @@ use beamcraft_model::attribute::{AttrDef, AttrType, AttrValue};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, ProjectId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{control, integrity, load_base, open_base};
 use std::collections::BTreeMap;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -43,7 +45,7 @@ pub struct Model {
 }
 
 /// Reads the head of the store (`None` manifest for a store without a revision).
-pub fn read(store: &RevisionStore) -> Result<Model, PlateError> {
+pub fn read(store: &RevisionStore) -> Result<Model, Refusal> {
     let empty = |manifest| {
         Ok(Model {
             schema: Schema::default(),
@@ -73,7 +75,7 @@ pub fn read(store: &RevisionStore) -> Result<Model, PlateError> {
 }
 
 /// The composed prims of one pinned read, verified before they are interpreted.
-fn prims_of(request: &OpenRequest) -> Result<Vec<Prim>, PlateError> {
+fn prims_of(request: &OpenRequest) -> Result<Vec<Prim>, Refusal> {
     let control = control();
     validate_layers(request.clone(), schema_identity()?, &control)?;
     let mut reader = Reader::default();
@@ -83,10 +85,7 @@ fn prims_of(request: &OpenRequest) -> Result<Vec<Prim>, PlateError> {
 
 /// One record per active element: kind, name, part class and defined typed values. Inactive
 /// targets and registry definitions are not objects, so they never match a filter.
-fn records_of(
-    prims: &[Prim],
-    attrs: &crate::attribute::AttrModel,
-) -> Result<Vec<Record>, PlateError> {
+fn records_of(prims: &[Prim], attrs: &crate::attribute::AttrModel) -> Result<Vec<Record>, Refusal> {
     let scope = format!("{ATTR_SCHEMA_PATH}/");
     let mut records = Vec::new();
     for prim in prims {
@@ -135,7 +134,7 @@ fn records_of(
 }
 
 /// The scalar literal for one field type; a numeric literal may pin the unit of its definition.
-fn scalar(j: &Json, kind: AttrType, def: Option<&AttrDef>) -> Result<AttrValue, PlateError> {
+fn scalar(j: &Json, kind: AttrType, def: Option<&AttrDef>) -> Result<AttrValue, Refusal> {
     let j = if let Json::Object(_) = j {
         j.closed(&["value", "unit"])
             .map_err(|_| invalid("filter unit literal must contain value and unit"))?;
@@ -186,11 +185,11 @@ fn scalar(j: &Json, kind: AttrType, def: Option<&AttrDef>) -> Result<AttrValue, 
 }
 
 /// Parse a bounded closed rule and check attribute names against the schema.
-pub fn decode_rule(j: &Json, schema: &Schema) -> Result<Rule, PlateError> {
+pub fn decode_rule(j: &Json, schema: &Schema) -> Result<Rule, Refusal> {
     let mut nodes = 0;
     parse(j, schema, 0, &mut nodes)
 }
-fn parse(j: &Json, schema: &Schema, depth: usize, nodes: &mut usize) -> Result<Rule, PlateError> {
+fn parse(j: &Json, schema: &Schema, depth: usize, nodes: &mut usize) -> Result<Rule, Refusal> {
     *nodes = nodes.saturating_add(1);
     if depth >= 8 || *nodes > 256 {
         return Err(invalid("filter exceeds 256 nodes or depth eight"));
@@ -237,7 +236,7 @@ fn parse(j: &Json, schema: &Schema, depth: usize, nodes: &mut usize) -> Result<R
                 .and_then(Json::string)
                 .map_err(|_| invalid("attribute selector is required"))?;
             if !schema.contains(name) {
-                return Err(PlateError {
+                return Err(Refusal {
                     rule_id: None,
                     code: ErrorCode::NotFound,
                     message: "filter refers to an unknown attribute",
@@ -275,6 +274,6 @@ fn parse(j: &Json, schema: &Schema, depth: usize, nodes: &mut usize) -> Result<R
 }
 
 /// One admitted query over the head: the same rule, dataset and semantics as the engine API.
-pub fn query(model: &Model, rule: &Rule) -> Result<Vec<ElementId>, PlateError> {
+pub fn query(model: &Model, rule: &Rule) -> Result<Vec<ElementId>, Refusal> {
     Ok(model.dataset.query(rule)?)
 }

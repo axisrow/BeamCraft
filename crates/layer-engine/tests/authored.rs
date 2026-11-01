@@ -128,7 +128,7 @@ fn elements() -> Vec<Change> {
         Change::Create(Element {
             id: PLATE.into(),
             name: "Plate Ω".into(),
-            shape: Shape::Plate {
+            shape: Shape::plate(PlateShape {
                 contour_mm: vec![
                     [0.0, 0.0, 0.0],
                     [1000.0, 0.0, 0.0],
@@ -142,14 +142,14 @@ fn elements() -> Vec<Change> {
                 hole_records: Vec::new(),
                 cuts: Vec::new(),
                 bends: Vec::new(),
-            },
+            }),
             placement: pose(),
             material: Some(r[1].digest),
         }),
         Change::Create(Element {
             id: MEMBER.into(),
             name: "Member".into(),
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],
@@ -157,7 +157,7 @@ fn elements() -> Vec<Change> {
                 roll_rad: Some(0.125),
                 placement: None,
                 cuts: Vec::new(),
-            },
+            }),
             placement: pose(),
             material: None,
         }),
@@ -572,13 +572,7 @@ fn absence_block_removal_reveal_weaker_defaults_without_flattening() {
         let expected_local = opinion.clone();
         let p = a
             .prepare(
-                batch(
-                    &o.context,
-                    vec![Change::Roll {
-                        id: MEMBER.into(),
-                        opinion,
-                    }],
-                ),
+                batch(&o.context, vec![Change::roll(MEMBER.into(), opinion)]),
                 &control(),
             )
             .unwrap();
@@ -655,10 +649,7 @@ fn foreign_reference_overrides_and_foreign_ancestor_writes_fail_atomically() {
             id: PLATE.into(),
             name: "Attempt".into(),
         },
-        Change::Thickness {
-            id: PLATE.into(),
-            mm: 10.0,
-        },
+        Change::thickness(PLATE.into(), 10.0),
         Change::Material {
             id: PLATE.into(),
             opinion: MaterialOpinion::Empty,
@@ -741,13 +732,7 @@ fn mismatched_schema_pin_corruption_and_nonfinite_never_change_live_state() {
         };
         assert_eq!(
             a.prepare(
-                batch(
-                    &o.context,
-                    vec![Change::Thickness {
-                        id: PLATE.into(),
-                        mm
-                    }]
-                ),
+                batch(&o.context, vec![Change::thickness(PLATE.into(), mm)]),
                 &control()
             )
             .unwrap_err()
@@ -922,13 +907,7 @@ fn hundred_serialized_changes_invalidate_contexts_and_derive_semantic_groups() {
     assert_eq!(o.context.identity().generation, 143);
     let p = a
         .prepare(
-            batch(
-                &o.context,
-                vec![Change::Thickness {
-                    id: PLATE.into(),
-                    mm: 12.0,
-                }],
-            ),
+            batch(&o.context, vec![Change::thickness(PLATE.into(), 12.0)]),
             &control(),
         )
         .unwrap();
@@ -973,10 +952,7 @@ fn duplicate_keys_wrong_kind_bad_mesh_and_missing_or_forged_definitions_fail() {
         a.prepare(
             batch(
                 &o.context,
-                vec![Change::Roll {
-                    id: PLATE.into(),
-                    opinion: Opinion::Value(0.0)
-                }]
+                vec![Change::roll(PLATE.into(), Opinion::Value(0.0))]
             ),
             &control()
         )
@@ -1080,13 +1056,7 @@ fn material_empty_remove_profile_pin_and_loaded_unknown_schema_preservation() {
         section: SectionProperties::default(),
     })
     .unwrap();
-    let mut input = batch(
-        &o.context,
-        vec![Change::Profile {
-            id: MEMBER.into(),
-            digest: r.digest,
-        }],
-    );
+    let mut input = batch(&o.context, vec![Change::profile(MEMBER.into(), r.digest)]);
     input.resources = vec![r];
     let p = a.prepare(input, &control()).unwrap();
     assert!(p.reads.contains(&Footprint {
@@ -1220,10 +1190,7 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
             id: PLATE.into(),
             name: "would be valid".into(),
         },
-        Change::Thickness {
-            id: PLATE.into(),
-            mm: f64::INFINITY,
-        },
+        Change::thickness(PLATE.into(), f64::INFINITY),
     ];
     assert_eq!(
         a.prepare(batch(&o.context, bad), &control())
@@ -1234,13 +1201,7 @@ fn changed_input_bounds_are_inclusive_and_rejections_keep_the_entire_patch_atomi
     assert_eq!(snapshot(&a, &o.context), before);
     let p = a
         .prepare(
-            batch(
-                &o.context,
-                vec![Change::Thickness {
-                    id: PLATE.into(),
-                    mm: 0.001,
-                }],
-            ),
+            batch(&o.context, vec![Change::thickness(PLATE.into(), 0.001)]),
             &control(),
         )
         .unwrap();
@@ -1376,7 +1337,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
     Change::Create(Element {
         id: PLATE.into(),
         name: "Holed".into(),
-        shape: Shape::Plate {
+        shape: Shape::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -1390,7 +1351,7 @@ fn holed_plate(holes: Vec<Vec<[f64; 3]>>) -> Change {
             hole_records: Vec::new(),
             cuts: Vec::new(),
             bends: Vec::new(),
-        },
+        }),
         placement: pose(),
         material: None,
     })
@@ -1507,21 +1468,23 @@ fn through_hole_polygons_are_authored_as_flat_points_and_counts_and_validated() 
 
 #[test]
 fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
-    use beamcraft_model::command::{CornerTreatment, PlateCorner};
-    let treated = |corners: Vec<PlateCorner>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        thickness_side: None,
-        corners,
-        holes: Vec::new(),
-        hole_records: Vec::new(),
-        cuts: Vec::new(),
-        bends: Vec::new(),
+    use steel::model::command::{CornerTreatment, PlateCorner};
+    let treated = |corners: Vec<PlateCorner>| {
+        Shape::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners,
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+            bends: Vec::new(),
+        })
     };
     let chamfer = PlateCorner {
         vertex: 1,
@@ -1693,22 +1656,24 @@ fn corner_treatments_are_authored_as_five_parallel_arrays_and_bounded() {
 
 #[test]
 fn bend_records_are_authored_as_seven_parallel_arrays_and_bounded() {
-    use beamcraft_model::command::BendRecord;
     use beamcraft_model::id::OpId;
-    let bent = |bends: Vec<BendRecord>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        thickness_side: None,
-        corners: Vec::new(),
-        bends,
-        holes: Vec::new(),
-        hole_records: Vec::new(),
-        cuts: Vec::new(),
+    use steel::model::command::BendRecord;
+    let bent = |bends: Vec<BendRecord>| {
+        Shape::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            bends,
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+        })
     };
     let fold = BendRecord {
         operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000d1").unwrap(),
@@ -1801,22 +1766,24 @@ fn bend_records_are_authored_as_seven_parallel_arrays_and_bounded() {
 
 #[test]
 fn a_bend_record_refuses_an_out_of_range_angle_or_radius_before_writing() {
-    use beamcraft_model::command::BendRecord;
     use beamcraft_model::id::OpId;
-    let bent = |bends: Vec<BendRecord>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        thickness_side: None,
-        corners: Vec::new(),
-        bends,
-        holes: Vec::new(),
-        hole_records: Vec::new(),
-        cuts: Vec::new(),
+    use steel::model::command::BendRecord;
+    let bent = |bends: Vec<BendRecord>| {
+        Shape::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            bends,
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+        })
     };
     let spec_of = |angle: f64, radius: f64| BendSpec::Fold {
         a_mm: [0.0, 250.0, 0.0],
@@ -1894,8 +1861,8 @@ fn a_bend_record_refuses_an_out_of_range_angle_or_radius_before_writing() {
 
 #[test]
 fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
-    use beamcraft_model::command::KeepSide;
     use beamcraft_model::id::OpId;
+    use steel::model::command::KeepSide;
     let record = |ordinal: u16, point: [f64; 3], normal: [f64; 3], keep: KeepSide| CutRecord {
         operation_id: OpId::parse("019a7bf0-0000-7000-8000-0000000000c7").unwrap(),
         ordinal,
@@ -1903,20 +1870,22 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         normal,
         keep,
     };
-    let cuts = |records: Vec<CutRecord>| Shape::Plate {
-        contour_mm: vec![
-            [0.0, 0.0, 0.0],
-            [1000.0, 0.0, 0.0],
-            [1000.0, 500.0, 0.0],
-            [0.0, 500.0, 0.0],
-        ],
-        thickness_mm: 10.0,
-        thickness_side: None,
-        corners: Vec::new(),
-        holes: Vec::new(),
-        hole_records: Vec::new(),
-        cuts: records,
-        bends: Vec::new(),
+    let cuts = |records: Vec<CutRecord>| {
+        Shape::plate(PlateShape {
+            contour_mm: vec![
+                [0.0, 0.0, 0.0],
+                [1000.0, 0.0, 0.0],
+                [1000.0, 500.0, 0.0],
+                [0.0, 500.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            holes: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: records,
+            bends: Vec::new(),
+        })
     };
     let one = vec![record(
         0,
@@ -1978,7 +1947,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
         vec![Change::Create(Element {
             id: MEMBER.into(),
             name: "Cut beam".into(),
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: false,
                 axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
@@ -1991,7 +1960,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
                     [1.0, 0.0, 0.0],
                     KeepSide::Negative,
                 )],
-            },
+            }),
             placement: pose(),
             material: None,
         })],
@@ -2078,7 +2047,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
     );
     // A zero normal never reaches the layer engine either.
     assert_eq!(
-        refuse(Shape::Member {
+        refuse(Shape::member(MemberShape {
             kind: MemberKind::Beam,
             curved: false,
             axis_mm: vec![[0.0, 0.0, 0.0], [6000.0, 0.0, 0.0]],
@@ -2091,7 +2060,7 @@ fn the_plane_cut_records_are_authored_as_five_parallel_arrays_and_validated() {
                 [0.0, 0.0, 0.0],
                 KeepSide::Negative
             )],
-        }),
+        })),
         ErrorCode::InvalidArgument
     );
 }
@@ -2758,14 +2727,7 @@ fn assemblies_and_part_of_records_are_authored_on_the_part_and_validated() {
         Some(ErrorCode::DanglingRelationship)
     );
     // An assembly has no shape and no material, and an identity placement in this slice.
-    let unsupported = refused(
-        &mut a,
-        &o,
-        vec![Change::Thickness {
-            id: FRAME.into(),
-            mm: 5.0,
-        }],
-    );
+    let unsupported = refused(&mut a, &o, vec![Change::thickness(FRAME.into(), 5.0)]);
     assert_eq!(unsupported, Some(ErrorCode::UnsupportedProperty));
     let mut moved = assembly("0199e7a0-0000-7000-8000-000000000103", "Moved");
     if let Change::Create(e) = &mut moved {
@@ -2891,7 +2853,7 @@ fn create_weld(id: &str, w: Weld) -> Change {
     Change::Create(Element {
         id: id.into(),
         name: "W1".into(),
-        shape: Shape::Weld(w),
+        shape: Shape::weld(w),
         placement: Placement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -2986,10 +2948,7 @@ fn a_weld_authors_its_properties_and_connects_record_and_writes_only_itself() {
         }],
     );
     for change in [
-        Change::Thickness {
-            id: WELD.into(),
-            mm: 5.0,
-        },
+        Change::thickness(WELD.into(), 5.0),
         Change::Placement {
             id: WELD.into(),
             placement: Placement {
@@ -3253,7 +3212,7 @@ fn create_bolt(id: &str, b: Bolt) -> Change {
     Change::Create(Element {
         id: id.into(),
         name: "B1".into(),
-        shape: Shape::Bolt(b),
+        shape: Shape::bolt(b),
         placement: Placement {
             translation_mm: [0.0; 3],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
@@ -3489,7 +3448,7 @@ fn wrong_bolt_inputs_targets_and_loaded_records_are_refused() {
 
 #[test]
 fn section_profiles_round_trip_and_tampering_is_refused() {
-    use beamcraft_model::section::{CustomSection, ParametricSection, SectionFamily};
+    use steel::model::section::{CustomSection, ParametricSection, SectionFamily};
     let (mut a, mut o) = populated();
     let i_shape = Resource::new(Definition::SectionProfile {
         shape: SectionShape::Parametric(
@@ -3517,13 +3476,7 @@ fn section_profiles_round_trip_and_tampering_is_refused() {
     .unwrap();
     // The member ends linked to the custom outline; only linked definitions are validated.
     for r in [i_shape, custom] {
-        let mut input = batch(
-            &o.context,
-            vec![Change::Profile {
-                id: MEMBER.into(),
-                digest: r.digest,
-            }],
-        );
+        let mut input = batch(&o.context, vec![Change::profile(MEMBER.into(), r.digest)]);
         input.resources = vec![r];
         let p = a.prepare(input, &control()).unwrap();
         o = a
@@ -3698,10 +3651,7 @@ fn levels_and_level_records_are_authored_on_the_element_and_validated() {
         ),
         // A level has no shape inputs, no body, a bounded finite elevation and the identity pose.
         (
-            vec![Change::Thickness {
-                id: STOREY.into(),
-                mm: 5.0,
-            }],
+            vec![Change::thickness(STOREY.into(), 5.0)],
             ErrorCode::UnsupportedProperty,
         ),
         (
@@ -4160,7 +4110,8 @@ fn connection_discriminator_roundtrips_and_rejects_missing_unknown_or_conflictin
 
 #[test]
 fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
-    use beamcraft_model::{command::KeepSide, id::OpId};
+    use beamcraft_model::id::OpId;
+    use steel::model::command::KeepSide;
     let record = CutRecord {
         operation_id: OpId::parse("019a7bf0-0000-7000-8000-00000000cf01").unwrap(),
         ordinal: 7,
@@ -4173,10 +4124,12 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
     let Change::Create(e) = changes.first_mut().unwrap() else {
         panic!("create");
     };
-    let Shape::Plate { cuts, .. } = &mut e.shape else {
+    let Some(plate) = e.shape.as_plate() else {
         panic!("plate");
     };
-    cuts.push(record);
+    let mut plate = plate.clone();
+    plate.cuts.push(record);
+    e.shape = Shape::plate(plate);
     let mut create = batch(&o.context, changes);
     create.resources = resources();
     let p = a.prepare(create, &control()).unwrap();
@@ -4189,13 +4142,7 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
             &control(),
         )
         .unwrap();
-    let mut b = batch(
-        &o.context,
-        vec![Change::Cuts {
-            id: PLATE.into(),
-            cuts: Vec::new(),
-        }],
-    );
+    let mut b = batch(&o.context, vec![Change::cuts(PLATE.into(), Vec::new())]);
     b.op_id = "019a7bf0-0000-7000-8000-00000000cf02".into();
     let p = a.prepare(b, &control()).unwrap();
     let o = a
@@ -4239,13 +4186,7 @@ fn removed_cuts_keep_a_monotone_counter_and_cannot_reactivate_their_id() {
         value(&prims, PLATE, "steel:cut:operationId"),
         Some(&Value::Array(Vec::new()))
     );
-    let mut b = batch(
-        &o.context,
-        vec![Change::Cuts {
-            id: PLATE.into(),
-            cuts: vec![record],
-        }],
-    );
+    let mut b = batch(&o.context, vec![Change::cuts(PLATE.into(), vec![record])]);
     b.op_id = "019a7bf0-0000-7000-8000-00000000cf03".into();
     assert!(a.prepare(b, &control()).is_err());
     assert_eq!(
@@ -4267,7 +4208,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
         operation_id: OpId::parse("019a7bf0-0000-7000-8000-00000000af01").unwrap(),
         ordinal: 7,
         polygon_mm: vec![[10.0, 10.0], [10.0, 20.0], [20.0, 20.0], [20.0, 10.0]],
-        kind: beamcraft_model::command::HoleKind::Hole,
+        kind: steel::model::command::HoleKind::Hole,
         owner: None,
     };
     let (mut a, o) = Author::open(
@@ -4285,10 +4226,12 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     let Change::Create(e) = changes.first_mut().unwrap() else {
         panic!("create");
     };
-    let Shape::Plate { hole_records, .. } = &mut e.shape else {
+    let Some(plate) = e.shape.as_plate() else {
         panic!("plate");
     };
-    hole_records.push(record.clone());
+    let mut plate = plate.clone();
+    plate.hole_records.push(record.clone());
+    e.shape = Shape::plate(plate);
     let mut b = batch(&o.context, changes);
     b.resources = resources();
     let prepared = a.prepare(b, &control()).unwrap();
@@ -4307,10 +4250,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     let (mut a, o) = open(input);
     let mut b = batch(
         &o.context,
-        vec![Change::HoleRecords {
-            id: PLATE.into(),
-            records: Vec::new(),
-        }],
+        vec![Change::hole_records(PLATE.into(), Vec::new())],
     );
     b.op_id = "019a7bf0-0000-7000-8000-00000000af02".into();
     let prepared = a.prepare(b, &control()).unwrap();
@@ -4337,10 +4277,7 @@ fn removed_holes_mask_weaker_opinions_and_keep_their_history() {
     );
     let mut b = batch(
         &o.context,
-        vec![Change::HoleRecords {
-            id: PLATE.into(),
-            records: vec![record],
-        }],
+        vec![Change::hole_records(PLATE.into(), vec![record])],
     );
     b.op_id = "019a7bf0-0000-7000-8000-00000000af03".into();
     assert!(a.prepare(b, &control()).is_err());
@@ -4352,7 +4289,7 @@ fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
         Change::Create(Element {
             id: MEMBER.into(),
             name: "arc".into(),
-            shape: Shape::Member {
+            shape: Shape::member(MemberShape {
                 kind: MemberKind::Beam,
                 curved: true,
                 axis_mm: points,
@@ -4360,7 +4297,7 @@ fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
                 roll_rad: roll,
                 placement: None,
                 cuts: vec![],
-            },
+            }),
             placement: pose(),
             material: None,
         })
@@ -4419,7 +4356,7 @@ fn circular_member_path_is_explicit_and_invalid_shape_metadata_is_refused() {
 
 #[test]
 fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
-    use beamcraft_model::command::{CornerTreatment, PlateCorner};
+    use steel::model::command::{CornerTreatment, PlateCorner};
     let (mut a, o) = populated();
     let corner = |vertex| PlateCorner {
         vertex,
@@ -4432,13 +4369,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
     ] {
         assert!(
             a.prepare(
-                batch(
-                    &o.context,
-                    vec![Change::Corners {
-                        id: id.into(),
-                        corners
-                    }]
-                ),
+                batch(&o.context, vec![Change::corners(id.into(), corners)]),
                 &control()
             )
             .is_err()
@@ -4448,10 +4379,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
         .prepare(
             batch(
                 &o.context,
-                vec![Change::Corners {
-                    id: PLATE.into(),
-                    corners: vec![corner(0)],
-                }],
+                vec![Change::corners(PLATE.into(), vec![corner(0)])],
             ),
             &control(),
         )
@@ -4467,10 +4395,7 @@ fn corner_replacement_bounds_vertices_and_can_clear_the_complete_record() {
         .unwrap();
     let mut input = batch(
         &installed.context,
-        vec![Change::Corners {
-            id: PLATE.into(),
-            corners: vec![],
-        }],
+        vec![Change::corners(PLATE.into(), vec![])],
     );
     input.op_id = "0199e7a0-0000-7000-8000-000000000099".into();
     let clear = a.prepare(input, &control()).unwrap();

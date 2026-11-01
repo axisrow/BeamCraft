@@ -9,12 +9,14 @@ use beamcraft_host::revision::{
     CommitPoint, ExpectedBase, LayerEntry, NoFault, RevisionDraft, Uuid7,
 };
 use beamcraft_layer_engine::authored::{EditTargets, rebase};
-use beamcraft_model::command::{CreatePlate, ElementPatch, Placement, UpdateElement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use steel::model::command::CreatePlate;
+use steel::model::command::{ElementPatch, UpdateElement};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 fn id(n: usize) -> Uuid7 {
@@ -150,15 +152,15 @@ impl Fixture {
         let source = self.draft.open_at(receipt.draft.sequence).unwrap();
         let accepted = self.published.open_at(receipt.accepted.sequence).unwrap();
         let candidate = rebase::prepare(
-            &plate::open_base(&plate::base_of(&base).unwrap()).unwrap(),
-            &plate::open_base(&plate::base_of(&source).unwrap()).unwrap(),
-            &plate::open_base(&plate::base_of(&accepted).unwrap()).unwrap(),
+            &session::pipeline::open_base(&session::pipeline::base_of(&base).unwrap()).unwrap(),
+            &session::pipeline::open_base(&session::pipeline::base_of(&source).unwrap()).unwrap(),
+            &session::pipeline::open_base(&session::pipeline::base_of(&accepted).unwrap()).unwrap(),
             &evidence::dependencies(&receipt.footprint),
             &EditTargets {
-                authored: plate::AUTHORED_LAYER.into(),
-                derived: plate::DERIVED_LAYER.into(),
+                authored: session::pipeline::AUTHORED_LAYER.into(),
+                derived: session::pipeline::DERIVED_LAYER.into(),
             },
-            &plate::control(),
+            &session::pipeline::control(),
         )
         .unwrap();
         let entries = candidate

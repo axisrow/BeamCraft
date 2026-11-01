@@ -7,6 +7,13 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 authors.workspace = true
+# The integration suites build into one `kernel` test binary (`tests/kernel.rs`): one link
+# instead of eleven, and the shared `common*` helpers compile once.
+autotests = false
+
+[[test]]
+name = "kernel"
+path = "tests/kernel.rs"
 
 [dependencies]
 beamcraft-geom.workspace = true

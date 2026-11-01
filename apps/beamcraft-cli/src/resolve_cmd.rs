@@ -5,20 +5,18 @@
 //! API.
 
 use crate::plate_cmd::revision_json;
-use beamcraft_cli::{
-    plate::PlateError,
-    workspace::resolve::{ResolveRequest, resolve_workspace},
-};
+use beamcraft_cli::workspace::resolve::{ResolveRequest, resolve_workspace};
 use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
 };
 use beamcraft_json::Json;
 use beamcraft_model::{error::ErrorCode, id::OpId};
+use session::Refusal;
 use std::{collections::BTreeMap, ffi::OsString, path::Path};
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -32,7 +30,7 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
     }
 }
 
-fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
+fn run(args: &[OsString]) -> Result<(Json, u8), Refusal> {
     let args = args
         .iter()
         .map(|s| {
@@ -73,7 +71,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), PlateError> {
     let dir = Path::new(required("--workspace-dir")?);
     let workspace = BlobStore::new(dir)
         .map(RevisionStore::new)
-        .map_err(|error| PlateError {
+        .map_err(|error| Refusal {
             rule_id: None,
             code: error.code(),
             message: "resolve store is not usable",

@@ -20,7 +20,6 @@
 //! merge or rebase, a draft keeps one linear history, and `publish` publishes the draft head as one
 //! revision. Two workspaces of the same user are two directories and do not see each other.
 
-use crate::plate::{PlateError, RevisionSummary, host_uuid, integrity, summarize};
 use crate::publication::commit_verified;
 use beamcraft_engine::scope::WorkspaceScope;
 use beamcraft_host::revision::{
@@ -29,6 +28,8 @@ use beamcraft_host::revision::{
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
+use session::pipeline::{RevisionSummary, host_uuid, integrity, summarize};
 use std::path::{Path, PathBuf};
 
 mod state;
@@ -46,8 +47,8 @@ const META_MAGIC_REBASED: &str = "beamcraft-workspace 2";
 const META_MAGIC_SCOPED: &str = "beamcraft-workspace 3";
 const META_CAP: u64 = 4096;
 
-pub(crate) fn unusable() -> PlateError {
-    PlateError {
+pub(crate) fn unusable() -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::BackendUnavailable,
         message: "workspace metadata is not usable",
@@ -113,7 +114,7 @@ impl WorkspaceMeta {
         out
     }
 
-    fn decode(text: &str) -> Result<Self, PlateError> {
+    fn decode(text: &str) -> Result<Self, Refusal> {
         let rows: Vec<&str> = text.lines().collect();
         let magic = rows.first().copied();
         let scoped = magic == Some(META_MAGIC_SCOPED);
@@ -121,7 +122,7 @@ impl WorkspaceMeta {
             return Err(unusable());
         }
         let mut at = 1usize;
-        let mut field = |key: &str| -> Result<&str, PlateError> {
+        let mut field = |key: &str| -> Result<&str, Refusal> {
             let line = rows.get(at).copied().ok_or_else(unusable)?;
             // A non-matching row is left in place: the optional fields below decide by key.
             let value = line
@@ -193,7 +194,7 @@ fn meta_path(dir: &Path) -> PathBuf {
 }
 
 /// Recovers any pending rebase, then reads and validates workspace metadata.
-pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
+pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, Refusal> {
     WorkspaceState::open(dir)?
         .meta()
         .cloned()
@@ -202,7 +203,7 @@ pub fn read_meta(dir: &Path) -> Result<WorkspaceMeta, PlateError> {
 
 /// Pure read of the workspace metadata: no locks, no recovery, `None` when absent. The U19
 /// routing derives the authorized scope from it for every command without taking a lease.
-pub fn peek_meta(dir: &Path) -> Result<Option<WorkspaceMeta>, PlateError> {
+pub fn peek_meta(dir: &Path) -> Result<Option<WorkspaceMeta>, Refusal> {
     state::read(dir)
 }
 
@@ -210,7 +211,7 @@ pub(crate) fn write_meta(
     dir: &Path,
     expected: Option<&WorkspaceMeta>,
     next: &WorkspaceMeta,
-) -> Result<(), PlateError> {
+) -> Result<(), Refusal> {
     WorkspaceState::open(dir)?.compare_and_swap(expected, next)?;
     Ok(())
 }
@@ -252,8 +253,8 @@ pub struct WorkspaceStatus {
 
 fn head_of(
     store: &RevisionStore,
-) -> Result<Option<beamcraft_host::revision::RevisionInfo>, PlateError> {
-    store.head().map_err(PlateError::from)
+) -> Result<Option<beamcraft_host::revision::RevisionInfo>, Refusal> {
+    store.head().map_err(Refusal::from)
 }
 
 /// Resolves the exact accepted pin independently of the local published-operation prefix.
@@ -262,7 +263,7 @@ fn head_of(
 pub(crate) fn published_base(
     published: &RevisionStore,
     meta: &WorkspaceMeta,
-) -> Result<Revision, PlateError> {
+) -> Result<Revision, Refusal> {
     let head = published
         .head()?
         .ok_or_else(|| integrity("the published store has no revision"))?;
@@ -293,11 +294,11 @@ pub fn create_workspace(
     dir: &Path,
     request: &CreateWorkspace,
     hook: &mut dyn CommitHook,
-) -> Result<WorkspaceStatus, PlateError> {
+) -> Result<WorkspaceStatus, Refusal> {
     let revision = match published.open() {
         Ok(revision) => revision,
         Err(RevisionError::NoRevision) => {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::NotFound,
                 message: "there is no published revision to fork",
@@ -313,9 +314,9 @@ pub fn create_workspace(
         let classic = content
             .entries()
             .iter()
-            .any(|e| e.name() == crate::plate::AUTHORED_LAYER);
+            .any(|e| e.name() == session::pipeline::AUTHORED_LAYER);
         if classic {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::InvalidArgument,
                 message: "this store is not organized into section scopes",
@@ -327,14 +328,14 @@ pub fn create_workspace(
     let meta = if exists {
         let existing = read_meta(dir)?;
         if existing.workspace_id != request.workspace_id || existing.user_id != request.user_id {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::DuplicateId,
                 message: "the directory is already another workspace",
             });
         }
         if existing.scope != request.scope {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::DuplicateId,
                 message: "the directory is already a workspace with another authorized scope",
@@ -343,7 +344,7 @@ pub fn create_workspace(
         existing
     } else {
         if head_of(workspace)?.is_some() {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::DuplicateId,
                 message: "the directory already holds revisions",
@@ -365,7 +366,7 @@ pub fn create_workspace(
         let mut entries = Vec::new();
         for entry in content.entries() {
             let bytes = revision.layer_bytes(entry.name())?;
-            workspace.blobs().publish(&bytes).map_err(|e| PlateError {
+            workspace.blobs().publish(&bytes).map_err(|e| Refusal {
                 rule_id: None,
                 code: e.code(),
                 message: "layer blob could not be stored",
@@ -392,7 +393,7 @@ pub fn status(
     published: &RevisionStore,
     workspace: &RevisionStore,
     dir: &Path,
-) -> Result<WorkspaceStatus, PlateError> {
+) -> Result<WorkspaceStatus, Refusal> {
     let state = WorkspaceState::open(dir)?;
     let meta = state.meta().cloned().ok_or_else(unusable)?;
     let draft = head_of(workspace)?.ok_or_else(|| integrity("the workspace has no revision"))?;
@@ -418,7 +419,7 @@ pub fn status(
 pub fn pending_conflicts(
     workspace: &RevisionStore,
     dir: &Path,
-) -> Result<Vec<beamcraft_engine::rebase::Conflict>, PlateError> {
+) -> Result<Vec<beamcraft_engine::rebase::Conflict>, Refusal> {
     let meta = read_meta(dir)?;
     conflicts::active(workspace, dir, &meta)
 }
@@ -442,14 +443,14 @@ fn publish_in_scope(
     draft: &Revision,
     base: &Revision,
     layout: &WorkspaceScope,
-) -> Result<(), PlateError> {
-    let section = layout.section_layer().map_err(PlateError::from)?;
-    let grids = layout.grids_layer().map_err(PlateError::from)?;
+) -> Result<(), Refusal> {
+    let section = layout.section_layer().map_err(Refusal::from)?;
+    let grids = layout.grids_layer().map_err(Refusal::from)?;
     let mut authorized = std::collections::BTreeSet::from([section]);
     if layout.shared {
         authorized.insert(grids);
     }
-    let refused = |rule_id: Option<&'static str>, code, message| PlateError {
+    let refused = |rule_id: Option<&'static str>, code, message| Refusal {
         rule_id,
         code,
         message,
@@ -469,7 +470,7 @@ fn publish_in_scope(
     let outside = |name: &str, role: LayerRole| {
         // The derived layer follows the owning authored inputs and the root carries the units
         // and schema pins; the root's composition is checked separately below.
-        name != crate::plate::DERIVED_LAYER
+        name != session::pipeline::DERIVED_LAYER
             && name != root
             && role != LayerRole::External
             && !authorized.contains(name)
@@ -522,7 +523,7 @@ pub fn publish_workspace(
     workspace: &RevisionStore,
     dir: &Path,
     hook: &mut dyn CommitHook,
-) -> Result<Published, PlateError> {
+) -> Result<Published, Refusal> {
     let mut state = WorkspaceState::open(dir)?;
     let meta = state.meta().cloned().ok_or_else(unusable)?;
     let draft = workspace.open()?;
@@ -554,7 +555,7 @@ pub fn publish_workspace(
         });
     }
     if draft_sequence <= meta.synced_sequence {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the workspace has nothing to publish",
@@ -565,7 +566,7 @@ pub fn publish_workspace(
         return Err(conflicts::refusal());
     }
     if head.info().revision() != &meta.base_revision {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::BaseRevisionMismatch,
             message: "the published head moved since the workspace was forked",
@@ -591,7 +592,7 @@ pub fn publish_workspace(
         .as_ref()
         .is_some_and(|work| work.reads().is_empty() && work.writes().is_empty())
     {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::InvalidArgument,
             message: "the unsent work was renounced; there is nothing to publish",
@@ -602,7 +603,7 @@ pub fn publish_workspace(
     let mut entries = Vec::new();
     for entry in content.entries() {
         let bytes = draft.layer_bytes(entry.name())?;
-        published.blobs().publish(&bytes).map_err(|e| PlateError {
+        published.blobs().publish(&bytes).map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "layer blob could not be stored",
@@ -612,7 +613,7 @@ pub fn publish_workspace(
     let generation = published_content
         .workspace_generation()
         .checked_add(1)
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "generation exhausted",

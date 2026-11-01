@@ -55,7 +55,9 @@ impl Enclosure {
         self.lo * 0.5 + self.hi * 0.5
     }
 
-    pub(crate) fn add(self, other: Self) -> Option<Self> {
+    /// Shared with the steel crate.
+    #[allow(clippy::should_implement_trait)]
+    pub fn add(self, other: Self) -> Option<Self> {
         finite_pair(
             add_pair(self.lo, other.lo)?.0,
             add_pair(self.hi, other.hi)?.1,

@@ -256,7 +256,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        # The account runs at most five macOS jobs at once. A sixth shard always waited for
+        # another to finish (30-80 s in the runs of 2026-10-31), so five shards finish sooner.
+        shard: [1, 2, 3, 4, 5]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -294,9 +296,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
-          - { os: macos-latest, target: aarch64-apple-darwin }
+        # The macOS leg is build-time evidence (#153), not a test gate. On pull requests it took
+        # one of the five macOS runners while the macOS test shards waited, so it runs on pushes
+        # to master and on manual runs. The Linux leg still builds the release profile on every
+        # pull request.
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"}]' || '[{"os":"ubuntu-latest","target":"x86_64-unknown-linux-gnu"},{"os":"macos-latest","target":"aarch64-apple-darwin"}]') }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

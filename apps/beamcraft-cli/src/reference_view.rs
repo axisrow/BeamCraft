@@ -5,7 +5,7 @@
 
 mod display;
 
-use crate::plate::{PlateError, property, text};
+use crate::plate::{property, text};
 use crate::reference::wrapper_of;
 use beamcraft_engine::SceneElement;
 use beamcraft_engine::limits::{MAX_BLOB_TRIANGLES, MAX_BLOB_VERTICES};
@@ -14,28 +14,29 @@ use beamcraft_layer_engine::authored::{ReferenceView, read_references};
 use beamcraft_layer_engine::{Prim, Value};
 use beamcraft_model::error::ErrorCode;
 use display::display_meshes;
+use session::Refusal;
 use std::collections::{BTreeMap, BTreeSet};
 
-fn invalid() -> PlateError {
-    PlateError {
+fn invalid() -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message: "invalid foreign display geometry",
     }
 }
 
-fn unsupported() -> PlateError {
-    PlateError {
+fn unsupported() -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::UnsupportedGeometry,
         message: "reference view supports translated Cube and triangle/convex-quad Mesh cages only",
     }
 }
 
-fn array<'a>(p: &'a Prim, name: &str, cap: usize) -> Result<&'a [Value], PlateError> {
+fn array<'a>(p: &'a Prim, name: &str, cap: usize) -> Result<&'a [Value], Refusal> {
     match property(p, name) {
         Some(Value::Array(values)) if values.len() <= cap => Ok(values),
-        Some(Value::Array(_)) => Err(PlateError {
+        Some(Value::Array(_)) => Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "foreign display geometry exceeds the view budget",
@@ -44,7 +45,7 @@ fn array<'a>(p: &'a Prim, name: &str, cap: usize) -> Result<&'a [Value], PlateEr
     }
 }
 
-fn point(value: &Value) -> Result<[f64; 3], PlateError> {
+fn point(value: &Value) -> Result<[f64; 3], Refusal> {
     let Value::Array(values) = value else {
         return Err(invalid());
     };
@@ -54,7 +55,7 @@ fn point(value: &Value) -> Result<[f64; 3], PlateError> {
     Ok([*x, *y, *z])
 }
 
-fn index(value: &Value) -> Result<u32, PlateError> {
+fn index(value: &Value) -> Result<u32, Refusal> {
     match value {
         Value::Int(i) => u32::try_from(*i).map_err(|_| invalid()),
         Value::Uint(i) => u32::try_from(*i).map_err(|_| invalid()),
@@ -62,7 +63,7 @@ fn index(value: &Value) -> Result<u32, PlateError> {
     }
 }
 
-fn translation(p: &Prim) -> Result<[f64; 3], PlateError> {
+fn translation(p: &Prim) -> Result<[f64; 3], Refusal> {
     // USD operations not named in xformOpOrder are inactive, not an implicit transform.
     if property(p, "xformOpOrder").is_none() {
         return Ok([0.0; 3]);
@@ -84,7 +85,7 @@ fn translation(p: &Prim) -> Result<[f64; 3], PlateError> {
     Ok(result)
 }
 
-fn geometry(p: &Prim, translation: [f64; 3]) -> Result<Option<ReferenceGeometry>, PlateError> {
+fn geometry(p: &Prim, translation: [f64; 3]) -> Result<Option<ReferenceGeometry>, Refusal> {
     let mut mesh = match p.type_name.as_deref() {
         Some("Xform" | "Scope") | None => return Ok(None),
         Some("Cube") => {
@@ -147,14 +148,14 @@ fn geometry(p: &Prim, translation: [f64; 3]) -> Result<Option<ReferenceGeometry>
 /// display uses [`scene_elements`] and its own rules (`display_meshes`).
 pub(crate) fn reference_surfaces(
     prims: &[Prim],
-) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, PlateError> {
+) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, Refusal> {
     surfaces(prims, false)
 }
 
 fn surfaces(
     prims: &[Prim],
     display: bool,
-) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, PlateError> {
+) -> Result<Vec<(ReferenceView, Vec<ReferenceGeometry>)>, Refusal> {
     let by_path: BTreeMap<_, _> = prims.iter().map(|p| (p.path.as_str(), p)).collect();
     read_references(prims)?
         .iter()
@@ -175,7 +176,7 @@ fn surfaces(
 fn wrapper_meshes(
     view: &ReferenceView,
     by_path: &BTreeMap<&str, &Prim>,
-) -> Result<Vec<ReferenceGeometry>, PlateError> {
+) -> Result<Vec<ReferenceGeometry>, Refusal> {
     let prefix = format!("{}/", view.source_root);
     let mut ancestors = BTreeMap::new();
     let mut meshes = Vec::new();
@@ -207,7 +208,7 @@ fn wrapper_meshes(
         let [px, py, pz] = parent;
         let offset = [px + x, py + y, pz + z];
         if offset.iter().any(|v| !v.is_finite()) {
-            return Err(PlateError {
+            return Err(Refusal {
                 rule_id: None,
                 code: ErrorCode::NonFiniteNumber,
                 message: "foreign translation overflows",
@@ -222,7 +223,7 @@ fn wrapper_meshes(
 }
 
 /// Converts a complete, validated composed snapshot; it does not reopen or write a source file.
-pub(crate) fn scene_elements(prims: &[Prim]) -> Result<Vec<SceneElement>, PlateError> {
+pub(crate) fn scene_elements(prims: &[Prim]) -> Result<Vec<SceneElement>, Refusal> {
     let mut elements = Vec::new();
     for (view, meshes) in surfaces(prims, true)? {
         let wrapper = wrapper_of(&view)?;

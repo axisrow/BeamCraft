@@ -4,13 +4,14 @@
 //! D01 closed, canonical USDA intent. Writing requires admitted engine intent; reading goes
 //! through the bounded layer engine and the same engine admission, never through a raw setter.
 
-use crate::plate::{PlateError, integrity};
 use beamcraft_engine::drawing::{
     self, CutSide, DetailSpec, DimensionSpec, DraftingGeometry, DraftingSpec, Drawing, DrawingSpec,
     LayerSpec, LineType, MAX_DETAILS, MAX_DRAFTING_ENTITIES, MAX_INTENT_PAGE_ITEMS, MAX_LAYERS,
     MAX_SECTIONS, MAX_VIEWS, Plane, SectionSpec, SheetFrame, SheetSpec, SourceModelPin, TitleBlock,
     ViewSpec,
 };
+use session::Refusal;
+use session::pipeline::integrity;
 
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_layer_engine::{
@@ -35,13 +36,13 @@ pub const MAX_INTENT_BYTES: usize = 131_072;
 pub const SCHEMA_DESCRIPTOR: &str = "beamcraft-drawing-usd/4;intent-bytes=131072;number-text-bytes=24;root=/Drawing;view=/Drawing/View;view-title=drawing:title;views=/Drawing/Views;views-cap=16;sections=/Drawing/Sections;sections-cap=16;details=/Drawing/Details;details-cap=16;page-items=64;dimension=/Drawing/Dimension;sheet=/Drawing/Sheet;sheet-sizes=a4,a3,a2,a1,a0;drafting=/Drawing/Drafting;drafting-entities=line,polyline,arc,circle,rectangle,text,hatch,symbol,free_dimension;drafting-cap=60;drafting-attrs=layer,linetype;linetypes=continuous,dashed,dotted,dashdot;layers=/Drawing/Layers;layers-cap=16;intent=beamcraft-drawing/1;source=project,revision,manifest,schema,generation;anchors=qualified-member-vertices;units=mm;projection=front,top,right;canonical-usda";
 
 /// Independent drawing schema digest; never interchangeable with the engineering-model schema.
-pub fn schema_identity() -> Result<ContentDigest, PlateError> {
+pub fn schema_identity() -> Result<ContentDigest, Refusal> {
     Sha256::digest(SCHEMA_DESCRIPTOR.as_bytes())
         .map_err(|_| integrity("drawing schema digest failed"))
 }
 
-fn limit() -> PlateError {
-    PlateError {
+fn limit() -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::LimitExceeded,
         message: "drawing intent byte cap exceeded",
@@ -73,7 +74,7 @@ fn title_line(title: &Option<String>, indent: &str) -> String {
 
 /// Encodes bounded immutable intent as ordinary USD custom attributes. It authors no engineering
 /// prim, geometry or approved mark and grants no source verification/publication authority.
-pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
+pub fn encode(drawing: &Drawing) -> Result<Asset, Refusal> {
     let s = drawing.spec();
     let source = s.source;
     let [a, b] = &s.dimension.anchors;
@@ -190,7 +191,7 @@ pub fn encode(drawing: &Drawing) -> Result<Asset, PlateError> {
     })
 }
 
-fn value<'a>(prim: &'a Prim, name: &str, type_name: &str) -> Result<&'a Value, PlateError> {
+fn value<'a>(prim: &'a Prim, name: &str, type_name: &str) -> Result<&'a Value, Refusal> {
     let property = prim
         .properties
         .iter()
@@ -202,7 +203,7 @@ fn value<'a>(prim: &'a Prim, name: &str, type_name: &str) -> Result<&'a Value, P
         .ok_or_else(|| integrity("drawing attribute has no value"))
 }
 
-fn text<'a>(prim: &'a Prim, name: &str, type_name: &str) -> Result<&'a str, PlateError> {
+fn text<'a>(prim: &'a Prim, name: &str, type_name: &str) -> Result<&'a str, Refusal> {
     match value(prim, name, type_name)? {
         Value::Text(text) => Ok(text),
         _ => Err(integrity("drawing attribute is not text")),
@@ -212,7 +213,7 @@ fn text<'a>(prim: &'a Prim, name: &str, type_name: &str) -> Result<&'a str, Plat
 /// Reads one view's optional title attribute. An absent attribute is the unannotated
 /// default; any present-but-malformed one refuses, and the canonical re-encode comparison
 /// below refuses every other deviation from the closed schema.
-fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, PlateError> {
+fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, Refusal> {
     let Some(property) = prim.properties.iter().find(|p| p.name == name) else {
         return Ok(None);
     };
@@ -225,14 +226,14 @@ fn optional_text(prim: &Prim, name: &str) -> Result<Option<String>, PlateError> 
     }
 }
 
-fn number(prim: &Prim, name: &str) -> Result<f64, PlateError> {
+fn number(prim: &Prim, name: &str) -> Result<f64, Refusal> {
     match value(prim, name, "double")? {
         Value::Number(n) => Ok(*n),
         _ => Err(integrity("drawing attribute is not a double")),
     }
 }
 
-fn unsigned(prim: &Prim, name: &str, kind: &str) -> Result<u64, PlateError> {
+fn unsigned(prim: &Prim, name: &str, kind: &str) -> Result<u64, Refusal> {
     match value(prim, name, kind)? {
         Value::Uint(n) => Ok(*n),
         Value::Int(n) => u64::try_from(*n).map_err(|_| integrity("negative drawing integer")),
@@ -241,7 +242,7 @@ fn unsigned(prim: &Prim, name: &str, kind: &str) -> Result<u64, PlateError> {
 }
 
 /// Reads one view's exactly-two-component paper origin.
-fn paper_origin(prim: &Prim) -> Result<[f64; 2], PlateError> {
+fn paper_origin(prim: &Prim) -> Result<[f64; 2], Refusal> {
     match value(prim, "drawing:origin", "double[]")? {
         Value::Array(values) => match values.as_slice() {
             [Value::Number(x), Value::Number(y)] => Ok([*x, *y]),
@@ -257,7 +258,7 @@ fn ordinal_children<'a>(
     items: &'a [Prim],
     prefix: &str,
     cap: usize,
-) -> Result<Vec<&'a Prim>, PlateError> {
+) -> Result<Vec<&'a Prim>, Refusal> {
     let mut children: BTreeMap<usize, &Prim> = BTreeMap::new();
     for item in items {
         let Some(name) = item.path.strip_prefix(prefix) else {
@@ -291,7 +292,7 @@ fn ordinal_children<'a>(
 /// Revision/generation belong to the document; they are not substituted for its source pin.
 /// This first schema admits exactly canonical bytes produced by [`encode`], no composition,
 /// unknown fields or alternate topology. Decoding alone does not verify the archived source.
-pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Drawing, PlateError> {
+pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Drawing, Refusal> {
     if asset.bytes.len() > MAX_INTENT_BYTES {
         return Err(limit());
     }
@@ -370,7 +371,7 @@ pub fn decode(asset: Asset, identity: Identity, control: &Control) -> Result<Dra
     if text(root, "drawing:contract", "string")? != drawing::CONTRACT_VERSION
         || text(root, "drawing:schema", "string")? != schema_identity()?.to_string()
     {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::UnsupportedVersion,
             message: "unsupported drawing schema or contract",

@@ -30,7 +30,8 @@ path = "junit.xml"
 # at least ~40 s of serial time on the reference Mac (baseline 2026-10-25):
 # cli export_ifc, numbering_approval, numbering, libraries,
 # environments and pick (modules of the one `cli` test binary); host recovery,
-# revision and compaction; kernel g09_budget_fuzz and g05_profile_extrusion.
+# revision and compaction; kernel g09_budget_fuzz and g05_profile_extrusion (modules of
+# the one `kernel` test binary).
 # Nothing is removed: the skipped suites run in the default profile and in CI.
 # Re-measure and move the line when a suite outgrows this list; an explicit
 # filter on the command line overrides default-filter, so any skipped test stays
@@ -39,5 +40,14 @@ default-filter = '''not (
     (package(beamcraft-cli) and binary(cli) and test(
         /^(export_ifc|numbering_approval|numbering|libraries|environments|pick)::/))
     or (package(beamcraft-host) and (binary(recovery) or binary(revision) or binary(compaction)))
-    or (package(beamcraft-kernel) and (binary(g09_budget_fuzz) or binary(g05_profile_extrusion)))
+    or (package(beamcraft-kernel) and binary(kernel) and test(/^(g09_budget_fuzz|g05_profile_extrusion)::/))
 )'''
+
+[profile.ci]
+# CI's profile: everything the `default` profile runs, with no filter of its own, plus a
+# JUnit report per shard. The `ci-ok` job checks those reports against the full test list
+# (tools/ci-gate.py), so a shard that loses tests, or a filter that drops some, fails CI.
+retries = 0
+
+[profile.ci.junit]
+path = "junit.xml"

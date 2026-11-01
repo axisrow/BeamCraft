@@ -9,7 +9,6 @@
 //! canonical bytes: the same inputs produce the same bytes on every retry and in every process.
 
 use super::WorkspaceMeta;
-use crate::plate::{PlateError, integrity};
 use beamcraft_engine::{
     footprint::{Entry, Group, Target},
     rebase::{Conflict, ConflictKind, MAX_REBASE_CONFLICTS},
@@ -17,6 +16,8 @@ use beamcraft_engine::{
 use beamcraft_host::revision::{RevisionStore, Uuid7};
 use beamcraft_json::Json;
 use beamcraft_model::{digest::ContentDigest, error::ErrorCode, id::ElementId};
+use session::Refusal;
+use session::pipeline::integrity;
 use std::{
     fs,
     io::{Read, Write},
@@ -26,7 +27,7 @@ use std::{
 const FILE: &str = "conflicts.pending";
 const BYTES_CAP: u64 = 65536;
 
-fn bad() -> PlateError {
+fn bad() -> Refusal {
     integrity("recorded workspace conflicts are not usable")
 }
 
@@ -48,7 +49,7 @@ pub struct PendingConflicts {
 }
 
 impl PendingConflicts {
-    fn encode(&self) -> Result<String, PlateError> {
+    fn encode(&self) -> Result<String, Refusal> {
         if self.conflicts.len() > MAX_REBASE_CONFLICTS {
             return Err(bad());
         }
@@ -81,12 +82,12 @@ impl PendingConflicts {
         Ok(out)
     }
 
-    fn decode(text: &str) -> Result<Self, PlateError> {
+    fn decode(text: &str) -> Result<Self, Refusal> {
         let mut lines = text.lines();
         if lines.next() != Some("beamcraft-conflicts 1") {
             return Err(bad());
         }
-        let mut field = |key: &str| -> Result<&str, PlateError> {
+        let mut field = |key: &str| -> Result<&str, Refusal> {
             lines
                 .next()
                 .and_then(|l| l.strip_prefix(key))
@@ -179,15 +180,15 @@ pub fn conflict_json(conflict: &Conflict) -> Json {
 
 /// The typed refusal that gates the draft while conflicts stand; the named list travels in
 /// the status and rejection diagnostics.
-pub(crate) fn refusal() -> PlateError {
-    PlateError::new(
+pub(crate) fn refusal() -> Refusal {
+    Refusal::new(
         ErrorCode::DependencyConflict,
         "unresolved semantic conflicts against the accepted base block this draft; \
          inspect-workspace lists every conflict",
     )
 }
 
-fn read(dir: &Path) -> Result<Option<PendingConflicts>, PlateError> {
+fn read(dir: &Path) -> Result<Option<PendingConflicts>, Refusal> {
     let path = dir.join(FILE);
     match fs::symlink_metadata(&path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -206,7 +207,7 @@ fn read(dir: &Path) -> Result<Option<PendingConflicts>, PlateError> {
     PendingConflicts::decode(std::str::from_utf8(&bytes).map_err(|_| bad())?).map(Some)
 }
 
-pub(crate) fn store(dir: &Path, record: &PendingConflicts) -> Result<(), PlateError> {
+pub(crate) fn store(dir: &Path, record: &PendingConflicts) -> Result<(), Refusal> {
     let bytes = record.encode()?;
     if let Some(previous) = read(dir)?
         && previous.encode()? == bytes
@@ -230,7 +231,7 @@ pub(crate) fn store(dir: &Path, record: &PendingConflicts) -> Result<(), PlateEr
     fs::rename(&temporary, dir.join(FILE)).map_err(|_| bad())
 }
 
-fn clear(dir: &Path) -> Result<(), PlateError> {
+fn clear(dir: &Path) -> Result<(), Refusal> {
     match fs::remove_file(dir.join(FILE)) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -245,7 +246,7 @@ pub(crate) fn active(
     workspace: &RevisionStore,
     dir: &Path,
     meta: &WorkspaceMeta,
-) -> Result<Vec<Conflict>, PlateError> {
+) -> Result<Vec<Conflict>, Refusal> {
     let Some(record) = read(dir)? else {
         return Ok(Vec::new());
     };

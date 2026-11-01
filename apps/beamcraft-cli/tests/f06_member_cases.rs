@@ -10,13 +10,14 @@
     clippy::panic
 )]
 
-use beamcraft_engine::command::{MaterialInfo, create_plate, no_materials};
-use beamcraft_engine::member::{CreateMemberOutcome, ProfileInfo, create_straight_member};
 use beamcraft_json::{Json, Limits};
-use beamcraft_model::command::{CreatePlate, CreateStraightMember, MemberKind, Placement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::id::ElementId;
 use std::collections::{BTreeMap, BTreeSet};
+use steel::engine::command::{MaterialInfo, create_plate, no_materials};
+use steel::engine::member::{CreateMemberOutcome, ProfileInfo, create_straight_member};
+use steel::model::command::{CreatePlate, CreateStraightMember, MemberKind};
 
 const CASES: &str = "POS-04 POS-05 POS-06 POS-07 POS-08 POS-09 POS-10 POS-12 POS-13 POS-14 \
     POS-15 POS-41 POS-42 POS-46 POS-50 POS-51 POS-52 POS-57 POS-58 \

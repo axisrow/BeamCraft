@@ -5,19 +5,21 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    self, CreateRequest, Created, PlateError, RevisionSummary, check_footprint, control, decode,
-    digest_of, host_uuid, integrity, load_base, open_base, prior_op_with, replay_summary,
-    summarize,
+    self, CreateRequest, Created, check_footprint, decode, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::plate_draft::{
-    DraftAdmission, PlateDraft, UnsupportedPlate, admit_create_plate_draft,
-};
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Change, Element, Placement, Prepare, Shape, schema_identity,
+    Change, Element, Placement, PlateShape, Prepare, Shape, schema_identity,
+};
+use session::Refusal;
+use session::pipeline::{
+    RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base, summarize,
+};
+use steel::engine::plate_draft::{
+    DraftAdmission, PlateDraft, UnsupportedPlate, admit_create_plate_draft,
 };
 
 /// Saved unsupported input with its committed revision and replay result.
@@ -48,7 +50,7 @@ pub fn create_plate_draft(
     store: &RevisionStore,
     request: &CreateRequest,
     hook: &mut dyn CommitHook,
-) -> Result<CreatedDraft, PlateError> {
+) -> Result<CreatedDraft, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &request.project, &request.workspace)?;
     let open_request = open_base(&base)?;
@@ -84,7 +86,7 @@ pub fn create_plate_draft(
                 .find(|(p, _)| p.id == request.command.new_id)
                 .map(|(p, _)| p)
                 .ok_or_else(|| integrity("replayed element is absent"))?;
-            let state = beamcraft_engine::plate_draft::create_plate_draft(
+            let state = steel::engine::plate_draft::create_plate_draft(
                 &authored.to_command(),
                 &|_| false,
                 &material_lookup(&decoded.definitions),
@@ -135,7 +137,7 @@ pub fn create_plate_draft(
                 Change::Create(Element {
                     id: authored.id.to_string(),
                     name: authored.name.clone(),
-                    shape: Shape::Plate {
+                    shape: Shape::plate(PlateShape {
                         contour_mm: authored.contour_points_mm.clone(),
                         thickness_mm: authored.thickness_mm,
                         thickness_side: authored.thickness_side,
@@ -146,7 +148,7 @@ pub fn create_plate_draft(
                         holes: Vec::new(),
                         hole_records: Vec::new(),
                         cuts: Vec::new(),
-                    },
+                    }),
                     placement: Placement {
                         translation_mm: authored.placement.translation_mm,
                         orientation_xyzw: authored.placement.orientation_xyzw,

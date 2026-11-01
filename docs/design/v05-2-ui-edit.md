@@ -14,8 +14,8 @@ commands the CLI runs: move, copy, delete, undo and redo. Property editing is V0
 
 | Area | What exists |
 |---|---|
-| `beamcraft_ui::edit` (pure) | `ndc_of` and `ray_through` (a clicked pixel to a world ray: the inverse of `View::project`, shifted back by the scene origin in f64); `pick_args` / `parse_pick` (the CLI `pick`: nearest face hit only); `inspect_args` / `parse_element_info` (name, kind and translation of one element from `inspect-elements`); `Editor` (the selection, the move and copy forms and the preview, commit and cancel state machine); `Edit` / `parse_edited` (the argument list and the reply of one edit). No window, GPU or process, so it is unit-tested directly |
-| `beamcraft_ui::command` | `select_at` (runs `pick`, then looks the hit element up), `element_info`, `commit_edit` (runs an edit in a separate process under the V05.1 deadline and output cap) |
+| `beamcraft_ui::edit` (pure) | `ndc_of` and `ray_through` (a clicked pixel to a world ray: the inverse of `View::project`, shifted back by the scene origin in f64); `pick_in` / `pick_point_in` (the engine's pick, run in the window's own process on the snapshot on screen: nearest face hit only); `inspect_args` / `parse_element_info` (name, kind and translation of one element from `inspect-elements`); `Editor` (the selection, the move and copy forms and the preview, commit and cancel state machine); `Edit` / `parse_edited` (the argument list and the reply of one edit). No window, GPU or process, so it is unit-tested directly |
+| `beamcraft_ui::command` | `select_at` (picks in this process on the snapshot on screen, then looks the hit element up), `element_info`, `commit_edit` (runs an edit in a separate process under the V05.1 deadline and output cap) |
 | `beamcraft_ui::app` | A click on the view selects (a drag still orbits); the selection is drawn as the projected box of the engine's world bounds of the element; an Edit panel with Move, Copy and Delete (preview, commit, cancel, as the Create panel) and Undo and Redo buttons; Esc clears the selection. Lookups and commits run on worker threads and a success reloads the accepted revision |
 | `beamcraft-ui --workspace DIR` | opens the window on a personal workspace (a store made by `create-workspace`). It is also the store every command and the viewport use, so edits are draft revisions of the workspace; Undo and Redo act on it |
 
@@ -71,7 +71,7 @@ beamcraft redo-workspace  --workspace-dir DIR
 ## Not done (not claimed)
 
 * No multi-selection, box selection or selection of edges and vertices; no snapping or dragging in
-  the view (`snap` exists in the CLI, V04, but is not wired); a move is typed.
+  the view (the engine's `snap` is wired later, in process, in the creation and grid panels); a move is typed.
 * No property editing (V06), no rotate, no mirror, no array copy, no keyboard Delete (a delete is
   always previewed and committed).
 * Selection details come from `inspect-elements`, whose reply is bounded by the control-message
@@ -86,12 +86,12 @@ beamcraft redo-workspace  --workspace-dir DIR
 
 * Unit tests in `apps/beamcraft-ui/src/edit.rs` (14, including the epoch rule and the action switch): pixel to device coordinates inside the view
   only; the ray through a projected point hits that point (for a rotated camera and a large scene
-  origin); exact `pick` arguments; pick, inspection and edit replies (accepted, forged outcome of
+  origin); the pick reply; inspection and edit replies (accepted, forged outcome of
   another command, rejection that a zero exit cannot hide, crash without JSON); the argument lists
   of move, copy, delete, undo and redo; undo and redo refused without a workspace; number checks;
   the preview, commit and cancel rules; direct undo and redo not while busy.
 * `apps/beamcraft-ui/tests/edit_tools.rs` (7, real `beamcraft` binary, no GPU): a computed click on
-  the middle of each plate's top face selects that plate through the real `pick` and
+  the middle of each plate's top face selects that plate through the engine's pick on the snapshot on screen and the real
   `inspect-elements` and a click on empty space selects nothing; a move, a copy and a delete made by the tools leave the
   store in exactly the state of the same commands by hand (translation, mesh digest, world
   bounds); a cancelled preview leaves the head unchanged; an engine refusal (a translation of

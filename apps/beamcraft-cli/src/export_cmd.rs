@@ -12,20 +12,20 @@ use beamcraft_cli::export::{
     CONTRACT_VERSION, ExportReport, ExportRequest, check_destinations, ifc_code_of,
     ifc_guid_decode, ifc_guid_of, prepare_export, validate_request,
 };
-use beamcraft_cli::plate::PlateError;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_ifc::EXPORTER_VERSION;
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::Uuid7;
+use session::Refusal;
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
-type Run<T> = Result<T, PlateError>;
+type Run<T> = Result<T, Refusal>;
 
-fn invalid(message: &'static str) -> PlateError {
-    PlateError {
+fn invalid(message: &'static str) -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message,
@@ -221,7 +221,7 @@ fn export(options: &BTreeMap<&str, &str>) -> Run<Json> {
         overwrite: flag(options, "--overwrite"),
     };
     validate_request(&request)?;
-    let blobs = BlobStore::new(store_root).map_err(|e| PlateError {
+    let blobs = BlobStore::new(store_root).map_err(|e| Refusal {
         rule_id: None,
         code: e.code(),
         message: "store root is not usable",
@@ -244,7 +244,7 @@ fn export(options: &BTreeMap<&str, &str>) -> Run<Json> {
                         message: "the report could not be written",
                     })
             })
-            .map_err(|e| PlateError {
+            .map_err(|e| Refusal {
                 rule_id: None,
                 code: e.code,
                 message: e.message,
@@ -256,7 +256,7 @@ fn export(options: &BTreeMap<&str, &str>) -> Run<Json> {
         && let Err(e) = staged.install()
     {
         installed.undo();
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: e.code,
             message: e.message,

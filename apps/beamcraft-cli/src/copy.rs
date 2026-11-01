@@ -18,24 +18,31 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    Base, PlateError, RevisionSummary, control, decode, digest_of, evaluate_decoded, host_uuid,
-    integrity, load_base, member_record, mesh_change, open_base, plate_record, prior_op_with,
-    replay_summary, summarize,
+    decode, evaluate_decoded, member_record, mesh_change, plate_record, prior_op_with,
+    replay_summary,
 };
 use crate::publication::{PublicationTail, prepare_and_publish};
-use beamcraft_engine::copy::{copy_member, copy_plate};
 use beamcraft_engine::footprint::Footprint;
-use beamcraft_engine::query::committed::{MemberRecord, PlateRecord};
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Change, Element, MemberKind as LayerKind, Placement as LayerPlacement, Shape, schema_identity,
+    Change, Element, MemberKind as LayerKind, MemberShape, Placement as LayerPlacement, PlateShape,
+    Shape, schema_identity,
 };
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
-use beamcraft_model::command::{CommandError, CopyElement, MemberKind};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
+use session::Refusal;
+use session::pipeline::{
+    Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
+    summarize,
+};
+use steel::engine::committed::{MemberRecord, PlateRecord};
+use steel::engine::copy::{copy_member, copy_plate};
+use steel::engine::transaction::PriorOp;
+use steel::model::command::CopyElement;
+use steel::model::command::MemberKind;
 
 /// Inputs of one `copy_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -78,8 +85,8 @@ pub struct Copied {
     pub changed_layers: Vec<String>,
 }
 
-pub(crate) fn not_found() -> PlateError {
-    PlateError::from(CommandError::new(
+pub(crate) fn not_found() -> Refusal {
+    Refusal::from(CommandError::new(
         ErrorCode::NotFound,
         "source_id",
         "the source element is not in the head revision",
@@ -88,7 +95,7 @@ pub(crate) fn not_found() -> PlateError {
 
 /// The authored changes one copied part needs: its class, its create and its mesh. Shared by
 /// the single copy (P05) and the array copies (T03), which author the same per-copy records.
-pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, PlateError> {
+pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refusal> {
     Ok(match copy {
         CopiedElement::Plate(r) => {
             let a = &r.authored;
@@ -101,7 +108,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Plat
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
-                    shape: Shape::Plate {
+                    shape: Shape::plate(PlateShape {
                         contour_mm: a.contour_points_mm.clone(),
                         thickness_mm: a.thickness_mm,
                         thickness_side: a.thickness_side,
@@ -114,7 +121,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Plat
                             .collect(),
                         hole_records: a.hole_records.clone(),
                         cuts: a.cuts.clone(),
-                    },
+                    }),
                     placement: LayerPlacement {
                         translation_mm: a.placement.translation_mm,
                         orientation_xyzw: [qx, qy, qz, qw],
@@ -146,7 +153,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Plat
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
-                    shape: Shape::Member {
+                    shape: Shape::member(MemberShape {
                         kind: match a.kind {
                             MemberKind::Beam => LayerKind::Beam,
                             MemberKind::Column => LayerKind::Column,
@@ -157,7 +164,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Plat
                         roll_rad: a.roll_rad,
                         placement: a.section_placement,
                         cuts: a.cuts.clone(),
-                    },
+                    }),
                     placement: LayerPlacement {
                         translation_mm: a.placement.translation_mm,
                         orientation_xyzw: [qx, qy, qz, qw],
@@ -181,7 +188,7 @@ pub fn copy_element(
     store: &RevisionStore,
     request: &CopyRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Copied, PlateError> {
+) -> Result<Copied, Refusal> {
     copy_with_mode(store, request, hook, false)
 }
 
@@ -190,7 +197,7 @@ pub fn copy_instance(
     store: &RevisionStore,
     request: &CopyRequest,
     hook: &mut dyn CommitHook,
-) -> Result<Copied, PlateError> {
+) -> Result<Copied, Refusal> {
     copy_with_mode(store, request, hook, true)
 }
 
@@ -199,7 +206,7 @@ fn copy_with_mode(
     request: &CopyRequest,
     hook: &mut dyn CommitHook,
     instance: bool,
-) -> Result<Copied, PlateError> {
+) -> Result<Copied, Refusal> {
     let command = &request.command;
     command.validate_arguments()?;
     let control = control();
@@ -257,7 +264,7 @@ fn copy_with_mode(
     let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Plate(Box::new(PlateRecord {
             authored: if instance {
-                beamcraft_engine::instance::copy_plate_instance(&source.authored, command)?
+                steel::engine::instance::copy_plate_instance(&source.authored, command)?
             } else {
                 copy_plate(&source.authored, command)?
             },
@@ -267,7 +274,7 @@ fn copy_with_mode(
     } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
         CopiedElement::Member(Box::new(MemberRecord {
             authored: if instance {
-                beamcraft_engine::instance::copy_member_instance(&source.authored, command)?
+                steel::engine::instance::copy_member_instance(&source.authored, command)?
             } else {
                 copy_member(&source.authored, command)?
             },
@@ -303,7 +310,7 @@ fn copy_with_mode(
     } else if crate::coordination::pinned_owns_element(store, &command.source_id)? {
         // A pinned coordination grid is foreign bytes: the refusal precedes the local miss
         // (PC-OWN-002), exactly as for the dedicated grid commands.
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: Some("PC-OWN-002"),
             code: ErrorCode::ForeignReadOnly,
             message: "the source belongs to a pinned coordination project and is read-only",
@@ -336,7 +343,7 @@ fn copy_with_mode(
 
     let op_host = host_uuid(&request.op_id.to_string())?;
     let fingerprint = if instance {
-        beamcraft_model::instance::CopyInstance {
+        steel::model::instance::CopyInstance {
             copy: command.clone(),
         }
         .content_fingerprint()?
@@ -378,7 +385,7 @@ fn copy_with_mode(
         }
         PriorOp::Unseen => {}
     }
-    if instance && instances.links().count() >= beamcraft_model::instance::MAX_PART_INSTANCES {
+    if instance && instances.links().count() >= steel::model::instance::MAX_PART_INSTANCES {
         return Err(CommandError::new(
             ErrorCode::LimitExceeded,
             "instances",
@@ -452,16 +459,13 @@ fn copy_with_mode(
         for change in &mut changes {
             if let Change::Create(element) = change {
                 let kind = match &copy {
-                    CopiedElement::Plate(_) => beamcraft_model::instance::PartKind::Plate,
+                    CopiedElement::Plate(_) => steel::model::instance::PartKind::Plate,
                     CopiedElement::Member(r) => match r.authored.kind {
-                        MemberKind::Beam => beamcraft_model::instance::PartKind::Beam,
-                        MemberKind::Column => beamcraft_model::instance::PartKind::Column,
+                        MemberKind::Beam => steel::model::instance::PartKind::Beam,
+                        MemberKind::Column => steel::model::instance::PartKind::Column,
                     },
                 };
-                element.shape = Shape::Instance {
-                    kind,
-                    definition: canonical.to_string(),
-                };
+                element.shape = Shape::instance(kind, canonical.to_string());
                 element.material = None;
             }
         }

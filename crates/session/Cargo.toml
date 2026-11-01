@@ -1,0 +1,18 @@
+[package]
+name = "session"
+description = "Platform state for applications: settings, recent projects, project folders and environments."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+beamcraft-model.workspace = true
+beamcraft-json.workspace = true
+beamcraft-host = { path = "../host", version = "0.0.1" }
+beamcraft-layer-engine = { path = "../layer-engine", version = "0.0.1" }
+
+[lints]
+workspace = true

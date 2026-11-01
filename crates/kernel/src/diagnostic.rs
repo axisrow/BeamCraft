@@ -155,7 +155,8 @@ impl Failure {
         }
     }
 
-    pub(crate) fn one(code: Code, field: Field, stage: Stage) -> Self {
+    /// Shared with the steel crate.
+    pub fn one(code: Code, field: Field, stage: Stage) -> Self {
         Self {
             diagnostics: [Some(Diagnostic { code, field, stage }), None, None],
         }

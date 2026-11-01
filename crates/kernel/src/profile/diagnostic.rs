@@ -222,7 +222,8 @@ impl ProfileFailure {
         }
     }
 
-    pub(crate) fn global(code: ProfileCode, field: ProfileField, stage: Stage) -> Self {
+    /// Shared with the steel crate.
+    pub fn global(code: ProfileCode, field: ProfileField, stage: Stage) -> Self {
         Self::one(code, field, stage, Defect::None, None, None)
     }
 }

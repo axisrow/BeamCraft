@@ -1,45 +1,60 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Appearance settings shared by the start and model windows, through the headless CLI.
+//! Appearance settings shared by the start and model windows, kept in the user's settings file
+//! through the `session` crate on a worker thread.
 
-use crate::command;
-use crate::start::parse_settings;
-use crate::stats::Stats;
 use crate::theme::Palette;
 use crate::tools::ToolError;
 use egui::ThemePreference;
+use session::settings::{self, Settings};
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
+use std::sync::mpsc;
 use std::time::Duration;
 
-/// The stable CLI spelling of an appearance preference.
-pub const fn spelling(theme: ThemePreference) -> &'static str {
+/// The egui appearance for a stored preference.
+pub const fn egui_theme(theme: settings::ThemePreference) -> ThemePreference {
     match theme {
-        ThemePreference::System => "system",
-        ThemePreference::Light => "light",
-        ThemePreference::Dark => "dark",
+        settings::ThemePreference::System => ThemePreference::System,
+        settings::ThemePreference::Light => ThemePreference::Light,
+        settings::ThemePreference::Dark => ThemePreference::Dark,
     }
 }
 
-/// Reads the settings spelling without silently accepting an unknown preference.
-pub fn parse(value: &str) -> Result<ThemePreference, ToolError> {
-    match value {
-        "system" => Ok(ThemePreference::System),
-        "light" => Ok(ThemePreference::Light),
-        "dark" => Ok(ThemePreference::Dark),
-        _ => Err(ToolError::local(
-            "UNREADABLE_REPLY",
-            "unknown appearance preference",
-        )),
+/// The stored preference for an egui appearance.
+pub const fn stored_theme(theme: ThemePreference) -> settings::ThemePreference {
+    match theme {
+        ThemePreference::System => settings::ThemePreference::System,
+        ThemePreference::Light => settings::ThemePreference::Light,
+        ThemePreference::Dark => settings::ThemePreference::Dark,
     }
 }
 
-/// A persistent appearance selector; no user settings file is accessed by the UI.
+/// Reads or writes the stored preference of the settings in `config_dir` (the current user's
+/// directory when `None`), under the settings write lock of this process.
+fn stored(
+    config_dir: Option<&PathBuf>,
+    change: Option<ThemePreference>,
+) -> Result<ThemePreference, ToolError> {
+    let dir = config_dir
+        .cloned()
+        .or_else(settings::default_dir)
+        .ok_or_else(|| ToolError::local("NOT_FOUND", "no configuration directory is known"))?;
+    let failed = |e: settings::SettingsError| ToolError::local(e.code.as_str(), e.message);
+    let settings = Settings::update(&dir, |settings| match change {
+        Some(theme) => {
+            settings.theme = stored_theme(theme);
+            Ok(true)
+        }
+        None => Ok(false),
+    })
+    .map_err(failed)?;
+    Ok(egui_theme(settings.theme))
+}
+
+/// A persistent appearance selector over the user's settings file.
 pub struct Appearance {
-    cli: PathBuf,
     config_dir: Option<PathBuf>,
-    stats: Arc<Stats>,
     preference: ThemePreference,
     job: Option<mpsc::Receiver<Result<ThemePreference, ToolError>>>,
     error: Option<String>,
@@ -48,11 +63,9 @@ pub struct Appearance {
 
 impl Appearance {
     /// Loads the preference asynchronously, using the same configuration as the start page.
-    pub fn new(cli: PathBuf, config_dir: Option<PathBuf>, stats: Arc<Stats>) -> Self {
+    pub fn new(config_dir: Option<PathBuf>) -> Self {
         let mut this = Self {
-            cli,
             config_dir,
-            stats,
             preference: ThemePreference::System,
             job: None,
             error: None,
@@ -64,27 +77,12 @@ impl Appearance {
 
     fn request(&mut self, preference: Option<ThemePreference>) {
         self.retry = preference;
-        let cli = self.cli.clone();
-        let stats = Arc::clone(&self.stats);
-        let mut args = match preference {
-            Some(theme) => vec![
-                "set-settings".into(),
-                "--theme".into(),
-                spelling(theme).into(),
-            ],
-            None => vec!["show-settings".into()],
-        };
-        if let Some(dir) = &self.config_dir {
-            args.extend(["--config-dir".into(), dir.to_string_lossy().into_owned()]);
-        }
+        let config_dir = self.config_dir.clone();
         let (tx, rx) = mpsc::channel();
         match std::thread::Builder::new()
             .name("appearance-settings".into())
             .spawn(move || {
-                let result = command::run(&cli, &args, Duration::from_secs(60), &stats)
-                    .and_then(|out| parse_settings(out.code, &out.stdout))
-                    .map(|settings| settings.theme);
-                let _ = tx.send(result);
+                let _ = tx.send(stored(config_dir.as_ref(), preference));
             }) {
             Ok(_) => {
                 self.job = Some(rx);
@@ -217,14 +215,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn all_preferences_round_trip_and_unknown_values_fail() {
+    fn all_preferences_round_trip_between_egui_and_the_settings() {
         for theme in [
             ThemePreference::System,
             ThemePreference::Light,
             ThemePreference::Dark,
         ] {
-            assert_eq!(parse(spelling(theme)), Ok(theme));
+            assert_eq!(egui_theme(stored_theme(theme)), theme);
         }
-        assert!(parse("automatic").is_err());
+    }
+
+    #[test]
+    fn a_saved_preference_is_read_back_and_a_read_changes_nothing() {
+        let dir = std::env::temp_dir().join(format!("ui-appearance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let config = Some(dir.clone());
+        assert_eq!(stored(config.as_ref(), None), Ok(ThemePreference::System));
+        assert!(!dir.join("settings.json").exists(), "a read writes nothing");
+        assert_eq!(
+            stored(config.as_ref(), Some(ThemePreference::Dark)),
+            Ok(ThemePreference::Dark)
+        );
+        assert_eq!(stored(config.as_ref(), None), Ok(ThemePreference::Dark));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

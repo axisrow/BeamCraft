@@ -85,6 +85,13 @@ pub enum Violation {
         /// The app or tool.
         to: String,
     },
+    /// A package other than an app or a tool depends on a discipline.
+    DependsOnDiscipline {
+        /// Depending package.
+        from: String,
+        /// The discipline.
+        to: String,
+    },
     /// A domain crate uses a third-party crate that is not on the allowlist.
     ForbiddenThirdParty {
         /// Domain package.
@@ -173,6 +180,12 @@ impl fmt::Display for Violation {
             Self::DependsOnAppOrTool { from, to } => {
                 write!(f, "`{from}` depends on app or tool `{to}`")
             }
+            Self::DependsOnDiscipline { from, to } => {
+                write!(
+                    f,
+                    "`{from}` depends on discipline `{to}`; only an app or a tool may"
+                )
+            }
             Self::ForbiddenThirdParty {
                 package,
                 dependency,
@@ -248,6 +261,12 @@ fn kind_rules(from: &str, from_kind: Kind, to: &str, to_kind: Kind) -> Vec<Viola
     }
     if matches!(to_kind, Kind::App | Kind::Tool) {
         out.push(Violation::DependsOnAppOrTool {
+            from: from.to_owned(),
+            to: to.to_owned(),
+        });
+    }
+    if to_kind == Kind::Discipline && !matches!(from_kind, Kind::App | Kind::Tool) {
+        out.push(Violation::DependsOnDiscipline {
             from: from.to_owned(),
             to: to.to_owned(),
         });
@@ -937,8 +956,36 @@ mod tests {
     }
 
     #[test]
+    fn only_an_app_or_a_tool_may_depend_on_a_discipline() {
+        let breach = |from: &str, kind: Kind, to: &str| {
+            kind_rules(from, kind, to, Kind::Discipline).contains(&Violation::DependsOnDiscipline {
+                from: from.into(),
+                to: to.into(),
+            })
+        };
+        // The platform never depends on a discipline, and a discipline never on another.
+        for kind in [Kind::Domain, Kind::Native, Kind::Host, Kind::Discipline] {
+            assert!(breach("p", kind, "steel"), "{kind:?}");
+        }
+        // An app or a tool may; a discipline may depend on platform crates.
+        for kind in [Kind::App, Kind::Tool] {
+            assert!(!breach("p", kind, "steel"), "{kind:?}");
+        }
+        for to in [Kind::Domain, Kind::Native, Kind::Host] {
+            assert_eq!(kind_rules("steel", Kind::Discipline, "p", to), [], "{to:?}");
+        }
+        assert!(!Kind::Discipline.requires_wasm());
+    }
+
+    #[test]
     fn desktop_crates_need_not_have_wasm_clean_source_or_dependencies() {
-        for kind in [Kind::Native, Kind::Host, Kind::App, Kind::Tool] {
+        for kind in [
+            Kind::Native,
+            Kind::Host,
+            Kind::Discipline,
+            Kind::App,
+            Kind::Tool,
+        ] {
             let mut table = table();
             table.rows.push(row(
                 "desktop",

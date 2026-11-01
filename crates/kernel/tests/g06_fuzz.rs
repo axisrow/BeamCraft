@@ -8,8 +8,7 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 
-#[path = "common_mesh/mod.rs"]
-mod common;
+use crate::common_mesh as common;
 
 use beamcraft_kernel::measure::measure;
 use beamcraft_kernel::topology::{Analysis, Limits, analyze, analyze_with};

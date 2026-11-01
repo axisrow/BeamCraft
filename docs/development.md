@@ -211,12 +211,18 @@ In PowerShell, set `$env:RUSTC_WRAPPER = 'sccache'` for the build and remove it 
 No wrapper is required by the repository. Cache hits depend on the compiler, target and flags;
 they help repeated builds and do not replace a genuinely cold benchmark. CI already uses
 `Swatinem/rust-cache` for registry and target dependencies, with separate WASM and distribution-target
-keys.
+keys. The cache key hashes every `Cargo.toml` and `Cargo.lock`, so a pull request that changes a
+manifest restores `master`'s cache only as a partial match. rust-cache then deletes every artifact
+older than a week before the build, and the dependencies that rarely change, the GUI stack first,
+rebuild (about 40 s on hosted macOS). Such a pull request saves its own cache on its first run, so
+its later pushes match exactly; do not restrict saving to `master`.
 
-The cold release CI jobs on Linux and macOS deliberately skip compiled caches and upload their
-timing HTML, log and machine metadata as `build-timings-<triple>` artifacts. Downloads happen before
-the measured command. These artifacts document compiler-cold builds on the hosted runners;
-reference-machine acceptance still needs the Apple M5 run described above.
+The cold release CI jobs deliberately skip compiled caches and upload their timing HTML, log and
+machine metadata as `build-timings-<triple>` artifacts. The Linux job runs on every pull request;
+the macOS job runs on pushes to `master` and on manual runs, so it does not take a macOS runner
+from the pull request's test shards. Downloads happen before the measured command. These artifacts
+document compiler-cold builds on the hosted runners; reference-machine acceptance still needs the
+Apple M5 run described above.
 
 ## Everything CI checks
 
@@ -248,6 +254,22 @@ cargo deny check
   needs `cargo install cargo-deny --locked`. A check that could not run is not a passed check.
 - **Offline.** Add `--offline --locked` to Cargo commands to work without downloads; never update
   `Cargo.lock` as a side effect.
+- **Completeness gate.** `ci-ok` is the one job to require on `master`. It fails unless every
+  other job succeeded (pull requests may skip the Windows jobs) and, on each platform that ran,
+  the test shards together ran every test that `cargo nextest list --profile ci` lists exactly
+  once, with nothing filtered out. The shards run nextest's `ci` profile, which adds a JUnit
+  report to the `default` profile and nothing else. A test is ignored only by naming it in
+  `.config/ci-ignored.txt`, so `#[ignore]` on a test is a visible change to that file. The checks
+  live in `tools/ci-gate.py` (Python 3 standard library); test it with
+  `python3 tools/test-ci-gate.py`.
+- **Prose-only pull requests.** The `changes` job lists a pull request's files. When every one is
+  Markdown that no program reads, the Rust builds and tests are skipped and `docs-checks` runs the
+  three checks whose inputs are documents (boundaries, fixtures, the command reference)
+  instead, on Linux, without the macOS runners. A file counts as
+  read when a string literal in a `.rs` or `.toml` file names it or a directory above it
+  (`tools/ci-changes.py`, tested by `python3 tools/test-ci-changes.py`), so the F08 table, the
+  fixture documents and `COMMANDS.md` always run the full CI. Pushes to `master` always run
+  everything, including Windows.
 
 The independent-reader gate runs in every `cargo test`: run
 `cargo test -p beamcraft-cli --test cli -- independent_reader:: reference_reader:: --nocapture`.

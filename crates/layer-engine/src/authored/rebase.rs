@@ -55,6 +55,15 @@ fn property_group(name: &str) -> Option<G> {
         "xformOp:translate" | "xformOp:orient" | "xformOpOrder" => G::Placement,
         "bim:material" => G::MaterialRef,
         "bim:partOf" | "bim:level" | "bim:connects" | "bim:instanceOf" => G::Relationship,
+        "bim:elevationMm" => G::ShapeInputs,
+        _ => return super::disciplines::property_group(name),
+    })
+}
+
+/// The write group of a property of the steel discipline (plate, cut, hole, member, weld and
+/// bolt inputs). Moved unchanged from [`property_group`].
+pub(super) fn steel_property_group(name: &str) -> Option<G> {
+    Some(match name {
         "steel:plate:contourPointsMm"
         | "steel:plate:thicknessMm"
         | "steel:plate:thicknessSide"
@@ -95,7 +104,6 @@ fn property_group(name: &str) -> Option<G> {
         | "steel:member:startOffsetMm"
         | "steel:member:endOffsetMm"
         | "bim:profile"
-        | "bim:elevationMm"
         | "steel:connection:type"
         | "steel:weld:type"
         | "steel:weld:sizeMm"
@@ -124,7 +132,6 @@ fn property_group(name: &str) -> Option<G> {
         _ => return None,
     })
 }
-
 fn definition_property(name: &str) -> bool {
     matches!(
         name,

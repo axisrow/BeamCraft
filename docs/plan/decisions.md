@@ -35,6 +35,12 @@ Open questions are at the end.
   the gate, the load rule, the test pyramid and the
   acceptance-first rule.
 
+- **`ROADMAP.md` lists no tasks.** Owner decision: it keeps the stage, the acceptance-gate
+  verdicts and the MVP scope with its deferrals, and drops the "Next work" list and the per-gate
+  task status, which duplicated the issues and drifted from them
+  ([#738](https://github.com/Apibim-com/BeamCraft/issues/738)). What to work on, its order and
+  its state are read from the issues, milestones and the GitHub Project. An agent that starts work
+  on an issue adds the label `in progress` to it (`AGENTS.md` §7).
 - **Interactive-assist commands leave the CLI.** Owner decision: an agent builds a model by giving
   coordinates and ids directly, so the CLI does not need cursor picking, snapping or the start
   screen. `pick`, `snap`, `show-settings`, `set-settings`, `list-environment`,
@@ -368,7 +374,7 @@ Owner answers to [issue #129](https://github.com/Apibim-com/BeamCraft/issues/129
   agents) is retired and its documents removed. The asset and provenance rules of `AGENTS.md` §1–2 stay:
   nothing from Tekla or Trimble, no decompiling, no copied documentation, tables or GPL code.
 - **No progress log.** History is git, the pull requests and the design notes; `ROADMAP.md` keeps
-  only the stage, gates, MVP and next work and changes in docs-only PRs. A single log file would
+  only the stage, gate verdicts and MVP scope and changes in docs-only PRs. A single log file would
   conflict in every PR. Release notes are generated from merged PRs at tag time.
 - **Review threshold for contributor PRs.** A contributor PR goes back to its author only for a
   blocking problem: failing tests, a merge conflict, broken store or schema compatibility, or a

@@ -4,7 +4,7 @@
 //! D03 immutable source resources. They are not composed into the drawing stage. Reopening
 //! restores original virtual layer names and runs the ordinary strict model/kernel inspection.
 
-use crate::plate::{Inspection, PlateError, inspect_manifest_assets, integrity};
+use crate::plate::{Inspection, inspect_manifest_assets};
 use beamcraft_engine::drawing::SourceModelPin;
 use beamcraft_host::lease::StoreLease;
 use beamcraft_host::revision::{MAX_MANIFEST_BYTES, MAX_NAME_BYTES, Manifest, RevisionStore};
@@ -14,6 +14,8 @@ use beamcraft_layer_engine::{Asset, Budgets};
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ProjectId, RevisionId};
+use session::Refusal;
+use session::pipeline::integrity;
 use std::path::Path;
 
 /// Non-USD provenance metadata asset, excluded from all drawing/model composition requests.
@@ -30,15 +32,15 @@ pub struct SourceArchive {
     resources: Vec<Asset>,
 }
 
-fn limit() -> PlateError {
-    PlateError {
+fn limit() -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::LimitExceeded,
         message: "source archive exceeds existing model budgets",
     }
 }
 
-fn check_sizes(manifest: &Manifest) -> Result<(), PlateError> {
+fn check_sizes(manifest: &Manifest) -> Result<(), Refusal> {
     let entries = manifest.content().entries();
     let budgets = Budgets::MODEL;
     if entries.len() > budgets.layers {
@@ -65,13 +67,13 @@ impl SourceArchive {
     /// Captures one exact head under a shared maintenance guard before compaction can remove it.
     /// Ordinary model commits may continue. This owns a separate store handle for the whole call;
     /// all capture handles/leases are dropped before returning independent immutable byte resources.
-    pub fn capture(root: &Path) -> Result<Self, PlateError> {
-        let blobs = BlobStore::new(root).map_err(|e| PlateError {
+    pub fn capture(root: &Path) -> Result<Self, Refusal> {
+        let blobs = BlobStore::new(root).map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "source store is not usable",
         })?;
-        let _guard = StoreLease::shared(&blobs).map_err(|e| PlateError {
+        let _guard = StoreLease::shared(&blobs).map_err(|e| Refusal {
             rule_id: None,
             code: e.code(),
             message: "source maintenance guard is unavailable",
@@ -113,7 +115,7 @@ impl SourceArchive {
     /// Checks untrusted retained resources against the exact externally selected source pin,
     /// including manifest/project/revision/schema/generation, every layer name/size/digest and
     /// the normal USD/schema/index/kernel checks. Missing/extra/duplicate resources refuse.
-    pub fn verify(pin: SourceModelPin, resources: Vec<Asset>) -> Result<Self, PlateError> {
+    pub fn verify(pin: SourceModelPin, resources: Vec<Asset>) -> Result<Self, Refusal> {
         if resources.is_empty() || resources.len() > Budgets::MODEL.layers + 1 {
             return Err(limit());
         }
@@ -183,7 +185,7 @@ impl SourceArchive {
     }
 
     /// Strictly reopens the archived model under its original names, without any source-store I/O.
-    pub fn inspect(&self) -> Result<Inspection, PlateError> {
+    pub fn inspect(&self) -> Result<Inspection, Refusal> {
         let mut assets = Vec::with_capacity(self.manifest.content().entries().len());
         for entry in self.manifest.content().entries() {
             let name = format!("{SOURCE_PREFIX}{}", entry.name());

@@ -280,7 +280,7 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
     assert!(Uploaded::upload(&gpu.device, &gpu.queue, &after, None).is_err());
 }
 
-mod support;
+use crate::support;
 
 fn cli() -> Option<PathBuf> {
     support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui")))

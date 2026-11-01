@@ -1,0 +1,3 @@
+# Tests that are deliberately #[ignore]d, one `<binary-id> <test-name>` per line.
+# CI's `ci-ok` job fails when the ignored tests differ from this list, so ignoring a test
+# is always a visible change to this file (tools/ci-gate.py). It is empty: nothing is ignored.

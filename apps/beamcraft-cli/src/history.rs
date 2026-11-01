@@ -42,7 +42,6 @@
 //! later publish sends the draft head as it is).
 
 use crate::command_evidence as evidence;
-use crate::plate::{PlateError, RevisionSummary, host_uuid, integrity, summarize};
 use crate::publication::{commit_verified, commit_verified_with_evidence};
 use crate::workspace::WorkspaceState;
 use beamcraft_host::revision::{
@@ -50,6 +49,8 @@ use beamcraft_host::revision::{
 };
 use beamcraft_model::digest::Sha256;
 use beamcraft_model::error::ErrorCode;
+use session::Refusal;
+use session::pipeline::{RevisionSummary, host_uuid, integrity, summarize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
@@ -61,8 +62,8 @@ pub const LOG_CAP: u64 = 256 * 1024;
 /// Most draft revisions one history derivation reads.
 pub const MAX_REVISIONS: u64 = 4096;
 
-fn unusable() -> PlateError {
-    PlateError {
+fn unusable() -> Refusal {
+    Refusal {
         rule_id: None,
         code: ErrorCode::BackendUnavailable,
         message: "the undo log is not usable",
@@ -107,7 +108,7 @@ fn log_path(dir: &Path) -> PathBuf {
     dir.join(LOG_FILE)
 }
 
-fn read_log(dir: &Path) -> Result<Vec<Logged>, PlateError> {
+fn read_log(dir: &Path) -> Result<Vec<Logged>, Refusal> {
     let path = log_path(dir);
     // A link is never followed: the log is a regular file inside the workspace.
     let length = match fs::symlink_metadata(&path) {
@@ -117,7 +118,7 @@ fn read_log(dir: &Path) -> Result<Vec<Logged>, PlateError> {
         Err(_) => return Err(unusable()),
     };
     if length > LOG_CAP {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the undo log is full",
@@ -157,7 +158,7 @@ fn read_log(dir: &Path) -> Result<Vec<Logged>, PlateError> {
 
 /// Appends one bounded line and syncs it. The caller commits the revision afterwards; an
 /// entry without its revision is ignored by the derivation.
-fn append_line(dir: &Path, line: &str) -> Result<(), PlateError> {
+fn append_line(dir: &Path, line: &str) -> Result<(), Refusal> {
     let path = log_path(dir);
     let used = match fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.is_file() => metadata.len(),
@@ -166,7 +167,7 @@ fn append_line(dir: &Path, line: &str) -> Result<(), PlateError> {
     };
     let line_length = u64::try_from(line.len()).map_err(|_| unusable())?;
     if used.saturating_add(line_length) > LOG_CAP {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the undo log is full",
@@ -183,7 +184,7 @@ fn append_line(dir: &Path, line: &str) -> Result<(), PlateError> {
 }
 
 /// Appends one intent and syncs it. The caller commits the revision afterwards.
-fn append_intent(dir: &Path, intent: &Intent) -> Result<(), PlateError> {
+fn append_intent(dir: &Path, intent: &Intent) -> Result<(), Refusal> {
     append_line(
         dir,
         &format!(
@@ -198,7 +199,7 @@ fn append_intent(dir: &Path, intent: &Intent) -> Result<(), PlateError> {
 
 /// Records the boundary a committed resolution revision poses. The caller commits the
 /// resolution afterwards; a marker without its revision is ignored.
-pub(crate) fn append_resolved(dir: &Path, revision: &Uuid7) -> Result<(), PlateError> {
+pub(crate) fn append_resolved(dir: &Path, revision: &Uuid7) -> Result<(), Refusal> {
     append_line(dir, &format!("resolved {}\n", revision.as_str()))
 }
 
@@ -214,7 +215,7 @@ pub struct Timeline {
     revisions: Vec<Uuid7>,
 }
 
-fn head_of(store: &RevisionStore) -> Result<RevisionInfo, PlateError> {
+fn head_of(store: &RevisionStore) -> Result<RevisionInfo, Refusal> {
     store
         .head()?
         .ok_or_else(|| integrity("the workspace has no revision"))
@@ -228,7 +229,7 @@ impl Timeline {
 }
 
 /// Derives the undo and redo stacks of the draft in `dir`.
-pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, PlateError> {
+pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, Refusal> {
     let state = WorkspaceState::open(dir)?;
     let meta = state.meta().ok_or_else(crate::workspace::unusable)?;
     let head = head_of(workspace)?;
@@ -238,7 +239,7 @@ pub fn timeline(workspace: &RevisionStore, dir: &Path) -> Result<Timeline, Plate
         ));
     }
     if head.sequence() > MAX_REVISIONS {
-        return Err(PlateError {
+        return Err(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "the draft history is too long to derive",
@@ -331,7 +332,7 @@ pub fn step(
     direction: Direction,
     request: &Step,
     hook: &mut dyn CommitHook,
-) -> Result<Stepped, PlateError> {
+) -> Result<Stepped, Refusal> {
     let line = timeline(workspace, dir)?;
     let known = read_log(dir)?.into_iter().find_map(|logged| match logged {
         Logged::Step(intent) if intent.op == request.op_id => Some(intent),
@@ -340,7 +341,7 @@ pub fn step(
     let revision_id = match &known {
         Some(intent) => {
             if intent.direction != direction {
-                return Err(PlateError {
+                return Err(Refusal {
                     rule_id: None,
                     code: ErrorCode::OpIdReuse,
                     message: "the operation id was used for the other direction",
@@ -359,7 +360,7 @@ pub fn step(
                 });
             }
             if &intent.base != line.head.revision() {
-                return Err(PlateError {
+                return Err(Refusal {
                     rule_id: None,
                     code: ErrorCode::OpIdReuse,
                     message: "the operation was recorded against an older draft head",
@@ -374,7 +375,7 @@ pub fn step(
         Direction::Redo => line.redo.last(),
     }
     .copied()
-    .ok_or(PlateError {
+    .ok_or(Refusal {
         rule_id: None,
         code: ErrorCode::InvalidArgument,
         message: match direction {
@@ -436,7 +437,7 @@ pub fn step(
     let generation = head_content
         .workspace_generation()
         .checked_add(1)
-        .ok_or(PlateError {
+        .ok_or(Refusal {
             rule_id: None,
             code: ErrorCode::LimitExceeded,
             message: "generation exhausted",

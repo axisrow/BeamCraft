@@ -13,15 +13,16 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_engine::plate_draft::{
-    DraftAdmission as Admission, admit_create_plate_draft as admit_create_plate,
-};
-use beamcraft_engine::transaction::PriorOp;
 use beamcraft_json::{Json, Limits};
-use beamcraft_model::command::{CreatePlate, Placement};
+use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use std::collections::{BTreeMap, BTreeSet};
+use steel::engine::plate_draft::{
+    DraftAdmission as Admission, admit_create_plate_draft as admit_create_plate,
+};
+use steel::engine::transaction::PriorOp;
+use steel::model::command::CreatePlate;
 
 /// Cases not decided by this typed admission adapter; workspaces have separate runtime tests.
 const SKIPPED: &[(&str, &str)] = &[
@@ -217,7 +218,7 @@ fn run_case(case_id: &str, arguments: &Json, accepted: &BTreeMap<String, CreateP
         &command,
         prior,
         &existing,
-        &beamcraft_engine::command::no_materials,
+        &steel::engine::command::no_materials,
     ) {
         Ok(Admission::Apply(_)) => Verdict::Applied,
         Ok(Admission::Replay) => Verdict::Replayed,

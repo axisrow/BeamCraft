@@ -3,7 +3,7 @@
 
 //! The sealed mesh of any evaluated body, whatever the kernel operation that produced it.
 //!
-//! A box (plate or member) is a [`PlateResult`]; a plate with through holes is the certified
+//! A box (plate or member) is a `PlateResult` (the kernel box); a plate with through holes is the certified
 //! result of the G09 hole operation. Both are BCMESH01 blobs with a digest, vertices, triangles
 //! and an analytic volume, and everything downstream (derived USD mesh, view snapshot, quantities)
 //! needs only that.
@@ -13,23 +13,42 @@ use beamcraft_geom::{Frame3, Point3, RigidTransform, Vec3};
 use beamcraft_kernel::PlateResult;
 use beamcraft_kernel::ops::OpResult;
 use beamcraft_kernel::profile::Extrusion;
-use beamcraft_kernel::section::SectionResult;
-use beamcraft_kernel::sweep::SweepResult;
 use beamcraft_kernel::trimesh::TriMesh;
 use beamcraft_model::digest::{ContentDigest, Sha256};
 
 /// An evaluated, certified body mesh in element-local millimetres.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolidMesh {
-    vertices: Vec<[f64; 3]>,
-    triangles: Vec<[u32; 3]>,
-    face_table: Vec<String>,
-    blob: Vec<u8>,
-    digest: ContentDigest,
-    volume_mm3: f64,
+    pub(crate) vertices: Vec<[f64; 3]>,
+    pub(crate) triangles: Vec<[u32; 3]>,
+    pub(crate) face_table: Vec<String>,
+    pub(crate) blob: Vec<u8>,
+    pub(crate) digest: ContentDigest,
+    pub(crate) volume_mm3: f64,
 }
 
 impl SolidMesh {
+    /// A mesh from the parts of a certified body: the caller vouches that `blob` is the encoded
+    /// form of the vertices, triangles and face table, that `digest` is its digest and that
+    /// `volume_mm3` is the volume the seal measured.
+    pub fn from_parts(
+        vertices: Vec<[f64; 3]>,
+        triangles: Vec<[u32; 3]>,
+        face_table: Vec<String>,
+        blob: Vec<u8>,
+        digest: ContentDigest,
+        volume_mm3: f64,
+    ) -> Self {
+        Self {
+            vertices,
+            triangles,
+            face_table,
+            blob,
+            digest,
+            volume_mm3,
+        }
+    }
+
     /// The mesh of a sealed box.
     pub fn from_box(result: &PlateResult) -> Self {
         let mesh = result.mesh();
@@ -75,35 +94,6 @@ impl SolidMesh {
         })
     }
 
-    /// The mesh of a straight member of an A07.1 section; the volume is the analytic
-    /// `net_area * axis_length` of the extruded outline.
-    pub fn from_section(result: &SectionResult) -> Self {
-        let mesh = result.body().mesh();
-        Self {
-            vertices: mesh.vertices().to_vec(),
-            triangles: mesh.triangles().to_vec(),
-            face_table: result.body().face_table().to_vec(),
-            blob: result.blob().to_vec(),
-            digest: result.mesh_digest(),
-            volume_mm3: result.volume_mm3(),
-        }
-    }
-
-    /// The mesh of a G12 sweep (a P12 polybeam); the volume is the midpoint of the enclosure of
-    /// the certified signed-volume sum, which the seal checked against the analytic truncated
-    /// prism value.
-    pub fn from_sweep(result: &SweepResult) -> Self {
-        let mesh = result.body().mesh();
-        Self {
-            vertices: mesh.vertices().to_vec(),
-            triangles: mesh.triangles().to_vec(),
-            face_table: result.body().face_table().to_vec(),
-            blob: result.blob().to_vec(),
-            digest: result.mesh_digest(),
-            volume_mm3: result.volume_mm3().midpoint(),
-        }
-    }
-
     /// The mesh of an engine-composed solid (A15): an admitted, placed triangle set the kernel
     /// verified segment by segment, with the summed analytic volume. It has no kernel face
     /// table; a weld solid never reaches the scene, which is the only consumer of one. `None`
@@ -118,19 +108,6 @@ impl SolidMesh {
             digest: Sha256::digest(&blob).ok()?,
             volume_mm3,
         })
-    }
-
-    /// The mesh of a G13 ruled loft (an A11 lofted plate); the volume is the midpoint of the
-    /// enclosure of the certified signed-volume sum.
-    pub fn from_loft(result: &beamcraft_kernel::ruled::LoftResult) -> Self {
-        Self {
-            vertices: result.body().mesh().vertices().to_vec(),
-            triangles: result.body().mesh().triangles().to_vec(),
-            face_table: result.body().face_table().to_vec(),
-            blob: result.blob().to_vec(),
-            digest: result.mesh_digest(),
-            volume_mm3: result.volume_mm3().midpoint(),
-        }
     }
 
     /// The mesh of an admitted triangle set with the kernel face table of the body it
@@ -224,7 +201,7 @@ impl SolidMesh {
 
 /// Rotates a vector by the rigid quaternion `(x, y, z, w)`; the quaternion is normalized first,
 /// so any admitted (nonzero, finite) quaternion maps finite input to finite output.
-pub(crate) fn rotate_vector(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
+pub fn rotate_vector(v: [f64; 3], q: [f64; 4]) -> [f64; 3] {
     let [x, y, z, w] = q;
     let [vx, vy, vz] = v;
     let norm = (((x * x + y * y) + z * z) + (w * w)).sqrt();
