@@ -17,7 +17,7 @@ use beamcraft_model::grid::{
     CreateGrid, Grid, GridFamily, GridLabelOrder, RegularGridFamily, generate_grid_labels,
     parse_grid_expression, parse_grid_labels,
 };
-use beamcraft_model::id::{ElementId, Uuid7};
+use beamcraft_model::id::{ConnectionId, ElementId, Uuid7};
 use std::{collections::BTreeMap, ffi::OsString};
 type Run<T> = Result<T, PlateError>;
 fn invalid(message: &'static str) -> PlateError {
@@ -325,7 +325,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     for pair in tail.as_chunks::<2>().0 {
         let [key, value] = pair;
         let allowed = if *command == "list-grids" {
-            *key == "--store"
+            matches!(*key, "--store" | "--connection")
         } else {
             own.contains(key) || CONTEXT_OPTIONS.contains(key)
         };
@@ -340,20 +340,63 @@ fn run(args: &[OsString]) -> Run<Json> {
         BlobStore::new(root).map_err(|e| error(e.code(), "store root is not usable"))?,
     );
     if *command == "list-grids" {
+        // With --connection, list the verified grids of that pinned coordination connection
+        // (read-only use, T01 §9); the records are shown in the source frame.
+        if let Some(text) = options.get("--connection") {
+            let connection = ConnectionId::parse(text)
+                .map_err(|_| invalid("--connection needs a UUIDv7 connection identity"))?;
+            let (record, pinned) = beamcraft_cli::grid::pinned_grids(&store, connection)?;
+            return Ok(Json::object([
+                ("outcome", Json::text("grids_pinned")),
+                ("connection_id", Json::text(record.id.to_string())),
+                (
+                    "source_revision",
+                    Json::text(record.source_revision.to_string()),
+                ),
+                ("grids", views_json(&pinned)?),
+            ]));
+        }
         return Ok(Json::object([
             ("outcome", Json::text("grids")),
             ("grids", views_json(&grids(&store)?)?),
         ]));
     }
     if matches!(*command, "resolve-grid-point" | "resolve-grid-plane") {
-        let model = grids(&store)?;
         let required = |key| {
             options
                 .get(key)
                 .copied()
                 .ok_or_else(|| invalid("missing grid query option"))
         };
-        let grid = beamcraft_engine::grid_query::resolve_grid(&model, required("--grid")?)?;
+        let selector = required("--grid")?;
+        let pinned = beamcraft_cli::grid::pinned_selector(selector)?;
+        if pinned.is_some() && *command != "resolve-grid-point" {
+            return Err(invalid(
+                "a pinned grid answers point queries; resolve-grid-plane reads local grids",
+            ));
+        }
+        if let Some((connection, grid_id)) = pinned {
+            let (record, model) = beamcraft_cli::grid::pinned_grids(&store, connection)?;
+            let grid = model.iter().find(|g| g.id == grid_id).ok_or_else(|| {
+                error(
+                    ErrorCode::NotFound,
+                    "the pinned coordination project has no such grid",
+                )
+            })?;
+            let (a, b) = required("--labels")?
+                .split_once(',')
+                .filter(|(_, b)| !b.contains(','))
+                .ok_or_else(|| invalid("--labels needs two comma-separated labels"))?;
+            let [x, y] = beamcraft_cli::grid::pinned_grid_point(&record, grid, a, b)?;
+            return Ok(Json::object([
+                ("outcome", Json::text("grid_point")),
+                ("grid_id", Json::text(grid.id.to_string())),
+                ("connection_id", Json::text(record.id.to_string())),
+                ("point_world_mm", Json::Array(vec![num(x)?, num(y)?])),
+            ]));
+        }
+        let model = grids(&store)?;
+        let grid = beamcraft_engine::grid_query::resolve_grid(&model, selector)?;
         if *command == "resolve-grid-point" {
             let (a, b) = required("--labels")?
                 .split_once(',')
