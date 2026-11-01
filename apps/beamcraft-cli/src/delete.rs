@@ -195,8 +195,20 @@ pub fn delete_element(
         PriorOp::Unseen => {}
     }
     let Some(kind) = kind else {
+        // A pinned coordination grid is foreign bytes: the refusal precedes the local miss,
+        // because no authority of this store can reach another project's content (PC-OWN-002).
+        if crate::coordination::pinned_owns_element(store, &command.target_id)? {
+            return Err(PlateError {
+                rule_id: Some("PC-OWN-002"),
+                code: ErrorCode::ForeignReadOnly,
+                message: "the element belongs to a pinned coordination project and is read-only",
+            });
+        }
         return Err(not_found());
     };
+    // Grids and levels are shared data (T01 §9): their delete answers to the shared grids/
+    // levels scope, exactly like create and edit, not to the element scope.
+    let shared = matches!(kind, DeletedKind::Grid | DeletedKind::Level);
     // A16.1: a main part cannot leave its assembly through a delete, exactly as a detach of it
     // is refused; another main part is named first.
     if crate::assembly::is_main_part(&base_request, &command.target_id, &control)? {
@@ -254,7 +266,7 @@ pub fn delete_element(
         }
     }
     let (mut author, opened) =
-        crate::scope::open_author(store, base_request, false, schema, &control)?;
+        crate::scope::open_author(store, base_request, shared, schema, &control)?;
     let index = author.element_index(&opened.context, &control)?;
     author.check_delete(&index, &LayerElementId::parse(&id_text)?, &control)?;
     let (committed, changed_layers) = prepare_and_publish(

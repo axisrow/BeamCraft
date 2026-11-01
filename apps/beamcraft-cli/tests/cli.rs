@@ -93,6 +93,7 @@ mod revision;
 mod schedules;
 mod sections;
 mod start;
+mod t015_grid_rights;
 mod transform;
 mod u19_scopes;
 mod undo;

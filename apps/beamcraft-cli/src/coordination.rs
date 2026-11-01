@@ -30,14 +30,14 @@ use beamcraft_host::revision::{
 };
 use beamcraft_layer_engine::authored::descriptor::{descriptor_of, write_root_descriptor};
 use beamcraft_layer_engine::authored::{SchemaIdentity, schema_identity, validate_layers};
-use beamcraft_layer_engine::{Asset, Diagnostic, Reader};
+use beamcraft_layer_engine::{Asset, Diagnostic, Prim, Reader};
 use beamcraft_model::coordination::{SectionRecord, ZoneRecord};
 use beamcraft_model::descriptor::{
     ConnectionPlacement, ConnectionRecord, ProjectDescriptor, ScopeSelection,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{ConnectionId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::id::{ConnectionId, ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -791,6 +791,105 @@ fn resolve_entries(
     Ok(out)
 }
 
+/// The descriptor of a revision's own root layer, with full structural validation.
+pub(crate) fn revision_descriptor(
+    revision: &Revision,
+) -> Result<Option<ProjectDescriptor>, PlateError> {
+    descriptor_of_base(&base_of(revision)?)
+}
+
+/// Opens one connection's pinned source revision as a standalone verified view of its own
+/// identity (source project, workspace and manifest digest) and returns its prims. The pin
+/// entries must resolve against `revision` and agree with the record (PC-REV-001). Pinned
+/// bytes are foreign: they never join this store's own composition, so reads through this
+/// view change nothing and no write can reach them as owned content.
+pub(crate) fn pinned_prims(
+    revision: &Revision,
+    record: &ConnectionRecord,
+) -> Result<Vec<Prim>, PlateError> {
+    let control = control();
+    resolve_entries(revision, record)?;
+    let mut assets = Vec::new();
+    for (source_layer, _) in &record.layers {
+        let name = entry_name(record, source_layer);
+        let bytes = revision.layer_bytes(&name).map_err(dependency_error)?;
+        assets.push(Asset {
+            digest: digest_of(&bytes)?,
+            bytes,
+            name,
+        });
+    }
+    let request = open_request(
+        &entry_name(record, ROOT_LAYER),
+        &record.source_project.to_string(),
+        &record.source_workspace.to_string(),
+        record
+            .manifest
+            .parse::<ContentDigest>()
+            .map_err(|_| integrity("the pinned manifest digest is malformed"))?,
+        0,
+        assets,
+        &BTreeSet::new(),
+    )?;
+    let schema = schema_identity()?;
+    validate_layers(request.clone(), schema, &control)?;
+    let mut reader = Reader::default();
+    let opened = reader.open(request, &control)?;
+    read_prims(&reader, &opened.context, &control)
+}
+
+/// The verified prims of one connection's pinned source revision, with its record. The
+/// connection must exist in the revision's descriptor.
+pub(crate) fn pinned_prims_of(
+    revision: &Revision,
+    connection: ConnectionId,
+) -> Result<(ConnectionRecord, Vec<Prim>), PlateError> {
+    let descriptor = revision_descriptor(revision)?.ok_or(PlateError {
+        rule_id: None,
+        code: ErrorCode::NotFound,
+        message: "the store has no project descriptor",
+    })?;
+    let record = descriptor
+        .connections
+        .iter()
+        .find(|c| c.id == connection)
+        .ok_or(PlateError {
+            rule_id: None,
+            code: ErrorCode::NotFound,
+            message: "no connection of this identity exists",
+        })?
+        .clone();
+    let prims = pinned_prims(revision, &record)?;
+    Ok((record, prims))
+}
+
+/// Whether a pinned coordination connection of this store authors the element identity.
+/// Pinned content is foreign bytes (PC-OWN-002): the identity exists there and every write
+/// aimed at it is `FOREIGN_READ_ONLY`, never a local miss (T01.5).
+pub(crate) fn pinned_owns_element(
+    store: &RevisionStore,
+    id: &ElementId,
+) -> Result<bool, PlateError> {
+    let head = match store.open() {
+        Ok(revision) => revision,
+        Err(RevisionError::NoRevision) => return Ok(false),
+        Err(error) => return Err(dependency_error(error)),
+    };
+    let Some(descriptor) = revision_descriptor(&head)? else {
+        return Ok(false);
+    };
+    let id = id.to_string();
+    for record in &descriptor.connections {
+        if pinned_prims(&head, record)?
+            .iter()
+            .any(|p| p.element_id.as_deref() == Some(id.as_str()))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// One pinned source element placed into the parent frame.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedElement {
@@ -811,7 +910,6 @@ pub fn resolve(
     context: &LevelContext,
     connection: ConnectionId,
 ) -> Result<(ConnectionRecord, Vec<ResolvedElement>), PlateError> {
-    let control = control();
     let (_, base) = load_base(store, &context.project, &context.workspace)?;
     let descriptor = descriptor_of_base(&base)?.ok_or(PlateError {
         rule_id: None,
@@ -834,35 +932,7 @@ pub fn resolve(
         message: "the connection has no declared placement (unknown alignment)",
     })?;
     let head = store.open().map_err(dependency_error)?;
-    resolve_entries(&head, &record)?;
-    // Open the pinned source revision as a standalone verified view of its own identity.
-    let mut assets = Vec::new();
-    for (source_layer, _) in &record.layers {
-        let name = entry_name(&record, source_layer);
-        let bytes = head.layer_bytes(&name).map_err(dependency_error)?;
-        assets.push(Asset {
-            digest: digest_of(&bytes)?,
-            bytes,
-            name,
-        });
-    }
-    let request = open_request(
-        &entry_name(&record, ROOT_LAYER),
-        &record.source_project.to_string(),
-        &record.source_workspace.to_string(),
-        record
-            .manifest
-            .parse::<ContentDigest>()
-            .map_err(|_| integrity("the pinned manifest digest is malformed"))?,
-        0,
-        assets,
-        &BTreeSet::new(),
-    )?;
-    let schema = schema_identity()?;
-    validate_layers(request.clone(), schema, &control)?;
-    let mut reader = Reader::default();
-    let opened = reader.open(request, &control)?;
-    let prims = read_prims(&reader, &opened.context, &control)?;
+    let prims = pinned_prims(&head, &record)?;
     let mut elements = Vec::new();
     for prim in &prims {
         let Some(id) = prim.element_id.as_deref() else {

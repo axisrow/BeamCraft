@@ -3,6 +3,7 @@
 
 //! T01 grid commands through the atomic revision pipeline and verified USD records.
 use crate::assembly::read_prims;
+use crate::coordination::{pinned_owns_element, pinned_prims_of};
 use crate::plate::{
     Base, PlateError, RevisionSummary, base_of, check_footprint, control, host_uuid, integrity,
     load_base, open_base, prior_op_with, replay_summary, summarize,
@@ -10,15 +11,16 @@ use crate::plate::{
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::transaction::PriorOp;
-use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore};
+use beamcraft_host::revision::{CommitHook, CommitOutcome, Revision, RevisionError, RevisionStore};
 use beamcraft_layer_engine::authored::{
     Change, Element, Prepare, Shape, grid as storage, schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Prim, Reader};
 use beamcraft_model::command::{CommandError, CreateGrid};
+use beamcraft_model::descriptor::ConnectionRecord;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::grid::Grid;
-use beamcraft_model::id::ElementId;
+use beamcraft_model::id::{ConnectionId, ElementId};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Trusted context for a grid creation, using the same identities as level creation.
@@ -74,6 +76,73 @@ pub fn grids_at(store: &RevisionStore, sequence: u64) -> Result<Vec<Grid>, Plate
         open_base(&base_of(&revision)?)?,
         &control(),
     )?)?)
+}
+
+/// The refusal for a write aimed at a pinned coordination grid: its bytes are foreign
+/// (PC-OWN-002, T01 §9), so no workspace authority of this store can admit the edit.
+fn foreign_pinned(message: &'static str) -> PlateError {
+    PlateError {
+        rule_id: Some("PC-OWN-002"),
+        code: ErrorCode::ForeignReadOnly,
+        message,
+    }
+}
+
+/// Parses the pinned form of a grid selector: `CONNECTION:GRID`, two UUIDv7 identities, the
+/// coordination connection and the GridId (T01 §9: a pinned grid is identified as
+/// `(project, GridId)`). Any other colon form is refused, never silently read locally.
+pub fn pinned_selector(selector: &str) -> Result<Option<(ConnectionId, ElementId)>, PlateError> {
+    let Some((connection, grid)) = selector.split_once(':') else {
+        return Ok(None);
+    };
+    const BAD: &str = "a pinned grid selector is CONNECTION:GRID, two UUIDv7 identities";
+    let bad = || PlateError {
+        rule_id: None,
+        code: ErrorCode::InvalidArgument,
+        message: BAD,
+    };
+    let connection = ConnectionId::parse(connection).map_err(|_| bad())?;
+    let grid = ElementId::parse(grid).map_err(|_| bad())?;
+    Ok(Some((connection, grid)))
+}
+
+/// The verified grids of one connection's pinned source revision, with the connection record
+/// (for its declared frame placement). Read-only use; the records live in the source frame.
+pub(crate) fn pinned_grids_at(
+    revision: &Revision,
+    connection: ConnectionId,
+) -> Result<(ConnectionRecord, Vec<Grid>), PlateError> {
+    let (record, prims) = pinned_prims_of(revision, connection)?;
+    Ok((record, storage::read_grids(&prims)?))
+}
+
+/// The verified grids of a pinned coordination connection at the verified head.
+pub fn pinned_grids(
+    store: &RevisionStore,
+    connection: ConnectionId,
+) -> Result<(ConnectionRecord, Vec<Grid>), PlateError> {
+    pinned_grids_at(&store.open().map_err(PlateError::from)?, connection)
+}
+
+/// The parent-frame plan point of a pinned grid intersection: the source-frame point mapped
+/// by the connection's declared rigid placement (PC-FRAME-001). A connection without a
+/// placement is an explicit unknown alignment, never identity.
+pub fn pinned_grid_point(
+    record: &ConnectionRecord,
+    grid: &Grid,
+    first: &str,
+    second: &str,
+) -> Result<[f64; 2], PlateError> {
+    let [x, y] = beamcraft_engine::grid_query::grid_point(grid, first, second)?;
+    let placement = record.placement.ok_or(PlateError {
+        rule_id: Some("PC-FRAME-001"),
+        code: ErrorCode::DependencyUnavailable,
+        message: "the connection has no declared placement (unknown alignment)",
+    })?;
+    let mapped = placement
+        .apply_point([x, y, 0.0])
+        .map_err(PlateError::from)?;
+    Ok([mapped[0], mapped[1]])
 }
 /// Whether a verified snapshot has this owned grid identity.
 pub(crate) fn is_grid(
@@ -256,14 +325,25 @@ pub fn copy_grid(
     if let Some(replayed) = replay(store, context, fingerprint)? {
         return Ok(replayed);
     }
-    let source = grids(store)?
+    let source = match grids(store)?
         .into_iter()
         .find(|g| g.id == request.source_id)
-        .ok_or(CommandError::new(
-            ErrorCode::NotFound,
-            "source_id",
-            "source grid not found",
-        ))?;
+    {
+        Some(grid) => grid,
+        None if pinned_owns_element(store, &request.source_id)? => {
+            return Err(foreign_pinned(
+                "the source grid belongs to a pinned coordination project and is read-only",
+            ));
+        }
+        None => {
+            return Err(CommandError::new(
+                ErrorCode::NotFound,
+                "source_id",
+                "source grid not found",
+            )
+            .into());
+        }
+    };
     let mut copy = source.clone();
     copy.id = request.new_id;
     if let Some(name) = &request.name {
@@ -368,6 +448,13 @@ fn mutate_grid(
     let base_request = open_base(&base)?;
     let prims = snapshot(base_request.clone(), &c)?;
     let model = storage::read_grids(&prims)?;
+    // A pinned coordination grid is foreign bytes: its refusal precedes every scope decision,
+    // because no authority of this store can reach another project's content (PC-OWN-002).
+    if model.iter().all(|g| g.id != target_id) && pinned_owns_element(store, &target_id)? {
+        return Err(foreign_pinned(
+            "the target grid belongs to a pinned coordination project and is read-only",
+        ));
+    }
     let schema = schema_identity()?;
     let (mut author, opened) = crate::scope::open_author(store, base_request, true, schema, &c)?;
     let index = author.element_index(&opened.context, &c)?;
@@ -493,7 +580,12 @@ pub fn resolve_placement(
             CommandError::new(ErrorCode::NonFiniteNumber, "z", "height is not finite").into(),
         );
     }
-    let (selector, labels) = address.split_once(':').ok_or_else(bad)?;
+    // The labels follow the last colon: labels never contain one, and a selector with a
+    // colon is the pinned `CONNECTION:GRID` form.
+    let (selector, labels) = address.rsplit_once(':').ok_or_else(bad)?;
+    if labels.contains(':') {
+        return Err(bad().into());
+    }
     let (first, second) = labels
         .split_once(',')
         .filter(|(_, b)| !b.contains(','))
@@ -516,9 +608,28 @@ pub fn resolve_placement(
         Outcome::NotFound | Outcome::Aborted { .. } => store.open()?,
     };
     let request = open_base(&base_of(&revision)?)?;
-    let grids = storage::read_grids(&snapshot(request.clone(), &control())?)?;
-    let grid = beamcraft_engine::grid_query::resolve_grid(&grids, selector)?;
-    let [x, y] = beamcraft_engine::grid_query::grid_point(grid, first, second)?;
+    // A pinned coordination grid answers in the parent frame: the source-frame intersection
+    // mapped by the connection's declared placement (T01 §9, PC-FRAME-001). The height stays
+    // the caller's (a grid has no elevation), and the stored command keeps plain coordinates.
+    let [x, y] = match pinned_selector(selector)? {
+        Some((connection, grid_id)) => {
+            let (record, pinned) = pinned_grids_at(&revision, connection)?;
+            let grid = pinned
+                .iter()
+                .find(|g| g.id == grid_id)
+                .ok_or(CommandError::new(
+                    ErrorCode::NotFound,
+                    "grid",
+                    "the pinned coordination project has no such grid",
+                ))?;
+            pinned_grid_point(&record, grid, first, second)?
+        }
+        None => {
+            let grids = storage::read_grids(&snapshot(request.clone(), &control())?)?;
+            let grid = beamcraft_engine::grid_query::resolve_grid(&grids, selector)?;
+            beamcraft_engine::grid_query::grid_point(grid, first, second)?
+        }
+    };
     let z = match (z, level) {
         (Some(z), None) => z,
         (None, Some(id)) => {

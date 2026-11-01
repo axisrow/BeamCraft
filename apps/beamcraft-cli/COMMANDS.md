@@ -954,7 +954,7 @@ update-grid --store ROOT --id UUID [--name TEXT] [--origin X,Y] [--rotation DEG]
 read.
 
 ```text
-list-grids --store ROOT
+list-grids --store ROOT [--connection UUID]
 ```
 
 ### resolve-grid-point
@@ -962,7 +962,7 @@ list-grids --store ROOT
 read.
 
 ```text
-resolve-grid-point --store ROOT --grid UUID|TEXT --labels U,V
+resolve-grid-point --store ROOT --grid UUID|TEXT|CONN:UUID --labels U,V
 ```
 
 ### resolve-grid-plane

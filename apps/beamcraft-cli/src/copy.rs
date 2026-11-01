@@ -300,6 +300,14 @@ fn copy_with_mode(
             "a level is not copied",
         )
         .into());
+    } else if crate::coordination::pinned_owns_element(store, &command.source_id)? {
+        // A pinned coordination grid is foreign bytes: the refusal precedes the local miss
+        // (PC-OWN-002), exactly as for the dedicated grid commands.
+        return Err(PlateError {
+            rule_id: Some("PC-OWN-002"),
+            code: ErrorCode::ForeignReadOnly,
+            message: "the source belongs to a pinned coordination project and is read-only",
+        });
     } else {
         return Err(not_found());
     };

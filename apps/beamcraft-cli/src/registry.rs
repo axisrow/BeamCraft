@@ -1643,7 +1643,7 @@ pub const COMMANDS: &[Command] = &[
         "list-grids",
         Access::Read,
         Ids::None,
-        &[req("--store", "ROOT")],
+        &[req("--store", "ROOT"), opt("--connection", "UUID")],
     ),
     entry(
         Route::Grid,
@@ -1653,7 +1653,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[
             req("--store", "ROOT"),
-            req("--grid", "UUID|TEXT"),
+            req("--grid", "UUID|TEXT|CONN:UUID"),
             req("--labels", "U,V"),
         ],
     ),
