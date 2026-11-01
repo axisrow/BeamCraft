@@ -1179,9 +1179,11 @@ fn torn_or_inconsistent_head_logs_are_refused_with_typed_errors() {
     assert_eq!(again.info.sequence(), 3);
 }
 
-#[test]
-fn two_writers_on_one_base_never_both_win() {
-    for round in 0..100 {
+/// The two-writers race, sharded ten rounds per test so the shards run in parallel (issue
+/// #285: the 100-round loop was a 27 s serial straggler). Every round makes the same
+/// assertions the single loop made.
+fn two_writers_on_one_base_never_both_win_rounds(rounds: std::ops::Range<usize>) {
+    for round in rounds {
         let fx = Fixture::new();
         let store = fx.store();
         commit_n(&store, 1);
@@ -1215,6 +1217,28 @@ fn two_writers_on_one_base_never_both_win() {
         assert!(fx.log(2).exists() && !fx.log(3).exists());
         assert_eq!(fx.temp_leftovers(), 0);
     }
+}
+
+macro_rules! two_writer_shards {
+    ($($name:ident => $from:literal .. $to:literal),* $(,)?) => { $(
+        #[test]
+        fn $name() {
+            two_writers_on_one_base_never_both_win_rounds($from..$to);
+        }
+    )* };
+}
+
+two_writer_shards! {
+    two_writers_on_one_base_never_both_win_rounds_000_009 => 0..10,
+    two_writers_on_one_base_never_both_win_rounds_010_019 => 10..20,
+    two_writers_on_one_base_never_both_win_rounds_020_029 => 20..30,
+    two_writers_on_one_base_never_both_win_rounds_030_039 => 30..40,
+    two_writers_on_one_base_never_both_win_rounds_040_049 => 40..50,
+    two_writers_on_one_base_never_both_win_rounds_050_059 => 50..60,
+    two_writers_on_one_base_never_both_win_rounds_060_069 => 60..70,
+    two_writers_on_one_base_never_both_win_rounds_070_079 => 70..80,
+    two_writers_on_one_base_never_both_win_rounds_080_089 => 80..90,
+    two_writers_on_one_base_never_both_win_rounds_090_099 => 90..100,
 }
 
 #[test]
