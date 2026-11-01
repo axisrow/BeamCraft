@@ -5,9 +5,10 @@
 //! A12) and a lofted plate (A11). Each body is the arm it replaces in `edit.rs` and
 //! `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the same.
 
-use super::edit::{CUT_FIELDS, attr, author_bends, author_corners, author_record_history, points};
+use super::edit::{attr, author_record_history, points};
 use super::hook::{AuthorCx, HookedShape, ShapeHook, ValidateCx};
 use super::steel_read::{MAX_HOLE_POINTS, MAX_HOLES};
+use super::steel_write::{CUT_FIELDS, author_bends, author_corners};
 use super::validate::{cap, count_points, cut_values, finite};
 use super::*;
 use openusd::sdf;

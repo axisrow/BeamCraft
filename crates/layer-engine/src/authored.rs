@@ -32,6 +32,7 @@ mod steel_defs;
 /// that moves to `crates/steel` when the dependency flips (#388).
 pub mod steel_layer;
 mod steel_read;
+mod steel_write;
 mod validate;
 
 pub use connection::ReplaceBoltGroup;

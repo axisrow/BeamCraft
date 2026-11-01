@@ -5,7 +5,7 @@
 //! and the A14.3 bolt group. Each body is the arm it replaces in `edit.rs` and `validate.rs`,
 //! moved unchanged, so the bytes written and the refusals returned are the same.
 
-use super::edit::{attr, attribute, author_bolt_group, path, points, relationship_targets};
+use super::edit::{attr, attribute, path, points, relationship_targets};
 use super::hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
     ValidateCx,
@@ -14,6 +14,7 @@ use super::steel_read::{
     bolt_group_against, bolt_group_connects, bolt_group_values, fastener_definition,
     weld_path_points, weld_size, weld_tokens,
 };
+use super::steel_write::author_bolt_group;
 use super::target_path;
 use super::validate::{cap, finite};
 use super::*;
