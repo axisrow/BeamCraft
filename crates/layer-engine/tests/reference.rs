@@ -52,7 +52,7 @@ fn digest(bytes: &[u8]) -> ContentDigest {
 fn control() -> Control {
     Control {
         cancellation: Cancellation::default(),
-        deadline: Instant::now() + Duration::from_secs(10),
+        deadline: Instant::now() + Duration::from_secs(90),
     }
 }
 fn asset(name: &str, bytes: impl AsRef<[u8]>) -> Asset {

@@ -8,6 +8,16 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+/// One random value per process boot: this standalone binary has no shared support module, and
+/// a pid alone is not unique across runs (the #157/#408 recycling class). Unix-only like the
+/// test it names, so non-unix targets never see it unused.
+#[cfg(unix)]
+fn boot_nonce() -> u64 {
+    use std::hash::{BuildHasher, RandomState};
+    static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *NONCE.get_or_init(|| RandomState::new().hash_one(0u64))
+}
+
 #[cfg(unix)]
 #[test]
 fn a_lookup_that_is_no_longer_wanted_stops_its_process() {
@@ -21,7 +31,7 @@ fn a_lookup_that_is_no_longer_wanted_stops_its_process() {
     use std::time::{Duration, Instant};
 
     let stats = Stats::default();
-    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("cancel-{}", std::process::id()));
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("cancel-{}", boot_nonce()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     // A stand-in CLI that never answers; `exec` makes the sleep the process itself, so killing

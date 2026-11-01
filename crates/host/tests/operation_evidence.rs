@@ -20,12 +20,20 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+/// One random value per process boot: a pid alone is not unique across runs — the OS recycles
+/// pids against directories left by killed processes (the #157/#408 recycling class).
+fn boot_nonce() -> u64 {
+    use std::hash::{BuildHasher, RandomState};
+    static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *NONCE.get_or_init(|| RandomState::new().hash_one(0u64))
+}
+
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "c03-evidence-{}-{}",
-            std::process::id(),
+            boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();

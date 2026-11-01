@@ -43,7 +43,7 @@ impl Fixture {
             .join("grid-ui-tests")
             .join(format!(
                 "{}-{}",
-                std::process::id(),
+                crate::support::boot_nonce(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
         std::fs::create_dir_all(&root).unwrap();

@@ -41,7 +41,10 @@ fn run(args: &[&str]) -> (Option<i32>, String) {
 /// A scratch store directory: with `--store` the generic blob and revision path reaches its command
 /// check, so an undispatched word answers `UNSUPPORTED_COMMAND` instead of an argument refusal.
 fn scratch_store() -> String {
-    let dir = std::env::temp_dir().join(format!("beamcraft-registry-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "beamcraft-registry-{}",
+        crate::support::boot_nonce()
+    ));
     std::fs::create_dir_all(&dir).expect("scratch store");
     dir.to_str().expect("utf-8 path").to_owned()
 }
@@ -190,7 +193,10 @@ fn the_listing_carries_access_and_parameters() {
 /// Runs `beamcraft ARGS` in an empty scratch directory with the user configuration redirected
 /// into it, so a probe can neither create files in the checkout nor touch the real settings.
 fn probe(args: &[&str]) -> String {
-    let dir = std::env::temp_dir().join(format!("beamcraft-registry-probe-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "beamcraft-registry-probe-{}",
+        crate::support::boot_nonce()
+    ));
     std::fs::create_dir_all(&dir).expect("probe directory");
     let output = Command::new(env!("CARGO_BIN_EXE_beamcraft"))
         .args(args)

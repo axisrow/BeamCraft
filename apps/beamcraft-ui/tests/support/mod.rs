@@ -5,6 +5,16 @@
 #![allow(clippy::expect_used)]
 use std::path::{Path, PathBuf};
 
+/// One random value per process boot, for fixture directory names. A pid alone is not unique
+/// across runs — the OS recycles pids, and a directory left behind by a killed process then
+/// collides with a later run whose counter restarted at zero (the #157 class, seen again in
+/// #408 and #405). A process-wide random nonce cannot collide with any other boot.
+pub fn boot_nonce() -> u64 {
+    use std::hash::{BuildHasher, RandomState};
+    static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *NONCE.get_or_init(|| RandomState::new().hash_one(0u64))
+}
+
 /// Resolves the real CLI adjacent to the UI executable or fails the test explicitly.
 pub fn cli(ui: &Path) -> Option<PathBuf> {
     let parent = ui.parent().expect("required CLI location has no parent");
@@ -24,10 +34,7 @@ fn a_missing_cli_is_a_failed_check_not_a_successful_skip() {
         .unwrap()
         .as_nanos();
     let ui = std::env::temp_dir()
-        .join(format!(
-            "beamcraft-absent-cli-{}-{nonce}",
-            std::process::id()
-        ))
+        .join(format!("beamcraft-absent-cli-{}-{nonce}", boot_nonce()))
         .join("beamcraft-ui");
     let _ = cli(&ui);
 }

@@ -122,7 +122,8 @@ fn native_selector_saves_and_reloads_all_preferences() {
         return;
     }
     let config = Fixture(
-        Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("appearance-{}", std::process::id())),
+        Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("appearance-{}", crate::support::boot_nonce())),
     );
     std::fs::create_dir(&config.0).unwrap();
     let ctx = context();

@@ -24,7 +24,7 @@ use std::process::Command;
 fn root(name: &str) -> PathBuf {
     let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("v03-export")
-        .join(format!("{name}-{}", std::process::id()));
+        .join(format!("{name}-{}", crate::support::boot_nonce()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("store")).unwrap();
     root

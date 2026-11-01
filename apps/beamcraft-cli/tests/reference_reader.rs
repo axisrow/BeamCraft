@@ -64,7 +64,7 @@ fn run_binary(args: &[&str]) -> Json {
 fn the_reader_composes_the_reference_and_places_the_foreign_points_as_the_engine_says() {
     let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join("r01-reader");
     let _ = fs::remove_dir_all(&base);
-    let root = base.join(format!("run-{}", std::process::id()));
+    let root = base.join(format!("run-{}", crate::support::boot_nonce()));
     fs::create_dir_all(root.join("store")).unwrap();
     fs::create_dir_all(root.join("layers").join("external")).unwrap();
     let store = root.join("store");

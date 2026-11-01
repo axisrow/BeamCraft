@@ -46,7 +46,7 @@ fn level(name: &str) -> CreateLevel {
 fn store_dir(tag: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join("d1-claim-tests")
-        .join(format!("{tag}-{}", std::process::id()));
+        .join(format!("{tag}-{}", crate::support::boot_nonce()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     dir

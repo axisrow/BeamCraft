@@ -31,7 +31,7 @@ struct Story(PathBuf);
 impl Story {
     fn new() -> Self {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("q01-alpha-{}", std::process::id()));
+            .join(format!("q01-alpha-{}", crate::support::boot_nonce()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
         Self(root)
