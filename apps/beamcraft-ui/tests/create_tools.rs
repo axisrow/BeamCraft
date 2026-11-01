@@ -43,7 +43,7 @@ impl Stores {
             .join("v05-tests")
             .join(format!(
                 "run-{}-{}",
-                std::process::id(),
+                crate::support::boot_nonce(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
         let _ = std::fs::remove_dir_all(&root);

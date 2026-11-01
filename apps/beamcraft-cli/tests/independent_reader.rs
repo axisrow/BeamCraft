@@ -70,7 +70,7 @@ impl Scratch {
     fn new(name: &str) -> Self {
         let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
         let _ = fs::remove_dir_all(&base);
-        let root = base.join(format!("run-{}", std::process::id()));
+        let root = base.join(format!("run-{}", crate::support::boot_nonce()));
         let store = root.join("store");
         fs::create_dir_all(&store).unwrap();
         fs::create_dir_all(root.join("layers")).unwrap();

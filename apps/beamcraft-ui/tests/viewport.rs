@@ -297,7 +297,7 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
     let Some(cli) = cli() else { return };
     let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("v03-tests")
-        .join(format!("store-{}", std::process::id()));
+        .join(format!("store-{}", crate::support::boot_nonce()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let store = root.to_str().unwrap();
@@ -387,7 +387,7 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     let Some(cli) = cli() else { return };
     let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
         .join("v03-tests")
-        .join(format!("reference-{}", std::process::id()));
+        .join(format!("reference-{}", crate::support::boot_nonce()));
     let _ = std::fs::remove_dir_all(&root);
     let store = root.join("store");
     std::fs::create_dir_all(&store).unwrap();

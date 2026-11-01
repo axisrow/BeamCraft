@@ -18,6 +18,16 @@ use std::{
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+/// One random value per process boot, for fixture directory names. A pid alone is not unique
+/// across runs — the OS recycles pids, and a directory left behind by a killed process then
+/// collides with a later run whose counter restarted at zero (the #157 class, seen again in
+/// #408 and #405). A process-wide random nonce cannot collide with any other boot.
+pub(crate) fn boot_nonce() -> u64 {
+    use std::hash::{BuildHasher, RandomState};
+    static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *NONCE.get_or_init(|| RandomState::new().hash_one(0u64))
+}
+
 pub(crate) struct StoreFixture {
     pub(crate) root: PathBuf,
 }
@@ -29,7 +39,7 @@ impl StoreFixture {
         for _ in 0..1024 {
             let root = base.join(format!(
                 "e2e-{}-{}",
-                std::process::id(),
+                boot_nonce(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             match fs::create_dir(&root) {

@@ -17,8 +17,10 @@ use std::process::Command;
 
 #[test]
 fn a_pinned_publication_refuses_cli_writes_keeps_local_edits_and_retries_after_release() {
-    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("publication-guard-{}", std::process::id()));
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
+        "publication-guard-{}",
+        crate::support::boot_nonce()
+    ));
     fs::create_dir(&root).unwrap();
     let published = root.join("published");
     let draft = root.join("draft");

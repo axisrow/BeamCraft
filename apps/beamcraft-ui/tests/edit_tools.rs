@@ -52,7 +52,7 @@ impl Stores {
             .join("v05-2-tests")
             .join(format!(
                 "run-{}-{}",
-                std::process::id(),
+                crate::support::boot_nonce(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
         let _ = std::fs::remove_dir_all(&root);
@@ -700,7 +700,7 @@ fn a_launch_without_arguments_bootstraps_a_default_workspace_and_forks_it_once()
         .join("v05-2-tests")
         .join(format!(
             "default-{}-{}",
-            std::process::id(),
+            crate::support::boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
     let _ = std::fs::remove_dir_all(&root);

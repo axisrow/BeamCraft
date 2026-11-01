@@ -47,7 +47,7 @@ impl Fixture {
         fs::create_dir_all(&base).unwrap();
         let root = base.join(format!(
             "e2e-{}-{}",
-            std::process::id(),
+            crate::support::boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).unwrap();

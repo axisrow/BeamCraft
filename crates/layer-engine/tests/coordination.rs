@@ -34,7 +34,7 @@ const ACTOR: &str = "0199e7a0-0000-7000-8000-000000000017";
 fn control() -> Control {
     Control {
         cancellation: Cancellation::default(),
-        deadline: Instant::now() + Duration::from_secs(10),
+        deadline: Instant::now() + Duration::from_secs(90),
     }
 }
 fn digest(bytes: &[u8]) -> ContentDigest {

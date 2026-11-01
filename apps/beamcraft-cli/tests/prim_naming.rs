@@ -37,7 +37,7 @@ struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
         let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("u16-prim-naming-{}", std::process::id()));
+            .join(format!("u16-prim-naming-{}", crate::support::boot_nonce()));
         fs::create_dir_all(&root).unwrap();
         fs::create_dir(root.join("store")).unwrap();
         Self(root)

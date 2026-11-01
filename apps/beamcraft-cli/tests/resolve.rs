@@ -44,7 +44,7 @@ impl Fixture {
     fn new() -> Self {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "resolve-cli-{}-{}",
-            std::process::id(),
+            crate::support::boot_nonce(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let paths = ["published", "a", "b", "c"]

@@ -42,7 +42,7 @@ struct Story(PathBuf);
 impl Story {
     fn new() -> Self {
         let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("q01-expanded-{}", std::process::id()));
+            .join(format!("q01-expanded-{}", crate::support::boot_nonce()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
