@@ -1,0 +1,30 @@
+name: Fork sync conflict policy test
+
+# The committed regression harness for tools/fork-sync.sh, after the
+# tools/test-ci-queue-alert.sh precedent: synthetic repos and a fake cargo
+# drive the real script, so the conflict policy (fork-only paths keep the
+# fork version, shared conflicts abort and push nothing) cannot silently
+# regress to the old auto-keep-all form. No sync automation runs here.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/fork-sync-test.yml
+      - tools/fork-sync.sh
+      - tools/test-fork-sync.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-sync-test
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test the fork-sync conflict policy
+        run: bash tools/test-fork-sync.sh
