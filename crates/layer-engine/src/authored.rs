@@ -297,7 +297,8 @@ pub enum Shape {
     Assembly,
     /// An element whose shape belongs to a discipline (#795): its kind, attributes and bounds
     /// are answered by the shape's own hook. The weld, the A05 bolt group and the A14.3 bolt
-    /// group are built with [`Shape::weld`], [`Shape::bolt`] and [`Shape::bolt_group`].
+    /// group are built with the steel discipline facade's `weld`, `bolt` and `bolt_group`
+    /// constructors.
     Discipline(HookedShape),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
@@ -445,7 +446,7 @@ pub enum Change {
     },
     /// An edit that belongs to a discipline (#795): its target kind, groups, bounds and
     /// attribute writes are answered by the change's own hook. The replacement of an A14.3 bolt
-    /// group is built with [`Change::bolt_group`].
+    /// group is built with the steel discipline facade's `replace_bolt_group`.
     Discipline(HookedChange),
     /// Change the optional material relationship.
     Material {

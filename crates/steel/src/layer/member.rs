@@ -76,6 +76,11 @@ impl ShapeHook for MemberShape {
     }
 
     fn author_cuts(&self, data: &mut sdf::Data, path: &str) -> Result<(), Diagnostic> {
+        // A fresh uncut element authors no cut attributes; the empty arrays belong to the
+        // change path, where they mask weaker opinions (A03).
+        if self.cuts.is_empty() {
+            return Ok(());
+        }
         super::write::author_cuts(data, path, &self.cuts, None)
     }
 
