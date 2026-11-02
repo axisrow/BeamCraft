@@ -325,7 +325,13 @@ fn a_small_hole_cuts_a_tube_through_four_chains() {
     // A round hole of radius 4 spans two bands on each side of the section; the opening
     // touches every band's lower boundary edge only (a 48-sided band is about 9.8 mm
     // wide, the hole is 8 mm).
-    let res = drill(&body, circle(L / 2.0, 0.0, 4.0), -H / 2.0 - 1.0, H / 2.0 + 1.0, 7);
+    let res = drill(
+        &body,
+        circle(L / 2.0, 0.0, 4.0),
+        -H / 2.0 - 1.0,
+        H / 2.0 + 1.0,
+        7,
+    );
     assert_sealed(&res);
     assert_eq!(res.kind(), OpKind::MemberThroughHole);
     // The solid section is genus 0; the through hole adds one more.
@@ -358,7 +364,13 @@ fn a_hole_wider_than_a_facet_band_cuts_each_band_in_two() {
     let before = volume(&body);
     // A round hole of radius 10 is wider than a band: each crossed band is cut in two,
     // and the pieces are assembled around the opening's arcs.
-    let res = drill(&body, circle(L / 2.0, 0.0, R), -H / 2.0 - 1.0, H / 2.0 + 1.0, 9);
+    let res = drill(
+        &body,
+        circle(L / 2.0, 0.0, R),
+        -H / 2.0 - 1.0,
+        H / 2.0 + 1.0,
+        9,
+    );
     assert_sealed(&res);
     assert_eq!(genus(&res), 1);
     let removed = before - volume(res.body());
@@ -402,7 +414,12 @@ fn degenerate_faceted_inputs_never_crash() {
     // A tiny range, an inverted one, a sub-floor tangent on the tube wall.
     let _ = refused(&body, circle(L / 2.0, 0.0, 4.0), -H / 2.0, H / 2.0 - 0.0);
     let _ = refused(&body, circle(L / 2.0, 0.0, 4.0), -H / 2.0, H / 2.0 - 5e-4);
-    let _ = refused(&body, circle(L / 2.0, 0.0, 4.0), H / 2.0 + 2.0, H / 2.0 + 3.0);
+    let _ = refused(
+        &body,
+        circle(L / 2.0, 0.0, 4.0),
+        H / 2.0 + 2.0,
+        H / 2.0 + 3.0,
+    );
 }
 
 #[test]

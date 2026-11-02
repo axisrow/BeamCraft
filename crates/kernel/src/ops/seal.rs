@@ -317,8 +317,6 @@ pub fn seal(
     poll(cancelled, Stage::Checks)?;
     let analysis = analyze_with_tolerance(&mesh, tolerance, limits.analysis, &mut *cancelled)
         .map_err(|e| OpFailure::from_mesh(e, OpField::Mesh))?;
-    #[cfg(g142_slice2_dbg)]
-    eprintln!("seal status: {:?}", analysis.status());
     match analysis.status() {
         ShellStatus::Certified => {}
         ShellStatus::Uncertain(_) => {

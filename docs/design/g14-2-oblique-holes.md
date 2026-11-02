@@ -139,3 +139,49 @@ only up to rounding, so a body already cut obliquely fails the exact X-extrusion
 `analyze_extrusion` and a later member hole on it is refused with `BodyNotPrism`
 (certified by a test; never a crash). Perpendicular cuts after perpendicular cuts keep
 working as in G14.1.
+
+## Status after slice 2 (the strip registry, union-aware placement, shared kink vertices)
+
+Slice 2 lands the kink registry and the union-aware placement for faceted walls, behind the
+same `member_through_hole` entry point: a body whose walls group into strips of several
+planes now routes to the chain path, while every axis-aligned flat wall keeps the slice-1
+path bit for bit (the frame identity makes the registry a no-op there).
+
+- **Registry.** Wall triangles group into strips by exact YZ collinearity (the `area_sign`
+  filter re-merges a re-triangulated face); a strip carries its plane, contour and parent
+  face id. Strips join by union-find across vertical mesh edges with the `pi/4` soft-kink
+  turn; each chain is walked as a ring in adjacency order (not a transitive closure), so
+  the keep/cut sides of a chain are read off ring neighbours.
+- **Placement.** The footprint is clipped against every crossed strip region (Sutherland–
+  Hodgman with the canonical crossing interpolation on the region's axis-parallel edges);
+  clip pieces carry their source (footprint vertex, body edge or shared kink point), the
+  exact Big-integer piece areas must sum to the exact footprint area, and the floor
+  distance is enforced against hard edges while soft kinks may be touched.
+- **Shared kink vertices.** A kink edge crossed by the opening gets one vertex
+  parameterized along it, pushed into the registry and reused by both adjoining strips, so
+  the carved walls of two chains meet on identical coordinates.
+- **Construction.** Each crossed strip is carved to its clip piece through the generalized
+  splice: keep paths and the opening arc are assembled into the strip's outer loop, the
+  strip's area sign decides the winding, and a swallowed strip disappears with its face.
+- **Band and volume.** Per crossed chain the band events are collected per footprint edge
+  with their kink points, near-coincident events merge, and the band is emitted as the chord
+  polyline between consecutive events; the removed volume is the same exact Big-rational
+  divergence sum as slice 1 (rings fanned, band triangles, entry fan reversed) widened by
+  the ring-rounding residual, and the seal compares the mesh against it.
+
+Known limitations of this slice, all refusals or uncertified results rather than crashes:
+
+- A wall face spanning several strips (the re-triangulated wall of an earlier cavity, the
+  merge-walk case) is refused with `BodyWallUnsupported`; slice 3 lifts it.
+- A footprint wider than one facet band cuts a band in two, and the band's chord polyline
+  does not cover the body-edge arcs between neighbouring strips' kink points; the result
+  stays uncertified (`ResultNotCertified`) pending the merge-walk band of slice 3 (the
+  boundary question is with upstream).
+- On a strip tilted against the cutter axis the clip piece currently maps the footprint
+  into the strip frame without the `1/cos(tilt)` shadow scale, so the opening undercuts
+  the true cutter curve by that factor while staying self-consistent (the seal-certified
+  divergence sum anchors to the emitted vertices); the closed form `A * H` of the flat
+  walls does not hold for a tilted wall either (the wall slope shortens the removed
+  column). The fix or the accepted deviation is an open owner decision.
+- Re-cutting a body after a faceted wall hole keeps the slice-1 limitation: the new band
+  walls are not X-parallel, so a later hole on them is refused with `BodyNotPrism`.
