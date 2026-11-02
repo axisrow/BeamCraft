@@ -1092,13 +1092,14 @@ fn face_strips(
                 }
             }
             group.push(index);
-            assignment[index] = local;
+            *assignment.get_mut(index).ok_or_else(internal)? = local;
             placed = true;
             break;
         }
         if !placed {
             groups.push(vec![index]);
-            assignment[index] = groups.len() - 1;
+            let local = groups.len() - 1;
+            *assignment.get_mut(index).ok_or_else(internal)? = local;
         }
     }
     let mut strips = Vec::with_capacity(groups.len());
@@ -1197,6 +1198,16 @@ fn left_of(a: Point2, b: Point2, p: Point2) -> f64 {
     (b.x - a.x).mul_add(p.y - a.y, -(b.y - a.y) * (p.x - a.x))
 }
 
+/// The strip registry: the strips, their chains of soft kinks and every strip's triangles.
+type StripRegistry = (Vec<Strip>, Vec<Chain>, Vec<Vec<[u32; 3]>>);
+
+/// One strip's `(a, b)` region: the outer loop, the hole loops and the kink lines.
+type StripRegionParts = (
+    Vec<(Point2, u32)>,
+    Vec<Vec<(Point2, u32)>>,
+    Vec<(f64, [f64; 2], f64, f64)>,
+);
+
 /// Builds the strips of every wall face and chains them by soft kinks across the mesh
 /// edges that two wall triangles of different strips share. Every mesh edge whose two
 /// triangles lie in different strips is a kink: soft turns (at most `pi/4`) join their
@@ -1205,7 +1216,7 @@ fn build_walls(
     body: &Body,
     solid: &Solid,
     budget: &mut ExactBudget,
-) -> Result<(Vec<Strip>, Vec<Chain>, Vec<Vec<[u32; 3]>>), OpFailure> {
+) -> Result<StripRegistry, OpFailure> {
     let internal = || OpFailure::self_check(OpDefect::ResultNotCertified, Stage::Build);
     let mut strips: Vec<Strip> = Vec::new();
     let mut strips_tris: Vec<Vec<[u32; 3]>> = Vec::new();
@@ -1243,8 +1254,11 @@ fn build_walls(
     // Union-find over the strips, merged by soft kinks only.
     let mut parent: Vec<usize> = (0..strips.len()).collect();
     fn root(parent: &[usize], mut at: usize) -> usize {
-        while parent[at] != at {
-            at = parent[at];
+        while let Some(&next) = parent.get(at) {
+            if next == at {
+                return at;
+            }
+            at = next;
         }
         at
     }
@@ -1262,8 +1276,10 @@ fn build_walls(
         );
         if is_soft_kink((strip_a.ny, strip_a.nz), (strip_b.ny, strip_b.nz)) {
             let (ra, rb) = (root(&parent, *a), root(&parent, *b));
-            if ra != rb {
-                parent[ra.max(rb)] = ra.min(rb);
+            if ra != rb
+                && let Some(slot) = parent.get_mut(ra.max(rb))
+            {
+                *slot = ra.min(rb);
             }
             soft.push((*a.min(b), *a.max(b)));
         }
@@ -1292,10 +1308,10 @@ fn build_walls(
         ) else {
             continue;
         };
-        if ca == cb {
-            if let Some(chain) = chains.get_mut(ca) {
-                chain.soft.push((a, b));
-            }
+        if ca == cb
+            && let Some(chain) = chains.get_mut(ca)
+        {
+            chain.soft.push((a, b));
         }
     }
     Ok((strips, chains, strips_tris))
@@ -1313,14 +1329,7 @@ fn strip_region(
     project: &impl Fn([f64; 3]) -> [f64; 2],
     limits: &OpLimits,
     budget: &mut ExactBudget,
-) -> Result<
-    (
-        Vec<(Point2, u32)>,
-        Vec<Vec<(Point2, u32)>>,
-        Vec<(f64, [f64; 2], f64, f64)>,
-    ),
-    OpFailure,
-> {
+) -> Result<StripRegionParts, OpFailure> {
     let position = |i: u32| {
         body.mesh()
             .vertices()
@@ -1353,7 +1362,7 @@ fn strip_region(
         .ok_or_else(|| OpFailure::unsupported(OpField::Body, OpDefect::BodyLoops, Stage::Build))?;
     let (outer, holes) = split_loops(
         positioned,
-        |p| project(p),
+        project,
         OpDefect::BodyLoops,
         OpField::Body,
         budget,
@@ -1531,7 +1540,7 @@ fn cut_through_chains(
                 for (j, pair) in points.iter().zip(points.iter().cycle().skip(1)).enumerate() {
                     let (p, q) = pair;
                     let (d_b, at) = (q.y - p.y, p.y - line_b);
-                    if d_b == 0.0 || !(at < 0.0) == (q.y - line_b < 0.0) {
+                    if d_b == 0.0 || (at >= 0.0) == (q.y - line_b < 0.0) {
                         continue;
                     }
                     // The canonical crossing parameter, identical to the clip's own
@@ -1717,8 +1726,7 @@ fn cut_through_chains(
             return Err(internal());
         };
         let reverse = strip.axis_dot(dy, dz) < 0.0;
-        let (mut outer, mut holes) =
-            face_loops(body, tris, reverse, |p| project(p), limits, budget)?;
+        let (mut outer, mut holes) = face_loops(body, tris, reverse, project, limits, budget)?;
         // A strip whose every contour vertex lies inside its own clip piece disappears
         // whole: the opening swallows it.
         let outer_inside = !outer.ids.is_empty()
@@ -1757,15 +1765,18 @@ fn cut_through_chains(
             clip_ids.push(ids);
         }
         // Splice the clip piece into the strip's outer loop or add it as one more hole.
-        for (clip_index, piece) in std::slice::from_ref(piece).iter().enumerate() {
-            let ids = clip_ids.get(clip_index).ok_or_else(internal)?;
+        // A crossed strip carries exactly one clip piece, so the splice runs once.
+        {
+            let ids = clip_ids.first().ok_or_else(internal)?;
             // The boundary contact points of the clip, in clip order: the same physical
             // point (a clip loop that starts and ends on one boundary edge) is one contact.
             let mut contacts: Vec<usize> = Vec::new();
             for (i, tagged) in piece.tagged.iter().enumerate() {
                 if !matches!(tagged.src, ClipSrc::Footprint(_)) {
                     let duplicate = contacts.iter().any(|&c| {
-                        let prev = &piece.tagged[c];
+                        let Some(prev) = piece.tagged.get(c) else {
+                            return false;
+                        };
                         (prev.ab.x - tagged.ab.x).abs() <= eps
                             && (prev.ab.y - tagged.ab.y).abs() <= eps
                     });
@@ -1788,7 +1799,7 @@ fn cut_through_chains(
                 let carved = triangulate_cap(
                     &outer,
                     &holes,
-                    |p| project(p),
+                    project,
                     limits,
                     body.tolerance(),
                     OpField::Cap,
@@ -1868,27 +1879,23 @@ fn cut_through_chains(
             // opening (its first edge's midpoint is off the clip and off its boundary)
             // and thrown when it runs through the opening.
             let throws = |path: &[usize]| -> Result<bool, OpFailure> {
-                for w in 0..path.len().saturating_sub(1) {
-                    let (Some(pa), Some(pb)) = (
-                        outer.xyz.get(path[w]).copied(),
-                        outer.xyz.get(path[w + 1]).copied(),
-                    ) else {
-                        return Err(internal());
-                    };
-                    let mid3 = [
-                        (pa[0] + pb[0]) / 2.0,
-                        (pa[1] + pb[1]) / 2.0,
-                        (pa[2] + pb[2]) / 2.0,
-                    ];
-                    let mid_ab = flat_point(mid3, &project);
-                    if winding_contains(mid_ab, &clip_pts).unwrap_or(false)
-                        || clip_border_dist(mid_ab) <= eps
-                    {
-                        return Ok(true);
-                    }
+                // The first edge decides: the kept paths run along the strip's own
+                // contour, so the opening sits on one side of them all.
+                let (Some(&ia), Some(&ib)) = (path.first(), path.get(1)) else {
                     return Ok(false);
-                }
-                Ok(false)
+                };
+                let (Some(pa), Some(pb)) = (outer.xyz.get(ia).copied(), outer.xyz.get(ib).copied())
+                else {
+                    return Err(internal());
+                };
+                let mid3 = [
+                    (pa[0] + pb[0]) / 2.0,
+                    (pa[1] + pb[1]) / 2.0,
+                    (pa[2] + pb[2]) / 2.0,
+                ];
+                let mid_ab = flat_point(mid3, &project);
+                Ok(winding_contains(mid_ab, &clip_pts).unwrap_or(false)
+                    || clip_border_dist(mid_ab) <= eps)
             };
             let n = outer.ids.len();
             // The contacts in outer order (rotated from the smallest slot).
@@ -1908,8 +1915,8 @@ fn cut_through_chains(
             // when it only notches one edge.
             let mut keeps: Vec<(usize, usize, Vec<usize>)> = Vec::new();
             for i in 0..n_clip {
-                let (ci, ai) = ring[i];
-                let (cj, aj) = ring[(i + 1) % n_clip];
+                let (ci, ai) = *ring.get(i).ok_or_else(internal)?;
+                let (cj, aj) = *ring.get((i + 1) % n_clip).ok_or_else(internal)?;
                 let mut path = vec![ai];
                 let mut at = (ai + 1) % n;
                 while at != aj {
@@ -1926,7 +1933,10 @@ fn cut_through_chains(
             let m = piece.tagged.len();
             let mut arcs: Vec<(usize, usize, Vec<usize>)> = Vec::new();
             for i in 0..n_clip {
-                let (ci, cj) = (contacts[i], contacts[(i + 1) % n_clip]);
+                let (ci, cj) = (
+                    *contacts.get(i).ok_or_else(internal)?,
+                    *contacts.get((i + 1) % n_clip).ok_or_else(internal)?,
+                );
                 let mut slots = Vec::new();
                 let mut at = (ci + 1) % m;
                 while at != cj {
@@ -1958,16 +1968,16 @@ fn cut_through_chains(
             let mut used_arc = vec![false; arcs.len()];
             let mut pieces_out: Vec<CapLoop> = Vec::new();
             for start in 0..keeps.len() {
-                if used_keep[start] {
+                if *used_keep.get(start).ok_or_else(internal)? {
                     continue;
                 }
-                used_keep[start] = true;
+                *used_keep.get_mut(start).ok_or_else(internal)? = true;
                 let mut piece_loop = CapLoop {
                     ids: Vec::new(),
                     xyz: Vec::new(),
                 };
                 // Walk the first kept path in its own (outer, counter-clockwise) order.
-                let (_, mut end, path) = keeps[start].clone();
+                let (_, mut end, path) = keeps.get(start).ok_or_else(internal)?.clone();
                 for slot in &path {
                     let (Some(id), Some(xyz)) =
                         (outer.ids.get(*slot).copied(), outer.xyz.get(*slot).copied())
@@ -1979,13 +1989,14 @@ fn cut_through_chains(
                 }
                 loop {
                     // The arc at the path's end contact, walked away from it.
-                    let Some(ai) = (0..arcs.len())
-                        .find(|&i| !used_arc[i] && (arcs[i].0 == end || arcs[i].1 == end))
-                    else {
+                    let Some(ai) = (0..arcs.len()).find(|&i| {
+                        !used_arc.get(i).copied().unwrap_or(false)
+                            && arcs.get(i).is_some_and(|arc| arc.0 == end || arc.1 == end)
+                    }) else {
                         return Err(internal());
                     };
-                    used_arc[ai] = true;
-                    let (a, b, slots) = &arcs[ai];
+                    *used_arc.get_mut(ai).ok_or_else(internal)? = true;
+                    let (a, b, slots) = arcs.get(ai).ok_or_else(internal)?;
                     if *a == end {
                         for slot in slots {
                             let (xyz, id) = clip_at(*slot)?;
@@ -2002,13 +2013,16 @@ fn cut_through_chains(
                         end = *a;
                     }
                     // The kept path at the arc's far end, if one is left there.
-                    let Some(ki) = (0..keeps.len())
-                        .find(|&i| !used_keep[i] && (keeps[i].0 == end || keeps[i].1 == end))
-                    else {
+                    let Some(ki) = (0..keeps.len()).find(|&i| {
+                        !used_keep.get(i).copied().unwrap_or(false)
+                            && keeps
+                                .get(i)
+                                .is_some_and(|keep| keep.0 == end || keep.1 == end)
+                    }) else {
                         break;
                     };
-                    used_keep[ki] = true;
-                    let (a, b, keep_slots) = &keeps[ki];
+                    *used_keep.get_mut(ki).ok_or_else(internal)? = true;
+                    let (a, b, keep_slots) = keeps.get(ki).ok_or_else(internal)?;
                     if *a == end {
                         for slot in keep_slots.iter().skip(1) {
                             let (Some(id), Some(xyz)) =
@@ -2046,7 +2060,7 @@ fn cut_through_chains(
                 let carved = triangulate_cap(
                     &piece_loop,
                     &holes,
-                    |p| project(p),
+                    project,
                     limits,
                     body.tolerance(),
                     OpField::Cap,
@@ -2062,23 +2076,6 @@ fn cut_through_chains(
                 }
             }
             continue 'strip;
-        }
-        // Re-triangulate the carved face with the clip openings as holes.
-        let carved = triangulate_cap(
-            &outer,
-            &holes,
-            |p| project(p),
-            limits,
-            body.tolerance(),
-            OpField::Cap,
-            false,
-        )
-        .map_err(|e| cutter_field(e, holes.len()))?;
-        loops += 1 + holes.len();
-        cap_points += outer.ids.len() + holes.iter().map(|h| h.ids.len()).sum::<usize>();
-        for [a, b, c] in carved {
-            triangles.push(if reverse { [a, c, b] } else { [a, b, c] });
-            faces.push(face);
         }
     }
 
@@ -2099,11 +2096,10 @@ fn cut_through_chains(
                 events.get(s1).ok_or_else(internal)?,
             );
             let j = e0.edge;
-            let run = if e1.edge == j && e0.t == 0.0 {
-                ""
-            } else {
-                ".p1"
-            };
+            // The first run of an edge starts at the edge's own vertex; a run past a
+            // mid-edge kink crossing carries the `.p1` suffix (the G14.1 spelling keeps
+            // `s{j}` bare for the single-run case).
+            let run = if e0.t == 0.0 { "" } else { ".p1" };
             face_ids.push(format!("cut:f.h{}.w{k}.s{j}{run}", cutter.ordinal));
             // The in-frame side normal (db, -da) of the event edge, mapped back to body
             // coordinates as in the slice-1 bands.
@@ -2275,9 +2271,9 @@ fn place_chains(
         // A strip parallel to the cutter axis cannot carry the opening's height: its
         // section segment is parallel to `d` and the G14.1 breach applies.
         if chain.strips.iter().any(|&s| {
-            strips.get(s).map_or(false, |strip| {
-                strip.axis_dot(dy, dz).abs() <= f64::EPSILON * 64.0
-            })
+            strips
+                .get(s)
+                .is_some_and(|strip| strip.axis_dot(dy, dz).abs() <= f64::EPSILON * 64.0)
         }) {
             return Err(contour());
         }
