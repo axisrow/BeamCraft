@@ -8,17 +8,17 @@
 //! also writes one group-owned hole record per crossing fastener on every connected plate
 //! (A14.4); `--hole-mode none` (a screw's default) writes no part. The A05 `create-bolt` token
 //! is retired: stored annotation groups stay readable and upgradable, `bolts` lists them. The
-//! commands call the engine API through `beamcraft_cli::bolt` and print one JSON object with
+//! commands call the engine API through `beamcraft_commands::bolt` and print one JSON object with
 //! the same error shape and exit codes as the weld commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{footprint_json, id_error, revision_json};
-use beamcraft_cli::bolt::{
+use beamcraft_commands::bolt::{
     BoltContext, BoltGroupView, BoltView, GroupChange, bolt_groups, bolts, create_bolt_group,
     update_bolt_group,
 };
-use beamcraft_cli::definition::{DefinitionRecord, head_definitions};
-use beamcraft_cli::library::{Lookup, Source, load_fastener};
+use beamcraft_commands::definition::{DefinitionRecord, head_definitions};
+use beamcraft_commands::library::{Lookup, Source, load_fastener};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -521,7 +521,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     // reaches the adapter's replay comparison, whose verdict names the real state.
     if repin != from_library
         && current.is_some()
-        && !beamcraft_cli::bolt::op_accepted(&store, &context.op_id)?
+        && !beamcraft_commands::bolt::op_accepted(&store, &context.op_id)?
     {
         return Err(invalid(
             "--repin needs --fastener-library and --designation",

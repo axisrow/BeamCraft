@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! D06 headless commands: `annotation-create` and `annotation-list`. They call the engine API
-//! through `beamcraft_cli::annotation` and print one JSON object with the same error shape and
+//! through `beamcraft_commands::annotation` and print one JSON object with the same error shape and
 //! exit codes as the construction object commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{
     check_project_option, footprint_json, id_error, num, revision_json, triple,
 };
-use beamcraft_cli::annotation::{
+use beamcraft_commands::annotation::{
     AnnotationChange, AnnotationContext, annotations, create_annotation, status,
 };
 use beamcraft_host::{
@@ -191,7 +191,7 @@ fn coordinates(text: &str) -> Run<[f64; 3]> {
 /// The annotations as JSON; `resolved` carries the binding state of each stored record.
 pub(crate) fn list_json(
     stored: &[beamcraft_model::annotation::Annotation],
-    resolved: &[beamcraft_cli::annotation::AnnotationReport],
+    resolved: &[beamcraft_commands::annotation::AnnotationReport],
 ) -> Run<Json> {
     let state_of = |id: &ElementId| {
         resolved

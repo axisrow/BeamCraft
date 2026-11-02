@@ -26,6 +26,7 @@ name = "macos_icon"
 path = "tests/macos_icon.rs"
 
 [dependencies]
+beamcraft-commands = { path = "../../crates/commands", version = "0.0.1" }
 beamcraft-model.workspace = true
 steel = { path = "../../crates/steel", version = "0.0.1" }
 beamcraft-engine = { path = "../../crates/engine", version = "0.0.1" }

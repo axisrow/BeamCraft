@@ -24,7 +24,7 @@ beamcraft preview-numbering ...   (A08; now also reports the stored approval and
 |---|---|---|
 | Command and rules | `beamcraft_engine::numbering_approval` | `ApproveNumbering { settings, preview_token }`, `approve(parts, assemblies, command)`, `assess(parts, assemblies, stored)`, `compare_group`, `Basis`, `Mark`, `Approval::footprint`. Pure and bounded |
 | Stored mark | `beamcraft_layer_engine::authored` | `Change::Mark { id, mark }`, `Mark { series, number, basis }`, the property names `MARK_SERIES`, `MARK_NUMBER`, `MARK_BASIS`, validation of loaded and authored marks, descriptor and pin changes |
-| Adapter | `beamcraft_cli::numbering_approval` | `approve_numbering` (replay, facts, engine, author, footprint check, commit) and `numbering_status`; `beamcraft_cli::numbering` reads the marks with the facts, of one head |
+| Adapter | `beamcraft_commands::numbering_approval` | `approve_numbering` (replay, facts, engine, author, footprint check, commit) and `numbering_status`; `beamcraft_commands::numbering` reads the marks with the facts, of one head |
 | Commands | `numbering_cmd` | parsing and JSON only |
 
 ### Approval
@@ -186,7 +186,7 @@ Tests (all through real code, the CLI tests through the binary):
 
 * `docs/contracts/f08-module-boundaries-v0.1.md` row "Numbering preview": add the `approve-numbering`
   and `inspect-numbering` commands, `beamcraft_engine::numbering_approval` and
-  `beamcraft_cli::numbering_approval`, and replace "no stored numbers" by "approved marks stored as
+  `beamcraft_commands::numbering_approval`, and replace "no stored numbers" by "approved marks stored as
   `steel:numbering:*` properties (A09, experimental)".
 * `docs/contracts/f04-model-and-commands-v0.1.md` section 9 names approved-number invalidation as open:
   this note is the A09 resolution (stale = the proposal would differ; move, rename without name

@@ -141,6 +141,21 @@ version = "0.0.1"
 name = "beamcraft-cli"
 version = "0.0.1"
 dependencies = [
+ "beamcraft-commands",
+ "beamcraft-engine",
+ "beamcraft-host",
+ "beamcraft-ifc",
+ "beamcraft-json",
+ "beamcraft-layer-engine",
+ "beamcraft-model",
+ "session",
+ "steel",
+]
+
+[[package]]
+name = "beamcraft-commands"
+version = "0.0.1"
+dependencies = [
  "beamcraft-engine",
  "beamcraft-host",
  "beamcraft-ifc",

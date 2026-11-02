@@ -68,6 +68,7 @@ overflow-checks = false
 [profile.release.package]
 beamcraft-boundaries = { opt-level = 3 }
 beamcraft-cli = { opt-level = 3 }
+beamcraft-commands = { opt-level = 3 }
 beamcraft-engine = { opt-level = 3 }
 beamcraft-fixtures = { opt-level = 3 }
 beamcraft-geom = { opt-level = 3 }

@@ -7,8 +7,8 @@
 //! digests, the volumes and the mass with its source. It never touches a store.
 
 use crate::report::report;
-use beamcraft_cli::definition::DefinitionRecord;
-use beamcraft_cli::library::{Lookup, Source, load_fastener};
+use beamcraft_commands::definition::DefinitionRecord;
+use beamcraft_commands::library::{Lookup, Source, load_fastener};
 use beamcraft_json::Json;
 use beamcraft_model::ErrorCode;
 use session::Refusal;

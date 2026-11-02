@@ -17,10 +17,7 @@
 //! Other unsupported relationships still refuse the copy.
 
 use crate::definition::material_lookup;
-use crate::plate::{
-    decode, evaluate_decoded, member_record, mesh_change, plate_record, prior_op_with,
-    replay_summary,
-};
+use crate::plate::{decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary};
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
@@ -37,13 +34,10 @@ use session::pipeline::{
     Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
     summarize,
 };
-use steel::engine::committed::{MemberRecord, PlateRecord};
-use steel::engine::copy::{copy_member, copy_plate};
+pub use steel::engine::part::PartRecord;
 use steel::engine::transaction::PriorOp;
 use steel::layer as steel_layer;
-use steel::layer::{MemberKind as LayerKind, MemberShape, PlateShape};
 use steel::model::command::CopyElement;
-use steel::model::command::MemberKind;
 
 /// Inputs of one `copy_element` call beyond the command itself.
 #[derive(Debug, Clone)]
@@ -62,22 +56,13 @@ pub struct CopyRequest {
     pub command: CopyElement,
 }
 
-/// The copy as it is in the committed model.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CopiedElement {
-    /// A plate.
-    Plate(Box<PlateRecord>),
-    /// A beam or a column.
-    Member(Box<MemberRecord>),
-}
-
 /// Result of `copy_element`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Copied {
     /// True when the same operation was already committed and nothing was written.
     pub replayed: bool,
-    /// The copy.
-    pub element: CopiedElement,
+    /// The copy as it is in the committed model.
+    pub element: PartRecord,
     /// The revision that holds the result.
     pub revision: RevisionSummary,
     /// The declared footprint; `None` for a replay.
@@ -96,86 +81,27 @@ pub(crate) fn not_found() -> Refusal {
 
 /// The authored changes one copied part needs: its class, its create and its mesh. Shared by
 /// the single copy (P05) and the array copies (T03), which author the same per-copy records.
-pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refusal> {
-    Ok(match copy {
-        CopiedElement::Plate(r) => {
-            let a = &r.authored;
-            let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
-            vec![
-                Change::PartClass {
-                    id: a.id.to_string(),
-                    class: a.class,
-                },
-                Change::Create(Element {
-                    id: a.id.to_string(),
-                    name: a.name.clone(),
-                    shape: steel_layer::plate(PlateShape {
-                        contour_mm: a.contour_points_mm.clone(),
-                        thickness_mm: a.thickness_mm,
-                        thickness_side: a.thickness_side,
-                        corners: a.corners.clone(),
-                        bends: a.bends.clone(),
-                        holes: a
-                            .holes_mm
-                            .iter()
-                            .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
-                            .collect(),
-                        hole_records: a.hole_records.clone(),
-                        cuts: a.cuts.clone(),
-                    }),
-                    placement: LayerPlacement {
-                        translation_mm: a.placement.translation_mm,
-                        orientation_xyzw: [qx, qy, qz, qw],
-                    },
-                    material: a.material,
-                }),
-                mesh_change(&a.id, &r.body.solid, &plate_record(r))?,
-            ]
-        }
-        CopiedElement::Member(r) => {
-            // A04.2 member-hole records have no copy authoring yet (fresh operation ids and a
-            // Change::MemberHoles write): a copy or an array of a drilled member would report
-            // the source's holed mesh and silently lose the holes on the next evaluation.
-            if !r.authored.hole_records.is_empty() {
-                return Err(CommandError::new(
-                    ErrorCode::DependencyUnavailable,
-                    "hole_records",
-                    "copying a drilled member is not implemented",
-                )
-                .into());
-            }
-            let a = &r.authored;
-            let [qx, qy, qz, qw] = a.placement.orientation_xyzw;
-            vec![
-                Change::PartClass {
-                    id: a.id.to_string(),
-                    class: a.class,
-                },
-                Change::Create(Element {
-                    id: a.id.to_string(),
-                    name: a.name.clone(),
-                    shape: steel_layer::member(MemberShape {
-                        kind: match a.kind {
-                            MemberKind::Beam => LayerKind::Beam,
-                            MemberKind::Column => LayerKind::Column,
-                        },
-                        curved: a.curved,
-                        axis_mm: a.axis_points_mm.clone(),
-                        profile: a.profile,
-                        roll_rad: a.roll_rad,
-                        placement: a.section_placement,
-                        cuts: a.cuts.clone(),
-                    }),
-                    placement: LayerPlacement {
-                        translation_mm: a.placement.translation_mm,
-                        orientation_xyzw: [qx, qy, qz, qw],
-                    },
-                    material: a.material,
-                }),
-                mesh_change(&a.id, &r.body.solid, &member_record(r))?,
-            ]
-        }
-    })
+pub(crate) fn creation_changes(copy: &PartRecord) -> Result<Vec<Change>, Refusal> {
+    let id = copy.id().to_string();
+    let placement = copy.placement();
+    let [qx, qy, qz, qw] = placement.orientation_xyzw;
+    Ok(vec![
+        Change::PartClass {
+            id: id.clone(),
+            class: copy.class(),
+        },
+        Change::Create(Element {
+            id,
+            name: copy.name().to_owned(),
+            shape: steel_layer::part_shape(copy)?,
+            placement: LayerPlacement {
+                translation_mm: placement.translation_mm,
+                orientation_xyzw: [qx, qy, qz, qw],
+            },
+            material: copy.material(),
+        }),
+        part_mesh_change(copy)?,
+    ])
 }
 
 /// Copies one element and publishes the next revision, or replays the operation.
@@ -262,26 +188,8 @@ fn copy_with_mode(
         Err(e) if e.code == ErrorCode::NotFound => command.source_id,
         Err(e) => return Err(e.into()),
     };
-    let copy = if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
-        CopiedElement::Plate(Box::new(PlateRecord {
-            authored: if instance {
-                steel::engine::instance::copy_plate_instance(&source.authored, command)?
-            } else {
-                copy_plate(&source.authored, command)?
-            },
-            body: source.body.clone(),
-            quantities: source.quantities,
-        }))
-    } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
-        CopiedElement::Member(Box::new(MemberRecord {
-            authored: if instance {
-                steel::engine::instance::copy_member_instance(&source.authored, command)?
-            } else {
-                copy_member(&source.authored, command)?
-            },
-            body: source.body.clone(),
-            quantities: source.quantities,
-        }))
+    let copy = if let Some(source) = PartRecord::find(&plates, &members, command.source_id) {
+        source.copied(command, instance)?
     } else if crate::weld::is_weld(&base_request, &command.source_id, &control)? {
         // A weld always has element links (its `connects` record), so a single-element copy
         // would drop them (DV-REL-011).
@@ -319,28 +227,11 @@ fn copy_with_mode(
     } else {
         return Err(not_found());
     };
-    let (profile, material) = match &copy {
-        CopiedElement::Plate(r) => (None, r.authored.material),
-        CopiedElement::Member(r) => (Some(r.authored.profile), r.authored.material),
-    };
+    let (profile, material) = (copy.profile(), copy.material());
     if let Some(digest) = &material {
         materials(digest)?;
     }
-    let head_copy = plates
-        .iter()
-        .find(|r| r.authored.id == command.new_id)
-        .map(|r| CopiedElement::Plate(Box::new(r.clone())))
-        .or_else(|| {
-            members
-                .iter()
-                .find(|r| r.authored.id == command.new_id)
-                .map(|r| CopiedElement::Member(Box::new(r.clone())))
-        });
-    let same_state = |a: &CopiedElement, b: &CopiedElement| match (a, b) {
-        (CopiedElement::Plate(a), CopiedElement::Plate(b)) => a.authored == b.authored,
-        (CopiedElement::Member(a), CopiedElement::Member(b)) => a.authored == b.authored,
-        _ => false,
-    };
+    let head_copy = PartRecord::find(&plates, &members, command.new_id);
 
     let op_host = host_uuid(&request.op_id.to_string())?;
     let fingerprint = if instance {
@@ -355,7 +246,7 @@ fn copy_with_mode(
         // The head already holds this copy exactly when the retry is the same request.
         match &head_copy {
             Some(held)
-                if same_state(held, &copy)
+                if held.same_state(&copy)
                     && instances.is_instance(command.new_id) == instance
                     && (!instance || instances.definition(command.new_id)? == canonical) =>
             {
@@ -459,14 +350,7 @@ fn copy_with_mode(
     if instance {
         for change in &mut changes {
             if let Change::Create(element) = change {
-                let kind = match &copy {
-                    CopiedElement::Plate(_) => steel::model::instance::PartKind::Plate,
-                    CopiedElement::Member(r) => match r.authored.kind {
-                        MemberKind::Beam => steel::model::instance::PartKind::Beam,
-                        MemberKind::Column => steel::model::instance::PartKind::Column,
-                    },
-                };
-                element.shape = steel_layer::instance(kind, canonical.to_string());
+                element.shape = steel_layer::instance(copy.instance_kind(), canonical.to_string());
                 element.material = None;
             }
         }

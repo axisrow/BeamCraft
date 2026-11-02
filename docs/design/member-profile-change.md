@@ -19,7 +19,7 @@ placing the member again. The owner requires the window to change it.
   profile definition and writes the element's relationship group.
 * CLI: `update-element --profile NAME | --profile-digest SHA256`. A name is resolved as for
   `create-member`: among the model's definitions, then in the project's environment, where it is
-  defined in the model first (see [the starter environment](starter-environment.md)). The layer
+  defined in the model first (see [the blank environment](blank-environment.md)). The layer
   engine's existing `Change::Profile` rewrites the `bim:profile` relationship of the canonical
   part, so parts that share one definition follow the change; the reply reports
   `effect.profile`.

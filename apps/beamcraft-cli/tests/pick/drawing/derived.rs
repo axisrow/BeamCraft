@@ -4,7 +4,7 @@
 //! D02 ordinary USD curves from real CLI-authored models and strict archived source snapshots.
 
 use super::*;
-use beamcraft_cli::drawing::{archive::SourceArchive, codec, derived};
+use beamcraft_commands::drawing::{archive::SourceArchive, codec, derived};
 use beamcraft_engine::drawing::*;
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_layer_engine::{

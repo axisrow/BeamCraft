@@ -254,6 +254,9 @@ fn window(size: egui::Vec2, create: eframe::AppCreator<'_>) -> Result<(), Error>
 }
 
 fn main() -> ExitCode {
+    // The window reads layers in this process through `session` (environments, foreign layers),
+    // so the steel discipline joins the platform registry first, as in the CLI.
+    steel::layer::install();
     match run() {
         Ok(Some((json, code))) => {
             println!("{json}");

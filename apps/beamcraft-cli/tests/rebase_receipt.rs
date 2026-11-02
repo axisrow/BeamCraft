@@ -6,8 +6,8 @@
 //! source provenance or recovery of a materialized model.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_cli::command_evidence::CapturedFootprint;
-use beamcraft_cli::workspace::{
+use beamcraft_commands::command_evidence::CapturedFootprint;
+use beamcraft_commands::workspace::{
     WorkspaceMeta,
     rebase_receipt::{RebaseReceipt, RevisionPin},
 };

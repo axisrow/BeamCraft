@@ -40,14 +40,14 @@ Line counts are approximate and include tests.
 | `layer-engine/src/authored/validate.rs` | 3,557 | About 55% steel (plate, member hole, weld, bolt, fastener, cut records). Generic: links, marks, levels, assembly links, budgets. |
 | `layer-engine/src/authored/edit.rs` | 2,664 | Steel writes (corners, bends, plate, member, weld, bolt) next to generic ones (attribute definitions, erase, mesh, relationship, units). |
 | `layer-engine/src/authored.rs` | 1,372 | The `Shape` and `Change` enums list Plate, Member, LoftedPlate, Weld, Bolt, BoltGroup next to Grid, Construction, Annotation, Level, Assembly. |
-| `apps/beamcraft-cli/src/plate.rs` | 2,816 | The platform pipeline (layer names, `PlateError`, `RevisionSummary`, open the base, check the footprint, claim the project) next to the plate decoders and `create_plate`. About 60 CLI files import `PlateError` and the pipeline from here. |
+| `crates/commands/src/plate.rs` | 2,816 | The platform pipeline (layer names, `PlateError`, `RevisionSummary`, open the base, check the footprint, claim the project) next to the plate decoders and `create_plate`. About 60 CLI files import `PlateError` and the pipeline from here. |
 | `engine/src/element.rs` | 246 | `ElementKind` is one closed enum: Plate, Beam, Column next to Wall, Slab, Opening, Penetration, Pipe, Duct, Support and the generic kinds. Used by query, scene, filter, bom and synthetic. |
 | `model/src/prim.rs`, `instance.rs` | 119, 77 | The category scheme is generic but hard-codes plate, beam, column and the `/World/Steel/` prefix; `PartKind` is Plate, Beam, Column. |
 | `model/src/limits.rs`, `definition.rs` | 92, 455 | Weld, bolt, member and fastener caps next to generic limits; the generic definition container imports `section::SectionShape`. |
 | `engine/src/{update,transform,quantity,footprint,transaction}.rs`, `query/committed.rs` | | Generic frameworks that import `AuthoredPlate`, `AuthoredMember`, `CornerTreatment` or `SectionShape`; `footprint.rs` has `for_weld`, `for_bolt`. |
 | `engine/src/{numbering,numbering_approval}.rs` | 1,200; 913 | The series enum is plate, beam, column. |
 | `kernel/src/lib.rs` | 41 | Exports `PlateResult` and `rectangular_plate`; `engine::{scene,synthetic,solid}` import `PlateResult`. |
-| `apps/beamcraft-cli/src/registry.rs` | 2,487 | A generic command inventory that lists steel commands. |
+| `crates/commands/src/registry.rs` | 2,487 | A generic command inventory that lists steel commands. |
 
 ## Order of extraction
 
@@ -100,18 +100,16 @@ What moved, in order:
   their own modules behind the discipline seam.
 - The steel attribute lists the platform matched by hand — the shared P11 shape inputs, the
   rebase write groups, the definition properties, the delete opinions of a whole-record change —
-  moved into the built-in steel discipline, and the platform callers ask the registry
+  moved into the steel discipline (`steel::layer::discipline`), and the platform callers ask the registry
   (`registered()`, `is_part_kind`) instead of matching steel kinds.
 - The platform's only steel surface is the seam: the hook variants `Shape::Discipline` and
   `Change::Discipline` with the definition hook beside them, the re-exported surface a hook may
   use (`authored::seam`), and the facade of free constructors the apps build steel shapes and
   changes with, so no call site outside the facade names a steel variant.
-- A discipline installs itself through the installable registry
-  (`authored::disciplines::register`, pointer-deduplicated, registration order preserved; the
-  registry starts empty — the apps install the steel discipline through
-  `steel::layer::install()` at startup), and every read-back question — part kinds, part and
-  connection validation, write groups, delete attributes, definition read-back — is answered by
-  the registered disciplines.
+- A discipline installs itself through the installable registry (`authored::register`,
+  pointer-deduplicated, registration order preserved; both apps call `steel::layer::install()`
+  at start, and the registry is empty without it), and every read-back question — part kinds, part and connection validation, write
+  groups, delete attributes, definition read-back — is answered by the registered disciplines.
 
 The stored format is untouched: the `steel:*` attributes, the prim paths and the schema
 descriptor are byte-identical, so stores written before the reversal read back (the F04 and U03
@@ -133,24 +131,24 @@ helpers, `SolidMesh::from_parts`). The inherent impls that cannot live outside t
 became free functions in `steel::engine` (`solid_mesh::from_section`, `from_loft`, `from_sweep`,
 `numbering_geometry::member_geometry`).
 
-## What is left
+## The element interface
 
-The crate is kind `discipline`, and the platform no longer depends on it; the rule that only an
-app or a tool may depend on a `discipline` holds. What still ties the CLI to steel is:
+The reversal took the dependency away; the element interface (#795, design note
+[`element-interface.md`](element-interface.md)) took away the remaining branching on the kind:
 
-- the CLI: `CopiedElement`, `Decoded` and the decoders in `plate.rs`, and the command registry;
-- `ElementPatch`, one structure that carries plate fields; `ElementKind`, `prim.rs` and
-  `layer-engine/src/index.rs`, which name plate, beam and column.
+- **Typed operations.** `steel::engine::part::PartRecord` holds a committed plate or member and
+  chooses between the per-kind pairs (`copy_plate`/`copy_member`, the P11 instance pair,
+  `array_plate_copies`/`array_member_copies`, `patch_plate`/`patch_member`, the two evaluations
+  and quantity records). The CLI adapters `copy`, `array` and `update-element` call it and no
+  longer carry their own plate/member enums; `steel::layer::part_shape` builds the create shape
+  of a copied part. The pairs stay in `steel` as the implementation.
+- **Kind behaviour.** The engine's queries ask `ElementKind::is_part` and `is_linear_member`
+  instead of matching `Plate`, `Beam` or `Column`.
 
-These are app-side or read-side seams the element interface closes; the write and validate path
-already goes through the discipline hooks.
-
-The way out is one element interface in the platform, implemented in `steel` for `Plate` and
-`Beam`/`Column`, so that the engine, the CLI and `layer-engine` call it and no longer branch on
-a steel kind. The operations already exist as symmetric pairs (`copy_plate`/`copy_member`,
-`patch_plate`/`patch_member`, `mirror_plate_local`/`mirror_member_local`,
-`array_plate_copies`/`array_member_copies`), so the interface is taken from them, not guessed.
-The stored `steel:*` attributes and the schema descriptor stay byte-identical. The work is
-tracked in issue #795; [`element-interface.md`](element-interface.md) is its design note: the
-two seams (typed operations and layer persistence), the decisions and the order of the code
-slices.
+Deliberately left, each with its reason in `element-interface.md` section 8: no platform trait
+over the typed operations and no `ElementPatch` split (the inputs are steel commands and the
+callers are apps; the split risks the `UpdateElement/v2` fingerprint bytes); one
+`SCHEMA_DESCRIPTOR` constant (the stored format's identity); the `/World/Steel/...` prim paths,
+the F06 body tokens and the numbering series names (stored or contract format); the steel
+decoders and `registry.rs` in the CLI (they move with the command layer, `architecture.md`, "The
+window").

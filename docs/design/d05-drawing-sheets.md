@@ -30,15 +30,17 @@ to its version id: frame, title block, every resolved placed view in document or
 primary view's dimension groups. Text is contributor-original glyph strokes — the digit
 glyphs of D03 extended with angular capitals on the same 2.0 × 3.5 box, with ASCII
 lowercase folded onto its capitals and a drawn dot, so admissible title text keeps every
-mark — and no font, image or `<text>` element is embedded. The same sheet reproduces byte-identical output across
-runs and processes; anything unresolved, beyond the frame, or over the byte cap refuses
-instead of being rescaled or clipped. A document without a sheet keeps the D03 loose-paper
-export, and the pdf print defaults its sheet to the document's sheet size.
+mark — and no font, image or `<text>` element is embedded. The same sheet reproduces
+byte-identical output across runs and processes; anything unresolved, beyond the frame, or
+over the byte cap refuses instead of being rescaled or clipped. A document without a sheet
+keeps the D03 loose-paper export, and the pdf print defaults its sheet to the document's
+sheet size.
 
 ## Wire format and CLI
 
 The canonical intent gains one optional `Scope "Sheet"` (size token, frame inset, project,
-author); the schema descriptor is bumped. The CLI mirrors `edit-views` with `edit-sheet`
+author); the schema descriptor gains the sheet entries in place, without a version bump. The
+CLI mirrors `edit-views` with `edit-sheet`
 (set/replace, or `--sheet-remove true`), `create-drawing`/`refresh-drawing` accept the
 sheet options, and `inspect-drawing` reports `name`, `view` and `sheet` beside the placed
 views. `export-drawing` renders a sheet document through the whole-sheet export.

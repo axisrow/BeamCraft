@@ -126,7 +126,7 @@ impl Fixture {
 
 #[test]
 fn undo_after_a_rebase_boundary_restores_only_later_edits_and_keeps_the_combined_basis() {
-    use beamcraft_cli::workspace::{WorkspaceState, read_meta};
+    use beamcraft_commands::workspace::{WorkspaceState, read_meta};
     let f = Fixture::new();
     let (published, dir, id) = f.forked();
     let accepted = f.ok(&["open-revision", "--store", &published]);

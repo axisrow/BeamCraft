@@ -107,7 +107,7 @@ struct GpuMesh {
 /// The scene on the device: per distinct mesh one vertex buffer and one instance buffer.
 pub struct Uploaded {
     meshes: Vec<GpuMesh>,
-    /// Exact vertex and instance bytes this upload sent (excludes the fixed 96-byte camera
+    /// Exact vertex and instance bytes this upload sent (excludes the fixed 112-byte camera
     /// uniform); vertex buffers reused from the previous scene are not sent again.
     pub bytes: u64,
     /// Buffer allocation and writes, and for [`Uploaded::new`] the flush to completion.
@@ -348,7 +348,7 @@ fn pipeline(
     let scopes = error_scopes(device);
     let camera = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("BeamCraft camera"),
-        size: 96,
+        size: 112,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -363,7 +363,7 @@ fn pipeline(
         entries: &[
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -1021,6 +1021,90 @@ mod tests {
         assert!(
             red_pixels(&mut renderer, &coloured_gpu) > 0,
             "the overlay tint reaches the shaded faces"
+        );
+    }
+
+    #[test]
+    fn a_view_tint_colours_or_hides_the_model_and_a_hidden_kind_leaves_the_scene() {
+        let gpu = required_adapter(pollster::block_on(Gpu::headless()));
+        let stats = Stats::default();
+        let mut renderer =
+            Renderer::with_samples(&gpu.adapter, &gpu.device, 64, 48, Some(1), &stats).unwrap();
+        let pin = beamcraft_engine::ViewPin::new(
+            beamcraft_model::digest::Sha256::digest(b"revision").unwrap(),
+            1,
+        );
+        let snapshot = beamcraft_engine::ViewSnapshot::build(
+            pin,
+            beamcraft_engine::synthetic::plate_scene(1, false).unwrap(),
+            &beamcraft_engine::Limits::default(),
+        )
+        .unwrap();
+        let scene =
+            Scene::from_snapshot(&snapshot, beamcraft_engine::Representation::Full).unwrap();
+        let (target, extent) = scene.framing();
+        let base = crate::camera::Camera::new(target, extent, 1.2)
+            .unwrap()
+            .view(1.2)
+            .unwrap();
+        let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+        let count = |renderer: &mut Renderer,
+                     uploaded: &Uploaded,
+                     tint: [f32; 4],
+                     keep: &dyn Fn(&[u8; 4]) -> bool| {
+            let mut view = base;
+            view.tint = tint;
+            let index = renderer.draw(
+                &gpu.device,
+                &gpu.queue,
+                uploaded,
+                view,
+                &stats,
+                RenderMode::Shaded,
+                &crate::cut_plane::ClipGpu::none(),
+            );
+            wait(&gpu.device, index).unwrap();
+            let (pixels, _) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+            pixels.as_chunks::<4>().0.iter().filter(|p| keep(p)).count()
+        };
+        let background = renderer.background;
+        let bg = [background.r, background.g, background.b].map(|c| (c * 255.0).round() as i16);
+        let model = |p: &[u8; 4]| {
+            p.iter()
+                .zip(bg)
+                .take(3)
+                .any(|(c, b)| (i16::from(*c) - b).abs() > 8)
+        };
+        let red = |p: &[u8; 4]| i16::from(p[0]) > i16::from(p[2]) + 40;
+        let drawn = count(&mut renderer, &uploaded, crate::camera::NO_TINT, &model);
+        assert!(drawn > 0, "the plate is drawn without a tint");
+        assert_eq!(
+            count(&mut renderer, &uploaded, crate::camera::NO_TINT, &red),
+            0
+        );
+        assert!(
+            count(&mut renderer, &uploaded, [1.0, 0.0, 0.0, 1.0], &red) > 0,
+            "a view colour replaces the model colour"
+        );
+        assert_eq!(
+            count(&mut renderer, &uploaded, [-1.0, 0.0, 0.0, 0.0], &model),
+            0,
+            "a fully transparent view draws nothing"
+        );
+        // A view that hides plates builds a scene without them.
+        let hidden = Scene::from_snapshot_showing(
+            &snapshot,
+            beamcraft_engine::Representation::Full,
+            &std::collections::BTreeSet::new(),
+            None,
+            beamcraft_engine::KindFilter::SHOW_ALL.hiding(beamcraft_engine::ElementKind::Plate),
+        )
+        .unwrap();
+        assert_eq!(hidden.summary().origin_mm, scene.summary().origin_mm);
+        let hidden_gpu = Uploaded::new(&gpu.device, &gpu.queue, &hidden, &stats).unwrap();
+        assert_eq!(
+            count(&mut renderer, &hidden_gpu, crate::camera::NO_TINT, &model),
+            0
         );
     }
 }

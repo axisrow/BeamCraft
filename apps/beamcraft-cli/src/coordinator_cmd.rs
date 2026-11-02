@@ -10,7 +10,7 @@
 //! it is stopped) and prints its final JSON object. Tokens are read from files only, never from
 //! the command line, where other users could read them.
 
-use beamcraft_cli::coordinator::PublishHandler;
+use beamcraft_commands::coordinator::PublishHandler;
 use beamcraft_host::coordinator::{Client, Coordinator, CoordinatorError, Token, call};
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;

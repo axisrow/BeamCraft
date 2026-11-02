@@ -14,7 +14,7 @@ use crate::support;
 
 use support::{at, text};
 
-use beamcraft_cli::plate::inspect;
+use beamcraft_commands::plate::inspect;
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},

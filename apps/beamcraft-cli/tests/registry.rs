@@ -5,7 +5,7 @@
 
 #![allow(clippy::expect_used)]
 
-use beamcraft_cli::registry::{Access, COMMANDS, Route};
+use beamcraft_commands::registry::{Access, COMMANDS, Route};
 use beamcraft_json::{Json, Limits};
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -278,7 +278,7 @@ fn every_listed_option_is_accepted_by_the_command() {
 #[test]
 fn the_reference_is_current() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/COMMANDS.md");
-    let expected = beamcraft_cli::registry::reference_markdown();
+    let expected = beamcraft_commands::registry::reference_markdown();
     if std::env::var_os("BEAMCRAFT_BLESS").is_some() {
         std::fs::write(path, &expected).expect("write the reference");
     }

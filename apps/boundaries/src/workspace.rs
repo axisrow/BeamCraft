@@ -3,6 +3,10 @@
 
 //! Loads the workspace members, their manifests and their Rust sources from disk.
 //!
+//! Only `src/` is scanned for sources. A member's explicit target paths and whether it has a
+//! build script are loaded too, so the checker can refuse a layout that would hide sources from
+//! that scan (#208).
+//!
 //! Every read is bounded: manifests and sources are at most 1 MiB, at most 256 members and 512
 //! source files per member are read and directories are walked at most eight levels deep.
 //! The loader fails closed: a symbolic link or Windows reparse point anywhere in a member path, a
@@ -47,6 +51,12 @@ pub struct Package {
     pub dependencies: Vec<Dependency>,
     /// Rust sources under `src/`.
     pub sources: Vec<Source>,
+    /// Explicit target paths as `(table, path)` from the manifest (`[lib] path`, `[[bin]] path`,
+    /// ...), relative to the package directory.
+    pub targets: Vec<(String, String)>,
+    /// Whether the package has a build script: a `build.rs` next to the manifest or a
+    /// `[package] build` other than `false`.
+    pub build_script: bool,
 }
 
 /// All members of a workspace.
@@ -306,12 +316,19 @@ pub fn load(root: &Path) -> Result<Workspace, LoadError> {
         if classify(root, &src)? == Kind::Dir {
             collect_sources(root, &src, 0, &mut sources)?;
         }
+        let build_script = match manifest.build.as_deref() {
+            Some("false") => false,
+            Some(_) => true,
+            None => classify(root, &format!("{path}/build.rs"))? != Kind::Missing,
+        };
         packages.push(Package {
             name,
             path,
             publish_false: manifest.publish_false,
             dependencies: manifest.dependencies,
             sources,
+            targets: manifest.targets,
+            build_script,
         });
     }
     Ok(Workspace { packages })
@@ -395,6 +412,41 @@ name = \"x\"
             eprintln!("skipped: this environment does not permit creating directory links");
         }
         ok
+    }
+
+    /// The #208 reproduction on disk: a member whose library lives in `code/` behind
+    /// `[lib] path` (so `src/` is empty) and a member with a `build.rs`. The loader reports both
+    /// facts, so the checker can refuse them instead of passing an unscanned crate.
+    #[test]
+    fn the_loader_reports_moved_targets_and_build_scripts() {
+        let root = Scratch::new();
+        root.write("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
+        root.write(
+            "crates/moved/Cargo.toml",
+            "[package]\nname = \"moved\"\n[lib]\npath = \"code/lib.rs\"\n",
+        );
+        root.write(
+            "crates/moved/code/lib.rs",
+            "pub fn f() { let _ = std::fs::metadata(\".\"); }\n",
+        );
+        root.write("crates/built/Cargo.toml", "[package]\nname = \"built\"\n");
+        root.write("crates/built/build.rs", "fn main() {}\n");
+        root.write("crates/built/src/lib.rs", "\n");
+        root.write(
+            "crates/off/Cargo.toml",
+            "[package]\nname = \"off\"\nbuild = false\n",
+        );
+        root.write("crates/off/build.rs", "fn main() {}\n");
+        let ws = load(&root.0).unwrap();
+        let get = |n: &str| ws.packages.iter().find(|p| p.name == n).unwrap();
+        assert_eq!(
+            get("moved").targets,
+            [("lib".to_owned(), "code/lib.rs".to_owned())]
+        );
+        assert!(get("moved").sources.is_empty(), "nothing under src/");
+        assert!(!get("moved").build_script);
+        assert!(get("built").build_script);
+        assert!(!get("off").build_script);
     }
 
     #[test]

@@ -17,6 +17,8 @@ usage:
   beamcraft-fixtures verify --dir <DIR>     compare DIR with the generator, byte for byte
   beamcraft-fixtures check <FILE>           validate one beamcraft.fixture/1 description
   beamcraft-fixtures list                   list fixture IDs, support status and paths
+  beamcraft-fixtures g11 generate --out <DIR>  write the G11 accuracy set into DIR
+  beamcraft-fixtures g11 verify --dir <DIR>    compare DIR with the G11 generator, byte for byte
   beamcraft-fixtures --version";
 
 const FAILURE: u8 = 1;
@@ -31,6 +33,8 @@ fn main() -> ExitCode {
         ["verify", "--dir", dir] => run_verify(Path::new(dir)),
         ["check", file] => run_check(Path::new(file)),
         ["list"] => run_list(),
+        ["g11", "generate", "--out", dir] => run_g11_generate(Path::new(dir)),
+        ["g11", "verify", "--dir", dir] => run_g11_verify(Path::new(dir)),
         ["--version" | "-V"] => {
             println!("beamcraft-fixtures {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
@@ -42,6 +46,43 @@ fn main() -> ExitCode {
         _ => {
             eprintln!("{USAGE}");
             ExitCode::from(USAGE_ERROR)
+        }
+    }
+}
+
+fn run_g11_generate(dir: &Path) -> ExitCode {
+    match beamcraft_fixtures::g11::write(dir) {
+        Ok(count) => {
+            println!("generated {count} G11 files in {}", dir.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(FAILURE)
+        }
+    }
+}
+
+fn run_g11_verify(dir: &Path) -> ExitCode {
+    match beamcraft_fixtures::g11::verify(dir) {
+        Ok(problems) if problems.is_empty() => {
+            println!(
+                "verified {} G11 files in {}",
+                beamcraft_fixtures::g11::FILES.len(),
+                dir.display()
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(problems) => {
+            for problem in &problems {
+                println!("mismatch: {problem}");
+            }
+            println!("verification failed: {} problems", problems.len());
+            ExitCode::from(FAILURE)
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            ExitCode::from(FAILURE)
         }
     }
 }

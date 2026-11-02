@@ -10,7 +10,7 @@ inside the one inspection that every read command runs.
 ## Problem
 
 Every read command (`inspect-elements`, `definitions`, `export-view`, `pick`, `export-bom`,
-`export-ifc`, the numbering commands) runs one `beamcraft_cli::plate::inspect`, and every write
+`export-ifc`, the numbering commands) runs one `beamcraft_commands::plate::inspect`, and every write
 command evaluates the head and then the candidate again in its commit verifier. An inspection:
 
 1. reads and hashes every layer blob twice (`RevisionStore::open`, then `Revision::layer_bytes`);

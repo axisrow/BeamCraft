@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! T02 headless commands: `create-construction` and `list-construction`. They call the engine
-//! API through `beamcraft_cli::construction` and print one JSON object with the same error
+//! API through `beamcraft_commands::construction` and print one JSON object with the same error
 //! shape and exit codes as the grid and level commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{
     check_project_option, footprint_json, id_error, num, revision_json, triple,
 };
-use beamcraft_cli::construction::{
+use beamcraft_commands::construction::{
     ConstructionChange, ConstructionContext, constructions, create_construction,
 };
 use beamcraft_host::{

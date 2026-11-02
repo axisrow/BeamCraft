@@ -1,8 +1,8 @@
 # G13: ruled surfaces with thickness, and the first-class patches
 
 Date: 2026-10-27 (slice 1), 2026-10-31 (slice 2). Status: design note for the G13 kernel
-primitive (`beamcraft-kernel`, module `ruled`). Task card: `docs/plan/tasks.md` G13 / M
-(milestone M1); issue #186. Depends on G05 (`profile` admission, cap triangulation, arc
+primitive (`steel::kernel`, module `ruled`); milestone M1, issue #186.
+Depends on G05 (`profile` admission, cap triangulation, arc
 segment choice) and G09 (`ops` sealing and certification). Foundation for A10 (bent plate)
 and A11 (lofted plate), both delivered on the slice-1 primitive. Slice 1 delivers the
 ruled surface mechanism itself; slice 2 completes the card with the cylinder and cone

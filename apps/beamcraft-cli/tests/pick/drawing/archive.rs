@@ -4,9 +4,9 @@
 //! D03 source capture uses real committed USD, maintenance locks and actual history compaction.
 
 use super::*;
-use beamcraft_cli::drawing::archive::{MANIFEST_RESOURCE, SourceArchive};
-use beamcraft_cli::drawing::document::store::expected_base;
-use beamcraft_cli::drawing::document::{DocumentStore, DocumentWrite, State};
+use beamcraft_commands::drawing::archive::{MANIFEST_RESOURCE, SourceArchive};
+use beamcraft_commands::drawing::document::store::expected_base;
+use beamcraft_commands::drawing::document::{DocumentStore, DocumentWrite, State};
 use beamcraft_engine::drawing::{
     DimensionSpec, Drawing, DrawingSpec, Plane, SourceModelPin, ViewSpec,
 };

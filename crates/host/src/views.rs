@@ -1,157 +1,130 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The V12 named-view session format: the saved-view book between engine types and the JSON
-//! document the CLI and the window persist beside a store. Mapping only — every admission
-//! rule lives in `beamcraft_engine::views`.
+//! The V12 view-book session format: the named views and their folders between engine types and
+//! the JSON document the CLI and the window persist beside a store. Mapping only — every
+//! admission rule lives in `beamcraft_engine::views`. Temporary views are session state and are
+//! never written.
 
-use beamcraft_engine::views::{self, NamedView, PlaneSpec, ViewBook, ViewPose, WorkArea};
+use beamcraft_engine::views::{ModelView, Projection, ViewBook, WorkArea};
+use beamcraft_engine::work_plane::WorkPlane;
+use beamcraft_engine::{ElementKind, KindFilter, RenderMode};
 use beamcraft_json::Json;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::Uuid7;
 
-fn bad(code: ErrorCode, field: &'static str, message: &'static str) -> CommandError {
-    CommandError::new(code, field, message)
-}
+/// The format version this module writes and reads.
+pub const VERSION: u64 = 1;
 
 fn unread(field: &'static str) -> CommandError {
-    bad(
+    CommandError::new(
         ErrorCode::InvalidArgument,
         field,
         "view file field is unreadable",
     )
 }
 
-/// Three finite numbers from a JSON array, or a refusal.
-fn point3(json: &Json, key: &'static str) -> Result<[f64; 3], CommandError> {
-    let array = json
+fn numbers<const N: usize>(json: &Json, key: &'static str) -> Result<[f64; N], CommandError> {
+    let values = json
         .get(key)
         .and_then(Json::array)
-        .map_err(|_| unread(key))?;
-    let values = array
+        .map_err(|_| unread(key))?
         .iter()
         .map(|v| v.float().map_err(|_| unread(key)))
         .collect::<Result<Vec<_>, _>>()?;
-    <[f64; 3]>::try_from(values).map_err(|_| unread(key))
+    <[f64; N]>::try_from(values).map_err(|_| unread(key))
 }
 
-/// The pose as session-file JSON.
-pub fn pose_to_json(pose: &ViewPose) -> Result<Json, CommandError> {
-    // Values are validated finite, so number() cannot refuse here.
-    let point = |v: [f64; 3]| Json::Array(v.iter().filter_map(|v| Json::number(*v).ok()).collect());
-    Ok(Json::object([
-        ("target_mm", point(pose.target_mm)),
-        (
-            "yaw",
-            Json::number(pose.yaw).map_err(|_| unread("views.pose"))?,
-        ),
-        (
-            "pitch",
-            Json::number(pose.pitch).map_err(|_| unread("views.pose"))?,
-        ),
-        (
-            "distance_mm",
-            Json::number(pose.distance_mm).map_err(|_| unread("views.pose"))?,
-        ),
-        ("orthographic", Json::Bool(pose.orthographic)),
-    ]))
+fn optional<'a>(json: &'a Json, key: &str) -> Option<&'a Json> {
+    json.get(key).ok().filter(|v| !matches!(v, Json::Null))
 }
 
-fn pose_from_json(json: &Json) -> Result<ViewPose, CommandError> {
-    let number = |key: &'static str| json.get(key).and_then(Json::float).map_err(|_| unread(key));
-    ViewPose::new(
-        point3(json, "target_mm")?,
-        number("yaw")?,
-        number("pitch")?,
-        number("distance_mm")?,
-        json.get("orthographic")
-            .and_then(Json::boolean)
-            .map_err(|_| unread("orthographic"))?,
-    )
+fn number(value: f64, field: &'static str) -> Result<Json, CommandError> {
+    Json::number(value).map_err(|_| unread(field))
 }
 
-/// The plane spec as session-file JSON.
-pub fn plane_to_json(spec: &PlaneSpec) -> Json {
-    let text = |v: &str| Json::text(v.to_owned());
-    let point = |v: [f64; 3]| Json::Array(v.iter().filter_map(|v| Json::number(*v).ok()).collect());
-    match spec {
-        PlaneSpec::GridLine {
-            grid,
-            line,
-            reverse,
-        } => Json::object([(
-            "grid_line",
-            Json::object([
-                ("grid", text(grid)),
-                ("line", text(line)),
-                ("reverse", Json::Bool(*reverse)),
-            ]),
-        )]),
-        PlaneSpec::Level => Json::object([("level", Json::object([]))]),
-        PlaneSpec::TwoPoints { from_mm, to_mm } => Json::object([(
-            "two_points",
-            Json::object([("from_mm", point(*from_mm)), ("to_mm", point(*to_mm))]),
-        )]),
-    }
-}
-
-fn plane_from_json(json: &Json) -> Result<PlaneSpec, CommandError> {
-    if let Ok(inner) = json.get("grid_line") {
-        let text = |key: &'static str| {
-            inner
-                .get(key)
-                .and_then(Json::string)
-                .map_err(|_| unread("views.plane"))
-                .map(str::to_owned)
-        };
-        let reverse = inner
-            .get("reverse")
-            .and_then(Json::boolean)
-            .map_err(|_| unread("views.plane"))?;
-        return Ok(PlaneSpec::GridLine {
-            grid: text("grid")?,
-            line: text("line")?,
-            reverse,
-        });
-    }
-    if json.get("level").is_ok() {
-        return Ok(PlaneSpec::Level);
-    }
-    if let Ok(inner) = json.get("two_points") {
-        return Ok(PlaneSpec::TwoPoints {
-            from_mm: point3(inner, "from_mm")?,
-            to_mm: point3(inner, "to_mm")?,
-        });
-    }
-    Err(bad(
-        ErrorCode::InvalidArgument,
-        "views.plane",
-        "plane spec kind is unknown",
+fn array(values: &[f64], field: &'static str) -> Result<Json, CommandError> {
+    Ok(Json::Array(
+        values
+            .iter()
+            .map(|v| number(*v, field))
+            .collect::<Result<_, _>>()?,
     ))
 }
 
-/// The box as session-file JSON.
-pub fn work_area_to_json(area: &WorkArea) -> Result<Json, CommandError> {
-    let point = |v: [f64; 3]| Json::Array(v.iter().filter_map(|v| Json::number(*v).ok()).collect());
+/// A view plane as JSON: origin and the two in-plane axes.
+pub fn plane_to_json(plane: &WorkPlane) -> Result<Json, CommandError> {
     Ok(Json::object([
-        ("min", point(area.min)),
-        ("max", point(area.max)),
+        ("origin_mm", array(&plane.origin(), "views.plane")?),
+        ("x", array(&plane.x(), "views.plane")?),
+        ("y", array(&plane.y(), "views.plane")?),
     ]))
 }
 
-fn work_area_from_json(json: &Json) -> Result<WorkArea, CommandError> {
-    WorkArea::new(point3(json, "min")?, point3(json, "max")?)
+fn plane_from_json(json: &Json) -> Result<WorkPlane, CommandError> {
+    WorkPlane::new(
+        numbers(json, "origin_mm")?,
+        numbers(json, "x")?,
+        numbers(json, "y")?,
+    )
 }
 
-/// One saved view as JSON, in the session file's element shape.
-pub fn view_to_json(view: &NamedView) -> Result<Json, CommandError> {
+/// A work area as JSON.
+pub fn work_area_to_json(area: &WorkArea) -> Result<Json, CommandError> {
     Ok(Json::object([
+        ("min", array(&area.min, "views.work_area")?),
+        ("max", array(&area.max, "views.work_area")?),
+    ]))
+}
+
+fn kinds_to_json(filter: KindFilter) -> Json {
+    Json::Array(
+        filter
+            .hidden_kinds()
+            .into_iter()
+            .map(|k| Json::text(k.as_token()))
+            .collect(),
+    )
+}
+
+fn kinds_from_json(json: &Json) -> Result<KindFilter, CommandError> {
+    let mut filter = KindFilter::SHOW_ALL;
+    for token in json
+        .get("hidden_kinds")
+        .and_then(Json::array)
+        .map_err(|_| unread("views.hidden_kinds"))?
+    {
+        let kind = token
+            .string()
+            .ok()
+            .and_then(ElementKind::parse)
+            .ok_or_else(|| unread("views.hidden_kinds"))?;
+        filter = filter.hiding(kind);
+    }
+    Ok(filter)
+}
+
+/// One view as JSON, in the session file's element shape.
+pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
+    Ok(Json::object([
+        ("id", Json::text(view.id.to_string())),
         ("name", Json::text(&view.name)),
+        ("plane", plane_to_json(&view.plane)?),
+        ("projection", Json::text(view.projection.as_str())),
+        ("span_mm", number(view.span_mm, "views.span")?),
         (
-            "plane",
-            view.plane.as_ref().map_or(Json::Null, plane_to_json),
+            "depth_mm",
+            match view.depth {
+                Some(depth) => array(&depth, "views.depth")?,
+                None => Json::Null,
+            },
         ),
-        ("pose", pose_to_json(&view.pose)?),
+        ("render_mode", Json::text(view.render_mode.as_token())),
+        ("grids_visible", Json::Bool(view.grids_visible)),
+        ("folder", Json::text(&view.folder)),
+        ("favorite", Json::Bool(view.favorite)),
+        ("hidden_kinds", kinds_to_json(view.hidden_kinds)),
         (
             "work_area",
             match view.work_area.as_ref() {
@@ -159,56 +132,117 @@ pub fn view_to_json(view: &NamedView) -> Result<Json, CommandError> {
                 None => Json::Null,
             },
         ),
+        ("rotation_rad", array(&view.rotation_rad, "views.rotation")?),
+        (
+            "color",
+            match view.color {
+                Some(color) => array(&color, "views.color")?,
+                None => Json::Null,
+            },
+        ),
+        ("opacity", number(view.opacity, "views.opacity")?),
     ]))
 }
 
-/// The session file as JSON, one bounded object.
+/// Reads one view; every key is required, `depth_mm`, `work_area` and `color` may be null.
+pub fn view_from_json(json: &Json) -> Result<ModelView, CommandError> {
+    let text = |key: &'static str| {
+        json.get(key)
+            .and_then(Json::string)
+            .map_err(|_| unread(key))
+    };
+    let flag = |key: &'static str| {
+        json.get(key)
+            .and_then(Json::boolean)
+            .map_err(|_| unread(key))
+    };
+    let id = Uuid7::parse(text("id")?).map_err(|_| unread("id"))?;
+    let plane = plane_from_json(json.get("plane").map_err(|_| unread("plane"))?)?;
+    let span = json
+        .get("span_mm")
+        .and_then(Json::float)
+        .map_err(|_| unread("span_mm"))?;
+    let mut view = ModelView::new(id, text("name")?, plane, span);
+    view.projection = Projection::parse(text("projection")?)?;
+    view.depth = match optional(json, "depth_mm") {
+        Some(_) => Some(numbers(json, "depth_mm")?),
+        None => None,
+    };
+    view.render_mode =
+        RenderMode::parse(text("render_mode")?).ok_or_else(|| unread("render_mode"))?;
+    view.grids_visible = flag("grids_visible")?;
+    text("folder")?.clone_into(&mut view.folder);
+    view.favorite = flag("favorite")?;
+    view.hidden_kinds = kinds_from_json(json)?;
+    view.work_area = match optional(json, "work_area") {
+        Some(area) => Some(WorkArea::new(numbers(area, "min")?, numbers(area, "max")?)?),
+        None => None,
+    };
+    view.rotation_rad = numbers(json, "rotation_rad")?;
+    view.color = match optional(json, "color") {
+        Some(_) => Some(numbers(json, "color")?),
+        None => None,
+    };
+    view.opacity = json
+        .get("opacity")
+        .and_then(Json::float)
+        .map_err(|_| unread("opacity"))?;
+    view.validate()?;
+    Ok(view)
+}
+
+/// The session file as JSON: the folders and every saved (not temporary) view.
 pub fn book_to_json(book: &ViewBook) -> Result<Json, CommandError> {
     let views = book
+        .views()
         .iter()
+        .filter(|v| !v.temporary)
         .map(view_to_json)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Json::object([
-        ("version", Json::uint(1)),
+        ("version", Json::uint(VERSION)),
+        (
+            "folders",
+            Json::Array(book.folders().map(Json::text).collect()),
+        ),
         ("views", Json::Array(views)),
     ]))
 }
 
-/// Reads a book from the session file's JSON. Unknown object keys are ignored, so a newer
-/// writer stays readable; anything malformed refuses whole.
+/// Reads a book from the session file's JSON; anything malformed, another version, or past a
+/// limit refuses whole.
 pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
-    let views = json.get("views").and_then(Json::array).map_err(|_| {
-        bad(
+    let version = json
+        .get("version")
+        .and_then(Json::unsigned)
+        .map_err(|_| unread("version"))?;
+    if version != VERSION {
+        return Err(CommandError::new(
             ErrorCode::InvalidArgument,
-            "views.file",
-            "view file has no views array",
-        )
-    })?;
-    if views.len() > views::MAX_VIEWS {
-        return Err(bad(
-            ErrorCode::LimitExceeded,
-            "views.count",
-            "view file exceeds the saved-view limit",
+            "views.version",
+            "the view file has another format version",
         ));
     }
-    let mut book = ViewBook::new();
-    for view in views {
-        let name = view
-            .get("name")
-            .and_then(Json::string)
-            .map_err(|_| unread("views.name"))?;
-        let plane = match view.get("plane") {
-            Ok(plane) if !matches!(plane, Json::Null) => Some(plane_from_json(plane)?),
-            _ => None,
-        };
-        let work_area = match view.get("work_area") {
-            Ok(area) if !matches!(area, Json::Null) => Some(work_area_from_json(area)?),
-            _ => None,
-        };
-        let pose = pose_from_json(view.get("pose").map_err(|_| unread("views.pose"))?)?;
-        book.save(NamedView::new(name, plane, pose, work_area)?)?;
+    let list = |key: &'static str| json.get(key).and_then(Json::array).map_err(|_| unread(key));
+    let (views, folders) = (list("views")?, list("folders")?);
+    if views.len() > beamcraft_engine::views::MAX_VIEWS
+        || folders.len() > beamcraft_engine::views::MAX_FOLDERS
+    {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "views.count",
+            "the view file exceeds the view or folder limit",
+        ));
     }
-    Ok(book)
+    let folders = folders
+        .iter()
+        .map(|f| f.string().map(str::to_owned).map_err(|_| unread("folders")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let views = views
+        .iter()
+        .map(view_from_json)
+        .collect::<Result<Vec<_>, _>>()?;
+    ViewBook::from_parts(views, folders)
 }
 
 #[cfg(test)]
@@ -216,64 +250,74 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
 mod tests {
     use super::*;
 
-    fn pose() -> ViewPose {
-        ViewPose::new([0.0; 3], 0.0, 0.1, 100.0, false).unwrap()
+    fn view(n: u64, name: &str) -> ModelView {
+        let id = Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap();
+        ModelView::new(id, name, WorkPlane::default(), 4000.0)
     }
 
     #[test]
-    fn the_book_round_trips_through_json_and_refuses_malformed_files() {
+    fn the_book_round_trips_through_json() {
+        let mut full = view(1, "Section A");
+        full.plane =
+            WorkPlane::three_points([10.0, 0.0, 0.0], [10.0, 5.0, 0.0], [10.0, 0.0, 3.0]).unwrap();
+        full.projection = Projection::Perspective;
+        full.depth = Some([500.0, 250.0]);
+        full.render_mode = RenderMode::Wireframe;
+        full.grids_visible = false;
+        full.folder = "Sections/Main".into();
+        full.favorite = true;
+        full.hidden_kinds = KindFilter::SHOW_ALL.hiding(ElementKind::Grid);
+        full.work_area = Some(WorkArea::new([0.0; 3], [100.0, 200.0, 300.0]).unwrap());
+        full.rotation_rad = [0.5, -0.25];
+        full.color = Some([0.25, 0.5, 0.75]);
+        full.opacity = 0.4;
+        let mut temp = view(2, "Scratch");
+        temp.temporary = true;
         let mut book = ViewBook::new();
-        book.save(
-            NamedView::new(
-                "Plan",
-                Some(PlaneSpec::Level),
-                pose(),
-                Some(WorkArea::new([0.0; 3], [100.0; 3]).unwrap()),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        book.save(NamedView::new("3D", None, pose(), None).unwrap())
-            .unwrap();
-        let json = book_to_json(&book).unwrap();
-        let text = beamcraft_json::decode(
-            &json.encode(&beamcraft_json::Limits::DEFAULT).unwrap(),
-            &beamcraft_json::Limits::DEFAULT,
-        )
-        .unwrap();
-        assert_eq!(book_from_json(&text).unwrap(), book);
-        // A file without a views array and an overfull file refuse whole.
-        assert!(book_from_json(&Json::object([("version", Json::uint(1))])).is_err());
-        let mut full = ViewBook::new();
-        for i in 0..views::MAX_VIEWS {
-            full.save(NamedView::new(&format!("v{i}"), None, pose(), None).unwrap())
-                .unwrap();
-        }
-        assert!(
-            full.save(NamedView::new("over", None, pose(), None).unwrap())
-                .is_err()
+        book.insert(full.clone()).unwrap();
+        book.insert(view(3, "Plan")).unwrap();
+        book.insert(temp).unwrap();
+        book.create_folder("Empty").unwrap();
+        let back = book_from_json(&book_to_json(&book).unwrap()).unwrap();
+        assert_eq!(back.len(), 2, "the temporary view is not written");
+        assert_eq!(back.get(&full.id).unwrap(), &full);
+        assert_eq!(
+            back.folders().collect::<Vec<_>>(),
+            ["Empty", "Sections", "Sections/Main"]
         );
-        // Every plane kind keeps its shape.
-        for spec in [
-            PlaneSpec::Level,
-            PlaneSpec::GridLine {
-                grid: "G".into(),
-                line: "A".into(),
-                reverse: true,
-            },
-            PlaneSpec::TwoPoints {
-                from_mm: [0.0; 3],
-                to_mm: [1.0; 3],
-            },
-        ] {
-            let view = NamedView::new("v", Some(spec.clone()), pose(), None).unwrap();
-            let json = view_to_json(&view).unwrap();
-            let read = book_from_json(&Json::object([
-                ("version", Json::uint(1)),
-                ("views", Json::Array(vec![json])),
-            ]))
-            .unwrap();
-            assert_eq!(read.iter().next().unwrap().plane, Some(spec));
+    }
+
+    #[test]
+    fn malformed_files_refuse_whole() {
+        let good = book_to_json(&ViewBook::new()).unwrap();
+        assert!(book_from_json(&good).unwrap().is_empty());
+        let wrong_version = Json::object([
+            ("version", Json::uint(2)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![])),
+        ]);
+        assert!(book_from_json(&wrong_version).is_err());
+        let mut broken = view_to_json(&view(1, "A")).unwrap();
+        if let Json::Object(map) = &mut broken {
+            map.insert("opacity".into(), Json::text("high"));
         }
+        let file = Json::object([
+            ("version", Json::uint(1)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![broken])),
+        ]);
+        assert!(book_from_json(&file).is_err());
+        let twice = Json::object([
+            ("version", Json::uint(1)),
+            ("folders", Json::Array(vec![])),
+            (
+                "views",
+                Json::Array(vec![
+                    view_to_json(&view(1, "A")).unwrap(),
+                    view_to_json(&view(2, "a")).unwrap(),
+                ]),
+            ),
+        ]);
+        assert!(book_from_json(&twice).is_err(), "names stay unique");
     }
 }

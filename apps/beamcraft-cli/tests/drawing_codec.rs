@@ -5,7 +5,7 @@
 
 #![allow(clippy::unwrap_used)]
 
-use beamcraft_cli::drawing::codec;
+use beamcraft_commands::drawing::codec;
 use beamcraft_engine::drawing::*;
 use beamcraft_engine::query::feature::FeatureId;
 use beamcraft_layer_engine::{Asset, Cancellation, Control, Identity};

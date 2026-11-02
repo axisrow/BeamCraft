@@ -179,7 +179,7 @@ fn a_created_project_opens_lists_and_is_remembered() {
 }
 
 #[test]
-fn a_project_created_from_the_starter_environment_places_members_at_once() {
+fn a_project_created_from_the_blank_environment_places_members_at_once() {
     let f = Fixture::new();
     let models = f.path("models");
     let created = f.ok(&[
@@ -189,12 +189,12 @@ fn a_project_created_from_the_starter_environment_places_members_at_once() {
         "--name",
         "Seeded",
         "--environment",
-        "starter",
+        "blank",
         "--project-id",
         PROJECT,
     ]);
     let seeded = at(&created, &["seeded"]);
-    assert_eq!(text(seeded, "environment"), "starter");
+    assert_eq!(text(seeded, "environment"), "blank");
     assert_eq!(at(seeded, &["materials"]).unsigned().unwrap(), 2);
     let store = text(at(&created, &["project"]), "path");
 
@@ -271,26 +271,6 @@ fn an_unknown_environment_creates_no_project() {
 }
 
 #[test]
-fn the_blank_environment_seeds_only_the_default_materials() {
-    let f = Fixture::new();
-    let models = f.path("models");
-    let created = f.ok(&[
-        "create-project",
-        "--parent",
-        &models,
-        "--name",
-        "Empty",
-        "--environment",
-        "blank",
-    ]);
-    let seeded = at(&created, &["seeded"]);
-    assert_eq!(at(seeded, &["materials"]).unsigned().unwrap(), 2);
-    let store = text(at(&created, &["project"]), "path");
-    let defined = f.raw(&["definitions", "--store", &store]).1;
-    assert!(list(&defined, "environment_profiles").is_empty());
-}
-
-#[test]
 fn a_placed_member_changes_its_profile_by_name_and_a_plate_refuses() {
     let f = Fixture::new();
     let models = f.path("models");
@@ -301,7 +281,7 @@ fn a_placed_member_changes_its_profile_by_name_and_a_plate_refuses() {
         "--name",
         "Swap",
         "--environment",
-        "starter",
+        "blank",
     ]);
     let store = text(at(&created, &["project"]), "path");
     let run = |args: &[&str]| f.raw(args);

@@ -350,7 +350,7 @@ fn concurrent_publications_accept_one_and_never_overwrite_the_head() {
     let store = beamcraft_host::revision::RevisionStore::new(
         beamcraft_host::storage::BlobStore::new(f.path("published")).unwrap(),
     );
-    let captured = beamcraft_cli::command_evidence::read(&store.open().unwrap())
+    let captured = beamcraft_commands::command_evidence::read(&store.open().unwrap())
         .unwrap()
         .unwrap();
     assert_eq!(captured.fingerprint.to_string(), winner_cs.0);
@@ -572,7 +572,7 @@ fn a_conflicted_draft_refuses_its_stale_changeset_until_resolved() {
     // The accepted order is A's rename then B's move; no value was lost or rolled back.
     assert_eq!(f.head(), new_head);
     assert_eq!(plate_name(&published, PLATE), "remote name");
-    let report = beamcraft_cli::plate::inspect(&beamcraft_host::revision::RevisionStore::new(
+    let report = beamcraft_commands::plate::inspect(&beamcraft_host::revision::RevisionStore::new(
         beamcraft_host::storage::BlobStore::new(std::path::Path::new(&published)).unwrap(),
     ))
     .unwrap();
@@ -586,7 +586,7 @@ fn a_conflicted_draft_refuses_its_stale_changeset_until_resolved() {
 }
 
 fn plate_name(path: &str, id: &str) -> String {
-    beamcraft_cli::plate::inspect(&beamcraft_host::revision::RevisionStore::new(
+    beamcraft_commands::plate::inspect(&beamcraft_host::revision::RevisionStore::new(
         beamcraft_host::storage::BlobStore::new(std::path::Path::new(path)).unwrap(),
     ))
     .unwrap()

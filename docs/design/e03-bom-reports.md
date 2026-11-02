@@ -9,7 +9,7 @@ API. IFC export (E02) is a separate task; plain-text and HTML reports stay open.
 
 ## 1. What exists today
 
-* `beamcraft_cli::plate::inspect` opens and verifies the head revision, re-evaluates every plate
+* `beamcraft_commands::plate::inspect` opens and verifies the head revision, re-evaluates every plate
   and member with the kernel, and reports `PlateRecord`/`MemberRecord` (authored inputs, bodies,
   re-evaluated `Quantities`), the definitions by digest, the levels and the stored-quantity
   freshness. This is the same verified read every other reporting command uses.
@@ -33,7 +33,7 @@ API. IFC export (E02) is a separate task; plain-text and HTML reports stay open.
 ```text
 beamcraft_engine::bom      pure computation: rows in, sorted element table and grouped
                            summary out; CSV rendering of both (strings, no I/O)
-beamcraft_cli::bom         maps an Inspection to engine rows (labels, derived areas)
+beamcraft_commands::bom         maps an Inspection to engine rows (labels, derived areas)
 beamcraft export-bom       CLI command: verified head -> rows -> CSV files
 ```
 

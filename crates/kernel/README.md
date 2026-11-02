@@ -636,3 +636,16 @@ is not the section area. The exact area (closed form with true arcs) lives with 
 `docs/design/p-mass-section-area.md`). `SectionResult::axis_length_mm` is the extrusion length.
 Evidence: `tests/section.rs` and the unit tests of `section.rs` (a finely subdivided polygon
 converges to the exact area of every family). Details: `docs/design/a07-section-library.md`.
+
+## G11: accuracy fixtures
+
+The original G11 set [`docs/fixtures/g11`](../../docs/fixtures/g11/README.md) holds the
+builders to the F06 comparison rule on rounded meshes, subnormal masses, coordinates up to the
+1e9 mm cap and cancellation-heavy inputs, against exact rational references made by
+`beamcraft-fixtures g11`. The harness is in the steel test binary
+(`crates/steel/tests/g11_accuracy.rs`), because plates, members and fasteners are built there; it
+measures their meshes with this crate's `measure` and places them with `TriMesh::transformed`.
+The set found one kernel defect: `analytic_mass_kg` reported a subnormal mass as current. It now
+refuses any positive-density mass below the normal binary64 range as `GEO_NUMERIC_UNCERTAIN`
+(regression case in `tests/g06_measure.rs`). Design note:
+[`docs/design/g11-accuracy-fixtures.md`](../../docs/design/g11-accuracy-fixtures.md).

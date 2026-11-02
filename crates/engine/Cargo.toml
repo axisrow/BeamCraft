@@ -7,6 +7,13 @@ license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 authors.workspace = true
+# The integration suites build into one `engine` test binary (`tests/engine.rs`): one link
+# instead of six.
+autotests = false
+
+[[test]]
+name = "engine"
+path = "tests/engine.rs"
 
 [dependencies]
 beamcraft-geom.workspace = true

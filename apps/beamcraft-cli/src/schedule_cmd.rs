@@ -7,7 +7,7 @@
 //! prints one JSON object with the same error shape and exit codes as the other commands.
 
 use crate::bom_cmd::{reserve_all, write_sync};
-use beamcraft_cli::{plate::inspect, schedules};
+use beamcraft_commands::{plate::inspect, schedules};
 use beamcraft_engine::limits::MAX_ELEMENTS;
 use beamcraft_engine::schedule::{build, elements_csv, groups_csv, html};
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
@@ -82,7 +82,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         ));
     }
     // The approved numbering marks (A09) of the same head, exactly as export-bom reads them.
-    let (mark_revision, marks) = beamcraft_cli::numbering_approval::head_marks(&store)?;
+    let (mark_revision, marks) = beamcraft_commands::numbering_approval::head_marks(&store)?;
     if mark_revision != inspection.revision.revision_id {
         return Err(invalid(
             "the store head moved while the schedule was gathered",

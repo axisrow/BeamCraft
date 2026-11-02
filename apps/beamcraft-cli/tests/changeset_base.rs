@@ -100,7 +100,7 @@ impl Fixture {
     }
     fn pin(&self, revision: &str, manifest: ContentDigest) {
         let path = self.0.join("draft/workspace.json");
-        let old = beamcraft_cli::workspace::read_meta(&self.0.join("draft")).unwrap();
+        let old = beamcraft_commands::workspace::read_meta(&self.0.join("draft")).unwrap();
         let bytes = fs::read_to_string(&path)
             .unwrap()
             .replace(
@@ -128,9 +128,10 @@ impl Fixture {
         let digest = text(json.get("changeset").unwrap(), "digest")
             .parse()
             .unwrap();
-        let changeset = beamcraft_cli::changeset::read_changeset(&self.store("draft"), &digest)
-            .unwrap()
-            .changeset;
+        let changeset =
+            beamcraft_commands::changeset::read_changeset(&self.store("draft"), &digest)
+                .unwrap()
+                .changeset;
         (digest, changeset)
     }
     fn names(&self, store: &str) -> Vec<String> {
@@ -180,7 +181,7 @@ fn a_new_accepted_base_does_not_mark_unsent_operations_published_or_use_old_laye
         "all original unsent operations stay unsent"
     );
     assert_eq!(
-        beamcraft_cli::workspace::read_meta(&f.0.join("draft"))
+        beamcraft_commands::workspace::read_meta(&f.0.join("draft"))
             .unwrap()
             .synced_sequence,
         1
@@ -254,7 +255,7 @@ fn a_stale_workspace_packages_the_pinned_historical_base_instead_of_the_current_
 
 #[test]
 fn a_changeset_cannot_end_before_the_recorded_rebase_boundary() {
-    use beamcraft_cli::workspace::{WorkspaceState, read_meta};
+    use beamcraft_commands::workspace::{WorkspaceState, read_meta};
     let f = Fixture::new();
     f.rename("draft", ONE, "Mine");
     let (old_digest, _) = f.create();
@@ -358,7 +359,7 @@ fn wrong_missing_or_corrupt_accepted_pins_refuse_packaging_without_changing_eith
             }
             _ => {
                 let path = f.0.join("draft/workspace.json");
-                let meta = beamcraft_cli::workspace::read_meta(&f.0.join("draft")).unwrap();
+                let meta = beamcraft_commands::workspace::read_meta(&f.0.join("draft")).unwrap();
                 let bytes = fs::read_to_string(&path).unwrap().replace(
                     &format!("workspace_id={}", meta.workspace_id),
                     &format!("workspace_id={USER}"),

@@ -11,7 +11,7 @@
 //! so it is never a hit.
 
 use crate::plate_cmd::{num, translation, triple};
-use beamcraft_cli::plate::inspect;
+use beamcraft_commands::plate::inspect;
 use beamcraft_engine::error::{ViewCode, ViewError};
 use beamcraft_engine::query::feature::{
     FeatureGeometry, FeatureKind, FeatureLookup, list_features, lookup_feature,

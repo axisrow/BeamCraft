@@ -34,7 +34,7 @@ beamcraft inspect-elements --store ROOT
 
 1. **Where the wiring lives.** The module table gives the engine no edge to the layer engine and
    the host none either (owner decisions of 2026-10-16). Only the application links all three, so
-   the adapter is `beamcraft_cli::plate`. It computes no geometry. A library target was added to
+   the adapter is `beamcraft_commands::plate`. It computes no geometry. A library target was added to
    the CLI package so tests can inject a commit hook and kill a real process.
 2. **Layer engine in-process.** The owner decision places it in a separate process; the frozen U04
    profile has no authoring/verify message. P01 therefore runs U02/U01/U03 in the CLI process.

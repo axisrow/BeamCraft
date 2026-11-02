@@ -91,8 +91,9 @@ pub struct MassRecord {
 /// Absent density keeps mass `unknown`, never zero or defaulted. A non-finite
 /// density is `GEO_NON_FINITE`, a negative one `GEO_NOT_POSITIVE`. A density of
 /// exactly zero is the massless auxiliary material and gives a current mass of zero. A
-/// product that overflows or underflows to zero is `GEO_NUMERIC_UNCERTAIN`: zero is never
-/// the current mass of a positive-density solid.
+/// product that overflows, or underflows below the normal binary64 range (to a subnormal value or
+/// to zero), is `GEO_NUMERIC_UNCERTAIN`: a subnormal has lost the precision of the comparison
+/// rule, and zero is never the current mass of a positive-density solid.
 pub fn analytic_mass_kg(volume_mm3: f64, density_kg_m3: Option<f64>) -> Result<MassRecord, Code> {
     if !volume_mm3.is_finite() || volume_mm3 <= 0.0 {
         return Err(Code::NumericUncertain);
@@ -110,8 +111,9 @@ pub fn analytic_mass_kg(volume_mm3: f64, density_kg_m3: Option<f64>) -> Result<M
         return Err(Code::NotPositive);
     }
     let mass = (volume_mm3 * density) / 1_000_000_000.0;
-    // Only an explicit zero density (the massless auxiliary material) may give a zero mass.
-    if !mass.is_finite() || mass < 0.0 || (density > 0.0 && mass <= 0.0) {
+    // Only an explicit zero density (the massless auxiliary material) may give a zero mass, and a
+    // positive density never gives a subnormal one (G11, `g11.subnormal.*`).
+    if !mass.is_finite() || mass < 0.0 || (density > 0.0 && mass < f64::MIN_POSITIVE) {
         return Err(Code::NumericUncertain);
     }
     Ok(MassRecord {

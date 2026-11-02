@@ -3,7 +3,7 @@
 
 //! R01 headless commands: `attach-reference`, `move-reference`, `correct-reference-units`,
 //! `write-reference`, `inspect-reference` and `measure-reference`. They call the engine API
-//! through the adapter of `beamcraft_cli::reference` and print one JSON object (the same error
+//! through the adapter of `beamcraft_commands::reference` and print one JSON object (the same error
 //! shape and exit codes as the other store commands: 0 success, 2 rejection, 3 backend
 //! unavailable, 4 outcome unknown).
 //!
@@ -16,7 +16,7 @@ use crate::plate_cmd::{
     Run, footprint_json, id_error, invalid, num, revision_json, translation, triple,
 };
 use crate::report::report;
-use beamcraft_cli::reference::{
+use beamcraft_commands::reference::{
     AttachRequest, Attached, Edited, Ids, MeasuredReference, ReferenceInspection, Wrapper,
     attach_reference, correct_wrapper_units, inspect_references, measure_references, move_wrapper,
     refuse_foreign_write,

@@ -2,9 +2,10 @@
 
 Contributor-original BeamCraft documentation, MPL-2.0. Design note for slice 1 of
 [#795](https://github.com/Apibim-com/BeamCraft/issues/795), read against `master` at `94203bbd`
-(2026-11-01). Nothing here is implemented: the note fixes the shape of the seam and the order of
-the code slices. It continues [`platform-and-steel.md`](platform-and-steel.md), whose "What is
-left" section is the starting point, and the owner's comment of 2026-10-31 on the issue.
+(2026-11-01). Sections 1 to 6 are the plan as first written; section 7 corrects it after the
+first look at the code, and section 8 records what was built and what was left on purpose. It
+continues [`platform-and-steel.md`](platform-and-steel.md) and the owner's comment of 2026-10-31 on
+the issue.
 
 Fixed by the issue and not reopened here: the stored `steel:*` attributes, the schema descriptor
 and every store written today stay byte-identical; refusal codes and the output of existing
@@ -42,12 +43,12 @@ local shape records (cuts, thickness side, section placement, path).
 
 The platform names the pairs in exactly these places, so the interface has few callers:
 
-- `apps/beamcraft-cli/src/copy.rs:66` (`CopiedElement::{Plate, Member}`), `:98`
+- `crates/commands/src/copy.rs:66` (`CopiedElement::{Plate, Member}`), `:98`
   (`creation_changes`), `:267-279`;
-- `apps/beamcraft-cli/src/array.rs:160`, `:171`;
-- `apps/beamcraft-cli/src/edit.rs:166-169` (`Target::{Plate, Member}`), `:191`, `:209`, `:324`,
+- `crates/commands/src/array.rs:160`, `:171`;
+- `crates/commands/src/edit.rs:166-169` (`Target::{Plate, Member}`), `:191`, `:209`, `:324`,
   `:335`;
-- `apps/beamcraft-cli/src/plate.rs:1471-1516` (the `BodyCache` and the two evaluations);
+- `crates/commands/src/plate.rs:1471-1516` (the `BodyCache` and the two evaluations);
 - the decoders (`Decoded`) and `registry.rs` for the command inventory.
 
 `ElementPatch` (`steel/model/command.rs:3648`) carries one set of fields for both kinds. The
@@ -296,3 +297,33 @@ Known remainder, deliberately left: `SCHEMA_DESCRIPTOR` stays a single constant 
 `layer-engine` (D6's segments are only needed to compose it from several disciplines, and moving
 the steel text out of a pinned constant is a separate, byte-risky change). It is the stored
 format's identity, not a dependency on the `steel` crate.
+
+## 8. Closing state (#795 done)
+
+Steps (a) to (c) of section 7 landed as the hooks and registry (#803, #805) and the move of the
+steel half into `steel::layer` with the flipped edge (contributed as one series, the fork's
+#388 slices 1 to 10): `steel` is kind `discipline` at layer 6, depends on `layer-engine`, and no
+platform crate depends on it. Both apps call `steel::layer::install()` at start. Step (d) and D7
+landed in a reduced form, and the reductions are decisions, not gaps:
+
+- **D3 became a steel type, not a platform trait.** `steel::engine::part::PartRecord` is the
+  intersection of the pairs of section 2.1 (find, copy and P11 copy, array, patch with
+  re-evaluation, mesh and quantity record, and the accessors the adapters need). The CLI's
+  `CopiedElement`, `UpdatedElement` and `Target` are gone, and
+  `rg "(copy|patch|array)_(plate|member)" apps` finds nothing. A platform trait needs inputs the
+  platform owns; `CopyElement`, `ArrayElements` and `ElementPatch` are steel commands (#791) and
+  the callers are apps, which may link any discipline.
+- **D4 (the `ElementPatch` split) is not done.** It only serves a platform trait, and it is the
+  one change here that could move the `BeamCraft/P04/UpdateElement/v2` fingerprint bytes. It
+  becomes due when a second discipline shares the copy and edit commands.
+- **D7 became vocabulary properties.** `engine` sits below the registry in `layer-engine`, so the
+  properties are methods of the F10 enum, `ElementKind::is_part` and `is_linear_member`, and the
+  three behaviour matches of section 2.3 call them. `model::prim` keeps its token table and the
+  `/World/Steel/...` prefixes: they are the stored prim layout, not behaviour.
+- **D6 is not done.** `SCHEMA_DESCRIPTOR` stays one constant (section 7, known remainder).
+
+Acceptance of the issue, as run: `rg "crate::steel|beamcraft_(model|kernel|engine)::steel"`
+finds nothing outside `crates/steel`; no platform `Cargo.toml` names `steel`;
+`beamcraft-boundaries check` passes; `rg "ElementKind::(Plate|Beam|Column)" crates/engine/src`
+finds only the vocabulary table, the F06 `BodyKind::of` token mapping, the box demo scene and
+tests; the whole suite, the `f07` fixtures and the descriptor pins pass unchanged.

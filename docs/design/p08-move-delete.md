@@ -20,8 +20,8 @@ beamcraft delete-element --store ROOT --id UUID [--op-id UUID ...]
 | `beamcraft_model::command` | `ElementPatch::translation_mm` (absolute translation, finite, within the coordinate cap; part of the fingerprint only when present, so earlier fingerprints are unchanged). `DeleteElement { target_id }` and its fingerprint. |
 | `beamcraft_engine` | `update::{effect, patch_plate, patch_member}` carry the move (translation replaced, rotation kept, result validated); `Footprint::for_update(.., placement, ..)` and `Footprint::for_delete`. |
 | `beamcraft_layer_engine::authored` | `Change::Delete { id }`: removes the element prim from the authored layer and its result prims from the derived layer, drops it from `/World/Steel`, writes every group, refuses elements whose prims live in other layers, and cannot share a batch with another change of the element. |
-| `beamcraft_cli::edit` | A placement patch becomes `Change::Placement` only: no mesh change, no quantity change. |
-| `beamcraft_cli::delete` | `delete_element`: replay by `op_id`, `OP_ID_REUSE`, `NOT_FOUND`; the layer engine's element index decides the links (`Author::check_delete`) before anything is authored; the observed writes are checked against the footprint; commit through U06/U07 with the strict verifier. |
+| `beamcraft_commands::edit` | A placement patch becomes `Change::Placement` only: no mesh change, no quantity change. |
+| `beamcraft_commands::delete` | `delete_element`: replay by `op_id`, `OP_ID_REUSE`, `NOT_FOUND`; the layer engine's element index decides the links (`Author::check_delete`) before anything is authored; the observed writes are checked against the footprint; commit through U06/U07 with the strict verifier. |
 
 ## Decisions
 

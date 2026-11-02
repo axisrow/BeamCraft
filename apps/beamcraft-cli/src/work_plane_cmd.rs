@@ -3,7 +3,7 @@
 
 //! Read-only V08 work-plane construction, including a real face pick.
 use crate::plate_cmd::{invalid, triple};
-use beamcraft_cli::plate::inspect;
+use beamcraft_commands::plate::inspect;
 use beamcraft_engine::work_plane::{WorkPlane, pick_work_plane};
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;

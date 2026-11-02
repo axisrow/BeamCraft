@@ -128,19 +128,7 @@ impl SelectionClass {
     /// Whether an element of `kind` belongs to this switch.
     const fn covers(self, kind: ElementKind) -> bool {
         match self {
-            Self::Parts => matches!(
-                kind,
-                ElementKind::Plate
-                    | ElementKind::Beam
-                    | ElementKind::Column
-                    | ElementKind::Wall
-                    | ElementKind::Slab
-                    | ElementKind::Opening
-                    | ElementKind::Penetration
-                    | ElementKind::Pipe
-                    | ElementKind::Duct
-                    | ElementKind::Support
-            ),
+            Self::Parts => kind.is_part(),
             Self::Assemblies => matches!(kind, ElementKind::Assembly | ElementKind::Connection),
             Self::Grids => matches!(kind, ElementKind::Grid),
             Self::ConstructionObjects => matches!(kind, ElementKind::Construction),
@@ -1500,7 +1488,7 @@ fn snap_bodies(
             || !(2..=beamcraft_model::limits::CONTOUR_POINT_CAP).contains(&axis.points_mm.len())
             || !snapshot
                 .element(&axis.element_id)
-                .is_some_and(|e| matches!(e.kind, ElementKind::Beam | ElementKind::Column))
+                .is_some_and(|e| e.kind.is_linear_member())
         {
             return Err(input());
         }

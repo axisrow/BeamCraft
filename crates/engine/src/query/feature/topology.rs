@@ -111,7 +111,7 @@ impl NamedFeatures {
         if entry.full_face_table.is_empty() || BoxFeatures::local(snapshot, entry).is_some() {
             return None;
         }
-        let member = matches!(entry.kind, ElementKind::Beam | ElementKind::Column);
+        let member = entry.kind.is_linear_member();
         let names: Vec<String> = entry
             .full_face_table
             .iter()

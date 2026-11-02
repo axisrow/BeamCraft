@@ -21,7 +21,7 @@ use session::Refusal;
 
 use support::{at, text};
 
-use beamcraft_cli::plate::{CreateRequest, create_plate, inspect};
+use beamcraft_commands::plate::{CreateRequest, create_plate, inspect};
 use beamcraft_host::{
     ids::IdSource,
     revision::{CommitPoint, Injected, NoFault, RevisionStore, Uuid7},

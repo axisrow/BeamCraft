@@ -1,20 +1,22 @@
-# Starter environment and seeded new models
+# Blank environment and seeded new models
 
-Date: 2026-10-30. Status: experimental slice; no gate acceptance is claimed.
+Date: 2026-10-30, revised 2026-11-01. Status: experimental slice; no gate acceptance is claimed.
 
 ## Problem
 
 A new model had no profile and no material definitions. The native window lists the definitions
 of the model, so the beam and column tools offered an empty list and nothing could be placed.
-The `blank` environment is empty on purpose and the environment chosen on the start window was
-only a saved setting.
+The `blank` environment was empty and the environment chosen on the start window was only a
+saved setting.
 
 ## What changed
 
-* `environments/starter/` is a built-in A07.3 environment with nineteen generic profiles
-  (I, H, channel, angle, RHS, SHS, CHS, bar and one cold-formed C). Every value is invented and
-  rounded; none follows a standard or catalogue (`AGENTS.md` 1.2). The start window prefers it
-  over `blank` when no environment is saved.
+* `environments/blank/` is the one built-in A07.3 environment and the base for other
+  environments. Its library has nineteen generic profiles (I, H, channel, angle, RHS, SHS, CHS,
+  bar and one cold-formed C). Every value is invented and rounded; none follows a standard or
+  catalogue (`AGENTS.md` 1.2). The start window prefers it when no environment is saved. These
+  profiles first shipped as a separate `starter` environment next to an empty `blank`; the two
+  were merged on 2026-11-01 so that the base environment is usable on its own.
 * `create-project --environment ID` looks the environment up (built-in, then the user's), reads
   and admits it, then copies it into the project folder (`environment/`) and publishes the two
   default materials. The project therefore carries its environment: closing and reopening it, or

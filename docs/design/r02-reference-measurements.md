@@ -24,7 +24,7 @@ beamcraft measure-reference --store ROOT [--id UUID]
 |---|---|
 | `beamcraft_engine::scene` | `foreign_surface`: the world-space vertices and triangle corners of a wrapper's composed surfaces, with the caps, face rules and coordinate bounds the view path always applied; `reference_element` is now a thin caller of it (display keeps its rotation refusal and translation instance). |
 | `beamcraft_engine::measure` | `measure_reference` and the result objects `ReferenceMeasurement` / `MeshReading`: the kernel certification and measurement, the input signature, and the mass record that is `unsupported` by construction. Cancellation is a `&mut dyn FnMut(Stage) -> bool` polled by the kernel. |
-| `beamcraft_cli::reference` / `reference_view` | `measure_references` (read-only over the verified head) and `reference_surfaces`, the extracted per-wrapper geometry walk shared by the view and the measurement. |
+| `beamcraft_commands::reference` / `reference_view` | `measure_references` (read-only over the verified head) and `reference_surfaces`, the extracted per-wrapper geometry walk shared by the view and the measurement. |
 | `beamcraft-cli` | `measure-reference`: one JSON object, `--id` optional, no ids consumed, no revision created. |
 
 ## Decisions

@@ -398,6 +398,25 @@ impl Scene {
         resident: &BTreeSet<ContentDigest>,
         overlay: Option<&crate::colour_sets::Overlay>,
     ) -> Result<Self, Error> {
+        Self::from_snapshot_showing(
+            snapshot,
+            representation,
+            resident,
+            overlay,
+            beamcraft_engine::KindFilter::SHOW_ALL,
+        )
+    }
+
+    /// [`Scene::from_snapshot_reusing`] without the elements of the kinds `shown` hides (a model
+    /// view's object visibility, V12). The bounds and the origin stay those of the whole model,
+    /// so switching views never moves the display origin.
+    pub fn from_snapshot_showing(
+        snapshot: &ViewSnapshot,
+        representation: Representation,
+        resident: &BTreeSet<ContentDigest>,
+        overlay: Option<&crate::colour_sets::Overlay>,
+        shown: beamcraft_engine::KindFilter,
+    ) -> Result<Self, Error> {
         let bounds = snapshot.engineering_bounds();
         let origin_mm = bounds.map_or([0.0; 3], |b| {
             [
@@ -417,6 +436,9 @@ impl Scene {
         let mut total = 0usize;
         let mut triangles = 0u64;
         for element in snapshot.elements() {
+            if !shown.is_visible(element.kind) {
+                continue;
+            }
             let reference = element.representation(representation);
             let slot = usize::try_from(reference.mesh_slot).map_err(|_| Error::Input("slot"))?;
             let at = match slots.get(slot).copied().flatten() {

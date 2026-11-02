@@ -14,7 +14,7 @@ intersections, invalid arguments, duplicate IDs and missing definitions remain f
 This slice retains unsupported-plane contours without operations and with identity element
 rotation. Operations and P10 placements are not converted into accepted unsupported input.
 
-`beamcraft_cli::plate_draft::create_plate_draft` publishes the authored-only result through the
+`beamcraft_commands::plate_draft::create_plate_draft` publishes the authored-only result through the
 existing layer author, footprint check, complete revision manifest, atomic host commit and
 content verifier. The USD contains the unchanged authored contour, thickness, placement and
 material pin, without a Geometry prim, mesh, quantity values or signatures. Geometry status is

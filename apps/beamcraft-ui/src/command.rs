@@ -287,6 +287,7 @@ pub fn lookup(
 /// process ([`pick_in`]), then [`lookup`] of the element it hit. `selection` carries the
 /// window's switches (V11); a class that is off is never selected. A click costs one CLI process
 /// and one inspection; `cancel` gives the lookup up.
+#[allow(clippy::too_many_arguments)]
 pub fn select(
     cli: &Path,
     store: &Path,
@@ -295,8 +296,23 @@ pub fn select(
     cancel: &AtomicBool,
     stats: &Stats,
     selection: SelectionFilter,
+    view: Option<&beamcraft_engine::views::ModelView>,
 ) -> Result<Option<Selected>, ToolError> {
-    let Some(id) = pick_in(snapshot, ray, selection)? else {
+    // With an active model view only what it shows can be picked: geometry clipped by its depth
+    // or work area, or of a hidden kind, never masks a visible part behind it (V12).
+    let picked = match view {
+        Some(view) => beamcraft_engine::views::pick_visible(
+            snapshot,
+            view,
+            ray.origin,
+            ray.direction,
+            selection,
+        )
+        .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string()))?
+        .map(|hit| hit.element_id.to_string()),
+        None => pick_in(snapshot, ray, selection)?,
+    };
+    let Some(id) = picked else {
         return Ok(None);
     };
     let (info, details) = lookup(cli, store, &id, cancel, stats);

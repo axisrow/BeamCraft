@@ -145,6 +145,7 @@ fn a_switch_that_is_off_takes_its_class_out_of_the_click_selection_and_writes_no
         &cancel,
         &Stats::default(),
         parts_off,
+        None,
     )
     .unwrap();
     assert!(none.is_none());
@@ -156,6 +157,7 @@ fn a_switch_that_is_off_takes_its_class_out_of_the_click_selection_and_writes_no
         &cancel,
         &Stats::default(),
         SelectionFilter::ALL,
+        None,
     )
     .unwrap();
     assert_eq!(picked.unwrap().id, PLATE);

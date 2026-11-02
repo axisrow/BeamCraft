@@ -8,16 +8,21 @@
 //! writes them with a provenance manifest that records full SHA-256 digests, verifies a fixture
 //! directory byte for byte, and validates single descriptions.
 //!
-//! It never computes expected quantities. Analytical expectations are hand-derived in
+//! The F07 part never computes expected quantities. Analytical expectations are hand-derived in
 //! `docs/fixtures/expectations.md`, stored in `tests/fixtures/expectations/f07.json` and checked
 //! independently by this package's `tests/expectations.rs`, which recomputes them from the
 //! fixture inputs with its own closed-form vector algebra.
+//!
+//! The G11 accuracy set ([`g11`]) is different: it carries references, exact rational
+//! evaluations of its binary64 inputs made with [`rational`], with no kernel code.
 //!
 //! The command-line front end is the `beamcraft-fixtures` binary.
 
 pub mod catalog;
 pub mod fixture;
+pub mod g11;
 pub mod json;
+pub mod rational;
 pub mod sha256;
 
 use std::collections::BTreeSet;

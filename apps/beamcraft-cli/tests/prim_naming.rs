@@ -349,7 +349,7 @@ fn all_categories_reopen_at_rule_paths_and_keep_identity_through_edits_and_view_
     for id in [WELD, BOLT, ASSEMBLY, LEVEL] {
         f.run("delete-element", &["--id", id]);
     }
-    let inspection = beamcraft_cli::plate::inspect(&f.store()).unwrap();
+    let inspection = beamcraft_commands::plate::inspect(&f.store()).unwrap();
     assert_eq!(inspection.plates.len(), 1);
     assert_eq!(inspection.members.len(), 2);
 }

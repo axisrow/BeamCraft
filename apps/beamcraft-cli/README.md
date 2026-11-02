@@ -9,13 +9,16 @@ size and depth budgets; the project's own layers are verified by SHA-256 before 
 `commit-revision` and `open-revision` (below) publish already stored blobs and do not parse USD;
 `create-plate` (P01, below) and the other modelling commands author USD and publish it.
 
+The commands themselves are the library `beamcraft-commands` (`crates/commands`, #208); this
+package is the binary: argument parsing, help, dispatch and JSON rendering.
+
 Build offline with `cargo build --offline -p beamcraft-cli --bins`.
 `beamcraft --help` describes the bounded arguments. Results are one JSON object on standard
 output, with strings for generations and other lossless integers.
 
 CLI help text is owned by command family under `src/help/` (for example `member.rs`, `drawing.rs`
 and `workspace.rs`); edit that family's text there. The command inventory is one table,
-`src/registry.rs`: add a new command there (name, family, access, parameters, adapter
+`crates/commands/src/registry.rs`: add a new command there (name, family, access, parameters, adapter
 route) when it is added to its adapter.
 `main.rs` dispatches a command word only through the registry's route, so a word that is not
 registered is refused as unsupported and a registered word cannot be left without an adapter.
@@ -175,7 +178,7 @@ Rotated element placements remain `UNSUPPORTED_GEOMETRY` at command application.
 process by the U17 decision. Workspace and undo commands have their own sections below; a full
 F04 envelope/JSON command adapter remains absent. Quantities are printed, not stored in USD
 (the pinned schema has none).
-A library target (`beamcraft_cli::plate`) exposes the same path with a commit hook for fault
+The application layer (`beamcraft_commands::plate` in `crates/commands`) exposes the same path with a commit hook for fault
 injection in tests. `tests/independent_reader.rs` and `tests/reference_reader.rs` re-read the
 saved layers with the independent `beamcraft-usd-oracle` process — its own parser, composition
 and vector algebra, sharing no code with the layer engine — and cross-check the closed forms.

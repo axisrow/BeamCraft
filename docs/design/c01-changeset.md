@@ -19,7 +19,7 @@ beamcraft apply-changeset   --store PUBLISHED --workspace-dir DIR --changeset SH
 |---|---|
 | `beamcraft_model::changeset` | `Changeset { changeset_id, project, workspace, actor, base_revision, base_manifest, revision, operations, dependencies, layers, root_layer, assets }`; canonical binary `encode`/`decode` (versioned, length-prefixed, sorted, bounded at 1 MiB, round trip enforced); `digest`; `validate`; `admit(trusted_actor, recorded) -> Apply | Replay`. `ActorId` joins the typed ids. Pure and WASM-compatible. |
 | `beamcraft_host::changeset` | `RevisionStore::claim_changeset` / `changeset_claim`: an append-only, checksummed `changesets/claims.log`; the first valid line of an id is its binding. |
-| `beamcraft_cli::changeset` | `create_changeset` (from a workspace: base, unsent operations, complete layer set with base digests, changed layers as assets, captured command dependencies or conservative legacy fallback), `read_changeset`, `apply_changeset` (decode, actor, replay, claim, base, source/dependency checks, blob copy and verification, commit with the strict verifier, workspace base advanced). |
+| `beamcraft_commands::changeset` | `create_changeset` (from a workspace: base, unsent operations, complete layer set with base digests, changed layers as assets, captured command dependencies or conservative legacy fallback), `read_changeset`, `apply_changeset` (decode, actor, replay, claim, base, source/dependency checks, blob copy and verification, commit with the strict verifier, workspace base advanced). |
 
 ## Decisions
 

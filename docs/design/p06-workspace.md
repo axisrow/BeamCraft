@@ -18,8 +18,8 @@ beamcraft publish-workspace --store PUBLISHED --workspace-dir DIR
 
 | Area | What exists |
 |---|---|
-| `beamcraft_cli::workspace` | `create_workspace`, `status`, `publish_workspace`, `WorkspaceMeta` (`workspace.json`: workspace id, user id, base revision, base manifest, last published draft sequence). Atomic temp-and-rename write, bounded read. |
-| `beamcraft_cli::plate::commit_verified` | Commits an existing complete layer set through U06/U07 with the content verifier; used by fork and publish. |
+| `beamcraft_commands::workspace` | `create_workspace`, `status`, `publish_workspace`, `WorkspaceMeta` (`workspace.json`: workspace id, user id, base revision, base manifest, last published draft sequence). Atomic temp-and-rename write, bounded read. |
+| `beamcraft_commands::plate::commit_verified` | Commits an existing complete layer set through U06/U07 with the content verifier; used by fork and publish. |
 | CLI | The three commands above. Every other edit command works on a workspace with `--store DIR`. |
 
 ## Decisions

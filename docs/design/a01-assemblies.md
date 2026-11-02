@@ -22,7 +22,7 @@ beamcraft assemblies --store ROOT
 | `beamcraft_engine::assembly` | `Membership` (kinds and `part-of` targets of a model) decides attach and detach: kinds, cardinality, self-link, cycles of any length; returns the chain it read and the footprint. |
 | `beamcraft_engine::footprint` | `Footprint::for_part_of(part, chain)`: writes only the part's relationship group, reads the part and every assembly on the chain. `conflicts_with` is now symmetric (see Decisions). |
 | `beamcraft_layer_engine::authored` | `Shape::Assembly` (an element of kind `assembly`, model kind `assembly`, no shape inputs, material or `Geometry`, identity placement) and `Change::PartOf { id, assembly }` (explicit one-target `bim:partOf` relationship, or removal). The structural validator adds rule `A01-V01`: target is an active owned assembly, at most one target, no self-link, no cycle (linear walk). The mapping descriptor gains these two lines; layers pinned to the two earlier descriptors stay accepted. |
-| `beamcraft_cli::assembly` | `create_assembly`, `attach`, `detach`, `assemblies`: replay by `op_id`, `OP_ID_REUSE`, `DUPLICATE_ID`, `NOT_FOUND`; the layer engine's observed writes are checked against the footprint; commit through U06/U07 with the strict verifier. `delete-element` accepts an assembly. |
+| `beamcraft_commands::assembly` | `create_assembly`, `attach`, `detach`, `assemblies`: replay by `op_id`, `OP_ID_REUSE`, `DUPLICATE_ID`, `NOT_FOUND`; the layer engine's observed writes are checked against the footprint; commit through U06/U07 with the strict verifier. `delete-element` accepts an assembly. |
 
 ## Decisions
 

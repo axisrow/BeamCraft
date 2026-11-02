@@ -29,6 +29,9 @@ pub enum Kind {
     /// Only an app or a tool may depend on it, so a discipline never depends on another and the
     /// platform never depends on a discipline.
     Discipline,
+    /// The application layer shared by the apps: the commands they run, built on the platform
+    /// and the disciplines. Only an app or a tool may depend on it (#208).
+    Service,
     /// Binary entry point.
     App,
     /// Development tool.
@@ -181,6 +184,7 @@ fn kind(value: &str) -> Option<Kind> {
         "native" => Some(Kind::Native),
         "host" => Some(Kind::Host),
         "discipline" => Some(Kind::Discipline),
+        "service" => Some(Kind::Service),
         "app" => Some(Kind::App),
         "tool" => Some(Kind::Tool),
         _ => None,
@@ -290,6 +294,7 @@ mod tests {
             Kind::Native,
             Kind::Host,
             Kind::Discipline,
+            Kind::Service,
             Kind::App,
             Kind::Tool,
         ] {

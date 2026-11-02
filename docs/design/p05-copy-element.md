@@ -22,7 +22,7 @@ beamcraft copy-element --store ROOT --id SOURCE_UUID [--name TEXT] [--offset X,Y
 | `beamcraft_model::command` | `CopyElement { source_id, new_id, name, offset_mm }`: equal identities are `DUPLICATE_ID`, label rule, offset finite and within the coordinate cap; fingerprint. |
 | `beamcraft_engine::copy` | `copy_plate`, `copy_member`: the copy's authored state; the resulting placement is re-validated (`LIMIT_EXCEEDED` out of range). |
 | `beamcraft_engine::footprint` | `Footprint::for_copy`: writes what `CreatePlate` writes for the new id; reads the new id's lifecycle, the source's lifecycle and authored groups, and the pinned profile and material. The source is never written. |
-| `beamcraft_cli::copy` | `copy_element` for plates and members: replay by `op_id`, `OP_ID_REUSE`, `DUPLICATE_ID`, `NOT_FOUND`; the layer engine's observed writes are checked against the footprint; the strict verifier re-checks the copy's mesh and stored records. |
+| `beamcraft_commands::copy` | `copy_element` for plates and members: replay by `op_id`, `OP_ID_REUSE`, `DUPLICATE_ID`, `NOT_FOUND`; the layer engine's observed writes are checked against the footprint; the strict verifier re-checks the copy's mesh and stored records. |
 
 ## Decisions
 

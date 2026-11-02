@@ -6,7 +6,7 @@
 //! views stale together, and unrelated edits retain the placement.
 
 use super::*;
-use beamcraft_cli::drawing::archive::SourceArchive;
+use beamcraft_commands::drawing::archive::SourceArchive;
 use beamcraft_engine::drawing::projection::{self, BodyProjection, ProjectedEdge};
 use beamcraft_engine::drawing::{
     DEFAULT_SCALE_DENOMINATOR, DimensionSpec, Drawing, DrawingSpec, Plane, SourceModelPin, ViewSpec,

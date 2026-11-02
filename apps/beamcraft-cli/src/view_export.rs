@@ -19,7 +19,7 @@
 
 use crate::plate_cmd::{definitions_json, id_error, inspection_json};
 use crate::report::report;
-use beamcraft_cli::plate::inspect;
+use beamcraft_commands::plate::inspect;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::Json;
 use beamcraft_model::error::ErrorCode;

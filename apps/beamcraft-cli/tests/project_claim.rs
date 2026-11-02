@@ -8,7 +8,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_cli::level::{LevelContext, create_level, levels};
+use beamcraft_commands::level::{LevelContext, create_level, levels};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore, Uuid7},

@@ -3,7 +3,9 @@
 
 //! A small, bounded reader for the parts of `Cargo.toml` that the boundary rules need.
 //!
-//! It understands `[package]` (`name`, `publish`), `[workspace]` (`members`) and every dependency
+//! It understands `[package]` (`name`, `publish`, `build`), `[workspace]` (`members`), the target
+//! tables (`[lib]`, `[[bin]]`, `[[test]]`, `[[bench]]`, `[[example]]` and their `path`) and every
+//! dependency
 //! table form: `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]`, their
 //! `[target.<cfg>.*]` variants and the `[dependencies.<name>]` sub-table form. A dependency's
 //! fields are accumulated by its key, whether they are written inline (`x = { package = "p" }`),
@@ -41,7 +43,16 @@ pub struct Manifest {
     pub dependencies: Vec<Dependency>,
     /// `[workspace.dependencies]` as `(key, real package name)` pairs, in file order.
     pub workspace_dependencies: Vec<(String, String)>,
+    /// Explicit target paths as `(table, path)`, for example `("lib", "code/lib.rs")`, in file
+    /// order. A path that is not one quoted string is kept as written, so it is never mistaken
+    /// for a valid one.
+    pub targets: Vec<(String, String)>,
+    /// `[package] build` as written (`"build.rs"`, `true` or `false`), if present.
+    pub build: Option<String>,
 }
+
+/// The target tables whose `path` the layout rule checks.
+pub const TARGET_TABLES: [&str; 5] = ["lib", "bin", "test", "bench", "example"];
 
 /// Why a manifest was not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +168,8 @@ enum Section {
     Dep(usize),
     /// `[workspace.dependencies]`.
     WorkspaceDeps,
+    /// A target table such as `[lib]` or `[[bin]]`.
+    Target(String),
     /// A `[workspace.dependencies.name]` sub-table (index into the workspace entries).
     WorkspaceDep(usize),
 }
@@ -278,8 +291,15 @@ pub fn parse_manifest_in(text: &str, root: &[(String, String)]) -> Result<Manife
             Section::Package => match key {
                 "name" => manifest.name = string_value(value),
                 "publish" => manifest.publish_false = value == "false",
+                "build" => {
+                    manifest.build = Some(string_value(value).unwrap_or_else(|| value.to_owned()));
+                }
                 _ => {}
             },
+            Section::Target(table) if key == "path" => manifest.targets.push((
+                table.clone(),
+                string_value(value).unwrap_or_else(|| value.to_owned()),
+            )),
             Section::Workspace if key == "members" => {
                 let mut array = value.to_owned();
                 while !array.contains(']') {
@@ -344,6 +364,7 @@ fn classify(header: &str, entries: &mut Vec<Entry>, workspace_entries: &mut Vec<
             Section::WorkspaceDep(entry_index(workspace_entries, "", name))
         }
         ["workspace", ..] => Section::Other,
+        [table] if TARGET_TABLES.contains(table) => Section::Target((*table).to_owned()),
         [.., last] if is_dependency_table(last) => Section::Deps(header.to_owned()),
         [.., table, name] if is_dependency_table(table) => {
             let section = tokens
@@ -511,6 +532,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(deps(&sub), [("tokio", "dependencies")]);
+    }
+
+    #[test]
+    fn reads_target_paths_and_the_build_key() {
+        let m = parse_manifest(
+            "[package]
+name = \"x\"
+build = \"gen.rs\"
+             [lib]
+path = \"code/lib.rs\" # moved
+             [[bin]]
+name = \"b\"
+path = 'src/main.rs'
+             [[test]]
+path = \"tests/all.rs\"
+             [dependencies]
+path = \"not-a-target\"
+",
+        )
+        .unwrap();
+        assert_eq!(m.build.as_deref(), Some("gen.rs"));
+        assert_eq!(
+            m.targets,
+            [
+                ("lib".to_owned(), "code/lib.rs".to_owned()),
+                ("bin".to_owned(), "src/main.rs".to_owned()),
+                ("test".to_owned(), "tests/all.rs".to_owned()),
+            ]
+        );
+        let unquoted = parse_manifest(
+            "[lib]
+path = concat
+[package]
+build = true
+",
+        )
+        .unwrap();
+        assert_eq!(unquoted.targets, [("lib".to_owned(), "concat".to_owned())]);
+        assert_eq!(unquoted.build.as_deref(), Some("true"));
     }
 
     #[test]

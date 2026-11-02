@@ -436,7 +436,8 @@ fn drawing_lifecycle(s: &Story, accepted_head: &str) {
 
     // Reopen the stored document through a fresh application reader and verify its actual archive.
     let documents =
-        beamcraft_cli::drawing::document::store::DocumentStore::open(Path::new(&document)).unwrap();
+        beamcraft_commands::drawing::document::store::DocumentStore::open(Path::new(&document))
+            .unwrap();
     let reopened = documents.head().unwrap();
     assert_eq!(reopened.version.unwrap().to_string(), version);
     assert_eq!(reopened.source.pin().revision.to_string(), accepted_head);

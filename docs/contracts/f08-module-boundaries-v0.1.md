@@ -30,8 +30,11 @@ crates from it. Change the table and the manifests together.
    - `host`: native engine host. Owns deadlines, filesystem access, storage, the outcome ledger
      and the local coordinator. Depends on domain crates, never the
      reverse. Third-party dependencies need the audit that `AGENTS.md` section 5 requires.
-   - `app`: a binary entry point (CLI, later UI). Calls the host and the engine API. Nothing
-     depends on an app.
+   - `service`: the application layer shared by the apps (`beamcraft-commands`): the commands
+     they run, built on the platform crates and the disciplines. It parses no command line and
+     prints nothing. Only an app or a tool may depend on it (#208).
+   - `app`: a binary entry point (the CLI and the window). Reads its input, calls the application
+     layer, the host and the engine API, and renders the result. Nothing depends on an app.
    - `tool`: development tool, `publish = false`, never shipped. Nothing depends on a tool. The F07
     fixture tool lives in `tools/fixtures`; the boundary checker lives in `apps/boundaries` because
     F08 may write only to `crates/` and `apps/`. Moving it is a table edit plus a path move.
@@ -47,9 +50,10 @@ crates from it. Change the table and the manifests together.
 Columns: package; path; kind; layer; allowed internal dependencies (`-` for none); status
 (`now` = a workspace member today, `planned` = created by its own task); the task that creates a
 planned crate or owns a present one. Kind `domain` is reserved for the three WASM-required
-crates; all future crates use a desktop-native kind (`native`, `host`, `discipline`, `app` or
-`tool`). Kind `discipline` is one trade (steel today, concrete or MEP later) with its commands,
-model types and operations: only an app or a tool may depend on a discipline, so a discipline
+crates; all future crates use a desktop-native kind (`native`, `host`, `discipline`, `service`,
+`app` or `tool`). Kind `discipline` is one trade (steel today, concrete or MEP later) with its
+commands, model types and operations: only the application layer, an app or a tool may depend on
+a discipline, so a discipline
 never depends on another and the platform (`session`, `host`, `engine`, ...) never depends on a
 discipline (`docs/design/platform-and-steel.md`).
 Dependencies are checked in `[dependencies]`,
@@ -68,14 +72,17 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-host | crates/host | host | 4 | beamcraft-model, beamcraft-json, beamcraft-engine | now | U05 |
 | steel | crates/steel | discipline | 6 | beamcraft-geom, beamcraft-model, beamcraft-kernel, beamcraft-engine, beamcraft-layer-engine | now | #795: structural steel (plates, members, holes, bends, welds, bolts, fasteners): commands, bodies, engine and the steel half of the layer engine |
 | session | crates/session | host | 6 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, beamcraft-layer-engine | now | #763: settings, recent projects, projects and environments for the window and the CLI |
-| beamcraft-cli | apps/beamcraft-cli | app | 7 | beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-json, beamcraft-layer-engine, beamcraft-ifc, session, steel | now | U04: CLI binary; E02 (`export-ifc` adapter) |
-| beamcraft-ui | apps/beamcraft-ui | app | 7 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, session, steel | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the JSON crate); V05.2 (edit tools; same edges); #763 (settings, recent projects, project names and environments through `session`, no child process) |
+| beamcraft-commands | crates/commands | service | 7 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, beamcraft-layer-engine, beamcraft-ifc, session, steel | now | #208: the application layer of the CLI library moved out of the app (plates, members, bolts, welds, definitions, grids, assemblies, numbering, drawings, exports, workspaces, history, publication, rebase, coordinator) |
+| beamcraft-cli | apps/beamcraft-cli | app | 8 | beamcraft-commands, beamcraft-model, beamcraft-engine, beamcraft-host, beamcraft-json, beamcraft-layer-engine, beamcraft-ifc, session, steel | now | U04: CLI binary: argument parsing, help and JSON rendering over `beamcraft-commands`; E02 (`export-ifc` adapter) |
+| beamcraft-ui | apps/beamcraft-ui | app | 8 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, session, steel | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the JSON crate); V05.2 (edit tools; same edges); #763 (settings, recent projects, project names and environments through `session`, no child process) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
 | beamcraft-test-gate | tools/test-gate | tool | 9 | - | now | Fork #342: recorded test gate |
 <!-- module-table:end -->
 
-No package has a third-party dependency today: `Cargo.lock` holds project-owned packages only.
+No `domain` crate has a third-party dependency. The apps do: the window's third-party crates
+(the `eframe` fork and its dependencies) are audited under `AGENTS.md` section 5, and
+`cargo deny` checks their licences and advisories in CI.
 
 ## 3. Third-party crates allowed in domain crates
 
@@ -96,14 +103,14 @@ by the named task with real code. Allowed dependencies are those of the owning r
 
 | Contract area | Contract | Exact path | Status |
 |---------------|----------|------------|--------|
-| Rigid transform, vectors, quaternion, tolerance constants, canonical f64 encoding for keys | F06 s.2, 4, 7 | `beamcraft_geom` (modules `vec`, `quat`, `tolerance`) | planned, G01. Today `geom` holds `Point3` only |
-| Kernel input and result, diagnostics, `GEO_` codes and their F04 mapping | F06 s.2, 3 | `beamcraft_kernel::{input, result, diagnostic}` | planned, G01 |
-| Analytic box builders, self-checks, cancellation points | F06 s.4, 6, 10 | `beamcraft_kernel::build` | planned, G01 |
-| Mesh blob builder, validator, face table, digest rule | F06 s.6 | `beamcraft_kernel::mesh` (plate builder, G02); generic blob/buffer validator `beamcraft_kernel::trimesh` (G06) | planned, G01 |
-| FeatureId (`fid1`) | F06 s.5 | `beamcraft_kernel::feature_id` (uses `ElementId` from `model::id`) | planned, G01 |
+| Rigid transform, vectors, frames, planes, tolerance constants | F06 s.2, 4 | `beamcraft_geom::{vec, frame, transform, plane, tolerance}` | **now**, G01 (quaternions are applied by the engine's placement code; there is no separate `quat` module) |
+| Kernel input and result, diagnostics, `GEO_` codes and their F04 mapping | F06 s.2, 3 | `beamcraft_kernel::{input, result, diagnostic}` | **now**, G02 |
+| Analytic box builders, self-checks, cancellation points | F06 s.4, 6, 10 | `beamcraft_kernel::build` | **now**, G02 |
+| Mesh blob builder, validator, face table, digest rule | F06 s.6 | `beamcraft_kernel::mesh` (plate builder, G02); generic blob/buffer validator `beamcraft_kernel::trimesh` (G06) | **now**, G02/G06 |
+| FeatureId (`fid1`) | F06 s.5 | `beamcraft_kernel::feature_id` (uses `ElementId` from `model::id`) | **now**, G02 |
 | Three dependency keys, mass signature, invalidation | F06 s.7 | `beamcraft_kernel::keys` | planned, G01 |
-| Quantities and statuses | F06 s.8, F04 s.5 | `beamcraft_kernel::quantity` | planned, G01 |
-| Pick and feature geometry for one body | F06 s.9 | `beamcraft_kernel::pick` | planned, G01 |
+| Quantities and statuses | F06 s.8, F04 s.5 | `beamcraft_kernel::measure` (statuses, analytic mass, certified mesh measurement) | **now**, G06 (G11 accuracy fixtures) |
+| Pick and feature geometry for one body | F06 s.9 | `beamcraft_engine::query::{pick, feature}` | **now**, G04/V04 (on the engine snapshot, not in the kernel) |
 | Pinned queries (`ListElements`, `GetMeshSnapshot`, `LookupFeature`, `GetChanges`, `QueryBounds`), snapshot tokens | F06 s.9 | `beamcraft_engine::query` | **now, partial**, V02: `ListElements`, mesh blobs by digest, world `QueryBounds`, `GetChanges` over a bounded history, snapshot tokens, selection. `LookupFeature` and `Pick` planned (G04); dependency keys planned. P01 adds `query::committed`: authored plates of a committed revision become kernel-evaluated records and the pinned snapshot input |
 | View settings (element-kind filter, representation selector), read-time projection, instance/triangle id tables | architecture "Part representations and view filters", F06 s.9 | `beamcraft_engine::presentation` | **now**, V02 |
 | Presentation key preimage | F06 s.7 | `beamcraft_engine::presentation` (V01 may move it to the UI if it needs no engine state; never into the kernel) | planned, V01 |
@@ -112,20 +119,20 @@ by the named task with real code. Allowed dependencies are those of the owning r
 | F04 command and envelope types | F04 s.6, 7 | `beamcraft_model::command` | **now, partial**, P01: `CreatePlate` arguments, `Placement`, label/contour/placement admission, typed `CommandError`, argument content fingerprint. The envelope and the other commands are planned |
 | F04 stable error codes | F04 s.8 | `beamcraft_model::error::ErrorCode` | **now** (23 codes, tested) |
 | RFC 8785 canonical bytes of the validated command envelope | F04 s.3 | `beamcraft_model::{json, canonical}` | planned, P01 |
-| Command application, footprints, transactions, replay decisions | F04 s.8 | `beamcraft_engine::{command, footprint, transaction}` | **now, partial**, P01: `CreatePlate` only (origin rectangle), the Create footprint, op_id replay/reuse decision; no canonical command bytes |
+| Command application, footprints, transactions, replay decisions | F04 s.8 | `beamcraft_engine::footprint`; the steel commands in `steel::engine::{command, member, update, transaction, ...}` (#795) | **now**: plates, members, holes, cuts, bends, welds, bolts, copies, arrays, edits; no canonical command bytes |
 | Production UUIDv7 source (system clock, per-process OS-seeded entropy; uniqueness, not secrecy) | F04 s.2 | `beamcraft_host::ids` | **now**, P01 |
-| P01 adapter: engine command to U02 authoring to U06/U07 commit, and reopen through U01/U03 to the engine query | AGENTS s.3 | `apps/beamcraft-cli` (`beamcraft_cli::plate`, in-process layer engine) | **now**, P01 (experimental; no process isolation) |
+| P01 adapter: engine command to U02 authoring to U06/U07 commit, and reopen through U01/U03 to the engine query | AGENTS s.3 | `crates/commands` (`beamcraft_commands::plate`, in-process layer engine), called by `apps/beamcraft-cli` | **now**, P01 (experimental; no process isolation) |
 | Bounded JSON of the CLI output (decode, encode, limits, refusal codes; pure, no I/O) | F04 s.8 | `beamcraft_json` | **now**, U17 |
 | Host error with its CLI exit code, deadline and cancellation of a host operation | F04 s.8 | `beamcraft_host::control` | **now**, U17 |
 | Immutable byte storage, publish-if-absent and verified retrieval | F04 s.2, U05 | `beamcraft_host::storage` | **now**, U05 |
 | Revision manifest, atomic root (head log), expected-base commit, verified reader, commit hook seam | F04 s.2, 6, 8, U06 | `beamcraft_host::revision` | **now**, U06 (experimental; content verifier is injected, host links no layer engine); personal workspace remains planned, U07 |
 | Durable outcome ledger (write-ahead intent, committed/aborted records), recovery of an unfinished commit, host-ledger QueryOutcome | U07 | `beamcraft_host::ledger` | **now**, U07 (experimental; personal workspaces, collaboration, ledger rotation and garbage collection are not implemented) |
 | Rust USD layer engine (no host edge; runs in the calling process under its size and depth budgets) | F11 s.9, LEW-01/02/03/04/07 | `beamcraft_layer_engine` | experimental native slice, U01 |
-| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04: version and byte-storage commands; U06: `commit-revision`, `open-revision`; V02: `snapshot-view` and `inspect-view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `inspect-elements` over a store (the CLI package also has a library target, `beamcraft_cli`, for its tests) |
-| Read-only foreign reference: source pin, units interpretation, attach/move/correct commands, write refusal; wiring of file read, layer engine and host | F04 s.1, F10 `reference`, LEW-01/04 | `beamcraft_model::reference`, `beamcraft_engine::reference`, `beamcraft_layer_engine::authored` (`Change::AttachReference`, `read_references`, `inspect_foreign_layer`), `apps/beamcraft-cli` (`beamcraft_cli::{reference, source_file}`) | **now**, R01 (experimental; single self-contained layer, in-process layer engine; no new crate and no new edge) |
-| Numbering preview: grouping rules, series, overlaps, staleness token | A08 | `beamcraft_engine::numbering` (rules), `beamcraft_cli::numbering` (adapter), `preview-numbering` | **now**, A08 (experimental; read-only, no stored numbers) |
+| CLI | AGENTS s.3, F06 s.9 | `apps/beamcraft-cli` | U04: version and byte-storage commands; U06: `commit-revision`, `open-revision`; V02: `snapshot-view` and `inspect-view-changes` over a synthetic kernel plate scene; P01: `create-plate` and `inspect-elements` over a store (the commands themselves live in `beamcraft-commands` since #208; the CLI parses arguments and renders) |
+| Read-only foreign reference: source pin, units interpretation, attach/move/correct commands, write refusal; wiring of file read, layer engine and host | F04 s.1, F10 `reference`, LEW-01/04 | `beamcraft_model::reference`, `beamcraft_engine::reference`, `beamcraft_layer_engine::authored` (`Change::AttachReference`, `read_references`, `inspect_foreign_layer`), `crates/commands` (`beamcraft_commands::{reference, source_file}`) | **now**, R01 (experimental; single self-contained layer, in-process layer engine; no new crate and no new edge) |
+| Numbering preview: grouping rules, series, overlaps, staleness token | A08 | `beamcraft_engine::numbering` (rules), `beamcraft_commands::numbering` (adapter), `preview-numbering` | **now**, A08 (experimental; read-only, no stored numbers) |
 | IFC4 export: GlobalId, STEP lexical rules, entity templates, bounded sink, structural reader for tests | E01 s.3, 11, 15 | `beamcraft_ifc::{guid, step, model, verify}` and `write_ifc` | **now**, E02 (experimental; std only, no I/O of its own; `verify` is a test harness, not an importer) |
-| Export adapter: committed revision to `ExportModel`, report, atomic output | E01 s.4, 8, 13, 15.4 | `apps/beamcraft-cli` (`beamcraft_cli::export`), `beamcraft_host::output` | **now**, E02 (the contract proposed `beamcraft_engine::export`; the adapter sits with the other P/A-slice adapters and the engine gains no edge to `beamcraft-ifc`) |
+| Export adapter: committed revision to `ExportModel`, report, atomic output | E01 s.4, 8, 13, 15.4 | `crates/commands` (`beamcraft_commands::export`), `beamcraft_host::output` | **now**, E02 (the contract proposed `beamcraft_engine::export`; the adapter sits with the other P/A-slice adapters and the engine gains no edge to `beamcraft-ifc`) |
 | Native UI and viewport | F06 s.9, V-tasks | `apps/beamcraft-ui` | **now, partial**, V03: window, orbit camera, instanced offscreen viewport of the accepted snapshot (received as `beamcraft_engine::query::bundle` from `beamcraft export-view`), headless baseline metrics. Selection, snapping and tools are V04/V05 |
 
 ## 5. Crates created now, and why
@@ -159,10 +166,9 @@ by the named task with real code. Allowed dependencies are those of the owning r
   member engines, cuts, bends, welds, bolts, edits, copies, quantities) and the steel half of the
   layer engine. The platform never depends on it: `layer-engine` authors and validates elements
   through the discipline hooks and answers its read-back questions through the installable
-  discipline registry (`authored::disciplines::register`; the registry starts empty, and the
-  apps install the built-in steel discipline through `steel::layer::install()`), so only the
-  apps depend on steel. It is kind `discipline`, and only an app or a tool may depend
-  on one (`docs/design/platform-and-steel.md`).
+  discipline registry (`authored::register`), which the apps fill at start with
+  `steel::layer::install()`, so only the apps depend on steel. It is kind `discipline`, and only
+  an app or a tool may depend on one (`docs/design/platform-and-steel.md`).
 - **`beamcraft-engine` (`crates/engine`, native library)**, created by V02 with the real, tested
   view snapshot and query contract: a pinned `ViewSnapshot` built from sealed kernel plate
   results, snapshot tokens, `GetChanges` deltas, view settings (kind filter and representation
@@ -227,7 +233,13 @@ snapshot on screen. Moving the modelling commands under both apps is the directi
    in a variable assignment, a continuation or a separate run line;
 8. the loader fails closed: a symbolic link or Windows reparse point at a member, along its path,
    at its manifest or inside its `src`, a manifest that is not a regular file, and a source
-   directory nested deeper than eight levels are errors, never silently skipped.
+   directory nested deeper than eight levels are errors, never silently skipped;
+9. every member keeps the standard layout, so the source scan of rule 6 cannot be bypassed: an
+   explicit target path (`[lib]`, `[[bin]]`, `[[test]]`, `[[bench]]`, `[[example]]`) stays a
+   plain relative `.rs` path inside `src/` (lib and bin), `tests/`, `benches/` or `examples/`;
+   a `domain` crate has no build script (no `build.rs` and no `[package] build` other than
+   `false`); and non-test source of a `domain` crate loads no module through `#[path = ...]`
+   (#208).
 
 Known limits: the scan is lexical, so a `#[cfg_attr(...)]`-generated or macro-generated path is
 not seen, and an alias such as `use std as s;` is not followed. The manifest reader is line
