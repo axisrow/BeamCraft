@@ -337,7 +337,7 @@ fn a_small_hole_cuts_a_tube_through_four_chains() {
     // The solid section is genus 0; the through hole adds one more.
     assert_eq!(genus(&res), 1);
     let removed = before - volume(res.body());
-    let expected = polygon_area_of(4.0) * H;
+    let expected = tube_removed_volume(4.0, H);
     assert!(
         (removed - expected).abs() < 1e-4 * expected,
         "{removed} vs {expected}"
@@ -346,6 +346,30 @@ fn a_small_hole_cuts_a_tube_through_four_chains() {
     let expect_result = before - expected;
     assert!(analytic.lo <= expect_result && expect_result <= analytic.hi);
     assert!(res.face_table().iter().any(|id| id == "cut:f.h7.w0.s0"));
+}
+
+/// The removed volume of a through hole across a solid `N`-band section: the flat prism
+/// over the cavity's own approximation polygon minus the inclined-member term
+/// `2·tan(γ)·∬|b|` (each band chord tilts by `γ = π/N` against the cutter axis). The
+/// polygon is taken at the cavity's own radius: the CurveSpec segment count depends on
+/// the radius (48 sides at r=4, 72 at R=10), so a far polygon's area does not scale as
+/// `r²` — the old `polygon_area_of` base was that 72-side area.
+fn tube_removed_volume(r: f64, height: f64) -> f64 {
+    let pts: Vec<(f64, f64)> = circle(0.0, 0.0, r)
+        .points()
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
+    let mut area2 = 0.0;
+    let mut moment = 0.0;
+    for (p, q) in pts.iter().zip(pts.iter().cycle().skip(1)) {
+        let cross = p.0 * q.1 - q.0 * p.1;
+        area2 += cross;
+        moment += cross.abs() * (p.1 + q.1).abs() / 6.0;
+    }
+    let area = area2.abs() / 2.0;
+    let gamma = PI / f64::from(N);
+    area * height - 2.0 * gamma.tan() * moment
 }
 
 #[test]
@@ -402,10 +426,6 @@ fn a_non_convex_hole_in_a_tube_is_refused_or_cut_without_crashing() {
     if let Ok(res) = cut {
         assert_sealed(&res);
     }
-}
-
-fn polygon_area_of(r: f64) -> f64 {
-    polygon_area() * (r * r) / (R * R)
 }
 
 #[test]
