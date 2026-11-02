@@ -228,6 +228,15 @@ pub fn member_through_hole_with(
         return Err(refuse(OpCode::ContourInvalid, OpDefect::None, Stage::Caps));
     }
     let (dy, dz) = (cutter.axis.0 / norm, cutter.axis.1 / norm);
+    // The exact-predicate budget starts here so the winding check below can use it.
+    let mut budget = ExactBudget::new(limits.max_exact_predicates);
+    // The cavity contract is a clockwise footprint polygon; a counter-clockwise one
+    // would flip the chains' moment sign and surface as an internal self-check instead
+    // of an honest refusal, so the winding is validated here, exactly.
+    let flat: Vec<[f64; 2]> = points.iter().map(|p| [p.x, p.y]).collect();
+    if area_sign(&flat, &mut budget)? > 0 {
+        return Err(refuse(OpCode::ContourInvalid, OpDefect::None, Stage::Caps));
+    }
     // The prism frame `(e1, e2, d)` with `e1 = +X` and `e2 = d x e1 = (0, dz, -dy)`: a body
     // point maps to the footprint coordinate pair `(a, b) = (x, p . e2)` and a height
     // `t = p . d`. For `d = +Z` each expression is the identity on `(x, y, z)`, so every
@@ -251,7 +260,6 @@ pub fn member_through_hole_with(
     }
     poll(&mut cancelled, Stage::Build)?;
 
-    let mut budget = ExactBudget::new(limits.max_exact_predicates);
     let solid = analyze_extrusion(body, &mut budget)?;
 
     let eps = body.tolerance().eps_geom_mm();
@@ -1406,7 +1414,8 @@ fn strip_region(
     Ok((tag(&outer), holes.iter().map(tag).collect(), kink_lines))
 }
 
-/// Clips the CCW `subject` polygon against every half-plane left of a CCW `region` edge
+/// Clips the `subject` polygon (in its authored winding; the cavity contract is
+/// clockwise) against every half-plane left of a CCW `region` edge
 /// (Sutherland–Hodgman). Returns the empty clip when the polygons are disjoint. A crossing
 /// against a horizontal region edge (a kink line) interpolates through the canonical
 /// `t = (line - p.y)/(q.y - p.y)`, so the clip vertices and the band events agree bit for
@@ -1445,6 +1454,10 @@ struct Event {
     edge: usize,
     t: f64,
     ab: Point2,
+    /// Whether this event is a footprint vertex itself: its `edge`, `t` and `ab` are the
+    /// vertex's exact ones and take over as the anchor when the event absorbs a
+    /// same-position crossing collected on an adjacent contour edge.
+    vertex: bool,
     /// The kink points the event sits on, one per owning chain when several chains'
     /// edges share the same footprint line (the near and far wall of a section).
     kinks: Vec<[f64; 3]>,
@@ -1537,6 +1550,7 @@ fn cut_through_chains(
             edge: i,
             t: 0.0,
             ab: *p,
+            vertex: true,
             kinks: Vec::new(),
         })
         .collect();
@@ -1568,6 +1582,7 @@ fn cut_through_chains(
                         edge: j,
                         t,
                         ab: Point2::new(a, *line_b),
+                        vertex: false,
                         kinks: vec![[a, line_yz[0], line_yz[1]]],
                     });
                 }
@@ -1608,6 +1623,17 @@ fn cut_through_chains(
                 if (last.ab.x - event.ab.x).abs() <= eps
                     && (last.ab.y - event.ab.y).abs() <= eps =>
             {
+                // A footprint vertex is the canonical anchor of its contour point: when
+                // the vertex's event merges into a crossing collected on the incoming
+                // edge (the crossing sorts first, at `t = 1`), the vertex's exact
+                // `edge`, `t` and `ab` take over so the construction's exact
+                // `Footprint` lookup still finds it.
+                if event.vertex && !last.vertex {
+                    last.edge = event.edge;
+                    last.t = event.t;
+                    last.ab = event.ab;
+                    last.vertex = true;
+                }
                 for kink in event.kinks {
                     if !last
                         .kinks
@@ -1805,6 +1831,12 @@ fn cut_through_chains(
                         }
                     }
                     ClipSrc::Footprint(index) => {
+                        // The vertex's own event first. A same-position crossing can
+                        // absorb it in the merge (the vertex anchor takes over there),
+                        // and a vertex outside its own strip's kink-line spans can sit
+                        // within `eps` of another chain's line whose crossing merges
+                        // with it — so a position match is the fallback before the
+                        // internal refusal.
                         let mut found = None;
                         for (ei, e) in events.iter().enumerate() {
                             if e.edge == index
@@ -1814,6 +1846,16 @@ fn cut_through_chains(
                             {
                                 found = Some(ei);
                                 break;
+                            }
+                        }
+                        if found.is_none() {
+                            for (ei, e) in events.iter().enumerate() {
+                                if (e.ab.x - tagged.ab.x).abs() <= eps
+                                    && (e.ab.y - tagged.ab.y).abs() <= eps
+                                {
+                                    found = Some(ei);
+                                    break;
+                                }
                             }
                         }
                         ring_id(chain_ring, found.ok_or_else(internal)?)?

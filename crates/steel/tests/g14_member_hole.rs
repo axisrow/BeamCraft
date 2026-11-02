@@ -13,6 +13,7 @@ use crate::common;
 use crate::common_mesh;
 use crate::common_ops;
 
+use beamcraft_kernel::diagnostic::Stage;
 use beamcraft_kernel::ops::{Body, OpCode, OpDefect, OpField, OpKind, OpResult};
 use beamcraft_kernel::profile::{Cavity, CurveSpec, Point2, extrude};
 use beamcraft_kernel::trimesh::TriMesh;
@@ -576,6 +577,53 @@ fn a_hole_crosses_several_strips_of_one_coarse_face() {
         (removed - expected).abs() < 1e-6 * expected,
         "{removed} vs {expected}"
     );
+}
+
+#[test]
+fn a_footprint_vertex_a_hair_above_a_kink_line_refuses_honestly() {
+    // A diamond whose top and bottom vertices sit one rounding step off the tube's
+    // apex-band kink lines: the contour crossings of those lines land within the merge
+    // tolerance of the vertices, their events fold together, and the dust slivers the
+    // opening leaves on the flanking bands are entirely within the floor of the lines.
+    // Every clip vertex of such a sliver is a boundary contact, which the carve
+    // assembly refuses honestly (`BodyWallUnsupported`), never with an internal
+    // self-check; the band event merge keeps the vertex anchor and the `Footprint`
+    // resolution falls back to position, so no swallowed event surfaces as an
+    // unreachable vertex.
+    let diamond = vec![
+        Point2::new(L / 2.0, 9.789464416503875),
+        Point2::new(L / 2.0 + 8.0, 0.0),
+        Point2::new(L / 2.0, -9.789464416503875),
+        Point2::new(L / 2.0 - 8.0, 0.0),
+    ];
+    let body = tube_body();
+    let err = member_through_hole(
+        &body,
+        &MemberHoleCutter::new(Cavity::polygon(diamond), -H / 2.0 - 1.0, H / 2.0 + 1.0, 7),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, OpCode::OpUnsupported);
+    assert_eq!(err.defect, OpDefect::BodyWallUnsupported);
+}
+
+#[test]
+fn a_counter_clockwise_cavity_is_refused() {
+    // The cavity contract is a clockwise footprint polygon; the chains' moment sum
+    // signs against it, so a counter-clockwise cavity is refused up front, exactly.
+    let ccw = vec![
+        Point2::new(L / 2.0 - 6.0, -6.0),
+        Point2::new(L / 2.0 + 6.0, -6.0),
+        Point2::new(L / 2.0 + 6.0, 6.0),
+        Point2::new(L / 2.0 - 6.0, 6.0),
+    ];
+    let body = i_body(true);
+    let err = member_through_hole(
+        &body,
+        &MemberHoleCutter::new(Cavity::polygon(ccw), -TW / 2.0 - 1.0, TW / 2.0 + 1.0, 8),
+    )
+    .unwrap_err();
+    assert_eq!(err.code, OpCode::ContourInvalid);
+    assert_eq!(err.stage, Stage::Caps);
 }
 
 #[test]

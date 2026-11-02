@@ -200,8 +200,15 @@ flat walls, behind the same `member_through_hole` entry point.
   line's `b` (a section vertex a rounding step off the line) pushes it out of `[0, 1]`.
   Events of the same contour point merge their kink points by position alone — a
   clamped crossing lands on its vertex's event, whatever edge each was collected on —
-  and the walk folds the seam, where the last event can be the first vertex's duplicate,
-  into the head.
+  and the walk folds the seam, where the last event can be the first vertex's
+  duplicate, into the head. A footprint vertex is the canonical anchor of its contour
+  point: when a crossing collected on the incoming edge absorbs the vertex's event, the
+  vertex's exact `edge`, `t` and position take over, and the construction's `Footprint`
+  resolution falls back to a position match before refusing, so a merged event never
+  surfaces as an unreachable vertex. The cavity's clockwise contract is validated up
+  front with the exact `area_sign` predicate: a counter-clockwise cavity would flip the
+  chains' moment sign and is refused `ContourInvalid` instead of failing inside the
+  volume certification.
 - **Shared kink vertices.** A merged event can carry the kink points of two chains whose
   lines sit a few ulps apart at the same `b` (a tube's near and far wall); the ring picks
   the first point on the chain's own planes, and the carved wall resolves its `Kink` clip
@@ -232,9 +239,13 @@ flat walls, behind the same `member_through_hole` entry point.
   it seals with genus 1, its removed volume matches the section's own closed form, its
   band ids carry the `.p<run>` suffixes past the mid-edge kink crossings, and it repeats
   byte for byte. New tests cover the sloped walls (a rotated square section: two
-  single-strip chains, the closed `A · s / cos(tilt)` volume, byte-exact repeats) and
-  the honest refusals: an oblique range that now genuinely ends inside a sloped wall is
-  the blind `CutterNotThrough` instead of the blanket `BodyWallUnsupported`.
+  single-strip chains, the closed `A · s / cos(tilt)` volume, byte-exact repeats), the
+  coarse face grouping (two strips of one face carved under one face id), the honest
+  refusals: an oblique range that now genuinely ends inside a sloped wall is the blind
+  `CutterNotThrough` instead of the blanket `BodyWallUnsupported`, a counter-clockwise
+  cavity is refused up front, and a footprint whose vertices hug the apex-band kink
+  lines within the floor refuses `BodyWallUnsupported` (every sliver clip vertex is a
+  boundary contact) rather than failing inside the carve.
 
 Known limitations still standing:
 
@@ -243,6 +254,10 @@ Known limitations still standing:
 - On a strip tilted against the cutter axis the clip piece still maps the footprint
   into the strip frame without the `1/cos(tilt)` shadow scale (the opening undercuts
   the true cutter curve by that factor); the closed form `A * H` does not hold for a
-  tilted wall. The fix or the accepted deviation remains an open owner decision.
+  tilted wall. This is a shape-fidelity limitation only: the certified volume anchors
+  to the emitted vertices, so the closed `A · s / cos(tilt)` form of the rotated-square
+  sloped-wall test above stays exact even while the carved opening's outline is subtly
+  narrower than the true swept cylinder. The fix or the accepted deviation remains an
+  open owner decision.
 - Re-cutting a body after a faceted wall hole keeps the slice-1 limitation: the new
   band walls are not X-parallel, so a later hole on them is refused with `BodyNotPrism`.
