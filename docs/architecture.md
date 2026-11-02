@@ -34,8 +34,8 @@ Dependencies point one way, down the table. `beamcraft-boundaries` checks this i
 | 2 | `ifc` | IFC4 STEP writer and GlobalId encoding; no file system |
 | 3 | `engine` | Queries and presentation: picking, snapping, the view snapshot, scenes, drawings, views, filters, schedules, grids, levels, assemblies |
 | 4 | `host` | Disk: content-addressed blobs, atomic revision commit, journal and recovery, workspaces' storage, coordinator, compaction |
-| 4 | `steel` | The structural steel discipline: plates, members, holes, bends, welds, bolts and fasteners with their commands (`model`), bodies (`kernel`) and engine (`engine`). Kind `native` until the element interface lands (#795), then `discipline` |
-| 5 | `layer-engine` | Our wrapper over `openusd`: reads and writes the project's USD layers, the schema, validation and the UUID index. It writes the steel elements, so it sits above `steel` for now |
+| 5 | `layer-engine` | Our wrapper over `openusd`: reads and writes the project's USD layers, the schema, validation and the UUID index. Authors and validates elements through discipline hooks (#795), so no discipline code lives here |
+| 6 | `steel` | The structural steel discipline: plates, members, holes, bends, welds, bolts and fasteners with their commands (`model`), bodies (`kernel`), engine (`engine`) and the steel half of the layer engine (the hooks behind `Shape::Discipline`/`Change::Discipline` and the `steel::layer` facade). Kind `discipline`: the platform never depends on it, only the apps do |
 | 6 | `session` | Platform state that is not storage: settings, recent projects, project folders and environments (#763); later the command registry and a long-lived session over a verified revision. Discipline-agnostic, hence no `beamcraft-` prefix |
 | 7 | `beamcraft-cli` (binary `beamcraft`) | Every user command; ties the crates together |
 | 7 | `beamcraft-ui` (binary `beamcraft-ui`) | Native window: viewport, tools, properties panel |
@@ -66,8 +66,8 @@ flowchart TD
     host --> json
     engine["engine<br/>applies commands"] --> kernel
     le["layer-engine<br/>USD read/write"] --> model
-    le --> steel
     steel["steel<br/>plates, members, bolts, welds"] --> engine
+    steel --> le
     steel --> kernel
     steel --> model
     ifc["ifc<br/>IFC4 writer"] --> model
