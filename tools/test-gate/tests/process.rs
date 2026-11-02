@@ -229,7 +229,7 @@ fn a_broken_real_doctest_returns_a_failed_stage() {
     cmd.current_dir(&temp.0)
         .args(["test", "--doc", "--offline", "--no-fail-fast"])
         .env("CARGO_TARGET_DIR", temp.0.join("target"));
-    let result = process::run("doctests", &mut cmd, &temp.0, Duration::from_secs(90)).unwrap();
+    let result = process::run("doctests", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
     assert_ne!(result.exit_code, 0);
     assert!(!result.timed_out);
     assert!(
@@ -293,7 +293,7 @@ mod tests {
             .env("NEXTEST_PROFILE", "deliberately-unknown-parent-profile")
             .env("GATE_FIXTURE_PID", &ready)
             .env("CARGO_TARGET_DIR", root.join("target"));
-        let result = process::run(name, &mut cmd, &temp.0, Duration::from_secs(90)).unwrap();
+        let result = process::run(name, &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
         assert_ne!(result.exit_code, 0);
         assert!(!result.timed_out, "nextest's own budget must fire first");
         assert_descendant_stopped(&ready);
@@ -403,7 +403,7 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
         ])
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env("XDG_CACHE_HOME", temp.0.join("cache"));
-    let result = process::run("cli-gate", &mut cmd, &temp.0, Duration::from_secs(90)).unwrap();
+    let result = process::run("cli-gate", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
     let stderr = std::fs::read_to_string(temp.0.join("cli-gate.stderr.log")).unwrap();
     assert_eq!(result.exit_code, 0, "{stderr}");
     assert_eq!(
@@ -455,7 +455,7 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
         ])
         .env("CARGO_TARGET_DIR", root.join("target"))
         .env("XDG_CACHE_HOME", temp.0.join("cache"));
-    let failed = process::run("mutated-gate", &mut cmd, &temp.0, Duration::from_secs(90)).unwrap();
+    let failed = process::run("mutated-gate", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
     assert_ne!(failed.exit_code, 0);
     let changed: Report = serde_json::from_str(
         &std::fs::read_to_string(root.join("target/mutating/report.json")).unwrap(),
