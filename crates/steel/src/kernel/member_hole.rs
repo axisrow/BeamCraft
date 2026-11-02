@@ -2087,6 +2087,8 @@ fn cut_through_chains(
         let entry_ring = rings.get(2 * k).ok_or_else(internal)?;
         let exit_ring = rings.get(2 * k + 1).ok_or_else(internal)?;
         let mut band = Vec::with_capacity(2 * events.len());
+        // The emitted run count of each footprint edge, for the band id suffixes.
+        let mut runs: std::collections::BTreeMap<usize, u32> = std::collections::BTreeMap::new();
         // The face id of each band side: the footprint edge it walks, with a run suffix
         // after the first planar run of the side.
         for s in 0..events.len() {
@@ -2096,10 +2098,17 @@ fn cut_through_chains(
                 events.get(s1).ok_or_else(internal)?,
             );
             let j = e0.edge;
-            // The first run of an edge starts at the edge's own vertex; a run past a
-            // mid-edge kink crossing carries the `.p1` suffix (the G14.1 spelling keeps
-            // `s{j}` bare for the single-run case).
-            let run = if e0.t == 0.0 { "" } else { ".p1" };
+            // The runs of an edge number from the bare first run at the edge's own
+            // vertex; a run past a mid-edge kink crossing carries `.p<run>` (the G14.1
+            // spelling keeps `s{j}` bare for the single-run case). Two crossings on one
+            // edge must not share a suffix: every band side is its own face id.
+            let run_index = runs.entry(j).or_insert(0);
+            let run = if *run_index == 0 {
+                String::new()
+            } else {
+                format!(".p{run_index}")
+            };
+            *run_index += 1;
             face_ids.push(format!("cut:f.h{}.w{k}.s{j}{run}", cutter.ordinal));
             // The in-frame side normal (db, -da) of the event edge, mapped back to body
             // coordinates as in the slice-1 bands.
