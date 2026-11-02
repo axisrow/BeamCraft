@@ -248,6 +248,17 @@ fn analytic_mass_uses_the_written_order_and_never_defaults_density() {
         analytic_mass_kg(1e-9, Some(5e-324)),
         Err(Code::NumericUncertain)
     );
+    // G11: a subnormal mass is refused too. 1 mm3 at 1e-310 kg/m3 is about 1e-319 kg, a
+    // subnormal with a relative error near 1e-5, beyond the comparison rule.
+    assert_eq!(
+        analytic_mass_kg(1.0, Some(1e-310)),
+        Err(Code::NumericUncertain)
+    );
+    // The smallest normal mass is still current.
+    assert_eq!(
+        analytic_mass_kg(1e9, Some(f64::MIN_POSITIVE)).unwrap().kg,
+        Some(f64::MIN_POSITIVE)
+    );
     assert_eq!(
         analytic_mass_kg(1e300, Some(1e300)),
         Err(Code::NumericUncertain)

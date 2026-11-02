@@ -24,6 +24,7 @@ pub mod loft_plate;
 pub mod member;
 pub mod member_hole;
 pub mod numbering_geometry;
+pub mod part;
 pub mod plate_draft;
 pub mod quantity;
 pub mod snap;

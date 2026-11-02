@@ -85,11 +85,16 @@ load, not under suite growth. Nothing is removed or permanently skipped: the unf
 `default` profile and CI always run everything, and an explicit command-line filter overrides
 the profile's `default-filter`.
 
-The `beamcraft-cli` integration suites build into one `cli` test binary (`tests/cli.rs`, one
-module per suite file), so they link once and `cargo test` runs all their cases on one thread
-pool. Run one suite with `cargo test -p beamcraft-cli --test cli -- <suite>::` or
-`cargo nextest run -p beamcraft-cli -E 'test(/^<suite>::/)'`; list a new suite file in
-`tests/cli.rs`. `macos_icon` checks the desktop app's icon and stays its own target.
+Each crate's integration suites build into one test binary, one module per suite file, so they
+link once and `cargo test` runs all their cases on one thread pool: `cli` (`beamcraft-cli`),
+`ui` (`beamcraft-ui`), `kernel`, `steel`, `engine`, `host` and `layer_engine`. Run one suite with
+`cargo test -p beamcraft-cli --test cli -- <suite>::` or
+`cargo nextest run -p beamcraft-cli -E 'test(/^<suite>::/)'`, and list a new suite file in the
+binary's root file (`tests/cli.rs`, `tests/ui.rs`, ...); a guard test in each fails when a suite
+file is not listed. `macos_icon` checks the desktop app's icon and `cancel` relies on being
+alone in its process, so both stay their own targets. Linking the GUI stack once instead of once
+per suite matters most: the workspace's 74 test binaries became 33, and the nextest archive that
+each CI shard downloads shrank by about 30 % (measured when the count went from 73 to 31).
 
 The drawn-grid viewport controller test requires a native wgpu adapter and fails explicitly if
 none is available. On a headless Linux worker, Mesa's software Vulkan driver (`mesa-vulkan-drivers`)
@@ -207,10 +212,14 @@ cold command on that machine, workspace tests, and opening the window against a 
 
 ## Reusing dependencies
 
-Ordinary Cargo commands reuse the local target directory. For several worktrees, optionally set
-`CARGO_TARGET_DIR` to a persistent directory outside them. Cargo separates profiles and target
-triples there; artifacts for different target ABIs still need separate compilation. Unset this
-variable when following the packaging commands below, which use the repository's `target/`.
+Ordinary Cargo commands reuse the local target directory. Give every worktree its own target
+directory, which is the default (`target/` inside the worktree). Cargo locks a target directory
+for the whole build, so worktrees sharing one through `CARGO_TARGET_DIR` wait for each other.
+To reuse compiled dependencies across worktrees without that lock, use a compiler cache such as
+`sccache` (below) instead of a shared target directory. Cargo separates profiles and target
+triples inside one directory; artifacts for different target ABIs still need separate
+compilation. If you do set `CARGO_TARGET_DIR`, unset it when following the packaging commands
+below, which use the repository's `target/`.
 
 An optional installed `sccache` can reuse dependency compilation after the target directory is
 removed:

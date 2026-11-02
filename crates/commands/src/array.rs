@@ -10,7 +10,7 @@
 //! write set. Honesty limits: the copies join no assembly and take no connections (DV-REL-011),
 //! as a single copy; a shared-definition source duplicates independently, it does not instance.
 
-use crate::copy::{CopiedElement, creation_changes, not_found};
+use crate::copy::{PartRecord, creation_changes, not_found};
 use crate::definition::material_lookup;
 use crate::plate::{decode, evaluate_decoded, prior_op_with, replay_summary};
 use crate::publication::{PublicationTail, prepare_and_publish};
@@ -20,16 +20,14 @@ use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{Change, schema_identity};
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::CommandError;
-use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
+use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
 use session::Refusal;
 use session::pipeline::{
     Base, RevisionSummary, control, digest_of, host_uuid, integrity, load_base, open_base,
     summarize,
 };
 use steel::engine::transaction::PriorOp;
-use steel::engine::transform::{array_member_copies, array_plate_copies};
 use steel::model::command::ArrayElements;
 
 /// Inputs of one `array-linear` or `array-polar` call beyond the command itself.
@@ -55,37 +53,13 @@ pub struct Arrayed {
     /// True when the same operation was already committed and nothing was written.
     pub replayed: bool,
     /// The copies, in array order.
-    pub elements: Vec<CopiedElement>,
+    pub elements: Vec<PartRecord>,
     /// The revision that holds the result.
     pub revision: RevisionSummary,
     /// The declared footprint; `None` for a replay.
     pub footprint: Option<Footprint>,
     /// Names of the layers whose bytes changed (empty for a replay).
     pub changed_layers: Vec<String>,
-}
-
-/// The pinned profile a copy's creation reads (a member's, never a plate's).
-fn copy_profile(copy: &CopiedElement) -> Option<ContentDigest> {
-    match copy {
-        CopiedElement::Plate(_) => None,
-        CopiedElement::Member(r) => Some(r.authored.profile),
-    }
-}
-
-/// The pinned material a copy's creation reads.
-fn copy_material(copy: &CopiedElement) -> Option<ContentDigest> {
-    match copy {
-        CopiedElement::Plate(r) => r.authored.material,
-        CopiedElement::Member(r) => r.authored.material,
-    }
-}
-
-/// The identity of a copied record.
-fn copy_id(copy: &CopiedElement) -> ElementId {
-    match copy {
-        CopiedElement::Plate(r) => r.authored.id,
-        CopiedElement::Member(r) => r.authored.id,
-    }
 }
 
 /// Arrays every copy of one source part and publishes the next revision, or replays the
@@ -155,29 +129,9 @@ pub fn array_elements(
     };
     // The engine builds every authored copy; the element-local bodies and quantities are the
     // source's, byte for byte, exactly as for one copy.
-    let copies: Vec<CopiedElement> =
-        if let Some(source) = plates.iter().find(|r| r.authored.id == command.source_id) {
-            array_plate_copies(&source.authored, command)?
-                .into_iter()
-                .map(|authored| {
-                    CopiedElement::Plate(Box::new(steel::engine::committed::PlateRecord {
-                        body: source.body.clone(),
-                        quantities: source.quantities,
-                        authored,
-                    }))
-                })
-                .collect()
-        } else if let Some(source) = members.iter().find(|r| r.authored.id == command.source_id) {
-            array_member_copies(&source.authored, command)?
-                .into_iter()
-                .map(|authored| {
-                    CopiedElement::Member(Box::new(steel::engine::committed::MemberRecord {
-                        body: source.body.clone(),
-                        quantities: source.quantities,
-                        authored,
-                    }))
-                })
-                .collect()
+    let copies: Vec<PartRecord> =
+        if let Some(source) = PartRecord::find(&plates, &members, command.source_id) {
+            source.arrayed(command)?
         } else if crate::weld::is_weld(&base_request, &command.source_id, &control)? {
             return Err(CommandError::new(
                 ErrorCode::DependencyConflict,
@@ -205,37 +159,21 @@ pub fn array_elements(
             return Err(not_found());
         };
     for copy in &copies {
-        if let Some(digest) = copy_material(copy) {
+        if let Some(digest) = copy.material() {
             materials(&digest)?;
         }
     }
     // The array is a replay when the head holds every copy of the source's current state and
     // none of them is itself an instance.
-    let held: Vec<Option<CopiedElement>> = command
+    let held: Vec<Option<PartRecord>> = command
         .new_ids
         .iter()
-        .map(|id| {
-            plates
-                .iter()
-                .find(|r| r.authored.id == *id)
-                .map(|r| CopiedElement::Plate(Box::new(r.clone())))
-                .or_else(|| {
-                    members
-                        .iter()
-                        .find(|r| r.authored.id == *id)
-                        .map(|r| CopiedElement::Member(Box::new(r.clone())))
-                })
-        })
+        .map(|id| PartRecord::find(&plates, &members, *id))
         .collect();
-    let same_state = |a: &CopiedElement, b: &CopiedElement| match (a, b) {
-        (CopiedElement::Plate(a), CopiedElement::Plate(b)) => a.authored == b.authored,
-        (CopiedElement::Member(a), CopiedElement::Member(b)) => a.authored == b.authored,
-        _ => false,
-    };
     let complete = held.iter().zip(&copies).all(|(head_copy, copy)| {
         head_copy
             .as_ref()
-            .is_some_and(|h| same_state(h, copy) && !instances.is_instance(copy_id(h)))
+            .is_some_and(|h| h.same_state(copy) && !instances.is_instance(h.id()))
     });
     let any_held = held.iter().any(Option::is_some);
 
@@ -288,18 +226,13 @@ pub fn array_elements(
     let level = levels.level_of(&command.source_id);
     let mut footprint: Option<Footprint> = None;
     for (id, copy) in command.new_ids.iter().zip(&copies) {
-        let mut one = Footprint::for_copy(
-            command.source_id,
-            *id,
-            copy_profile(copy),
-            copy_material(copy),
-        )?;
+        let mut one = Footprint::for_copy(command.source_id, *id, copy.profile(), copy.material())?;
         if canonical != command.source_id {
             one = one.union(Footprint::for_copy(
                 canonical,
                 *id,
-                copy_profile(copy),
-                copy_material(copy),
+                copy.profile(),
+                copy.material(),
             )?)?;
         }
         if let Some(level) = level {

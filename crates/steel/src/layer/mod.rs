@@ -60,6 +60,61 @@ pub fn member(member: MemberShape) -> Shape {
     Shape::Discipline(HookedShape::new(member))
 }
 
+/// The shape that creates `part` as it stands: its local inputs, without the label, placement
+/// and material the platform writes. Shared by the single copy (P05) and the array copies (T03).
+///
+/// # Errors
+///
+/// `DEPENDENCY_UNAVAILABLE` for a drilled member: A04.2 member-hole records have no copy
+/// authoring yet (fresh operation ids and a member-holes write), so a copy would report the
+/// source's holed mesh and lose the holes on the next evaluation.
+pub fn part_shape(
+    part: &crate::engine::part::PartRecord,
+) -> Result<Shape, beamcraft_model::command::CommandError> {
+    use crate::engine::part::PartRecord;
+    Ok(match part {
+        PartRecord::Plate(r) => {
+            let a = &r.authored;
+            plate(PlateShape {
+                contour_mm: a.contour_points_mm.clone(),
+                thickness_mm: a.thickness_mm,
+                thickness_side: a.thickness_side,
+                corners: a.corners.clone(),
+                bends: a.bends.clone(),
+                holes: a
+                    .holes_mm
+                    .iter()
+                    .map(|h| h.iter().map(|[x, y]| [*x, *y, 0.0]).collect())
+                    .collect(),
+                hole_records: a.hole_records.clone(),
+                cuts: a.cuts.clone(),
+            })
+        }
+        PartRecord::Member(r) => {
+            if !r.authored.hole_records.is_empty() {
+                return Err(beamcraft_model::command::CommandError::new(
+                    beamcraft_model::error::ErrorCode::DependencyUnavailable,
+                    "hole_records",
+                    "copying a drilled member is not implemented",
+                ));
+            }
+            let a = &r.authored;
+            member(MemberShape {
+                kind: match a.kind {
+                    crate::model::command::MemberKind::Beam => MemberKind::Beam,
+                    crate::model::command::MemberKind::Column => MemberKind::Column,
+                },
+                curved: a.curved,
+                axis_mm: a.axis_points_mm.clone(),
+                profile: a.profile,
+                roll_rad: a.roll_rad,
+                placement: a.section_placement,
+                cuts: a.cuts.clone(),
+            })
+        }
+    })
+}
+
 /// An instance of a canonical part (P11); see [`InstanceShape`].
 pub fn instance(kind: PartKind, definition: String) -> Shape {
     Shape::Discipline(HookedShape::new(InstanceShape { kind, definition }))

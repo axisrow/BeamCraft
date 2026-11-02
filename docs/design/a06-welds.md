@@ -22,7 +22,7 @@ beamcraft welds --store ROOT
 | `beamcraft_engine::weld` | `Parts` (element kinds of a model) decides `CreateWeld`: free identity, both parts exist and are plates, beams or columns; returns the footprint. |
 | `beamcraft_engine::footprint` | `Footprint::for_weld(id, [main, secondary])`: writes what a create writes for the weld, reads each part's lifecycle. No part is written. |
 | `beamcraft_layer_engine::authored` | `Shape::Weld(Weld)`: an element of kind `connection`, model kind `component`, the four `steel:weld:*` properties and one explicit, ordered `bim:connects` relationship (main part first); no material, no `Geometry`, identity placement. The structural validator adds rule `A06-V01`. The mapping descriptor gains three lines; layers pinned to the A01 descriptor and the earlier ones stay accepted. |
-| `beamcraft_cli::weld` | `create_weld` and `welds`: replay by `op_id`, `OP_ID_REUSE`, `DUPLICATE_ID`, `NOT_FOUND`; the layer engine's observed writes are checked against the footprint; commit through U06/U07 with the strict verifier. `delete-element` deletes a weld; `copy-element` refuses one. |
+| `beamcraft_commands::weld` | `create_weld` and `welds`: replay by `op_id`, `OP_ID_REUSE`, `DUPLICATE_ID`, `NOT_FOUND`; the layer engine's observed writes are checked against the footprint; commit through U06/U07 with the strict verifier. `delete-element` deletes a weld; `copy-element` refuses one. |
 
 ## Decisions
 

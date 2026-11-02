@@ -1,4 +1,4 @@
-# D04: drawing views — slice 1, view placement core; slice 2, section and detail views; slice 3, titles and scales
+# D04: drawing views — slice 1, view placement core; slice 2, section and detail views
 
 Scope: fork #228 (epic #224, roadmap M4). The issue splits D04 into 2–3 slice PRs:
 view placement core → section/detail views → titles and scales. This note records
@@ -88,40 +88,9 @@ drawing schema descriptor that #347 carries (`beamcraft-drawing-usd/4`) with the
 `sections=`/`details=` entries rather than bumping it again. `edit-views` replaces all
 three view collections in one fingerprinted document operation via
 `--placed-section UUID:plane:cut:side:scale:x,y` and
-`--placed-detail UUID:parent:x,y:radius:scale:x,y`; `inspect-drawing` reports them as
+`--placed-detail UUID:parent:center:radius:scale:x,y`; `inspect-drawing` reports them as
 `placed_sections`/`placed_details`.
 
 Known boundary: the whole-sheet renderer (`drawing::sheet`, D05) draws placed views and
 the primary dimension groups; section and detail geometry resolves headlessly but does not
 render on exports yet. Titles and scales are slice 3.
-
-## Slice 3: titles and scales
-
-Baseline: verified fork `master` `356a7c23` (2026-10-31), i.e. after the upstream merge
-#356 restored the fork's ancestry; slices 1-2 live in master through PRs #335/#353. The
-slice closes fork #228: every view of a document can carry an authored title, and every
-view is annotated with its title and display scale where it draws.
-
-A **title** is optional authored annotation on each view — the primary view
-(`create-drawing`/`refresh-drawing` `--view-title`), each placed view, section and detail
-(an optional `:title` whole-remainder segment on the `edit-views` specs, an empty segment
-meaning unannotated). A present title obeys the bounded label rule and is validated in
-`admit` and in every replacement path alike. Titles are annotation, never identity: they
-join no UUID space, and `inspect-drawing` reports them (`title`, null when absent).
-
-The **whole-sheet renderer** now draws every view and annotates it: the primary wireframe
-and dimension groups as before, each placed view, each section's visible half plus its
-exact closed cut contour, each detail's magnified wireframe — and below each view's lowest
-stroke one centred annotation line, the authored title plus the display scale `1:N`, the
-scale alone when no title was authored. A section whose cut misses the member box
-annotates at its view origin instead of a fabricated bound. An annotation outside the
-frame refuses exactly like any other content that does not fit; unresolved derived views
-and body-count mismatches refuse before any stroke. `export_svg` takes one resolved body
-per placed view, section and detail — the coordination slice 2 left open.
-
-Wire format: the optional `drawing:title` string attribute beside each view scope's
-attributes (absent stays byte-stable for untitled documents); the drawing schema
-descriptor extends with `view-title=drawing:title`, so archived slice-2 intents refuse
-with `UnsupportedVersion`, same as the earlier bumps. Known boundary remaining: the
-loose-paper export and the PDF/print pipeline render the primary view only — titles are a
-sheet annotation, and multi-view loose-paper layout stays with D05.

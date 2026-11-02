@@ -17,10 +17,11 @@ neutral by design, and the selected-only draw and the ghost preview are never ti
 
 ## The overlay is never stored in the model
 
-The overlay is a map from element id to tint held in window state (`views::Overlay`). It is
-produced by read-only `query-elements` runs, applied when a scene is built from the engine's
-pinned `ViewSnapshot` (`Scene::from_snapshot_reusing` writes the tint into the per-instance
-bytes), and cleared with the window. No snapshot, store, revision or model command carries it:
+The overlay is a map from element id to tint held in window state
+(`colour_sets::Overlay`). It is produced by read-only `query-elements` runs, applied when a
+scene is built from the engine's pinned `ViewSnapshot` (`Scene::from_snapshot_reusing`
+writes the tint into the per-instance bytes), and cleared with the window. No snapshot,
+store, revision or model command carries it:
 the scene build reads the overlay and nothing else, the snapshot token and every mesh digest
 are untouched, and nothing is written to the store. Tests prove the coloured scene differs
 from the plain one in the tint words only, and a GPU readback test proves the tint reaches

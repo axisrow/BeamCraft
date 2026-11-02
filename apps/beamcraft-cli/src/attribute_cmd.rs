@@ -3,12 +3,12 @@
 
 //! I04 headless commands: `attribute-define`, `attribute-undefine`, `attribute-set`,
 //! `attribute-clear`, `attribute-get` and `attributes`. They call the engine API through
-//! `beamcraft_cli::attribute` and print one JSON object with the same error shape and exit
+//! `beamcraft_commands::attribute` and print one JSON object with the same error shape and exit
 //! codes as the plate commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
-use beamcraft_cli::attribute::{
+use beamcraft_commands::attribute::{
     AttrContext, Scalar, ValueEntry, clear_attribute, define_attribute, definition_of, parse_value,
     set_attribute, undefine_attribute, values_of,
 };
@@ -98,7 +98,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     })?;
     let store = RevisionStore::new(blobs);
     if *command == "attributes" {
-        let defs = beamcraft_cli::attribute::definitions(&store)?;
+        let defs = beamcraft_commands::attribute::definitions(&store)?;
         return Ok(Json::object([
             ("outcome", Json::text("attributes")),
             (
@@ -318,7 +318,7 @@ fn change_json(
     base: &str,
     op_id: OpId,
     subject: Json,
-    change: &beamcraft_cli::attribute::AttrChange,
+    change: &beamcraft_commands::attribute::AttrChange,
 ) -> Run<Json> {
     let outcome = if change.replayed {
         format!("{base}_replayed")

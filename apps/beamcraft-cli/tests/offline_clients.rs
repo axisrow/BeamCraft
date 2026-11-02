@@ -20,7 +20,7 @@
     clippy::panic
 )]
 
-use beamcraft_cli::changeset::{Applied, apply_changeset};
+use beamcraft_commands::changeset::{Applied, apply_changeset};
 use beamcraft_host::revision::{CommitPoint, NoFault, RevisionInfo, RevisionStore};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::{Json, Limits};

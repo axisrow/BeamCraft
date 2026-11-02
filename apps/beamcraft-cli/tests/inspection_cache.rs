@@ -3,14 +3,14 @@
 // Contributor-original synthetic plates and members, MPL-2.0.
 
 //! Issue 26: a reader evaluates bit-identical shape inputs once per thread (the body cache behind
-//! `beamcraft_cli::plate::inspect`). A warm cache returns exactly what a cold evaluation returns,
+//! `beamcraft_commands::plate::inspect`). A warm cache returns exactly what a cold evaluation returns,
 //! and every stored mesh it receives is still compared with the kernel body: a tampered derived
 //! layer is refused however warm the cache is.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
 use crate::support;
-use beamcraft_cli::plate::{Inspection, body_cache_counts, inspect};
+use beamcraft_commands::plate::{Inspection, body_cache_counts, inspect};
 use beamcraft_host::{
     ids::IdSource,
     revision::{ExpectedBase, LayerEntry, NoFault, RevisionDraft, RevisionStore, Uuid7},

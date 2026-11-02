@@ -28,7 +28,7 @@ beamcraft compact-history --store ROOT (--keep-head | --keep N) --yes
 | `beamcraft_host::revision` | The compaction **floor** (below), `RevisionStore::first_sequence`, `RevisionError::Compacted` and `StoreBusy`. Every head-log reader (`head`, `open`, `info_at`, `open_at`, `sequence_of`, replay, recovery) is floor-aware. |
 | `beamcraft_host::ledger` | Rotation primitives; a ledger record below the floor is a tombstone; `query_outcome` proves "not found" over the retained log. Recovery also removes abandoned `ledger/.tmp-*`. |
 | `beamcraft_host::storage` | Sized blob listing, blob removal, atomically replaced files (all private to the host crate). |
-| `beamcraft_cli::history_compact` | Workspace pins (`workspace.json`), the verified backup, the coordinator lease, the refusal to compact a workspace's own draft store. |
+| `beamcraft_commands::history_compact` | Workspace pins (`workspace.json`), the verified backup, the coordinator lease, the refusal to compact a workspace's own draft store. |
 | CLI | The two commands above, JSON output and the existing exit codes (2 refused, 3 store in use). |
 
 ### The compaction floor

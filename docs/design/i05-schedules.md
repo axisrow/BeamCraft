@@ -14,7 +14,7 @@ stale, and the same store head plus the same template file render byte-identical
 beamcraft_engine::schedule  pure computation: a template and typed rows in, the element table
                             and the group table out, with CSV and HTML rendering and the
                             filter evaluator (strings and cells, no I/O)
-beamcraft_cli::schedules    maps one Inspection (plates and members) plus the pinned I04
+beamcraft_commands::schedules    maps one Inspection (plates and members) plus the pinned I04
                             attribute state of the same revision to engine rows; decodes the
                             template and the filter rule
 beamcraft schedule-export   CLI command: verified head -> filtered rows -> CSV/HTML files

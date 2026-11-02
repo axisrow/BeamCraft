@@ -1,0 +1,22 @@
+[package]
+name = "beamcraft-commands"
+description = "BeamCraft application layer: the modelling, project and publication commands the apps call."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+beamcraft-model.workspace = true
+beamcraft-json.workspace = true
+beamcraft-engine = { path = "../engine", version = "0.0.1" }
+beamcraft-host = { path = "../host", version = "0.0.1" }
+beamcraft-layer-engine = { path = "../layer-engine", version = "0.0.1" }
+beamcraft-ifc = { path = "../ifc", version = "0.0.1" }
+session = { path = "../session", version = "0.0.1" }
+steel = { path = "../steel", version = "0.0.1" }
+
+[lints]
+workspace = true

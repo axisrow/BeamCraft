@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! V14 headless command: `query-elements`. It calls the engine evaluator through
-//! `beamcraft_cli::filters` and prints one JSON object with the same error shape and exit
+//! `beamcraft_commands::filters` and prints one JSON object with the same error shape and exit
 //! codes as the plate commands.
 
-use beamcraft_cli::filters;
+use beamcraft_commands::filters;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::error::ErrorCode;
@@ -30,11 +30,12 @@ pub fn execute(args: &[OsString]) -> (Json, u8) {
 }
 
 fn read_rule(path: &str) -> Run<Json> {
-    let bytes = beamcraft_cli::source_file::read_file(path, 65536).map_err(|code| Refusal {
-        rule_id: None,
-        code,
-        message: "filter rule file is not usable",
-    })?;
+    let bytes =
+        beamcraft_commands::source_file::read_file(path, 65536).map_err(|code| Refusal {
+            rule_id: None,
+            code,
+            message: "filter rule file is not usable",
+        })?;
     beamcraft_json::decode(&bytes, &Limits::DEFAULT)
         .map_err(|_| invalid("filter rule file is invalid JSON"))
 }

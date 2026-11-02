@@ -9,7 +9,14 @@ cargo run -p beamcraft-fixtures -- verify --dir tests/fixtures/f07
 cargo run -p beamcraft-fixtures -- check <FILE>
 cargo run -p beamcraft-fixtures -- list
 cargo test -p beamcraft-fixtures --test expectations  # independent analytical check
+cargo run -p beamcraft-fixtures -- g11 generate --out docs/fixtures/g11
+cargo run -p beamcraft-fixtures -- g11 verify --dir docs/fixtures/g11
+cargo test -p beamcraft-fixtures --test g11           # generated = committed, roundings, hand checks
 ```
+
+The `g11` commands write and verify the G11 accuracy set (`docs/fixtures/g11`). Unlike F07, that
+set carries references: exact rational evaluations of its binary64 inputs, computed here with
+`src/rational.rs` and no kernel code.
 
 The generator computes no expected values. The analytical expectations are checked by
 `tests/expectations.rs`, which recomputes volume, axis length, mass and bounds from the fixture
@@ -22,10 +29,13 @@ corrupted expectation (mutation cases included).
 | `src/fixture.rs` | `beamcraft.fixture/1` validator, limits and stable error codes |
 | `src/json.rs` | Bounded strict JSON reader and deterministic writer |
 | `src/sha256.rs` | SHA-256 (FIPS 180-4) |
+| `src/rational.rs` | Exact arbitrary-size rationals: binary64 conversion, arithmetic, bounded square roots, decimal printing |
+| `src/g11.rs` | G11 accuracy cases and their exact references; the `g11` writer and verifier |
 | `src/lib.rs` | `generate`, `write` and `verify` APIs and the manifest |
 | `src/main.rs` | CLI |
 | `tests/cli.rs` | End-to-end tests of the binary, including every committed outcome |
 | `tests/expectations.rs` | Independent analytical check and mutation cases |
+| `tests/g11.rs` | The committed G11 set equals the generator; decimals round their fractions; hand-derived references |
 
 See [docs/fixtures/README.md](../../docs/fixtures/README.md) for the format, statuses,
 provenance and verification results. See

@@ -80,9 +80,20 @@ impl App {
         } else if let Some(plane) = self.tools.plane {
             plane.ray_point(ray.origin, ray.direction)
         } else if let Some(loaded) = &self.loaded {
-            pick_point_in(&loaded.snapshot, &ray)?
-                .map(|(point, _)| point)
-                .or_else(|| ground_point(&ray))
+            // An active model view hits only what it shows (V12).
+            match self.views.active_view() {
+                Some(view) => beamcraft_engine::views::pick_visible(
+                    &loaded.snapshot,
+                    view,
+                    ray.origin,
+                    ray.direction,
+                    beamcraft_engine::query::pick::SelectionFilter::ALL,
+                )
+                .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
+                .map(|hit| hit.point_world_mm),
+                None => pick_point_in(&loaded.snapshot, &ray)?.map(|(point, _)| point),
+            }
+            .or_else(|| ground_point(&ray))
         } else {
             ground_point(&ray)
         };
@@ -241,6 +252,16 @@ impl App {
                 if let Some((hit, _)) = result
                     .candidates
                     .iter()
+                    // The active view snaps only to what it shows (V12).
+                    .filter(|hit| {
+                        self.views.active_view().is_none_or(|view| {
+                            view.contains(hit.point_world_mm)
+                                && loaded
+                                    .snapshot
+                                    .element(&hit.element_id)
+                                    .is_none_or(|e| view.shows_kind(e.kind))
+                        })
+                    })
                     .filter_map(|hit| {
                         screen_distance(hit.point_world_mm)
                             .filter(|d| *d <= 10.0)

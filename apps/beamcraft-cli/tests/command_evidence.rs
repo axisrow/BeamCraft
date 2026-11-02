@@ -5,7 +5,7 @@
 //! Persist actual command reads/writes, including invisible dependencies, through the real CLI.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_cli::command_evidence::{CapturedFootprint, read};
+use beamcraft_commands::command_evidence::{CapturedFootprint, read};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_host::revision::{
     EvidencePin, ExpectedBase, NoFault, RevisionDraft, RevisionStore, Uuid7,

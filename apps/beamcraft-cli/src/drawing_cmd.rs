@@ -4,10 +4,10 @@
 //! Read-only D02 drawing preview over one strictly inspected committed source revision.
 
 use crate::plate_cmd::num;
-use beamcraft_cli::drawing::archive::SourceArchive;
-use beamcraft_cli::drawing::document::store::request_fingerprint;
-use beamcraft_cli::drawing::document::{DocumentStore, DocumentWrite, State};
-use beamcraft_cli::plate::inspect_revision;
+use beamcraft_commands::drawing::archive::SourceArchive;
+use beamcraft_commands::drawing::document::store::request_fingerprint;
+use beamcraft_commands::drawing::document::{DocumentStore, DocumentWrite, State};
+use beamcraft_commands::plate::inspect_revision;
 use beamcraft_engine::drawing::projection::{
     self, BodyProjection, DimensionProjection, Projection,
 };
@@ -531,7 +531,7 @@ fn title_json(title: &Option<String>) -> Json {
     }
 }
 
-fn document_json(revision: &beamcraft_cli::drawing::document::DocumentRevision) -> Run<Json> {
+fn document_json(revision: &beamcraft_commands::drawing::document::DocumentRevision) -> Run<Json> {
     Ok(Json::object([
         (
             "revision_id",
@@ -1336,7 +1336,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let spec = drawing.spec();
     let intent = options
         .get("--intent-out")
-        .map(|_| beamcraft_cli::drawing::codec::encode(&drawing))
+        .map(|_| beamcraft_commands::drawing::codec::encode(&drawing))
         .transpose()?;
     let result = Json::object([
         ("outcome", Json::text("drawing_preview")),

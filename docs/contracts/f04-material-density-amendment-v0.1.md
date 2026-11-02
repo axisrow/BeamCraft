@@ -16,8 +16,10 @@ still `unknown`.
 | exactly `0` | admitted | `current`, exactly `0` kg |
 | positive | admitted | `volume * density` as before |
 
-A positive density whose product with the volume underflows to zero is still
-`GEO_NUMERIC_UNCERTAIN`: only an explicit zero density gives a zero mass.
+A positive density whose mass falls below the normal binary64 range, to a subnormal value or to
+zero, is still `GEO_NUMERIC_UNCERTAIN`: only an explicit zero density gives a zero mass. A
+subnormal mass has lost the precision the comparison rule needs (relative 1e-6): 1 mm3 at 1e-310 kg/m3 gives about 1e-319 kg with an error near
+1e-5. Found by the G11 accuracy fixtures (`docs/fixtures/g11`); corrected 2026-11-01, #490.
 
 ## Why
 

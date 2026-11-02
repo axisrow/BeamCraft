@@ -21,7 +21,7 @@
 //! because a workspace's base revision must not be removed. The dry run lists exactly the
 //! revisions whose undo points would be lost.
 
-use beamcraft_cli::history_compact::{
+use beamcraft_commands::history_compact::{
     backup_store, collect_pins, hold_coordinator_lease, is_workspace_store,
 };
 use beamcraft_host::compaction::{
@@ -101,7 +101,7 @@ pub fn lease_refusal(error: Refusal) -> (Json, u8) {
 }
 
 /// Holds the store lease of a starting `serve-coordinator`; see
-/// [`beamcraft_cli::history_compact::hold_coordinator_lease`].
+/// [`beamcraft_commands::history_compact::hold_coordinator_lease`].
 pub fn coordinator_lease(args: &[OsString]) -> Result<Option<StoreLease>, (Json, u8)> {
     hold_coordinator_lease(args).map_err(lease_refusal)
 }

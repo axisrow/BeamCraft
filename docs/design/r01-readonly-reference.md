@@ -42,7 +42,7 @@ A reply of `attach-reference` and `inspect-reference` lists at most 512 foreign 
 (`foreign_prims_truncated` says when more exist; `foreign_prim_count` is always the total): a real
 scene composes tens of thousands of prims and the reply is bounded by the JSON token ceiling.
 
-The display no longer refuses a source. `apps/beamcraft-cli/src/reference_view/display.rs` applies the
+The display no longer refuses a source. `crates/commands/src/reference_view/display.rs` applies the
 full USD transform stack of every ancestor (translate, scale, `rotateX/Y/Z` and the six
 `rotateXYZ` orders, `orient`, `transform`, `!invert!`, `!resetXformStack!`), draws any `Mesh` as its
 polygon cage whatever its `subdivisionScheme` (holes and creases are ignored), fan-triangulates a

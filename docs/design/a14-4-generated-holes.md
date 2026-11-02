@@ -24,10 +24,10 @@ upgrades them); no new A05 group can be authored.
 
 | Area | What exists |
 |---|---|
-| `beamcraft_model::command` | `BoltGroupInputs.hole_mode` (`Option<HoleMode>`, the definition's preference as the default: a bolt generates, a screw does not) and `BoltGroupInputs.hole_clearance_mm` (`Option<f64>`, the definition's clearance as the default) with admission and fingerprint input (`BoltGroupInputs/v2`), and `HoleRecord.owner` (`Option<ElementId>`). |
-| `beamcraft_engine::bolt` | `generate_holes`: with `generate`, one round through hole per crossing fastener on every connected plate, of diameter `nominal + clearance`, centred where the shank axis crosses the plate's mid-plane; a beam or a column is `UNSUPPORTED_GEOMETRY` (G14.1); `none` writes no part. `update_hole`/`remove_hole` refuse a group-owned record with `DEPENDENCY_CONFLICT` (`DV-REL-009`). |
+| `steel::model::command` | `BoltGroupInputs.hole_mode` (`Option<HoleMode>`, the definition's preference as the default: a bolt generates, a screw does not) and `BoltGroupInputs.hole_clearance_mm` (`Option<f64>`, the definition's clearance as the default) with admission and fingerprint input (`BoltGroupInputs/v2`), and `HoleRecord.owner` (`Option<ElementId>`). |
+| `steel::engine::bolt` | `generate_holes`: with `generate`, one round through hole per crossing fastener on every connected plate, of diameter `nominal + clearance`, centred where the shank axis crosses the plate's mid-plane; a beam or a column is `UNSUPPORTED_GEOMETRY` (G14.1); `none` writes no part. `update_hole`/`remove_hole` refuse a group-owned record with `DEPENDENCY_CONFLICT` (`DV-REL-009`). |
 | `beamcraft_layer_engine::authored` | `steel:bolt:holeMode` (required token) and `steel:bolt:holeClearanceMm` (present exactly when `generate`) on the group record; `steel:hole:generatedBy` (the sixth record attribute, equal length, a full UUIDv7 or the empty string per record); the instance projection carries the new attribute, so a drilled definition's instances read the records whole. |
-| `beamcraft_cli::bolt` | `create_bolt_group`/`update_bolt_group` write the hole records of every affected plate in the same transaction: the record identities are derived from the operation id (SHA-256 over the pair, version and variant bits forced), so a retry authors the same identities; the plate is replayed before anything is written, so a hole that does not fit refuses the whole command. `update` regenerates the holes and turning `generate` off removes exactly the group's records. `delete-element` of a group removes its records from the plates in the same revision. |
+| `beamcraft_commands::bolt_cmd` | `create_bolt_group`/`update_bolt_group` write the hole records of every affected plate in the same transaction: the record identities are derived from the operation id (SHA-256 over the pair, version and variant bits forced), so a retry authors the same identities; the plate is replayed before anything is written, so a hole that does not fit refuses the whole command. `update` regenerates the holes and turning `generate` off removes exactly the group's records. `delete-element` of a group removes its records from the plates in the same revision. |
 
 ## Decisions
 
@@ -65,11 +65,11 @@ upgrades them); no new A05 group can be authored.
 
 ## Tests
 
-`beamcraft_model::command`: the hole defaults follow the definition, an explicit mode and
+`steel::model::command`: the hole defaults follow the definition, an explicit mode and
 clearance enter the fingerprint, the refusals name `hole_clearance_mm`.
-`beamcraft_engine::bolt`: one hole per crossing fastener per plate at the mapped centre, the
+`steel::engine::bolt`: one hole per crossing fastener per plate at the mapped centre, the
 group clearance over the definition's, the screw default and the explicit override, the member
-refusal, a partly covered row cutting only the crossed holes. `beamcraft_engine::command`: a
+refusal, a partly covered row cutting only the crossed holes. `steel::engine::command`: a
 generated record refuses update and removal with `DEPENDENCY_CONFLICT`.
 `beamcraft_layer_engine`: the record attribute set is six-or-none with the owner column
 checked; the descriptor-pinned stores revalidate.

@@ -85,7 +85,14 @@ pub enum Violation {
         /// The app or tool.
         to: String,
     },
-    /// A package other than an app or a tool depends on a discipline.
+    /// A package other than an app or a tool depends on the application layer.
+    DependsOnService {
+        /// Depending package.
+        from: String,
+        /// The service crate.
+        to: String,
+    },
+    /// A package other than an app, a service or a tool depends on a discipline.
     DependsOnDiscipline {
         /// Depending package.
         from: String,
@@ -111,6 +118,24 @@ pub enum Violation {
         file: String,
         /// The mentioned API path.
         api: &'static str,
+    },
+    /// A target path leaves the standard layout, so its sources would not be scanned.
+    TargetOutsideLayout {
+        /// Package.
+        package: String,
+        /// The target table, for example `lib`.
+        target: String,
+        /// The declared path.
+        path: String,
+    },
+    /// A domain crate has a build script.
+    DomainBuildScript(String),
+    /// Non-test source of a domain crate loads a module from a `#[path]`.
+    DomainPathAttribute {
+        /// Domain package.
+        package: String,
+        /// Source path.
+        file: String,
     },
     /// The CI wasm check names crates by hand.
     CiHardCodedList(String),
@@ -180,6 +205,10 @@ impl fmt::Display for Violation {
             Self::DependsOnAppOrTool { from, to } => {
                 write!(f, "`{from}` depends on app or tool `{to}`")
             }
+            Self::DependsOnService { from, to } => write!(
+                f,
+                "`{from}` depends on the application layer `{to}`; only an app or a tool may"
+            ),
             Self::DependsOnDiscipline { from, to } => {
                 write!(
                     f,
@@ -201,6 +230,26 @@ impl fmt::Display for Violation {
                     "domain crate `{package}` uses `{api}` in `{file}` outside test code"
                 )
             }
+            Self::TargetOutsideLayout {
+                package,
+                target,
+                path,
+            } => write!(
+                f,
+                "`{package}` declares its {target} at `{path}`, outside the standard layout \
+                 (`src/` for lib and bin, `tests/`, `benches/`, `examples/`); its sources would \
+                 not be checked"
+            ),
+            Self::DomainBuildScript(p) => write!(
+                f,
+                "domain crate `{p}` has a build script; it would run native code and could \
+                 generate unchecked sources"
+            ),
+            Self::DomainPathAttribute { package, file } => write!(
+                f,
+                "domain crate `{package}` loads a module with `#[path]` in `{file}` outside test \
+                 code; that module would not be checked"
+            ),
             Self::CiHardCodedList(line) => write!(
                 f,
                 "CI wasm job selects a package by hand (`{}`); derive the list with `beamcraft-boundaries portable`",
@@ -265,7 +314,13 @@ fn kind_rules(from: &str, from_kind: Kind, to: &str, to_kind: Kind) -> Vec<Viola
             to: to.to_owned(),
         });
     }
-    if to_kind == Kind::Discipline && !matches!(from_kind, Kind::App | Kind::Tool) {
+    if to_kind == Kind::Service && !matches!(from_kind, Kind::App | Kind::Tool) {
+        out.push(Violation::DependsOnService {
+            from: from.to_owned(),
+            to: to.to_owned(),
+        });
+    }
+    if to_kind == Kind::Discipline && !matches!(from_kind, Kind::Service | Kind::App | Kind::Tool) {
         out.push(Violation::DependsOnDiscipline {
             from: from.to_owned(),
             to: to.to_owned(),
@@ -572,6 +627,36 @@ pub fn forbidden_apis(source: &str) -> Vec<&'static str> {
     found
 }
 
+/// The directory a target table's path must stay inside.
+fn layout_dir(target: &str) -> &'static str {
+    match target {
+        "test" => "tests/",
+        "bench" => "benches/",
+        "example" => "examples/",
+        _ => "src/",
+    }
+}
+
+/// Whether `path` is a plain relative path inside the standard directory of `target`: `/`
+/// separators, no empty, `.` or `..` component, ending in `.rs`.
+pub fn inside_layout(target: &str, path: &str) -> bool {
+    path.strip_prefix(layout_dir(target)).is_some_and(|rest| {
+        path.ends_with(".rs")
+            && !path.contains('\\')
+            && rest
+                .split('/')
+                .all(|part| !part.is_empty() && part != "." && part != "..")
+    })
+}
+
+/// Whether non-test source loads a module from a `#[path = ...]` attribute.
+pub fn has_path_attribute(source: &str) -> bool {
+    let mut code = blank_literals(source);
+    without_test_items(&mut code);
+    let code: String = code.into_iter().filter(|c| !c.is_whitespace()).collect();
+    code.contains("#[path=") || code.contains("#![path=")
+}
+
 /// Checks a workspace against the module table.
 pub fn check_workspace(workspace: &Workspace, table: &ModuleTable) -> Vec<Violation> {
     let mut out = check_table(table);
@@ -595,6 +680,18 @@ pub fn check_workspace(workspace: &Workspace, table: &ModuleTable) -> Vec<Violat
         }
         if row.kind == Kind::Tool && !package.publish_false {
             out.push(Violation::ToolPublishable(package.name.clone()));
+        }
+        for (target, path) in &package.targets {
+            if !inside_layout(target, path) {
+                out.push(Violation::TargetOutsideLayout {
+                    package: package.name.clone(),
+                    target: target.clone(),
+                    path: path.clone(),
+                });
+            }
+        }
+        if row.kind.requires_wasm() && package.build_script {
+            out.push(Violation::DomainBuildScript(package.name.clone()));
         }
         for dep in &package.dependencies {
             match table.row(&dep.name) {
@@ -635,6 +732,12 @@ pub fn check_workspace(workspace: &Workspace, table: &ModuleTable) -> Vec<Violat
                         package: package.name.clone(),
                         file: source.path.clone(),
                         api,
+                    });
+                }
+                if has_path_attribute(&source.text) {
+                    out.push(Violation::DomainPathAttribute {
+                        package: package.name.clone(),
+                        file: source.path.clone(),
                     });
                 }
             }
@@ -832,6 +935,8 @@ mod tests {
                 })
                 .collect(),
             sources: Vec::new(),
+            targets: Vec::new(),
+            build_script: false,
         }
     }
 
@@ -967,14 +1072,44 @@ mod tests {
         for kind in [Kind::Domain, Kind::Native, Kind::Host, Kind::Discipline] {
             assert!(breach("p", kind, "steel"), "{kind:?}");
         }
-        // An app or a tool may; a discipline may depend on platform crates.
-        for kind in [Kind::App, Kind::Tool] {
+        // The application layer, an app or a tool may; a discipline may depend on platform
+        // crates.
+        for kind in [Kind::Service, Kind::App, Kind::Tool] {
             assert!(!breach("p", kind, "steel"), "{kind:?}");
         }
         for to in [Kind::Domain, Kind::Native, Kind::Host] {
             assert_eq!(kind_rules("steel", Kind::Discipline, "p", to), [], "{to:?}");
         }
         assert!(!Kind::Discipline.requires_wasm());
+    }
+
+    #[test]
+    fn only_an_app_or_a_tool_may_depend_on_the_application_layer() {
+        let breach = |kind: Kind| {
+            kind_rules("p", kind, "commands", Kind::Service).contains(
+                &Violation::DependsOnService {
+                    from: "p".into(),
+                    to: "commands".into(),
+                },
+            )
+        };
+        for kind in [
+            Kind::Domain,
+            Kind::Native,
+            Kind::Host,
+            Kind::Discipline,
+            Kind::Service,
+        ] {
+            assert!(breach(kind), "{kind:?}");
+        }
+        for kind in [Kind::App, Kind::Tool] {
+            assert!(!breach(kind), "{kind:?}");
+        }
+        // The application layer itself may use the platform and the disciplines.
+        for to in [Kind::Native, Kind::Host, Kind::Discipline] {
+            assert_eq!(kind_rules("commands", Kind::Service, "p", to), [], "{to:?}");
+        }
+        assert!(!Kind::Service.requires_wasm());
     }
 
     #[test]
@@ -1177,6 +1312,97 @@ mod tests {
             })
             .collect();
         assert_eq!(apis, ["std::fs", "std::env"]);
+    }
+
+    #[test]
+    fn target_paths_must_stay_in_the_standard_layout() {
+        for (target, path) in [
+            ("lib", "src/lib.rs"),
+            ("bin", "src/bin/tool.rs"),
+            ("test", "tests/all.rs"),
+            ("bench", "benches/speed.rs"),
+            ("example", "examples/demo.rs"),
+        ] {
+            assert!(inside_layout(target, path), "{target} {path}");
+        }
+        for (target, path) in [
+            ("lib", "code/lib.rs"),
+            ("lib", "src/../code/lib.rs"),
+            ("lib", "./src/lib.rs"),
+            ("lib", "src//lib.rs"),
+            ("lib", "src\\lib.rs"),
+            ("lib", "/abs/src/lib.rs"),
+            ("lib", "src/lib.txt"),
+            ("lib", "concat"),
+            ("bin", "tests/main.rs"),
+            ("test", "src/t.rs"),
+        ] {
+            assert!(!inside_layout(target, path), "{target} {path}");
+        }
+        let v = with(good(), |ws| {
+            let cli = pkg_mut(ws, "cli");
+            cli.targets.push(("bin".into(), "src/main.rs".into()));
+            cli.targets.push(("test".into(), "tests/cli.rs".into()));
+        });
+        assert_eq!(v, []);
+    }
+
+    /// The #208 reproduction: geom's sources moved to `code/` behind `[lib] path`, with
+    /// `std::fs` in them. The scan of `src/` finds nothing, so the layout rule must fire.
+    #[test]
+    fn a_library_moved_out_of_src_is_a_violation() {
+        let v = with(good(), |ws| {
+            pkg_mut(ws, "geom")
+                .targets
+                .push(("lib".into(), "code/lib.rs".into()));
+        });
+        assert_eq!(
+            v,
+            [Violation::TargetOutsideLayout {
+                package: "geom".into(),
+                target: "lib".into(),
+                path: "code/lib.rs".into(),
+            }]
+        );
+        assert!(v[0].to_string().contains("outside the standard layout"));
+    }
+
+    #[test]
+    fn a_domain_build_script_is_a_violation_and_an_app_one_is_not() {
+        let v = with(good(), |ws| {
+            pkg_mut(ws, "model").build_script = true;
+            pkg_mut(ws, "cli").build_script = true;
+        });
+        assert_eq!(v, [Violation::DomainBuildScript("model".into())]);
+    }
+
+    #[test]
+    fn a_domain_path_attribute_outside_tests_is_a_violation() {
+        assert!(has_path_attribute("#[path = \"../code/x.rs\"]\nmod x;\n"));
+        assert!(has_path_attribute("#[ path=\"x.rs\" ]\nmod x;\n"));
+        assert!(!has_path_attribute(
+            "// #[path = \"x.rs\"]\nconst S: &str = \"#[path = 1]\";\n"
+        ));
+        assert!(!has_path_attribute(
+            "#[cfg(test)]\n#[path = \"tests.rs\"]\nmod tests;\n"
+        ));
+        let v = with(good(), |ws| {
+            pkg_mut(ws, "geom").sources.push(Source {
+                path: "crates/geom/src/lib.rs".into(),
+                text: "#[path = \"../../elsewhere.rs\"]\nmod hidden;\n".into(),
+            });
+            pkg_mut(ws, "cli").sources.push(Source {
+                path: "apps/cli/src/main.rs".into(),
+                text: "#[path = \"other.rs\"]\nmod other;\n".into(),
+            });
+        });
+        assert_eq!(
+            v,
+            [Violation::DomainPathAttribute {
+                package: "geom".into(),
+                file: "crates/geom/src/lib.rs".into(),
+            }]
+        );
     }
 
     #[test]

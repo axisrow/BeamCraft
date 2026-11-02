@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! A06 headless commands: `create-weld` and `welds`. They call the engine API through
-//! `beamcraft_cli::weld` and print one JSON object with the same error shape and exit codes as
+//! `beamcraft_commands::weld` and print one JSON object with the same error shape and exit codes as
 //! the plate commands.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{footprint_json, id_error, revision_json};
-use beamcraft_cli::weld::{WeldChange, WeldContext, WeldView, create_weld, welds};
+use beamcraft_commands::weld::{WeldChange, WeldContext, WeldView, create_weld, welds};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},

@@ -32,8 +32,8 @@ use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Change, Element, Placement as LayerPlacement, Prepare, Resource, schema_identity,
-    validate_layers,
+    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Resource,
+    schema_identity, validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::CommandError;
@@ -1077,8 +1077,16 @@ pub fn update_bolt_group(
     if !model.definitions.contains_key(&resource.digest) {
         resources.push(resource);
     }
-    let (mut author, opened) =
-        crate::scope::open_author(store, base_request, false, schema, &control)?;
+    let (mut author, opened) = Author::open(
+        base_request,
+        EditTargets {
+            authored: session::pipeline::AUTHORED_LAYER.into(),
+            derived: session::pipeline::DERIVED_LAYER.into(),
+        },
+        None,
+        schema,
+        &control,
+    )?;
     let mut changes = vec![steel_layer::replace_bolt_group(
         command.target_id.to_string(),
         layer_group(&command.inputs, &placed),

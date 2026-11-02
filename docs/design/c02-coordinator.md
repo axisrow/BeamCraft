@@ -20,7 +20,7 @@ beamcraft inspect-coordinator-head --address 127.0.0.1:PORT --token-file FILE
 | Area | What exists |
 |---|---|
 | `beamcraft_host::coordinator` | `Token` (32 to 256 printable bytes from a file; on Unix the file must not be group/world accessible; never printed; constant-time comparison), `Client` (actor and token), `Coordinator::bind` (127.0.0.1 only, 1 to 16 clients with distinct tokens and actors) and `serve` (bounded frames, deadlines, at most 16 connections, a queue of at most 64 requests, one handler thread), `Handler`, `Request` (the authenticated actor, the op and the remaining fields), `call` (loopback addresses only). |
-| `beamcraft_cli::coordinator` | `PublishHandler`: `head`, and `publish` (named workspace inside the root, expected head equal to the changeset's base, C01 receipt with the authenticated actor as the trusted caller, `BASE_REVISION_MISMATCH` with the current head). |
+| `beamcraft_commands::coordinator` | `PublishHandler`: `head`, and `publish` (named workspace inside the root, expected head equal to the changeset's base, C01 receipt with the authenticated actor as the trusted caller, `BASE_REVISION_MISMATCH` with the current head). |
 | CLI | `serve-coordinator` prints a `listening` line with the address, serves, and prints a final `stopped` object; `publish-changeset` and `inspect-coordinator-head` print the coordinator's answer with matching exit codes. |
 
 ## Decisions

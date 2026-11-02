@@ -5,7 +5,7 @@
 //! Actual two-client CLI conflict resolution (C04.2): discard, re-edit, replay and refusals.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_cli::{
+use beamcraft_commands::{
     plate,
     workspace::resolve::{ResolveRequest, resolve_workspace},
 };
@@ -198,7 +198,7 @@ impl Drop for Fixture {
     }
 }
 
-fn name_of(report: &beamcraft_cli::plate::Inspection, n: usize) -> String {
+fn name_of(report: &beamcraft_commands::plate::Inspection, n: usize) -> String {
     report
         .plates
         .iter()

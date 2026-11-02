@@ -4,7 +4,7 @@
 //! T01 headless grid creation and verified listing.
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
-use beamcraft_cli::grid::{GridContext, create_grid, grids};
+use beamcraft_commands::grid::{GridContext, create_grid, grids};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -345,7 +345,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         if let Some(text) = options.get("--connection") {
             let connection = ConnectionId::parse(text)
                 .map_err(|_| invalid("--connection needs a UUIDv7 connection identity"))?;
-            let (record, pinned) = beamcraft_cli::grid::pinned_grids(&store, connection)?;
+            let (record, pinned) = beamcraft_commands::grid::pinned_grids(&store, connection)?;
             return Ok(Json::object([
                 ("outcome", Json::text("grids_pinned")),
                 ("connection_id", Json::text(record.id.to_string())),
@@ -369,14 +369,14 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .ok_or_else(|| invalid("missing grid query option"))
         };
         let selector = required("--grid")?;
-        let pinned = beamcraft_cli::grid::pinned_selector(selector)?;
+        let pinned = beamcraft_commands::grid::pinned_selector(selector)?;
         if pinned.is_some() && *command != "resolve-grid-point" {
             return Err(invalid(
                 "a pinned grid answers point queries; resolve-grid-plane reads local grids",
             ));
         }
         if let Some((connection, grid_id)) = pinned {
-            let (record, model) = beamcraft_cli::grid::pinned_grids(&store, connection)?;
+            let (record, model) = beamcraft_commands::grid::pinned_grids(&store, connection)?;
             let grid = model.iter().find(|g| g.id == grid_id).ok_or_else(|| {
                 error(
                     ErrorCode::NotFound,
@@ -387,7 +387,7 @@ fn run(args: &[OsString]) -> Run<Json> {
                 .split_once(',')
                 .filter(|(_, b)| !b.contains(','))
                 .ok_or_else(|| invalid("--labels needs two comma-separated labels"))?;
-            let [x, y] = beamcraft_cli::grid::pinned_grid_point(&record, grid, a, b)?;
+            let [x, y] = beamcraft_commands::grid::pinned_grid_point(&record, grid, a, b)?;
             return Ok(Json::object([
                 ("outcome", Json::text("grid_point")),
                 ("grid_id", Json::text(grid.id.to_string())),
@@ -695,7 +695,7 @@ pub(crate) fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>
         offset_mm,
         new_axis_ids,
     };
-    let change = beamcraft_cli::grid::copy_grid(store, &context, &request, &mut NoFault)?;
+    let change = beamcraft_commands::grid::copy_grid(store, &context, &request, &mut NoFault)?;
     Ok(Json::object([
         (
             "outcome",
@@ -777,7 +777,7 @@ fn line_command(
         }
         _ => return Err(invalid("unknown grid-line command")),
     };
-    let change = beamcraft_cli::grid::edit_grid(
+    let change = beamcraft_commands::grid::edit_grid(
         store,
         context,
         &GridLineEditRequest { target_id, edit },
@@ -942,7 +942,7 @@ fn update_command(
             Some(_) => return Err(invalid("--fit-spans is true or false")),
         },
     };
-    let change = beamcraft_cli::grid::update_grid(store, context, &request, &mut NoFault)?;
+    let change = beamcraft_commands::grid::update_grid(store, context, &request, &mut NoFault)?;
     Ok(Json::object([
         (
             "outcome",

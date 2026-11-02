@@ -19,7 +19,7 @@ semantic-conflict workflow (C04), retry across publication (C05) and compensatio
 operation (C06). It completes no package and changes no implementation-plan status.
 
 Baseline inspected: fork `master` `c1d34913871255dc2cc26b5ebcaf3b18afa044e9`. The coordinator wire
-speaks only `head` and `publish` (`apps/beamcraft-cli/src/coordinator.rs`); rebase exists only as
+speaks only `head` and `publish` (`crates/commands/src/coordinator.rs`); rebase exists only as
 the local `rebase-workspace` CLI operation. Everything in the tables below is therefore required
 behaviour to build and verify, not a claim about current code.
 

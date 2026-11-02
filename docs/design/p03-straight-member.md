@@ -26,7 +26,7 @@ beamcraft inspect-elements --store ROOT   (plates and members, one pinned view s
 | `beamcraft_model::command` | `CreateStraightMember`, `MemberKind`: label, finiteness, coordinate (1e9 mm) and roll (2 pi) caps, placement; fingerprint including kind, profile, material, roll. |
 | `beamcraft_engine::member` | `ProfileInfo`/`ProfileLookup`, `AuthoredMember`, `evaluate_member` (profile re-admitted), `create_straight_member`, `admit_create_member` (replay/reuse), `Footprint::for_create_member` (profile and material are read, never written). Order: arguments, duplicate id, profile, material, geometry. |
 | `beamcraft_engine::query::committed` | `MemberRecord`, `evaluate_committed_members`, `scene_elements_with_members` (beam and column kinds in the snapshot). |
-| `beamcraft_cli::member` | `create_member`; `plate.rs` now decodes beams and columns, and the publish-time verifier checks their derived mesh against the kernel's. Shared `load_base`, `publish_revision`, `prior_op_with`, `replay_summary`, `check_footprint`, `mesh_change`. |
+| `beamcraft_commands::member` | `create_member`; `plate.rs` now decodes beams and columns, and the publish-time verifier checks their derived mesh against the kernel's. Shared `load_base`, `publish_revision`, `prior_op_with`, `replay_summary`, `check_footprint`, `mesh_change`. |
 
 ## Decisions
 

@@ -7,7 +7,7 @@
 //! derived view stale together, and nothing is placed automatically.
 
 use super::*;
-use beamcraft_cli::drawing::archive::SourceArchive;
+use beamcraft_commands::drawing::archive::SourceArchive;
 use beamcraft_engine::drawing::projection::{
     self, DetailProjection, ProjectedEdge, SectionGeometry, SectionProjection,
 };

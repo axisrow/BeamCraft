@@ -108,6 +108,34 @@ impl ElementKind {
         Self::ALL.iter().copied().find(|k| k.as_token() == token)
     }
 
+    /// Whether the kind is a physical part of any discipline (registered or reserved): it has
+    /// an engineering body, as opposed to an assembly, a connection, a reference, a grid, a
+    /// construction object or an annotation.
+    ///
+    /// The kind properties are the one place the platform names the steel kinds (#795): code
+    /// that decides behaviour asks a property, it never matches `Plate`, `Beam` or `Column`.
+    pub const fn is_part(self) -> bool {
+        matches!(
+            self,
+            Self::Plate
+                | Self::Beam
+                | Self::Column
+                | Self::Wall
+                | Self::Slab
+                | Self::Opening
+                | Self::Penetration
+                | Self::Pipe
+                | Self::Duct
+                | Self::Support
+        )
+    }
+
+    /// Whether the kind is a linear member: a body swept along an authored axis, whose axis is
+    /// a snap and pick target and whose `extrusion:` face roles carry an end suffix.
+    pub const fn is_linear_member(self) -> bool {
+        matches!(self, Self::Beam | Self::Column)
+    }
+
     const fn bit(self) -> u16 {
         1 << (self as u16)
     }
@@ -174,6 +202,41 @@ mod tests {
     use super::*;
 
     const GOOD: &str = "01990000-0000-7000-8000-000000000001";
+
+    #[test]
+    fn kind_properties_follow_the_registry() {
+        let parts: Vec<&str> = ElementKind::ALL
+            .iter()
+            .filter(|k| k.is_part())
+            .map(|k| k.as_token())
+            .collect();
+        assert_eq!(
+            parts,
+            [
+                "plate",
+                "beam",
+                "column",
+                "wall",
+                "slab",
+                "opening",
+                "penetration",
+                "pipe",
+                "duct",
+                "support"
+            ]
+        );
+        let linear: Vec<&str> = ElementKind::ALL
+            .iter()
+            .filter(|k| k.is_linear_member())
+            .map(|k| k.as_token())
+            .collect();
+        assert_eq!(linear, ["beam", "column"]);
+        assert!(
+            ElementKind::ALL
+                .iter()
+                .all(|k| !k.is_linear_member() || k.is_part())
+        );
+    }
 
     #[test]
     fn parses_and_prints_the_canonical_form() {

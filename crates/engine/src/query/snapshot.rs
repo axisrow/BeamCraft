@@ -232,9 +232,7 @@ fn admit_face_table(
         {
             return Err(invalid());
         }
-        let role_length = if matches!(kind, ElementKind::Beam | ElementKind::Column)
-            && role.starts_with("extrusion:")
-        {
+        let role_length = if kind.is_linear_member() && role.starts_with("extrusion:") {
             role.len().saturating_sub(2)
         } else {
             role.len()

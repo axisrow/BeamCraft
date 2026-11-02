@@ -26,19 +26,12 @@ global-timeout = "180s"
 path = "junit.xml"
 
 [profile.fast]
-# Inner-loop default: everything except the integration suites that keep the
-# remaining serial mass near ~800 s, which is ~80 s of wall clock on the
-# reference Mac (re-measured 2026-11-01 for issue #285, interleaved A/B): the
-# cli IO-heavy suites export_ifc, numbering_approval, numbering, libraries,
-# environments and pick (modules of the one `cli` test binary) and the host
-# recovery, revision and compaction binaries. environments stays out for its
-# 30-64 s tail even at a ~38 s median. Other long cli suites
-# (alpha_scenario_expanded, offline_clients, reference, bolt_groups, rebase)
-# measured wall-neutral in the loop: they fill parallel slack, so excluding them
-# buys no time and loses signal. The kernel's g09_budget_fuzz and
-# g05_profile_extrusion fell to 12-16 s after the one-binary consolidation and
-# run here again. Wall clock degrades to 110-140 s under unrelated machine load,
-# not under suite growth.
+# Inner-loop default: everything except the integration suites that each measure
+# at least ~40 s of serial time on the reference Mac (baseline 2026-10-25):
+# cli export_ifc, numbering_approval, numbering, libraries,
+# environments and pick (modules of the one `cli` test binary); host recovery,
+# revision and compaction (modules of the one `host` test binary); kernel
+# g09_budget_fuzz and g05_profile_extrusion (modules of the one `kernel` test binary).
 # Nothing is removed: the skipped suites run in the default profile and in CI.
 # Re-measure and move the line when a suite outgrows this list; an explicit
 # filter on the command line overrides default-filter, so any skipped test stays
@@ -46,7 +39,8 @@ path = "junit.xml"
 default-filter = '''not (
     (package(beamcraft-cli) and binary(cli) and test(
         /^(export_ifc|numbering_approval|numbering|libraries|environments|pick)::/))
-    or (package(beamcraft-host) and (binary(recovery) or binary(revision) or binary(compaction)))
+    or (package(beamcraft-host) and binary(host) and test(/^(recovery|revision|compaction)::/))
+    or (package(beamcraft-kernel) and binary(kernel) and test(/^(g09_budget_fuzz|g05_profile_extrusion)::/))
 )'''
 
 [profile.ci]

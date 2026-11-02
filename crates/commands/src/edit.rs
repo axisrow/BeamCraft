@@ -19,10 +19,7 @@
 //! `plate`.
 
 use crate::definition::{material_lookup, profile_lookup};
-use crate::plate::{
-    decode, evaluate_decoded, member_record, mesh_change, plate_record, prior_op_with,
-    replay_summary,
-};
+use crate::plate::{decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary};
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
@@ -40,11 +37,9 @@ use session::pipeline::{
     summarize,
 };
 use std::collections::BTreeMap;
-use steel::engine::command::evaluate_plate;
-use steel::engine::committed::{MemberRecord, PlateRecord};
-use steel::engine::member::{evaluate_member, member_quantities};
+pub use steel::engine::part::PartRecord;
 use steel::engine::transaction::PriorOp;
-use steel::engine::update::{UpdateEffect, effect, patch_member, patch_plate};
+use steel::engine::update::{UpdateEffect, effect};
 use steel::layer as steel_layer;
 use steel::model::command::UpdateElement;
 
@@ -66,22 +61,13 @@ pub struct UpdateRequest {
     pub command: UpdateElement,
 }
 
-/// The element as it is after the update.
-#[derive(Debug, Clone, PartialEq)]
-pub enum UpdatedElement {
-    /// A plate.
-    Plate(Box<PlateRecord>),
-    /// A beam or a column.
-    Member(Box<MemberRecord>),
-}
-
 /// Result of `update_element`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Updated {
     /// True when the same operation was already committed and nothing was written.
     pub replayed: bool,
     /// The element after the update (the head's element for a replay).
-    pub element: UpdatedElement,
+    pub element: PartRecord,
     /// The groups the patch changes.
     pub effect: UpdateEffect,
     /// The revision that holds the result.
@@ -163,21 +149,8 @@ pub fn update_element(
     let new_material = command.patch.material.flatten();
 
     // The element after the patch, its body and its quantities.
-    enum Target<'a> {
-        Plate(&'a PlateRecord),
-        Member(&'a MemberRecord),
-    }
-    let target = plates
-        .iter()
-        .find(|r| r.authored.id == command.target_id)
-        .map(Target::Plate)
-        .or_else(|| {
-            members
-                .iter()
-                .find(|r| r.authored.id == command.target_id)
-                .map(Target::Member)
-        })
-        .ok_or_else(|| match command.patch.level {
+    let head_element = PartRecord::find(&plates, &members, command.target_id).ok_or_else(|| {
+        match command.patch.level {
             // A known element that cannot hold a level is an unsupported assignment, not a
             // missing element.
             Some(level) => levels
@@ -185,61 +158,17 @@ pub fn update_element(
                 .err()
                 .map_or_else(not_found, Refusal::from),
             None => not_found(),
-        })?;
-    let (head_element, next) = match target {
-        Target::Plate(head) => {
-            let authored = patch_plate(&head.authored, &command.patch)?;
-            let material = authored.material.as_ref().map(&materials).transpose()?;
-            let body = if patch_effect.shape {
-                evaluate_plate(&authored)?
-            } else {
-                head.body.clone()
-            };
-            let quantities = body.quantities_for(material)?;
-            (
-                UpdatedElement::Plate(Box::new(head.clone())),
-                UpdatedElement::Plate(Box::new(PlateRecord {
-                    authored,
-                    body,
-                    quantities,
-                })),
-            )
         }
-        Target::Member(head) => {
-            let authored = patch_member(&head.authored, &command.patch)?;
-            let material = authored.material.as_ref().map(&materials).transpose()?;
-            // A path patch (P12) is the supported member shape edit: the body is re-evaluated
-            // from the resolved profile. The other supported member edits change metadata,
-            // placement or material, never local shape.
-            let body = if patch_effect.shape {
-                // A profile patch rebuilds the body from the new section; any other shape
-                // patch keeps the standing one.
-                let profile = match command.patch.profile {
-                    Some(digest) => profile_lookup(&definitions)(&digest)?,
-                    None => head.body.profile.clone(),
-                };
-                evaluate_member(&authored, profile)?
-            } else {
-                head.body.clone()
-            };
-            let quantities = member_quantities(&body, material)?;
-            (
-                UpdatedElement::Member(Box::new(head.clone())),
-                UpdatedElement::Member(Box::new(MemberRecord {
-                    authored,
-                    body,
-                    quantities,
-                })),
-            )
-        }
-    };
+    })?;
+    let next = head_element.patched(
+        &command.patch,
+        patch_effect.shape,
+        &materials,
+        profile_lookup(&definitions),
+    )?;
     let head_level = levels.level_of(&command.target_id);
     let next_level = command.patch.level.unwrap_or(head_level);
-    let same_state = |a: &UpdatedElement, b: &UpdatedElement| match (a, b) {
-        (UpdatedElement::Plate(a), UpdatedElement::Plate(b)) => a.authored == b.authored,
-        (UpdatedElement::Member(a), UpdatedElement::Member(b)) => a.authored == b.authored,
-        _ => false,
-    } && head_level == next_level;
+    let same_state = |a: &PartRecord, b: &PartRecord| a.same_state(b) && head_level == next_level;
 
     let op_host = host_uuid(&request.op_id.to_string())?;
     let fingerprint = command.content_fingerprint()?;
@@ -314,30 +243,11 @@ pub fn update_element(
             if id == command.target_id {
                 continue;
             }
-            let record = match &next {
-                UpdatedElement::Plate(r) => {
-                    let head = plates
-                        .iter()
-                        .find(|p| p.authored.id == id)
-                        .ok_or_else(|| integrity("shared plate is not evaluated"))?;
-                    UpdatedElement::Plate(Box::new(PlateRecord {
-                        authored: patch_plate(&head.authored, &patch)?,
-                        body: r.body.clone(),
-                        quantities: r.quantities,
-                    }))
-                }
-                UpdatedElement::Member(r) => {
-                    let head = members
-                        .iter()
-                        .find(|p| p.authored.id == id)
-                        .ok_or_else(|| integrity("shared member is not evaluated"))?;
-                    UpdatedElement::Member(Box::new(MemberRecord {
-                        authored: patch_member(&head.authored, &patch)?,
-                        body: r.body.clone(),
-                        quantities: r.quantities,
-                    }))
-                }
-            };
+            let head = PartRecord::find(&plates, &members, id)
+                .ok_or_else(|| integrity(next.unevaluated_instance()))?;
+            let record = next
+                .shared_with(&head, &patch)?
+                .ok_or_else(|| integrity(next.unevaluated_instance()))?;
             shared_records.push(record);
         }
     }
@@ -418,14 +328,11 @@ pub fn update_element(
     }
     // A member path change (P12) is authored on the canonical part, like a thickness change:
     // the instances of the group read their shape inputs from it.
-    if let (UpdatedElement::Member(record), true) = (&next, patch_effect.shape) {
-        changes.push(steel_layer::axis(
-            definition_text.clone(),
-            record.authored.axis_points_mm.clone(),
-        ));
+    if let (Some(axis), true) = (next.axis_points_mm(), patch_effect.shape) {
+        changes.push(steel_layer::axis(definition_text.clone(), axis.to_vec()));
         // A bent member carries no authored roll: the polybeam sweep has no roll input, so
         // the old straight member's opinion is removed instead of being silently ignored.
-        if record.authored.axis_points_mm.len() > 2 {
+        if axis.len() > 2 {
             changes.push(steel_layer::roll(definition_text.clone(), Opinion::Remove));
         }
     }
@@ -435,24 +342,16 @@ pub fn update_element(
     // A mirror (T03) re-encodes the local body: the plate's side flips and the cuts of either
     // part kind reflect, both authored on the canonical part.
     if patch_effect.mirror {
-        if let UpdatedElement::Plate(record) = &next
-            && let Some(side) = record.authored.thickness_side
-        {
+        if let Some(side) = next.thickness_side() {
             changes.push(steel_layer::thickness_side(definition_text.clone(), side));
         }
         changes.push(steel_layer::cuts(
             definition_text.clone(),
-            match &next {
-                UpdatedElement::Plate(r) => r.authored.cuts.clone(),
-                UpdatedElement::Member(r) => r.authored.cuts.clone(),
-            },
+            next.cuts().to_vec(),
         ));
     }
     if patch_effect.placement || patch_effect.orientation {
-        let placement = match &next {
-            UpdatedElement::Plate(r) => r.authored.placement,
-            UpdatedElement::Member(r) => r.authored.placement,
-        };
+        let placement = next.placement();
         let [qx, qy, qz, qw] = placement.orientation_xyzw;
         changes.push(Change::Placement {
             id: id_text.clone(),
@@ -469,24 +368,10 @@ pub fn update_element(
         });
     }
     if patch_effect.material || patch_effect.shape {
-        changes.push(match &next {
-            UpdatedElement::Plate(r) => {
-                mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?
-            }
-            UpdatedElement::Member(r) => {
-                mesh_change(&r.authored.id, &r.body.solid, &member_record(r))?
-            }
-        });
+        changes.push(part_mesh_change(&next)?);
     }
     for record in &shared_records {
-        changes.push(match record {
-            UpdatedElement::Plate(r) => {
-                mesh_change(&r.authored.id, &r.body.solid, &plate_record(r))?
-            }
-            UpdatedElement::Member(r) => {
-                mesh_change(&r.authored.id, &r.body.solid, &member_record(r))?
-            }
-        });
+        changes.push(part_mesh_change(record)?);
     }
     let (committed, changed_layers) = prepare_and_publish(
         &mut author,

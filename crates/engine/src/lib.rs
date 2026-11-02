@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The BeamCraft engine API. V02 adds the renderer-agnostic view snapshot and query contract;
-//! P01 adds `CreatePlate` application (`steel::engine::command` and `steel::engine::transaction` in the steel crate, and [`footprint`]) and the read
-//! side over committed plates (`steel::engine::committed`).
+//! The BeamCraft engine API: the platform half of the engine that every discipline shares.
+//!
+//! It holds the renderer-agnostic view snapshot and its queries (bounds, changes, selection,
+//! picking and features, snapping input), footprints, grids, levels, work planes, assemblies,
+//! attributes, references, numbering, drawings, views, filters and schedules. The steel commands
+//! (plates, members, holes, cuts, bends, welds, bolts, copies and edits) and their transactions
+//! live in the `steel` discipline crate (`steel::engine`), which builds on this one (#795);
+//! personal workspaces, publication and undo live with the host and the application layer.
 //!
 //! The crate holds pure, bounded, deterministic data and no UI, wgpu, egui, I/O or clock. A
 //! renderer receives meshes by digest, instance and triangle tables, ids and bounds; it computes
-//! no engineering geometry. P01 implements the first command only (a rectangular plate); keys,
-//! the other commands and personal workspaces are not implemented.
+//! no engineering geometry.
 
 pub mod annotation;
 pub mod assembly;

@@ -4,7 +4,7 @@
 //! Explicit C03 rebase; all engineering/storage decisions stay in the application API.
 
 use crate::plate_cmd::revision_json;
-use beamcraft_cli::workspace::{
+use beamcraft_commands::workspace::{
     conflicts::conflict_json,
     read_meta,
     rebase::{RebaseRequest, RebaseResult, rebase_workspace},

@@ -4,7 +4,7 @@
 //! Compose feature-owned help without changing command dispatch or parsing. The command
 //! inventory is rendered from the registry.
 
-use beamcraft_cli::registry;
+use beamcraft_commands::registry;
 
 mod annotation;
 mod assembly;

@@ -14,7 +14,7 @@ and the R rows by `docs/design/c03-c06-acceptance.md`.
 All engineering and storage decisions stay in `workspace::rebase::rebase_workspace`; the wire
 adds transport, authentication and serialization only, like C02 `publish` before it:
 
-- The `rebase` wire operation (`apps/beamcraft-cli/src/coordinator.rs`) accepts exactly the
+- The `rebase` wire operation (`crates/commands/src/coordinator.rs`) accepts exactly the
   fields `workspace`, `op_id`, `expected_head`, `expected_draft`; anything else is
   `UNSUPPORTED_PROPERTY` before any state is read, and an unknown operation stays
   `UNSUPPORTED_COMMAND`. The handler opens the named workspace under the workspaces root

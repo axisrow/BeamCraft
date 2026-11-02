@@ -3,15 +3,15 @@
 
 //! F12 headless commands: `set-project-metadata`, `define-section`, `define-zone`,
 //! `show-project`, `connect-project`, `update-connection`, `remove-connection` and
-//! `resolve-connection`. They call the adapter through `beamcraft_cli::coordination` and print
+//! `resolve-connection`. They call the adapter through `beamcraft_commands::coordination` and print
 //! one JSON object with the same error shape and exit codes as the modelling commands.
 //! Shared metadata changes only through these explicit commands (PC-OWN-002); there is no
 //! command that resolves `latest` instead of an exact revision (PC-COORD-001).
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, id_error, num, revision_json};
-use beamcraft_cli::coordination;
-use beamcraft_cli::coordination::{Applied, ConnectionStatus, PinRequest, ResolvedElement};
+use beamcraft_commands::coordination;
+use beamcraft_commands::coordination::{Applied, ConnectionStatus, PinRequest, ResolvedElement};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},
@@ -262,8 +262,10 @@ fn run(args: &[OsString]) -> Run<Json> {
     }
 }
 
-fn common_context(common: &command_context::CommandContext) -> beamcraft_cli::level::LevelContext {
-    beamcraft_cli::level::LevelContext {
+fn common_context(
+    common: &command_context::CommandContext,
+) -> beamcraft_commands::level::LevelContext {
+    beamcraft_commands::level::LevelContext {
         op_id: common.op_id,
         revision_id: common.revision_id,
         actor: common.actor.clone(),

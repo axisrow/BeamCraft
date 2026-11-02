@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! BeamCraft command-line interface library: the P01 plate adapter and the P02 definition adapter
-//! shared by the `beamcraft` binary and its tests. Nothing depends on this package; it is the
-//! application layer.
+//! The BeamCraft application layer: the commands the apps run against a project.
+//!
+//! Each module turns one family of typed requests (create and edit plates, members, bolts and
+//! welds; copies and arrays; definitions, grids and levels; assemblies, numbering, drawings,
+//! schedules and exports; workspaces, history, publication, rebase and the coordinator) into
+//! engine and discipline calls, layer edits and a host commit, and returns typed results or a
+//! refusal. It parses no command line and prints nothing: the `beamcraft` CLI
+//! (`apps/beamcraft-cli`) reads arguments, calls these modules and renders their results, and the
+//! window can call the same modules. Only an app or a tool may depend on this crate (F08 kind
+//! `service`). It was the library target of `beamcraft-cli` until #208 moved it here.
 
 pub mod annotation;
 pub mod array;

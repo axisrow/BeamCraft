@@ -19,7 +19,7 @@ beamcraft inspect-workspace-history --workspace-dir DIR
 | Area | What exists |
 |---|---|
 | `beamcraft_host::revision` | `RevisionStore::info_at(sequence)` and `open_at(sequence)`: an earlier revision by log sequence with the record, manifest, base-link and blob checks of `open`. Test in `crates/host/tests/revision.rs`. |
-| `beamcraft_cli::history` | `timeline` (derives the stacks), `step` (undo or redo), the `undo.log` intent file. |
+| `beamcraft_commands::history` | `timeline` (derives the stacks), `step` (undo or redo), the `undo.log` intent file. |
 | CLI | The three commands above. They need no published store. |
 
 ## Decisions

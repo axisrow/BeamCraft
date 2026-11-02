@@ -7,8 +7,8 @@
 //! says whether the model still matches it).
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
-use beamcraft_cli::numbering::{NumberingView, numbering_preview};
-use beamcraft_cli::numbering_approval::{
+use beamcraft_commands::numbering::{NumberingView, numbering_preview};
+use beamcraft_commands::numbering_approval::{
     ApprovalContext, Approved, StatusView, approve_numbering, numbering_status,
 };
 use beamcraft_engine::numbering::{GroupKind, Series, Settings, unnumbered};

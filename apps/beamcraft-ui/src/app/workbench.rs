@@ -600,11 +600,36 @@ impl App {
                     }
                     if self.ribbon_tab == RibbonTab::View {
                     group(ui, "Views", &mut |ui| {
-                        if tool_button(ui, Icon::Block, "Saved views", self.views_panel.window_open, true).clicked() {
-                            self.views_panel.window_open = !self.views_panel.window_open;
+                        ui.menu_button("Create view", |ui| {
+                            for (construction, label) in crate::views::Construction::ALL {
+                                if ui.button(label).clicked() {
+                                    self.begin_view(construction);
+                                    ui.close();
+                                }
+                            }
+                        });
+                        if tool_button(ui, Icon::Block, "View properties", self.views.editing, true).clicked() {
+                            match self.views.active {
+                                Some(id) => self.edit_view(id),
+                                None => self.views.editing = !self.views.editing,
+                            }
                         }
-                        if tool_button(ui, Icon::Copy, "New view window", false, self.view_windows.len() < crate::views::MAX_WINDOWS).clicked() {
-                            self.open_view_window();
+                        if tool_button(ui, Icon::Fit, "3D / plane (Ctrl+P)", self.views.toggled.is_some(), true).clicked() {
+                            self.toggle_view_plane();
+                        }
+                        ui.menu_button("Direction", |ui| {
+                            for (direction, label) in crate::views::Direction::ALL {
+                                if ui.button(label).clicked() {
+                                    self.orient_view(direction);
+                                    ui.close();
+                                }
+                            }
+                        });
+                        if tool_button(ui, Icon::Copy, "New view window", false, self.views.windows.len() < crate::views::MAX_WINDOWS).clicked() {
+                            self.open_view_window(self.views.active);
+                        }
+                        if tool_button(ui, Icon::Grid, "Tile windows", false, !self.views.windows.is_empty()).clicked() {
+                            self.views.tile = true;
                         }
                     });
                     group(ui, "Display", &mut |ui| {
@@ -639,6 +664,12 @@ impl App {
                     group(ui, "Refresh", &mut |ui| {
                         if tool_button(ui, Icon::Refresh, "Reload", false, true).clicked() {
                             self.reload();
+                        }
+                        if tool_button(ui, Icon::Refresh, "Redraw views", false, true).clicked() {
+                            for window in &mut self.views.windows {
+                                window.filtered = None;
+                            }
+                            self.recolour();
                         }
                     });
                     }
@@ -908,6 +939,47 @@ impl App {
                     self.delete_selection();
                 } else {
                     self.set_bench(bench);
+                }
+                return true;
+            }
+        }
+        // The model views (V12): every way to create one, and the view commands.
+        for (construction, label) in crate::views::Construction::ALL {
+            let label = format!("Create view: {label}");
+            if label.to_lowercase().contains(&query)
+                && ui
+                    .add(egui::Button::new(&label).min_size(vec2(ui.available_width(), 34.0)))
+                    .clicked()
+            {
+                self.begin_view(construction);
+                return true;
+            }
+        }
+        for label in [
+            "View properties",
+            "3D / plane view",
+            "New view window",
+            "Tile view windows",
+            "Next open view",
+        ] {
+            if label.to_lowercase().contains(&query)
+                && ui
+                    .add(egui::Button::new(label).min_size(vec2(ui.available_width(), 34.0)))
+                    .clicked()
+            {
+                match label {
+                    "View properties" => match self.views.active {
+                        Some(id) => self.edit_view(id),
+                        None => self.views.editing = true,
+                    },
+                    "3D / plane view" => self.toggle_view_plane(),
+                    "New view window" => self.open_view_window(self.views.active),
+                    "Tile view windows" => self.views.tile = true,
+                    _ => {
+                        if let Some(next) = self.views.next_open() {
+                            self.activate_view(Some(next));
+                        }
+                    }
                 }
                 return true;
             }
@@ -1224,69 +1296,11 @@ impl App {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let needle = self.browser_search.trim().to_lowercase();
                     if needle.is_empty() || "views 3d model".contains(&needle) {
-                        // The named views of the model (V12): clicking restores the view; the
-                        // {3D} entry fits the whole model. Actions run after the panel closes.
-                        let mut pick = None;
-                        egui::CollapsingHeader::new("Views (all)")
+                        // The model views (V12): folders, search, quick access and the context
+                        // menu live in the view browser; the {3D} entry is the free view.
+                        egui::CollapsingHeader::new("Views")
                             .default_open(true)
-                            .show(ui, |ui| {
-                                ui.add_enabled(false, egui::Label::new("Floor Plans"))
-                                    .on_disabled_hover_text(LATER);
-                                egui::CollapsingHeader::new("3D Views")
-                                    .default_open(true)
-                                    .show(ui, |ui| {
-                                        if ui.selectable_label(true, "{3D}").clicked() {
-                                            self.pending_fit = true;
-                                        }
-                                        for view in self.views.iter() {
-                                            let kind = match &view.plane {
-                                                None => "3D",
-                                                Some(
-                                                    beamcraft_engine::views::PlaneSpec::GridLine {
-                                                        ..
-                                                    },
-                                                ) => "grid line",
-                                                Some(beamcraft_engine::views::PlaneSpec::Level) => {
-                                                    "level"
-                                                }
-                                                Some(
-                                                    beamcraft_engine::views::PlaneSpec::TwoPoints {
-                                                        ..
-                                                    },
-                                                ) => "two points",
-                                            };
-                                            ui.horizontal(|ui| {
-                                                if ui.selectable_label(false, &view.name).clicked()
-                                                {
-                                                    pick = Some(crate::views::Action::Apply(
-                                                        view.name.clone(),
-                                                    ));
-                                                }
-                                                ui.label(
-                                                    RichText::new(kind)
-                                                        .size(10.0)
-                                                        .color(palette.muted),
-                                                );
-                                                if ui
-                                                    .button("×")
-                                                    .on_hover_text("Remove view")
-                                                    .clicked()
-                                                {
-                                                    pick = Some(crate::views::Action::Delete(
-                                                        view.name.clone(),
-                                                    ));
-                                                }
-                                            });
-                                        }
-                                    });
-                                for label in ["Elevations", "Sections", "Drafting Views"] {
-                                    ui.add_enabled(false, egui::Label::new(label))
-                                        .on_disabled_hover_text(LATER);
-                                }
-                            });
-                        if let Some(action) = pick {
-                            self.view_action(action);
-                        }
+                            .show(ui, |ui| self.view_browser(ui));
                     }
                     for title in ["Schedules / Quantities", "Sheets (all)"] {
                         if needle.is_empty() || title.to_lowercase().contains(&needle) {

@@ -8,11 +8,10 @@ use openusd::sdf;
 /// Persistent shared-definition relationship name.
 pub const RELATIONSHIP: &str = "bim:instanceOf";
 
-/// The platform's read-side cap on part instances of one stage. It mirrors the command-side
-/// cap (`steel::model::instance::MAX_PART_INSTANCES`), which admission checks before writing,
-/// so a batch and its loaded stage fan out to the same bound; a steel-side test asserts the
-/// two constants stay equal.
-pub const MAX_PART_INSTANCES: usize = 256;
+/// The command-side cap on part instances of one stage. It mirrors the model's stored cap
+/// (`steel::model::instance::MAX_PART_INSTANCES`), which the steel layer reports its links
+/// against, so a batch and its loaded stage fan out to the same bound.
+const MAX_PART_INSTANCES: usize = 256;
 
 fn text<'a>(p: &'a Prim, name: &str) -> Option<&'a str> {
     match p

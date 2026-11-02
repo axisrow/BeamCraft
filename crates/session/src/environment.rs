@@ -454,8 +454,11 @@ mod tests {
             "{entries:?}"
         );
         assert!(
-            entries.len() >= 2,
-            "blank and starter ship with the program"
+            entries.iter().any(|e| matches!(
+                &e.state,
+                EnvironmentState::Ready { id, .. } if id == "blank"
+            )),
+            "the base blank environment ships with the program"
         );
     }
 }

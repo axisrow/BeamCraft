@@ -1917,6 +1917,11 @@ pub(crate) fn replay_summary(
     }
 }
 
+/// The U02 mesh change of a steel part: its body and the quantity record of its kind.
+pub(crate) fn part_mesh_change(part: &steel::engine::part::PartRecord) -> Result<Change, Refusal> {
+    mesh_change(&part.id(), part.solid(), &part.quantity_record())
+}
+
 /// The U02 mesh change of a kernel body.
 pub(crate) fn mesh_change(
     id: &ElementId,

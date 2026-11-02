@@ -23,8 +23,8 @@ beamcraft inspect-elements --store ROOT   (plates and members now carry stored_q
 | `beamcraft_engine::quantity` | `QuantityRecord` (volume, mass, statuses, shape and mass signatures, algorithm), `assess` (current, stale, missing), `plate_shape_signature`, `member_shape_signature`, `mass_signature`, `record_for`. |
 | `beamcraft_engine::update` | `effect`, `patch_plate`, `patch_member`; thickness on a member is UNSUPPORTED_PROPERTY. |
 | `beamcraft_layer_engine::authored` | Optional mesh attributes `bim:volumeMm3`, `bim:volumeStatus`, `bim:massKg`, `bim:massStatus`, `bim:shapeSignature`, `bim:massSignature`, `bim:quantityAlgorithm`; mesh writes replace the whole prim, so no stale attribute survives. |
-| `beamcraft_cli::edit` | `update_element`: only changed groups are written; replay by `op_id`; a no-op patch is INVALID_ARGUMENT. |
-| `beamcraft_cli::plate` | The publish-time verifier is strict: a stored record that disagrees with the re-evaluated one fails with INTEGRITY_ERROR. `inspect-elements` is not strict and reports freshness. |
+| `beamcraft_commands::edit` | `update_element`: only changed groups are written; replay by `op_id`; a no-op patch is INVALID_ARGUMENT. |
+| `beamcraft_commands::plate` | The publish-time verifier is strict: a stored record that disagrees with the re-evaluated one fails with INTEGRITY_ERROR. `inspect-elements` is not strict and reports freshness. |
 
 ## Decisions
 

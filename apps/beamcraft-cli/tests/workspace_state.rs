@@ -10,7 +10,7 @@
     clippy::indexing_slicing
 )]
 
-use beamcraft_cli::workspace::{WorkspaceMeta, WorkspaceState, read_meta};
+use beamcraft_commands::workspace::{WorkspaceMeta, WorkspaceState, read_meta};
 use beamcraft_host::lease::{LeaseError, StoreLease};
 use beamcraft_host::revision::{RevisionStore, Uuid7};
 use beamcraft_host::storage::BlobStore;

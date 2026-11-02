@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! D2 headless commands: `create-level` and `levels`. They call the engine API through
-//! `beamcraft_cli::level` and print one JSON object with the same error shape and exit codes as
+//! `beamcraft_commands::level` and print one JSON object with the same error shape and exit codes as
 //! the plate commands. Assigning an element to a level is `update-element --level`.
 
 use crate::command_context::{self, CONTEXT_OPTIONS};
 use crate::plate_cmd::{check_project_option, footprint_json, id_error, num, revision_json};
-use beamcraft_cli::level::{LevelChange, LevelContext, LevelView, create_level, levels};
+use beamcraft_commands::level::{LevelChange, LevelContext, LevelView, create_level, levels};
 use beamcraft_host::{
     ids::IdSource,
     revision::{NoFault, RevisionStore},

@@ -292,7 +292,7 @@ fn malformed_or_unbounded_preview_refuses_without_writing_the_model() {
 
 #[test]
 fn real_cli_exports_reopenable_usd_intent_without_overwriting_or_modifying_the_model() {
-    use beamcraft_cli::drawing::codec;
+    use beamcraft_commands::drawing::codec;
     use beamcraft_layer_engine::{Asset, Cancellation, Control, Identity};
     use beamcraft_model::digest::ContentDigest;
     use std::time::{Duration, Instant};

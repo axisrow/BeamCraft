@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! E03 headless command `export-bom`: the verified head revision's bill of materials as CSV
-//! files. It calls the engine's pure tables through `beamcraft_cli::bom` and prints one JSON
+//! files. It calls the engine's pure tables through `beamcraft_commands::bom` and prints one JSON
 //! object with the same error shape and exit codes as the other commands.
 
-use beamcraft_cli::bom::rows;
-use beamcraft_cli::plate::inspect;
+use beamcraft_commands::bom::rows;
+use beamcraft_commands::plate::inspect;
 use beamcraft_engine::bom::{elements_csv, summary_csv, tables};
 use beamcraft_engine::limits::MAX_ELEMENTS;
 use beamcraft_host::{revision::RevisionStore, storage::BlobStore};
@@ -123,7 +123,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     let inspection = inspect(&store)?;
     // The approved numbering marks (A09) of the same head; a mark the store does not carry
     // falls back to the element id in the report.
-    let (mark_revision, marks) = beamcraft_cli::numbering_approval::head_marks(&store)?;
+    let (mark_revision, marks) = beamcraft_commands::numbering_approval::head_marks(&store)?;
     if mark_revision != inspection.revision.revision_id {
         return Err(invalid(
             "the store head moved while the report was gathered",

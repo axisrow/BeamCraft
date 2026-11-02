@@ -5,7 +5,7 @@
 //! Actual two-client CLI rebase, including strict inspection and a draft CAS race.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
-use beamcraft_cli::{
+use beamcraft_commands::{
     plate,
     workspace::{
         self,
@@ -454,7 +454,7 @@ fn accepted_head_is_pinned_while_a_concurrent_local_edit_wins_the_draft_cas() {
     );
 }
 
-fn name_of(report: &beamcraft_cli::plate::Inspection, n: usize) -> String {
+fn name_of(report: &beamcraft_commands::plate::Inspection, n: usize) -> String {
     report
         .plates
         .iter()
@@ -713,7 +713,7 @@ fn reported_kinds_cover_lifecycle_and_read_write_dependencies() {
     assert_eq!(text(&diagnostics[0], "group"), "label");
 }
 
-fn thickness_of(report: &beamcraft_cli::plate::Inspection, n: usize) -> f64 {
+fn thickness_of(report: &beamcraft_commands::plate::Inspection, n: usize) -> f64 {
     report
         .plates
         .iter()

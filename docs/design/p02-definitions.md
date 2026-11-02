@@ -26,8 +26,8 @@ beamcraft definitions --store ROOT   (fresh process: verified head, every defini
 | `beamcraft_model::command` | `CreatePlate.material_digest` is admitted (the P01 `UNSUPPORTED_PROPERTY` refusal is gone) and is part of the content fingerprint, so another material under one `op_id` is `OP_ID_REUSE`. |
 | `beamcraft_engine` | `MaterialInfo`, `MaterialLookup`, `no_materials`; `AuthoredPlate.material`; `Quantities.{mass_kg, density_kg_m3}`; mass by the kernel's `analytic_mass_kg` (`fl(fl(V_mm3 * density) / 1e9)`, F06 section 2). The density is re-admitted from the committed layer before it makes a mass. `Footprint::for_create` reads the pinned definition and never writes it; `Footprint::for_define` writes only the definition. |
 | `beamcraft_layer_engine::authored` | A batch of resources only is accepted (an empty batch is still rejected), each newly written definition is a declared write of its digest, existing definitions are never rewritten. |
-| `beamcraft_cli::definition` | `define` (admit, resource, head read, idempotency by digest, author, footprint check, commit), `decode_definitions` (path digest, `bim:contentDigest` label, units, version, values and the recomputed digest must agree), `material_lookup`. |
-| `beamcraft_cli::plate` | The verifier and `inspect` now resolve materials from the committed definitions; `load_base`/`publish_revision` are shared by `create_plate` and `define`. |
+| `beamcraft_commands::definition` | `define` (admit, resource, head read, idempotency by digest, author, footprint check, commit), `decode_definitions` (path digest, `bim:contentDigest` label, units, version, values and the recomputed digest must agree), `material_lookup`. |
+| `beamcraft_commands::plate` | The verifier and `inspect` now resolve materials from the committed definitions; `load_base`/`publish_revision` are shared by `create_plate` and `define`. |
 
 ## Decisions
 

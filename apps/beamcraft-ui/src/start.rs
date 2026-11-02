@@ -705,8 +705,8 @@ impl StartPage {
                 let usable = |id: &str| self.environments.iter().any(|e| e.usable_id() == Some(id));
                 let saved = settings.environment.clone().filter(|id| usable(id));
                 self.environment = saved.clone().or_else(|| {
-                    // The starter environment has the sections a first beam needs; the blank
-                    // one is empty, so it is only the fallback.
+                    // The blank environment is the base one and has the sections a first beam
+                    // needs; any other usable environment is only the fallback.
                     let usable = |wanted: Option<&str>| {
                         self.environments.iter().find_map(|e| {
                             e.usable_id()
@@ -714,7 +714,7 @@ impl StartPage {
                                 .map(str::to_owned)
                         })
                     };
-                    usable(Some("starter")).or_else(|| usable(None))
+                    usable(Some("blank")).or_else(|| usable(None))
                 });
                 self.launcher =
                     !(settings.skip_launcher && settings.profile.is_some() && saved.is_some());
@@ -2046,7 +2046,7 @@ mod tests {
                 "/c"
             ]
         );
-        let args = project_create_args(None, "/m", "Nave 1", None, Some("starter"));
+        let args = project_create_args(None, "/m", "Nave 1", None, Some("blank"));
         assert_eq!(
             args,
             [
@@ -2056,7 +2056,7 @@ mod tests {
                 "--name",
                 "Nave 1",
                 "--environment",
-                "starter"
+                "blank"
             ]
         );
     }

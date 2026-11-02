@@ -15,7 +15,7 @@
     clippy::panic
 )]
 
-use beamcraft_cli::workspace::compensation::{CompensationRequest, compensate_workspace};
+use beamcraft_commands::workspace::compensation::{CompensationRequest, compensate_workspace};
 use beamcraft_host::revision::{CommitPoint, RevisionStore, Uuid7};
 use beamcraft_host::storage::BlobStore;
 use beamcraft_json::{Json, Limits};

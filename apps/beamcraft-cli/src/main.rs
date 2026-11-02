@@ -7,7 +7,7 @@ mod help;
 mod report;
 mod revision;
 
-use beamcraft_cli::registry::{self, Route};
+use beamcraft_commands::registry::{self, Route};
 use beamcraft_host::{
     control::{Cancellation, Control, HostError},
     storage::BlobStore,
@@ -302,12 +302,12 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
     result.map_err(|e| (e, Json::Null))
 }
 fn read_file(path: &str, cap: usize) -> Result<Vec<u8>, HostError> {
-    beamcraft_cli::source_file::read_file(path, cap).map_err(HostError::logical)
+    beamcraft_commands::source_file::read_file(path, cap).map_err(HostError::logical)
 }
 /// `commands`: the registry, with no store involved. It takes no options.
 fn list_commands(tail: &[std::ffi::OsString]) -> std::process::ExitCode {
     match tail {
-        [] => print_json(&beamcraft_cli::registry::listing(), 0),
+        [] => print_json(&beamcraft_commands::registry::listing(), 0),
         _ => {
             let error = invalid();
             let json = Json::object([

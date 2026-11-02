@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Original display-only perspective and orthographic projection (V13) and Lambert lighting;
 // no engineering computation.
-struct Camera { right: vec4f, up: vec4f, back: vec4f, eye: vec4f, params: vec4f, mode: vec4f }
+struct Camera { right: vec4f, up: vec4f, back: vec4f, eye: vec4f, params: vec4f, mode: vec4f, tint: vec4f }
 @group(0) @binding(0) var<uniform> camera: Camera;
 // The V15 cut plane: a count and up to 16 half-spaces (normal.xyz, -normal·point). A fragment
 // outside any half-space is discarded, so the model is cut in the image only and never in data.
@@ -50,13 +50,19 @@ fn cut(world: vec3f) {
         if (dot(plane.xyz, world) + plane.w < 0.0) { discard; }
     }
 }
+// The model view tint (V12): a fully transparent view draws nothing, and a colour override
+// replaces the base colour of the model faces; a negative red keeps the pipeline colour.
+fn view_colour(base: vec3f) -> vec3f {
+    if (camera.tint.a <= 0.0) { discard; }
+    return select(base, camera.tint.rgb, camera.tint.r >= 0.0);
+}
 // Cool steel faces keep the engineering model distinct from the application chrome. The
 // overlay tint multiplies the base colour (also in wireframe, which shares this fragment); a
 // white tint leaves the face untouched.
 @fragment fn shade(o: Out) -> @location(0) vec4f {
     cut(o.world);
     let n = normalize(o.normal);
-    let base = mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0));
+    let base = view_colour(mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return vec4f(base * light * o.tint.rgb, 1.0);
 }
@@ -73,7 +79,7 @@ fn cut(world: vec3f) {
     cut(o.world);
     let n = normalize(o.normal);
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
-    return vec4f(vec3f(0.62, 0.62, 0.62) * light, 1.0);
+    return vec4f(view_colour(vec3f(0.62, 0.62, 0.62)) * light, 1.0);
 }
 // The transparent mode: the shaded colours at partial opacity; the pipeline blends and keeps
 // depth testing but not depth writing, so hidden faces show through. The overlay tint carries
@@ -81,7 +87,7 @@ fn cut(world: vec3f) {
 @fragment fn shade_transparent(o: Out) -> @location(0) vec4f {
     cut(o.world);
     let n = normalize(o.normal);
-    let base = mix(vec3f(0.47, 0.71, 0.77), vec3f(0.96, 0.94, 0.88), clamp(n.z, 0.0, 1.0));
+    let base = view_colour(mix(vec3f(0.47, 0.71, 0.77), vec3f(0.96, 0.94, 0.88), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
-    return vec4f(base * light * o.tint.rgb, 0.45 * o.tint.a);
+    return vec4f(base * light * o.tint.rgb, 0.45 * o.tint.a * camera.tint.a);
 }

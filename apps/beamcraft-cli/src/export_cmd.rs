@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! E02 headless commands: `export-ifc` and `ifc-guid`. They parse, call the engine-side adapter
-//! `beamcraft_cli::export` and print one JSON object with sorted keys; they compute nothing
+//! `beamcraft_commands::export` and print one JSON object with sorted keys; they compute nothing
 //! else (`IFCX-SURF-001`). A refused export prints the common rejection shape, with the `IFC_`
 //! token and the status (`failed`, or `incomplete` for an unavailable input) in `diagnostics`.
 
 use crate::plate_cmd::id_error;
 use crate::report::report_with;
-use beamcraft_cli::export::{
+use beamcraft_commands::export::{
     CONTRACT_VERSION, ExportReport, ExportRequest, check_destinations, ifc_code_of,
     ifc_guid_decode, ifc_guid_of, prepare_export, validate_request,
 };

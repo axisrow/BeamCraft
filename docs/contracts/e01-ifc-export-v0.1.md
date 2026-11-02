@@ -781,7 +781,7 @@ No network access is involved; the output path is a local I/O-edge argument and 
 |-------|------|
 | Pure IFC writer: GlobalId, STEP lexical rules, entity templates, bounded sink | `crates/ifc` (`beamcraft-ifc`, layer 2, no file system, no third-party dependency) |
 | Atomic output (temporary file, sync, non-replacing install) | `beamcraft_host::output` |
-| Export adapter and the commands `export-ifc` and `ifc-guid` | `beamcraft_cli::export` |
+| Export adapter and the commands `export-ifc` and `ifc-guid` | `beamcraft_commands::export` |
 
 ### 15.2 Writer design
 

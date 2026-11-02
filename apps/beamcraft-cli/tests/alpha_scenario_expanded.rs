@@ -1552,7 +1552,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     // the closed descriptor through its schema identity; the unannotated view authors no
     // title line, so an untitled document keeps its byte-stable form.
     let documents =
-        beamcraft_cli::drawing::document::store::DocumentStore::open(Path::new(&titled_dir))
+        beamcraft_commands::drawing::document::store::DocumentStore::open(Path::new(&titled_dir))
             .unwrap();
     let stored = documents.head().unwrap();
     assert_eq!(stored.version.unwrap().to_string(), titled_version);
@@ -1562,14 +1562,16 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         .content()
         .entries()
         .iter()
-        .find(|entry| entry.name() == beamcraft_cli::drawing::codec::INTENT_LAYER)
+        .find(|entry| entry.name() == beamcraft_commands::drawing::codec::INTENT_LAYER)
         .unwrap();
     let blobs = beamcraft_host::storage::BlobStore::new(Path::new(&titled_dir)).unwrap();
     let intent = String::from_utf8(blobs.read(&intent_entry.digest()).unwrap()).unwrap();
-    assert!(beamcraft_cli::drawing::codec::SCHEMA_DESCRIPTOR.contains("view-title=drawing:title"));
+    assert!(
+        beamcraft_commands::drawing::codec::SCHEMA_DESCRIPTOR.contains("view-title=drawing:title")
+    );
     assert!(intent.contains(&format!(
         "custom string drawing:schema = \"{}\"",
-        beamcraft_cli::drawing::codec::schema_identity().unwrap()
+        beamcraft_commands::drawing::codec::schema_identity().unwrap()
     )));
     assert_eq!(intent.matches("custom string drawing:title = ").count(), 4);
     for title in ["COLUMN A REV 2", "PLAN: east", "SECTION A-A", "DETAIL 1"] {

@@ -1,0 +1,53 @@
+# beamcraft.g11-cases/1; original synthetic inputs, MPL-2.0, BeamCraft contributors
+# Decimal tokens round to the nearest binary64. Units: mm, kg/m3. See README.md.
+# id	family	body	parameters	density_kg_m3	translation_mm	rotation
+g11.mesh.plate_decimal_box	mesh	plate	points=0e0,0e0;1e-1,0e0;1e-1,3e-1;0e0,3e-1 thickness=7e-1	7.85e3	0e0,0e0,0e0	identity
+g11.mesh.plate_thirds	mesh	plate	points=0e0,0e0;3.333333e2,0e0;3.333333e2,7.777777e2;0e0,7.777777e2 thickness=1.23e1	-	0e0,0e0,0e0	identity
+g11.mesh.plate_pentagon	mesh	plate	points=0e0,0e0;3e-1,0e0;3e-1,7e-1;1e-1,9e-1;0e0,7e-1 thickness=1e-2	-	0e0,0e0,0e0	identity
+g11.mesh.plate_concave	mesh	plate	points=0e0,0e0;5.005e2,0e0;5.005e2,1.001e2;1.001e2,1.001e2;1.001e2,3.003e2;0e0,3.003e2 thickness=1.01e1	7.85e3	0e0,0e0,0e0	identity
+g11.mesh.member_rectangle	mesh	member	rectangle=2.001e2,3.007e2 start=0e0,0e0,0e0 end=3e3,4e3,0e0	7.85e3	0e0,0e0,0e0	identity
+g11.mesh.member_i_sharp	mesh	member	i_shape=3.003e2,1.501e2,7.1e0,1.07e1,0e0 start=0e0,0e0,0e0 end=3e3,4e3,0e0	-	0e0,0e0,0e0	identity
+g11.mesh.member_channel_sharp	mesh	member	channel=2.002e2,7.53e1,8.5e0,1.15e1,0e0 start=1.005e2,2.0025e2,3.00125e2 end=4.005e2,6.0025e2,1.500125e3	-	0e0,0e0,0e0	identity
+g11.mesh.member_angle_sharp	mesh	member	angle=1.001e2,6.53e1,8.2e0,0e0 start=1.005e2,2.0025e2,3.00125e2 end=4.005e2,6.0025e2,1.500125e3	-	0e0,0e0,0e0	identity
+g11.mesh.member_rhs_sharp	mesh	member	rhs=2.002e2,1.001e2,6.3e0,0e0 start=0e0,0e0,0e0 end=3e3,4e3,0e0	7.85e3	0e0,0e0,0e0	identity
+g11.mesh.member_plain_c_sharp	mesh	member	plain_c=1.501e2,5.03e1,3.2e0,0e0 start=1.005e2,2.0025e2,3.00125e2 end=4.005e2,6.0025e2,1.500125e3	-	0e0,0e0,0e0	identity
+g11.mesh.member_lipped_c_sharp	mesh	member	lipped_c=2.002e2,7.01e1,2.03e1,2.5e0,0e0 start=1.005e2,2.0025e2,3.00125e2 end=4.005e2,6.0025e2,1.500125e3	-	0e0,0e0,0e0	identity
+g11.mesh.member_lipped_z_sharp	mesh	member	lipped_z=2.002e2,7.01e1,2.03e1,2.5e0,0e0 start=1.005e2,2.0025e2,3.00125e2 end=4.005e2,6.0025e2,1.500125e3	-	0e0,0e0,0e0	identity
+g11.mesh.member_omega_sharp	mesh	member	omega=8.03e1,5.01e1,2.02e1,2e0,0e0 start=1.005e2,2.0025e2,3.00125e2 end=4.005e2,6.0025e2,1.500125e3	-	0e0,0e0,0e0	identity
+g11.mesh.member_i_rounded	mesh	member	i_shape=3.003e2,1.501e2,7.1e0,1.07e1,1.5e1 start=0e0,0e0,0e0 end=3e3,4e3,0e0	7.85e3	0e0,0e0,0e0	identity
+g11.mesh.member_rhs_rounded	mesh	member	rhs=2.002e2,1.001e2,6.3e0,9.45e0 start=0e0,0e0,0e0 end=3e3,4e3,0e0	-	0e0,0e0,0e0	identity
+g11.mesh.member_chs	mesh	member	chs=1.683e2,7.1e0 start=1.005e2,2.0025e2,3.00125e2 end=4.005e2,6.0025e2,1.500125e3	-	0e0,0e0,0e0	identity
+g11.mesh.member_lipped_c_rounded	mesh	member	lipped_c=2.002e2,7.01e1,2.03e1,2.5e0,3.75e0 start=1.005e2,2.0025e2,3.00125e2 end=4.005e2,6.0025e2,1.500125e3	-	0e0,0e0,0e0	identity
+g11.mesh.bolt_m16_washer	mesh	bolt	part=washer diameter=1.6e1 head=2.4e1,1e1 nut=2.4e1,1.48e1 washer=3e1,1.7e1,3e0 length=6e1	-	0e0,0e0,0e0	identity
+g11.mesh.bolt_m16_head	mesh	bolt	part=head diameter=1.6e1 head=2.4e1,1e1 nut=2.4e1,1.48e1 washer=3e1,1.7e1,3e0 length=6e1	-	0e0,0e0,0e0	identity
+g11.mesh.bolt_m16_shank	mesh	bolt	part=shank diameter=1.6e1 head=2.4e1,1e1 nut=2.4e1,1.48e1 washer=3e1,1.7e1,3e0 length=6e1	-	0e0,0e0,0e0	identity
+g11.mesh.bolt_m16_nut	mesh	bolt	part=nut diameter=1.6e1 head=2.4e1,1e1 nut=2.4e1,1.48e1 washer=3e1,1.7e1,3e0 length=6e1	-	0e0,0e0,0e0	identity
+g11.mesh.bolt_odd_washer	mesh	bolt	part=washer diameter=2.03e1 head=3.07e1,1.29e1 nut=3.07e1,1.81e1 washer=3.73e1,2.11e1,3.7e0 length=7.77e1	-	0e0,0e0,0e0	identity
+g11.mesh.bolt_odd_head	mesh	bolt	part=head diameter=2.03e1 head=3.07e1,1.29e1 nut=3.07e1,1.81e1 washer=3.73e1,2.11e1,3.7e0 length=7.77e1	-	0e0,0e0,0e0	identity
+g11.mesh.bolt_odd_shank	mesh	bolt	part=shank diameter=2.03e1 head=3.07e1,1.29e1 nut=3.07e1,1.81e1 washer=3.73e1,2.11e1,3.7e0 length=7.77e1	-	0e0,0e0,0e0	identity
+g11.mesh.bolt_odd_nut	mesh	bolt	part=nut diameter=2.03e1 head=3.07e1,1.29e1 nut=3.07e1,1.81e1 washer=3.73e1,2.11e1,3.7e0 length=7.77e1	-	0e0,0e0,0e0	identity
+g11.subnormal.min_plate_tiny_density	subnormal	plate	points=0e0,0e0;1e-3,0e0;1e-3,1e-3;0e0,1e-3 thickness=1e-3	1e-300	0e0,0e0,0e0	identity
+g11.subnormal.unit_plate_1e310	subnormal	plate	points=0e0,0e0;1e3,0e0;1e3,1e3;0e0,1e3 thickness=1e0	1e-310	0e0,0e0,0e0	identity
+g11.subnormal.largest_plate_smallest_density	subnormal	plate	points=0e0,0e0;1e6,0e0;1e6,1e6;0e0,1e6 thickness=1e6	5e-324	0e0,0e0,0e0	identity
+g11.subnormal.min_normal_density	subnormal	plate	points=0e0,0e0;1e3,0e0;1e3,1e3;0e0,1e3 thickness=1e4	2.2250738585072014e-308	0e0,0e0,0e0	identity
+g11.subnormal.normal_small_mass	subnormal	plate	points=0e0,0e0;1e3,0e0;1e3,1e3;0e0,1e3 thickness=1e3	1e-300	0e0,0e0,0e0	identity
+g11.subnormal.cap_density_min_plate	subnormal	plate	points=0e0,0e0;1e-3,0e0;1e-3,1e-3;0e0,1e-3 thickness=1e-3	1e6	0e0,0e0,0e0	identity
+g11.subnormal.zero_density	subnormal	plate	points=0e0,0e0;1e2,0e0;1e2,2e2;0e0,2e2 thickness=1e1	0e0	0e0,0e0,0e0	identity
+g11.subnormal.member_tiny_mass	subnormal	member	rectangle=5e-1,2.5e-1 start=0e0,0e0,0e0 end=1e3,0e0,0e0	1e-310	0e0,0e0,0e0	identity
+g11.far.plate_translated	far	plate	points=0e0,0e0;3.003e2,0e0;3.003e2,7.007e2;0e0,7.007e2 thickness=1.01e1	-	9.99998e8,-9.99999e8,9.99999e8	identity
+g11.far.plate_half_turn	far	plate	points=0e0,0e0;3.003e2,0e0;3.003e2,7.007e2;0e0,7.007e2 thickness=1.01e1	-	9.99999e8,9.99999e8,-9.9999999e8	half_turn_z
+g11.far.plate_at_negative_cap	far	plate	points=0e0,0e0;1e0,0e0;1e0,2e0;0e0,2e0 thickness=3e0	-	-1e9,-1e9,-1e9	identity
+g11.far.plate_local_contour	far	plate	points=9.99999e8,9.99999e8;9.999990003e8,9.99999e8;9.999990003e8,9.999990007e8;9.999990001e8,9.999990009e8;9.99999e8,9.999990007e8 thickness=1e-2	-	0e0,0e0,0e0	identity
+g11.far.plate_local_negative	far	plate	points=-9.99999e8,-9.99999e8;-9.999989997e8,-9.99999e8;-9.999989997e8,-9.999989993e8;-9.999989999e8,-9.999989991e8;-9.99999e8,-9.999989993e8 thickness=1e-2	-	0e0,0e0,0e0	identity
+g11.far.member_local_axis	far	member	rhs=1.003e2,5.01e1,5.7e0,0e0 start=9.99998e8,9.99998e8,9.99998e8 end=9.999981e8,9.999984e8,9.999988e8	-	0e0,0e0,0e0	identity
+g11.far.member_tiny_section	far	member	rectangle=5e-1,2.5e-1 start=9.99998e8,9.99998e8,9.99998e8 end=9.999981e8,9.999984e8,9.999988e8	-	0e0,0e0,0e0	identity
+g11.far.member_translated	far	member	i_shape=3.003e2,1.501e2,7.1e0,1.07e1,0e0 start=0e0,0e0,0e0 end=3e3,4e3,0e0	-	9.9999e8,-9.9999e8,9.9999e8	half_turn_z
+g11.cancel.rhs_huge_thin	cancel	member	rhs=9.999999e5,9.999997e5,4e-1,0e0 start=0e0,0e0,0e0 end=1e3,0e0,0e0	-	0e0,0e0,0e0	identity
+g11.cancel.rhs_mid_thin	cancel	member	rhs=1.234567e5,9.87653e4,5e-2,0e0 start=0e0,0e0,0e0 end=1e3,0e0,0e0	-	0e0,0e0,0e0	identity
+g11.cancel.chs_huge_thin	cancel	member	chs=9.999999e5,4e-1 start=0e0,0e0,0e0 end=1e3,0e0,0e0	-	0e0,0e0,0e0	identity
+g11.cancel.plate_sliver	cancel	plate	points=0e0,0e0;1e3,0e0;5e2,1e-3 thickness=1e0	-	0e0,0e0,0e0	identity
+g11.cancel.plate_sliver_far	cancel	plate	points=9.9999e7,-9.9999e7;1e8,-9.9999e7;9.99995e7,-9.9998999999e7 thickness=1e0	-	0e0,0e0,0e0	identity
+g11.cancel.plate_thin_large	cancel	plate	points=0e0,0e0;1e6,0e0;1e6,1e6;0e0,1e6 thickness=3.4e-1	-	0e0,0e0,0e0	identity
+g11.cancel.member_long_thin	cancel	member	rectangle=5e-1,5e-1 start=0e0,0e0,0e0 end=6e5,8e5,0e0	-	0e0,0e0,0e0	identity
+g11.cancel.member_near_vertical_column	cancel	member	rectangle=2.001e2,1.003e2 start=0e0,0e0,0e0 end=9e-4,0e0,1e3	-	0e0,0e0,0e0	identity
+g11.cancel.member_near_vertical_beam	cancel	member	rectangle=2.001e2,1.003e2 start=0e0,0e0,0e0 end=1.1e-3,0e0,1e3	-	0e0,0e0,0e0	identity

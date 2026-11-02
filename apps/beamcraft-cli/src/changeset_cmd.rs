@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! C01 headless commands: `create-changeset`, `inspect-changeset` and `apply-changeset`. They call
-//! `beamcraft_cli::changeset` and print one JSON object with the same error shape and exit codes
+//! `beamcraft_commands::changeset` and print one JSON object with the same error shape and exit codes
 //! as the plate commands.
 
 use crate::plate_cmd::revision_json;
-use beamcraft_cli::changeset::{
+use beamcraft_commands::changeset::{
     CreateChangeset, StoredChangeset, apply_changeset, create_changeset, read_changeset,
 };
 use beamcraft_host::{
@@ -143,9 +143,9 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
             Err(error) if error.code == ErrorCode::DependencyConflict => {
                 // C04: the refusal names every pending conflict in its diagnostics.
                 candidates.extend(
-                    beamcraft_cli::workspace::pending_conflicts(&workspace, dir)?
+                    beamcraft_commands::workspace::pending_conflicts(&workspace, dir)?
                         .iter()
-                        .map(beamcraft_cli::workspace::conflicts::conflict_json),
+                        .map(beamcraft_commands::workspace::conflicts::conflict_json),
                 );
                 return Err(error);
             }

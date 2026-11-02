@@ -18,7 +18,7 @@ beamcraft preview-numbering --store ROOT [--plate-series PREFIX:START] [--beam-s
 | Piece | Where | What |
 |---|---|---|
 | Rules | `beamcraft_engine::numbering` | `preview(parts, assemblies, settings)`: pure, bounded, deterministic. Part facts and assembly facts in, groups, positions, statuses and a token out |
-| Adapter | `beamcraft_cli::numbering` | reads plates, members and assemblies of the verified head (`plate::inspect`, `assembly::assemblies`) into facts; the two readers are checked to describe the same revision (read again up to three times if the head moved) |
+| Adapter | `beamcraft_commands::numbering` | reads plates, members and assemblies of the verified head (`plate::inspect`, `assembly::assemblies`) into facts; the two readers are checked to describe the same revision (read again up to three times if the head moved) |
 | Command | `preview-numbering` | parsing and JSON only; groups are paged (`--offset`, `--limit`, default 64, at most 256; at most 32 members listed per group) |
 
 Rules (own wording, from the owner's local numbering notes `24-numbering.md` and

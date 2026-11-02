@@ -5,7 +5,7 @@
 //! API.
 
 use crate::plate_cmd::revision_json;
-use beamcraft_cli::workspace::resolve::{ResolveRequest, resolve_workspace};
+use beamcraft_commands::workspace::resolve::{ResolveRequest, resolve_workspace};
 use beamcraft_host::{
     revision::{NoFault, RevisionStore, Uuid7},
     storage::BlobStore,
@@ -78,7 +78,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Refusal> {
         })?;
     let actor = match options.get("--actor-id") {
         Some(text) => Uuid7::parse(text)?,
-        None => beamcraft_cli::workspace::read_meta(dir)?.user_id,
+        None => beamcraft_commands::workspace::read_meta(dir)?.user_id,
     };
     let result = resolve_workspace(
         &workspace,
