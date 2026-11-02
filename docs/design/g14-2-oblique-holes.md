@@ -185,3 +185,64 @@ Known limitations of this slice, all refusals or uncertified results rather than
   column). The fix or the accepted deviation is an open owner decision.
 - Re-cutting a body after a faceted wall hole keeps the slice-1 limitation: the new band
   walls are not X-parallel, so a later hole on them is refused with `BodyNotPrism`.
+
+## Status after slice 3 (the merge-walk band, single-strip chains)
+
+Slice 3 delivers the merge walk of the construction section and takes over the sloped
+flat walls, behind the same `member_through_hole` entry point.
+
+- **Band events.** The crossing pass was dead in slice 2 (its sign filter skipped the
+  genuine crossings), so every event came from a footprint vertex; a cutter whose
+  footprint crosses a kink line mid-edge produced openings whose carved walls and band
+  rings did not meet, and the seal refused the result. The walk now collects a crossing
+  for every contour edge whose ends sit on strictly opposite sides of a crossed chain's
+  kink line, with the canonical parameter clamped onto the edge when fp dust in the
+  line's `b` (a section vertex a rounding step off the line) pushes it out of `[0, 1]`.
+  Events of the same contour point merge their kink points by position alone — a
+  clamped crossing lands on its vertex's event, whatever edge each was collected on —
+  and the walk folds the seam, where the last event can be the first vertex's duplicate,
+  into the head.
+- **Shared kink vertices.** A merged event can carry the kink points of two chains whose
+  lines sit a few ulps apart at the same `b` (a tube's near and far wall); the ring picks
+  the first point on the chain's own planes, and the carved wall resolves its `Kink` clip
+  vertices through the same chain's ring vertex for that contour position, so band and
+  carve meet on one registered vertex.
+- **Union-aware placement per side.** The exact area-cover check now runs per crossed
+  side instead of per chain: the sides of a ring wall tile the footprint once each, so a
+  chain covering it twice (near and far wall of one ring) classifies correctly. The
+  underlying `big_area2` shoelace was telescoping (`p.x·p.y − q.x·q.y`, identically zero
+  on any closed polygon) and is repaired to `p.x·q.y − q.x·p.y`; the cover bound is
+  matched to the area's own scale (`2^(2e)`) and widened over the crossing vertices' ulp
+  residual, so the check is meaningful rather than vacuous.
+- **Construction.** A face with several crossed strips is carved strip by strip under the
+  same face id (the per-strip splice already supported it); the slice-2 refusal is
+  lifted. Single-strip chains — one sloped plane, the tapered-section wall — are served
+  by the same chain path, which lifts the slice-1 `BodyWallUnsupported` refusal for
+  sloped walls. A mix of crossed flat faces and crossed chains stays refused
+  (`BodyWallUnsupported`), unchanged.
+- **Volume.** The removed volume of a chain crossing is certified from the clip pieces'
+  exact moments, not from the emitted band: a merge-walk ring crosses several strip
+  planes per side and the ring-fan divergence sum of the flat walls straddles the folds,
+  so it does not bracket the removed column. Each clip piece's height is linear, the
+  piece contributes the exact origin-fan moment `∬ t dA` in the scaled Big integers
+  (negated once for the cavity's clockwise winding), the pair's removed volume is the
+  exit sides' sum minus the entry sides', and the enclosure is widened by the clip
+  vertices' ulp residual. The flat walls keep the slice-1 divergence sum bit for bit.
+- **Tests.** The wider-than-band tube hole (the parked test of the fixup) is unparked:
+  it seals with genus 1, its removed volume matches the section's own closed form, its
+  band ids carry the `.p<run>` suffixes past the mid-edge kink crossings, and it repeats
+  byte for byte. New tests cover the sloped walls (a rotated square section: two
+  single-strip chains, the closed `A · s / cos(tilt)` volume, byte-exact repeats) and
+  the honest refusals: an oblique range that now genuinely ends inside a sloped wall is
+  the blind `CutterNotThrough` instead of the blanket `BodyWallUnsupported`.
+
+Known limitations still standing:
+
+- A mix of crossed flat faces and crossed chains is refused with
+  `BodyWallUnsupported` (the routing is conservative; lifting it is unassigned).
+- On a strip tilted against the cutter axis the clip piece still maps the footprint
+  into the strip frame without the `1/cos(tilt)` shadow scale (the opening undercuts
+  the true cutter curve by that factor); the closed form `A * H` does not hold for a
+  tilted wall. The fix or the accepted deviation remains an open owner decision.
+- Re-cutting a body after a faceted wall hole keeps the slice-1 limitation: the new
+  band walls are not X-parallel, so a later hole on them is refused with `BodyNotPrism`.

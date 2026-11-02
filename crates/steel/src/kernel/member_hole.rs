@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Transverse holes through the flat walls of a member section: G14.1, plus the G14.2
-//! first slice of directed cutters that cross those walls obliquely.
+//! Transverse holes through the walls of a member section: G14.1, the G14.2 directed
+//! cutters that cross flat walls obliquely (slice 1), the strip and kink registry with
+//! the union-aware placement (slice 2) and the merge-walk band across multi-facet
+//! chains with the single-strip sloped walls (slice 3).
 //!
 //! The body is a straight extrusion along X (the member axis): its lowest and highest
 //! vertices define two end planes `x0 < x1`, every triangle at `x0` or at `x1` is an end
@@ -24,16 +26,20 @@
 //! * Both ends of the cutter lie in free space: every wall it enters it also leaves, so a
 //!   range ending inside a wall is refused (a wall whose height interval over the footprint
 //!   straddles a range end is the same blind hole).
-//! * At every wall the footprint lies strictly inside one flat wall face, clear of that
-//!   face's edges, of other holes in the same face and of the face's own holes by at least
-//!   the geometric floor; contact is refused. A flat face the cutter passes over free
-//!   space (the footprint lies entirely beyond its region) is left untouched.
+//! * At every crossed wall the footprint lies strictly inside the wall's surface, clear
+//!   of its hard edges, of other holes in the same surface and of the surface's own
+//!   holes by at least the geometric floor; contact is refused. A wall the cutter passes
+//!   over free space (the footprint lies entirely beyond its region) is left untouched.
+//!   Flat axis-aligned walls classify face by face; faceted or sloped walls classify
+//!   through the strip registry, whose chains of soft kinks are crossed side by side,
+//!   each side's strips covering the footprint exactly.
 //! * A crossed wall removes the footprint area times the wall thickness along the hole
 //!   axis (`A * t / |n . d|` for a wall normal `n`); the exact removed volume of the
-//!   constructed opening certifies the candidate.
-//! * A curved wall (a fillet, a rounded corner, a tube), or a sloped (not axis-aligned)
-//!   wall plane inside the cutter range is refused in this slice: it needs the strip and
-//!   kink registry of the later G14.2 slices.
+//!   constructed opening certifies the candidate — the flat walls through the divergence
+//!   sum of the emitted rings and bands, the chains through the clip pieces' exact
+//!   moments, which stay honest when one side of the band crosses several strip planes.
+//! * A mix of crossed flat faces and crossed chains is still refused, as is a footprint
+//!   past the union of a chain's strips (the G14.1 edge-touching refusal).
 //! * The footprint clears the end caps and every wall parallel to the cutter axis (a face
 //!   whose `b` extent is degenerate) by at least the floor.
 //!
@@ -1539,17 +1545,21 @@ fn cut_through_chains(
             for (line_b, line_yz, x_lo, x_hi) in &piece.kinks {
                 for (j, pair) in points.iter().zip(points.iter().cycle().skip(1)).enumerate() {
                     let (p, q) = pair;
-                    let (d_b, at) = (q.y - p.y, p.y - line_b);
-                    if d_b == 0.0 || (at >= 0.0) == (q.y - line_b < 0.0) {
+                    let (d_b, sp, sq) = (q.y - p.y, p.y - line_b, q.y - line_b);
+                    // A contour edge is a crossing only when its ends sit on strictly
+                    // opposite sides of the line; same-side edges and edge ends exactly on
+                    // the line are the footprint-vertex attachments below.
+                    if d_b == 0.0 || (sp > 0.0) == (sq > 0.0) {
                         continue;
                     }
                     // The canonical crossing parameter, identical to the clip's own
                     // interpolation against a kink line, so both sides compute the exact
-                    // same registered point.
-                    let t = (line_b - p.y) / d_b;
-                    if !(0.0..=1.0).contains(&t) {
-                        continue;
-                    }
+                    // same registered point. The strict sides put `t` inside [0, 1]
+                    // mathematically; fp dust in `line_b` (a section vertex whose
+                    // coordinate is a rounding step off the line) can push it one step out,
+                    // so it clamps onto the edge — a crossing at a contour vertex lands on
+                    // that vertex's event and merges with it below.
+                    let t = ((line_b - p.y) / d_b).clamp(0.0, 1.0);
                     let a = p.x + t * (q.x - p.x);
                     if !(x_lo - eps..=x_hi + eps).contains(&a) {
                         continue;
@@ -1587,15 +1597,16 @@ fn cut_through_chains(
         }
     }
     events.sort_by(|a, b| a.edge.cmp(&b.edge).then(a.t.total_cmp(&b.t)));
-    // Events of the same contour point merge their kink points: chains whose bands share
-    // the footprint line produce identical crossings with their own body edges.
+    // Events of the same contour point merge their kink points. A crossing whose
+    // parameter clamps onto a contour vertex is that vertex's event, whatever edges the
+    // two were collected on, so the merge is by position alone: two crossings of one
+    // edge land at different positions and stay apart.
     let mut unique: Vec<Event> = Vec::with_capacity(events.len());
     for event in events {
         match unique.last_mut() {
             Some(last)
-                if last.edge == event.edge
-                    && (last.t - event.t).abs() <= 1e-12
-                    && (last.ab.x - event.ab.x).abs() <= eps =>
+                if (last.ab.x - event.ab.x).abs() <= eps
+                    && (last.ab.y - event.ab.y).abs() <= eps =>
             {
                 for kink in event.kinks {
                     if !last
@@ -1608,6 +1619,32 @@ fn cut_through_chains(
                 }
             }
             _ => unique.push(event),
+        }
+    }
+    // The contour seam: the walk ends where it started, so the last event can be the
+    // first vertex's duplicate and folds into it.
+    let seam = if unique.len() > 1 {
+        match (unique.first(), unique.last()) {
+            (Some(first), Some(last)) => {
+                (first.ab.x - last.ab.x).abs() <= eps && (first.ab.y - last.ab.y).abs() <= eps
+            }
+            _ => false,
+        }
+    } else {
+        false
+    };
+    if seam {
+        let last = unique.pop().ok_or_else(internal)?;
+        if let Some(first) = unique.first_mut() {
+            for kink in &last.kinks {
+                if !first
+                    .kinks
+                    .iter()
+                    .any(|k| k[0] == kink[0] && k[1] == kink[1] && k[2] == kink[2])
+                {
+                    first.kinks.push(*kink);
+                }
+            }
         }
     }
     let events = unique;
@@ -1685,27 +1722,26 @@ fn cut_through_chains(
             chain_of_strip.insert(piece.strip, ci);
         }
     }
-    // A face carved through several of its own strips (a curve-approximated cavity wall,
-    // whose band seams never line up with the flat bands) is the merge-walk slice's work.
-    let mut crossed_face_strips: std::collections::BTreeMap<u16, usize> =
-        std::collections::BTreeMap::new();
+    // A face carved through several of its own strips (a curve-approximated cavity
+    // wall, whose band seams never line up with the flat bands) is carved strip by
+    // strip under the same face id; a face with strips the cutter does not cross keeps
+    // their triangles.
+    let mut crossed_strip_tris: std::collections::BTreeSet<(u16, [u32; 3])> =
+        std::collections::BTreeSet::new();
     for chain in &crossed {
         for piece in &chain.pieces {
-            *crossed_face_strips.entry(piece.face).or_default() += 1;
+            if let Some(tris) = strips_tris.get(piece.strip) {
+                for tri in tris {
+                    crossed_strip_tris.insert((piece.face, *tri));
+                }
+            }
         }
     }
-    if crossed_face_strips.values().any(|count| *count > 1) {
-        return Err(OpFailure::unsupported(
-            OpField::Body,
-            OpDefect::BodyWallUnsupported,
-            Stage::Build,
-        ));
-    }
-    // The body keeps every triangle except those of the carved strips' faces.
+    // The body keeps every triangle except those of the carved strips.
     let mut triangles: Vec<[u32; 3]> = Vec::new();
     let mut faces: Vec<u16> = Vec::new();
     for (tri, face) in body.mesh().triangles().iter().zip(body.mesh().faces()) {
-        if !crossed_face_strips.contains_key(face) {
+        if !crossed_strip_tris.contains(&(*face, *tri)) {
             triangles.push(*tri);
             faces.push(*face);
         }
@@ -1744,7 +1780,30 @@ fn cut_through_chains(
             for tagged in &piece.tagged {
                 let id = match tagged.src {
                     ClipSrc::Body(id) => id,
-                    ClipSrc::Kink(at) => kinks.point(at, &mut vertices, &mut next_vertex)?,
+                    ClipSrc::Kink(at) => {
+                        // The band ring resolved this contour point to the chain's own
+                        // registered kink vertex, so the carved wall reuses that vertex:
+                        // two chains' kink lines can sit a few ulps apart at the same `b`
+                        // (a tube's near and far wall share one footprint line up to
+                        // rounding), their crossings merge into one event anchored at the
+                        // first line's parameter, and the clip's own interpolation may
+                        // carry the other line's. The event is found by position and the
+                        // vertex comes from this chain's ring, where the carve and the
+                        // band must meet.
+                        let mut event_index = None;
+                        for (ei, e) in events.iter().enumerate() {
+                            if (e.ab.x - tagged.ab.x).abs() <= eps
+                                && (e.ab.y - tagged.ab.y).abs() <= eps
+                            {
+                                event_index = Some(ei);
+                                break;
+                            }
+                        }
+                        match event_index {
+                            Some(ei) => ring_id(chain_ring, ei)?,
+                            None => kinks.point(at, &mut vertices, &mut next_vertex)?,
+                        }
+                    }
                     ClipSrc::Footprint(index) => {
                         let mut found = None;
                         for (ei, e) in events.iter().enumerate() {
@@ -2082,11 +2141,9 @@ fn cut_through_chains(
     // The cutter's own wall: one band per crossed chain pair, walked along the events.
     let mut face_ids = body.face_table().to_vec();
     let mut normals = body.face_normals().to_vec();
-    let mut bands: Vec<Vec<[u32; 3]>> = Vec::new();
     for k in 0..usize::try_from(count).map_err(|_| internal())? {
         let entry_ring = rings.get(2 * k).ok_or_else(internal)?;
         let exit_ring = rings.get(2 * k + 1).ok_or_else(internal)?;
-        let mut band = Vec::with_capacity(2 * events.len());
         // The emitted run count of each footprint edge, for the band id suffixes.
         let mut runs: std::collections::BTreeMap<usize, u32> = std::collections::BTreeMap::new();
         // The face id of each band side: the footprint edge it walks, with a run suffix
@@ -2127,19 +2184,12 @@ fn cut_through_chains(
             triangles.push([in_id, out_id1, out_id]);
             faces.push(u16::try_from(face_ids.len() - 1).map_err(|_| internal())?);
             faces.push(u16::try_from(face_ids.len() - 1).map_err(|_| internal())?);
-            band.push([in_id, in_id1, out_id1]);
-            band.push([in_id, out_id1, out_id]);
         }
-        bands.push(band);
     }
-    let rings_cap: Vec<CapLoop> = rings
-        .iter()
-        .map(|ring| CapLoop {
-            ids: ring.iter().map(|(id, _)| *id).collect(),
-            xyz: ring.iter().map(|(_, xyz)| *xyz).collect(),
-        })
-        .collect();
-    let removed = removed_volume(&cutter.cavity, &vertices, &rings_cap, &bands)?;
+    // The removed volume is certified from the clip pieces' exact moments, not from the
+    // emitted band: a merge-walk ring crosses several strip planes per side, so the
+    // ring-fan divergence sum of the flat walls would not bracket the removed column.
+    let removed = removed_volume_chains(&crossed)?;
     let negated = Enclosure {
         lo: -removed.hi,
         hi: -removed.lo,
@@ -2192,8 +2242,8 @@ fn big_area2(poly: &[Point2], e: i32) -> Result<Big, OpFailure> {
             (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
             _ => return Err(range()),
         };
-        let left = px.mul(&py);
-        let right = qx.mul(&qy);
+        let left = px.mul(&qy);
+        let right = qx.mul(&py);
         let (left, right) = match (left, right) {
             (Ok(a), Ok(b)) => (a, b),
             _ => return Err(range()),
@@ -2316,33 +2366,15 @@ fn place_chains(
         if t_clear(t_c_lo, t_c_hi, zf, zt, eps) {
             continue;
         }
-        // A chain of one strip is a single sloped plane: the flat-wall slice keeps its
-        // refusal, and the merge-walk slice takes it.
-        if chain.strips.len() < 2 {
-            return Err(OpFailure::unsupported(
-                OpField::Body,
-                OpDefect::BodyWallUnsupported,
-                Stage::Ranges,
-            ));
-        }
         // The clip pieces first: the exact areas below need the scale over the clip
         // interpolations, whose coordinates may carry deeper mantissas than the body's
         // own vertices.
-        let mut perim = 0.0f64;
         for piece in &mut pieces {
             let region_pts: Vec<Point2> = piece.region.iter().map(|(p, _)| *p).collect();
             let clip = clip_region(points, &region_pts);
             if clip.is_empty() {
                 continue;
             }
-            perim += clip
-                .iter()
-                .zip(clip.iter().cycle().skip(1))
-                .map(|(p, q)| {
-                    let (d_x, d_y) = (q.x - p.x, q.y - p.y);
-                    d_x.hypot(d_y)
-                })
-                .sum::<f64>();
             piece.clip = clip;
         }
         let any = pieces.iter().any(|p| !p.clip.is_empty());
@@ -2356,37 +2388,21 @@ fn place_chains(
                     .flat_map(|p| p.clip.iter().flat_map(|c| [c.x, c.y])),
             ),
         );
-        let mut covered2 = Big::ZERO;
-        for piece in &mut pieces {
-            if piece.clip.is_empty() {
-                continue;
-            }
-            let area2 = big_area2(&piece.clip, e)?;
-            covered2 = covered2.add(&area2).map_err(|_| internal())?;
-        }
         let footprint2 = big_area2(points, e)?;
-        let scale = 2.0f64.powi(e);
-        let bound = 32.0
-            * f64::EPSILON
-            * scale
-            * perim
-            * f64::from(u32::try_from(points.len() * 2).map_err(|_| internal())?);
-        let diff = footprint2.sub(&covered2).map_err(|_| internal())?;
-        let diff_enc = diff
-            .enclose_clamped(e.checked_sub(1).ok_or_else(internal)?)
-            .ok_or_else(internal)?;
-        if diff_enc.lo > bound || diff_enc.hi < -bound {
-            // The footprint is not exactly covered: free space or a sub-floor reach past
-            // the union, refused as the G14.1 edge-touching footprint.
-            if covered2.sign() == 0 {
-                continue;
-            }
-            return Err(contour());
-        }
+        // The cover bound: the crossings of the contour with the kink lines are fp
+        // interpolations a few ulps off the true intersection, so the pieces' union
+        // misses the footprint by at most one such residual per vertex over the span.
+        let mag_ab = points
+            .iter()
+            .flat_map(|p| [p.x, p.y])
+            .chain(
+                pieces
+                    .iter()
+                    .flat_map(|p| p.clip.iter().flat_map(|c| [c.x, c.y])),
+            )
+            .fold(0.0f64, |acc, v| acc.max(v.abs()));
         // The clip vertices: tagged by source, and the floor kept from the region's hard
         // edges (kink lines may be touched).
-        let mut t_lo = f64::INFINITY;
-        let mut t_hi = f64::NEG_INFINITY;
         for piece in &mut pieces {
             let region_pts: Vec<Point2> = piece.region.iter().map(|(p, _)| *p).collect();
             let tag = |p: &Point2| -> Result<ClipVertex, OpFailure> {
@@ -2440,12 +2456,6 @@ fn place_chains(
                 }
             }
             piece.tagged = deduped;
-            let t_at = |b: f64| piece.gamma.mul_add(b, piece.delta);
-            for p in &piece.clip {
-                let t = t_at(p.y);
-                t_lo = t_lo.min(t);
-                t_hi = t_hi.max(t);
-            }
             // The floor: every clip edge clears the region's hard edges; the region's own
             // holes and the kink lines are exempt from the hole half only.
             for (p, q) in piece.clip.iter().zip(piece.clip.iter().cycle().skip(1)) {
@@ -2477,7 +2487,8 @@ fn place_chains(
         // The crossed pieces grouped into sides: clips on strips adjacent through the
         // chain's own soft-kink order form one crossing; separated zones of a ring wall
         // (a tube's near and far wall) are distinct sides and cross the range as an entry
-        // and an exit of their own.
+        // and an exit of their own. Each crossed side must cover the footprint whole
+        // (the union-aware placement below runs per side).
         let mut crossed_pieces: Vec<ChainPiece> =
             pieces.into_iter().filter(|p| !p.clip.is_empty()).collect();
         // The chain's strip order, walking the soft-kink adjacency end to end (a ring
@@ -2536,6 +2547,42 @@ fn place_chains(
             }
         }
         for side in sides {
+            // The union-aware placement, per side: the side's clips must cover the
+            // footprint exactly — the exact clip areas sum to the exact footprint area
+            // (the sides of a ring wall tile it once each, so the check runs per side).
+            // A footprint reaching past the union onto a hard edge, into a hole of the
+            // same face or into free space is refused exactly as G14.1's edge-touching
+            // footprint.
+            let mut perim = 0.0f64;
+            let mut covered2 = Big::ZERO;
+            for piece in &side {
+                covered2 = covered2
+                    .add(&big_area2(&piece.clip, e)?)
+                    .map_err(|_| internal())?;
+                perim += piece
+                    .clip
+                    .iter()
+                    .zip(piece.clip.iter().cycle().skip(1))
+                    .map(|(p, q)| {
+                        let (d_x, d_y) = (q.x - p.x, q.y - p.y);
+                        d_x.hypot(d_y)
+                    })
+                    .sum::<f64>();
+            }
+            let bound = 32.0
+                * f64::EPSILON
+                * mag_ab
+                * perim
+                * f64::from(u32::try_from(points.len() * 2).map_err(|_| internal())?);
+            let diff = footprint2.sub(&covered2).map_err(|_| internal())?;
+            // The shoelace areas live at the coordinate scale squared; enclose the
+            // difference there so it compares with the bound in true square millimetres.
+            let diff_enc = diff
+                .enclose_clamped(e.checked_mul(2).ok_or_else(internal)?)
+                .ok_or_else(internal)?;
+            if diff_enc.lo > bound || diff_enc.hi < -bound {
+                return Err(contour());
+            }
             let mut s_lo = f64::INFINITY;
             let mut s_hi = f64::NEG_INFINITY;
             for piece in &side {
@@ -2753,6 +2800,87 @@ fn removed_volume(
         * mag
         * area_hi
         * f64::from(u32::try_from(ring_points).map_err(|_| range())?);
+    let v6 = total6
+        .enclose_clamped(e.checked_mul(3).ok_or_else(range)?)
+        .ok_or_else(range)?;
+    let v = div6(v6).ok_or_else(range)?;
+    Enclosure::new((v.lo - residual).next_down(), (v.hi + residual).next_up()).ok_or_else(range)
+}
+
+/// Exact removed volume of the crossed chain pairs, enclosed outward, from the clip
+/// pieces' exact moments rather than the emitted band: a merge-walk ring crosses several
+/// strip planes per side, so the ring-fan divergence sum of the flat walls does not
+/// bracket the removed column (its fans straddle the folds between the planes). On every
+/// clip piece the removed column's height is linear, `t = gamma * b + delta` on the entry
+/// side and on the exit side, so the piece contributes the exact Greene-moment integral
+/// `∬ t dA` — the origin-fan sum `(1/6) Σ cross_i (t_i + t_j + t_0)` over its polygon,
+/// exact in the scaled Big integers. The crossed sides of each pair tile the footprint
+/// exactly (the union-aware placement), so the pair's removed volume is the exit sides'
+/// moment sum minus the entry sides'. The enclosure is widened by the clip vertices'
+/// rounding residual: every clip coordinate is a few ulps off its true intersection
+/// point and every height a few ulps off its plane.
+fn removed_volume_chains(crossed: &[CrossedChain]) -> Result<Enclosure, OpFailure> {
+    let range = || OpFailure::numeric(OpField::Volume, OpDefect::NumericRange, Stage::Quantities);
+    let e = min_exponent(crossed.iter().flat_map(|chain| {
+        chain.pieces.iter().flat_map(|piece| {
+            piece
+                .clip
+                .iter()
+                .flat_map(|p| [p.x, p.y])
+                .chain([piece.gamma, piece.delta])
+        })
+    }));
+    let s = |x: f64| -> Result<Big, OpFailure> { scaled(x, e).map_err(|_| range()) };
+    let big_mul = |u: &Big, v: &Big| -> Result<Big, OpFailure> { u.mul(v).map_err(|_| range()) };
+    let big_sub = |u: &Big, v: &Big| -> Result<Big, OpFailure> { u.sub(v).map_err(|_| range()) };
+    let big_add = |u: &Big, v: &Big| -> Result<Big, OpFailure> { u.add(v).map_err(|_| range()) };
+    let mut total6 = Big::ZERO;
+    let mut residual = 0.0f64;
+    for (k, chain) in crossed.iter().enumerate() {
+        // Even chains enter the material, odd chains leave it: the exit sides' columns
+        // add, the entry sides' subtract.
+        let exit = k % 2 == 1;
+        for piece in &chain.pieces {
+            let mut sum6 = Big::ZERO;
+            let mut perim = 0.0f64;
+            let mut mag_t = piece.delta.abs();
+            for (p, q) in piece.clip.iter().zip(piece.clip.iter().cycle().skip(1)) {
+                let (tp, tq) = (
+                    piece.gamma.mul_add(p.y, piece.delta),
+                    piece.gamma.mul_add(q.y, piece.delta),
+                );
+                mag_t = mag_t.max(tp.abs()).max(tq.abs());
+                perim += (q.x - p.x).hypot(q.y - p.y);
+                // cross_i = p.x * q.y - q.x * p.y, exact in the scaled integers.
+                let cross = big_sub(&big_mul(&s(p.x)?, &s(q.y)?)?, &big_mul(&s(q.x)?, &s(p.y)?)?)?;
+                // The origin-fan term with the apex height `t_0 = delta`.
+                let ts = big_add(&big_add(&s(tp)?, &s(tq)?)?, &s(piece.delta)?)?;
+                sum6 = big_add(&sum6, &big_mul(&cross, &ts)?)?;
+            }
+            // The cavity polygon is authored clockwise, so the clip pieces inherit its
+            // winding and their origin-fan sums carry the orientation's minus sign; the
+            // piece's integral is the negated sum for entry and exit alike.
+            let piece_integral = sum6.negated();
+            if !(mag_t.is_finite() && mag_t >= 0.0) {
+                return Err(range());
+            }
+            let count = u32::try_from(piece.clip.len()).map_err(|_| range())?;
+            // Every clip coordinate is a few ulps off the true intersection point and
+            // every height a few ulps off its plane; the moment moves by at most one
+            // such residual per vertex over the piece's span.
+            let mag_ab = piece
+                .clip
+                .iter()
+                .fold(0.0f64, |acc, p| acc.max(p.x.abs()).max(p.y.abs()));
+            residual += 64.0 * f64::EPSILON * mag_t * mag_ab.max(1.0) * perim * f64::from(count);
+            let signed = if exit {
+                piece_integral
+            } else {
+                piece_integral.negated()
+            };
+            total6 = big_add(&total6, &signed)?;
+        }
+    }
     let v6 = total6
         .enclose_clamped(e.checked_mul(3).ok_or_else(range)?)
         .ok_or_else(range)?;

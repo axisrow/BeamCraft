@@ -114,6 +114,84 @@ fn tube_body() -> Body {
     x_extruded(&outer, &[])
 }
 
+/// The same 48-band tube with every odd/even pair of consecutive bands grouped into one
+/// face: the curved wall then carries two strips per face around the apex (the
+/// merge-walk carve case, a curve-approximated cavity wall's coarse face grouping).
+fn coarse_tube_body() -> Body {
+    let outer: Vec<Point2> = (0..N)
+        .map(|i| {
+            let a = 2.0 * PI * f64::from(i) / f64::from(N);
+            Point2::new(B / 2.0 * a.cos(), B / 2.0 * a.sin())
+        })
+        .collect();
+    let ex = extrude(&outer, &[], L).unwrap();
+    let mesh = ex.mesh();
+    let v: Vec<[f64; 3]> = mesh.vertices().iter().map(|p| [p.z, p.x, p.y]).collect();
+    let t: Vec<[u32; 3]> = mesh.triangles().to_vec();
+    let old_faces: Vec<u16> = mesh.triangle_faces().to_vec();
+    let old_ids: Vec<String> = mesh.face_table().to_vec();
+    let old_normals: Vec<Option<[f64; 3]>> = mesh
+        .face_normals()
+        .iter()
+        .map(|n| n.as_ref().map(|w| [w.z(), w.x(), w.y()]))
+        .collect();
+    // The band index of every old wall face from its first triangle's section angle;
+    // the end caps carry no band.
+    let mut band_of_face: std::collections::BTreeMap<u16, Option<u32>> =
+        std::collections::BTreeMap::new();
+    let step = 2.0 * PI / f64::from(N);
+    for (tri, &face) in t.iter().zip(&old_faces) {
+        let p = v.get(tri[0] as usize).copied().unwrap_or([f64::NAN; 3]);
+        let is_cap = p[0] == 0.0 || p[0] == L;
+        let band = if is_cap {
+            None
+        } else {
+            let mut angle = p[2].atan2(p[1]);
+            if angle < 0.0 {
+                angle += 2.0 * PI;
+            }
+            Some((angle / step).floor() as u32)
+        };
+        band_of_face.entry(face).or_insert(band);
+    }
+    // New faces: the caps one for one, the bands as their odd/even pairs.
+    let mut new_ids: Vec<String> = Vec::new();
+    let mut new_normals: Vec<Option<[f64; 3]>> = Vec::new();
+    let mut remap: std::collections::BTreeMap<u16, u16> = std::collections::BTreeMap::new();
+    let mut pair_slot: std::collections::BTreeMap<u32, u16> = std::collections::BTreeMap::new();
+    for (old, band) in &band_of_face {
+        let old = *old;
+        match band {
+            None => {
+                remap.insert(old, u16::try_from(new_ids.len()).unwrap());
+                new_ids.push(old_ids[old as usize].clone());
+                new_normals.push(old_normals[old as usize]);
+            }
+            Some(band) => {
+                let slot = *pair_slot.entry(band.div_ceil(2)).or_insert_with(|| {
+                    let at = u16::try_from(new_ids.len()).unwrap();
+                    new_ids.push(format!("member:band-pair{}", band.div_ceil(2)));
+                    new_normals.push(old_normals[old as usize]);
+                    at
+                });
+                remap.insert(old, slot);
+            }
+        }
+    }
+    let faces: Vec<u16> = old_faces
+        .iter()
+        .map(|f| remap.get(f).copied().unwrap_or_default())
+        .collect();
+    let buf = common_mesh::blob(&v, &t, &faces, new_ids.len() as u32, 0);
+    Body::from_mesh(
+        TriMesh::from_blob(&buf).unwrap(),
+        new_ids,
+        new_normals,
+        None,
+    )
+    .unwrap()
+}
+
 fn tapered_body() -> Body {
     let outer = vec![
         Point2::new(-B / 2.0, -H / 2.0),
@@ -121,6 +199,22 @@ fn tapered_body() -> Body {
         Point2::new(B / 4.0, H / 2.0),
         Point2::new(-B / 4.0, H / 2.0),
     ];
+    x_extruded(&outer, &[])
+}
+
+/// A square section rotated by `deg`, so every wall is a sloped plane: each wall is a
+/// single-strip chain of its own (the turns between walls are hard edges), and a central
+/// `+Z` hole crosses the top and bottom walls through the merge-walk path.
+fn rotated_square_body(deg: f64) -> Body {
+    let half = 50.0;
+    let th = deg.to_radians();
+    let outer: Vec<Point2> = [(-half, -half), (half, -half), (half, half), (-half, half)]
+        .iter()
+        .map(|&(u, v)| {
+            let (bu, bv) = (u * th.cos() - v * th.sin(), u * th.sin() + v * th.cos());
+            Point2::new(bu, bv)
+        })
+        .collect();
     x_extruded(&outer, &[])
 }
 
@@ -383,12 +477,90 @@ fn a_tube_hole_repeats_byte_for_byte() {
 }
 
 #[test]
-#[ignore = "a hole wider than one band awaits the merge-walk band boundary decision (issue #383)"]
 fn a_hole_wider_than_a_facet_band_cuts_each_band_in_two() {
     let body = tube_body();
     let before = volume(&body);
-    // A round hole of radius 10 is wider than a band: each crossed band is cut in two,
-    // and the pieces are assembled around the opening's arcs.
+    // A round hole of radius 10 is wider than a band: the opening touches both boundary
+    // edges of the flanking bands and cuts each in two, the band events include the kink
+    // crossings between neighbouring strips, and the merge walk emits one coherent band
+    // whose sides carry the `.p<run>` suffixes past the mid-edge kink points.
+    let cutter = MemberHoleCutter::new(circle(L / 2.0, 0.0, R), -H / 2.0 - 1.0, H / 2.0 + 1.0, 9);
+    let res = member_through_hole(&body, &cutter).unwrap();
+    assert_sealed(&res);
+    assert_eq!(genus(&res), 1);
+    let removed = before - volume(res.body());
+    let expected = tube_removed_volume(R, H);
+    assert!(
+        (removed - expected).abs() < 1e-6 * expected,
+        "{removed} vs {expected}"
+    );
+    // The moment certification brackets the removed volume to dust width; the closed
+    // form above carries the apex-band approximation and may sit a hair outside it.
+    let analytic = res.analytic_volume_mm3().unwrap();
+    assert!(analytic.hi - analytic.lo < 1.0);
+    assert!(analytic.lo <= before - removed && before - removed <= analytic.hi);
+    // The band walk crosses the kink lines mid-edge, so the run suffixes appear.
+    assert!(
+        res.face_table()
+            .iter()
+            .any(|id| id.starts_with("cut:f.h9.w0.") && id.ends_with(".p1"))
+    );
+    // The merge walk is deterministic.
+    let second = member_through_hole(&body, &cutter).unwrap();
+    assert_eq!(res.blob(), second.blob());
+    assert_eq!(res.mesh_digest(), second.mesh_digest());
+}
+
+#[test]
+fn a_sloped_wall_hole_passes_the_merge_walk() {
+    // A square section rotated by 20 degrees: every wall is one sloped strip, and the
+    // central hole crosses the top and bottom walls as two single-strip chains.
+    let body = rotated_square_body(20.0);
+    let before = volume(&body);
+    let res = drill(
+        &body,
+        circle(L / 2.0, 0.0, 8.0),
+        -H / 2.0 - 1.0,
+        H / 2.0 + 1.0,
+        5,
+    );
+    assert_sealed(&res);
+    assert_eq!(genus(&res), 1);
+    // The two crossed walls are parallel (opposite sides of the square), so the removed
+    // column is constant: the footprint area times the wall-to-wall height along `Z`,
+    // the square's side over the cosine of the walls' tilt (the square rotated by `deg`
+    // tilts its sides by `deg` against the section plane).
+    let segments = circle(0.0, 0.0, 8.0).approximation().unwrap().segments;
+    let footprint = regular_polygon_area(segments, 8.0);
+    let expected = footprint * (100.0 / 20.0f64.to_radians().cos());
+    let removed = before - volume(res.body());
+    assert!(
+        (removed - expected).abs() < 1e-6 * expected,
+        "{removed} vs {expected}"
+    );
+    let analytic = res.analytic_volume_mm3().unwrap();
+    let expect_result = before - expected;
+    assert!(analytic.lo <= expect_result && expect_result <= analytic.hi);
+    assert!(res.face_table().iter().any(|id| id == "cut:f.h5.w0.s0"));
+}
+
+#[test]
+fn a_sloped_wall_hole_repeats_byte_for_byte() {
+    let body = rotated_square_body(20.0);
+    let cutter = MemberHoleCutter::new(circle(L / 2.0, 0.0, 8.0), -H / 2.0 - 1.0, H / 2.0 + 1.0, 6);
+    let first = member_through_hole(&body, &cutter).unwrap();
+    let second = member_through_hole(&body, &cutter).unwrap();
+    assert_eq!(first.blob(), second.blob());
+    assert_eq!(first.mesh_digest(), second.mesh_digest());
+}
+
+#[test]
+fn a_hole_crosses_several_strips_of_one_coarse_face() {
+    // The coarse tube groups the apex bands of each side into one face, so the wide
+    // hole crosses both strips of one face per wall; the face is carved strip by strip
+    // under its own id while the untouched partner bands keep their triangles.
+    let body = coarse_tube_body();
+    let before = volume(&body);
     let res = drill(
         &body,
         circle(L / 2.0, 0.0, R),
@@ -399,9 +571,9 @@ fn a_hole_wider_than_a_facet_band_cuts_each_band_in_two() {
     assert_sealed(&res);
     assert_eq!(genus(&res), 1);
     let removed = before - volume(res.body());
-    let expected = polygon_area() * H;
+    let expected = tube_removed_volume(R, H);
     assert!(
-        (removed - expected).abs() < 1e-4 * expected,
+        (removed - expected).abs() < 1e-6 * expected,
         "{removed} vs {expected}"
     );
 }
@@ -662,9 +834,13 @@ fn degenerate_directions_are_refused() {
 #[test]
 fn an_oblique_hole_in_a_tapered_body_is_refused() {
     let body = tapered_body();
+    // Slice 3 serves single-strip chains (sloped flat walls), so the oblique cutter is
+    // no longer blanket-refused: its range genuinely ends inside the material (the
+    // section line enters through the bottom wall beyond the range start and leaves
+    // through the sloped wall inside it), and the honest refusal is the blind one.
     let err = refused_directed(&body, circle(L / 2.0, 0.0, R), (3.0, 4.0), -80.0, 80.0);
     assert_eq!(err.code, OpCode::OpUnsupported);
-    assert_eq!(err.defect, OpDefect::BodyWallUnsupported);
+    assert_eq!(err.defect, OpDefect::CutterNotThrough);
 }
 
 #[test]
