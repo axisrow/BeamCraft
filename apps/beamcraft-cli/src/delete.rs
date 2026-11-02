@@ -27,6 +27,7 @@ use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
+use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{Change, schema_identity};
 use beamcraft_layer_engine::index::ElementId as LayerElementId;
 use beamcraft_model::command::{CommandError, DeleteElement};
@@ -258,7 +259,7 @@ pub fn delete_element(
                 body: body.clone(),
                 quantities,
             };
-            changes.push(Change::hole_records(
+            changes.push(steel_layer::hole_records(
                 next.id.to_string(),
                 next.hole_records.clone(),
             ));

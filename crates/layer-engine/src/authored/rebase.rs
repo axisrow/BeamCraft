@@ -60,78 +60,6 @@ fn property_group(name: &str) -> Option<G> {
     })
 }
 
-/// The write group of a property of the steel discipline (plate, cut, hole, member, weld and
-/// bolt inputs). Moved unchanged from [`property_group`].
-pub(super) fn steel_property_group(name: &str) -> Option<G> {
-    Some(match name {
-        "steel:plate:contourPointsMm"
-        | "steel:plate:thicknessMm"
-        | "steel:plate:thicknessSide"
-        | "steel:plate:cornerVertex"
-        | "steel:plate:cornerKind"
-        | "steel:plate:cornerD1Mm"
-        | "steel:plate:cornerD2Mm"
-        | "steel:plate:cornerRadiusMm"
-        | "steel:plate:bendOperationId"
-        | "steel:plate:bendKind"
-        | "steel:plate:bendLineAMm"
-        | "steel:plate:bendLineBMm"
-        | "steel:plate:bendRadiusMm"
-        | "steel:plate:bendRadiusBMm"
-        | "steel:plate:bendAngleRad"
-        | "steel:plate:holePointsMm"
-        | "steel:plate:holeVertexCounts"
-        | "steel:cut:operationId"
-        | "steel:cut:ordinal"
-        | "steel:cut:pointMm"
-        | "steel:cut:normal"
-        | "steel:cut:keep"
-        | "steel:cut:nextOrdinal"
-        | "steel:cut:retiredOperationIds"
-        | "steel:hole:nextOrdinal"
-        | "steel:hole:retiredOperationIds"
-        | "steel:hole:pointsMm"
-        | "steel:hole:vertexCounts"
-        | "steel:hole:operationIds"
-        | "steel:hole:ordinals"
-        | "steel:member:pathType"
-        | "bim:axisPointsMm"
-        | "steel:member:rollRad"
-        | "steel:member:planePosition"
-        | "steel:member:planeOffsetMm"
-        | "steel:member:depthPosition"
-        | "steel:member:depthOffsetMm"
-        | "steel:member:startOffsetMm"
-        | "steel:member:endOffsetMm"
-        | "bim:profile"
-        | "steel:connection:type"
-        | "steel:weld:type"
-        | "steel:weld:sizeMm"
-        | "steel:weld:location"
-        | "steel:weld:side"
-        | "steel:bolt:diameterMm"
-        | "steel:bolt:count"
-        | "steel:bolt:pitchMm"
-        | "steel:bolt:originMm"
-        | "steel:bolt:directionMm"
-        | "steel:bolt:fastener"
-        | "steel:bolt:point1Mm"
-        | "steel:bolt:point2Mm"
-        | "steel:bolt:planeNormalMm"
-        | "steel:bolt:rotationRad"
-        | "steel:bolt:onPlaneMm"
-        | "steel:bolt:depthMm"
-        | "steel:bolt:offsetStartMm"
-        | "steel:bolt:spacingMode"
-        | "steel:bolt:spacingValueMm"
-        | "steel:bolt:spacingsMm"
-        | "steel:bolt:lengthMode"
-        | "steel:bolt:lengthMm"
-        | "steel:bolt:washerUnderHead"
-        | "steel:bolt:washerUnderNut" => G::ShapeInputs,
-        _ => return None,
-    })
-}
 fn definition_property(name: &str) -> bool {
     matches!(
         name,
@@ -142,25 +70,9 @@ fn definition_property(name: &str) -> bool {
             | "bim:densityKgM3"
             | "bim:materialGrade"
             | "bim:materialStandard"
-            | "steel:profile:widthMm"
-            | "steel:profile:heightMm"
-            | "steel:profile:designation"
-            | "steel:profile:standard"
-            | "steel:profile:areaMm2"
-            | "steel:profile:massPerMeterKg"
-            | "steel:profile:surfacePerMeterM2"
-            | "steel:profile:hMm"
-            | "steel:profile:bMm"
-            | "steel:profile:twMm"
-            | "steel:profile:tfMm"
-            | "steel:profile:rMm"
-            | "steel:profile:tMm"
-            | "steel:profile:dMm"
-            | "steel:profile:cMm"
-            | "steel:profile:outerPointsMm"
-            | "steel:profile:cavityPointsMm"
-            | "steel:profile:cavityVertexCounts"
-    )
+    ) || super::disciplines::registered()
+        .iter()
+        .any(|discipline| discipline.definition_property(name))
 }
 
 fn geometry_property(name: &str) -> bool {

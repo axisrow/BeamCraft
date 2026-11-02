@@ -25,9 +25,10 @@ use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
+use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
     Change, Element, MemberKind as LayerKind, MemberShape, Placement as LayerPlacement, PlateShape,
-    Shape, schema_identity,
+    schema_identity,
 };
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::CommandError;
@@ -108,7 +109,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refu
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
-                    shape: Shape::plate(PlateShape {
+                    shape: steel_layer::plate(PlateShape {
                         contour_mm: a.contour_points_mm.clone(),
                         thickness_mm: a.thickness_mm,
                         thickness_side: a.thickness_side,
@@ -153,7 +154,7 @@ pub(crate) fn creation_changes(copy: &CopiedElement) -> Result<Vec<Change>, Refu
                 Change::Create(Element {
                     id: a.id.to_string(),
                     name: a.name.clone(),
-                    shape: Shape::member(MemberShape {
+                    shape: steel_layer::member(MemberShape {
                         kind: match a.kind {
                             MemberKind::Beam => LayerKind::Beam,
                             MemberKind::Column => LayerKind::Column,
@@ -465,7 +466,7 @@ fn copy_with_mode(
                         MemberKind::Column => steel::model::instance::PartKind::Column,
                     },
                 };
-                element.shape = Shape::instance(kind, canonical.to_string());
+                element.shape = steel_layer::instance(kind, canonical.to_string());
                 element.material = None;
             }
         }

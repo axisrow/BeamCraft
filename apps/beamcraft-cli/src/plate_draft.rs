@@ -11,8 +11,9 @@ use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore};
 use beamcraft_layer_engine::Reader;
+use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
-    Change, Element, Placement, PlateShape, Prepare, Shape, schema_identity,
+    Change, Element, Placement, PlateShape, Prepare, schema_identity,
 };
 use session::Refusal;
 use session::pipeline::{
@@ -137,7 +138,7 @@ pub fn create_plate_draft(
                 Change::Create(Element {
                     id: authored.id.to_string(),
                     name: authored.name.clone(),
-                    shape: Shape::plate(PlateShape {
+                    shape: steel_layer::plate(PlateShape {
                         contour_mm: authored.contour_points_mm.clone(),
                         thickness_mm: authored.thickness_mm,
                         thickness_side: authored.thickness_side,

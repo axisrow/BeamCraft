@@ -23,9 +23,10 @@ use beamcraft_host::revision::{
 };
 use beamcraft_layer_engine::OpenRequest;
 use beamcraft_layer_engine::Reader;
+use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
     Change, Element, MemberKind as LayerKind, MemberShape, Placement as LayerPlacement, Prepare,
-    Shape, schema_identity,
+    schema_identity,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -464,7 +465,7 @@ fn finish_member(
                 Change::Create(Element {
                     id: outcome.authored.id.to_string(),
                     name: outcome.authored.name.clone(),
-                    shape: Shape::member(MemberShape {
+                    shape: steel_layer::member(MemberShape {
                         kind: match outcome.authored.kind {
                             MemberKind::Beam => LayerKind::Beam,
                             MemberKind::Column => LayerKind::Column,

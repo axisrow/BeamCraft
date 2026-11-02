@@ -25,7 +25,8 @@ use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::{Change, Prepare, schema_identity};
+use beamcraft_layer_engine::authored::steel_layer;
+use beamcraft_layer_engine::authored::{Prepare, schema_identity};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{OpId, ProjectId, RevisionId, WorkspaceId};
@@ -366,7 +367,10 @@ fn apply_hole(
                 });
             }
             let mut changes = vec![
-                Change::hole_records(canonical.to_string(), next.authored.hole_records.clone()),
+                steel_layer::hole_records(
+                    canonical.to_string(),
+                    next.authored.hole_records.clone(),
+                ),
                 mesh_change(&next.authored.id, &next.body.solid, &plate_record(&next))?,
             ];
             for other in &others {
@@ -430,7 +434,10 @@ fn apply_hole(
                 });
             }
             let mut changes = vec![
-                Change::member_holes(canonical.to_string(), next.authored.hole_records.clone()),
+                steel_layer::member_holes(
+                    canonical.to_string(),
+                    next.authored.hole_records.clone(),
+                ),
                 mesh_change(&next.authored.id, &next.body.solid, &member_record(&next))?,
             ];
             for other in &others {
