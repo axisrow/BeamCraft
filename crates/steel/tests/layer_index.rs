@@ -21,6 +21,9 @@ use std::{
     io::Cursor as IoCursor,
     time::{Duration, Instant},
 };
+use steel::layer as steel_layer;
+use steel::layer::*;
+use steel::model::definition::SectionProperties;
 
 const PLATE: &str = "0199e7a0-0000-7000-8000-000000000003";
 const MEMBER: &str = "0199e7a0-0000-7000-8000-000000000004";
@@ -33,6 +36,7 @@ fn digest(bytes: &[u8]) -> ContentDigest {
     Sha256::digest(bytes).unwrap()
 }
 fn control() -> Control {
+    steel_layer::install();
     Control {
         cancellation: Cancellation::default(),
         deadline: Instant::now() + Duration::from_secs(90),
@@ -335,11 +339,11 @@ fn ids_are_full_uuidv7_and_same_millisecond_ids_are_never_shortened() {
 #[test]
 fn reader_index_resolves_ids_provenance_and_typed_relationships() {
     let (a, b) = (seq(0x10), seq(0x11));
-    let profile = Resource::new(Definition::RectangleProfile {
-        width_mm: 100.0,
-        height_mm: 50.0,
-        section: SectionProperties::default(),
-    })
+    let profile = Resource::new(steel_layer::rectangle(
+        100.0,
+        50.0,
+        SectionProperties::default(),
+    ))
     .unwrap()
     .digest;
     let definition = format!(
@@ -866,11 +870,11 @@ fn open_author(assets: Vec<Asset>) -> (Author, Opened) {
 }
 fn resources() -> Vec<Resource> {
     vec![
-        Resource::new(Definition::RectangleProfile {
-            width_mm: 100.0,
-            height_mm: 50.0,
-            section: SectionProperties::default(),
-        })
+        Resource::new(steel_layer::rectangle(
+            100.0,
+            50.0,
+            SectionProperties::default(),
+        ))
         .unwrap(),
         Resource::new(Definition::Material {
             density_kg_m3: Some(1000.0),
@@ -891,7 +895,7 @@ fn plate() -> Change {
     Change::Create(Element {
         id: PLATE.into(),
         name: "Plate".into(),
-        shape: Shape::plate(PlateShape {
+        shape: steel_layer::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [1000.0, 0.0, 0.0],
@@ -914,7 +918,7 @@ fn member(id: &str, name: &str) -> Change {
     Change::Create(Element {
         id: id.into(),
         name: name.into(),
-        shape: Shape::member(MemberShape {
+        shape: steel_layer::member(MemberShape {
             kind: MemberKind::Beam,
             curved: false,
             axis_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]],

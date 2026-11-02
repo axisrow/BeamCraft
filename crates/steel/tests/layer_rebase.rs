@@ -13,6 +13,8 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use openusd::sdf::{self, AbstractData};
 use std::time::{Duration, Instant};
+use steel::layer as steel_layer;
+use steel::layer::*;
 
 const ACTOR: &str = "0199e7a0-0000-7000-8000-000000000005";
 const OP: &str = "0199e7a0-0000-7000-8000-000000000006";
@@ -26,6 +28,7 @@ fn digest(bytes: &[u8]) -> ContentDigest {
     Sha256::digest(bytes).unwrap()
 }
 fn control() -> Control {
+    steel_layer::install();
     Control {
         cancellation: Cancellation::default(),
         deadline: Instant::now() + Duration::from_secs(90),
@@ -80,7 +83,7 @@ fn create(n: usize) -> Change {
     Change::Create(Element {
         id: id(n).to_string(),
         name: format!("part {n}"),
-        shape: Shape::plate(PlateShape {
+        shape: steel_layer::plate(PlateShape {
             contour_mm: vec![
                 [0.0, 0.0, 0.0],
                 [100.0, 0.0, 0.0],
@@ -317,12 +320,12 @@ fn same_group_is_atomic_even_for_different_properties() {
     let base = initial();
     let source = edit(
         base.clone(),
-        vec![Change::thickness(id(10).to_string(), 20.0)],
+        vec![steel_layer::thickness(id(10).to_string(), 20.0)],
         Vec::new(),
     );
     let accepted = edit(
         base.clone(),
-        vec![Change::contour(
+        vec![steel_layer::contour(
             id(10).to_string(),
             vec![[0.0, 0.0, 0.0], [200.0, 0.0, 0.0], [0.0, 100.0, 0.0]],
         )],

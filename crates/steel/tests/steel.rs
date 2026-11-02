@@ -18,6 +18,9 @@ mod g07_acceptance;
 mod g14_member_hole;
 mod kernel_member;
 mod kernel_section;
+mod layer_authored;
+mod layer_index;
+mod layer_rebase;
 mod member_placement_rotation;
 mod non_box_features;
 mod plate_contour;
@@ -51,4 +54,16 @@ fn every_suite_file_is_a_module_of_this_binary() {
         suites += 1;
     }
     assert!(suites > 0, "no suite file found in {}", dir.display());
+}
+
+/// The platform's read-side cap must equal the model's command-side cap: write admission
+/// (engine instance and copy) checks the model const while read admission (the snapshot and
+/// resolve paths through the platform's cap) checks the platform const, so raising one alone
+/// would let the CLI author stages the platform refuses to reopen.
+#[test]
+fn the_platform_and_model_part_instance_caps_agree() {
+    assert_eq!(
+        beamcraft_layer_engine::authored::instance::MAX_PART_INSTANCES,
+        steel::model::instance::MAX_PART_INSTANCES
+    );
 }

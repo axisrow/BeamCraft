@@ -2,21 +2,35 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The member family behind the discipline hook (#795): a beam or a column (P03, P12, P13, P14)
-//! and the edits of its path, roll and profile. Each body is the arm it replaces in `edit.rs`
-//! and `validate.rs`, moved unchanged, so the bytes written and the refusals returned are the
-//! same.
+//! and the edits of its path, roll and profile. Each body is the arm it replaced in the
+//! platform's `edit.rs` and `validate.rs`, moved unchanged, so the bytes written and the
+//! refusals returned are the same. The facade constructors in [`super`] build the platform
+//! `Shape` and `Change` from these hooks.
 
-use super::edit::{attr, attribute, points, relationship};
-use super::hook::{
-    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, HookedChange, HookedShape, ShapeHook,
-    ValidateCx,
+use super::read::cut_values;
+use super::write::{CUT_FIELDS, MEMBER_PLACEMENT};
+use crate::model::command::{CutRecord, SectionPlacement};
+use beamcraft_layer_engine::Diagnostic;
+use beamcraft_layer_engine::authored::seam::author::{attr, attribute, points, relationship};
+use beamcraft_layer_engine::authored::seam::read::{cap, finite};
+use beamcraft_layer_engine::authored::{
+    AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, Footprint, Group, MaterialOpinion,
+    Opinion, ShapeHook, ValidateCx, invalid,
 };
-use super::steel_write::{CUT_FIELDS, MEMBER_PLACEMENT};
-use super::validate::{cap, cut_values, finite};
-use super::*;
+use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::limits::MAX_MEMBER_PATH_POINTS;
+use beamcraft_model::prim::ElementCategory;
 use openusd::sdf;
 use std::any::Any;
+
+/// Closed member vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemberKind {
+    /// Straight beam.
+    Beam,
+    /// Straight column.
+    Column,
+}
 
 /// The authored shape of a member (P03 straight, P12 polybeam), with a required pinned profile.
 #[derive(Debug, Clone, PartialEq)]
@@ -41,21 +55,6 @@ pub struct MemberShape {
     pub cuts: Vec<CutRecord>,
 }
 
-impl Shape {
-    /// A member of the given shape; see [`MemberShape`].
-    pub fn member(member: MemberShape) -> Self {
-        Self::Discipline(HookedShape::new(member))
-    }
-
-    /// The member of a hook shape, when it is one.
-    pub fn as_member(&self) -> Option<&MemberShape> {
-        match self {
-            Self::Discipline(h) => h.0.as_any().downcast_ref::<MemberShape>(),
-            _ => None,
-        }
-    }
-}
-
 impl ShapeHook for MemberShape {
     fn as_any(&self) -> &dyn Any {
         self
@@ -76,8 +75,13 @@ impl ShapeHook for MemberShape {
         ElementCategory::Part
     }
 
-    fn cuts(&self) -> &[CutRecord] {
-        &self.cuts
+    fn author_cuts(&self, data: &mut sdf::Data, path: &str) -> Result<(), Diagnostic> {
+        // A fresh uncut element authors no cut attributes; the empty arrays belong to the
+        // change path, where they mask weaker opinions (A03).
+        if self.cuts.is_empty() {
+            return Ok(());
+        }
+        super::write::author_cuts(data, path, &self.cuts, None)
     }
 
     fn classed(&self) -> bool {
@@ -268,23 +272,6 @@ pub struct SetProfile {
     pub id: String,
     /// Verified profile content digest.
     pub digest: ContentDigest,
-}
-
-impl Change {
-    /// Replace the member's path points as a whole; see [`SetAxis`].
-    pub fn axis(id: String, points_mm: Vec<[f64; 3]>) -> Self {
-        Self::Discipline(HookedChange::new(SetAxis { id, points_mm }))
-    }
-
-    /// Change the optional roll opinion; see [`SetRoll`].
-    pub fn roll(id: String, opinion: Opinion<f64>) -> Self {
-        Self::Discipline(HookedChange::new(SetRoll { id, opinion }))
-    }
-
-    /// Replace the required immutable member profile; see [`SetProfile`].
-    pub fn profile(id: String, digest: ContentDigest) -> Self {
-        Self::Discipline(HookedChange::new(SetProfile { id, digest }))
-    }
 }
 
 macro_rules! member_change_common {

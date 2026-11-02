@@ -5,7 +5,6 @@
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
 pub mod annotation;
-mod connection;
 pub mod construction;
 pub mod coordination;
 /// Persistent cut ordinal and retired-record identities.
@@ -19,35 +18,17 @@ pub mod grid;
 mod guard;
 pub mod hook;
 pub mod instance;
-mod instance_shape;
-mod member;
-mod plate;
-mod plate_change;
 pub mod rebase;
 mod reference;
 /// The surface a discipline crate's hooks use to author and validate through this platform.
 pub mod seam;
-mod steel_defs;
-/// The steel authoring facade: free constructors for the steel shapes and changes, the module
-/// that moves to `crates/steel` when the dependency flips (#388).
-pub mod steel_layer;
-mod steel_read;
-mod steel_write;
 mod validate;
 
-pub use connection::ReplaceBoltGroup;
 pub use disciplines::{Discipline, is_part_kind};
 pub use guard::WriteGrant;
 pub use hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, DefinitionHook, HookedChange,
     HookedDefinition, HookedShape, ShapeHook, ValidateCx,
-};
-pub use instance_shape::InstanceShape;
-pub use member::{MemberShape, SetAxis, SetProfile, SetRoll};
-pub use plate::{LoftedPlateShape, PlateShape};
-pub use plate_change::{
-    SetBends, SetContour, SetCorners, SetCuts, SetHoleRecords, SetMemberHoles, SetThickness,
-    SetThicknessSide,
 };
 pub use reference::{
     ForeignPrim, Reference, ReferenceView, SourceFormat, SourcePin, UnitsInterpretation, UpAxis,
@@ -62,14 +43,6 @@ pub fn layer_sublayers(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
 use crate::*;
 use beamcraft_model::prim::{DefinitionCategory, ElementCategory};
 use std::collections::BTreeMap;
-pub use steel::model::command::{
-    BendRecord, BendSpec, CornerTreatment, CutRecord, HoleExtent, HoleRecord, KeepSide, MAX_BENDS,
-    MemberHoleRecord, PlateCorner, PlateSide, SectionDepthPosition, SectionPlacement,
-    SectionPlanePosition,
-};
-pub use steel::model::definition::SectionProperties;
-pub use steel::model::fastener::FastenerSpec;
-pub use steel::model::section::SectionShape;
 
 /// Canonical UTF-8 schema descriptor. Its exact bytes commit the mapping and item profile.
 /// No generated schema, plugin, fallback values or external schema resources are required.
@@ -324,7 +297,8 @@ pub enum Shape {
     Assembly,
     /// An element whose shape belongs to a discipline (#795): its kind, attributes and bounds
     /// are answered by the shape's own hook. The weld, the A05 bolt group and the A14.3 bolt
-    /// group are built with [`Shape::weld`], [`Shape::bolt`] and [`Shape::bolt_group`].
+    /// group are built with the steel discipline facade's `weld`, `bolt` and `bolt_group`
+    /// constructors.
     Discipline(HookedShape),
     /// T01 grid, with no authored engineering body.
     Grid(beamcraft_model::grid::Grid),
@@ -341,126 +315,6 @@ pub enum Shape {
         /// Elevation in millimetres, finite and at most 1,000,000,000 in magnitude.
         elevation_mm: f64,
     },
-}
-
-impl Shape {
-    /// The owned `plane_cut` records of a plate, beam or column (A03); other kinds have none.
-    pub(crate) fn cuts(&self) -> &[CutRecord] {
-        match self {
-            Self::Discipline(hook) => hook.0.cuts(),
-            Self::Assembly
-            | Self::Grid(_)
-            | Self::Construction(_)
-            | Self::Annotation(_)
-            | Self::Level { .. } => &[],
-        }
-    }
-}
-
-/// The authored inputs of a weld (A06). Tokens are the exact stored values.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Weld {
-    /// Full UUIDv7 of the main part, then of the part welded to it. Distinct, each a plate, beam
-    /// or column; the order is significant.
-    pub connects: [String; 2],
-    /// `fillet`, the only supported type.
-    pub weld_type: String,
-    /// Nominal size in millimetres, in `(0, 1000]`.
-    pub size_mm: f64,
-    /// `workshop` or `site`.
-    pub location: String,
-    /// `arrow`, `other` or `both`.
-    pub side: String,
-    /// Optional geometry (A15): the path the weld runs along and its symbol data. `None` authors
-    /// an A06 weld without a body; `Some` also derives a solid under the connection.
-    pub geometry: Option<WeldPath>,
-}
-
-/// The authored geometry of one weld (A15). The path is an ordered world polyline in
-/// millimetres; the symbol tokens are the exact stored values.
-#[derive(Debug, Clone, PartialEq)]
-pub struct WeldPath {
-    /// Ordered world points of the path, 2 to 1024, each within the coordinate cap.
-    pub points_mm: Vec<[f64; 3]>,
-    /// All-around symbol. Symbol data only.
-    pub all_around: bool,
-    /// `none`, `flush`, `concave` or `convex`.
-    pub contour: String,
-}
-
-/// The authored inputs of a bolt group (A05). The group is `count` bolts in a straight world line
-/// `origin + direction * (pitch * i)`; the direction is a stored unit vector.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Bolt {
-    /// Full UUIDv7 of the main part, then of the part bolted to it. Distinct, each a plate, beam
-    /// or column; the order is significant.
-    pub connects: [String; 2],
-    /// Nominal bolt diameter in millimetres, in `(0, 1000]`.
-    pub diameter_mm: f64,
-    /// Bolts in the group, 1 to 512.
-    pub count: usize,
-    /// Centre-to-centre distance along the line in millimetres, in `(0, 1000000]`.
-    pub pitch_mm: f64,
-    /// World position of the first bolt in millimetres, each component within the coordinate cap.
-    pub origin_mm: [f64; 3],
-    /// Unit world direction of the line: finite, squared norm within 1e-6 of one.
-    pub direction_mm: [f64; 3],
-}
-
-/// The authored inputs of an A14.3 bolt group (bolt amendment section 4): two points, a
-/// reference plane with rotation, the position values, the offsets and the authoritative
-/// spacings over a pinned fastener definition addressed by its digest. Every engine decision
-/// (crossing, length) has already run; this library stores, bounds and re-reads the record.
-#[derive(Debug, Clone, PartialEq)]
-pub struct BoltGroup {
-    /// Full UUIDv7 of every connected part, main part first: 2 to 1024 distinct plates, beams
-    /// or columns.
-    pub connects: Vec<String>,
-    /// Content digest of the pinned fastener definition the group places.
-    pub fastener: ContentDigest,
-    /// World start of the row in millimetres, each component within the coordinate cap.
-    pub point1_mm: [f64; 3],
-    /// World end of the row.
-    pub point2_mm: [f64; 3],
-    /// Unit normal of the reference plane at zero rotation.
-    pub plane_normal_mm: [f64; 3],
-    /// Rotation about the row in radians.
-    pub rotation_rad: f64,
-    /// Offset of the whole group along the plane axis in millimetres.
-    pub on_plane_mm: f64,
-    /// Offset of the whole group along the shank axis in millimetres.
-    pub depth_mm: f64,
-    /// Distance along the row from `point1` to the first fastener, in millimetres.
-    pub offset_start_mm: f64,
-    /// `spacings`, `pitch` or `offset_end`: the stored pattern a moved `point2` re-expands.
-    pub spacing_mode: String,
-    /// The value of a `pitch` or `offset_end` pattern; `0.0` for `spacings`.
-    pub spacing_value_mm: f64,
-    /// The authoritative distances between neighbouring fasteners, one to 511 values.
-    pub spacings_mm: Vec<f64>,
-    /// `auto` or `fixed`.
-    pub length_mode: String,
-    /// The resolved shank length in millimetres, one for the whole group.
-    pub length_mm: f64,
-    /// Whether a washer sits under the head.
-    pub washer_under_head: bool,
-    /// Whether a washer sits under the nut.
-    pub washer_under_nut: bool,
-    /// `generate` or `none` (bolt amendment section 5): whether the group cuts holes in the
-    /// parts it passes through.
-    pub hole_mode: String,
-    /// The clearance the generated holes use beyond the nominal diameter; `Some` exactly when
-    /// `hole_mode` is `generate`, `None` reading as the pinned definition's clearance.
-    pub hole_clearance_mm: Option<f64>,
-}
-
-/// Closed initial member vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MemberKind {
-    /// Straight beam.
-    Beam,
-    /// Straight column.
-    Column,
 }
 
 /// Complete initial element, after host authorization and F04/F06 engineering validation.
@@ -481,22 +335,6 @@ pub struct Element {
 /// Contributor/engine-supplied immutable definitions, never a vendor catalogue.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Definition {
-    /// F06 section 2's only initial profile.
-    RectangleProfile {
-        /// Width in millimetres.
-        width_mm: f64,
-        /// Height in millimetres.
-        height_mm: f64,
-        /// Declared designation, standard and section numbers; absent values stay unknown.
-        section: SectionProperties,
-    },
-    /// A07.1 section profile: a parametric family or an authored outline.
-    SectionProfile {
-        /// The section shape.
-        shape: SectionShape,
-        /// Declared designation, standard and section numbers; absent values stay unknown.
-        section: SectionProperties,
-    },
     /// Material with explicitly optional density.
     Material {
         /// Density in kg/m3; None remains unknown.
@@ -508,11 +346,10 @@ pub enum Definition {
         /// Readable name (prim `displayName` metadata), part of the definition content.
         display_name: Option<String>,
     },
-    /// A14.1 fastener definition (bolt amendment section 2): one size of one standard.
-    Fastener {
-        /// The complete fastener values, admitted by the model crate.
-        spec: FastenerSpec,
-    },
+    /// A definition whose content belongs to a discipline (#795): its kind token, its category,
+    /// its attributes, their bounds and its readable name are answered by the definition's own
+    /// hook, so the platform never matches on a discipline's definition kind.
+    Discipline(HookedDefinition),
 }
 
 /// Pinned definition with verified canonical USD bytes, not a second persisted model.
@@ -609,7 +446,7 @@ pub enum Change {
     },
     /// An edit that belongs to a discipline (#795): its target kind, groups, bounds and
     /// attribute writes are answered by the change's own hook. The replacement of an A14.3 bolt
-    /// group is built with [`Change::bolt_group`].
+    /// group is built with the steel discipline facade's `replace_bolt_group`.
     Discipline(HookedChange),
     /// Change the optional material relationship.
     Material {
@@ -1190,10 +1027,7 @@ pub fn target_path(
 fn definition_category(definition: &Definition) -> DefinitionCategory {
     match definition {
         Definition::Material { .. } => DefinitionCategory::Material,
-        Definition::RectangleProfile { .. } | Definition::SectionProfile { .. } => {
-            DefinitionCategory::Profile
-        }
-        Definition::Fastener { .. } => DefinitionCategory::Fastener,
+        Definition::Discipline(hook) => hook.0.category(),
     }
 }
 pub(super) fn definition_path(digest: ContentDigest, category: DefinitionCategory) -> String {

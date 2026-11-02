@@ -12,9 +12,8 @@ use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
-    Change, Element, LoftedPlateShape, Placement as LayerPlacement, Prepare, schema_identity,
+    Change, Element, Placement as LayerPlacement, Prepare, schema_identity,
 };
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -26,6 +25,8 @@ use session::pipeline::{
 use steel::engine::loft_plate::{AuthoredLoftedPlate, LOFT_VOLUME_ALGORITHM, create_lofted_plate};
 use steel::engine::quantity::{StoredRecord, lofted_plate_record};
 use steel::engine::transaction::PriorOp;
+use steel::layer as steel_layer;
+use steel::layer::LoftedPlateShape;
 
 /// Inputs of one `create-lofted-plate` call beyond the command itself.
 #[derive(Debug, Clone)]

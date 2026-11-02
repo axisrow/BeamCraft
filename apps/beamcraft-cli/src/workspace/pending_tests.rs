@@ -33,6 +33,7 @@ struct Fixture {
 }
 impl Fixture {
     fn open(root: PathBuf) -> Self {
+        steel::layer::install();
         Self {
             published: store(&root.join("published")).unwrap(),
             draft: store(&root.join("draft")).unwrap(),

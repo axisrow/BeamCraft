@@ -20,8 +20,8 @@ pub mod author {
 /// The reading half of the seam: inspecting the prims of the stage a batch applies to.
 pub mod read {
     pub use super::super::validate::{
-        cap, count_points, finite, link, number, optional_number, optional_text, points,
-        relationship, required, resource, text,
+        cap, count_points, definition, finite, link, number, optional, optional_number,
+        optional_text, points, relationship, required, resource, supported_kind, text,
     };
 }
 
@@ -30,4 +30,4 @@ pub use super::{
     hook::DefinitionHook, hook::HookedChange, hook::HookedDefinition, hook::HookedShape,
     hook::ShapeHook, hook::ValidateCx, invalid, target_path,
 };
-pub use crate::{fail, limit, unsupported, uuid7};
+pub use crate::{corrupt, fail, limit, unsupported, uuid7};

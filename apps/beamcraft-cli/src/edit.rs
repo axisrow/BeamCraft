@@ -27,7 +27,6 @@ use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
     Change, MaterialOpinion, Opinion, Placement as LayerPlacement, schema_identity,
 };
@@ -46,6 +45,7 @@ use steel::engine::committed::{MemberRecord, PlateRecord};
 use steel::engine::member::{evaluate_member, member_quantities};
 use steel::engine::transaction::PriorOp;
 use steel::engine::update::{UpdateEffect, effect, patch_member, patch_plate};
+use steel::layer as steel_layer;
 use steel::model::command::UpdateElement;
 
 /// Inputs of one `update_element` call beyond the command itself.

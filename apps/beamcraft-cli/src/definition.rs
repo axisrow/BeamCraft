@@ -184,15 +184,9 @@ impl DefinitionRecord {
                 width_mm,
                 height_mm,
                 section,
-            } => Definition::RectangleProfile {
-                width_mm,
-                height_mm,
-                section,
-            },
-            Self::SectionProfile { shape, section } => {
-                Definition::SectionProfile { shape, section }
-            }
-            Self::Fastener { spec } => Definition::Fastener { spec: spec.clone() },
+            } => steel::layer::rectangle(width_mm, height_mm, section),
+            Self::SectionProfile { shape, section } => steel::layer::section(shape, section),
+            Self::Fastener { spec } => steel::layer::fastener(spec),
         }
     }
 

@@ -25,7 +25,6 @@ use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{Prepare, schema_identity};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -38,6 +37,7 @@ use std::collections::BTreeMap;
 use steel::engine::committed::{MemberRecord, PlateRecord};
 use steel::engine::member::{evaluate_member, member_quantities};
 use steel::engine::transaction::PriorOp;
+use steel::layer as steel_layer;
 use steel::model::command::AddHole;
 
 /// Inputs of one `add_hole` call beyond the command itself. The `op_id` is the record's

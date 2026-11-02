@@ -25,10 +25,8 @@ use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
-    Change, Element, MemberKind as LayerKind, MemberShape, Placement as LayerPlacement, PlateShape,
-    schema_identity,
+    Change, Element, Placement as LayerPlacement, schema_identity,
 };
 use beamcraft_layer_engine::index::{ElementId as LayerElementId, LinkTarget};
 use beamcraft_model::command::CommandError;
@@ -42,6 +40,8 @@ use session::pipeline::{
 use steel::engine::committed::{MemberRecord, PlateRecord};
 use steel::engine::copy::{copy_member, copy_plate};
 use steel::engine::transaction::PriorOp;
+use steel::layer as steel_layer;
+use steel::layer::{MemberKind as LayerKind, MemberShape, PlateShape};
 use steel::model::command::CopyElement;
 use steel::model::command::MemberKind;
 

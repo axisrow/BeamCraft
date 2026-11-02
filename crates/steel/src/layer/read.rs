@@ -1,16 +1,32 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The steel plate readers (#388 slice): the loaded-content checks of a plate's contour,
-//! holes, hole records, member-hole records and cut records. Extracted from `validate.rs`
-//! unchanged; the discipline reversal moves this file to `crates/steel`.
+//! The steel readers of a stored layer (#388 slice): the loaded-content checks of a plate's
+//! contour, holes, hole records, member-hole records and cut records, the connection checks,
+//! the cross-element `bim:connects` rules and the cut-record admission. Extracted from the
+//! platform's `validate.rs` unchanged; the discipline reversal moved them to `crates/steel`,
+//! where the discipline's hooks answer the platform's questions with them.
 
-use super::steel_defs::read_definition;
-use super::validate::{cap, finite, number, optional_number, points, required, resource, text};
-use super::*;
+use super::BoltGroup;
+use super::definition::{
+    FastenerDef, PROFILE_KINDS, RectangleProfileDef, SectionProfileDef, read_definition,
+};
+use crate::model::command::CutRecord;
+use crate::model::{command::KeepSide, fastener::FastenerKind, fastener::FastenerSpec};
+use beamcraft_layer_engine::authored::seam::read::{
+    cap, definition, finite, link, number, optional, optional_number, points, relationship,
+    required, resource, supported_kind, text,
+};
+use beamcraft_layer_engine::authored::{Definition, cut_history, invalid, is_part_kind};
+use beamcraft_layer_engine::{Diagnostic, Prim, Value, corrupt, fail, limit, unsupported, uuid7};
+use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::OpId;
-use beamcraft_model::limits::{MAX_RELATIONSHIP_TARGETS, MIN_WELD_SEGMENT_MM};
-use steel::model::{command::KeepSide, fastener::FastenerKind, fastener::FastenerSpec};
+use beamcraft_model::limits::{
+    MAX_MEMBER_PATH_POINTS, MAX_RELATIONSHIP_TARGETS, MIN_WELD_SEGMENT_MM,
+};
+use beamcraft_model::prim::DefinitionCategory;
+use std::collections::BTreeMap;
 
 pub(super) fn norm([x, y, z]: [f64; 3]) -> f64 {
     ((x * x + y * y) + z * z).sqrt()
@@ -760,13 +776,16 @@ pub(super) fn bolt_group_against(spec: &FastenerSpec, b: &BoltGroup) -> Result<(
 /// The fastener definition a group places: one this batch pins as a resource, or the pinned
 /// definition the model already holds. Anything else is a dangling reference.
 pub(super) fn fastener_definition(
-    input: &Prepare,
+    input: &beamcraft_layer_engine::authored::Prepare,
     prims: &[Prim],
     digest: ContentDigest,
 ) -> Result<FastenerSpec, Diagnostic> {
     if let Some(found) = input.resources.iter().find(|r| r.digest == digest) {
         return match &found.definition {
-            Definition::Fastener { spec } => Ok(spec.clone()),
+            Definition::Discipline(hook) => match hook.0.as_any().downcast_ref::<FastenerDef>() {
+                Some(def) => Ok(def.spec.clone()),
+                _ => Err(invalid()),
+            },
             _ => Err(invalid()),
         };
     }
@@ -776,8 +795,12 @@ pub(super) fn fastener_definition(
 /// The pinned fastener definition of a stored digest, re-admitted from its canonical bytes.
 fn pinned_fastener(prims: &[Prim], digest: ContentDigest) -> Result<FastenerSpec, Diagnostic> {
     let p = resource(prims, digest, &["fastener"], DefinitionCategory::Fastener)?;
-    match read_definition(p, "fastener")? {
-        Definition::Fastener { spec } => Ok(spec),
+    let definition = read_definition(p, "fastener")?.ok_or_else(corrupt)?;
+    match definition {
+        Definition::Discipline(hook) => match hook.0.as_any().downcast_ref::<FastenerDef>() {
+            Some(def) => Ok(def.spec.clone()),
+            _ => Err(corrupt()),
+        },
         _ => Err(corrupt()),
     }
 }
@@ -848,4 +871,372 @@ pub(super) fn bolt_group_properties(p: &Prim, prims: &[Prim]) -> Result<(), Diag
     };
     bolt_group_values(&record)?;
     bolt_group_against(&pinned_fastener(prims, digest)?, &record)
+}
+
+/// The authored plane-cut records of a created plate or member (A03): finite and within the
+/// coordinate cap, with a non-zero normal, in ascending ordinals at most 999. Whether a plane
+/// crosses the element is the engine's gate.
+pub(super) fn cut_values(cuts: &[CutRecord]) -> Result<(), Diagnostic> {
+    let mut last_ordinal = None;
+    for cut in cuts {
+        // The record admission keeps the model's codes: non-finite and a zero normal are
+        // invalid, the coordinate cap is a limit.
+        match cut.validate() {
+            Ok(()) => (),
+            Err(error) if error.code == ErrorCode::LimitExceeded => return Err(limit()),
+            Err(_) => return Err(invalid()),
+        }
+        if cut.ordinal > 999 {
+            return Err(limit());
+        }
+        if last_ordinal.is_some_and(|last| last >= cut.ordinal) {
+            return Err(invalid());
+        }
+        last_ordinal = Some(cut.ordinal);
+    }
+    Ok(())
+}
+
+fn plate_corner_records(p: &Prim) -> Result<(), Diagnostic> {
+    use crate::model::command::{CornerTreatment, PlateCorner};
+    let fields = [
+        ("steel:plate:cornerVertex", "int[]"),
+        ("steel:plate:cornerKind", "token[]"),
+        ("steel:plate:cornerD1Mm", "double[]"),
+        ("steel:plate:cornerD2Mm", "double[]"),
+        ("steel:plate:cornerRadiusMm", "double[]"),
+    ];
+    let mut arrays = Vec::new();
+    let mut absent = 0usize;
+    for (name, ty) in fields {
+        match optional(p, name, ty)? {
+            None => absent += 1,
+            Some(Value::Array(a)) => arrays.push(a),
+            _ => return Err(invalid()),
+        }
+    }
+    if absent == 5 {
+        return Ok(());
+    }
+    if absent != 0 {
+        return Err(invalid());
+    }
+    let [vertices, kinds, d1s, d2s, radii] = arrays.as_slice() else {
+        return Err(invalid());
+    };
+    if vertices.len() > 1024 {
+        return Err(limit());
+    }
+    if [kinds.len(), d1s.len(), d2s.len(), radii.len()]
+        .iter()
+        .any(|n| *n != vertices.len())
+    {
+        return Err(invalid());
+    }
+    let count = points(p, "steel:plate:contourPointsMm")?.len();
+    let mut seen = Vec::new();
+    for ((((v, k), d1), d2), r) in vertices
+        .iter()
+        .zip(kinds.iter())
+        .zip(d1s.iter())
+        .zip(d2s.iter())
+        .zip(radii.iter())
+    {
+        let Value::Int(v) = v else {
+            return Err(invalid());
+        };
+        let v = usize::try_from(*v).map_err(|_| invalid())?;
+        if v >= count || seen.contains(&v) {
+            return Err(invalid());
+        }
+        seen.push(v);
+        let number = |n: &Value| match n {
+            Value::Number(n) => Ok(*n),
+            Value::Int(n) => Ok(*n as f64),
+            _ => Err(invalid()),
+        };
+        let (d1, d2, r) = (number(d1)?, number(d2)?, number(r)?);
+        let treatment = match k {
+            Value::Text(k) if k == "chamfer" && r == 0. => CornerTreatment::Chamfer {
+                d1_mm: d1,
+                d2_mm: d2,
+            },
+            Value::Text(k) if k == "round" && d1 == 0. && d2 == 0. => {
+                CornerTreatment::Round { radius_mm: r }
+            }
+            _ => return Err(invalid()),
+        };
+        PlateCorner {
+            vertex: v,
+            treatment,
+        }
+        .validate()
+        .map_err(|_| invalid())?;
+    }
+    Ok(())
+}
+
+/// Validates one owned plate, beam or column prim of a loaded layer: the operation history, the
+/// shape inputs and the owned records. Moved unchanged from the platform's `snapshot`.
+pub(super) fn steel_part(
+    kind: &str,
+    p: &Prim,
+    prims: &[Prim],
+    operation_ids: &mut std::collections::BTreeSet<beamcraft_model::id::OpId>,
+) -> Result<(), Diagnostic> {
+    let hole_history = cut_history::read_holes(p)?;
+    let member_history = cut_history::read_member_holes(p)?;
+    let history = cut_history::read(p)?;
+    for id in history
+        .retired
+        .into_iter()
+        .chain(hole_history.retired)
+        .chain(member_history.retired)
+        .chain(cut_history::ids(p, "steel:cut:operationId")?)
+        .chain(cut_history::ids(p, "steel:hole:operationIds")?)
+        .chain(cut_history::ids(p, "steel:mhole:operationIds")?)
+    {
+        if !operation_ids.insert(id) {
+            return Err(invalid());
+        }
+    }
+    match kind {
+        "plate" => {
+            // The form token discriminates the stored record: a lofted plate (A11)
+            // carries the three loft attributes and no plate extrusion inputs; an
+            // extruded plate stores neither the token nor the loft attributes.
+            let lofted = match p.properties.iter().find(|a| a.name == "steel:plate:form") {
+                None => {
+                    if p.properties.iter().any(|a| {
+                        matches!(
+                            a.name.as_str(),
+                            "steel:plate:loftStartMm" | "steel:plate:loftEndMm"
+                        )
+                    }) {
+                        return Err(invalid());
+                    }
+                    false
+                }
+                Some(_) => {
+                    if text(p, "steel:plate:form", "token")? != "lofted" {
+                        return Err(invalid());
+                    }
+                    if p.properties.iter().any(|a| {
+                        matches!(
+                            a.name.as_str(),
+                            "steel:plate:contourPointsMm" | "steel:plate:thicknessMm"
+                        )
+                    }) {
+                        return Err(invalid());
+                    }
+                    true
+                }
+            };
+            if lofted {
+                lofted_plate(
+                    &points(p, "steel:plate:loftStartMm")?,
+                    &points(p, "steel:plate:loftEndMm")?,
+                )?;
+            } else {
+                plate(
+                    &points(p, "steel:plate:contourPointsMm")?,
+                    number(p, "steel:plate:thicknessMm")?,
+                )?;
+            }
+            plate_corner_records(p)?;
+            plate_holes(p)?;
+            plate_hole_records(p)?;
+            element_cut(p)?;
+        }
+        "beam" | "column" => {
+            let axis = points(p, "bim:axisPointsMm")?;
+            if let Some(prop) = p
+                .properties
+                .iter()
+                .find(|v| v.name == "steel:member:pathType")
+            {
+                if prop.type_name != "token"
+                    || text(p, "steel:member:pathType", "token")? != "arc"
+                    || axis.len() != 3
+                {
+                    return Err(invalid());
+                }
+                if p.properties
+                    .iter()
+                    .any(|v| v.name == "steel:member:rollRad")
+                {
+                    return Err(invalid());
+                }
+            }
+            if axis.len() < 2 || axis.len() > MAX_MEMBER_PATH_POINTS {
+                return Err(invalid());
+            }
+            let profile =
+                link(p, prims, "bim:profile", &PROFILE_KINDS, true)?.ok_or_else(invalid)?;
+            let profile = read_definition(profile, text(profile, "bim:definitionKind", "token")?)?
+                .ok_or_else(invalid)?;
+            definition(&profile)?;
+            // A member pins a section profile: a rectangle for its width and height, a section
+            // for its extent. A material or a fastener definition never hangs off `bim:profile`.
+            let (width, height) = match &profile {
+                Definition::Discipline(hook) => {
+                    if let Some(def) = hook.0.as_any().downcast_ref::<RectangleProfileDef>() {
+                        (def.width_mm, def.height_mm)
+                    } else if let Some(def) = hook.0.as_any().downcast_ref::<SectionProfileDef>() {
+                        def.shape.extent_mm()
+                    } else {
+                        return Err(invalid());
+                    }
+                }
+                _ => return Err(invalid()),
+            };
+            // The size reference is the total path length for a polybeam and the one
+            // chord for a straight member; both sum the same first chord.
+            let mut length = 0.0;
+            for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
+                length += norm(difference(*b, *a));
+            }
+            let half_width = width / 2.0;
+            let half_height = height / 2.0;
+            let size = length.max((half_width * half_width + half_height * half_height).sqrt());
+            if size > 1e6 {
+                return Err(limit());
+            }
+            let eps = 0.001f64.max(size / 4194304.0);
+            // Every chord, not only the total, must clear the geometric floor.
+            let mut short = length < eps;
+            for (a, b) in axis.iter().zip(axis.iter().skip(1)) {
+                short |= norm(difference(*b, *a)) < eps;
+            }
+            if short || width < eps || height < eps {
+                return Err(invalid());
+            }
+            if let Some(Value::Number(n)) = p
+                .properties
+                .iter()
+                .find(|v| v.name == "steel:member:rollRad")
+                .and_then(|v| v.value.as_ref())
+            {
+                cap([*n], std::f64::consts::TAU)?;
+            }
+            element_cut(p)?;
+            member_hole_records(p)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Validates the properties of a weld or bolt-group connection prim; the rest of a connection
+/// is the platform's. Moved unchanged from the platform's `snapshot`.
+pub(super) fn steel_connection(p: &Prim, prims: &[Prim]) -> Result<(), Diagnostic> {
+    let connection_type = text(p, "steel:connection:type", "token")?;
+    let has = |prefix: &str| p.properties.iter().any(|v| v.name.starts_with(prefix));
+    let placed = has("steel:bolt:fastener");
+    match connection_type {
+        "weld" if !has("steel:bolt:") => weld_properties(p)?,
+        // An A05 annotation group and an A14.3 group are discriminated by
+        // the definition digest; a mixed property set is never guessed.
+        "bolt_group" if !has("steel:weld:") && placed => bolt_group_properties(p, prims)?,
+        "bolt_group" if !has("steel:weld:") && !has("steel:bolt:point1Mm") => bolt_properties(p)?,
+        _ => return Err(invalid().with_rule("DV-ATTR-002")),
+    }
+    Ok(())
+}
+
+/// A06 and A05 `connects` records (domain vocabulary section 5.1): only a connection — a weld or
+/// a bolt group — carries one, with exactly two distinct targets (`DV-REL-004`, `DV-REL-007`),
+/// never itself (`DV-REL-006`), each an active owned plate, beam or column (`DV-REL-001`
+/// dangling, `DV-REL-003` kind). An assembly is a valid target in the vocabulary but not for a
+/// weld or a bolt group in this slice.
+pub(super) fn connects(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let elements: BTreeMap<&str, (&Prim, &str)> = prims
+        .iter()
+        .filter_map(|p| supported_kind(p).map(|k| (p.path.as_str(), (p, k))))
+        .collect();
+    for (&path, &(p, kind)) in &elements {
+        let Some(r) = relationship(p, "bim:connects") else {
+            if kind == "connection" {
+                return Err(fail(
+                    ErrorCode::DependencyConflict,
+                    "a connection connects exactly two parts",
+                )
+                .with_rule("DV-REL-004"));
+            }
+            continue;
+        };
+        if kind != "connection" {
+            return Err(fail(
+                ErrorCode::InvalidArgument,
+                "only a connection carries a connects record",
+            )
+            .with_rule("DV-REL-003"));
+        }
+        // An A14.3 bolt group carries 2 to 1024 targets (the vocabulary's own range); a weld
+        // and an A05 group carry exactly two.
+        let target_cap = if p.properties.iter().any(|v| v.name == "steel:bolt:fastener") {
+            MAX_RELATIONSHIP_TARGETS
+        } else {
+            2
+        };
+        if r.targets.len() < 2 || r.targets.len() > target_cap {
+            return Err(fail(
+                ErrorCode::DependencyConflict,
+                "a connection connects exactly two parts",
+            )
+            .with_rule("DV-REL-004"));
+        }
+        for (index, first) in r.targets.iter().enumerate() {
+            if r.targets.iter().skip(index + 1).any(|other| other == first) {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "a connection connects two distinct parts",
+                )
+                .with_rule("DV-REL-007"));
+            }
+        }
+        for target in &r.targets {
+            if target == path {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "a connection cannot connect itself",
+                ));
+            }
+            match elements.get(target.as_str()) {
+                Some((t, _)) if !t.active => {
+                    return Err(fail(
+                        ErrorCode::DanglingRelationship,
+                        "connects target is not active",
+                    )
+                    .with_rule("DV-REL-001"));
+                }
+                Some((_, kind)) if is_part_kind(kind) => {}
+                Some((_, "assembly")) => return Err(unsupported()),
+                Some(_) => {
+                    return Err(fail(
+                        ErrorCode::InvalidArgument,
+                        "connects target is not a plate, beam or column",
+                    ));
+                }
+                None if prims
+                    .iter()
+                    .any(|p| p.path == *target && p.element_id.is_some()) =>
+                {
+                    return Err(fail(
+                        ErrorCode::InvalidArgument,
+                        "connects target is not a supported owned part",
+                    )
+                    .with_rule("DV-REL-003"));
+                }
+                None => {
+                    return Err(fail(
+                        ErrorCode::DanglingRelationship,
+                        "connects target unavailable",
+                    )
+                    .with_rule("DV-REL-001"));
+                }
+            }
+        }
+    }
+    Ok(())
 }

@@ -23,7 +23,9 @@ pub struct CutHistory {
     /// UUIDs that cannot be used by a new record.
     pub retired: Vec<OpId>,
 }
-pub(super) fn ids(p: &Prim, name: &str) -> Result<Vec<OpId>, Diagnostic> {
+/// The operation identities stored under one id attribute; the seam a discipline's record
+/// history reads its stored ids through.
+pub fn ids(p: &Prim, name: &str) -> Result<Vec<OpId>, Diagnostic> {
     let Some(value) = validate::optional(p, name, "string[]")? else {
         return Ok(Vec::new());
     };
@@ -76,7 +78,9 @@ pub fn fields(family: Family) -> (&'static str, &'static str, &'static str, &'st
         ),
     }
 }
-pub(super) fn ordinals(p: &Prim, name: &str) -> Result<Vec<u16>, Diagnostic> {
+/// The ordinals stored under one ordinal attribute, ascending; the seam a discipline's record
+/// history reads its stored ordinals through.
+pub fn ordinals(p: &Prim, name: &str) -> Result<Vec<u16>, Diagnostic> {
     let Some(value) = validate::optional(p, name, "int[]")? else {
         return Ok(Vec::new());
     };

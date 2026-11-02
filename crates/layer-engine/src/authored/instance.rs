@@ -3,12 +3,16 @@
 
 //! P11 canonical definition links and bounded materialization for model readers.
 use super::*;
-use beamcraft_model::id::ElementId;
 use openusd::sdf;
-use steel::model::instance::{InstanceLink, MAX_PART_INSTANCES};
 
 /// Persistent shared-definition relationship name.
 pub const RELATIONSHIP: &str = "bim:instanceOf";
+
+/// The platform's read-side cap on part instances of one stage. It mirrors the command-side
+/// cap (`steel::model::instance::MAX_PART_INSTANCES`), which admission checks before writing,
+/// so a batch and its loaded stage fan out to the same bound; a steel-side test asserts the
+/// two constants stay equal.
+pub const MAX_PART_INSTANCES: usize = 256;
 
 fn text<'a>(p: &'a Prim, name: &str) -> Option<&'a str> {
     match p
@@ -113,31 +117,26 @@ pub fn validate_source<'a>(
     Ok(source)
 }
 
-/// Persistent links of a validated stage. Definitions are canonical parts, never chains.
-pub fn links(prims: &[Prim]) -> Result<Vec<InstanceLink>, Diagnostic> {
-    let mut out = Vec::new();
+/// Caps the part instances of a stage at [`MAX_PART_INSTANCES`]; the platform half of the cap
+/// the steel layer reports its links against. The instance identities themselves are a
+/// discipline concern and stay with the links.
+pub(super) fn cap(prims: &[Prim]) -> Result<(), Diagnostic> {
+    let mut count = 0usize;
     for p in prims {
-        if let Some(source) = definition(p, prims)? {
-            if out.len() >= MAX_PART_INSTANCES {
+        if definition(p, prims)?.is_some() {
+            if count >= MAX_PART_INSTANCES {
                 return Err(fail(ErrorCode::LimitExceeded, "too many part instances"));
             }
-            let id = |p: &Prim| {
-                ElementId::parse(p.element_id.as_deref().ok_or_else(invalid)?)
-                    .map_err(|_| invalid())
-            };
-            out.push(InstanceLink {
-                instance: id(p)?,
-                definition: id(source)?,
-            });
+            count += 1;
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Clones a bounded reader projection with shared inputs resolved onto each instance. This is
 /// transient evaluation state; the authored USD stores the definition once and retains links.
 pub fn resolve(prims: Vec<Prim>) -> Result<Vec<Prim>, Diagnostic> {
-    links(&prims)?;
+    cap(&prims)?;
     // Charge expanded shared values before cloning, including nested point arrays. Unknown
     // properties are never expanded. One million values is a hard cap independent of disk size.
     let mut charge = 0usize;

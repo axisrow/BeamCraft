@@ -19,7 +19,6 @@ use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{Prepare, schema_identity};
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
@@ -31,6 +30,7 @@ use session::pipeline::{
 use std::collections::BTreeMap;
 use steel::engine::command::evaluate_plate;
 use steel::engine::committed::PlateRecord;
+use steel::layer as steel_layer;
 use steel::model::command::BendPlate;
 
 fn not_found() -> Refusal {

@@ -53,6 +53,9 @@ fn invalid() -> HostError {
     HostError::logical(ErrorCode::InvalidArgument)
 }
 fn main() -> std::process::ExitCode {
+    // The steel discipline joins the platform registry first, so every command below reads and
+    // authors steel parts; a repeated install is kept, never duplicated.
+    steel::layer::install();
     let args = std::env::args_os().skip(1).take(50).collect::<Vec<_>>();
     if args.len() == 1 && (args.first().is_some_and(|s| s == "--version" || s == "-V")) {
         println!("beamcraft {}", env!("CARGO_PKG_VERSION"));

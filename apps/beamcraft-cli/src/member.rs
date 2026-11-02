@@ -23,10 +23,8 @@ use beamcraft_host::revision::{
 };
 use beamcraft_layer_engine::OpenRequest;
 use beamcraft_layer_engine::Reader;
-use beamcraft_layer_engine::authored::steel_layer;
 use beamcraft_layer_engine::authored::{
-    Change, Element, MemberKind as LayerKind, MemberShape, Placement as LayerPlacement, Prepare,
-    schema_identity,
+    Change, Element, Placement as LayerPlacement, Prepare, schema_identity,
 };
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -38,6 +36,8 @@ use steel::engine::committed::{MemberRecord, ids};
 use steel::engine::member::{
     AuthoredMember, MemberAdmission, admit_create_member, admit_create_polybeam,
 };
+use steel::layer as steel_layer;
+use steel::layer::{MemberKind as LayerKind, MemberShape};
 use steel::model::command::{CreatePolybeam, CreateStraightMember, MemberKind};
 
 /// Inputs of one `create_member` call beyond the command itself.

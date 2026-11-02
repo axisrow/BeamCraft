@@ -34,6 +34,7 @@ pub(crate) struct StoreFixture {
 
 impl StoreFixture {
     pub(crate) fn new(suite: &str) -> Self {
+        steel::layer::install();
         let base = Path::new(env!("CARGO_TARGET_TMPDIR")).join(suite);
         fs::create_dir_all(&base).unwrap();
         for _ in 0..1024 {

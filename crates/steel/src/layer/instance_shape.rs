@@ -2,13 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The P11 instance behind the discipline hook (#795): shared inputs are read from a canonical
-//! part; only metadata and pose are local. The arms are the ones this replaces in `edit.rs` and
-//! `validate.rs`, moved unchanged.
+//! part; only metadata and pose are local. The arms are the ones that replaced this in the
+//! platform's `edit.rs` and `validate.rs`, moved unchanged; the facade constructor in [`super`]
+//! builds the platform `Shape` from this hook.
 
-use super::hook::{AuthorCx, HookedShape, ShapeHook, ValidateCx};
-use super::*;
+use crate::model::instance::PartKind;
+use beamcraft_layer_engine::Diagnostic;
+use beamcraft_layer_engine::authored::instance;
+use beamcraft_layer_engine::authored::{
+    AuthorCx, Footprint, Group, ShapeHook, ValidateCx, invalid,
+};
+use beamcraft_model::prim::ElementCategory;
 use std::any::Any;
-use steel::model::instance::PartKind;
 
 /// The authored shape of a P11 instance.
 #[derive(Debug, Clone, PartialEq)]
@@ -17,13 +22,6 @@ pub struct InstanceShape {
     pub kind: PartKind,
     /// Canonical part identity, never another instance.
     pub definition: String,
-}
-
-impl Shape {
-    /// An instance of the given canonical part; see [`InstanceShape`].
-    pub fn instance(kind: PartKind, definition: String) -> Self {
-        Self::Discipline(HookedShape::new(InstanceShape { kind, definition }))
-    }
 }
 
 impl ShapeHook for InstanceShape {
