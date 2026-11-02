@@ -231,12 +231,8 @@ pub fn update_element(
     if shared {
         let patch = steel::model::command::ElementPatch {
             material: command.patch.material,
-            thickness_mm: command.patch.thickness_mm,
-            corners: command.patch.corners.clone(),
-            contour_points_mm: command.patch.contour_points_mm.clone(),
-            thickness_side: command.patch.thickness_side,
-            axis_points_mm: command.patch.axis_points_mm.clone(),
-            profile: command.patch.profile,
+            plate: command.patch.plate.clone(),
+            member: command.patch.member.clone(),
             ..Default::default()
         };
         for id in instances.group(command.target_id)? {
@@ -259,7 +255,7 @@ pub fn update_element(
         patch_effect.placement || patch_effect.orientation,
         new_material,
     )?;
-    if let Some(profile) = command.patch.profile {
+    if let Some(profile) = command.patch.pinned_profile() {
         footprint = footprint.union(Footprint::for_profile_change(command.target_id, profile)?)?;
     }
     if shared {
@@ -306,24 +302,24 @@ pub fn update_element(
             opinion: material.map_or(MaterialOpinion::Empty, MaterialOpinion::Target),
         });
     }
-    if let Some(mm) = command.patch.thickness_mm {
+    if let Some(mm) = command.patch.plate.thickness_mm {
         changes.push(steel_layer::thickness(definition_text.clone(), mm));
     }
     // The contour is a shape input of the canonical definition, like the thickness: the
     // instances of the group read their bodies from it and take mesh updates below.
-    if let Some(points) = &command.patch.contour_points_mm {
+    if let Some(points) = &command.patch.plate.contour_points_mm {
         changes.push(steel_layer::contour(
             definition_text.clone(),
             points.clone(),
         ));
     }
-    if let Some(corners) = &command.patch.corners {
+    if let Some(corners) = &command.patch.plate.corners {
         changes.push(steel_layer::corners(
             definition_text.clone(),
             corners.clone(),
         ));
     }
-    if let Some(side) = command.patch.thickness_side {
+    if let Some(side) = command.patch.plate.thickness_side {
         changes.push(steel_layer::thickness_side(definition_text.clone(), side));
     }
     // A member path change (P12) is authored on the canonical part, like a thickness change:
@@ -336,7 +332,7 @@ pub fn update_element(
             changes.push(steel_layer::roll(definition_text.clone(), Opinion::Remove));
         }
     }
-    if let Some(digest) = command.patch.profile {
+    if let Some(digest) = command.patch.member.profile {
         changes.push(steel_layer::profile(definition_text.clone(), digest));
     }
     // A mirror (T03) re-encodes the local body: the plate's side flips and the cuts of either

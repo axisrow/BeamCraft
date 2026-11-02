@@ -73,13 +73,9 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         name: patch.name.is_some(),
         class: patch.class.is_some(),
         material: patch.material.is_some(),
-        shape: patch.corners.is_some()
-            || patch.contour_points_mm.is_some()
-            || patch.thickness_mm.is_some()
-            || patch.thickness_side.is_some()
-            || patch.axis_points_mm.is_some()
-            || patch.mirror.is_some()
-            || patch.profile.is_some(),
+        shape: patch.plate.changes_shape()
+            || patch.member.changes_shape()
+            || patch.mirror.is_some(),
         placement: patch.translation_mm.is_some()
             || patch.rotate.is_some()
             || patch.mirror.is_some()
@@ -89,24 +85,24 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
         rotate: patch.rotate.is_some(),
         mirror: patch.mirror.is_some(),
         move_mm: patch.move_mm.is_some(),
-        profile: patch.profile.is_some(),
+        profile: patch.member.profile.is_some(),
     }
 }
 
-/// Applies a patch to an authored plate. A plate has no path points: that field is
-/// `UNSUPPORTED_PROPERTY`.
+/// Applies a patch to an authored plate. A member half in the patch is refused: every named
+/// field of it is `UNSUPPORTED_PROPERTY` on a plate.
 pub fn patch_plate(
     plate: &AuthoredPlate,
     patch: &ElementPatch,
 ) -> Result<AuthoredPlate, CommandError> {
-    if patch.axis_points_mm.is_some() {
+    if patch.member.axis_points_mm.is_some() {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,
             "axis_points_mm",
             "a plate has no path points",
         ));
     }
-    if patch.profile.is_some() {
+    if patch.member.profile.is_some() {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,
             "profile",
@@ -114,15 +110,15 @@ pub fn patch_plate(
         ));
     }
     let mut next = plate.clone();
-    if let Some(points) = &patch.contour_points_mm {
+    if let Some(points) = &patch.plate.contour_points_mm {
         next.contour_points_mm.clone_from(points);
     }
-    if let Some(corners) = &patch.corners {
+    if let Some(corners) = &patch.plate.corners {
         next.corners.clone_from(corners);
     }
     // One admission covers the pair: a contour patch is validated with the corners it arrives
     // with (each naming a vertex of the new contour), a corner patch with the standing contour.
-    if patch.contour_points_mm.is_some() || patch.corners.is_some() {
+    if patch.plate.contour_points_mm.is_some() || patch.plate.corners.is_some() {
         next.to_command().validate_arguments()?;
     }
     if let Some(name) = &patch.name {
@@ -134,10 +130,10 @@ pub fn patch_plate(
     if let Some(material) = patch.material {
         next.material = material;
     }
-    if let Some(thickness) = patch.thickness_mm {
+    if let Some(thickness) = patch.plate.thickness_mm {
         next.thickness_mm = thickness;
     }
-    if let Some(side) = patch.thickness_side {
+    if let Some(side) = patch.plate.thickness_side {
         next.thickness_side = Some(side);
     }
     next.placement = if let Some(mirror) = &patch.mirror {
@@ -153,36 +149,36 @@ pub fn patch_plate(
     Ok(next)
 }
 
-/// Applies a patch to an authored member. A member has no thickness: that field and the
-/// thickness side are `UNSUPPORTED_PROPERTY`. A path patch replaces the whole polyline; fewer
-/// than two points is `INVALID_ARGUMENT`, and whether the chords are long enough is the body
-/// evaluation's decision.
+/// Applies a patch to an authored member. A plate half in the patch is refused: every named
+/// field of it is `UNSUPPORTED_PROPERTY` on a member. A path patch replaces the whole
+/// polyline; fewer than two points is `INVALID_ARGUMENT`, and whether the chords are long
+/// enough is the body evaluation's decision.
 pub fn patch_member(
     member: &AuthoredMember,
     patch: &ElementPatch,
 ) -> Result<AuthoredMember, CommandError> {
-    if patch.contour_points_mm.is_some() {
+    if patch.plate.contour_points_mm.is_some() {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,
             "contour_points_mm",
             "only plates have a contour",
         ));
     }
-    if patch.corners.is_some() {
+    if patch.plate.corners.is_some() {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,
             "corner",
             "only plates have contour corners",
         ));
     }
-    if patch.thickness_mm.is_some() {
+    if patch.plate.thickness_mm.is_some() {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,
             "thickness_mm",
             "a member has no thickness",
         ));
     }
-    if patch.thickness_side.is_some() {
+    if patch.plate.thickness_side.is_some() {
         return Err(CommandError::new(
             ErrorCode::UnsupportedProperty,
             "thickness_side",
@@ -191,7 +187,7 @@ pub fn patch_member(
     }
     // The mirror re-encodes through the path symmetry; a path replacement in the same patch
     // would mirror through one path and re-encode through another (the model refuses it too).
-    if patch.mirror.is_some() && patch.axis_points_mm.is_some() {
+    if patch.mirror.is_some() && patch.member.axis_points_mm.is_some() {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "mirror",
@@ -208,10 +204,10 @@ pub fn patch_member(
     if let Some(material) = patch.material {
         next.material = material;
     }
-    if let Some(profile) = patch.profile {
+    if let Some(profile) = patch.member.profile {
         next.profile = profile;
     }
-    if let Some(points) = &patch.axis_points_mm {
+    if let Some(points) = &patch.member.axis_points_mm {
         if points.len() < 2 {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
@@ -281,7 +277,7 @@ fn placement_after(placement: &Placement, patch: &ElementPatch) -> Result<Placem
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::command::MemberKind;
+    use crate::model::command::{MemberKind, MemberPatch, PlatePatch};
     use beamcraft_model::digest::Sha256;
     use beamcraft_model::id::ElementId;
 
@@ -386,7 +382,10 @@ mod tests {
             &plate(),
             &ElementPatch {
                 material: Some(Some(steel)),
-                thickness_mm: Some(12.0),
+                plate: PlatePatch {
+                    thickness_mm: Some(12.0),
+                    ..PlatePatch::default()
+                },
                 ..ElementPatch::default()
             },
         )
@@ -522,7 +521,10 @@ mod tests {
     fn a_thickness_side_patch_is_a_shape_change_and_a_member_refuses_it() {
         use crate::model::command::PlateSide;
         let side = ElementPatch {
-            thickness_side: Some(PlateSide::Bottom),
+            plate: PlatePatch {
+                thickness_side: Some(PlateSide::Bottom),
+                ..PlatePatch::default()
+            },
             ..ElementPatch::default()
         };
         assert!(effect(&side).shape && !effect(&side).placement);
@@ -557,7 +559,10 @@ mod tests {
             patch_member(
                 &member,
                 &ElementPatch {
-                    thickness_mm: Some(3.0),
+                    plate: PlatePatch {
+                        thickness_mm: Some(3.0),
+                        ..PlatePatch::default()
+                    },
                     ..ElementPatch::default()
                 }
             )
@@ -581,7 +586,10 @@ mod tests {
     fn a_path_patch_replaces_the_whole_member_path_and_is_a_shape_change() {
         // The effect names the shape group, so the adapter re-evaluates the body.
         let bent = ElementPatch {
-            axis_points_mm: Some(vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]),
+            member: MemberPatch {
+                axis_points_mm: Some(vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]),
+                ..MemberPatch::default()
+            },
             ..ElementPatch::default()
         };
         assert!(effect(&bent).shape);
@@ -596,7 +604,10 @@ mod tests {
             patch_member(
                 &member(),
                 &ElementPatch {
-                    axis_points_mm: Some(vec![[0.0; 3]]),
+                    member: MemberPatch {
+                        axis_points_mm: Some(vec![[0.0; 3]]),
+                        ..MemberPatch::default()
+                    },
                     ..ElementPatch::default()
                 }
             )
@@ -607,7 +618,10 @@ mod tests {
         let straightened = patch_member(
             &patched,
             &ElementPatch {
-                axis_points_mm: Some(vec![[0.0; 3], [7000.0, 0.0, 0.0]]),
+                member: MemberPatch {
+                    axis_points_mm: Some(vec![[0.0; 3], [7000.0, 0.0, 0.0]]),
+                    ..MemberPatch::default()
+                },
                 ..ElementPatch::default()
             },
         )
@@ -625,7 +639,10 @@ mod tests {
         let bent = patch_member(
             &rolled,
             &ElementPatch {
-                axis_points_mm: Some(vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]),
+                member: MemberPatch {
+                    axis_points_mm: Some(vec![[0.0; 3], [3000.0, 0.0, 0.0], [3000.0, 4000.0, 0.0]]),
+                    ..MemberPatch::default()
+                },
                 ..ElementPatch::default()
             },
         )
@@ -637,7 +654,10 @@ mod tests {
         let straight = patch_member(
             &bent,
             &ElementPatch {
-                axis_points_mm: Some(vec![[0.0; 3], [7000.0, 0.0, 0.0]]),
+                member: MemberPatch {
+                    axis_points_mm: Some(vec![[0.0; 3], [7000.0, 0.0, 0.0]]),
+                    ..MemberPatch::default()
+                },
                 ..ElementPatch::default()
             },
         )
@@ -719,7 +739,10 @@ mod tests {
         );
         let with_path = ElementPatch {
             mirror: patch.mirror,
-            axis_points_mm: Some(vec![[0.0; 3], [2000.0, 0.0, 0.0]]),
+            member: MemberPatch {
+                axis_points_mm: Some(vec![[0.0; 3], [2000.0, 0.0, 0.0]]),
+                ..MemberPatch::default()
+            },
             ..ElementPatch::default()
         };
         assert_eq!(
@@ -734,7 +757,10 @@ mod tests {
             patch_plate(
                 &plate(),
                 &ElementPatch {
-                    axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0]]),
+                    member: MemberPatch {
+                        axis_points_mm: Some(vec![[0.0; 3], [1000.0, 0.0, 0.0]]),
+                        ..MemberPatch::default()
+                    },
                     ..ElementPatch::default()
                 }
             )
@@ -748,12 +774,15 @@ mod tests {
         use crate::model::command::{CornerTreatment, PlateCorner};
         let before = plate();
         let moved = ElementPatch {
-            contour_points_mm: Some(vec![
-                [0.0, 0.0, 0.0],
-                [2000.0, 0.0, 0.0],
-                [2000.0, 500.0, 0.0],
-                [0.0, 500.0, 0.0],
-            ]),
+            plate: PlatePatch {
+                contour_points_mm: Some(vec![
+                    [0.0, 0.0, 0.0],
+                    [2000.0, 0.0, 0.0],
+                    [2000.0, 500.0, 0.0],
+                    [0.0, 500.0, 0.0],
+                ]),
+                ..PlatePatch::default()
+            },
             ..Default::default()
         };
         assert!(effect(&moved).shape);
@@ -766,15 +795,18 @@ mod tests {
         let pair = patch_plate(
             &before,
             &ElementPatch {
-                contour_points_mm: Some(vec![
-                    [0.0, 0.0, 0.0],
-                    [500.0, 0.0, 0.0],
-                    [0.0, 500.0, 0.0],
-                ]),
-                corners: Some(vec![PlateCorner {
-                    vertex: 0,
-                    treatment: CornerTreatment::Round { radius_mm: 10. },
-                }]),
+                plate: PlatePatch {
+                    contour_points_mm: Some(vec![
+                        [0.0, 0.0, 0.0],
+                        [500.0, 0.0, 0.0],
+                        [0.0, 500.0, 0.0],
+                    ]),
+                    corners: Some(vec![PlateCorner {
+                        vertex: 0,
+                        treatment: CornerTreatment::Round { radius_mm: 10. },
+                    }]),
+                    ..PlatePatch::default()
+                },
                 ..Default::default()
             },
         )
@@ -785,15 +817,18 @@ mod tests {
             patch_plate(
                 &before,
                 &ElementPatch {
-                    contour_points_mm: Some(vec![
-                        [0.0, 0.0, 0.0],
-                        [500.0, 0.0, 0.0],
-                        [0.0, 500.0, 0.0]
-                    ]),
-                    corners: Some(vec![PlateCorner {
-                        vertex: 3,
-                        treatment: CornerTreatment::Round { radius_mm: 10. },
-                    }]),
+                    plate: PlatePatch {
+                        contour_points_mm: Some(vec![
+                            [0.0, 0.0, 0.0],
+                            [500.0, 0.0, 0.0],
+                            [0.0, 500.0, 0.0]
+                        ]),
+                        corners: Some(vec![PlateCorner {
+                            vertex: 3,
+                            treatment: CornerTreatment::Round { radius_mm: 10. },
+                        }]),
+                        ..PlatePatch::default()
+                    },
                     ..Default::default()
                 }
             )
@@ -804,7 +839,10 @@ mod tests {
             patch_plate(
                 &before,
                 &ElementPatch {
-                    contour_points_mm: Some(vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0]]),
+                    plate: PlatePatch {
+                        contour_points_mm: Some(vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0]]),
+                        ..PlatePatch::default()
+                    },
                     ..Default::default()
                 }
             )
@@ -816,7 +854,10 @@ mod tests {
             patch_member(
                 &member(),
                 &ElementPatch {
-                    contour_points_mm: Some(before.contour_points_mm.clone()),
+                    plate: PlatePatch {
+                        contour_points_mm: Some(before.contour_points_mm.clone()),
+                        ..PlatePatch::default()
+                    },
                     ..Default::default()
                 }
             )
@@ -835,7 +876,10 @@ mod tests {
             treatment: CornerTreatment::Round { radius_mm: 10. },
         }];
         let patch = ElementPatch {
-            corners: Some(corners.clone()),
+            plate: PlatePatch {
+                corners: Some(corners.clone()),
+                ..PlatePatch::default()
+            },
             ..Default::default()
         };
         assert!(effect(&patch).shape);
@@ -847,7 +891,10 @@ mod tests {
         let cleared = patch_plate(
             &after,
             &ElementPatch {
-                corners: Some(vec![]),
+                plate: PlatePatch {
+                    corners: Some(vec![]),
+                    ..PlatePatch::default()
+                },
                 ..Default::default()
             },
         )
@@ -857,10 +904,13 @@ mod tests {
             patch_plate(
                 &before,
                 &ElementPatch {
-                    corners: Some(vec![PlateCorner {
-                        vertex: 999,
-                        treatment: CornerTreatment::Round { radius_mm: 1. }
-                    }]),
+                    plate: PlatePatch {
+                        corners: Some(vec![PlateCorner {
+                            vertex: 999,
+                            treatment: CornerTreatment::Round { radius_mm: 1. }
+                        }]),
+                        ..PlatePatch::default()
+                    },
                     ..Default::default()
                 }
             )

@@ -63,8 +63,8 @@ use steel::model::command::{
     SectionPlanePosition, SplitPart,
 };
 use steel::model::command::{
-    ArrayElements, ArrayStep, CopyElement, ElementMirror, ElementPatch, ElementRotate,
-    UpdateElement,
+    ArrayElements, ArrayStep, CopyElement, ElementMirror, ElementPatch, ElementRotate, MemberPatch,
+    PlatePatch, UpdateElement,
 };
 use steel::model::definition::SectionProperties;
 use steel::model::section::{CustomSection, ParametricSection, SectionFamily, SectionShape};
@@ -1434,12 +1434,6 @@ fn update_command(
         }
     }
     let patch = ElementPatch {
-        corners: if given("--corners").is_some() {
-            Some(corner_treatments(options)?)
-        } else {
-            None
-        },
-        contour_points_mm: None,
         class: given("--class")
             .map(|v| {
                 v.parse::<i32>()
@@ -1452,13 +1446,6 @@ fn update_command(
             Some("none") => Some(None),
             Some(text) => Some(Some(digest_option(text)?)),
         },
-        thickness_mm: given("--thickness")
-            .map(|text| {
-                text.parse::<f64>()
-                    .map_err(|_| invalid("a number is malformed"))
-            })
-            .transpose()?,
-        thickness_side: thickness_side(options)?,
         translation_mm: given("--translation").map(translation).transpose()?,
         orientation_xyzw: match given("--orientation-xyzw") {
             None => None,
@@ -1474,17 +1461,35 @@ fn update_command(
                 other => ElementId::parse(other).map(Some).map_err(id_error),
             })
             .transpose()?,
-        axis_points_mm: given("--axis-point").map(path_points).transpose()?,
-        // A member's new section: a digest, or a name looked up in the model and then in the
-        // environment of the project, exactly as when a member is created.
-        profile: selected(
-            store,
-            options,
-            ("--profile-digest", "--profile"),
-            true,
-            None,
-            candidates,
-        )?,
+        plate: PlatePatch {
+            corners: if given("--corners").is_some() {
+                Some(corner_treatments(options)?)
+            } else {
+                None
+            },
+            // A contour patch has no option: the contour edits (A12.3) build one below.
+            contour_points_mm: None,
+            thickness_mm: given("--thickness")
+                .map(|text| {
+                    text.parse::<f64>()
+                        .map_err(|_| invalid("a number is malformed"))
+                })
+                .transpose()?,
+            thickness_side: thickness_side(options)?,
+        },
+        member: MemberPatch {
+            axis_points_mm: given("--axis-point").map(path_points).transpose()?,
+            // A member's new section: a digest, or a name looked up in the model and then in
+            // the environment of the project, exactly as when a member is created.
+            profile: selected(
+                store,
+                options,
+                ("--profile-digest", "--profile"),
+                true,
+                None,
+                candidates,
+            )?,
+        },
     };
     let updated = update_element(
         store,
@@ -1688,9 +1693,12 @@ fn contour_edit_command(
             command: UpdateElement {
                 target_id,
                 patch: ElementPatch {
-                    contour_points_mm: Some(points),
-                    corners: Some(corners),
-                    ..Default::default()
+                    plate: PlatePatch {
+                        contour_points_mm: Some(points),
+                        corners: Some(corners),
+                        ..PlatePatch::default()
+                    },
+                    ..ElementPatch::default()
                 },
             },
         },

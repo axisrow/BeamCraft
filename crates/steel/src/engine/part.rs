@@ -260,7 +260,7 @@ impl PartRecord {
                 let body = if shape {
                     // A profile patch rebuilds the body from the new section; any other shape
                     // patch keeps the standing one.
-                    let resolved = match patch.profile {
+                    let resolved = match patch.member.profile {
                         Some(digest) => profile(&digest)?,
                         None => head.body.profile.clone(),
                     };
