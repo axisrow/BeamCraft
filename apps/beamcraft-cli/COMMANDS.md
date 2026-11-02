@@ -1089,10 +1089,35 @@ list-views --file FILE [--store ROOT]
 write.
 
 ```text
-save-view --file FILE --name TEXT [--store ROOT] [--target X,Y,Z] [--yaw RAD] [--pitch RAD]
-    [--distance MM] [--ortho true|false] [--work-area MM,MM,MM,MM,MM,MM] [--plane-grid SELECTOR]
-    [--plane-line LABEL] [--plane-reverse true|false] [--plane-level true|false] [--from X,Y,Z]
-    [--to X,Y,Z] [--centre X,Y,Z]
+save-view --file FILE --name TEXT [--new-id UUID] [--store ROOT] [--target X,Y,Z] [--yaw RAD]
+    [--pitch RAD] [--parallel xy|xz|yz] [--offset MM] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ]
+    [--two-points X,Y,Z;X,Y,Z] [--work-plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ]
+    [--three-points X,Y,Z;X,Y,Z;X,Y,Z] [--grid SELECTOR] [--axis LABEL|ID]
+    [--u-axes none|first|last|all] [--v-axes none|first|last|all] [--u-prefix TEXT]
+    [--v-prefix TEXT] [--level NAME|ID] [--levels first|last|all] [--element ID] [--assembly ID]
+    [--side front|back|top|bottom|end|3d|four] [--ray-origin X,Y,Z] [--ray-direction X,Y,Z]
+    [--edge X,Y,Z;X,Y,Z] [--projection orthographic|perspective] [--span MM]
+    [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
+    [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
+    [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
+    [--opacity 0..1] [--folder PATH] [--favorite true|false] [--copy-from VIEW]
+```
+
+### update-view
+
+write.
+
+```text
+update-view --file FILE --view ID|NAME [--name TEXT] [--store ROOT] [--target X,Y,Z] [--yaw RAD]
+    [--pitch RAD] [--parallel xy|xz|yz] [--offset MM] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ]
+    [--two-points X,Y,Z;X,Y,Z] [--work-plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ]
+    [--three-points X,Y,Z;X,Y,Z;X,Y,Z] [--grid SELECTOR] [--axis LABEL|ID] [--level NAME|ID]
+    [--element ID] [--assembly ID] [--side front|back|top|bottom|end|3d] [--ray-origin X,Y,Z]
+    [--ray-direction X,Y,Z] [--edge X,Y,Z;X,Y,Z] [--projection orthographic|perspective]
+    [--span MM] [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
+    [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
+    [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
+    [--opacity 0..1] [--folder PATH] [--favorite true|false] [--copy-from VIEW]
 ```
 
 ### remove-view
@@ -1100,7 +1125,7 @@ save-view --file FILE --name TEXT [--store ROOT] [--target X,Y,Z] [--yaw RAD] [-
 write.
 
 ```text
-remove-view --file FILE --name TEXT
+remove-view --file FILE --view ID|NAME [--store ROOT]
 ```
 
 ### apply-view
@@ -1108,7 +1133,7 @@ remove-view --file FILE --name TEXT
 read.
 
 ```text
-apply-view --file FILE --name TEXT
+apply-view --file FILE --view ID|NAME [--store ROOT]
 ```
 
 ## annotation

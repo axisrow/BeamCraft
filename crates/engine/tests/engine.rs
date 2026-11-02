@@ -12,6 +12,7 @@ mod drawing_contract;
 mod grid_geometry;
 mod grid_queries;
 mod grid_updates;
+mod model_views;
 mod reference_scene;
 mod view_snapshot;
 

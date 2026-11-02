@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-//! Orbit camera: spherical orbit, pan and zoom around a target, a perspective or an
-//! orthographic projection (V13), right-handed Z up, millimetres. Display only; derived from
-//! the V01 spike.
+//! Orbit and plane camera: spherical orbit, pan and zoom around a target, a perspective or an
+//! orthographic projection (V13), right-handed Z up, millimetres. A model view (V12) aligns the
+//! camera with its view plane: the camera then orbits about its own axes instead of yaw and
+//! pitch. Display only; derived from the V01 spike.
 use crate::Error;
+use beamcraft_engine::views::{ModelView, Projection};
+use beamcraft_engine::work_plane::WorkPlane;
+/// Half the vertical field of view, radians.
+const HALF_FOV: f32 = std::f32::consts::PI / 8.0;
 /// Bounded orbit/pan/zoom state; fields private to preserve finiteness.
 #[derive(Debug, Clone, Copy)]
 pub struct Camera {
@@ -12,6 +17,11 @@ pub struct Camera {
     pitch: f32,
     distance: f32,
     orthographic: bool,
+    /// Plane-aligned basis `[right, up, back]`; `None` derives it from yaw and pitch.
+    basis: Option<[[f32; 3]; 3]>,
+    /// The least eye distance of the orthographic projection: its scale follows `distance`, but
+    /// the eye stands at least this far back so a view's depth in front of the plane is drawn.
+    reach: f32,
 }
 /// Validated camera basis; four-component vectors match WGSL uniform alignment.
 #[derive(Debug, Clone, Copy)]
@@ -30,9 +40,38 @@ pub struct View {
     pub params: [f32; 4],
     /// 1.0 orthographic, 0.0 perspective, then padding.
     pub mode: [f32; 4],
+    /// The model view's display tint (V12): a colour override in rgb (a negative red keeps the
+    /// pipeline's colours) and the view opacity in a; zero opacity draws nothing.
+    pub tint: [f32; 4],
 }
+/// The tint of a view without a colour override, fully opaque.
+pub const NO_TINT: [f32; 4] = [-1.0, 0.0, 0.0, 1.0];
 fn dot([x, y, z]: [f32; 3], [a, b, c]: [f32; 3]) -> f32 {
     x * a + y * b + z * c
+}
+fn cross([x, y, z]: [f32; 3], [a, b, c]: [f32; 3]) -> [f32; 3] {
+    [y * c - z * b, z * a - x * c, x * b - y * a]
+}
+fn scaled([x, y, z]: [f32; 3], s: f32) -> [f32; 3] {
+    [x * s, y * s, z * s]
+}
+fn sum([x, y, z]: [f32; 3], [a, b, c]: [f32; 3]) -> [f32; 3] {
+    [x + a, y + b, z + c]
+}
+/// Rodrigues rotation of `v` about the unit `axis`.
+fn rotate(v: [f32; 3], axis: [f32; 3], angle: f32) -> [f32; 3] {
+    let (s, c) = angle.sin_cos();
+    sum(
+        sum(scaled(v, c), scaled(cross(axis, v), s)),
+        scaled(axis, dot(v, axis) * (1.0 - c)),
+    )
+}
+fn unit(v: [f32; 3]) -> Option<[f32; 3]> {
+    let len = dot(v, v).sqrt();
+    (len.is_finite() && len > 1e-6).then(|| scaled(v, 1.0 / len))
+}
+fn narrow(v: [f64; 3]) -> [f32; 3] {
+    v.map(|x| x as f32)
 }
 impl Camera {
     /// Frames a bounded scene for a viewport of `aspect` (width / height): `extent` is the
@@ -47,16 +86,97 @@ impl Camera {
         {
             return Err(Error::Input("camera framing"));
         }
-        let vertical = std::f32::consts::PI / 8.0;
-        let horizontal = (vertical.tan() * aspect).atan();
-        let half = vertical.min(horizontal);
+        let horizontal = (HALF_FOV.tan() * aspect).atan();
+        let half = HALF_FOV.min(horizontal);
         Ok(Self {
             target,
             yaw: -0.8,
             pitch: 0.85,
             distance: (extent / 2.0 / half.sin() * 1.05).clamp(10.0, 2e7),
             orthographic: false,
+            basis: None,
+            reach: extent,
         })
+    }
+    /// The camera a model view restores: its rotated view plane as the basis, the target on the
+    /// plane origin (scene-relative to `origin`, the display origin in millimetres), the visible
+    /// height and the projection. `extent` is the scene diagonal, so an orthographic eye stands
+    /// in front of everything.
+    pub fn from_view(view: &ModelView, origin: [f64; 3], extent: f32) -> Result<Self, Error> {
+        let frame = view
+            .camera_plane()
+            .map_err(|_| Error::Input("model view"))?;
+        let mut camera = Self::aligned_to(frame, origin, view.span_mm, extent)?;
+        camera.orthographic = view.projection == Projection::Orthographic;
+        if let Some([above, _]) = view.depth {
+            camera.reach = camera.reach.max(above as f32 + 10.0);
+        }
+        Ok(camera)
+    }
+    /// An orthographic camera looking straight at `plane` with `span` millimetres of visible
+    /// height, keeping nothing of the current orbit.
+    pub fn aligned_to(
+        plane: WorkPlane,
+        origin: [f64; 3],
+        span: f64,
+        extent: f32,
+    ) -> Result<Self, Error> {
+        if !span.is_finite() || !(1.0..=2e7).contains(&span) {
+            return Err(Error::Input("view span"));
+        }
+        let [px, py, pz] = plane.origin();
+        let [ox, oy, oz] = origin;
+        let target = narrow([px - ox, py - oy, pz - oz]);
+        let mut camera = Self::new(target, 1000.0, 1.0)?;
+        camera.basis = Some([narrow(plane.x()), narrow(plane.y()), narrow(plane.normal())]);
+        camera.distance = (span as f32 / (2.0 * HALF_FOV.tan())).clamp(10.0, 2e7);
+        camera.orthographic = true;
+        camera.reach = if extent.is_finite() {
+            extent.max(0.0)
+        } else {
+            0.0
+        };
+        Ok(camera)
+    }
+    /// The camera's current frame: the plane through the target facing the eye, and the visible
+    /// height at the target, both in model millimetres (`origin` is the display origin).
+    pub fn frame(&self, origin: [f64; 3]) -> Result<(WorkPlane, f64), Error> {
+        let view = self.view(1.0)?;
+        let [rx, ry, rz, _] = view.right;
+        let [ux, uy, uz, _] = view.up;
+        let [ox, oy, oz] = origin;
+        let [x, y, z] = self.target;
+        // The f32 basis is orthogonal only to single precision: the up axis is made exactly
+        // orthogonal to the right axis in f64 before the frame is admitted.
+        let right = [rx, ry, rz].map(f64::from);
+        let up = [ux, uy, uz].map(f64::from);
+        let [ra, rb, rc] = right;
+        let [ua, ub, uc] = up;
+        let rr = ra * ra + rb * rb + rc * rc;
+        let k = if rr > 0.0 {
+            (ra * ua + rb * ub + rc * uc) / rr
+        } else {
+            0.0
+        };
+        let plane = WorkPlane::new(
+            [ox + f64::from(x), oy + f64::from(y), oz + f64::from(z)],
+            right,
+            [ua - k * ra, ub - k * rb, uc - k * rc],
+        )
+        .map_err(|_| Error::Input("camera frame"))?;
+        let span = (2.0 * f64::from(self.distance) * f64::from(HALF_FOV.tan())).clamp(1.0, 2e7);
+        Ok((plane, span))
+    }
+    /// Whether the camera is aligned with a view plane rather than orbiting by yaw and pitch.
+    pub fn is_aligned(&self) -> bool {
+        self.basis.is_some()
+    }
+    /// Keeps the framing in world space after the display origin moved from `previous` to
+    /// `next` (a reload re-centres the scene).
+    pub fn rebase(&mut self, previous: [f64; 3], next: [f64; 3]) {
+        for ((t, p), n) in self.target.iter_mut().zip(previous).zip(next) {
+            *t = (*t + (p - n) as f32).clamp(-1e7, 1e7);
+        }
     }
     /// Switches the projection without moving the view: the orthographic window keeps the
     /// perspective image's half-height at the target (`distance * tan(half FOV)`), so the model
@@ -81,8 +201,22 @@ impl Camera {
         }
         let [ox, oy] = orbit;
         let [px, py] = pan;
-        self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
-        self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+        if let Some([right, up, back]) = self.basis {
+            // A plane-aligned camera turns about its own up, then its own right axis; the basis
+            // is re-orthonormalized so repeated steps never drift.
+            let right = rotate(right, up, ox);
+            let back = rotate(back, up, ox);
+            let up = rotate(up, right, -oy);
+            let back = rotate(back, right, -oy);
+            if let (Some(back), Some(up)) = (unit(back), unit(up))
+                && let Some(right) = unit(cross(up, back))
+            {
+                self.basis = Some([right, cross(back, right), back]);
+            }
+        } else {
+            self.yaw = (self.yaw + ox).rem_euclid(std::f32::consts::TAU);
+            self.pitch = (self.pitch + oy).clamp(0.0, 1.52);
+        }
         self.distance = (self.distance * (-zoom.clamp(-10.0, 10.0)).exp()).clamp(10.0, 2e7);
         let view = self.view(1.0)?;
         let [rx, ry, rz, _] = view.right;
@@ -100,45 +234,12 @@ impl Camera {
         let framed = Self::new(target, extent, aspect)?;
         self.target = framed.target;
         self.distance = framed.distance;
+        self.reach = self.reach.max(extent);
         Ok(())
     }
     /// Distance used to convert UI pan pixels to display millimetres.
     pub fn distance(&self) -> f32 {
         self.distance
-    }
-    /// Captures the pose as an engine view pose (V12): the exact state a saved view restores.
-    /// The camera keeps its fields inside the pose's bounds, so the capture cannot refuse.
-    pub fn pose(&self) -> beamcraft_engine::views::ViewPose {
-        beamcraft_engine::views::ViewPose {
-            target_mm: self.target.map(f64::from),
-            yaw: f64::from(self.yaw),
-            // The f32 pitch can sit a rounding step above the pose bound after a restore.
-            pitch: f64::from(self.pitch).min(beamcraft_engine::views::PITCH_MAX_RAD),
-            distance_mm: f64::from(self.distance),
-            orthographic: self.orthographic,
-        }
-    }
-    /// Restores a saved pose exactly: unlike navigation it admits a horizontal pitch, so plane
-    /// views stay level until the user orbits.
-    pub fn set_pose(&mut self, pose: &beamcraft_engine::views::ViewPose) -> Result<(), Error> {
-        if !pose
-            .target_mm
-            .iter()
-            .chain([pose.yaw, pose.pitch, pose.distance_mm].iter())
-            .all(|x| x.is_finite())
-            || pose.target_mm.iter().any(|x| x.abs() > 1e7)
-            || !(10.0..=2e7).contains(&pose.distance_mm)
-            || !(0.0..=1.52).contains(&pose.pitch)
-        {
-            return Err(Error::Input("camera pose restore"));
-        }
-        let [x, y, z] = pose.target_mm;
-        self.target = [x as f32, y as f32, z as f32];
-        self.yaw = pose.yaw as f32;
-        self.pitch = pose.pitch as f32;
-        self.distance = pose.distance_mm as f32;
-        self.orthographic = pose.orthographic;
-        Ok(())
     }
     /// The pan (millimetres) that keeps the point under the cursor fixed while zooming: `ndc` is
     /// the cursor in normalized device coordinates (`edit::ndc_of`, y up, inside `[-1, 1]`) and
@@ -183,12 +284,23 @@ impl Camera {
         }
         let (sy, cy) = self.yaw.sin_cos();
         let (sp, cp) = self.pitch.sin_cos();
-        let back = [cy * cp, sy * cp, sp, 0.0];
-        let right = [-sy, cy, 0.0, 0.0];
-        let up = [-cy * sp, -sy * sp, cp, 0.0];
+        let [r, u, b] = self.basis.unwrap_or([
+            [-sy, cy, 0.0],
+            [-cy * sp, -sy * sp, cp],
+            [cy * cp, sy * cp, sp],
+        ]);
+        let pad = |[x, y, z]: [f32; 3]| [x, y, z, 0.0];
+        let (right, up, back) = (pad(r), pad(u), pad(b));
         let [x, y, z] = self.target;
         let [bx, by, bz, _] = back;
-        let tan = (std::f32::consts::PI / 8.0).tan();
+        let tan = HALF_FOV.tan();
+        // The orthographic image does not depend on where the eye stands, so the eye backs off
+        // to the reach and nothing in front of the target is cut by the near plane.
+        let eye = if self.orthographic {
+            self.distance.max(self.reach.min(2e7))
+        } else {
+            self.distance
+        };
         // The near plane follows the camera distance. A fixed 1 mm near plane leaves a
         // `Depth32Float` buffer too little resolution over a long model (far is at least
         // 1e7 mm), so hidden parts showed through; one percent of the distance keeps
@@ -198,12 +310,7 @@ impl Camera {
             right,
             up,
             back,
-            eye: [
-                x + bx * self.distance,
-                y + by * self.distance,
-                z + bz * self.distance,
-                0.0,
-            ],
+            eye: [x + bx * eye, y + by * eye, z + bz * eye, 0.0],
             // Orthographic replaces the field angle with the half-height of the image at the
             // target plane, so the same `dot / scale` division draws both projections.
             params: [
@@ -214,9 +321,10 @@ impl Camera {
                 },
                 aspect,
                 near,
-                self.distance * 5.0 + 1e7,
+                eye * 5.0 + 1e7,
             ],
             mode: [u8::from(self.orthographic) as f32, 0.0, 0.0, 0.0],
+            tint: NO_TINT,
         })
     }
 }
@@ -253,6 +361,7 @@ impl View {
             .chain(self.eye)
             .chain(self.params)
             .chain(self.mode)
+            .chain(self.tint)
             .flat_map(f32::to_le_bytes)
             .collect()
     }
@@ -301,43 +410,48 @@ mod tests {
         assert!(px > 0.0);
     }
     #[test]
-    fn a_pose_round_trips_through_the_engine_view() {
-        let mut c = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
-        c.navigate([0.4, 0.3], [10.0, -20.0], 0.5).unwrap();
-        c.set_projection(true);
-        let pose = c.pose();
-        let mut back = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
-        back.navigate([1.0, 1.0], [500.0, 500.0], -3.0).unwrap();
-        back.set_pose(&pose).unwrap();
-        assert_eq!(back.pose(), pose);
-        assert!(back.is_orthographic());
-        // The restored state is valid again and navigation still keeps its bounds.
-        back.navigate([0.0, 0.0], [0.0; 2], 10.0).unwrap();
-        assert!(back.pose().distance_mm >= 10.0);
-        // A horizontal plane view restores exactly and survives one orbit step.
-        let level = beamcraft_engine::views::ViewPose {
-            target_mm: [100.0, 200.0, 300.0],
-            yaw: 1.1,
-            pitch: 0.0,
-            distance_mm: 2500.0,
-            orthographic: false,
-        };
-        let mut flat = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
-        flat.set_pose(&level).unwrap();
-        assert_eq!(flat.pitch, 0.0);
-        flat.navigate([0.0, 0.05], [0.0; 2], 0.0).unwrap();
-        assert!(flat.pitch > 0.0);
-        // Hostile poses refuse.
-        let mut junk = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
-        let mut bad = level;
-        bad.pitch = 1.6;
-        assert!(junk.set_pose(&bad).is_err());
-        bad.pitch = 0.0;
-        bad.distance_mm = 5.0;
-        assert!(junk.set_pose(&bad).is_err());
-        bad.distance_mm = 100.0;
-        bad.target_mm = [2e8, 0.0, 0.0];
-        assert!(junk.set_pose(&bad).is_err());
+    fn a_view_camera_looks_along_the_plane_and_its_frame_round_trips() {
+        use beamcraft_engine::views::ModelView;
+        let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
+        // A vertical section facing -Y through (1000, 2000, 300), shown 4 m high.
+        let plane =
+            WorkPlane::new([1000.0, 2000.0, 300.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]).unwrap();
+        let mut view = ModelView::new(id, "Section", plane, 4000.0);
+        view.depth = Some([20_000.0, 100.0]);
+        let origin = [1000.0, 0.0, 0.0];
+        let c = Camera::from_view(&view, origin, 500.0).unwrap();
+        assert!(c.is_aligned() && c.is_orthographic());
+        let v = c.view(1.0).unwrap();
+        assert!((v.back[1] + 1.0).abs() < 1e-6, "{:?}", v.back);
+        // The plane origin projects to the centre; a point 2 m up reaches the top edge.
+        let centre = v.project([0.0, 2000.0, 300.0]);
+        assert!(centre[0].abs() < 1e-5 && centre[1].abs() < 1e-5);
+        let top = v.project([0.0, 2000.0, 2300.0]);
+        assert!((top[1] - 1.0).abs() < 1e-3, "{top:?}");
+        // The eye stands in front of the whole depth towards the viewer.
+        assert!(v.eye[1] < 2000.0 - 20_000.0, "{:?}", v.eye);
+        let (frame, span) = c.frame(origin).unwrap();
+        assert!((span - 4000.0).abs() < 1e-2);
+        assert!((frame.origin()[1] - 2000.0).abs() < 1e-3);
+        assert!((frame.normal()[1] + 1.0).abs() < 1e-6);
+        // Orbiting a plane camera turns its own basis and keeps it orthonormal.
+        let mut turned = c;
+        for _ in 0..50 {
+            turned.navigate([0.3, -0.2], [0.0; 2], 0.0).unwrap();
+        }
+        let t = turned.view(1.0).unwrap();
+        let (r, u, b) = (
+            [t.right[0], t.right[1], t.right[2]],
+            [t.up[0], t.up[1], t.up[2]],
+            [t.back[0], t.back[1], t.back[2]],
+        );
+        assert!(dot(r, u).abs() < 1e-4 && dot(r, b).abs() < 1e-4 && dot(u, b).abs() < 1e-4);
+        assert!((dot(b, b) - 1.0).abs() < 1e-4);
+        assert!(Camera::aligned_to(plane, origin, 0.0, 1.0).is_err());
+        let mut moved = c;
+        moved.rebase(origin, [0.0; 3]);
+        let shifted = moved.view(1.0).unwrap().project([1000.0, 2000.0, 300.0]);
+        assert!(shifted[0].abs() < 1e-5);
         assert!(Camera::new([f32::NAN; 3], 1.0, 1.0).is_err());
         assert!(Camera::new([0.0; 3], 100.0, 0.0).is_err());
         let mut c = Camera::new([0.0; 3], 100.0, 1.0).unwrap();
@@ -346,7 +460,7 @@ mod tests {
         for _ in 0..100 {
             c.navigate([100.0, 100.0], [1e6, -1e6], 100.0).unwrap();
         }
-        assert!(c.view(1.0).unwrap().bytes().len() == 96);
+        assert!(c.view(1.0).unwrap().bytes().len() == 112);
         assert!(c.distance().is_finite());
     }
     #[test]

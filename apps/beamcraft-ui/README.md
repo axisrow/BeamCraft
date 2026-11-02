@@ -68,6 +68,13 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   CLI; Cancel does not write. The pinned snapshot includes grid axes for display and framing.
   Upstream grid selection, properties, local-line editing, intersection snapping and deletion
   remain available in the inspector. Grid guides can be toggled from View.
+- Model views (V12): View > Create view builds plan, elevation, section, grid, level, part,
+  assembly, face and camera views, by picking points or a face in the model where needed; each
+  view has its own plane, projection, visible height, depth, work area, render mode, grids,
+  hidden kinds, colour and opacity. The project browser lists them by folder with search, quick
+  access, previews and a context menu; Ctrl+P toggles 3D and the view plane, Ctrl+Tab cycles the
+  open views, and up to eight view windows tile and dock. Views are display state beside the
+  store and never change the model. See [model views](../../docs/design/v12-named-views.md).
 - View retains all five render modes (Wireframe, Transparent, Grey, Shaded, Selected only)
   and the upstream remappable Ctrl+1 through Ctrl+5 shortcuts. Mode changes never reload the
   model. See [render modes](../../docs/design/v16-render-modes.md).
