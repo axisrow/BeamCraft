@@ -31,7 +31,7 @@ pub use plate::*;
 pub use plate_change::*;
 
 use crate::model::command::{
-    BendRecord, CutRecord, HoleRecord, MemberHoleRecord, PlateCorner, PlateSide,
+    BendRecord, CutRecord, ElementPatch, HoleRecord, MemberHoleRecord, PlateCorner, PlateSide,
 };
 use crate::model::instance::PartKind;
 use beamcraft_layer_engine::authored::{
@@ -252,6 +252,58 @@ pub fn roll(id: String, opinion: Opinion<f64>) -> Change {
 /// Replace the required immutable member profile; see [`SetProfile`].
 pub fn profile(id: String, digest: ContentDigest) -> Change {
     Change::Discipline(HookedChange::new(SetProfile { id, digest }))
+}
+
+/// The steel-authored layer changes of a patched part (P04): the shape inputs the patch names,
+/// authored on the canonical definition, plus the local re-encoding a mirror writes — the
+/// plate's thickness side, the reflected path of a member and the cuts of either kind, read
+/// from the patched record. The adapter adds the platform changes around them: label, class,
+/// material, placement, level and the mesh. The kind policy sits in the halves' own fields and
+/// their [`crate::engine::update::ElementKindOps`] impls, so no caller names the kind.
+pub fn patch_changes(
+    patch: &ElementPatch,
+    patched: &crate::engine::part::PartRecord,
+    definition: &str,
+) -> Vec<Change> {
+    let mut changes = Vec::new();
+    if let Some(mm) = patch.plate.thickness_mm {
+        changes.push(thickness(definition.to_owned(), mm));
+    }
+    if let Some(points) = &patch.plate.contour_points_mm {
+        changes.push(contour(definition.to_owned(), points.clone()));
+    }
+    if let Some(treatments) = &patch.plate.corners {
+        changes.push(corners(definition.to_owned(), treatments.clone()));
+    }
+    if let Some(side) = patch.plate.thickness_side {
+        changes.push(thickness_side(definition.to_owned(), side));
+    }
+    // A member path change (P12) is authored on the canonical part, like a thickness change:
+    // the instances of the group read their shape inputs from it.
+    if let Some(points) = &patch.member.axis_points_mm {
+        changes.push(axis(definition.to_owned(), points.clone()));
+        // A bent member carries no authored roll: the polybeam sweep has no roll input, so
+        // the old straight member's opinion is removed instead of being silently ignored.
+        if points.len() > 2 {
+            changes.push(roll(definition.to_owned(), Opinion::Remove));
+        }
+    }
+    if let Some(digest) = patch.member.profile {
+        changes.push(profile(definition.to_owned(), digest));
+    }
+    // A mirror (T03) re-encodes the local body: the plate's side flips, the member's path
+    // reflects and the cuts of either part kind reflect, all read back from the patched
+    // record and authored on the canonical part.
+    if patch.mirror.is_some() {
+        if let Some(side) = patched.thickness_side() {
+            changes.push(thickness_side(definition.to_owned(), side));
+        }
+        if let Some(points) = patched.axis_points_mm() {
+            changes.push(axis(definition.to_owned(), points.to_vec()));
+        }
+        changes.push(cuts(definition.to_owned(), patched.cuts().to_vec()));
+    }
+    changes
 }
 
 /// Replace the complete authored record of an A14.3 bolt group; see [`ReplaceBoltGroup`].

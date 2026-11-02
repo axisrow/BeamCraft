@@ -25,7 +25,7 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
 use beamcraft_layer_engine::Reader;
 use beamcraft_layer_engine::authored::{
-    Change, MaterialOpinion, Opinion, Placement as LayerPlacement, schema_identity,
+    Change, MaterialOpinion, Placement as LayerPlacement, schema_identity,
 };
 use beamcraft_model::command::CommandError;
 use beamcraft_model::digest::ContentDigest;
@@ -302,50 +302,14 @@ pub fn update_element(
             opinion: material.map_or(MaterialOpinion::Empty, MaterialOpinion::Target),
         });
     }
-    if let Some(mm) = command.patch.plate.thickness_mm {
-        changes.push(steel_layer::thickness(definition_text.clone(), mm));
-    }
-    // The contour is a shape input of the canonical definition, like the thickness: the
-    // instances of the group read their bodies from it and take mesh updates below.
-    if let Some(points) = &command.patch.plate.contour_points_mm {
-        changes.push(steel_layer::contour(
-            definition_text.clone(),
-            points.clone(),
-        ));
-    }
-    if let Some(corners) = &command.patch.plate.corners {
-        changes.push(steel_layer::corners(
-            definition_text.clone(),
-            corners.clone(),
-        ));
-    }
-    if let Some(side) = command.patch.plate.thickness_side {
-        changes.push(steel_layer::thickness_side(definition_text.clone(), side));
-    }
-    // A member path change (P12) is authored on the canonical part, like a thickness change:
-    // the instances of the group read their shape inputs from it.
-    if let (Some(axis), true) = (next.axis_points_mm(), patch_effect.shape) {
-        changes.push(steel_layer::axis(definition_text.clone(), axis.to_vec()));
-        // A bent member carries no authored roll: the polybeam sweep has no roll input, so
-        // the old straight member's opinion is removed instead of being silently ignored.
-        if axis.len() > 2 {
-            changes.push(steel_layer::roll(definition_text.clone(), Opinion::Remove));
-        }
-    }
-    if let Some(digest) = command.patch.member.profile {
-        changes.push(steel_layer::profile(definition_text.clone(), digest));
-    }
-    // A mirror (T03) re-encodes the local body: the plate's side flips and the cuts of either
-    // part kind reflect, both authored on the canonical part.
-    if patch_effect.mirror {
-        if let Some(side) = next.thickness_side() {
-            changes.push(steel_layer::thickness_side(definition_text.clone(), side));
-        }
-        changes.push(steel_layer::cuts(
-            definition_text.clone(),
-            next.cuts().to_vec(),
-        ));
-    }
+    // The kind halves author their own layer changes on the canonical part (#389): the shape
+    // inputs the patch names, plus the local re-encoding a mirror writes read back from the
+    // patched record. The adapter adds only the platform changes around them.
+    changes.extend(steel_layer::patch_changes(
+        &command.patch,
+        &next,
+        &definition_text,
+    ));
     if patch_effect.placement || patch_effect.orientation {
         let placement = next.placement();
         let [qx, qy, qz, qw] = placement.orientation_xyzw;
