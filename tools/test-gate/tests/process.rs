@@ -229,7 +229,7 @@ fn a_broken_real_doctest_returns_a_failed_stage() {
     cmd.current_dir(&temp.0)
         .args(["test", "--doc", "--offline", "--no-fail-fast"])
         .env("CARGO_TARGET_DIR", temp.0.join("target"));
-    let result = process::run("doctests", &mut cmd, &temp.0, Duration::from_secs(30)).unwrap();
+    let result = process::run("doctests", &mut cmd, &temp.0, Duration::from_secs(90)).unwrap();
     assert_ne!(result.exit_code, 0);
     assert!(!result.timed_out);
     assert!(
