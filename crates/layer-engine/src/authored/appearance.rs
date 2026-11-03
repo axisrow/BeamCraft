@@ -289,7 +289,8 @@ pub(super) fn validate_looks(prims: &[Prim]) -> Result<(), Diagnostic> {
             .iter()
             .find(|a| a.name == "outputs:surface")
             .ok_or_else(invalid)?;
-        if output.type_name != "token" {
+        // The output is a token with no default: the surface is computed, never stored.
+        if output.type_name != "token" || output.value.is_some() {
             return Err(invalid());
         }
         if shader {
@@ -299,14 +300,17 @@ pub(super) fn validate_looks(prims: &[Prim]) -> Result<(), Diagnostic> {
             if text(p, "info:id", "token")? != "UsdPreviewSurface" {
                 return Err(invalid());
             }
-            // The diffuse colour is declared with an exact value, never valueless.
-            let diffuse = match p
+            // The diffuse colour is exactly a color3f declared with an exact value.
+            let diffuse_prop = p
                 .properties
                 .iter()
                 .find(|a| a.name == "inputs:diffuseColor")
-                .map(|a| a.value.as_ref())
-            {
-                Some(Some(Value::Array(items))) => match items.as_slice() {
+                .ok_or_else(invalid)?;
+            if diffuse_prop.type_name != "color3f" {
+                return Err(invalid());
+            }
+            let diffuse = match diffuse_prop.value.as_ref() {
+                Some(Value::Array(items)) => match items.as_slice() {
                     [Value::Number(r), Value::Number(g), Value::Number(b)] => {
                         [*r as f32, *g as f32, *b as f32]
                     }

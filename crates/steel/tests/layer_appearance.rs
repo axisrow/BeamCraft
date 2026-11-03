@@ -547,6 +547,42 @@ fn a_declared_diffuse_colour_outside_the_shader_is_refused() {
         );
     });
     assert_eq!(error.code, ErrorCode::InvalidArgument, "{}", error.message);
+    // A diffuse colour of another USD type holding the same linear triple is refused too.
+    let error = tampered_refusal(&author, &opened.context, |data| {
+        data.set_field(
+            &openusd::sdf::Path::new("/World/Looks/PartClass0/PreviewSurface.inputs:diffuseColor")
+                .unwrap(),
+            "typeName",
+            sdf::Value::token("double3"),
+        );
+    });
+    assert_eq!(error.code, ErrorCode::InvalidArgument, "{}", error.message);
+}
+
+#[test]
+fn a_valued_output_on_a_look_is_refused_by_the_strict_profile() {
+    let (author, opened, _) = with_plate();
+    // The surface output is valueless by contract: a stored default refuses, on the
+    // material and on the shader alike.
+    for holder in [
+        "/World/Looks/PartClass0",
+        "/World/Looks/PartClass0/PreviewSurface",
+    ] {
+        let error = tampered_refusal(&author, &opened.context, |data| {
+            data.set_field(
+                &openusd::sdf::Path::new(&format!("{holder}.outputs:surface")).unwrap(),
+                "default",
+                sdf::Value::token("fake"),
+            );
+        });
+        assert_eq!(
+            error.code,
+            ErrorCode::InvalidArgument,
+            "{}: {}",
+            holder,
+            error.message
+        );
+    }
 }
 
 #[test]
