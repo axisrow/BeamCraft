@@ -59,7 +59,7 @@ doors); the per-rule engine-level evidence lives beside the rules.
 | Vocabulary rules (`A01`/`A16`/`A06`/`A05`/`D2`/`T01`-`V01`) | positive model; package suites `assemblies.rs`, `welds.rs`, `bolt_groups.rs`, `levels.rs`, `grids.rs` | each package suite's refusal cases; snapshot negatives in `layer_authored.rs` |
 | Module re-admission and derived truth | `plate.rs` P01 end to end; `verify_derived` strict on every commit | `hostile_usd.rs` (stable codes, never a panic or a hang); steel record refusals in `crates/steel/tests/` |
 | Bounds and budgets | positive model | label beyond the 256-byte bound → `INVALID_ARGUMENT` (`validation_layer::violations_are_deterministic_and_bounded`); `layer_index.rs::index_budgets_and_cancellation_fail_closed`; batch caps in `validate::input_bounds` |
-| Determinism | `twenty_seeded_permutations_...` (authoring); index resolves in fixed path order regardless of delivery order | same dangling record with the prim order permuted → identical code and message (`validation_layer::violations_are_deterministic_and_bounded`); `layer_index.rs::tampered_pages_cannot_forge_identity_provenance_or_bounds` |
+| Determinism | `twenty_seeded_permutations_...` (authoring); index resolves in fixed path order regardless of delivery order | same dangling record with the sibling prim order inside the Parts scope reversed (the suite asserts the reversal changes the layer text) → identical code and message (`validation_layer::violations_are_deterministic_and_bounded`); `layer_index.rs::tampered_pages_cannot_forge_identity_provenance_or_bounds` |
 
 ## Limits
 

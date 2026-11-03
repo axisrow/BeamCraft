@@ -41,6 +41,7 @@ const ASSEMBLY: &str = "019ad0c0-0000-7000-8000-000000009105";
 const NESTED: &str = "019ad0c0-0000-7000-8000-000000009106";
 const WELD: &str = "019ad0c0-0000-7000-8000-000000009107";
 const GRID: &str = "019ad0c0-0000-7000-8000-000000009108";
+const SIBLING: &str = "019ad0c0-0000-7000-8000-00000000910b";
 const MISSING: &str = "019ad0c0-0000-7000-8000-0000000091ff";
 const USER: &str = "019ad0c0-0000-7000-8000-0000000091f0";
 const GRID_AXES: &str = "019ad0c0-0000-7000-8000-000000009109,019ad0c0-0000-7000-8000-00000000910a";
@@ -265,6 +266,56 @@ impl Fixture {
         // The copy keeps the original `bim:id`, so two paths claim one identity.
         format!("{}{}\n{}", &text[..end], copy, &text[end..])
     }
+
+    /// Reverses the order of the element prims inside the Parts scope: a composition-order
+    /// change of the layer text that must not change any verdict. Returns the text unchanged
+    /// when the expected shape is absent, so the caller's inequality assert fails loudly
+    /// instead of a vacuous permutation passing silently.
+    fn reverse_parts_children(text: &str) -> String {
+        let Some((body, child_indent, before, after)) = parts_scope_body(text) else {
+            return text.to_owned();
+        };
+        // The body opens with the first child's own def line at the children's indent; the
+        // separator is that indent at a line start, so deeper-indented defs never split.
+        let Some(rest) = body.strip_prefix(child_indent) else {
+            return text.to_owned();
+        };
+        let separator = format!("\n{child_indent}def ");
+        let chunks: Vec<&str> = rest.split(&separator).collect();
+        if chunks.len() < 2 {
+            // Fewer than two children cannot be reordered.
+            return text.to_owned();
+        }
+        let mut reordered = String::from(chunks[0]);
+        for chunk in chunks[1..].iter().rev() {
+            reordered.push_str(&separator);
+            reordered.push_str(chunk);
+        }
+        format!("{before}{child_indent}{reordered}{after}")
+    }
+}
+
+/// Slices the Parts scope body out of the layer text: the body between the scope's opening and
+/// closing braces, the element children's indent, and the text before and after the body.
+/// The body keeps every child block intact, so reversing the children cannot break a brace.
+fn parts_scope_body(text: &str) -> Option<(&str, &str, &str, &str)> {
+    let child_def = text.find("def Xform \"PRT_")?;
+    let child_line_start = text[..child_def].rfind('\n').map_or(0, |pos| pos + 1);
+    let child_indent = &text[child_line_start..child_def];
+    let scope_def = text.rfind("def Scope \"Parts\"")?;
+    let scope_line_start = text[..scope_def].rfind('\n').map_or(0, |pos| pos + 1);
+    let scope_indent = &text[scope_line_start..scope_def];
+    let open_needle = format!("\n{scope_indent}{{\n");
+    let open = scope_def + text[scope_def..].find(&open_needle)?;
+    let body_start = open + open_needle.len();
+    let close_needle = format!("\n{scope_indent}}}");
+    let close = body_start + text[body_start..].find(&close_needle)?;
+    Some((
+        &text[body_start..close],
+        child_indent,
+        &text[..body_start],
+        &text[close..],
+    ))
 }
 
 /// The one valid model every rule family accepts: plates, a member, a level with an assigned
@@ -530,30 +581,28 @@ fn module_rules_are_refused_by_the_client_door() {
 
 #[test]
 fn violations_are_deterministic_and_bounded() {
-    // Determinism: the same dangling record with its element prim moved to the end of the layer
-    // (a different composition order) is refused with the same code and message.
+    // Determinism: the same dangling record with the sibling prims inside the Parts scope in
+    // reversed order (a different composition order of the same records) is refused with the
+    // identical code and message.
     let refused = |permuted: bool| {
         let f = Fixture::new();
         f.workspace_with_two_plates();
+        // A second plate gives Parts two children, so there is an order to reverse.
+        f.plate_in(f.ws(), SIBLING, "Sibling");
         f.attach_work_plate();
         let absent = format!("/World/Steel/Assemblies/ASM_{}", MISSING.replace('-', ""));
         let present = format!("/World/Steel/Assemblies/ASM_{}", ASSEMBLY.replace('-', ""));
-        f.tamper(f.ws(), |_layer, text| {
+        f.tamper(f.ws(), |layer, text| {
             let replaced = text.replace(&present, &absent);
-            if !permuted {
+            // The authored layer carries the def-tree whose composition order is permuted; the
+            // derived layer mirrors it as sparse over-prims and stays as it is.
+            if !permuted || !layer.contains("authored") {
                 return replaced;
             }
-            // Move every element prim block after the first one to the front, reversing the
-            // composed order without changing any record.
-            let mut parts: Vec<&str> = replaced.split("\ndef ").collect();
-            if parts.len() > 2 {
-                let rest: Vec<&str> = parts[1..].iter().rev().copied().collect();
-                parts = vec![parts[0]];
-                for part in rest {
-                    parts.push(part);
-                }
-            }
-            parts.join("\ndef ")
+            let permuted = Fixture::reverse_parts_children(&replaced);
+            // The permutation must actually change the layer text, or this case proves nothing.
+            assert_ne!(permuted, replaced, "the order permutation changed nothing");
+            permuted
         });
         let message = f.publish_refused("DANGLING_RELATIONSHIP");
         (message,)
