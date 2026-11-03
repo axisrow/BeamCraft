@@ -9,8 +9,8 @@
 
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_host::revision::{
-    EvidencePin, MAX_MANIFEST_BYTES, MAX_OPERATION_EVIDENCE_BYTES, Manifest, Revision,
-    RevisionInfo, RevisionStore, Uuid7,
+    EvidencePin, MAX_MANIFEST_BYTES, MAX_OPERATION_EVIDENCE_BYTES, Manifest, REPLAY_LOOKBACK,
+    Revision, RevisionInfo, RevisionStore, Uuid7,
 };
 use beamcraft_model::changeset::{
     Access, Dependency, DependencyGroup, DependencyTarget, MAX_OPERATIONS, Operation,
@@ -27,6 +27,10 @@ use std::fmt::Write as _;
 const MAGIC: &str = "beamcraft-command-footprint 1";
 
 /// A command/publication identity, request fingerprint and actual semantic read/write set.
+///
+/// A batch publication carries the batch operation's own fingerprint and the union footprint,
+/// plus one binding per command the batch admitted; a single command's evidence carries no
+/// bindings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapturedFootprint {
     /// Full operation identity; it must match the revision manifest.
@@ -36,6 +40,10 @@ pub struct CapturedFootprint {
     pub fingerprint: ContentDigest,
     /// Actual engine-derived semantic dependencies.
     pub footprint: Footprint,
+    /// Commands a batch admitted, in strictly ascending operation-id order: each op id is
+    /// bound to the fingerprint of its own request, so `accepted` can replay a carried
+    /// command from immutable history even though the ledger names only the batch operation.
+    pub bindings: Vec<(OpId, ContentDigest)>,
 }
 
 fn invalid() -> CommandError {
@@ -106,6 +114,8 @@ fn entries<'a>(
 
 impl CapturedFootprint {
     /// Exact canonical bytes. Only nonempty, capped engine-command footprints are admitted.
+    /// Evidence without bindings keeps the original byte form; a batch's evidence appends the
+    /// binding section, so old revisions decode unchanged.
     pub fn encode(&self) -> Result<Vec<u8>, CommandError> {
         let count = self
             .footprint
@@ -132,6 +142,15 @@ impl CapturedFootprint {
                     ),
                 };
                 let _ = writeln!(out, "{kind} {identity} {}", entry.group.as_str());
+            }
+        }
+        if !self.bindings.is_empty() {
+            if self.bindings.len() > MAX_FOOTPRINT_ENTRIES {
+                return Err(invalid());
+            }
+            let _ = writeln!(out, "bindings {}", self.bindings.len());
+            for (op, fingerprint) in &self.bindings {
+                let _ = writeln!(out, "bind {op} {fingerprint}");
             }
         }
         if out.len() as u64 > MAX_OPERATION_EVIDENCE_BYTES {
@@ -169,6 +188,36 @@ impl CapturedFootprint {
             return Err(invalid());
         }
         let writes = entries(&mut lines, writes_count)?;
+        let bindings = match lines.next() {
+            None => Vec::new(),
+            Some(line) => {
+                let count = line
+                    .strip_prefix("bindings ")
+                    .and_then(|tail| tail.parse::<usize>().ok())
+                    .filter(|n| (1..=MAX_FOOTPRINT_ENTRIES).contains(n))
+                    .ok_or_else(invalid)?;
+                let mut bindings = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let line = lines.next().ok_or_else(invalid)?;
+                    let mut fields = line.split(' ');
+                    let (Some(tag), Some(op), Some(fingerprint), None) =
+                        (fields.next(), fields.next(), fields.next(), fields.next())
+                    else {
+                        return Err(invalid());
+                    };
+                    if tag != "bind" {
+                        return Err(invalid());
+                    }
+                    let op = OpId::parse(op).map_err(|_| invalid())?;
+                    let fingerprint = fingerprint.parse().map_err(|_| invalid())?;
+                    if bindings.last().is_some_and(|(previous, _)| *previous >= op) {
+                        return Err(invalid());
+                    }
+                    bindings.push((op, fingerprint));
+                }
+                bindings
+            }
+        };
         if lines.next().is_some() {
             return Err(invalid());
         }
@@ -176,6 +225,7 @@ impl CapturedFootprint {
             op_id,
             fingerprint,
             footprint: Footprint::from_entries(&reads, &writes)?,
+            bindings,
         };
         if captured.encode()? != bytes {
             return Err(invalid());
@@ -198,6 +248,11 @@ pub fn read(revision: &Revision) -> Result<Option<CapturedFootprint>, Refusal> {
 
 /// Resolve a committed logical request from immutable history, including its exact manifest
 /// and operation identity. Legacy missing evidence refuses rather than guessing from live state.
+///
+/// A command carried inside a batch is bound in the ledger to the batch's revision: the
+/// revision's manifest names the batch operation, and this command's request identity comes
+/// from the evidence's binding section. A binding that does not carry this operation means
+/// the revision is not its replay answer.
 pub(crate) fn accepted(
     store: &RevisionStore,
     op: &Uuid7,
@@ -213,7 +268,6 @@ pub(crate) fn accepted(
             let info = opened.info();
             if info.manifest_digest() != manifest
                 || info.manifest().content().revision() != &revision
-                || info.manifest().content().op() != op
             {
                 return Err(integrity("ledger request and accepted revision disagree"));
             }
@@ -223,14 +277,103 @@ pub(crate) fn accepted(
                     "accepted operation has no compatible request evidence",
                 )
             })?;
-            Ok(Some((evidence, opened)))
+            if info.manifest().content().op() == op {
+                if evidence.op_id.to_string() != op.as_str() {
+                    return Err(integrity(
+                        "operation footprint evidence belongs to another operation",
+                    ));
+                }
+                return Ok(Some((evidence, opened)));
+            }
+            let bound = evidence
+                .bindings
+                .iter()
+                .find(|(bound, _)| bound.to_string() == op.as_str())
+                .ok_or_else(|| integrity("a carried command has no binding in its batch"))?;
+            Ok(Some((
+                CapturedFootprint {
+                    op_id: OpId::parse(op.as_str())
+                        .map_err(|_| integrity("operation identity is invalid"))?,
+                    fingerprint: bound.1,
+                    // The carried command's own footprint stays inside its request; a replay
+                    // declares none.
+                    footprint: Footprint::default(),
+                    bindings: Vec::new(),
+                },
+                opened,
+            )))
         }
         beamcraft_host::ledger::Outcome::Unknown => Err(Refusal::new(
             ErrorCode::OutcomeUnknown,
             "operation outcome requires recovery",
         )),
-        _ => Ok(None),
+        // A command carried by a batch has no ledger record of its own: its acceptance is
+        // answered from the batch revision's evidence bindings.
+        beamcraft_host::ledger::Outcome::NotFound => match carried(store, op)? {
+            Some((fingerprint, info)) => {
+                let opened = store.open_at(info.sequence())?;
+                Ok(Some((
+                    CapturedFootprint {
+                        op_id: OpId::parse(op.as_str())
+                            .map_err(|_| integrity("operation identity is invalid"))?,
+                        fingerprint,
+                        // The carried command's own footprint stays inside its request; a
+                        // replay declares none.
+                        footprint: Footprint::default(),
+                        bindings: Vec::new(),
+                    },
+                    opened,
+                )))
+            }
+            None => Ok(None),
+        },
+        // An aborted ledger record speaks for a standalone attempt; bindings never carry it.
+        beamcraft_host::ledger::Outcome::Aborted { .. } => Ok(None),
     }
+}
+
+/// Looks a command carried by a batch up in the bindings of recent batch revisions: the walk
+/// goes back from the head over at most [`REPLAY_LOOKBACK`] revisions, the same window the
+/// host's own replay check scans, and reads only each revision's manifest and evidence blob.
+/// Returns the bound request fingerprint and the revision that binds the operation. A batch
+/// carries no ledger records of its own — its commands are replayable through exactly this
+/// evidence, whole-batch replays go through the batch's own operation id.
+pub(crate) fn carried(
+    store: &RevisionStore,
+    op: &Uuid7,
+) -> Result<Option<(ContentDigest, RevisionInfo)>, Refusal> {
+    let mut sequence = store.head()?.map(|info| info.sequence());
+    for _ in 0..REPLAY_LOOKBACK {
+        let Some(current) = sequence else { break };
+        let info = store.info_at(current)?;
+        let fingerprint = bound_fingerprint(store, &info, op)?;
+        if let Some(fingerprint) = fingerprint {
+            return Ok(Some((fingerprint, info)));
+        }
+        sequence = current.checked_sub(1).filter(|s| *s > 0);
+    }
+    Ok(None)
+}
+
+/// The fingerprint this revision's evidence binds `op` to, when it binds it at all.
+fn bound_fingerprint(
+    store: &RevisionStore,
+    info: &RevisionInfo,
+    op: &Uuid7,
+) -> Result<Option<ContentDigest>, Refusal> {
+    let Some(pin) = info.manifest().content().operation_evidence() else {
+        return Ok(None);
+    };
+    let bytes = store.evidence_bytes(pin)?;
+    // A legacy or foreign evidence form simply binds nothing here.
+    let Ok(captured) = CapturedFootprint::decode(&bytes) else {
+        return Ok(None);
+    };
+    Ok(captured
+        .bindings
+        .iter()
+        .find(|(bound, _)| bound.to_string() == op.as_str())
+        .map(|(_, fingerprint)| *fingerprint))
 }
 
 fn decode_for(bytes: &[u8], op: &Uuid7) -> Result<CapturedFootprint, Refusal> {
@@ -241,6 +384,7 @@ fn decode_for(bytes: &[u8], op: &Uuid7) -> Result<CapturedFootprint, Refusal> {
             op_id: receipt.op_id,
             fingerprint: receipt.fingerprint()?,
             footprint: receipt.footprint,
+            bindings: Vec::new(),
         }
     } else {
         CapturedFootprint::decode(bytes)
@@ -259,11 +403,13 @@ pub(crate) fn store(
     op: &Uuid7,
     fingerprint: ContentDigest,
     footprint: &Footprint,
+    bindings: &[(OpId, ContentDigest)],
 ) -> Result<EvidencePin, Refusal> {
     let captured = CapturedFootprint {
         op_id: OpId::parse(op.as_str()).map_err(|_| integrity("operation identity is invalid"))?,
         fingerprint,
         footprint: footprint.clone(),
+        bindings: bindings.to_vec(),
     };
     let bytes = captured.encode()?;
     let (digest, _) = store
@@ -514,4 +660,66 @@ pub(crate) fn dependencies(footprint: &Footprint) -> Vec<Dependency> {
     }
     result.sort();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beamcraft_engine::footprint::{Entry, Group, Target};
+
+    fn footprint(op: &str, bindings: Vec<(OpId, ContentDigest)>) -> CapturedFootprint {
+        let id = ElementId::parse("01900000-0000-7000-8000-000000000001").unwrap();
+        let entry = Entry {
+            target: Target::Element(id),
+            group: Group::Placement,
+        };
+        CapturedFootprint {
+            op_id: OpId::parse(op).unwrap(),
+            fingerprint: "0100000000000000000000000000000000000000000000000000000000000000"
+                .parse()
+                .unwrap(),
+            footprint: Footprint::from_entries(&[entry.clone()], &[entry]).unwrap(),
+            bindings,
+        }
+    }
+
+    #[test]
+    fn bindings_round_trip_and_stay_ascending() {
+        let carried_op = OpId::parse("01900000-0000-7000-8000-00000000000b").unwrap();
+        let carried_fingerprint: ContentDigest =
+            "0200000000000000000000000000000000000000000000000000000000000000"
+                .parse()
+                .unwrap();
+        let batch = footprint(
+            "01900000-0000-7000-8000-00000000000a",
+            vec![(carried_op, carried_fingerprint)],
+        );
+        let bytes = batch.encode().unwrap();
+        let decoded = CapturedFootprint::decode(&bytes).unwrap();
+        assert_eq!(decoded, batch);
+        assert_eq!(decoded.bindings.len(), 1);
+        // A bindings section in descending order is not canonical.
+        let swapped = footprint(
+            "01900000-0000-7000-8000-00000000000a",
+            vec![
+                (
+                    OpId::parse("01900000-0000-7000-8000-00000000000c").unwrap(),
+                    carried_fingerprint,
+                ),
+                (carried_op, carried_fingerprint),
+            ],
+        );
+        assert!(CapturedFootprint::decode(&swapped.encode().unwrap()).is_err());
+    }
+
+    #[test]
+    fn evidence_without_bindings_keeps_the_original_byte_form() {
+        let single = footprint("01900000-0000-7000-8000-00000000000a", Vec::new());
+        let bytes = single.encode().unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(!text.contains("bindings"));
+        let decoded = CapturedFootprint::decode(&bytes).unwrap();
+        assert!(decoded.bindings.is_empty());
+        assert_eq!(decoded, single);
+    }
 }

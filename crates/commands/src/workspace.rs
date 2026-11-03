@@ -637,6 +637,7 @@ pub fn publish_workspace(
                 &next.op,
                 draft.info().manifest_digest(),
                 footprint,
+                &[],
             )
         })
         .transpose()?;

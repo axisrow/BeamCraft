@@ -4,6 +4,7 @@
 //! Shared prepared-layer publication and verified revision commit boundary.
 
 use session::Refusal;
+use session::draft::{self, Admitted};
 use session::pipeline::{DERIVED_LAYER, ROOT_LAYER, host_uuid, integrity};
 use std::collections::BTreeMap;
 
@@ -11,7 +12,7 @@ use crate::plate::{PlateVerifier, check_footprint};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{
     CommitHook, CommitOutcome, Committed, ExpectedBase, LayerEntry, LayerRole, RevisionDraft,
-    RevisionStore, Uuid7,
+    RevisionInfo, RevisionStore, Uuid7,
 };
 use beamcraft_layer_engine::authored::{Author, Change, Prepare, Prepared, SchemaIdentity};
 use beamcraft_layer_engine::{Control, Opened};
@@ -55,11 +56,19 @@ pub(crate) struct PublishRequest<'a> {
 
 /// Stores the layer blobs of a prepared candidate and commits them as the next revision through
 /// U06/U07, with the model content verifier.
+///
+/// While a draft batch is open nothing is published: the prepared layer set is admitted into
+/// the draft, and the returned outcome previews the revision this command would create —
+/// the batch's single commit later publishes the accumulated state as one revision with the
+/// batch operation's own identity.
 pub(crate) fn publish_revision(
     store: &RevisionStore,
     request: &PublishRequest<'_>,
     hook: &mut dyn CommitHook,
 ) -> Result<Committed, Refusal> {
+    if draft::is_open() {
+        return draft_admit(request);
+    }
     let generation = request.base_generation.checked_add(1).ok_or(Refusal::new(
         ErrorCode::LimitExceeded,
         "generation exhausted",
@@ -103,13 +112,80 @@ pub(crate) fn publish_revision(
     // U11: the persisted evidence carries the immutable geometry assets the batch's mesh
     // transfers pin, so a later rebase can admit the shared asset prims' deltas.
     let evidence = crate::plate::with_transfer_assets(request.footprint, request.prepared)?;
-    let pin = crate::command_evidence::store(store, &request.op, request.fingerprint, &evidence)?;
+    let pin = crate::command_evidence::store(
+        store,
+        &request.op,
+        request.fingerprint,
+        &evidence,
+        &[],
+    )?;
     Ok(store.commit_with_evidence(
         &draft,
         request.expected,
         Some(pin),
         Some(&PlateVerifier),
         hook,
+    )?)
+}
+
+/// Admits one prepared candidate into the open draft batch and previews the revision it
+/// would create: the manifest is assembled exactly as the batch's commit will assemble the
+/// accumulated state, with this command's own operation, revision id and sequence. No blob,
+/// no manifest and no ledger record is written.
+fn draft_admit(request: &PublishRequest<'_>) -> Result<Committed, Refusal> {
+    // U11: the drafted command's declared footprint is augmented with its own mesh-transfer
+    // assets exactly as a committed publication would be, so the batch's union evidence
+    // carries them and a later rebase can admit the shared asset prims' deltas.
+    let footprint = crate::plate::with_transfer_assets(request.footprint, request.prepared)?;
+    let admitted = draft::with(|state| {
+        state.admit(
+            &request.prepared.layers,
+            &request.prepared.retained,
+            request.op.as_str(),
+            request.fingerprint,
+            &footprint,
+        )
+    })
+    .ok_or_else(|| integrity("a draft batch vanished while a command ran"))??;
+    let info = preview_of(request, &admitted)?;
+    Ok(Committed {
+        outcome: CommitOutcome::Drafted,
+        info,
+    })
+}
+
+/// Assembles the preview manifest of one drafted command: the layer entries the batch commit
+/// will carry, at the command's own generation and sequence, over the batch's pinned base.
+fn preview_of(request: &PublishRequest<'_>, admitted: &Admitted) -> Result<RevisionInfo, Refusal> {
+    let mut entries = Vec::new();
+    for layer in &request.prepared.layers {
+        entries.push(LayerEntry::from_bytes(
+            &layer.name,
+            role_of(&layer.name),
+            &layer.bytes,
+        )?);
+    }
+    for layer in &request.prepared.retained {
+        entries.push(LayerEntry::from_bytes(
+            &layer.name,
+            LayerRole::External,
+            &layer.bytes,
+        )?);
+    }
+    let draft = RevisionDraft {
+        project: host_uuid(request.project)?,
+        workspace: host_uuid(request.workspace)?,
+        revision: host_uuid(&request.revision_id.to_string())?,
+        op: request.op.clone(),
+        workspace_generation: admitted.generation,
+        schema: request.schema.digest,
+        root_layer: ROOT_LAYER.into(),
+        entries,
+    };
+    Ok(RevisionInfo::preview(
+        &draft,
+        admitted.sequence,
+        admitted.base.clone(),
     )?)
 }
 
