@@ -37,6 +37,7 @@ fn capture(footprint: Footprint) -> CapturedFootprint {
         op_id: OpId::parse(&element(100).to_string()).unwrap(),
         fingerprint: Sha256::digest(b"synthetic request").unwrap(),
         footprint,
+        bindings: Vec::new(),
     }
 }
 fn text<'a>(json: &'a Json, key: &str) -> &'a str {

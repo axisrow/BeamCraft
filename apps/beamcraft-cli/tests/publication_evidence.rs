@@ -155,6 +155,7 @@ impl Fixture {
                     op_id: OpId::parse(op.as_str()).unwrap(),
                     fingerprint: Sha256::digest(b"synthetic raw input").unwrap(),
                     footprint,
+                    bindings: Vec::new(),
                 }
                 .encode()
                 .unwrap()
