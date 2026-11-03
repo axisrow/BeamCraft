@@ -61,6 +61,13 @@ views V12, colour sets V17, sheet editor D05) are traced to the slice F runbook 
 re-checked against master `d8249fff`) plus the four-step runbook in
 [q01-alpha-scenario.md](q01-alpha-scenario.md). No step of it has been executed yet; every
 cell stays open until the owner runs it and accepts each visual result by eye.
+Preparation note for the slice F runbook: its step 0.1 keeps the libtest filter
+`alpha_scenario::` (with `::`), which matches only the original story, so the
+`Q01 expanded artifacts:` path never prints and the runbook's step 0.2 has no expanded root
+to launch on. Generate both artifact roots with the documented entry point command without
+the `::` (run with `--no-capture` while `BEAMCRAFT_Q01_KEEP=1` is set, see
+[q01-alpha-scenario.md](q01-alpha-scenario.md)); the corrected preparation command is
+`BEAMCRAFT_Q01_KEEP=1 cargo nextest run --locked -p beamcraft-cli --test cli --no-capture alpha_scenario`.
 
 ## Acceptance traceability
 

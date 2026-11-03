@@ -9,9 +9,10 @@ cargo nextest run --locked -p beamcraft-cli --test cli alpha_scenario
 
 The `alpha_scenario` substring filter selects both stories of the package's `cli` integration
 target: `alpha_scenario.rs` (the original) and `alpha_scenario_expanded.rs` (the expanded one,
-which includes the original frame as its opening). The expected exit is 0. The evidence lands
-on stdout: the runner prints every step's pass or failure, and a failing step prints the exact
-command with its expected and actual JSON. If cargo-nextest is not installed, the libtest
+which includes the original frame as its opening). The expected exit is 0. On success the
+stories themselves are silent; the runner prints one result line per test. A failing step
+aborts its story with the exact command and its expected and actual JSON in the assert panic
+message. If cargo-nextest is not installed, the libtest
 equivalent on a clean checkout is:
 
 ```sh
@@ -19,9 +20,12 @@ cargo test --locked -p beamcraft-cli --test cli -- alpha_scenario
 ```
 
 The same substring runs both stories there too. Setting `BEAMCRAFT_Q01_KEEP=1` (PowerShell:
-`$env:BEAMCRAFT_Q01_KEEP = '1'`) additionally prints the absolute artifact directory paths
-(`Q01 artifacts:` for the original story, `Q01 expanded artifacts:` for the expanded one) and
-keeps their stores, workspaces, exports and drawing documents for inspection. This invocation
+`$env:BEAMCRAFT_Q01_KEEP = '1'`) keeps both stories' stores, workspaces, exports and drawing
+documents for inspection, and each story then prints its absolute artifact directory path on
+stderr when it ends (`Q01 artifacts:` for the original story, `Q01 expanded artifacts:` for
+the expanded one). A runner captures a passing test's output, which would hide those paths,
+so run the nextest command with `--no-capture`, or the libtest form with `-- --nocapture`,
+whenever KEEP is set. This invocation
 is the acceptance run of the two stories, not the recorded test gate: the gate
 (`tools/test-gate`) remains the workspace-wide evidence behind a PR. Every item of the expanded
 acceptance is traced to its executable check or recorded manual result in
