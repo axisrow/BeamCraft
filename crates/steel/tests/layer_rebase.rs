@@ -195,14 +195,18 @@ fn rename(n: usize, name: &str) -> Change {
 }
 
 fn mesh_for(n: usize) -> Change {
-    Change::Mesh(Mesh {
+    Change::Mesh(body_for(n, 0.0))
+}
+
+fn body_for(n: usize, lift: f32) -> Mesh {
+    Mesh {
         id: id(n).to_string(),
-        shape_key: digest(format!("mesh {n}").as_bytes()),
+        shape_key: digest(format!("mesh {n} {lift}").as_bytes()),
         points_mm: vec![
-            [0.0, 0.0, 0.0],
-            [100.0, 0.0, 0.0],
-            [100.0, 100.0, 0.0],
-            [0.0, 100.0, 0.0],
+            [0.0, 0.0, lift],
+            [100.0, 0.0, lift],
+            [100.0, 100.0, lift],
+            [0.0, 100.0, lift],
         ],
         face_counts: vec![4],
         indices: vec![0, 1, 2, 3],
@@ -210,11 +214,81 @@ fn mesh_for(n: usize) -> Change {
         reduced: None,
         proxy: None,
         axis: None,
-    })
+    }
 }
 
 fn element_file(n: usize) -> String {
     element_layer(&id(n).to_string()).unwrap()
+}
+
+/// Both branches create their first meshed element from one element-less base: the shared
+/// asset layer is added by both sides, with different bodies (different lift).
+#[test]
+fn u15_a_both_sides_added_asset_layer_unions_bodies_and_carries_both_files() {
+    // A realistic base: one published plain-plate revision that already stamped the layer
+    // pins (the first edit stamps bimSchemaDigest into the root layer).
+    let base = edit(empty(), vec![create(19)], Vec::new());
+    let body_20 = body_for(20, 0.0);
+    let source = edit(
+        base.clone(),
+        vec![create(20), Change::Mesh(body_20)],
+        Vec::new(),
+    );
+    let accepted = edit(
+        base.clone(),
+        vec![create(21), Change::Mesh(body_for(21, 5.0))],
+        Vec::new(),
+    );
+    // The union needs the foreign body named in the verified writes.
+    let mut writes = lifecycle(20);
+    writes.push(Dependency {
+        target: T::Definition(mesh_asset_digest(&body_for(20, 0.0)).unwrap()),
+        group: G::Derived,
+        access: Access::Write,
+    });
+    let merged = prepare(&base, &source, &accepted, &writes).unwrap();
+    // Both element files are carried.
+    for n in [20usize, 21usize] {
+        assert!(merged.assets.iter().any(|a| a.name == element_file(n)));
+        assert!(merged.owned_layers.contains(&element_file(n)));
+    }
+    // The asset layer unions: both bodies, each once.
+    let assets = std::str::from_utf8(
+        &merged
+            .assets
+            .iter()
+            .find(|a| a.name == "derived/geometry.usda")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert_eq!(assets.matches("def Mesh \"GEO_").count(), 2, "{assets}");
+    // The remote authored work survives beside it.
+    assert_eq!(
+        value(&merged, &format!("{}.bim:name", path(21)), "default"),
+        sdf::Value::String("part 21".into())
+    );
+}
+
+#[test]
+fn u15_a_collision_body_outside_the_verified_writes_is_a_conflict() {
+    // The same element-less published base as above: both branches then create their first
+    // meshed element, so the shared asset layer is added by both sides with diverging
+    // bodies.
+    let base = edit(empty(), vec![create(19)], Vec::new());
+    let source = edit(base.clone(), vec![create(20), mesh_for(20)], Vec::new());
+    let accepted = edit(
+        base.clone(),
+        vec![create(21), Change::Mesh(body_for(21, 5.0))],
+        Vec::new(),
+    );
+    // The evidence names only the local element's own groups: the foreign body's digest is
+    // outside the verified writes, so the add/add collision of the shared layer is a
+    // semantic conflict between clients.
+    let error = prepare(&base, &source, &accepted, &lifecycle(20))
+        .err()
+        .unwrap_or_else(|| panic!("an unverified foreign body must conflict"));
+    assert_eq!(error.code, ErrorCode::DependencyConflict);
 }
 
 #[test]

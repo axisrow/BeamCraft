@@ -683,51 +683,67 @@ pub fn prepare(
             if !transferable(&added.name) {
                 return Err(unsupported_delta());
             }
-            // A new or rewritten body asset carries the U11 content identity in the verified
-            // writes: every GEO_ body of the added layer must be named by a definition write.
-            if added.name == super::GEOMETRY_ASSET_LAYER {
-                let text = String::from_utf8_lossy(&added.bytes).into_owned();
-                for digest in text.match_indices("GEO_").filter_map(|(at, _)| {
-                    text.get(at + 4..at + 68)
-                        .filter(|label| label.len() == 64)
-                        .and_then(|label| label.parse::<ContentDigest>().ok())
-                }) {
-                    require(
-                        &writes,
-                        &format!("{}/GEO_{digest}", super::edit::GEOMETRY_ASSETS),
-                        "specifier",
-                    )?;
-                }
-            }
             // The accepted head may carry a layer of the same name already (reachable: both
-            // branches create their first meshed element and both add the asset layer). An
-            // identical copy adds nothing; a diverging one merges under the verified writes
-            // and conflicts on overlapping opinions — pushing a second entry would die later
-            // in composition, not at the overlap.
-            match candidate.assets.iter_mut().find(|a| a.name == added.name) {
+            // branches create their first meshed element and both add the asset layer).
+            // An identical copy adds nothing. A diverging element file is the same element
+            // authored two ways with no common ancestor: a conflict. A diverging asset layer
+            // unions: the bodies are content-addressed, so a body the accepted head lacks is
+            // a new definition — it must be named by a definition write, and one outside the
+            // verified writes is a conflict between clients, not a silent drop of the other
+            // client's body.
+            let target = match candidate.assets.iter_mut().find(|a| a.name == added.name) {
+                Some(target) if target.digest == added.digest => continue,
+                // A diverging element file is the same element authored two ways with no
+                // common ancestor: a conflict.
+                Some(_) if element_layer_id(&added.name).is_some() => return Err(conflict()),
                 Some(target) => {
-                    if target.digest == added.digest {
-                        continue;
+                    let text = String::from_utf8_lossy(&added.bytes).into_owned();
+                    for digest in text.match_indices("GEO_").filter_map(|(at, _)| {
+                        text.get(at + 4..at + 68)
+                            .filter(|label| label.len() == 64)
+                            .and_then(|label| label.parse::<ContentDigest>().ok())
+                    }) {
+                        if !permitted(&writes, (T::Definition(digest), G::Derived)) {
+                            return Err(conflict());
+                        }
                     }
-                    let mut merged = edit::data(target)?;
-                    if merge_layer(
-                        &edit::data(target)?,
-                        &edit::data(added)?,
-                        &mut merged,
-                        &writes,
-                        control,
-                    )? {
-                        let bytes = edit::serialize(&merged, accepted.budgets.layer_bytes)?;
-                        *target = Asset {
-                            name: target.name.clone(),
-                            digest: Sha256::digest(&bytes).map_err(|_| limit())?,
-                            bytes,
-                        };
-                    }
+                    target
                 }
                 None => {
+                    // A new or rewritten body asset carries the U11 content identity in the
+                    // verified writes: every GEO_ body of the added layer must be named by a
+                    // definition write.
+                    if added.name == super::GEOMETRY_ASSET_LAYER {
+                        let text = String::from_utf8_lossy(&added.bytes).into_owned();
+                        for digest in text.match_indices("GEO_").filter_map(|(at, _)| {
+                            text.get(at + 4..at + 68)
+                                .filter(|label| label.len() == 64)
+                                .and_then(|label| label.parse::<ContentDigest>().ok())
+                        }) {
+                            require(
+                                &writes,
+                                &format!("{}/GEO_{digest}", super::edit::GEOMETRY_ASSETS),
+                                "specifier",
+                            )?;
+                        }
+                    }
                     candidate.assets.push(added.clone());
                     candidate.owned_layers.insert(added.name.clone());
+                    continue;
+                }
+            };
+            if added.name == super::GEOMETRY_ASSET_LAYER {
+                // Union: an empty base makes every body of the added layer a new spec gated
+                // by its definition write, and never erases the accepted side's bodies.
+                let empty = sdf::Data::new();
+                let mut merged = edit::data(target)?;
+                if merge_layer(&empty, &edit::data(added)?, &mut merged, &writes, control)? {
+                    let bytes = edit::serialize(&merged, accepted.budgets.layer_bytes)?;
+                    *target = Asset {
+                        name: target.name.clone(),
+                        digest: Sha256::digest(&bytes).map_err(|_| limit())?,
+                        bytes,
+                    };
                 }
             }
         }
