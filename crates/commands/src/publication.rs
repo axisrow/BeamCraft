@@ -19,7 +19,8 @@ use beamcraft_layer_engine::{Control, Opened};
 use beamcraft_model::{digest::ContentDigest, error::ErrorCode, id::RevisionId};
 
 fn role_of(name: &str) -> LayerRole {
-    if name == DERIVED_LAYER {
+    // The shared derived stack and, since U15, every per-element derived layer are derived.
+    if name == DERIVED_LAYER || beamcraft_layer_engine::authored::element_layer_id(name).is_some() {
         LayerRole::Derived
     } else {
         LayerRole::Authored

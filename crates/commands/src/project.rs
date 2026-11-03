@@ -284,7 +284,9 @@ fn first_revision(
                 .blobs()
                 .publish(&asset.bytes)
                 .map_err(|e| refuse(e.code(), "layer blob could not be stored"))?;
-            let role = if asset.name == DERIVED_LAYER {
+            let role = if asset.name == DERIVED_LAYER
+                || beamcraft_layer_engine::authored::element_layer_id(&asset.name).is_some()
+            {
                 LayerRole::Derived
             } else {
                 LayerRole::Authored

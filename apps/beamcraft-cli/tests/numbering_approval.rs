@@ -764,7 +764,13 @@ fn the_reader_reads_the_stored_marks() {
                 .join("blobs")
                 .join(&digest[..2])
                 .join(&digest),
-            layers.join(text(entry, "name")),
+            {
+                let target = layers.join(text(entry, "name"));
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).unwrap();
+                }
+                target
+            },
         )
         .unwrap();
     }

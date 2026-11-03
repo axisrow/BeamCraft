@@ -122,9 +122,23 @@ fn edit(mut request: OpenRequest, changes: Vec<Change>, resources: Vec<Resource>
             &control(),
         )
         .unwrap();
+    // The candidate's owned set replaces the request's: an element delete drops its file (U15).
+    let names: std::collections::BTreeSet<String> =
+        prepared.layers.iter().map(|l| l.name.clone()).collect();
+    request
+        .assets
+        .retain(|a| !request.owned_layers.contains(&a.name) || names.contains(&a.name));
+    request.owned_layers.retain(|n| names.contains(n));
     for layer in prepared.layers {
         let name = layer.name.clone();
-        *request.assets.iter_mut().find(|a| a.name == name).unwrap() = layer;
+        match request.assets.iter_mut().find(|a| a.name == name) {
+            Some(slot) => *slot = layer,
+            // A new element's own derived layer (U15) joins the stage.
+            None => {
+                request.owned_layers.insert(name.clone());
+                request.assets.push(layer);
+            }
+        }
     }
     request.identity.generation += 1;
     request.manifest = request.manifest_digest().unwrap();
@@ -178,6 +192,90 @@ fn rename(n: usize, name: &str) -> Change {
         id: id(n).to_string(),
         name: name.into(),
     }
+}
+
+fn mesh_for(n: usize) -> Change {
+    Change::Mesh(Mesh {
+        id: id(n).to_string(),
+        shape_key: digest(format!("mesh {n}").as_bytes()),
+        points_mm: vec![
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+            [100.0, 100.0, 0.0],
+            [0.0, 100.0, 0.0],
+        ],
+        face_counts: vec![4],
+        indices: vec![0, 1, 2, 3],
+        quantities: None,
+    })
+}
+
+fn element_file(n: usize) -> String {
+    element_layer(&id(n).to_string()).unwrap()
+}
+
+#[test]
+fn u15_a_local_element_file_and_stack_survive_a_rebase() {
+    // A realistic base: one published revision that already stamped the layer pins.
+    let base = edit(empty(), vec![create(12), mesh_for(12)], Vec::new());
+    let source = edit(base.clone(), vec![create(10), mesh_for(10)], Vec::new());
+    let accepted = edit(base.clone(), vec![create(11)], Vec::new());
+    let file = element_file(10);
+    let source_file = source
+        .assets
+        .iter()
+        .find(|a| a.name == file)
+        .unwrap()
+        .clone();
+    let merged = prepare(&base, &source, &accepted, &lifecycle(10)).unwrap();
+    // The locally created element's derived file is carried whole.
+    let carried = merged.assets.iter().find(|a| a.name == file).unwrap();
+    assert_eq!(carried.digest, source_file.digest);
+    assert!(merged.owned_layers.contains(&file));
+    // The accepted stack is rebuilt from the candidate's asset set: both meshed elements.
+    let stack_bytes = &merged
+        .assets
+        .iter()
+        .find(|a| a.name == "derived.usda")
+        .unwrap()
+        .bytes;
+    let mut stack = layer_sublayers(stack_bytes).unwrap();
+    stack.sort();
+    assert_eq!(stack, [element_file(10), element_file(12)]);
+    // The remote authored work survives beside it.
+    assert_eq!(
+        value(&merged, &format!("{}.bim:name", path(11)), "default"),
+        sdf::Value::String("part 11".into())
+    );
+}
+
+#[test]
+fn u15_an_upstream_element_delete_conflicts_only_where_local_writes_reach_it() {
+    let base = edit(
+        empty(),
+        vec![create(10), mesh_for(10), create(12)],
+        Vec::new(),
+    );
+    let file = element_file(10);
+    // Upstream deletes the element: its file and stack entry go with it.
+    let accepted = edit(
+        base.clone(),
+        vec![Change::Delete {
+            id: id(10).to_string(),
+        }],
+        Vec::new(),
+    );
+    assert!(accepted.assets.iter().all(|a| a.name != file));
+    // A local rename of another element rebases cleanly over the deletion.
+    let source = edit(base.clone(), vec![rename(12, "elsewhere")], Vec::new());
+    let merged = prepare(&base, &source, &accepted, &[write(12, G::Label)]).unwrap();
+    assert!(merged.assets.iter().all(|a| a.name != file));
+    // A local write to the deleted element itself conflicts.
+    let source = edit(base.clone(), vec![rename(10, "local")], Vec::new());
+    let error = prepare(&base, &source, &accepted, &lifecycle(10))
+        .err()
+        .unwrap_or_else(|| panic!("a write into an upstream-deleted element must conflict"));
+    assert_eq!(error.code, ErrorCode::DependencyConflict);
 }
 fn replace(request: &mut OpenRequest, name: &str, from: &str, to: &str) {
     let entry = request.assets.iter_mut().find(|a| a.name == name).unwrap();

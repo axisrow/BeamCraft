@@ -9,8 +9,8 @@ use beamcraft_host::compaction::{self, Keep, Request, Safeguard};
 use beamcraft_host::ledger::RecoveryPolicy;
 use beamcraft_host::revision::{
     CommitOutcome, CommitPoint, EvidencePin, ExpectedBase, Injected, LayerEntry, LayerRole,
-    MAX_ENTRIES, MAX_OPERATION_EVIDENCE_BYTES, Manifest, NoFault, RevisionDraft, RevisionError,
-    RevisionStore, Uuid7,
+    MAX_OPERATION_EVIDENCE_BYTES, Manifest, NoFault, RevisionDraft, RevisionError, RevisionStore,
+    Uuid7,
 };
 use beamcraft_host::storage::BlobStore;
 use beamcraft_model::digest::{ContentDigest, Sha256};
@@ -473,9 +473,14 @@ fn an_unresolved_intent_protects_its_evidence_before_any_root_exists() {
 
 #[test]
 fn the_full_layer_cap_and_one_evidence_blob_fit_one_durable_intent() {
+    // A downscaled stand-in for the entry cap: at the U15 cap (70,000 entries) a full-cap
+    // commit publishes 70,000 blobs and encodes a multi-megabyte intent, which cannot fit the
+    // 120-second per-test budget. The durable-intent line cap is exercised at
+    // `ledger::record::tests::the_maximal_intent_fits_the_line_cap_and_round_trips`.
+    const ENTRIES: usize = 4_000;
     let fx = Fixture::new();
     let mut draft = fx.draft(1);
-    for n in draft.entries.len()..MAX_ENTRIES {
+    for n in draft.entries.len()..ENTRIES {
         let bytes = format!("#usda 1.0\n# original extra layer {n}\n");
         fx.store().blobs().publish(bytes.as_bytes()).unwrap();
         draft.entries.push(
@@ -498,7 +503,7 @@ fn the_full_layer_cap_and_one_evidence_blob_fit_one_durable_intent() {
         )
         .unwrap();
     let opened = fx.store().open().unwrap();
-    assert_eq!(opened.manifest().content().entries().len(), MAX_ENTRIES);
+    assert_eq!(opened.manifest().content().entries().len(), ENTRIES);
     assert_eq!(
         opened.operation_evidence().unwrap().unwrap(),
         b"evidence beyond the 64 layer slots"

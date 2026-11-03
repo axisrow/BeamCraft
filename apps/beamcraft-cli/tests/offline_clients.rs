@@ -552,12 +552,16 @@ fn two_offline_workspaces_publish_independent_elements_and_lose_nothing() {
         .unwrap()
     {
         let digest = text(entry, "digest");
+        let target = layers.join(text(entry, "name"));
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         fs::copy(
             f.path("published")
                 .join("blobs")
                 .join(&digest[..2])
                 .join(digest),
-            layers.join(text(entry, "name")),
+            &target,
         )
         .unwrap();
     }

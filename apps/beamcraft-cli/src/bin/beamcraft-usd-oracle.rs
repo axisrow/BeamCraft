@@ -1050,7 +1050,43 @@ impl Stage {
         }
         for sub in sublayers.iter().take(OWNED_STACK.len() - 1) {
             let layer = stage.load(sub, false);
+            // U15: the derived stack lists one file per element, `derived/<32 hex>.usda`,
+            // composed weaker than the derived layer itself.
+            if sub == OWNED_STACK[2] {
+                let mut problems = stage.problems.borrow_mut();
+                if layer.sublayers.len() > 70_000 {
+                    problems.push(format!(
+                        "derived.usda lists {} element layers",
+                        layer.sublayers.len()
+                    ));
+                }
+                for entry in layer.sublayers.iter().take(70_000) {
+                    let hex = entry.strip_suffix(".usda").unwrap_or_default();
+                    let shape = hex.len() == 32 && hex.bytes().all(|b| b.is_ascii_hexdigit());
+                    if !shape {
+                        problems.push(format!(
+                            "derived.usda names {entry:?}, expected <32 hex>.usda"
+                        ));
+                    }
+                }
+            }
             stage.layers.borrow_mut().push((sub.clone(), layer, false));
+        }
+        {
+            let derived = stage
+                .layers
+                .borrow()
+                .iter()
+                .find(|(name, _, _)| name == OWNED_STACK[2])
+                .map(|(_, l, _)| l.clone())
+                .unwrap_or_default();
+            for entry in derived.sublayers.iter().take(70_000) {
+                let layer = stage.load(entry, false);
+                stage
+                    .layers
+                    .borrow_mut()
+                    .push((entry.clone(), layer, false));
+            }
         }
         stage.resolve_arcs();
         stage

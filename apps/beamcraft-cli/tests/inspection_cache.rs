@@ -262,7 +262,9 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
     // The stored box of the body both plates share is stretched from 10 to 12 mm while the
     // authored inputs stay unchanged. Points and extent change together and an axis-aligned box
     // keeps its face normals, and the asset's content digest is relabelled to match (U11), so
-    // the layer passes every structural rule: only the kernel comparison can tell.
+    // the layer passes every structural rule: only the kernel comparison can tell. The body is
+    // a shared asset in the derived stack root: it survives per-element isolation (U15)
+    // untouched.
     f.tamper(|name, mut text| {
         if name == "derived.usda" {
             let block = text.find("def Mesh \"GEO_").unwrap();

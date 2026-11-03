@@ -640,11 +640,12 @@ fn export_changes_nothing_in_the_store() {
             .count(),
         blobs
     );
-    // The GlobalId is computed, never stored.
-    for name in ["authored.usda", "derived.usda", "root.usda"] {
-        let store = RevisionStore::new(BlobStore::new(f.shared.root.join("store")).unwrap());
-        let layer = String::from_utf8(store.open().unwrap().layer_bytes(name).unwrap()).unwrap();
-        assert!(!layer.contains("ifcGlobalId"), "{name}");
+    // The GlobalId is computed, never stored: in any layer, including element files (U15).
+    let store = RevisionStore::new(BlobStore::new(f.shared.root.join("store")).unwrap());
+    let head = store.open().unwrap();
+    for entry in head.manifest().content().entries() {
+        let layer = String::from_utf8(head.layer_bytes(entry.name()).unwrap()).unwrap();
+        assert!(!layer.contains("ifcGlobalId"), "{}", entry.name());
     }
 }
 
@@ -773,7 +774,7 @@ fn a_stale_quantity_is_left_out_and_listed() {
     let f = Fixture::new();
     let s = f.scene();
     f.tamper(|name, layer| {
-        if name == "derived.usda" {
+        if name.starts_with("derived/") {
             layer.replacen(
                 "custom double bim:volumeMm3 = ",
                 "custom double bim:volumeMm3 = 1",

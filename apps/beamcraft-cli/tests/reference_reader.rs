@@ -119,9 +119,13 @@ fn the_reader_composes_the_reference_and_places_the_foreign_points_as_the_engine
         .unwrap();
     for entry in manifest {
         let digest = text(entry, "digest");
+        let target = layers.join(text(entry, "name"));
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         fs::copy(
             store.join("blobs").join(&digest[..2]).join(&digest),
-            layers.join(text(entry, "name")),
+            &target,
         )
         .unwrap();
     }

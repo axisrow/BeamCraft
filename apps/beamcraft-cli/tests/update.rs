@@ -121,6 +121,11 @@ fn layers(json: &Json) -> Vec<String> {
         .collect()
 }
 
+/// The element's own derived layer (U15).
+fn element_layer(id: &str) -> String {
+    format!("derived/{}.usda", id.replace('-', ""))
+}
+
 #[test]
 fn a_rename_touches_the_authored_layer_alone_and_keeps_body_and_quantities() {
     let f = Fixture::new();
@@ -192,7 +197,10 @@ fn a_material_change_updates_the_mass_record_and_keeps_the_shape() {
         text(at(&changed, &["element"]), "mesh_digest"),
         text(at(&created, &["plate"]), "mesh_digest")
     );
-    assert_eq!(layers(&changed), ["authored.usda", "derived.usda"]);
+    assert_eq!(
+        layers(&changed),
+        ["authored.usda".to_owned(), element_layer(&id)]
+    );
     let after = f.inspected();
     let stored = at(
         &at(&after, &["plates"]).array().unwrap()[0],
@@ -398,6 +406,13 @@ fn a_stored_record_that_no_longer_matches_is_stale_never_current() {
     let light = f.material("2700");
     f.plate(&["--material-digest", &steel]);
     let current = f.inspected();
+    let plate_id = at(
+        &at(&current, &["plates"]).array().unwrap()[0],
+        &["element_id"],
+    )
+    .string()
+    .unwrap()
+    .to_owned();
     assert_eq!(
         text(
             at(
@@ -410,7 +425,7 @@ fn a_stored_record_that_no_longer_matches_is_stale_never_current() {
     );
     // A stored mass edited outside BeamCraft: same signature, other value.
     f.tamper(|name, text| {
-        if name == "derived.usda" {
+        if name == element_layer(&plate_id) {
             assert!(text.contains("bim:massKg = 39.25"), "{text}");
             text.replace("bim:massKg = 39.25", "bim:massKg = 99.0")
         } else {
@@ -461,13 +476,13 @@ fn a_revision_with_stale_records_cannot_be_published_by_the_verifier() {
     let created = f.plate(&["--material-digest", &steel]);
     let id = text(at(&created, &["plate"]), "element_id");
     f.tamper(|name, text| {
-        if name == "derived.usda" {
+        if name == element_layer(&id) {
             text.replace("bim:massKg = 39.25", "bim:massKg = 99.0")
         } else {
             text
         }
     });
-    // A rename leaves the derived layer untouched, so the stale record would stay: refused.
+    // A rename leaves the derived results untouched, so the stale record would stay: refused.
     assert_eq!(
         f.rejected("update-element", &["--id", &id, "--name", "After tamper"]),
         "INTEGRITY_ERROR"
@@ -483,7 +498,7 @@ fn a_partial_quantity_record_is_damaged_not_missing() {
     let created = f.plate(&["--material-digest", &steel]);
     let id = text(at(&created, &["plate"]), "element_id");
     f.tamper(|name, text| {
-        if name == "derived.usda" {
+        if name == element_layer(&id) {
             let kept: Vec<&str> = text
                 .lines()
                 .filter(|l| !l.contains("bim:shapeSignature"))

@@ -789,7 +789,7 @@ fn flipped_garbage_and_oversized_ledger_content_is_counted_never_trusted() {
         state ^= state << 17;
         hostile.push(u8::try_from(state & 0xff).unwrap());
     }
-    hostile.extend(vec![b'x'; MAX_RECORD_BYTES * 3]);
+    hostile.extend(vec![b'x'; MAX_RECORD_BYTES + 1024]);
     hostile.push(b'\n');
     fx.set_ledger(&hostile);
     assert!(fx.scan().diagnostics().damaged_lines >= 1);

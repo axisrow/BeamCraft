@@ -388,7 +388,7 @@ fn a_store_from_before_this_slice_reads_stale_and_stays_usable() {
         "kernel-a07-section-member-volume/1;detailed-arcs-max(0.25mm,0.5%r);tolerance-policy-3";
     let old_hex = "ab".repeat(32);
     f.tamper(|name, layer| {
-        if name != "derived.usda" {
+        if !name.starts_with("derived/") {
             return layer;
         }
         layer
@@ -479,7 +479,7 @@ fn a_record_with_the_current_label_and_a_wrong_value_is_still_refused() {
     let profile = f.profile(I298);
     f.beam(&profile, Some(&steel));
     f.tamper(|name, layer| {
-        if name != "derived.usda" {
+        if !name.starts_with("derived/") {
             return layer;
         }
         layer
@@ -514,7 +514,7 @@ fn a_plate_record_with_a_superseded_member_label_is_still_refused() {
     // The label exemption is for member records only: a plate whose stored volume is wrong and
     // whose algorithm label is one a member used to carry is a wrong record, not a stale one.
     f.tamper(|name, layer| {
-        if name != "derived.usda" {
+        if !name.starts_with("derived/") {
             return layer;
         }
         layer

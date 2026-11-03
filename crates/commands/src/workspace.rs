@@ -468,9 +468,10 @@ fn publish_in_scope(
     let base_entries = digest_of(base);
     let root = draft.manifest().content().root_layer().to_owned();
     let outside = |name: &str, role: LayerRole| {
-        // The derived layer follows the owning authored inputs and the root carries the units
-        // and schema pins; the root's composition is checked separately below.
-        name != session::pipeline::DERIVED_LAYER
+        // Derived layers (the shared stack and, since U15, every per-element layer) follow the
+        // owning authored inputs and the root carries the units and schema pins; the root's
+        // composition is checked separately below.
+        role != LayerRole::Derived
             && name != root
             && role != LayerRole::External
             && !authorized.contains(name)

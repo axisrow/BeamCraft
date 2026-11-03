@@ -76,12 +76,15 @@ pub use manifest::{
 pub use read::{Revision, RevisionStore};
 pub use root::{RevisionInfo, RootRecord};
 
-/// Most layer entries one manifest may name.
-pub const MAX_ENTRIES: usize = 64;
+/// Most layer entries one manifest may name. U15 gives every element its own derived layer,
+/// so the manifest holds one entry per element at the engine's 65,536-element view cap, beside
+/// the roots, section layers, external wrappers and coordination pins.
+pub const MAX_ENTRIES: usize = 70_000;
 /// Longest layer name in bytes.
 pub const MAX_NAME_BYTES: usize = 128;
-/// Largest encoded manifest.
-pub const MAX_MANIFEST_BYTES: usize = 65_536;
+/// Largest encoded manifest. One U15 entry line is ~130 bytes, so the entry cap fits with
+/// headroom for identity, evidence and index fields.
+pub const MAX_MANIFEST_BYTES: usize = 16_777_216;
 /// Maximum bytes of opaque operation evidence pinned by one revision.
 pub const MAX_OPERATION_EVIDENCE_BYTES: u64 = 1_048_576;
 /// Largest revision sequence number (and head-log length) this store accepts. Every commit reads

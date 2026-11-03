@@ -24,8 +24,10 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 
 use crate::revision::{MAX_ENTRIES, Uuid7};
 
-/// Longest record line the parser accepts, including its newline.
-pub const MAX_RECORD_BYTES: usize = 8192;
+/// Longest record line the parser accepts, including its newline. A maximal intent lists
+/// [`MAX_INTENT_BLOBS`] blob digests (~4.6 MB at the U15 entry cap), so the line cap follows
+/// the manifest entry cap with headroom.
+pub const MAX_RECORD_BYTES: usize = 8_388_608;
 const VERSION: &str = "L1";
 // At most MAX_ENTRIES USD layers plus the optional operation-evidence blob of manifest v2.
 const MAX_INTENT_BLOBS: usize = MAX_ENTRIES + 1;
@@ -286,8 +288,7 @@ mod tests {
             Record::Genesis { head: 0 },
             Record::Genesis { head: u64::MAX },
             Record::Intent(intent(1)),
-            Record::Intent(intent(MAX_ENTRIES)),
-            Record::Intent(intent(MAX_INTENT_BLOBS)),
+            Record::Intent(intent(3)),
             Record::Intent(Intent {
                 base: None,
                 ..intent(2)
@@ -307,7 +308,20 @@ mod tests {
     }
 
     #[test]
+    fn the_maximal_intent_fits_the_line_cap_and_round_trips() {
+        let record = Record::Intent(intent(MAX_INTENT_BLOBS));
+        let (bytes, sum) = record.encode();
+        assert!(bytes.len() < MAX_RECORD_BYTES);
+        assert_eq!(
+            Record::parse(std::str::from_utf8(&bytes[..bytes.len() - 1]).unwrap()),
+            Some((record, sum))
+        );
+    }
+
+    #[test]
     fn every_record_round_trips_and_stays_inside_the_line_cap() {
+        // Small samples only: the exhaustive mutation tests below are quadratic in the line
+        // length, and a maximal U15 intent is megabytes long.
         for record in samples() {
             let (bytes, sum) = record.encode();
             assert!(bytes.len() < MAX_RECORD_BYTES);

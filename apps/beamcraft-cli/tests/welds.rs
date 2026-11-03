@@ -387,10 +387,19 @@ fn a_path_weld_keeps_its_symbol_data_and_reports_the_analytic_volume() {
         op,
     ]);
     let created = f.ok("create-weld", &args);
-    // The solid is derived data: both layers change.
+    // The solid is derived data: the authored layer, the new stack entry and the weld's own
+    // derived layer (U15) change.
     let mut changed = strings(&created, "changed_layers");
     changed.sort();
-    assert_eq!(changed, ["authored.usda", "derived.usda"]);
+    let weld_layer = format!("derived/{}.usda", WELD.replace('-', ""));
+    assert_eq!(
+        changed,
+        [
+            "authored.usda".to_owned(),
+            "derived.usda".to_owned(),
+            weld_layer
+        ]
+    );
     let welds = f.welds();
     let w = welds.iter().find(|w| text(w, "id") == WELD).unwrap();
     // Workshop/site and side kept exactly as authored, with the symbol data beside them.

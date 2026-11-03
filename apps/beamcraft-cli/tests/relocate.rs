@@ -287,6 +287,8 @@ fn a_delete_removes_the_whole_element_and_keeps_everything_else() {
     assert_eq!(text(&deleted, "kind"), "plate");
     let mut changed = strings(&deleted, "changed_layers");
     changed.sort();
+    // The authored layer loses the element and the derived stack loses its entry (U15); the
+    // element's own file is dropped, not changed.
     assert_eq!(changed, ["authored.usda", "derived.usda"]);
     // The footprint writes every group of the deleted element and nothing else.
     let writes = list(at(&deleted, &["footprint"]), "writes");

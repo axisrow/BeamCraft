@@ -105,9 +105,13 @@ fn copy_layers(store: &Path, layers: &Path, inspected: &Json) {
         .unwrap()
     {
         let digest = text(entry, "digest");
+        let target = layers.join(text(entry, "name"));
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
         fs::copy(
             store.join("blobs").join(&digest[..2]).join(&digest),
-            layers.join(text(entry, "name")),
+            &target,
         )
         .unwrap();
     }

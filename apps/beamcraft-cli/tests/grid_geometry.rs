@@ -34,9 +34,19 @@ fn create(f: &support::StoreFixture) {
 fn layers(f: &support::StoreFixture) -> (String, String) {
     let store = RevisionStore::new(BlobStore::new(f.root.join("store")).unwrap());
     let rev = store.open().unwrap();
+    // The grid's guide mesh lives in the grid's own derived layer (U15); the grid's id is
+    // generated, so the layer is found from the manifest.
+    let guide = rev
+        .manifest()
+        .content()
+        .entries()
+        .iter()
+        .map(|e| e.name().to_owned())
+        .find(|n| n.starts_with("derived/"))
+        .unwrap();
     (
         String::from_utf8(rev.layer_bytes("authored.usda").unwrap()).unwrap(),
-        String::from_utf8(rev.layer_bytes("derived.usda").unwrap()).unwrap(),
+        String::from_utf8(rev.layer_bytes(&guide).unwrap()).unwrap(),
     )
 }
 #[test]
@@ -63,9 +73,15 @@ fn guides_are_derived_only_and_relabel_is_geometry_inert() {
     );
     assert_ne!(layers(&f).1, d);
     ok(&f, "delete-element", &["--id", G]);
-    // The guide wrapper is gone with the grid; the immutable geometry asset (U11) stays, like
-    // every pinned definition.
-    assert!(!layers(&f).1.contains("def Mesh \"Geometry\""));
+    // The element's derived layer is dropped with the element (U15): no guide body remains.
+    // The immutable geometry asset (U11) stays, like every pinned definition.
+    let derived = String::from_utf8(revision_bytes(&f, "derived.usda")).unwrap();
+    assert!(!derived.contains("def Mesh \"Geometry\""));
+}
+/// The bytes of one layer of the current head.
+fn revision_bytes(f: &support::StoreFixture, name: &str) -> Vec<u8> {
+    let store = RevisionStore::new(BlobStore::new(f.root.join("store")).unwrap());
+    store.open().unwrap().layer_bytes(name).unwrap()
 }
 #[test]
 fn standard_usd_guide_reopens_in_openusd_when_available() {

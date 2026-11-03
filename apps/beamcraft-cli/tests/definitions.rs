@@ -192,17 +192,25 @@ fn a_material_with_density_gives_the_plate_a_current_mass_across_processes() {
     assert!(authored.contains(&format!(
         "custom rel bim:material = </World/Definitions/Materials/MAT_{digest}>"
     )));
-    // Physical material only: the U08 appearance is presentation under /World/Looks, the
-    // engineering definition carries no shader or binding of its own, and the derived layer
-    // stays appearance-free.
+    // Physical material only: the U08 appearance is presentation under /World/Looks; the
+    // engineering definition carries no shader or binding of its own, and no layer (U15 adds
+    // element files and the asset layer) carries a shader.
     assert!(authored.contains("def Scope \"Looks\""), "{authored}");
     assert!(
         authored.contains("custom rel material:binding = </World/Looks/PartClass0>"),
         "{authored}"
     );
     assert!(!authored.contains("material:binding = </World/Definitions/Materials/"));
+    let layers = at(&created, &["revision", "manifest", "layers"])
+        .array()
+        .unwrap()
+        .to_vec();
+    for layer in &layers {
+        let body = f.layer_text(text(layer, "name").as_str(), &created);
+        assert!(!body.contains("Shader"), "{}", text(layer, "name"));
+    }
     let derived = f.layer_text("derived.usda", &created);
-    assert!(!derived.contains("Shader") && !derived.contains("material:binding"));
+    assert!(!derived.contains("material:binding"));
 }
 
 #[test]

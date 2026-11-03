@@ -143,6 +143,21 @@ impl Fixture {
         self.fork();
         vec![low, high]
     }
+    /// The changed layers of a batch that rewrites both parts' meshes (U15: their own derived
+    /// layers, not a shared one). A batch that also creates or deletes elements adds or removes
+    /// stack entries, so the shared derived stack changes with them (`stack_change`).
+    fn mesh_changed(parts: &[String], stack_change: bool) -> Vec<String> {
+        let mut changed: Vec<String> = parts
+            .iter()
+            .map(|p| format!("derived/{}.usda", p.replace('-', "")))
+            .collect();
+        changed.push("authored.usda".to_owned());
+        if stack_change {
+            changed.push("derived.usda".to_owned());
+        }
+        changed.sort();
+        changed
+    }
     /// The create arguments of one group: two points on `y = 250`, the row along `x`, the
     /// plane normal up, offset start 100.
     fn group_args(
@@ -261,7 +276,7 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     // derived meshes are rewritten.
     assert_eq!(
         strings(&created, "changed_layers"),
-        ["authored.usda", "derived.usda"]
+        Fixture::mesh_changed(&parts, false)
     );
     // The parts' lifecycles and shapes and the pinned definition are read; the group's seven
     // groups, the definition's entry (pinned by the same transaction) and both plates' hole
@@ -710,7 +725,7 @@ fn none_writes_no_part_and_a_member_part_refuses_generate() {
     let forced = f.ok(&strs("create-bolt-group", &args));
     assert_eq!(
         strings(&forced, "changed_layers"),
-        ["authored.usda", "derived.usda"]
+        Fixture::mesh_changed(&parts, false)
     );
     let holes = holes_of(&f, &plate);
     assert_eq!(holes.len(), 2);
@@ -855,7 +870,7 @@ fn holes_are_removed_with_the_group_and_refuse_separate_edits() {
     // The delete writes the group's removal and both parts' hole records and meshes.
     assert_eq!(
         strings(&deleted, "changed_layers"),
-        ["authored.usda", "derived.usda"]
+        Fixture::mesh_changed(&parts, false)
     );
     let holes = holes_of(&f, &plate);
     assert_eq!(holes.len(), 1, "only the manual hole stays");

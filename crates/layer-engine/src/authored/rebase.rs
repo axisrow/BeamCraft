@@ -7,7 +7,7 @@
 //! command, including reads and reverted edits, before calling it. Host authority, pinned history,
 //! kernel re-evaluation, publication and recovery remain the caller's responsibilities.
 
-use super::{EditTargets, edit, schema_identity};
+use super::{EditTargets, edit, element_layer_id, schema_identity};
 use crate::*;
 use beamcraft_model::changeset::{Access, Dependency, DependencyGroup as G, DependencyTarget as T};
 use beamcraft_model::id::ElementId;
@@ -17,6 +17,64 @@ use openusd::sdf::{self, AbstractData};
 use std::collections::BTreeMap;
 
 type Writes = BTreeSet<(T, G)>;
+
+/// Rebuilds the derived stack's element-file list from the candidate asset set (U15): the
+/// stack is derived state, a sorted set of exactly the element files the manifest carries.
+fn reconcile_element_stack(
+    candidate: &mut OpenRequest,
+    targets: &EditTargets,
+) -> Result<(), Diagnostic> {
+    let mut entries: Vec<String> = candidate
+        .assets
+        .iter()
+        .filter(|a| element_layer_id(&a.name).is_some())
+        .map(|a| a.name.clone())
+        .collect();
+    entries.sort();
+    entries.dedup();
+    let asset = candidate
+        .assets
+        .iter_mut()
+        .find(|a| a.name == targets.derived)
+        .ok_or_else(corrupt)?;
+    let mut derived = edit::data(asset)?;
+    let root = sdf::Path::abs_root();
+    let current = match derived
+        .try_field(&root, "subLayers")
+        .map_err(|_| corrupt())?
+    {
+        Some(value) => match value.as_ref() {
+            sdf::Value::StringVec(names) => Some(names.clone()),
+            _ => {
+                return Err(fail(
+                    ErrorCode::InvalidArgument,
+                    "the derived stack lists non-token entries",
+                ));
+            }
+        },
+        None => None,
+    };
+    let changed = match (&current, entries.is_empty()) {
+        (None, true) => false,
+        (Some(names), false) => names != &entries,
+        _ => true,
+    };
+    if !changed {
+        return Ok(());
+    }
+    if entries.is_empty() {
+        derived.erase_field(&root, "subLayers");
+    } else {
+        derived.set_field(&root, "subLayers", sdf::Value::StringVec(entries));
+    }
+    let bytes = edit::serialize(&derived, candidate.budgets.layer_bytes)?;
+    *asset = Asset {
+        name: asset.name.clone(),
+        digest: Sha256::digest(&bytes).map_err(|_| limit())?,
+        bytes,
+    };
+    Ok(())
+}
 
 fn conflict() -> Diagnostic {
     fail(
@@ -241,11 +299,39 @@ fn check_accepted(
         if !base.owned_layers.contains(&asset.name) {
             continue;
         }
-        let other = accepted
-            .assets
-            .iter()
-            .find(|a| a.name == asset.name)
-            .ok_or_else(conflict)?;
+        let other = match accepted.assets.iter().find(|a| a.name == asset.name) {
+            Some(other) => other,
+            None => {
+                // The accepted head removed a whole layer. Roots never vanish; an element
+                // file is an upstream element delete (U15) and conflicts only where the
+                // local write set covers content the deletion removes.
+                if element_layer_id(&asset.name).is_none() {
+                    return Err(conflict());
+                }
+                let removed = edit::data(asset)?;
+                for path in removed.spec_paths() {
+                    control.check()?;
+                    let before = fields(&removed, &path)?;
+                    for key in before.keys() {
+                        if key == "propertyChildren" || key == "primChildren" {
+                            for child in names(before.get(key))? {
+                                let child_path = child_path(&path.to_string(), key, &child);
+                                if scope(&child_path, "default")
+                                    .is_ok_and(|entry| permitted(writes, entry))
+                                {
+                                    return Err(conflict());
+                                }
+                            }
+                        } else if scope(&path.to_string(), key)
+                            .is_ok_and(|entry| permitted(writes, entry))
+                        {
+                            return Err(conflict());
+                        }
+                    }
+                }
+                continue;
+            }
+        };
         if asset.digest == other.digest {
             continue;
         }
@@ -348,6 +434,12 @@ fn merge_layer(
     let mut changed = false;
     for path in paths {
         control.check()?;
+        // The pseudo-root of an edit layer carries engine bookkeeping (units, schema pin, and
+        // since U15 the element-file stack): the candidate keeps the accepted side of it, and
+        // only prim content merges.
+        if path.to_string() == "/" {
+            continue;
+        }
         let before = fields(old, &path)?;
         let after = fields(source, &path)?;
         if before == after && old.spec_type(&path) == source.spec_type(&path) {
@@ -506,29 +598,49 @@ pub fn prepare(
             }
         }
     }
-    if base.owned_layers != source.owned_layers || base.assets.len() != source.assets.len() {
-        return Err(unsupported_delta());
+    for asset in &base.assets {
+        let in_source = source.assets.iter().any(|a| a.name == asset.name);
+        if !in_source && element_layer_id(&asset.name).is_none() {
+            return Err(unsupported_delta());
+        }
+    }
+    for asset in &source.assets {
+        let in_base = base.assets.iter().any(|a| a.name == asset.name);
+        if !in_base && element_layer_id(&asset.name).is_none() {
+            return Err(unsupported_delta());
+        }
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         check_accepted(base, accepted, &writes, control)?;
         let mut candidate = accepted.clone();
+        // Element files the source removed: whole element deletes (U15), dropped from the
+        // candidate when the accepted head still carries them.
+        let mut dropped: Vec<String> = Vec::new();
         for old in &base.assets {
-            let source_asset = source
-                .assets
-                .iter()
-                .find(|a| a.name == old.name)
-                .ok_or_else(unsupported_delta)?;
+            let element_file = element_layer_id(&old.name).is_some();
+            let source_asset = source.assets.iter().find(|a| a.name == old.name);
+            let Some(source_asset) = source_asset else {
+                if !element_file {
+                    return Err(unsupported_delta());
+                }
+                dropped.push(old.name.clone());
+                continue;
+            };
             if source_asset.digest == old.digest {
                 continue;
             }
-            if old.name != targets.authored && old.name != targets.derived {
+            if old.name != targets.authored && old.name != targets.derived && !element_file {
                 return Err(unsupported_delta());
             }
-            let target = candidate
-                .assets
-                .iter_mut()
-                .find(|a| a.name == old.name)
-                .ok_or_else(unsupported_delta)?;
+            let target = match candidate.assets.iter_mut().find(|a| a.name == old.name) {
+                Some(target) => target,
+                // The accepted head removed the element file too: the deletion carries.
+                None if element_file => {
+                    dropped.retain(|n| n != &old.name);
+                    continue;
+                }
+                None => return Err(unsupported_delta()),
+            };
             let mut merged = edit::data(target)?;
             if merge_layer(
                 &edit::data(old)?,
@@ -545,6 +657,20 @@ pub fn prepare(
                 };
             }
         }
+        // Element files the source added: a locally created element's results ride with the
+        // batch; the authored prim arrives through the authored-layer merge.
+        for added in &source.assets {
+            if base.assets.iter().any(|a| a.name == added.name) {
+                continue;
+            }
+            if element_layer_id(&added.name).is_none() {
+                return Err(unsupported_delta());
+            }
+            candidate.assets.push(added.clone());
+            candidate.owned_layers.insert(added.name.clone());
+        }
+        candidate.assets.retain(|a| !dropped.contains(&a.name));
+        reconcile_element_stack(&mut candidate, targets)?;
         candidate.manifest = candidate.manifest_digest()?;
         let mut reader = Reader::default();
         let (opened, _) = reader.open_validated(candidate.clone(), schema, control)?;

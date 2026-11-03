@@ -130,6 +130,46 @@ pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<()
             "edit layers must participate in root stack",
         ));
     }
+    // U15: the derived stack lists exactly the per-element derived layers of the manifest.
+    // A `derived/` asset outside the fixed name shape, an unlisted file or a stack entry
+    // without its file is a broken stage, not a layer the engine may edit.
+    let derived_asset = request
+        .assets
+        .iter()
+        .find(|a| a.name == targets.derived)
+        .ok_or_else(corrupt)?;
+    let derived_data = data(derived_asset)?;
+    let stack = match derived_data
+        .try_field(&sdf::Path::abs_root(), "subLayers")
+        .map_err(|_| corrupt())?
+    {
+        None => BTreeSet::new(),
+        Some(value) => match value.as_ref() {
+            sdf::Value::StringVec(entries) => entries
+                .iter()
+                .map(|n| preflight::anchored(n, &targets.derived))
+                .collect::<Result<BTreeSet<_>, _>>()?,
+            _ => return Err(invalid()),
+        },
+    };
+    let mut element_files = BTreeSet::new();
+    for asset in &request.assets {
+        if asset.name.starts_with("derived/") {
+            let Some(id) = element_layer_id(&asset.name) else {
+                return Err(corrupt());
+            };
+            if !uuid7(&id) || !request.owned_layers.contains(&asset.name) {
+                return Err(corrupt());
+            }
+            if !stack.contains(&asset.name) {
+                return Err(corrupt());
+            }
+            element_files.insert(asset.name.clone());
+        }
+    }
+    if stack.len() != element_files.len() {
+        return Err(corrupt());
+    }
     Ok(())
 }
 pub(super) fn field(
@@ -639,17 +679,24 @@ fn mesh_asset_path(m: &Mesh) -> Result<(String, String), Diagnostic> {
 /// The authored-layer scope holding the immutable geometry assets (U11).
 pub const GEOMETRY_ASSETS: &str = "/World/Definitions/Geometry";
 
-fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str, purpose: &str) -> Result<(), Diagnostic> {
+fn mesh(
+    assets: &mut sdf::Data,
+    data: &mut sdf::Data,
+    m: &Mesh,
+    parent: &str,
+    purpose: &str,
+) -> Result<(), Diagnostic> {
     let extent = derive::extent(&m.points_mm).ok_or_else(invalid)?;
     let normals =
         derive::face_normals(&m.points_mm, &m.face_counts, &m.indices).ok_or_else(invalid)?;
-    // The asset prim is written once per distinct body: an existing spec with the same
-    // content-addressed name is left untouched, so equal bodies across a batch and across
-    // revisions share one immutable definition and ordinary USD readers compose one prototype.
+    // The asset prim is written once per distinct body into the shared derived stack root
+    // (U15): an existing spec with the same content-addressed name is left untouched, so equal
+    // bodies across a batch, across elements and across revisions share one immutable
+    // definition, and an edit of another element never re-serializes it.
     let (asset, _) = mesh_asset_path(m)?;
-    container(data, GEOMETRY_ASSETS, "Scope", None)?;
-    if !data.has_spec(&path(&asset)?) {
-        prim(data, &asset, Some("Mesh"), true)?;
+    container(assets, GEOMETRY_ASSETS, "Scope", None)?;
+    if !assets.has_spec(&path(&asset)?) {
+        prim(assets, &asset, Some("Mesh"), true)?;
         for (name, ty, v) in [
             (
                 "points",
@@ -679,12 +726,12 @@ fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str, purpose: &str) -> Result<(
                 sdf::Value::Vec3fVec(normals.iter().map(|n| (*n).into()).collect()),
             ),
         ] {
-            attribute(data, &asset, name, ty, Opinion::Value(v), false)?;
+            attribute(assets, &asset, name, ty, Opinion::Value(v), false)?;
         }
         let normals_spec = path(&format!("{asset}.normals"))?;
-        data.set_field(&normals_spec, "interpolation", sdf::Value::token("uniform"));
+        assets.set_field(&normals_spec, "interpolation", sdf::Value::token("uniform"));
         attr(
-            data,
+            assets,
             &asset,
             "bim:shapeKey",
             "string",
@@ -1010,6 +1057,103 @@ fn erase_element(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// Appends one entry to the derived stack's `subLayers` (U15). The stack is a string list,
+/// exactly the form the parser and the read profile produce and consume.
+fn stack_append(derived: &mut sdf::Data, entry: &str) -> Result<(), Diagnostic> {
+    let root = sdf::Path::abs_root();
+    let mut names = match derived
+        .try_field(&root, "subLayers")
+        .map_err(|_| corrupt())?
+    {
+        Some(value) => match value.as_ref() {
+            sdf::Value::StringVec(names) => names.clone(),
+            _ => return Err(invalid()),
+        },
+        None => Vec::new(),
+    };
+    if !names.iter().any(|n| n == entry) {
+        names.push(entry.to_owned());
+        field(derived, "/", "subLayers", sdf::Value::StringVec(names))?;
+    }
+    Ok(())
+}
+
+/// Removes one entry from the derived stack's `subLayers` (U15).
+fn stack_remove(derived: &mut sdf::Data, entry: &str) -> Result<(), Diagnostic> {
+    let root = sdf::Path::abs_root();
+    let Some(value) = derived
+        .try_field(&root, "subLayers")
+        .map_err(|_| corrupt())?
+    else {
+        return Ok(());
+    };
+    let sdf::Value::StringVec(names) = value.as_ref() else {
+        return Err(invalid());
+    };
+    let kept: Vec<String> = names
+        .iter()
+        .filter(|n| n.as_str() != entry)
+        .cloned()
+        .collect();
+    if kept.len() != names.len() {
+        field(derived, "/", "subLayers", sdf::Value::StringVec(kept))?;
+    }
+    Ok(())
+}
+
+/// Loads, or creates on the first mesh write, the per-element derived layer of one element
+/// (U15): an owned asset beside the derived stack, listed once in the stack's `subLayers`.
+/// A new element file rewrites alone on every later edit of the element, so unchanged elements
+/// are never re-serialized into a common layer.
+fn element_layer_data<'a>(
+    layers: &'a mut BTreeMap<String, sdf::Data>,
+    request: &mut OpenRequest,
+    derived: &mut sdf::Data,
+    id: &str,
+    schema: SchemaIdentity,
+) -> Result<&'a mut sdf::Data, Diagnostic> {
+    if !layers.contains_key(id) {
+        let name = element_layer(id)?;
+        let loaded = match request.assets.iter().find(|a| a.name == name) {
+            Some(asset) => data(asset)?,
+            None => {
+                let mut fresh = sdf::Data::new();
+                units(&mut fresh, Some(schema))?;
+                request.assets.push(Asset {
+                    name: name.clone(),
+                    digest: Sha256::digest(b"").map_err(|_| limit())?,
+                    bytes: Vec::new(),
+                });
+                request.owned_layers.insert(name.clone());
+                stack_append(derived, &name)?;
+                fresh
+            }
+        };
+        layers.insert(id.to_owned(), loaded);
+    }
+    layers.get_mut(id).ok_or_else(corrupt)
+}
+
+/// Sorts the `subLayers` of the derived stack: the element-layer list is a set, so its byte
+/// form never depends on the edit order.
+fn sort_sublayers(derived: &mut sdf::Data) -> Result<(), Diagnostic> {
+    let Some(value) = derived
+        .try_field(&sdf::Path::abs_root(), "subLayers")
+        .map_err(|_| corrupt())?
+    else {
+        return Ok(());
+    };
+    let sdf::Value::StringVec(names) = value.as_ref() else {
+        return Err(invalid());
+    };
+    let mut sorted = names.clone();
+    sorted.sort();
+    if sorted != *names {
+        field(derived, "/", "subLayers", sdf::Value::StringVec(sorted))?;
+    }
+    Ok(())
+}
+
 pub(super) fn apply(
     original: &OpenRequest,
     targets: &EditTargets,
@@ -1043,6 +1187,8 @@ pub(super) fn apply(
     units(&mut root, Some(input.schema))?;
     units(&mut authored, Some(input.schema))?;
     units(&mut derived, Some(input.schema))?;
+    // The per-element derived layers (U15) touched by this batch: element id, parsed bytes.
+    let mut element_layers: BTreeMap<String, sdf::Data> = BTreeMap::new();
     let mut resources = input.resources.iter().collect::<Vec<_>>();
     resources.sort_by_key(|r| r.digest.to_string());
     let mut seen = BTreeSet::new();
@@ -1244,71 +1390,161 @@ pub(super) fn apply(
             }
             Change::Delete { .. } => {
                 let inside = format!("{p}/");
-                if prims
+                let layer_name = element_layer(id)?;
+                // The element and its results must live in the authored layer and in exactly
+                // one owned derived location: its own U15 layer, or the shared derived layer
+                // of a pre-U15 store.
+                let mut location: Option<bool> = None;
+                for v in prims
                     .iter()
                     .filter(|v| v.path == p || v.path.starts_with(&inside))
-                    .flat_map(|v| &v.sources)
-                    .any(|s| s.layer != targets.authored && s.layer != targets.derived)
                 {
-                    return Err(fail(
-                        ErrorCode::DependencyUnavailable,
-                        "delete requires the element to live in the authored and derived layers only",
-                    ));
+                    for s in &v.sources {
+                        if s.layer == targets.authored {
+                            continue;
+                        }
+                        let shared = s.layer == targets.derived;
+                        if !shared && s.layer.as_str() != layer_name {
+                            return Err(fail(
+                                ErrorCode::DependencyUnavailable,
+                                "delete requires the element to live in the authored and derived layers only",
+                            ));
+                        }
+                        match location {
+                            None => location = Some(shared),
+                            Some(prev) if prev != shared => {
+                                return Err(fail(
+                                    ErrorCode::DependencyUnavailable,
+                                    "delete requires one owned derived layer",
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                match location {
+                    Some(true) => erase_element(&mut derived, &p)?,
+                    Some(false) => {
+                        let element = element_layer_data(
+                            &mut element_layers,
+                            &mut request,
+                            &mut derived,
+                            id,
+                            input.schema,
+                        )?;
+                        erase_element(element, &p)?;
+                    }
+                    None => (),
                 }
                 erase_element(&mut authored, &p)?;
-                erase_element(&mut derived, &p)?;
+                // The element's derived file goes away with the element (U15).
+                if request.assets.iter().any(|a| a.name == layer_name) {
+                    request.assets.retain(|a| a.name != layer_name);
+                    request.owned_layers.remove(layer_name.as_str());
+                    stack_remove(&mut derived, &layer_name)?;
+                }
             }
             _ => (),
         }
         if matches!(c, Change::Discipline(hook) if hook.0.invalidates_derived()) {
-            // Never reveal a weaker stale result after removing the derived opinion.
+            // Never reveal a weaker stale result after removing the derived opinion. The
+            // result prims must live in exactly one owned location: the element's own U15
+            // layer or the shared derived layer of a pre-U15 store.
             let mesh_path = format!("{p}/Geometry");
-            if prims
-                .iter()
-                .filter(|v| v.path == mesh_path)
-                .flat_map(|v| &v.sources)
-                .any(|s| s.layer != targets.derived)
-            {
-                return Err(fail(
-                    ErrorCode::DependencyUnavailable,
-                    "derived invalidation requires exclusive result layer",
-                ));
+            let layer_name = element_layer(id)?;
+            let mut location: Option<bool> = None;
+            for v in prims.iter().filter(|v| v.path == mesh_path) {
+                for s in &v.sources {
+                    let shared = s.layer == targets.derived;
+                    if !shared && s.layer.as_str() != layer_name {
+                        return Err(fail(
+                            ErrorCode::DependencyUnavailable,
+                            "derived invalidation requires exclusive result layer",
+                        ));
+                    }
+                    match location {
+                        None => location = Some(shared),
+                        Some(prev) if prev != shared => {
+                            return Err(fail(
+                                ErrorCode::DependencyUnavailable,
+                                "derived invalidation requires one result layer",
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
             }
-            erase_mesh(&mut derived, &p)?;
+            match location {
+                Some(true) => erase_mesh(&mut derived, &p)?,
+                Some(false) => {
+                    let element = element_layer_data(
+                        &mut element_layers,
+                        &mut request,
+                        &mut derived,
+                        id,
+                        input.schema,
+                    )?;
+                    erase_mesh(element, &p)?;
+                }
+                None => (),
+            }
         }
     }
     for c in &input.changes {
         if let Change::Mesh(m) = c {
             control.check()?;
             let parent = change_path(&m.id, input, prims)?;
-            let owned = |name: &str| {
-                prims
-                    .iter()
-                    .filter(|v| {
-                        let p = format!("{parent}/{name}");
-                        v.path == p || v.path.starts_with(&format!("{p}/"))
-                    })
-                    .flat_map(|v| &v.sources)
-                    .any(|s| s.layer != targets.derived)
-            };
-            if MESH_CHILDREN.iter().any(|name| owned(name)) {
-                return Err(fail(
-                    ErrorCode::DependencyUnavailable,
-                    "mesh writes require exclusive derived layer",
-                ));
+            let mesh_path = format!("{parent}/Geometry");
+            let layer_name = element_layer(&m.id)?;
+            // The result prims must live in exactly one owned location: the element's own U15
+            // layer, or the shared derived layer of a pre-U15 store, which this write empties.
+            let mut legacy = false;
+            for v in prims
+                .iter()
+                .filter(|v| v.path == mesh_path || v.path.starts_with(&format!("{mesh_path}/")))
+            {
+                for s in &v.sources {
+                    let shared = s.layer == targets.derived;
+                    if !shared && s.layer.as_str() != layer_name {
+                        return Err(fail(
+                            ErrorCode::DependencyUnavailable,
+                            "mesh writes require exclusive derived layer",
+                        ));
+                    }
+                    match legacy {
+                        false if shared => legacy = true,
+                        true if !shared => {
+                            return Err(fail(
+                                ErrorCode::DependencyUnavailable,
+                                "mesh writes require one result layer",
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            let element = element_layer_data(
+                &mut element_layers,
+                &mut request,
+                &mut derived,
+                &m.id,
+                input.schema,
+            )?;
+            if legacy {
+                erase_mesh(&mut derived, &parent)?;
             }
             // A mesh change replaces the supported fields and the quantity record as a whole:
             // stale quantity attributes never survive it, unknown content stays. The U12 level
             // set is replaced as a whole too: a level the new body does not carry is erased,
             // never left stale beside the fresh full mesh.
-            clear_quantities(&mut derived, &parent)?;
+            clear_quantities(element, &parent)?;
             for (carried, name) in [
                 (m.reduced.is_some(), "Reduced"),
                 (m.proxy.is_some(), "Proxy"),
                 (m.axis.is_some(), "Axis"),
             ] {
                 if !carried {
-                    erase_level(&mut derived, &parent, name)?;
+                    erase_level(element, &parent, name)?;
                 }
             }
             // The U12 purpose of the full body: a grid's only geometry is its display guide
@@ -1318,21 +1554,39 @@ pub(super) fn apply(
             } else {
                 "render"
             };
-            mesh(&mut derived, m, &parent, purpose)?;
+            mesh(
+                &mut derived,
+                element,
+                m,
+                &parent,
+                purpose,
+            )?;
         }
     }
-    let opinions = capture(input, prims, &authored, &derived, original.budgets)?;
+    // The element-layer stack is a canonical set: sorted, whatever the edit order.
+    sort_sublayers(&mut derived)?;
+    let opinions = capture(input, prims, &authored, &element_layers, original.budgets)?;
     for (name, data) in [
-        (&original.root, root),
-        (&targets.authored, authored),
-        (&targets.derived, derived),
+        (&original.root, &root),
+        (&targets.authored, &authored),
+        (&targets.derived, &derived),
     ] {
         let a = request
             .assets
             .iter_mut()
             .find(|a| a.name == *name)
             .ok_or_else(corrupt)?;
-        a.bytes = serialize(&data, request.budgets.layer_bytes)?;
+        a.bytes = serialize(data, request.budgets.layer_bytes)?;
+        a.digest = Sha256::digest(&a.bytes).map_err(|_| limit())?;
+    }
+    for (id, element) in &element_layers {
+        let name = element_layer(id)?;
+        // An element deleted in this batch is gone from the candidate: its parsed bytes only
+        // served the removal opinions above.
+        let Some(a) = request.assets.iter_mut().find(|a| a.name == name) else {
+            continue;
+        };
+        a.bytes = serialize(element, request.budgets.layer_bytes)?;
         a.digest = Sha256::digest(&a.bytes).map_err(|_| limit())?;
     }
     Ok((request, opinions))
@@ -1342,7 +1596,7 @@ fn capture(
     input: &Prepare,
     prims: &[Prim],
     authored: &sdf::Data,
-    derived: &sdf::Data,
+    element_layers: &BTreeMap<String, sdf::Data>,
     b: Budgets,
 ) -> Result<Vec<AuthoredItem>, Diagnostic> {
     const POSE: &[(&str, &str)] = &[
@@ -1562,31 +1816,14 @@ fn capture(
             _ => (p, false),
         };
         let spec = path(&format!("{p}.{name}"))?;
-        let data = if derived_data { derived } else { authored };
-        let opinion = if !data.has_spec(&spec) {
-            Opinion::Remove
-        } else if ty == "rel" {
-            match data
-                .try_field(&spec, "targetPaths")
-                .map_err(|_| corrupt())?
-            {
-                None => Opinion::Absent,
-                Some(v) => match v.as_ref() {
-                    sdf::Value::PathListOp(list) if list.explicit => Opinion::Value(Value::Array(
-                        list.explicit_items
-                            .iter()
-                            .map(|p| Value::Text(p.to_string()))
-                            .collect(),
-                    )),
-                    _ => return Err(unsupported()),
-                },
-            }
-        } else {
-            match data.try_field(&spec, "default").map_err(|_| corrupt())? {
-                None => Opinion::Absent,
-                Some(v) if matches!(v.as_ref(), sdf::Value::ValueBlock) => Opinion::Block,
-                Some(v) => Opinion::Value(backend::typed_attribute(v.as_ref(), b, name)?),
-            }
+        // The derived result places read the element's own layer; an element with no such layer
+        // in the candidate has every result field removed.
+        let opinion = match derived_data {
+            true => match element_layers.get(&id) {
+                None => Opinion::Remove,
+                Some(data) => field_opinion(data, &spec, ty, b, name)?,
+            },
+            false => field_opinion(authored, &spec, ty, b, name)?,
         };
         result.push(AuthoredItem {
             element_id: id,
@@ -1596,4 +1833,41 @@ fn capture(
         });
     }
     Ok(result)
+}
+
+/// The authored opinion of one spec in one candidate layer: Remove when the spec is gone,
+/// the typed value (or a relationship's explicit targets) otherwise.
+fn field_opinion(
+    data: &sdf::Data,
+    spec: &sdf::Path,
+    ty: &str,
+    b: Budgets,
+    name: &str,
+) -> Result<Opinion<Value>, Diagnostic> {
+    if !data.has_spec(spec) {
+        return Ok(Opinion::Remove);
+    }
+    if ty == "rel" {
+        return match data.try_field(spec, "targetPaths").map_err(|_| corrupt())? {
+            None => Ok(Opinion::Absent),
+            Some(v) => match v.as_ref() {
+                sdf::Value::PathListOp(list) if list.explicit => Ok(Opinion::Value(Value::Array(
+                    list.explicit_items
+                        .iter()
+                        .map(|p| Value::Text(p.to_string()))
+                        .collect(),
+                ))),
+                _ => Err(unsupported()),
+            },
+        };
+    }
+    match data.try_field(spec, "default").map_err(|_| corrupt())? {
+        None => Ok(Opinion::Absent),
+        Some(v) if matches!(v.as_ref(), sdf::Value::ValueBlock) => Ok(Opinion::Block),
+        Some(v) => Ok(Opinion::Value(backend::typed_attribute(
+            v.as_ref(),
+            b,
+            name,
+        )?)),
+    }
 }

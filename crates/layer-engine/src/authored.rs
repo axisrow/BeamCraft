@@ -1003,6 +1003,34 @@ impl Reader {
     }
 }
 
+/// The derived layer of one element (U15): the manifest name of the owned USDA file whose
+/// sublayer carries exactly this element's `/Geometry` result prims. The engine creates the
+/// file on the element's first mesh write and drops it with the element; every other edit of
+/// the element rewrites this file alone, so unchanged elements are never re-serialized.
+pub fn element_layer(id: &str) -> Result<String, Diagnostic> {
+    let uuid = beamcraft_model::id::ElementId::parse(id)
+        .map_err(|_| fail(ErrorCode::InvalidId, "invalid full element identity"))?;
+    Ok(format!("derived/{}.usda", uuid.uuid().hex32()))
+}
+
+/// Whether `name` is an [`element_layer`] file, and the canonical hyphenated id of the element
+/// it belongs to. The reversed seam the host, the rebase and the publication use to classify
+/// per-element derived layers.
+pub fn element_layer_id(name: &str) -> Option<String> {
+    let hex = name.strip_prefix("derived/")?.strip_suffix(".usda")?;
+    if hex.len() != 32 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    ))
+}
+
 /// The authored prim path of an element identity in a category; the seam a discipline hook
 /// resolves target paths with.
 pub fn element_path(id: &str, category: ElementCategory) -> Result<String, Diagnostic> {

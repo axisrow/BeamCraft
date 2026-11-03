@@ -90,7 +90,17 @@ fn regular_grids_are_explicit_usd_and_reopen_with_exact_expressions_and_endpoint
     assert!(authored.contains("GRD_"));
     assert!(authored.contains("bim:grid:u:pointsMm"));
     assert!(!authored.contains("def Mesh"));
-    let derived = String::from_utf8(revision.layer_bytes("derived.usda").unwrap()).unwrap();
+    // The grid's guide mesh lives in the grid's own derived layer (U15); the grid's id is
+    // generated, so the layer is found from the manifest.
+    let grid_layer = revision
+        .manifest()
+        .content()
+        .entries()
+        .iter()
+        .map(|e| e.name().to_owned())
+        .find(|n| n.starts_with("derived/"))
+        .unwrap();
+    let derived = String::from_utf8(revision.layer_bytes(&grid_layer).unwrap()).unwrap();
     assert!(derived.contains("Geometry"));
     assert!(derived.contains("purpose = \"guide\""));
     let inspected = ok(&f, "inspect-elements", &[]);
