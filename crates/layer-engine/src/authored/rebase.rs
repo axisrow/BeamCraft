@@ -175,8 +175,10 @@ fn require(writes: &Writes, path: &str, field: &str) -> Result<(), Diagnostic> {
     } else {
         // `apiSchemas` is the prim metadata a U08 classed part applies at create; U11: an
         // element's derived prim is an instanceable reference to the shared geometry asset.
-        matches!(field, "specifier" | "typeName" | "kind" | "displayName" | "apiSchemas")
-            || ((field == "instanceable" || field == "references") && path.ends_with("/Geometry"))
+        matches!(
+            field,
+            "specifier" | "typeName" | "kind" | "displayName" | "apiSchemas"
+        ) || ((field == "instanceable" || field == "references") && path.ends_with("/Geometry"))
     };
     if !known {
         return Err(unsupported_delta());
