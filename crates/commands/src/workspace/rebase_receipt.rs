@@ -237,6 +237,7 @@ impl RebaseReceipt {
             op_id: self.op_id,
             fingerprint: Sha256::digest(&request).map_err(|_| limit())?,
             footprint: self.footprint.clone(),
+            bindings: Vec::new(),
         }
         .encode()?;
         let mut out = format!("{MAGIC}request {}\n", request.len()).into_bytes();

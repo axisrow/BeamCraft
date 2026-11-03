@@ -16,6 +16,7 @@ pub mod annotation;
 pub mod array;
 pub mod assembly;
 pub mod attribute;
+pub mod batch;
 pub mod bend;
 pub mod bolt;
 pub mod bom;
