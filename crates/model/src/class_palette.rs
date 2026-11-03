@@ -2,6 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! P15 contributor-original environment palette. RGB bytes are display data, never materials.
+//! Lives in the model crate because the U08 portable-appearance layer mapping (U08) consumes
+//! it below the engine: the authored class palette of a store and the viewport overlay read
+//! the same presentation colours.
 
 /// Original default environment preset, licensed MPL-2.0 with BeamCraft.
 /// Class zero is slate; subsequent colours repeat for arbitrary int32 classes.

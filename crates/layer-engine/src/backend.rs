@@ -838,6 +838,35 @@ fn validate_as(value: &sdf::Value, b: Budgets, depth: usize, max: f64) -> Result
             }
             Ok(())
         }
+        // A token list op is bounded prim metadata such as `apiSchemas` (U08 applies the
+        // MaterialBindingAPI of a classed part); its items are text-bounded.
+        sdf::Value::TokenListOp(list) => {
+            let count = list
+                .explicit_items
+                .len()
+                .saturating_add(list.added_items.len())
+                .saturating_add(list.prepended_items.len())
+                .saturating_add(list.appended_items.len())
+                .saturating_add(list.deleted_items.len())
+                .saturating_add(list.ordered_items.len());
+            if count > b.array_items {
+                return Err(limit());
+            }
+            for token in list
+                .explicit_items
+                .iter()
+                .chain(&list.added_items)
+                .chain(&list.prepended_items)
+                .chain(&list.appended_items)
+                .chain(&list.deleted_items)
+                .chain(&list.ordered_items)
+            {
+                if token.as_str().len() > b.text_bytes {
+                    return Err(limit());
+                }
+            }
+            Ok(())
+        }
         _ => {
             typed_depth(value, b, depth, max)?;
             Ok(())

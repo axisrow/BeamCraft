@@ -32,19 +32,25 @@ fn unsupported_delta() -> Diagnostic {
 }
 
 fn scaffold(path: &str) -> bool {
-    matches!(
-        path,
-        "/" | "/World"
-            | "/World/Steel"
-            | "/World/Steel/Parts"
-            | "/World/Steel/Assemblies"
-            | "/World/Steel/Connections"
-            | "/World/Levels"
-            | "/World/Definitions"
-            | "/World/Definitions/Materials"
-            | "/World/Definitions/Profiles"
-            | "/World/Definitions/Geometry"
-    )
+    looks(path)
+        || matches!(
+            path,
+            "/" | "/World"
+                | "/World/Steel"
+                | "/World/Steel/Parts"
+                | "/World/Steel/Assemblies"
+                | "/World/Steel/Connections"
+                | "/World/Levels"
+                | "/World/Definitions"
+                | "/World/Definitions/Materials"
+                | "/World/Definitions/Profiles"
+                | "/World/Definitions/Geometry"
+        )
+}
+
+/// The fixed U08 appearance scope: engine-authored look content, never a user opinion.
+fn looks(path: &str) -> bool {
+    path == "/World/Looks" || path.starts_with("/World/Looks/")
 }
 
 /// The immutable geometry asset (U11) a spec path belongs to, by its content-addressed label.
@@ -59,7 +65,8 @@ fn property_group(name: &str) -> Option<G> {
     Some(match name {
         "bim:id" | "bim:elementKind" | "bim:geometryMode" | "bim:schemaVersion"
         | "bim:createdBy" | "bim:revision" => G::Lifecycle,
-        "bim:name" | "steel:class" => G::Label,
+        // The U08 appearance travels with the class: one presentation write, one group.
+        "bim:name" | "steel:class" | "primvars:displayColor" | "material:binding" => G::Label,
         "steel:numbering:series" | "steel:numbering:number" | "steel:numbering:basis" => G::Mark,
         "xformOp:translate" | "xformOp:orient" | "xformOpOrder" => G::Placement,
         "bim:material" => G::MaterialRef,
@@ -166,8 +173,9 @@ fn require(writes: &Writes, path: &str, field: &str) -> Result<(), Diagnostic> {
         ) || (field == "interpolation"
             && (path.ends_with("/Geometry.normals") || geometry_asset_path(path)))
     } else {
-        matches!(field, "specifier" | "typeName" | "kind" | "displayName")
-            // U11: an element's derived prim is an instanceable reference to the shared asset.
+        // `apiSchemas` is the prim metadata a U08 classed part applies at create; U11: an
+        // element's derived prim is an instanceable reference to the shared geometry asset.
+        matches!(field, "specifier" | "typeName" | "kind" | "displayName" | "apiSchemas")
             || ((field == "instanceable" || field == "references") && path.ends_with("/Geometry"))
     };
     if !known {
@@ -345,6 +353,28 @@ fn merge_layer(
         }
         changed = true;
         let path_text = path.to_string();
+        // The fixed appearance scope is engine-authored content both sides carry identically:
+        // equal content is no conflict, and anything else is a tampered look and refuses.
+        // It is never a user opinion, so it is copied wholesale, never permission-merged.
+        if looks(&path_text) {
+            let accepted_type = accepted.spec_type(&path);
+            let same = accepted_type == source.spec_type(&path)
+                && accepted.has_spec(&path)
+                && fields(accepted, &path)? == after;
+            if same {
+                continue;
+            }
+            if accepted_type.is_some() {
+                return Err(conflict());
+            }
+            if let Some(ty) = source.spec_type(&path) {
+                accepted.create_spec(path.clone(), ty);
+            }
+            for (key, value) in &after {
+                accepted.set_field(&path, key, value.clone());
+            }
+            continue;
+        }
         let container = scaffold(&path_text);
         let old_type = old.spec_type(&path);
         let source_type = source.spec_type(&path);

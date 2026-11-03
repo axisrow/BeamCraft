@@ -1318,7 +1318,14 @@ fn copy_gets_a_fresh_id_remaps_owned_links_and_leaves_the_source_unchanged() {
         .iter()
         .map(|l| (l.name.clone(), l.target.clone()))
         .collect();
-    assert_eq!(copy_links, planned);
+    // The copy re-authors its U08 appearance with its own create: the plan carries no
+    // binding link, the applied copy binds to its class look like any fresh part.
+    let mut expected = planned;
+    expected.push((
+        "material:binding".to_owned(),
+        LinkTarget::Prim("/World/Looks/PartClass0".to_owned()),
+    ));
+    assert_eq!(copy_links, expected);
     // The source keeps its identity, link and fields; nothing now points from it to the copy.
     let source_after = snapshot_of(&a, &o2.context)
         .into_iter()

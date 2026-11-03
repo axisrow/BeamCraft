@@ -497,6 +497,7 @@ fn create(
     }
     if matches!(&e.shape, Shape::Discipline(hook) if hook.0.classed()) {
         attr(data, &p, "steel:class", "int", sdf::Value::Int(0))?;
+        appearance::author_element(data, &p, 0)?;
     }
     match &e.shape {
         Shape::Assembly => (),
@@ -1110,13 +1111,16 @@ pub(super) fn apply(
         let p = change_path(id, input, prims)?;
         match c {
             Change::Grid { grid: g, .. } => grid::author(&mut authored, &p, g)?,
-            Change::PartClass { class, .. } => attr(
-                &mut authored,
-                &p,
-                "steel:class",
-                "int",
-                sdf::Value::Int(*class),
-            )?,
+            Change::PartClass { class, .. } => {
+                attr(
+                    &mut authored,
+                    &p,
+                    "steel:class",
+                    "int",
+                    sdf::Value::Int(*class),
+                )?;
+                appearance::author_element(&mut authored, &p, *class)?;
+            }
             Change::Label { name, .. } => {
                 attr(
                     &mut authored,
@@ -1372,6 +1376,8 @@ fn capture(
                     ("bim:id", "string"),
                     ("bim:name", "string"),
                     ("steel:class", "int"),
+                    ("primvars:displayColor", "color3f[]"),
+                    ("material:binding", "rel"),
                     ("bim:elementKind", "token"),
                     ("bim:geometryMode", "token"),
                     ("bim:schemaVersion", "string"),
@@ -1432,7 +1438,11 @@ fn capture(
                     add(name, ty, 2);
                 }
             }
-            Change::PartClass { .. } => add("steel:class", "int", 0),
+            Change::PartClass { .. } => {
+                add("steel:class", "int", 0);
+                add("primvars:displayColor", "color3f[]", 0);
+                add("material:binding", "rel", 0);
+            }
             Change::Label { .. } => add("bim:name", "string", 0),
             Change::Discipline(hook) => {
                 for (name, ty) in hook.0.attributes() {
@@ -1444,6 +1454,8 @@ fn capture(
                     ("bim:id", "string"),
                     ("bim:name", "string"),
                     ("steel:class", "int"),
+                    ("primvars:displayColor", "color3f[]"),
+                    ("material:binding", "rel"),
                     ("bim:elementKind", "token"),
                     ("bim:geometryMode", "token"),
                     ("bim:schemaVersion", "string"),

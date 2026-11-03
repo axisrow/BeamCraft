@@ -5,6 +5,8 @@
 //! This is a library boundary, not an F04 command validator or acceptance ledger.
 
 pub mod annotation;
+/// The U08 portable appearance: class looks, bindings and the display-colour fallback.
+mod appearance;
 pub mod construction;
 pub mod coordination;
 /// Persistent cut ordinal and retired-record identities.
@@ -183,6 +185,11 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "bim:reference:correctionSourceDigest=string(sha256);xformOp:rotateX:bimUpAxis=double(degrees,Y up only);",
     "xformOp:scale:bimUnits=double3(metersPerUnit*1000);xformOpOrder=token[](rotateX,scale;empty without correction)\n",
     "reference/Correction/Source=def without type;references=@external/<sha256>.<usda|usdc>@</defaultPrim>;nothing else owned at or below\n",
+    "appearance=U08;colour comes from presentation (steel:class through the P15 class palette),never from the engineering material;\n",
+    "classed part=prepend apiSchemas=[MaterialBindingAPI];rel material:binding=/World/Looks/PartClass<i> (one target);",
+    "color3f[] primvars:displayColor=[one linear sRGB->linear palette triple];i=unsigned|class| mod 8;both properties replaced together with steel:class\n",
+    "looks=/World/Looks=Scope;PartClass0..7=Material;outputs:surface=token connected to the child shader;child=Shader PreviewSurface;",
+    "info:id=token(UsdPreviewSurface);inputs:diffuseColor=color3f(palette entry,linear);outputs:surface=token;no other owned prim under /World/Looks\n",
     "changes=Create|Label|Contour|Thickness|ThicknessSide|Corners|Bends|Axis|Roll|Profile|Material|Placement|Mesh|AttachReference|ReferenceUnits|PartOf|MainPart|Level|Mark|Cuts|HoleRecords|Delete;",
     "opinion=Absent|Block|Value|Remove;relationship=Targets|Empty|Remove\n",
     "snapshot=Prim(path,element_id,type_name,active,properties,relationships,sources);",

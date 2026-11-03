@@ -19,6 +19,7 @@ mod g11_accuracy;
 mod g14_member_hole;
 mod kernel_member;
 mod kernel_section;
+mod layer_appearance;
 mod layer_authored;
 mod layer_index;
 mod layer_instancing;

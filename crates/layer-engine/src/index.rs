@@ -430,6 +430,11 @@ impl ElementIndex {
             {
                 continue;
             }
+            // The U08 appearance is authored with the copy itself; the fixed looks are
+            // reserved content, never a link the plan carries.
+            if link.name == "material:binding" && matches!(link.target, LinkTarget::Prim(_)) {
+                continue;
+            }
             let target = match &link.target {
                 // Links carried by a descendant prim cannot be represented by the plan yet.
                 _ if link.source_path != entry.path => {

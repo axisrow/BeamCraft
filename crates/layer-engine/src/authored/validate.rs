@@ -576,6 +576,7 @@ pub(super) fn snapshot(
     }
     let mut operation_ids = std::collections::BTreeSet::new();
     attribute_schema(prims)?;
+    appearance::validate_looks(prims)?;
     for p in prims.iter().filter(|p| p.element_id.is_some()) {
         let id = p.element_id.as_deref().ok_or_else(invalid)?;
         // Foreign content is preserved inertly, not interpreted as engineering input.
@@ -651,6 +652,7 @@ pub(super) fn snapshot(
         {
             return Err(invalid());
         }
+        appearance::validate_element(p, is_part_kind(kind))?;
         if instance::definition(p, prims)?.is_none() {
             if is_part_kind(kind) {
                 disciplines::validate_part(kind, p, prims, &mut operation_ids)?;
