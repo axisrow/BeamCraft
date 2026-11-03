@@ -1,9 +1,12 @@
 # CLI session / batch mode — phase 1 measurements and design
 
-Date: 2026-11-03. Status: **phase 1 draft for owner review — measurements and a design
-proposal only; nothing is implemented.** Fork card #424 (upstream Apibim-com#766, slice 6
-of #753). Per the upstream card, the design note precedes any code; implementation starts
-only after the owner approves the design.
+Date: 2026-11-03. Status: **phase 2 implemented** on top of this note: `beamcraft session`
+with explicit batch bracketing, the design proposal below with the open questions resolved
+as proposed (bracketing default, stop-on-first-refusal, fail on a moved head, full
+per-command JSON, no token — `AGENTS.md` §3 holds by construction). The implementation
+decisions are recorded at the end of this note. Fork card #424 (upstream Apibim-com#766,
+slice 6 of #753). Per the upstream card, the design note precedes any code; the owner
+approved the design before implementation.
 
 ## Measured baseline
 
@@ -131,6 +134,52 @@ across commands to make authoring incremental is a further step and is not propo
 4. **Head moved mid-batch:** fail the batch on base mismatch (proposed) vs auto-rebase the
    remaining commands onto the moved head.
 5. **Output shape:** full per-command JSON on stdout (proposed) or a compact line protocol.
+
+## Implementation decisions (phase 2)
+
+The owner approved implementing this design; the five open questions above are resolved as
+the note proposed them. The mechanics, as implemented:
+
+- **Surface.** `session --store ROOT` holds the store and the U14 coordinator lease for the
+  process lifetime. One command per stdin line (whitespace tokens, `'…'`/`"…"` quoting),
+  one JSON object per stdout line, the same registry routes and adapters as the
+  one-process CLI, every line naming the session's own `--store`. Export commands, a
+  nested `session` and the coordinator commands are refused inside a session: they write
+  past the line protocol or serve their own loop. `batch-open`, `batch-commit
+  [--op-id] [--revision-id] [--timeout-ms] [--cancel-after-ms]` and `batch-abort` are the
+  bracket words; `batch-open` requires an existing head (a store's first revision belongs
+  outside a batch).
+- **Draft mechanics.** The interception points are the three existing funnels:
+  `load_base` serves the accumulated layer set instead of the store, `publish_revision`
+  admits into the draft and previews the revision the command would create
+  (`CommitOutcome::Drafted`), and `batch-commit` publishes the accumulated state as one
+  U06 revision with the batch's operation id, the union footprint plus one evidence
+  binding per carried command, and the base pinned at `batch-open` as the expected root.
+  Nothing between the brackets touches the disk, so an interrupted batch leaves no trace.
+- **Replay.** The ledger keeps exactly one intent/committed pair per batch, keyed by the
+  batch operation id — the ledger's root cross-check requires a record's operation to be
+  the revision's own, so carried commands cannot have records of their own (that is why
+  the design's evidence clause is load-bearing). Carried commands carry their binding in
+  the batch revision's operation evidence; the replay lookups (`prior_op_with`,
+  `accepted`, the curved-member replay) resolve a bound command over the same bounded
+  window (`REPLAY_LOOKBACK`) the host's own replay check scans. A duplicate operation id
+  inside one open batch is refused by the session before any work.
+- **Per-command JSON.** A drafted command's `revision` field previews the revision it
+  would create — the promise of the store's contract per command — and the revision the
+  batch actually published is the one `batch-commit` returns under `revision`.
+- **Reads.** A read inside an open batch answers from the committed store, never the
+  draft. Reads were not part of the batch promise; draft-visible reads are a possible
+  follow-up.
+- **Admission.** Only modelling routes may run between the brackets (their writes route
+  through the draft, so nothing can escape a batch by writing the store behind its back).
+- **Recovery.** After an uncertain `batch-commit` the client runs `recover-revision` or
+  inspects the store. An identical blind retry after a committed batch answers
+  `OP_ID_REUSE` (the base moved to the batch revision, so the content differs), and a
+  retry of an uncommitted batch re-executes fresh — both safe by construction; carried
+  element ids should still be fixed with `--new-id` for guaranteed cross-process replay.
+- **Format note.** The evidence bindings section is canonical and absent for
+  single-command evidence, so every previously stored evidence blob decodes and
+  re-encodes byte for byte; old revisions read unchanged.
 
 ## Provenance
 
