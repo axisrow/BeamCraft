@@ -1,12 +1,35 @@
 # Q01 alpha scenario
 
-Run the original five-part detailing story with one command on Windows, Linux or macOS:
+One documented command runs the whole alpha story — the original five-part detailing story and
+its expanded story — on Windows, Linux or macOS:
 
 ```sh
-cargo test --locked -p beamcraft-cli --test cli -- alpha_scenario:: --nocapture
+cargo nextest run --locked -p beamcraft-cli --test cli alpha_scenario
 ```
 
-The test runs the real CLI in a new process for every step, against a fresh published store and
+The `alpha_scenario` substring filter selects both stories of the package's `cli` integration
+target: `alpha_scenario.rs` (the original) and `alpha_scenario_expanded.rs` (the expanded one,
+which includes the original frame as its opening). The expected exit is 0. The evidence lands
+on stdout: the runner prints every step's pass or failure, and a failing step prints the exact
+command with its expected and actual JSON. If cargo-nextest is not installed, the libtest
+equivalent on a clean checkout is:
+
+```sh
+cargo test --locked -p beamcraft-cli --test cli -- alpha_scenario
+```
+
+The same substring runs both stories there too. Setting `BEAMCRAFT_Q01_KEEP=1` (PowerShell:
+`$env:BEAMCRAFT_Q01_KEEP = '1'`) additionally prints the absolute artifact directory paths
+(`Q01 artifacts:` for the original story, `Q01 expanded artifacts:` for the expanded one) and
+keeps their stores, workspaces, exports and drawing documents for inspection. This invocation
+is the acceptance run of the two stories, not the recorded test gate: the gate
+(`tools/test-gate`) remains the workspace-wide evidence behind a PR. Every item of the expanded
+acceptance is traced to its executable check or recorded manual result in
+[q01-alpha-matrix.md](q01-alpha-matrix.md).
+
+## The original five-part story
+
+Its test runs the real CLI in a new process for every step, against a fresh published store and
 personal workspace. Its invented dimensions and expected values are contributor-original test
 data under MPL-2.0, covered by `ATTRIBUTION.md`. No commercial section catalogue is used.
 

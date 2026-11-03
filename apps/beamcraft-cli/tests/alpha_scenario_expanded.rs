@@ -657,8 +657,10 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         assert_eq!(found.2, *digest, "{id} mesh must survive the round trip");
     }
 
-    // Views: the synthetic scene stands in for P01 (recorded in the matrix), so the kind
-    // filter is exercised there; the store itself exports its pinned view bundle (V03).
+    // Views: the kind filter over the real frame is exercised through query-elements above;
+    // snapshot-view still runs on its synthetic kernel plate scene because P01 does not
+    // exist (recorded in the matrix; no acceptance item traces to it), and the store
+    // itself exports its pinned view bundle (V03).
     let snapshot = s.execute(&["snapshot-view", "--plates", "10", "--hide", "support"]);
     assert_eq!(snapshot.0, 0);
     assert_eq!(text(&snapshot.1, "outcome"), "view_snapshot");

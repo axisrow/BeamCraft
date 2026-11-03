@@ -2,6 +2,9 @@
 
 Evidence record for fork issue [#318](https://github.com/axisrow/BeamCraft/issues/318) (mirror of
 upstream [#334](https://github.com/Apibim-com/BeamCraft/issues/334)), the expanded Q01 acceptance.
+Slice E (fork issue [#446](https://github.com/axisrow/BeamCraft/issues/446)) added the acceptance
+traceability section below and the documented entry point recorded in
+[q01-alpha-scenario.md](q01-alpha-scenario.md).
 It separates what actually executed on this machine from what stays open, and it replaces no gate:
 the expanded Q01 and gate K7 stay open until the remaining matrix cells run and their dependency
 issues close. Nothing here is a mock standing in for an OS/GPU cell.
@@ -30,8 +33,7 @@ steps ran and passed on this machine.
 | Numbering | `preview-numbering` + `approve-numbering`, 8 marks (7 parts + assembly) | Passed |
 | Schedules (I05) | `schedule-export` over the numbered head: CSV, group totals that keep unknown cells counted, and HTML reproduce byte for byte; an unknown attribute column stays visible and is reported; a kind filter narrows to one row | Passed |
 | Views/filters (real store) | `export-view` twice for one head: byte-identical bundles; a repeat export into an existing file is refused without overwriting | Passed |
-| Views/filters (kind filter) | `snapshot-view --hide support` over the synthetic kernel plate scene; hidden kind recorded in the reply | Passed (stand-in, see below) |
-| Filters (V14, real store) | `query-elements` typed rules over the frame, including an `all`/`any` combination; a query never writes; a missing attribute value never satisfies `ne`; an unknown attribute refuses instead of matching silently | Passed |
+| Filters (V14, real store) | `query-elements` typed rules over the frame, including an `all`/`any` combination and the `type` (kind) rule; a query never writes; a missing attribute value never satisfies `ne`; an unknown attribute refuses instead of matching silently | Passed |
 | Exact stored outputs, reopen | After `publish-workspace`: every part's volume and `mesh_digest` equal the draft-side values; `export-bom` + `--summary` reproduce byte for byte | Passed |
 | Published drawings (D03 fresh path) | `create-drawing` (primary view titled `COLUMN A` at 1:20), `publish-drawing`, `inspect-drawing` freshness `current` over the published head | Passed |
 | Drawing views (D04) | `edit-views` places a top view, a right section (cut through the column axis, positive side) and a detail over the placed view; every view carries its own title and display scale (1:20 primary, 1:10, 1:5, 1:2) | Passed |
@@ -53,6 +55,36 @@ create tools, edit tools, grids, appearance, cancel) executed as part of the wor
 this machine. No new native-UI automation was added to Q01, per the standing rule: screenshot
 tests without kittest, and visual acceptance belongs to the owner's eyes.
 
+The extended native-UI cells (selection switches V11, render modes V16, cut plane V15, named
+views V12, colour sets V17, sheet editor D05) are traced to the slice F runbook artifact
+(`ui-runbook-q01-slice-f.md`, prepared by worker session beamcraft-174 on 2026-11-01 and
+re-checked against master `d8249fff`) plus the four-step runbook in
+[q01-alpha-scenario.md](q01-alpha-scenario.md). No step of it has been executed yet; every
+cell stays open until the owner runs it and accepts each visual result by eye.
+
+## Acceptance traceability
+
+The expanded acceptance (fork issue [#318](https://github.com/axisrow/BeamCraft/issues/318),
+mirror of upstream [#334](https://github.com/Apibim-com/BeamCraft/issues/334)) traced item by
+item. "In the UI" rows point at the runbook artifacts, never at a mock; the OS/GPU rows are
+recorded open and stay open until they execute on real hardware.
+
+| Acceptance item | Executable check or recorded manual result | Status |
+|---|---|---|
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, grids/levels, attributes, assembly/bolt/weld, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| View it (CLI) | `export-view` bundle rows above | Executed locally (macOS, Apple silicon) |
+| Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
+| Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |
+| Take a schedule (CLI) | `schedule-export` row above: CSV, HTML, group totals, unknown column, kind filter | Executed locally (macOS, Apple silicon) |
+| Take a drawing (CLI) | The drawing rows above: D03 fresh path, D04/D04.3 views and titles, D05 sheet, D06/D07 drafting, D08 PDF | Executed locally (macOS, Apple silicon) |
+| An item in the model | Deferred by the owner-approved MVP (I01–I03); the upstream issue records the same | Recorded as deferred |
+| Invalid files and crash regressions | Story refusal/cancellation rows above; the hook-driven interrupted-commit path lives in `apps/beamcraft-cli/tests/recovery.rs` (U07) and ran in the workspace run | Executed locally (macOS, Apple silicon) |
+| In the CLI, end to end | The documented entry point of [q01-alpha-scenario.md](q01-alpha-scenario.md): one command runs both stories, exit 0 | Executed locally (macOS, Apple silicon) |
+| In the UI, original four steps | Runbook in [q01-alpha-scenario.md](q01-alpha-scenario.md) | Open until the owner executes and accepts |
+| In the UI, extended cells (V11, V16, V15, V12, V17, D05) | Slice F runbook artifact (`ui-runbook-q01-slice-f.md`, session beamcraft-174) | Open until the owner executes and accepts |
+| Windows and Linux (native UI and packaging) | No such machine in this workspace; mocks forbidden by the acceptance rule | Recorded open |
+| GPU variety beyond Apple M5/Metal 4 | Single-GPU hardware; Vulkan and D3D12 paths did not execute | Recorded open |
+
 ## Open matrix cells and why
 
 | Cell | Why it is open |
@@ -61,15 +93,19 @@ tests without kittest, and visual acceptance belongs to the owner's eyes.
 | GPU variety beyond Apple M5/Metal 4 | Single-GPU hardware. Vulkan and D3D12 rendering paths of the native viewport did not execute here. |
 | Curved-wall (tube) member holes (G14.2 remainder) | The directed cutter through a multi-facet chain still builds an unsealed corner piece when a chain's kink line crosses a footprint edge close to a cavity vertex; the seal honestly refuses and fork issue [#420](https://github.com/axisrow/BeamCraft/issues/420) owns the fix. On this machine the CLI path also mis-certifies the volume: a CHS 114x5 member takes an `add-hole` d = 6/10/20 whose reported drop exceeds the engine suite's own `2·A·t` bound by a constant ~10,980 mm3 on top of the correct column (the engine unit test with the same section passes), so the tube hole stays out of the story rather than blessing a wrong number. Two further delivered-surface limits: a member moved off the world origin refuses its hole as not fitting (the replay reads the member-frame axis point in element coordinates), and a second hole record on one member refuses `BodyNotPrism` (recorded by the slice-4 delivery). |
 | Item (I01-I03) | Deferred by the owner-approved MVP; the upstream issue records the same. |
-| `snapshot-view` over a real model | The command runs on the synthetic kernel plate scene because P01 does not exist; the output marks itself `synthetic: true`. The real-store view path is `export-view` (V03), which this story exercises. |
+| `snapshot-view` over a real model | The command runs on the synthetic kernel plate scene because P01 does not exist; the output marks itself `synthetic: true`. This is no longer a stand-in for any acceptance item (resolved in slice E, fork issue [#446](https://github.com/axisrow/BeamCraft/issues/446)): the kind filter of the expanded acceptance is exercised on the real frame through `query-elements` (V14), and the real-store view path is `export-view` (V03), which this story exercises. The synthetic-scene step still runs inside the story for the command's own coverage (hidden kind recorded in the reply), without tracing to an acceptance item. |
 | Full crash/interruption matrix | The hook-driven interrupted-commit regression lives in `apps/beamcraft-cli/tests/recovery.rs` (U07) and ran in the workspace run; the scenario adds the end-to-end cancellation path through the real binary. |
 
 ## Reproducing
 
+The documented entry point of [q01-alpha-scenario.md](q01-alpha-scenario.md) runs both stories
+(the delivered one and the expanded one):
+
 ```sh
-cargo nextest run -p beamcraft-cli --test cli alpha_scenario
+cargo nextest run --locked -p beamcraft-cli --test cli alpha_scenario
 ```
 
-runs both stories (the delivered one and the expanded one). `BEAMCRAFT_Q01_KEEP=1` preserves the
-expanded story's store, workspace, BOM, view bundles, drawing document and PDF exports for
-inspection.
+The libtest equivalent, if cargo-nextest is not installed, is
+`cargo test --locked -p beamcraft-cli --test cli -- alpha_scenario`.
+`BEAMCRAFT_Q01_KEEP=1` preserves the expanded story's store, workspace, BOM, view bundles,
+drawing document and PDF exports for inspection.
