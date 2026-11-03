@@ -157,12 +157,31 @@ fn role_of(name: &str) -> LayerRole {
 }
 
 /// Whether a command route may run inside an open draft batch: the modelling, definition and
-/// construction routes whose write publications route through the draft. Everything else
-/// (store-level revisions, workspaces, compaction, exports) is refused between the brackets,
-/// so no command can escape a batch by writing the store behind the draft's back. Reads of
-/// these routes answer from the committed store; a read never sees the draft.
-pub fn batchable(route: crate::registry::Route) -> bool {
+/// The workspace words of the modelling route commit through the direct materializer funnel
+/// (fork, publish, undo, redo), not through `publish_revision`, so admitting them between
+/// the brackets would let them write the store behind the draft's back. They are refused by
+/// name whatever their route says.
+const WORKSPACE_WORDS: &[&str] = &[
+    "create-workspace",
+    "publish-workspace",
+    "undo-workspace",
+    "redo-workspace",
+    "inspect-workspace",
+    "inspect-workspace-history",
+    "workspace",
+];
+
+/// Whether a command may run inside an open draft batch: the modelling, definition and
+/// construction routes whose write publications route through the draft, with the workspace
+/// words excluded by name — they commit directly and would escape the batch. Everything
+/// else (store-level revisions, workspaces, compaction, exports) is refused between the
+/// brackets, so no command can escape a batch by writing the store behind the draft's back.
+/// Reads of these routes answer from the committed store; a read never sees the draft.
+pub fn batchable(route: crate::registry::Route, word: &str) -> bool {
     use crate::registry::Route;
+    if WORKSPACE_WORDS.contains(&word) {
+        return false;
+    }
     matches!(
         route,
         Route::Plate
@@ -177,14 +196,6 @@ pub fn batchable(route: crate::registry::Route) -> bool {
             | Route::Assembly
             | Route::Library
     )
-}
-
-/// The registry's `Access` of a command word, for the session's batch admission rules.
-pub fn access_of(name: &str) -> Option<crate::registry::Access> {
-    crate::registry::COMMANDS
-        .iter()
-        .find(|command| command.name == name)
-        .map(|command| command.access)
 }
 
 #[cfg(test)]
@@ -213,6 +224,17 @@ mod tests {
             fingerprint: fingerprint.parse().unwrap(),
             footprint: Footprint::default(),
         }
+    }
+
+    #[test]
+    fn workspace_words_never_admit_even_on_a_modelling_route() {
+        use crate::registry::Route;
+        assert!(batchable(Route::Plate, "create-plate"));
+        assert!(!batchable(Route::Plate, "publish-workspace"));
+        assert!(!batchable(Route::Plate, "undo-workspace"));
+        assert!(!batchable(Route::Plate, "create-workspace"));
+        assert!(!batchable(Route::Plate, "inspect-workspace"));
+        assert!(!batchable(Route::Coordinator, "create-plate"));
     }
 
     #[test]

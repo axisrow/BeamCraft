@@ -269,5 +269,15 @@ pub(crate) fn commit_verified_with_evidence(
     evidence: Option<beamcraft_host::revision::EvidencePin>,
     hook: &mut dyn CommitHook,
 ) -> Result<Committed, Refusal> {
+    // Belt for the draft batch's admission rules: the direct materializer funnel (forking,
+    // publishing, undo/redo, compensation) must not write the store behind an open batch's
+    // back, whatever word reached it. The batch's own commit ends the draft before it calls
+    // here, so it is never refused by this.
+    if session::draft::is_open() {
+        return Err(Refusal::new(
+            ErrorCode::InvalidArgument,
+            "this command commits directly and may not run inside a draft batch",
+        ));
+    }
     Ok(store.commit_with_evidence(draft, expected, evidence, Some(&PlateVerifier), hook)?)
 }

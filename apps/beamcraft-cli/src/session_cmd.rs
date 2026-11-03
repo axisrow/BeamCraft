@@ -206,9 +206,10 @@ impl<'a> Session<'a> {
     }
 
     /// The session-level admission rules of one command line: the store must be the session's
-    /// own, an operation id may not repeat inside the open batch, and only modelling routes
+    /// own, an operation id may not repeat inside the open batch, and only modelling commands
     /// may run between the brackets (their writes route through the draft, so nothing can
-    /// escape a batch by writing the store behind its back).
+    /// escape a batch by writing the store behind its back; the workspace words commit
+    /// directly and are excluded by name).
     fn check_command(&mut self, tokens: &[String], route: Option<Route>) -> Result<(), Refusal> {
         let given_store = option_value(tokens, "--store");
         if given_store.is_some_and(|store| store != self.root) {
@@ -219,8 +220,9 @@ impl<'a> Session<'a> {
         if !draft::is_open() {
             return Ok(());
         }
+        let word = tokens.first().map(String::as_str).unwrap_or_default();
         match route {
-            Some(route) if batch::batchable(route) => {}
+            Some(route) if batch::batchable(route, word) => {}
             _ => {
                 return Err(invalid_session(
                     "only modelling commands may run inside a batch",
