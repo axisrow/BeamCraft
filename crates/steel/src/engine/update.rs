@@ -34,7 +34,7 @@
 
 use crate::engine::command::AuthoredPlate;
 use crate::engine::member::AuthoredMember;
-use crate::model::command::ElementPatch;
+use crate::model::command::{ElementPatch, MemberPatch, PlatePatch};
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::error::ErrorCode;
 
@@ -89,38 +89,150 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
     }
 }
 
-/// Applies a patch to an authored plate. A member half in the patch is refused: every named
-/// field of it is `UNSUPPORTED_PROPERTY` on a plate.
+/// The kind-specific half of an element patch (#389): how one part kind's fields refuse the
+/// other kind, and how they land on an authored part. [`PlatePatch`] and [`MemberPatch`]
+/// implement it; `patch_plate`, `patch_member` and the derived-layer authoring dispatch
+/// through it, so the update path names no kind outside these impls.
+pub trait ElementKindOps {
+    /// Refuses this half against a plate target: every named field of a member patch is
+    /// `UNSUPPORTED_PROPERTY` on a plate, field by field with the standing messages.
+    fn refuse_on_plate(&self) -> Result<(), CommandError>;
+    /// Refuses this half against a member target, the same way.
+    fn refuse_on_member(&self) -> Result<(), CommandError>;
+    /// Writes this half into a plate target: the fields, then the pair revalidation of a
+    /// contour that arrives with its corners. Called after `refuse_on_plate` passed.
+    fn apply_to_plate(&self, plate: &mut AuthoredPlate) -> Result<(), CommandError>;
+    /// Writes this half into a member target: the profile, then the path with the roll
+    /// opinion a polybeam drops. Called after `refuse_on_member` passed.
+    fn apply_to_member(&self, member: &mut AuthoredMember) -> Result<(), CommandError>;
+}
+
+impl ElementKindOps for PlatePatch {
+    fn refuse_on_plate(&self) -> Result<(), CommandError> {
+        Ok(())
+    }
+
+    fn refuse_on_member(&self) -> Result<(), CommandError> {
+        if self.contour_points_mm.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "contour_points_mm",
+                "only plates have a contour",
+            ));
+        }
+        if self.corners.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "corner",
+                "only plates have contour corners",
+            ));
+        }
+        if self.thickness_mm.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "thickness_mm",
+                "a member has no thickness",
+            ));
+        }
+        if self.thickness_side.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "thickness_side",
+                "a member has no thickness side",
+            ));
+        }
+        Ok(())
+    }
+
+    fn apply_to_plate(&self, plate: &mut AuthoredPlate) -> Result<(), CommandError> {
+        if let Some(points) = &self.contour_points_mm {
+            plate.contour_points_mm.clone_from(points);
+        }
+        if let Some(corners) = &self.corners {
+            plate.corners.clone_from(corners);
+        }
+        // One admission covers the pair: a contour patch is validated with the corners it
+        // arrives with (each naming a vertex of the new contour), a corner patch with the
+        // standing contour.
+        if self.contour_points_mm.is_some() || self.corners.is_some() {
+            plate.to_command().validate_arguments()?;
+        }
+        if let Some(thickness) = self.thickness_mm {
+            plate.thickness_mm = thickness;
+        }
+        if let Some(side) = self.thickness_side {
+            plate.thickness_side = Some(side);
+        }
+        Ok(())
+    }
+
+    fn apply_to_member(&self, member: &mut AuthoredMember) -> Result<(), CommandError> {
+        let _ = member;
+        self.refuse_on_member()
+    }
+}
+
+impl ElementKindOps for MemberPatch {
+    fn refuse_on_plate(&self) -> Result<(), CommandError> {
+        if self.axis_points_mm.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "axis_points_mm",
+                "a plate has no path points",
+            ));
+        }
+        if self.profile.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedProperty,
+                "profile",
+                "a plate has no profile",
+            ));
+        }
+        Ok(())
+    }
+
+    fn refuse_on_member(&self) -> Result<(), CommandError> {
+        Ok(())
+    }
+
+    fn apply_to_plate(&self, plate: &mut AuthoredPlate) -> Result<(), CommandError> {
+        let _ = plate;
+        self.refuse_on_plate()
+    }
+
+    fn apply_to_member(&self, member: &mut AuthoredMember) -> Result<(), CommandError> {
+        if let Some(profile) = self.profile {
+            member.profile = profile;
+        }
+        if let Some(points) = &self.axis_points_mm {
+            if points.len() < 2 {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "axis_points_mm",
+                    "a member path has at least two points",
+                ));
+            }
+            member.axis_points_mm.clone_from(points);
+            // A polybeam carries no authored roll (the G12 sweep has no roll input): bending a
+            // rolled straight member into a polybeam clears the opinion instead of storing one
+            // the body would silently ignore.
+            if points.len() > 2 {
+                member.roll_rad = None;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Applies a patch to an authored plate: the member half is refused (`UNSUPPORTED_PROPERTY`),
+/// then the plate half writes its fields and the generic ones land.
 pub fn patch_plate(
     plate: &AuthoredPlate,
     patch: &ElementPatch,
 ) -> Result<AuthoredPlate, CommandError> {
-    if patch.member.axis_points_mm.is_some() {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedProperty,
-            "axis_points_mm",
-            "a plate has no path points",
-        ));
-    }
-    if patch.member.profile.is_some() {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedProperty,
-            "profile",
-            "a plate has no profile",
-        ));
-    }
+    patch.member.refuse_on_plate()?;
     let mut next = plate.clone();
-    if let Some(points) = &patch.plate.contour_points_mm {
-        next.contour_points_mm.clone_from(points);
-    }
-    if let Some(corners) = &patch.plate.corners {
-        next.corners.clone_from(corners);
-    }
-    // One admission covers the pair: a contour patch is validated with the corners it arrives
-    // with (each naming a vertex of the new contour), a corner patch with the standing contour.
-    if patch.plate.contour_points_mm.is_some() || patch.plate.corners.is_some() {
-        next.to_command().validate_arguments()?;
-    }
+    patch.plate.apply_to_plate(&mut next)?;
     if let Some(name) = &patch.name {
         next.name.clone_from(name);
     }
@@ -129,12 +241,6 @@ pub fn patch_plate(
     }
     if let Some(material) = patch.material {
         next.material = material;
-    }
-    if let Some(thickness) = patch.plate.thickness_mm {
-        next.thickness_mm = thickness;
-    }
-    if let Some(side) = patch.plate.thickness_side {
-        next.thickness_side = Some(side);
     }
     next.placement = if let Some(mirror) = &patch.mirror {
         crate::engine::transform::mirror_plate_local(&mut next)?;
@@ -149,42 +255,15 @@ pub fn patch_plate(
     Ok(next)
 }
 
-/// Applies a patch to an authored member. A plate half in the patch is refused: every named
-/// field of it is `UNSUPPORTED_PROPERTY` on a member. A path patch replaces the whole
-/// polyline; fewer than two points is `INVALID_ARGUMENT`, and whether the chords are long
-/// enough is the body evaluation's decision.
+/// Applies a patch to an authored member: the plate half is refused (`UNSUPPORTED_PROPERTY`),
+/// then the member half writes its fields and the generic ones land. A path patch replaces the
+/// whole polyline; fewer than two points is `INVALID_ARGUMENT`, and whether the chords are
+/// long enough is the body evaluation's decision.
 pub fn patch_member(
     member: &AuthoredMember,
     patch: &ElementPatch,
 ) -> Result<AuthoredMember, CommandError> {
-    if patch.plate.contour_points_mm.is_some() {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedProperty,
-            "contour_points_mm",
-            "only plates have a contour",
-        ));
-    }
-    if patch.plate.corners.is_some() {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedProperty,
-            "corner",
-            "only plates have contour corners",
-        ));
-    }
-    if patch.plate.thickness_mm.is_some() {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedProperty,
-            "thickness_mm",
-            "a member has no thickness",
-        ));
-    }
-    if patch.plate.thickness_side.is_some() {
-        return Err(CommandError::new(
-            ErrorCode::UnsupportedProperty,
-            "thickness_side",
-            "a member has no thickness side",
-        ));
-    }
+    patch.plate.refuse_on_member()?;
     // The mirror re-encodes through the path symmetry; a path replacement in the same patch
     // would mirror through one path and re-encode through another (the model refuses it too).
     if patch.mirror.is_some() && patch.member.axis_points_mm.is_some() {
@@ -204,25 +283,7 @@ pub fn patch_member(
     if let Some(material) = patch.material {
         next.material = material;
     }
-    if let Some(profile) = patch.member.profile {
-        next.profile = profile;
-    }
-    if let Some(points) = &patch.member.axis_points_mm {
-        if points.len() < 2 {
-            return Err(CommandError::new(
-                ErrorCode::InvalidArgument,
-                "axis_points_mm",
-                "a member path has at least two points",
-            ));
-        }
-        next.axis_points_mm.clone_from(points);
-        // A polybeam carries no authored roll (the G12 sweep has no roll input): bending a
-        // rolled straight member into a polybeam clears the opinion instead of storing one
-        // the body would silently ignore.
-        if points.len() > 2 {
-            next.roll_rad = None;
-        }
-    }
+    patch.member.apply_to_member(&mut next)?;
     if let Some(mirror) = &patch.mirror {
         crate::engine::transform::mirror_member_local(&mut next)?;
         // The placement absorbs the world mirror through the same local symmetry the path
@@ -277,7 +338,7 @@ fn placement_after(placement: &Placement, patch: &ElementPatch) -> Result<Placem
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::command::{MemberKind, MemberPatch, PlatePatch};
+    use crate::model::command::MemberKind;
     use beamcraft_model::digest::Sha256;
     use beamcraft_model::id::ElementId;
 
