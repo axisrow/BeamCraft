@@ -189,6 +189,8 @@ pub fn access_of(name: &str) -> Option<crate::registry::Access> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
     use super::*;
     use crate::plate::{CreateRequest, create_plate, inspect};
     use beamcraft_engine::footprint::Footprint;

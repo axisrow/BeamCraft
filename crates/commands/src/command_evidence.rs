@@ -670,6 +670,8 @@ pub(crate) fn dependencies(footprint: &Footprint) -> Vec<Dependency> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
     use super::*;
     use beamcraft_engine::footprint::{Entry, Group, Target};
 
