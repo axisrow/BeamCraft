@@ -187,6 +187,24 @@ accepted or migrated. Definitions live under `Definitions/Materials/MAT_<sha256>
 `Definitions/Profiles/PRF_<sha256>`; levels and reference wrappers live outside `/World/Steel`.
 See the [U16 design note](../../docs/design/u16-prim-naming.md).
 
+## The views layer (W01)
+
+`authored::views` is the closed profile of a standalone views layer:
+`authored::views::bytes` produces its canonical text (header with the
+`bimViewsSchemaDigest` pin of `views_schema_identity()`, then one standard USD `Camera`
+prim per saved view under `/World/Views`), and `authored::views::read_views` reads the
+owned camera prims of a composed snapshot back. A saved view is display state, not model
+data: a view prim carries no `bim:id`, so it enters no element index and links to nothing,
+and saving or restoring views never moves model keys or numbering. The camera is an
+ordinary placed USD camera (`xformOp:translate`, `xformOp:orient`, the standard
+`projection` token); the BeamCraft record — identity, span, depth, display properties,
+work area and the W01 provenance (author, unix time, comment, model revision, all four or
+none) — rides on `bim:view:*` attributes with the bounds of `VIEWS_SCHEMA_DESCRIPTOR`.
+The layer's mapping identity is its own digest, separate from the element profile's
+`schema_identity`; an ordinary USD reader needs no BeamCraft plugin to see the cameras
+(SDK interchange has **not** run). See [the W01 design note](../../docs/design/w01-saved-views.md).
+
+
 
 ## F10 vocabulary alignment (#148)
 

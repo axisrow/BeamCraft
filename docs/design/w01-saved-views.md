@@ -35,8 +35,22 @@ The session sidecar becomes format version 2 and writes the stamp as
 
 ## Not in this slice
 
-The USD form of the views layer (`views.usda` camera prims through the layer engine, decision
-of 2026-10-17) is the scheduled layer-engine card, as is the shared-review-layer answer to the
-open owner question of where views live (workspace vs a shared review layer). This slice
-delivers the provenance contract, its engine API, its CLI and its persistence in the views
-layer file.
+The shared-review-layer answer to the open owner question of where views live (workspace vs
+a shared review layer) is open. This slice delivers the provenance contract, its engine API,
+its CLI and its persistence in the views layer file.
+
+## The USD form of the views layer
+
+The USD form is delivered in two steps. The layer profile is here:
+`beamcraft_layer_engine::authored::views` is the closed views-layer profile — `bytes`
+produces the canonical layer text (a `bimViewsSchemaDigest` pin, then one standard USD
+`Camera` prim per saved view under `/World/Views`), `read_views` reads the owned camera
+prims of a composed snapshot back, and the mapping identity (`views_schema_identity`) is
+separate from the element profile's pin. A view prim carries no `bim:id`: a saved view is
+display state, not model data, so it enters no element index and no model key or number
+can move. The W01 provenance rides on the prim as `bim:view:author`, `bim:view:savedAtMs`,
+`bim:view:comment` and `bim:view:modelRevision`, all four or none, with the same bounds as
+the record above. The restore path through the session file and the CLI is the next step;
+whether the layer also becomes a manifest layer of the store revision stays with the owner
+question above.
+

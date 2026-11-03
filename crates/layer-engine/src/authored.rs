@@ -25,6 +25,8 @@ mod reference;
 /// The surface a discipline crate's hooks use to author and validate through this platform.
 pub mod seam;
 mod validate;
+/// W01 saved views: the camera prims of a views layer and their provenance.
+pub mod views;
 
 pub use disciplines::{Discipline, is_part_kind};
 pub use edit::{GEOMETRY_ASSETS, mesh_asset_digest};
