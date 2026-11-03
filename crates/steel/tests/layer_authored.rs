@@ -421,6 +421,16 @@ fn value<'a>(prims: &'a [Prim], id: &str, name: &str) -> Option<&'a Value> {
         .find(|p| p.name == name)
         .and_then(|p| p.value.as_ref())
 }
+fn value_on_path<'a>(prims: &'a [Prim], path: &str, name: &str) -> Option<&'a Value> {
+    prims
+        .iter()
+        .find(|p| p.path == path)
+        .unwrap()
+        .properties
+        .iter()
+        .find(|p| p.name == name)
+        .and_then(|p| p.value.as_ref())
+}
 
 #[test]
 fn author_install_reopen_standard_mesh_relationships_and_exact_unknown_opinions() {
@@ -482,10 +492,33 @@ fn author_install_reopen_standard_mesh_relationships_and_exact_unknown_opinions(
     );
     let bin = exported.iter().find(|a| a.name == "derived.usda").unwrap();
     let parsed = openusd::usda::parse(std::str::from_utf8(&bin.bytes).unwrap()).unwrap();
-    let mesh_path = openusd::sdf::Path::new(&format!("{}/Geometry.points", path(PLATE))).unwrap();
+    // U11: the buffers live on the shared immutable asset; the element's own prim authors only
+    // the instanceable reference and its local quantity record.
+    let composed = snapshot(&a, &new.context);
+    let geometry = composed
+        .iter()
+        .find(|p| p.path == format!("{}/Geometry", path(PLATE)))
+        .unwrap();
+    assert!(geometry.instanceable);
+    let asset_path = geometry
+        .sources
+        .iter()
+        .map(|s| s.path.clone())
+        .find(|p| p.starts_with("/World/Definitions/Geometry/GEO_"))
+        .unwrap();
     assert_eq!(
-        parsed.get_field(&mesh_path, "typeName").unwrap().as_ref(),
+        value_on_path(&composed, &format!("{}/Geometry", path(PLATE)), "points"),
+        value_on_path(&composed, &asset_path, "points")
+    );
+    let asset_spec = openusd::sdf::Path::new(&format!("{asset_path}.points")).unwrap();
+    assert_eq!(
+        parsed.get_field(&asset_spec, "typeName").unwrap().as_ref(),
         &openusd::sdf::Value::token("point3f[]")
+    );
+    assert!(
+        !parsed.has_spec(
+            &openusd::sdf::Path::new(&format!("{}/Geometry.points", path(PLATE))).unwrap()
+        )
     );
     let req = request(
         exported,
@@ -924,10 +957,11 @@ fn hundred_serialized_changes_invalidate_contexts_and_derive_semantic_groups() {
             &control(),
         )
         .unwrap();
+    // The stale result wrapper is gone; the shared immutable assets (U11) stay.
     assert!(
         !snapshot(&a, &o.context)
             .iter()
-            .any(|p| p.path.ends_with("/Geometry"))
+            .any(|p| p.path.ends_with("/Geometry") && !p.path.starts_with("/World/Definitions"))
     );
 }
 

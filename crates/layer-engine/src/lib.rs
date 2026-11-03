@@ -398,6 +398,8 @@ pub struct Prim {
     pub kind: Option<String>,
     /// Composed `displayName` metadata, when authored.
     pub display_name: Option<String>,
+    /// Composed `instanceable` metadata (U11): true only for an explicit `true`.
+    pub instanceable: bool,
     /// Static attributes, ordered by full name.
     pub properties: Vec<Property>,
     /// Static composed relationships, ordered by full name; the UUID/link index is built

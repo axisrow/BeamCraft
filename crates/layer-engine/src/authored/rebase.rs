@@ -43,7 +43,16 @@ fn scaffold(path: &str) -> bool {
             | "/World/Definitions"
             | "/World/Definitions/Materials"
             | "/World/Definitions/Profiles"
+            | "/World/Definitions/Geometry"
     )
+}
+
+/// The immutable geometry asset (U11) a spec path belongs to, by its content-addressed label.
+fn geometry_asset(path: &str) -> Option<ContentDigest> {
+    path.strip_prefix(super::edit::GEOMETRY_ASSETS)
+        .and_then(|rest| rest.strip_prefix("/GEO_"))
+        .filter(|label| label.len() == 64)
+        .and_then(|label| label.parse().ok())
 }
 
 fn property_group(name: &str) -> Option<G> {
@@ -109,6 +118,13 @@ fn scope(path: &str, field: &str) -> Result<(T, G), Diagnostic> {
         }
         return Ok((T::Definition(digest), G::Relationship));
     }
+    // U11: a shared immutable geometry asset is a derived write of its content identity.
+    if let Some(digest) = geometry_asset(prim) {
+        if property.is_some_and(|p| !geometry_property(p)) {
+            return Err(unsupported_delta());
+        }
+        return Ok((T::Definition(digest), G::Derived));
+    }
     let (element, geometry) = prim
         .strip_suffix("/Geometry")
         .map_or((prim, false), |p| (p, true));
@@ -147,9 +163,12 @@ fn require(writes: &Writes, path: &str, field: &str) -> Result<(), Diagnostic> {
         matches!(
             field,
             "typeName" | "default" | "custom" | "variability" | "targetPaths"
-        ) || (field == "interpolation" && path.ends_with("/Geometry.normals"))
+        ) || (field == "interpolation"
+            && (path.ends_with("/Geometry.normals") || geometry_asset_path(path)))
     } else {
         matches!(field, "specifier" | "typeName" | "kind" | "displayName")
+            // U11: an element's derived prim is an instanceable reference to the shared asset.
+            || ((field == "instanceable" || field == "references") && path.ends_with("/Geometry"))
     };
     if !known {
         return Err(unsupported_delta());
@@ -161,6 +180,13 @@ fn require(writes: &Writes, path: &str, field: &str) -> Result<(), Diagnostic> {
         ));
     }
     Ok(())
+}
+
+/// Whether a property path sits on an immutable geometry asset (U11).
+fn geometry_asset_path(path: &str) -> bool {
+    path.split_once('.')
+        .and_then(|(prim, _)| geometry_asset(prim))
+        .is_some()
 }
 
 fn fields(data: &sdf::Data, path: &sdf::Path) -> Result<BTreeMap<String, sdf::Value>, Diagnostic> {

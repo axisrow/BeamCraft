@@ -25,6 +25,7 @@ pub mod seam;
 mod validate;
 
 pub use disciplines::{Discipline, is_part_kind};
+pub use edit::{GEOMETRY_ASSETS, mesh_asset_digest};
 pub use guard::WriteGrant;
 pub use hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, DefinitionHook, HookedChange,
@@ -158,13 +159,16 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "element values=bim:attr:<name>=string|double|int|bool on any element;a value may outlive its",
     "definition and is then an unknown attribute: shown, never dropped\n",
     "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
-    "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
+    "geometry asset=/World/Definitions/Geometry/GEO_<sha256-64 of the canonical buffers>:Mesh;no bim:id,",
+    "no model kind, no quantities;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
     "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
-    "bim:shapeKey=string(sha256);purpose=token(render,guide on a grid guide mesh);",
+    "bim:shapeKey=string(sha256);immutable: never rewritten, stays after its last referent is deleted\n",
+    "derived=<element>/Geometry:Mesh;instanceable=true;references=</World/Definitions/Geometry/GEO_<sha256>>;",
+    "the mesh buffers compose from the asset;local opinions=purpose=token(render,guide on a grid guide mesh);",
     "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
     "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
-    "bim:quantityAlgorithm=string\n",
+    "bim:quantityAlgorithm=string;kind=subcomponent\n",
     "representations(U12,each only where its body differs from the full one,never quantities)=",
     "<part>/Reduced:Mesh(cuts kept,holes dropped;purpose=default);<part>/Proxy:Mesh(no cuts,no holes;purpose=proxy);",
     "<part>/Axis:BasisCurves(member axis points;element-local;type=token(linear,uniform);wrap=token(nonperiodic,uniform);",

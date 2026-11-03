@@ -793,6 +793,7 @@ mod tests {
             active: true,
             kind: None,
             display_name: None,
+            instanceable: false,
             properties: properties
                 .into_iter()
                 .map(|(name, type_name, value)| Property {

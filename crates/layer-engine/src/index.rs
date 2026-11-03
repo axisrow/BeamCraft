@@ -723,6 +723,7 @@ impl IndexBuilder {
             active: prim.active,
             kind: None,
             display_name: None,
+            instanceable: prim.instanceable,
             properties,
             relationships: prim.relationships.clone(),
             sources: prim.sources.clone(),

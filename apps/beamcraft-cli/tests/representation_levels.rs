@@ -152,8 +152,11 @@ fn a_plain_plate_authors_no_level_prims() {
     let f = Fixture::new();
     let created = f.plate(&[]);
     let derived = f.derived_text(&created);
-    // No holes and no cuts: one body, the render level, and nothing else.
-    assert_eq!(derived.matches("def Mesh").count(), 1, "{derived}");
+    // No holes and no cuts: one body, the render level, and nothing else. U11 stores the body
+    // twice by name only — the immutable shared asset and the instanceable wrapper that
+    // composes it.
+    assert_eq!(derived.matches("def Mesh").count(), 2, "{derived}");
+    assert!(derived.contains("instanceable = true"), "{derived}");
     assert!(derived.contains("custom token purpose = \"render\""),);
     assert!(!derived.contains("def Mesh \"Reduced\""), "{derived}");
     assert!(!derived.contains("def Mesh \"Proxy\""), "{derived}");
@@ -180,8 +183,10 @@ fn a_member_authors_its_axis_as_a_guide_curve() {
         ],
     );
     let derived = f.derived_text(&created);
-    // A plain member has one body and one guide: the axis polyline.
-    assert_eq!(derived.matches("def Mesh").count(), 1, "{derived}");
+    // A plain member has one body and one guide: the axis polyline. U11 names the body twice —
+    // the shared immutable asset and the instanceable wrapper.
+    assert_eq!(derived.matches("def Mesh").count(), 2, "{derived}");
+    assert!(derived.contains("instanceable = true"), "{derived}");
     let axis = derived
         .split("def BasisCurves \"Axis\"")
         .nth(1)

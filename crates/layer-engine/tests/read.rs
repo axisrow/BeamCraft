@@ -512,7 +512,6 @@ fn unsupported_arcs_and_full_id_faults_are_explicit() {
         "payload = @child.usda@</Source>",
         "inherits = </Source>",
         "specializes = </Source>",
-        "instanceable = true",
     ] {
         let input = layer(&format!("def Xform \"A\" ({field}) {{}}"));
         assert_eq!(
@@ -520,6 +519,15 @@ fn unsupported_arcs_and_full_id_faults_are_explicit() {
             ErrorCode::UnsupportedProperty
         );
     }
+    // U11 admits `instanceable` for owned layers; a non-boolean value is still a broken layer,
+    // and the other instancing arcs stay outside the profile.
+    assert_eq!(
+        error(request(vec![asset(
+            "root.usda",
+            layer("def Xform \"A\" (instanceable = \"yes\") {}")
+        )])),
+        ErrorCode::IntegrityError
+    );
     assert_eq!(
         error(request(vec![asset(
             "root.usda",

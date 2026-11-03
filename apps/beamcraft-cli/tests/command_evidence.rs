@@ -233,9 +233,24 @@ fn the_real_cli_persists_exact_reads_writes_and_request_fingerprints() {
         holes_mm: vec![],
     };
     assert_eq!(created.fingerprint, command.content_fingerprint().unwrap());
-    assert_eq!(
-        created.footprint,
-        Footprint::for_create(element(1), None).unwrap()
+    // U11: the transfer evidence carries exactly one extra write — the immutable geometry
+    // asset the created body pins, by content digest.
+    let declared = Footprint::for_create(element(1), None).unwrap();
+    assert_eq!(created.footprint.reads(), declared.reads());
+    let extra: Vec<_> = created
+        .footprint
+        .writes()
+        .iter()
+        .filter(|entry| !declared.writes().contains(entry))
+        .collect();
+    assert_eq!(extra.len(), 1, "only the transfer asset write: {extra:?}");
+    assert_eq!(extra[0].group, Group::Derived);
+    assert!(matches!(extra[0].target, Target::Definition(_)));
+    assert!(
+        declared
+            .writes()
+            .iter()
+            .all(|entry| created.footprint.writes().contains(entry))
     );
     let copied = f
         .recorded(
@@ -252,10 +267,18 @@ fn the_real_cli_persists_exact_reads_writes_and_request_fingerprints() {
             ],
         )
         .1;
-    assert_eq!(
-        copied.footprint,
-        Footprint::for_copy(element(1), element(2), None, None).unwrap()
-    );
+    // U11: the copy's evidence carries exactly one extra write — the geometry asset it pins.
+    let declared_copy = Footprint::for_copy(element(1), element(2), None, None).unwrap();
+    assert_eq!(copied.footprint.reads(), declared_copy.reads());
+    let copy_extra: Vec<_> = copied
+        .footprint
+        .writes()
+        .iter()
+        .filter(|entry| !declared_copy.writes().contains(entry))
+        .collect();
+    assert_eq!(copy_extra.len(), 1, "only the transfer asset write");
+    assert_eq!(copy_extra[0].group, Group::Derived);
+    assert!(matches!(copy_extra[0].target, Target::Definition(_)));
     assert_eq!(
         copied.fingerprint,
         CopyElement {
@@ -331,9 +354,28 @@ fn every_modeling_publication_path_records_its_own_operation() {
             &element(3).to_string(),
         ],
     );
+    // U11: exactly one extra write — the immutable geometry asset the member body pins.
+    let declared_member =
+        Footprint::for_create_member(element(3), digest.parse().unwrap(), None).unwrap();
+    assert_eq!(member.footprint.reads(), declared_member.reads());
+    let member_extra: Vec<_> = member
+        .footprint
+        .writes()
+        .iter()
+        .filter(|entry| !declared_member.writes().contains(entry))
+        .collect();
     assert_eq!(
-        member.footprint,
-        Footprint::for_create_member(element(3), digest.parse().unwrap(), None).unwrap()
+        member_extra.len(),
+        1,
+        "only the transfer asset write: {member_extra:?}"
+    );
+    assert_eq!(member_extra[0].group, Group::Derived);
+    assert!(matches!(member_extra[0].target, Target::Definition(_)));
+    assert!(
+        declared_member
+            .writes()
+            .iter()
+            .all(|entry| member.footprint.writes().contains(entry))
     );
     f.recorded(
         "create-level",

@@ -589,6 +589,16 @@ impl Footprint {
         Ok(())
     }
 
+    /// Extends the write set with additional entries, keeping the 4096-entry bound. Used by the
+    /// publication boundary to complete a declared set with the immutable geometry assets (U11)
+    /// a mesh transfer pins: a widening derived from the batch itself, never a caller claim.
+    pub fn plus(&self, entries: &[Entry]) -> Result<Self, CommandError> {
+        let mut out = self.clone();
+        out.writes.extend(entries.iter().copied());
+        out.check_bound()?;
+        Ok(out)
+    }
+
     /// Entries the command reads.
     pub const fn reads(&self) -> &BTreeSet<Entry> {
         &self.reads

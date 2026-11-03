@@ -63,7 +63,9 @@ fn guides_are_derived_only_and_relabel_is_geometry_inert() {
     );
     assert_ne!(layers(&f).1, d);
     ok(&f, "delete-element", &["--id", G]);
-    assert!(!layers(&f).1.contains("def Mesh"));
+    // The guide wrapper is gone with the grid; the immutable geometry asset (U11) stays, like
+    // every pinned definition.
+    assert!(!layers(&f).1.contains("def Mesh \"Geometry\""));
 }
 #[test]
 fn standard_usd_guide_reopens_in_openusd_when_available() {

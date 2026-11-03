@@ -600,12 +600,153 @@ pub fn author_record_history(
     Ok(())
 }
 
+/// The identity of the immutable geometry asset (U11) that a derived body pins: the full
+/// SHA-256 of the canonical asset content — the engine shape key followed by the exact stored
+/// float/int buffers. Equal bodies therefore share one asset, and the name always recomputes
+/// from the content it labels.
+pub fn mesh_asset_digest(m: &Mesh) -> Result<ContentDigest, Diagnostic> {
+    let mut hash = Sha256::new();
+    hash.update(b"beamcraft-geometry-asset-v1")
+        .map_err(|_| limit())?;
+    hash.update(m.shape_key.as_bytes()).map_err(|_| limit())?;
+    let mut chunk = |bytes: &[u8]| {
+        hash.update(&(bytes.len() as u64).to_le_bytes())
+            .map_err(|_| limit())?;
+        hash.update(bytes).map_err(|_| limit())
+    };
+    for p in &m.points_mm {
+        chunk(&p[0].to_le_bytes())?;
+        chunk(&p[1].to_le_bytes())?;
+        chunk(&p[2].to_le_bytes())?;
+    }
+    let mut numbers = Vec::new();
+    for n in m.face_counts.iter().chain(m.indices.iter()) {
+        numbers.extend_from_slice(&n.to_le_bytes());
+    }
+    chunk(&numbers)?;
+    Ok(hash.finalize())
+}
+
+/// The canonical path of the immutable geometry asset a derived body pins (U16 naming: the
+/// digest lives in the prim name, as for `MAT_`/`PRF_` definitions).
+fn mesh_asset_path(m: &Mesh) -> Result<(String, String), Diagnostic> {
+    let digest = mesh_asset_digest(m)?;
+    let name = format!("GEO_{digest}");
+    Ok((format!("{GEOMETRY_ASSETS}/{name}"), name))
+}
+
+/// The authored-layer scope holding the immutable geometry assets (U11).
+pub const GEOMETRY_ASSETS: &str = "/World/Definitions/Geometry";
+
 fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str, purpose: &str) -> Result<(), Diagnostic> {
-    mesh_prim(data, m, &format!("{parent}/Geometry"), purpose, true)?;
+    let extent = derive::extent(&m.points_mm).ok_or_else(invalid)?;
+    let normals =
+        derive::face_normals(&m.points_mm, &m.face_counts, &m.indices).ok_or_else(invalid)?;
+    // The asset prim is written once per distinct body: an existing spec with the same
+    // content-addressed name is left untouched, so equal bodies across a batch and across
+    // revisions share one immutable definition and ordinary USD readers compose one prototype.
+    let (asset, _) = mesh_asset_path(m)?;
+    container(data, GEOMETRY_ASSETS, "Scope", None)?;
+    if !data.has_spec(&path(&asset)?) {
+        prim(data, &asset, Some("Mesh"), true)?;
+        for (name, ty, v) in [
+            (
+                "points",
+                "point3f[]",
+                sdf::Value::Vec3fVec(m.points_mm.iter().map(|p| (*p).into()).collect()),
+            ),
+            (
+                "faceVertexCounts",
+                "int[]",
+                sdf::Value::IntVec(m.face_counts.clone()),
+            ),
+            (
+                "faceVertexIndices",
+                "int[]",
+                sdf::Value::IntVec(m.indices.clone()),
+            ),
+            ("subdivisionScheme", "token", sdf::Value::token("none")),
+            ("orientation", "token", sdf::Value::token("rightHanded")),
+            (
+                "extent",
+                "float3[]",
+                sdf::Value::Vec3fVec(extent.iter().map(|p| (*p).into()).collect()),
+            ),
+            (
+                "normals",
+                "normal3f[]",
+                sdf::Value::Vec3fVec(normals.iter().map(|n| (*n).into()).collect()),
+            ),
+        ] {
+            attribute(data, &asset, name, ty, Opinion::Value(v), false)?;
+        }
+        let normals_spec = path(&format!("{asset}.normals"))?;
+        data.set_field(&normals_spec, "interpolation", sdf::Value::token("uniform"));
+        attr(
+            data,
+            &asset,
+            "bim:shapeKey",
+            "string",
+            sdf::Value::String(m.shape_key.to_string()),
+        )?;
+    }
+    // The element's own prim is an instanceable reference (U11): the composed Mesh comes from
+    // the shared asset, and only the U12 purpose and the per-element quantity record stay
+    // local. The exactness marker is absent (`true` being the default), as U12 stores it.
+    let p = format!("{parent}/Geometry");
+    prim(data, &p, Some("Mesh"), true)?;
+    field(data, &p, "kind", sdf::Value::token("subcomponent"))?;
+    field(data, &p, "instanceable", sdf::Value::Bool(true))?;
+    field(
+        data,
+        &p,
+        "references",
+        sdf::Value::ReferenceListOp(sdf::ListOp::explicit([sdf::Reference {
+            asset_path: String::new(),
+            prim_path: path(&asset)?,
+            layer_offset: sdf::LayerOffset::IDENTITY,
+            custom_data: Default::default(),
+        }])),
+    )?;
+    attr(data, &p, "purpose", "token", sdf::Value::token(purpose))?;
+    if let Some(q) = &m.quantities {
+        let mut fields = vec![
+            ("bim:volumeMm3", "double", sdf::Value::Double(q.volume_mm3)),
+            (
+                "bim:volumeStatus",
+                "token",
+                sdf::Value::token(&q.volume_status),
+            ),
+            ("bim:massStatus", "token", sdf::Value::token(&q.mass_status)),
+            (
+                "bim:shapeSignature",
+                "string",
+                sdf::Value::String(q.shape_signature.to_string()),
+            ),
+            (
+                "bim:massSignature",
+                "string",
+                sdf::Value::String(q.mass_signature.to_string()),
+            ),
+            (
+                "bim:quantityAlgorithm",
+                "string",
+                sdf::Value::String(q.algorithm.clone()),
+            ),
+        ];
+        if let Some(kg) = q.mass_kg {
+            fields.push(("bim:massKg", "double", sdf::Value::Double(kg)));
+        }
+        for (name, ty, value) in fields {
+            attr(data, &p, name, ty, value)?;
+        }
+    }
     // The U12 representation levels exist only where their body differs from the full one, so
     // every authored prim carries content no other level repeats. A level is a display result:
     // it never carries a quantity record, and each carries `bim:exact = false` (the exactness
     // marker the acceptance reads; the full mesh stores none, `true` being the default).
+    // Levels stay inline, per-element prims: unlike the shared full body they are authored
+    // only where they differ, so they take no part in the U11 asset sharing.
     if let Some(r) = &m.reduced {
         mesh_prim(data, r, &format!("{parent}/Reduced"), "default", false)?;
     }
@@ -618,8 +759,9 @@ fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str, purpose: &str) -> Result<(
     Ok(())
 }
 
-/// One mesh body at `path`: the standard buffer, the shape key, an optional quantity record and
-/// the U12 purpose/exactness marks. `exact = false` is authored, `true` is stored as absence.
+/// One inline mesh body at `path` (a U12 representation level): the standard buffer, the
+/// level's own shape key, the purpose and exactness marks. `exact = false` is authored, `true`
+/// is stored as absence.
 fn mesh_prim(
     data: &mut sdf::Data,
     m: &Mesh,
@@ -1204,8 +1346,9 @@ fn capture(
         ("xformOp:orient", "quatd"),
         ("xformOpOrder", "token[]"),
     ];
-    /// The A04.2 member-hole record attributes of a member, in storage order.
-    /// The P14 section-placement attributes of a member, in storage order.
+    // The standard mesh-buffer attributes of a U12 representation level, in storage order.
+    // The full body's buffers are shared-asset content (U11): only a level prim carries them
+    // as its own authored fields.
     const MESH: &[(&str, &str)] = &[
         ("points", "point3f[]"),
         ("faceVertexCounts", "int[]"),
@@ -1328,9 +1471,6 @@ fn capture(
                 for &(name, ty) in POSE {
                     add(name, ty, 0);
                 }
-                for &(name, ty) in MESH {
-                    add(name, ty, 1);
-                }
                 for (name, ty) in QUANTITY_FIELDS {
                     add(name, ty, 1);
                 }
@@ -1350,10 +1490,9 @@ fn capture(
                 }
             }
             Change::Mesh(m) => {
+                // The wrapper authors its U12 purpose opinion; the mesh buffers themselves are
+                // shared-asset content (U11), never an element's own opinion.
                 add("purpose", "token", 1);
-                for &(name, ty) in MESH {
-                    add(name, ty, 1);
-                }
                 // Every quantity field is reported: absent ones as removals.
                 for (name, ty) in QUANTITY_FIELDS {
                     add(name, ty, 1);
@@ -1392,11 +1531,6 @@ fn capture(
             // mapping: they contribute no opinion inventory yet, while their footprint writes
             // and the candidate bytes carry them as usual.
             Change::AttrDefine { .. } | Change::AttrUndefine { .. } | Change::AttrSet { .. } => {}
-        }
-        if matches!(change, Change::Discipline(hook) if hook.0.declares_mesh()) {
-            for &(name, ty) in MESH {
-                add(name, ty, 1);
-            }
         }
         if fields.len() > b.values {
             return Err(limit());

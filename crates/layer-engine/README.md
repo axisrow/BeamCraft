@@ -57,7 +57,12 @@ is tested with the same Rust backend; SDK interchange has **not run**. No solid 
 or exact quantity computation runs here.
 
 `Author::open` consumes a verified U01 manifest plus distinct, existing owned USDA edit
-targets participating directly in the root's sublayer stack. The root must also be owned.
+targets participating directly in the root's sublayer stack. Derived bodies are stored as
+immutable, content-addressed geometry assets under `/World/Definitions/Geometry/GEO_<sha256>`
+(U11); an element's `Geometry` prim is an `instanceable` reference to one of them, with its
+quantity record authored locally, and equal bodies share one asset. The read profile admits the
+`instanceable` metadata and internal reference arcs on owned layers; see the
+[U11 design note](../../docs/design/u11-geometry-instancing.md). The root must also be owned.
 `prepare` consumes a pinned context, full op/actor identities, exact schema pin, bounded
 immutable resources and typed changes. Host authorization, canonical F04 replay checks,
 engineering validation and serialized decisions are prerequisites. It returns owned layer

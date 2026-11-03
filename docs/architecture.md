@@ -504,11 +504,12 @@ implemented by this documentation change.
   /Definitions
     /Materials/MAT_<sha256>              material
     /Profiles/PRF_<sha256>               profile
+    /Geometry/GEO_<sha256>               immutable mesh asset (derived.usda, U11)
   /Levels/LVL_<uuid>                     level, shared by every discipline
   /References/REF_<uuid>                 foreign model, read-only
   /Steel                                 steel discipline, kind = group
     /Parts/PRT_<uuid>                    plate, beam or column, kind = component
-      /Geometry                          mesh, kind = subcomponent (derived.usda)
+      /Geometry                          instanceable reference to one GEO_ asset
     /Assemblies/ASM_<uuid>               assembly
     /Connections/CON_<uuid>              weld or bolt group
 ```
@@ -530,10 +531,11 @@ The rule:
    "Platform and disciplines").
 5. **The readable name is `displayName`** (equal to `bim:name`), which USD viewers show instead of
    the prim name.
-6. **Child prims have fixed names.** `Geometry` is the full body (the `render` purpose); the
-   U12 representation levels get their own fixed names beside it — `Reduced` (`default`,
-   cuts without holes), `Proxy` (`proxy`), `Axis` (`guide`, members) — each only where its
-   body differs, and each marked `bim:exact = false` except the full body.
+6. **Child prims have fixed names.** `Geometry` is the full body (the `render` purpose), an
+   `instanceable` reference to one `GEO_` asset; the U12 representation levels get their own
+   fixed names beside it as inline bodies — `Reduced` (`default`, cuts without holes), `Proxy`
+   (`proxy`), `Axis` (`guide`, members) — each only where its body differs, and each marked
+   `bim:exact = false` except the full body.
 7. **Element category folders have `kind = group`.** This keeps the USD model hierarchy intact
    between the project root and its components or assemblies.
 
@@ -583,6 +585,14 @@ readable without registering a schema.
 `channel`, `rhs`, ...), the values (`bim:densityKgM3`, `steel:profile:hMm`, `:bMm`, `:twMm`, ...),
 `bim:contentDigest`. The prim name is the SHA-256 of the content, so a definition never changes;
 an element pins exactly the definition it was built with.
+
+**Geometry assets** (`GEO_<sha256>`, U11, derived.usda): the standard mesh buffers
+(`points`, `faceVertexCounts`, `faceVertexIndices`, `extent`, `normals`, `bim:shapeKey`) of one
+derived body, named by the SHA-256 of that canonical content. A body is written once and never
+rewritten; every element whose body it is authors its own `Geometry` prim as `instanceable = true`
+with an internal reference to the asset, carrying only its per-element quantity record locally.
+Equal bodies — the copies of one part, a whole instance group — therefore reference one asset and
+compose one prototype in ordinary USD.
 
 **Derived data** (`derived.usda`, on `.../PRT_<uuid>/Geometry`): the mesh (`points`,
 `faceVertexCounts`, `faceVertexIndices`, `extent`, normals), and the quantities `bim:volumeMm3`,

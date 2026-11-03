@@ -18,7 +18,7 @@ use beamcraft_host::{
 };
 
 use beamcraft_json::Json;
-use beamcraft_model::{error::ErrorCode, id::ElementId, prim::ElementCategory};
+use beamcraft_model::error::ErrorCode;
 
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000000010";
 const PLATE_COPY: &str = "019a7bf0-0000-7000-8000-000000000011";
@@ -259,22 +259,79 @@ fn a_warm_cache_still_refuses_a_tampered_derived_mesh() {
     let store = f.store();
     // Warm this thread's cache with the shape both plates share.
     inspect(&store).unwrap();
-    // The copy's stored box is stretched from 10 to 12 mm while its authored inputs stay those
-    // of the source. Points and extent change together and an axis-aligned box keeps its face
-    // normals, so the layer passes every structural rule: only the kernel comparison can tell.
-    let path = ElementId::parse(PLATE_COPY)
-        .unwrap()
-        .prim_path(ElementCategory::Part);
-    let marker = format!("\"{}\"", path.rsplit('/').next().unwrap());
+    // The stored box of the body both plates share is stretched from 10 to 12 mm while the
+    // authored inputs stay unchanged. Points and extent change together and an axis-aligned box
+    // keeps its face normals, and the asset's content digest is relabelled to match (U11), so
+    // the layer passes every structural rule: only the kernel comparison can tell.
     f.tamper(|name, mut text| {
         if name == "derived.usda" {
-            let block = text.find(&marker).unwrap();
+            let block = text.find("def Mesh \"GEO_").unwrap();
+            let label_at = block + "def Mesh \"GEO_".len();
+            let old = text[label_at..label_at + 64].to_owned();
             for attribute in ["point3f[] points = [", "float3[] extent = ["] {
                 let start = block + text[block..].find(attribute).unwrap();
                 let end = start + text[start..].find('\n').unwrap();
                 let line = text[start..end].replace(", 10.0)", ", 12.0)");
                 text.replace_range(start..end, &line);
             }
+            // Relabel the asset with the digest of its tampered content, so the name still
+            // recomposes: the mismatch must be found by the kernel, not by naming.
+            let mut points = Vec::new();
+            let mut counts = Vec::new();
+            let mut indices = Vec::new();
+            let line_of = |marker: &str| -> String {
+                let at = block + text[block..].find(marker).unwrap();
+                let end = at + text[at..].find('\n').unwrap();
+                text[at..end].to_owned()
+            };
+            for triple in line_of("point3f[] points = [")
+                .trim_start_matches("point3f[] points = [")
+                .trim_end_matches(']')
+                .split("), (")
+            {
+                let clean = triple.replace(['(', ')', ' '], "");
+                let xyz: Vec<f32> = clean
+                    .split(',')
+                    .map(|v| v.parse::<f32>().unwrap())
+                    .collect();
+                points.push([xyz[0], xyz[1], xyz[2]]);
+            }
+            for count in line_of("int[] faceVertexCounts = [")
+                .trim_start_matches("int[] faceVertexCounts = [")
+                .trim_end_matches(']')
+                .split(',')
+            {
+                counts.push(count.trim().parse::<i32>().unwrap());
+            }
+            for index in line_of("int[] faceVertexIndices = [")
+                .trim_start_matches("int[] faceVertexIndices = [")
+                .trim_end_matches(']')
+                .split(',')
+            {
+                indices.push(index.trim().parse::<i32>().unwrap());
+            }
+            let key_line = line_of("custom string bim:shapeKey = \"");
+            let shape_key = key_line
+                .split_once("bim:shapeKey = \"")
+                .unwrap()
+                .1
+                .trim_end_matches('"')
+                .to_owned();
+            let mesh = beamcraft_layer_engine::authored::Mesh {
+                id: String::new(),
+                shape_key: shape_key.parse().unwrap(),
+                points_mm: points,
+                face_counts: counts,
+                indices,
+                quantities: None,
+                reduced: None,
+                proxy: None,
+                axis: None,
+            };
+            let fresh = beamcraft_layer_engine::authored::mesh_asset_digest(&mesh)
+                .unwrap()
+                .to_string();
+            text = text.replace(&format!("GEO_{old}"), &format!("GEO_{fresh}"));
         }
         text
     });

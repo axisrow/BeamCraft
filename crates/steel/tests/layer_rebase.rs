@@ -463,3 +463,69 @@ fn part_class_edits_rebase_as_label_opinions_and_keep_their_value() {
         sdf::Value::String("remote".into())
     );
 }
+
+#[test]
+fn a_mesh_transfer_carries_its_shared_asset_over_an_accepted_rename() {
+    let base = initial();
+    let mesh = Mesh {
+        id: id(11).to_string(),
+        shape_key: digest(b"transfer-shape-key"),
+        points_mm: vec![
+            [0.0, 0.0, 0.0],
+            [100.0, 0.0, 0.0],
+            [100.0, 100.0, 5.0],
+            [0.0, 100.0, 5.0],
+        ],
+        face_counts: vec![4],
+        indices: vec![0, 1, 2, 3],
+        quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
+    };
+    let local = edit(base.clone(), vec![Change::Mesh(mesh.clone())], Vec::new());
+    let accepted = edit(base.clone(), vec![rename(10, "renamed")], Vec::new());
+    // The transfer's evidence names the immutable asset (U11) by content digest; without that
+    // write the shared prim's delta is outside the verified writes.
+    let asset_digest = mesh_asset_digest(&mesh).unwrap();
+    let mut writes = lifecycle(11);
+    writes.push(Dependency {
+        target: T::Definition(asset_digest),
+        group: G::Derived,
+        access: Access::Write,
+    });
+    let merged = prepare(&base, &local, &accepted, &writes).unwrap();
+    let derived = std::str::from_utf8(
+        &merged
+            .assets
+            .iter()
+            .find(|a| a.name == "derived.usda")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert!(derived.contains("instanceable = true"));
+    assert!(derived.contains(&format!("GEO_{asset_digest}")));
+    let authored = std::str::from_utf8(
+        &merged
+            .assets
+            .iter()
+            .find(|a| a.name == "authored.usda")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert!(authored.contains("renamed"));
+    let mut reader = Reader::default();
+    reader
+        .open_validated(merged.clone(), schema_identity().unwrap(), &control())
+        .unwrap();
+    // An asset delta without its digest write stays outside the verified writes.
+    assert_eq!(
+        prepare(&base, &local, &accepted, &lifecycle(11))
+            .err()
+            .unwrap()
+            .code,
+        ErrorCode::IntegrityError
+    );
+}

@@ -100,8 +100,10 @@ pub(crate) fn publish_revision(
         root_layer: ROOT_LAYER.into(),
         entries,
     };
-    let pin =
-        crate::command_evidence::store(store, &request.op, request.fingerprint, request.footprint)?;
+    // U11: the persisted evidence carries the immutable geometry assets the batch's mesh
+    // transfers pin, so a later rebase can admit the shared asset prims' deltas.
+    let evidence = crate::plate::with_transfer_assets(request.footprint, request.prepared)?;
+    let pin = crate::command_evidence::store(store, &request.op, request.fingerprint, &evidence)?;
     Ok(store.commit_with_evidence(
         &draft,
         request.expected,

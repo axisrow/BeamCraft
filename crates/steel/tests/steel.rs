@@ -21,6 +21,7 @@ mod kernel_member;
 mod kernel_section;
 mod layer_authored;
 mod layer_index;
+mod layer_instancing;
 mod layer_rebase;
 mod member_placement_rotation;
 mod non_box_features;

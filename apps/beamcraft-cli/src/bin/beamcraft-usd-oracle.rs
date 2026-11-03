@@ -386,8 +386,10 @@ struct Spec {
     type_name: Option<String>,
     kind: Option<String>,
     display_name: Option<String>,
-    /// The reference arc: (asset path, target prim name).
+    /// The reference arc: (asset path, target prim path). An empty asset path is the U11
+    /// internal arc to a prim of the same layer.
     reference: Option<(String, String)>,
+    instanceable: bool,
     attributes: Vec<(String, Value)>,
     /// The prim had a body in this layer.
     has_body: bool,
@@ -772,12 +774,7 @@ impl Parser {
             self.expect(b'=')?;
             self.skip_space();
             let asset = self.asset()?;
-            self.skip_space();
-            self.expect(b'<')?;
-            // The target is a prim path: `</Site>`, leading slash included.
-            self.expect(b'/')?;
-            let target = self.word();
-            self.expect(b'>')?;
+            let target = self.prim_path_ref()?;
             if spec.reference.is_some() {
                 return Err(self.error("more than one reference arc"));
             }
@@ -797,8 +794,43 @@ impl Parser {
                 spec.display_name = Some(self.quoted()?);
                 Ok(())
             }
+            // U11: an instanceable prim references a shared asset of the same layer.
+            "references" => {
+                let target = self.prim_path_ref()?;
+                if spec.reference.is_some() {
+                    return Err(self.error("more than one reference arc"));
+                }
+                spec.reference = Some((String::new(), target));
+                Ok(())
+            }
+            "instanceable" => {
+                let value = if self.literal("true") {
+                    true
+                } else if self.literal("false") {
+                    false
+                } else {
+                    return Err(self.error("instanceable is not a boolean"));
+                };
+                spec.instanceable = value;
+                Ok(())
+            }
             other => Err(self.error(&format!("unexpected prim metadata {other:?}"))),
         }
+    }
+
+    /// `</path/segments>`: a prim path reference target, captured whole with its leading slash.
+    fn prim_path_ref(&mut self) -> Result<String, String> {
+        self.skip_space();
+        self.expect(b'<')?;
+        self.expect(b'/')?;
+        let start = self.pos;
+        while self.peek().is_some_and(|b| b != b'>') {
+            self.pos += 1;
+        }
+        let target =
+            String::from_utf8_lossy(self.bytes.get(start..self.pos).unwrap_or(&[])).into_owned();
+        self.expect(b'>')?;
+        Ok(format!("/{target}"))
     }
 
     /// Parses the body of `spec`: child prims, attributes and relationships. Children go
@@ -1039,12 +1071,24 @@ impl Stage {
 
     /// A composed prim: local opinions, then the foreign subtree baked by [`Self::resolve_arcs`].
     fn prim(&self, path: &str) -> Option<Prim> {
+        let specs = self.owned_specs(path);
         let mut prim = Prim {
             path: path.to_owned(),
             ..Prim::default()
         };
-        for spec in &self.owned_specs(path) {
+        for spec in &specs {
             prim.absorb(spec);
+        }
+        // U11: an internal reference composes the shared asset's opinions under the prim's own;
+        // type and kind keep their local answers, the buffers come from the asset.
+        if let Some((_, target)) = specs
+            .iter()
+            .find_map(|s| s.reference.as_ref().filter(|(asset, _)| asset.is_empty()))
+        {
+            match self.owned_specs(target).into_iter().next() {
+                Some(asset) => prim.absorb(&asset),
+                None => self.problem(format!("{path}: the internal arc lacks {target:?}")),
+            }
         }
         let foreign = self.foreign_specs.borrow().get(path).cloned();
         if let Some(foreign_spec) = foreign {
@@ -1070,9 +1114,11 @@ impl Stage {
             .filter(|(_, _, foreign)| !foreign)
             .flat_map(|(_, layer, _)| {
                 layer.specs.iter().filter_map(|s| {
-                    s.reference
-                        .clone()
-                        .map(|(asset, target)| (s.path.clone(), asset, target))
+                    // U11 internal arcs compose inside the owned stack; only an external asset
+                    // is baked as a foreign layer here.
+                    s.reference.clone().and_then(|(asset, target)| {
+                        (!asset.is_empty()).then(|| (s.path.clone(), asset, target))
+                    })
                 })
             })
             .collect();
@@ -1087,7 +1133,7 @@ impl Stage {
                 None => (),
             }
             let foreign = self.load(&asset, true);
-            let foreign_path = format!("/{target}");
+            let foreign_path = target.clone();
             let mut subtree = self.foreign_specs.borrow_mut();
             for spec in &foreign.specs {
                 if let Some(rest) = spec.path.strip_prefix(&foreign_path) {
@@ -1466,6 +1512,19 @@ fn check_element(stage: &Stage, entry: &Json, findings: &mut Findings) -> Option
     findings.check(
         mesh.kind.as_deref() == Some("subcomponent"),
         format!("{geometry_path}: kind is {:?}", mesh.kind),
+    );
+    // U11: the body is an instanceable reference to one shared immutable geometry asset.
+    let geometry_specs = stage.owned_specs(&geometry_path);
+    findings.check(
+        geometry_specs.iter().any(|s| s.instanceable),
+        format!("{geometry_path}: the prim is not instanceable"),
+    );
+    findings.check(
+        geometry_specs.iter().any(|s| {
+            matches!(&s.reference, Some((asset, target))
+                if asset.is_empty() && target.starts_with("/World/Definitions/Geometry/GEO_"))
+        }),
+        format!("{geometry_path}: no internal reference to a shared geometry asset"),
     );
     let points = mesh.v3s("points");
     let counts = mesh.nums("faceVertexCounts");

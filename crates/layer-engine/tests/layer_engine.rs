@@ -10,6 +10,7 @@
 
 mod coordination;
 mod displayed_source;
+mod instancing;
 mod read;
 mod reference;
 

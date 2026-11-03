@@ -262,9 +262,24 @@ fn changeset_publication_carries_copy_source_reads_without_unrelated_model_reads
         .unwrap()
         .unwrap();
     assert_eq!(proof.fingerprint, digest);
-    assert_eq!(
-        proof.footprint,
-        Footprint::for_copy(element(1), element(3), None, None).unwrap()
+    // U11: the copy's evidence carries exactly one extra write — the immutable geometry asset
+    // the copied body pins, by content digest.
+    let declared = Footprint::for_copy(element(1), element(3), None, None).unwrap();
+    assert_eq!(proof.footprint.reads(), declared.reads());
+    let extra: Vec<_> = proof
+        .footprint
+        .writes()
+        .iter()
+        .filter(|entry| !declared.writes().contains(entry))
+        .collect();
+    assert_eq!(extra.len(), 1, "only the transfer asset write: {extra:?}");
+    assert_eq!(extra[0].group, Group::Derived);
+    assert!(matches!(extra[0].target, Target::Definition(_)));
+    assert!(
+        declared
+            .writes()
+            .iter()
+            .all(|entry| proof.footprint.writes().contains(entry))
     );
 }
 

@@ -2083,20 +2083,46 @@ pub(crate) fn mesh_change(
     }))
 }
 
-/// The layer engine's own write set must lie inside the footprint the engine declared.
+/// The layer engine's own write set must lie inside the footprint the engine declared. U11: a
+/// geometry asset's content identity is an engine-completed transfer write, derived
+/// mechanically from the batch's own mesh buffers; it never narrows a caller claim, and
+/// `publish_revision` carries the same entries into the persisted evidence.
 pub(crate) fn check_footprint(prepared: &Prepared, declared: &Footprint) -> Result<(), Refusal> {
-    let observed: BTreeSet<Entry> = prepared
-        .writes
-        .iter()
-        .map(layer_entry)
-        .collect::<Option<_>>()
-        .ok_or_else(|| integrity("layer engine footprint names an unknown target"))?;
+    let mut observed = std::collections::BTreeSet::new();
+    for item in &prepared.writes {
+        let Some(entry) = layer_entry(item) else {
+            return Err(integrity("layer engine footprint names an unknown target"));
+        };
+        if matches!(entry.target, Target::Definition(_)) && entry.group == Group::Derived {
+            continue;
+        }
+        observed.insert(entry);
+    }
     if !declared.covers_writes(&observed) {
         return Err(integrity(
             "layer engine writes more than the engine footprint declares",
         ));
     }
     Ok(())
+}
+
+/// Completes a declared footprint with the immutable geometry assets (U11) the prepared batch
+/// transfers: one `Definition` derived-group write per distinct body. The declared set is only
+/// ever widened, and the 4096-entry bound still applies.
+pub(crate) fn with_transfer_assets(
+    declared: &Footprint,
+    prepared: &Prepared,
+) -> Result<Footprint, Refusal> {
+    let entries: Vec<Entry> = prepared
+        .writes
+        .iter()
+        .filter_map(|item| {
+            layer_entry(item).filter(|entry| {
+                matches!(entry.target, Target::Definition(_)) && entry.group == Group::Derived
+            })
+        })
+        .collect();
+    declared.plus(&entries).map_err(Refusal::from)
 }
 
 fn layer_group(group: LayerGroup) -> Group {
@@ -2449,6 +2475,7 @@ mod tests {
             active: true,
             kind: None,
             display_name: None,
+            instanceable: false,
             properties,
             relationships: Vec::new(),
             sources: Vec::new(),
