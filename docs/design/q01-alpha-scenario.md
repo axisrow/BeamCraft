@@ -115,9 +115,13 @@ cargo run --locked -p beamcraft-ui -- --workspace "$ROOTX/draft" --published "$R
 
 Record the environment first: OS and version, the GPU/backend line of the `Details` window
 (bottom bar → `Details`), the commit and the date. Keep `Details` open — its `Revision …` and
-`Elements:` lines are the "model unchanged" evidence of every cell. The expanded story leaves
-seven parts (two members named `column`, the beam trimmed to 950 mm, `Split column`, two
-`Base plate` plates, one copied part), the grid `Q01 grid` (U lines at x = 0 and x = 1000, a
+`Elements:` lines are the "model unchanged" evidence of every cell. The draft the cells open
+holds ten parts: the seven of the numbered frame (two members named `column`, the beam
+trimmed to 950 mm, `Split column`, two `Base plate` plates, one copied part) plus the three
+slice-D members `Q01-D oblique hole beam` and `Q01-D tube hole beam` (both along x, origin
+at 0,0,0) and `Q01-D sloped wall beam` (along y), which the story appends to the draft after
+the published store was forked — only `$ROOTX/published` keeps the seven-part state. The
+draft also carries the grid `Q01 grid` (U lines at x = 0 and x = 1000, a
 V line at y = 0), the level `Q01 level` at elevation 1000, the assembly `Q01 expanded frame`
 and a weld record. Write the exact `Elements:` count down; the cells use it as their
 baseline. The colour-set and shortcut files live in the per-user configuration directory
@@ -129,7 +133,7 @@ a crash is never "try again and it worked".
 
 ### V11 — selection switches and snap panel (open until accepted)
 
-**Precondition.** The UI is open on `$ROOTX/draft`; seven parts are visible; `Details` shows
+**Precondition.** The UI is open on `$ROOTX/draft`; the ten draft parts are visible; `Details` shows
 the baseline revision and element count; the bottom bar shows the entity strip on the left
 and the snap strip on the right (each button names itself on hover).
 
@@ -153,7 +157,7 @@ and the snap strip on the right (each button names itself on hover).
    `Snap endpoints`, `Snap midpoints`, `Orthogonal constraint` and `Snap nearest` one by
    one. After each toggle write down only that the highlight followed the click and the
    scene did not change. Leave every snap switch on.
-6. Press `R` (reload). The same seven parts, the same `Revision …` prefix and the same
+6. Press `R` (reload). The same ten parts, the same `Revision …` prefix and the same
    `Elements:` count as the baseline.
 
 **Checklist** (fill the recorded results in the separate record, not here).
@@ -195,8 +199,8 @@ line on what changed on screen.
 
 ### V15 — view cut plane (open until accepted)
 
-**Precondition.** Seven parts visible, `Shaded` mode, no cut applied. The model on disk must
-not change in this cell.
+**Precondition.** The ten draft parts visible, `Shaded` mode, no cut applied. The model on
+disk must not change in this cell.
 
 **Steps.**
 
@@ -210,10 +214,14 @@ not change in this cell.
 3. Offset `950`, apply again: the cut moves up to the beam. Write the change down.
 4. Mode `Point and normal`, point `500,0,1000`, normal `0,0,1`, apply: the visible
    half-space faces +Z at beam level. Write down what remains visible.
-5. Tick `Work-area box`, `Min X,Y,Z (mm)` `-500,-500,-100`, `Max X,Y,Z (mm)` `600,500,1100`,
-   apply. The confirmation names two effective half-spaces; only the boxed region around the
-   left column and part of the beam remains.
-6. `Remove cut`: `Cut removed: the whole model is visible.`, all seven parts back.
+5. Switch the mode back to `XY (cut below)` — the offset field still holds `100` — tick
+   `Work-area box`, set `Min X,Y,Z (mm)` to `-500,-500,-100` and `Max X,Y,Z (mm)` to
+   `600,500,1100`, apply. Write down the confirmation (expected `Cut applied: 1 user
+   plane(s), work-area box on, 7 effective half-space(s).` — with the box on, its six faces
+   join the user plane). On screen only what lies inside the box and at or above z = 100 mm
+   remains: the left column above the cut and the part of the beams inside the box; the
+   plates and the low slice-D beams disappear.
+6. `Remove cut`: `Cut removed: the whole model is visible.`, all ten parts back.
 7. Press `R`; `Details` still shows the baseline revision and element count.
 
 **Checklist.**
@@ -289,8 +297,8 @@ work-area fields.
 }
 ```
 
-Launch the UI. Baseline: seven parts in material colours; `Details` revision and counts
-noted.
+Launch the UI. Baseline: the ten draft parts in material colours; `Details` revision and
+counts noted.
 
 **Steps.**
 
