@@ -94,6 +94,7 @@ mod resolve;
 mod revision;
 mod schedules;
 mod sections;
+mod session;
 mod start;
 mod t015_grid_rights;
 mod transform;
