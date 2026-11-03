@@ -716,6 +716,7 @@ impl App {
                         dropdown_button(ui, Icon::Arrange, "Arrange", has_pane, |ui| {
                             for (how, label) in [
                                 (Arrange::Cascade, "Cascade"),
+                                (Arrange::Tile, "Tile"),
                                 (Arrange::TileHorizontal, "Tile horizontal"),
                                 (Arrange::TileVertical, "Tile vertical"),
                             ] {
@@ -747,18 +748,6 @@ impl App {
                             let on = !self.grids_shown();
                             self.set_grids_shown(on);
                             if !on { self.grid_edit = None; }
-                        }
-                    });
-                    group(ui, "Colour", &mut |ui| {
-                        if tool_button(ui, Icon::Block, "Colour", self.bench == Bench::Colour, true)
-                            .clicked()
-                        {
-                            pick = Some(Bench::Colour);
-                        }
-                    });
-                    group(ui, "Cut", &mut |ui| {
-                        if tool_button(ui, Icon::Block, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
-                            pick = Some(Bench::CutPlane);
                         }
                     });
                     group(ui, "Colour", &mut |ui| {
@@ -893,6 +882,8 @@ impl App {
                 }
                 if self.bench == Bench::View {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    // The panel keeps its width: a row never grows it.
+                    ui.set_max_width(ui.available_width());
                     self.view_panel(ui);
                     return;
                 }
@@ -1080,6 +1071,7 @@ impl App {
             "3D / plane view",
             "New view window",
             "Cascade view windows",
+            "Tile view windows",
             "Tile view windows horizontally",
             "Tile view windows vertically",
             "Maximize or restore the view window",
@@ -1095,6 +1087,7 @@ impl App {
                     "3D / plane view" => self.toggle_view_plane(),
                     "New view window" => self.open_pane(self.views.active()),
                     "Cascade view windows" => self.arrange(Arrange::Cascade),
+                    "Tile view windows" => self.arrange(Arrange::Tile),
                     "Tile view windows horizontally" => self.arrange(Arrange::TileHorizontal),
                     "Tile view windows vertically" => self.arrange(Arrange::TileVertical),
                     "Maximize or restore the view window" => self.arrange(Arrange::ToggleMaximize),
@@ -1663,61 +1656,12 @@ impl App {
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
-                    .inner_margin(egui::Margin::symmetric(10, 12)),
+                    .inner_margin(egui::Margin::symmetric(8, 8)),
             )
             .show(ui, |ui| {
-                ui.label(RichText::new("Project browser").size(12.0));
-                ui.separator();
-                ui.add_space(6.0);
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.browser_search)
-                        .hint_text("Search views and sheets")
-                        .desired_width(ui.available_width())
-                        .font(egui::FontId::proportional(11.0))
-                        .char_limit(128),
-                );
-                ui.add_space(12.0);
-                let name = self
-                    .source
-                    .store
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("Model");
-                ui.horizontal(|ui| {
-                    theme::icon(ui, Icon::Block, 16.0, palette.text);
-                    ui.label(RichText::new(name).size(12.0));
-                });
-                ui.add_space(10.0);
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let needle = self.browser_search.trim().to_lowercase();
-                    if needle.is_empty() || "views 3d model".contains(&needle) {
-                        // The model views (V12): folders, search, quick access and the context
-                        // menu live in the view browser; the {3D} entry is the free view.
-                        egui::CollapsingHeader::new("Views")
-                            .default_open(true)
-                            .show(ui, |ui| self.view_browser(ui));
-                    }
-                    for title in ["Schedules / Quantities", "Sheets (all)"] {
-                        if needle.is_empty() || title.to_lowercase().contains(&needle) {
-                            egui::CollapsingHeader::new(title).show(ui, |ui| {
-                                ui.label(
-                                    RichText::new("Not available in the native UI yet")
-                                        .size(10.0)
-                                        .color(palette.muted),
-                                );
-                            });
-                        }
-                    }
-                    egui::CollapsingHeader::new("Model information").show(ui, |ui| {
-                        if let Some(loaded) = &self.loaded {
-                            ui.label(format!("Elements: {}", loaded.summary.elements));
-                            ui.label(format!("Triangles: {}", loaded.summary.triangles));
-                        } else {
-                            ui.label("No snapshot loaded");
-                        }
-                        ui.label("Units: mm");
-                    });
-                });
+                // The Views / Drawings / Schedules tabs, the folders, quick access and the
+                // context menu live in the view browser; the 3D entry is the free view.
+                self.view_browser(ui);
             });
     }
 }

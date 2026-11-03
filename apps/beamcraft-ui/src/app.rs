@@ -199,7 +199,6 @@ pub struct App {
     command_search: bool,
     command_focus: bool,
     command_query: String,
-    browser_search: String,
     /// Whether the Details window is open.
     details: bool,
     /// A fit requested by the ribbon or command search, applied in the next frame.
@@ -850,7 +849,6 @@ impl App {
             command_search: false,
             command_focus: false,
             command_query: String::new(),
-            browser_search: String::new(),
             state,
             source,
             stats,
@@ -931,6 +929,8 @@ impl App {
         app.tools.actor.clone_from(&app.source.actor);
         app.editor.actor.clone_from(&app.source.actor);
         app.props.actor.clone_from(&app.source.actor);
+        app.ensure_default_view();
+        app.adopt_default_view();
         app.reload();
         app.refresh_status();
         Ok(app)
@@ -1086,8 +1086,14 @@ impl App {
                     self.loaded.as_ref().map(|l| self.grid_framing(&l.summary))
                 {
                     let aspect = self.aspect();
-                    // An active model view keeps its own camera (V12).
-                    match self.views.active_pane_mut().filter(|p| p.view.is_none()) {
+                    // An active model view keeps its own camera (V12); the default view fits
+                    // the model like a free camera.
+                    let default = self.default_view_id();
+                    match self
+                        .views
+                        .active_pane_mut()
+                        .filter(|p| p.view.is_none() || p.view == default)
+                    {
                         Some(pane) if needs_refit(pane.framed, target, extent, aspect) => {
                             match pane.camera.fit(target, extent, aspect) {
                                 Ok(()) => {
@@ -1112,9 +1118,14 @@ impl App {
                     loaded.summary.framing()
                 };
                 let aspect = self.aspect();
+                let default = self.default_view_id();
                 // A scene the camera cannot frame keeps the previous scene and shows why. An
                 // unchanged framing keeps the user's camera.
-                let fitted = match self.views.active_pane_mut().filter(|p| p.view.is_none()) {
+                let fitted = match self
+                    .views
+                    .active_pane_mut()
+                    .filter(|p| p.view.is_none() || p.view == default)
+                {
                     Some(pane) if needs_refit(pane.framed, target, extent, aspect) => Some(
                         pane.camera
                             .fit(target, extent, aspect)
@@ -1171,10 +1182,12 @@ impl App {
         // against its own aspect.
         let previous = self.loaded.as_ref().map(|l| l.summary.origin_mm);
         let next = loaded.summary.origin_mm;
+        let default = self.default_view_id();
         if let Some(previous) = previous.filter(|p| *p != next) {
             let active = self.views.active_pane().map(|p| p.key);
             for pane in &mut self.views.panes {
-                if pane.view.is_some() || Some(pane.key) != active {
+                let free = pane.view.is_none() || pane.view == default;
+                if !free || Some(pane.key) != active {
                     pane.camera.rebase(previous, next);
                 }
                 if let Some((camera, _, _)) = &mut pane.spatial {
@@ -1293,10 +1306,10 @@ impl App {
                 self.empty_click();
             }
             Ok(Some(Selected { id, info, details })) => {
-                // A part picked from the free 3D view's panel shows its own properties; a new
-                // view's form and a saved view's properties stay, so no edit is thrown away.
+                // A picked part shows its own properties. Only a new view's form stays open:
+                // its picks and name are not recoverable.
                 if self.bench == workbench::Bench::View
-                    && matches!(self.views.subject, crate::views::Subject::FreeView(_))
+                    && self.views.subject != crate::views::Subject::NewView
                 {
                     self.set_bench(workbench::Bench::Select);
                 }
@@ -3764,8 +3777,12 @@ pub(crate) mod tests {
         let Some(mut app) = headless() else { return };
         assert_eq!(app.views.panes.len(), 1);
         let pane = app.views.active_pane().unwrap();
-        assert_eq!(pane.view, None);
-        assert_eq!(pane.title, "3D view");
+        assert_eq!(pane.view, app.default_view_id());
+        assert!(
+            pane.view.is_some(),
+            "the main viewport shows the default view"
+        );
+        assert_eq!(pane.title, "3D View");
         assert_eq!(pane.mode, RenderMode::Shaded);
         assert!(pane.grids);
         assert_eq!(pane.target.size(), Some([1280, 800]));
@@ -5754,8 +5771,8 @@ pub(crate) mod tests {
         }
         let create = create.unwrap_or_else(|| panic!("no Apply button: {labels:?}"));
         views_frame(&mut app, &ctx, click(create), &mut labels, &mut rects);
-        assert_eq!(app.views.book.len(), 1, "the Apply button did not dispatch");
-        let plan = app.views.book.views()[0].clone();
+        assert_eq!(app.views.book.len(), 2, "the Apply button did not dispatch");
+        let plan = app.views.book.find("Plan +3000").unwrap().clone();
         assert_eq!(plan.plane.origin(), [0.0, 0.0, 3000.0]);
         assert_eq!(app.views.active(), Some(plan.id));
         // The panel moves on to the created view's properties.
@@ -5820,10 +5837,14 @@ pub(crate) mod tests {
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
 
         // The book round-trips through the sidecar, and a confirmed delete persists.
-        assert_eq!(crate::views::load(&dir).unwrap().len(), 1);
+        assert_eq!(crate::views::load(&dir).unwrap().len(), 2);
         app.browser_action(super::view_panel::BrowserAction::ConfirmDelete(plan.id));
         assert!(app.views.active().is_none());
-        assert!(crate::views::load(&dir).unwrap().is_empty());
+        assert_eq!(
+            crate::views::load(&dir).unwrap().len(),
+            1,
+            "only the default view is left"
+        );
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -5931,18 +5952,13 @@ pub(crate) mod tests {
         use beamcraft_engine::work_plane::WorkPlane;
         use beamcraft_model::id::Uuid7;
         let Some(mut app) = headless() else { return };
-        let key = app.views.active_pane().unwrap().key;
-        // The free 3D view: its display and a default name for "Save as view".
+        let default = app.default_view_id().expect("a model has a default view");
+        // The default view is a view like the others: its properties show in the panel.
         answer_select(&mut app, Ok(None));
         assert_eq!(app.bench, Bench::View);
-        assert_eq!(app.views.subject, Subject::FreeView(Some(key)));
-        assert_eq!(app.views.form.name, "View 1");
-        app.views.form.name = "Draft".into();
-        answer_select(&mut app, Ok(None));
-        assert_eq!(
-            app.views.form.name, "Draft",
-            "the same free pane keeps its form"
-        );
+        assert_eq!(app.views.subject, Subject::SavedView(default));
+        assert_eq!(app.views.form.name, "3D View");
+        assert!(app.views.form.default);
 
         // A saved view: its properties, and an unsaved edit survives another empty click.
         let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
@@ -5955,14 +5971,13 @@ pub(crate) mod tests {
         answer_select(&mut app, Ok(None));
         assert_eq!(app.views.form.span, "1234");
 
-        // A part picked with a saved view's properties open keeps them; from the free view's
-        // panel it shows its own properties.
+        // A part picked shows its own properties, from any view's panel.
         answer_select(&mut app, a_part());
-        assert_eq!(app.bench, Bench::View);
-        assert_eq!(app.views.subject, Subject::SavedView(id));
+        assert_eq!(app.bench, Bench::Select);
         app.activate_view(None);
+        assert_eq!(app.views.active(), Some(default));
         answer_select(&mut app, Ok(None));
-        assert_eq!(app.views.subject, Subject::FreeView(Some(key)));
+        assert_eq!(app.views.subject, Subject::SavedView(default));
         answer_select(&mut app, a_part());
         assert_eq!(app.bench, Bench::Select);
 
@@ -5985,24 +6000,131 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn save_as_view_turns_the_free_view_into_a_saved_view() {
+    fn the_project_browser_lists_tabs_folders_and_views_without_a_model_views_group() {
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
         let Some(mut app) = headless() else { return };
-        let dir =
-            std::env::temp_dir().join(format!("beamcraft-v12-save-as-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        app.source.store = dir.clone();
-        deliver(&mut app, refreshed(2));
-        app.show_view_properties();
-        assert_eq!(
-            app.views.subject,
-            crate::views::Subject::FreeView(app.views.active_pane().map(|p| p.key))
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let mut root = ModelView::new(
+            Uuid7::parse("019a7bf0-0000-7000-8000-000000000011").unwrap(),
+            "Elevation A",
+            WorkPlane::default(),
+            5000.0,
         );
-        app.submit_view();
-        let view = app.views.book.find("View 1").unwrap().clone();
-        assert_eq!(app.views.active(), Some(view.id));
-        assert_eq!(app.views.active_pane().unwrap().title, "View 1");
-        assert_eq!(app.views.subject, crate::views::Subject::SavedView(view.id));
-        std::fs::remove_dir_all(&dir).unwrap();
+        root.favorite = true;
+        let mut planned = ModelView::new(
+            Uuid7::parse("019a7bf0-0000-7000-8000-000000000012").unwrap(),
+            "Level 1",
+            WorkPlane::default(),
+            5000.0,
+        );
+        "Plans".clone_into(&mut planned.folder);
+        planned.temporary = true;
+        app.views.book.create_folder("Plans").unwrap();
+        app.views.book.insert(root).unwrap();
+        app.views.book.insert(planned).unwrap();
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let shown: Vec<&str> = labels.iter().map(|(t, _)| t.as_str()).collect();
+        for expected in ["3D views", "3D View", "Plans", "Elevation A", "Level 1"] {
+            assert!(shown.contains(&expected), "{expected} is listed: {shown:?}");
+        }
+        for gone in [
+            "Model views",
+            "Project browser",
+            "Model information",
+            "Search views and sheets",
+            "3D view",
+        ] {
+            assert!(!shown.contains(&gone), "{gone} is gone");
+        }
+        // By folder, the folder replaces the kind groups.
+        app.views.by_folder = true;
+        let labels = app_frame(&mut app, &ctx, vec![]);
+        let shown: Vec<&str> = labels.iter().map(|(t, _)| t.as_str()).collect();
+        assert!(shown.contains(&"Plans"), "{shown:?}");
+        assert!(!shown.contains(&"3D views"), "{shown:?}");
+    }
+
+    #[test]
+    fn the_view_panel_keeps_its_width_from_frame_to_frame() {
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        app.show_view_properties();
+        let at = |labels: &[(String, egui::Pos2)]| {
+            labels
+                .iter()
+                .find(|(t, _)| t == "Folder")
+                .map(|(_, p)| *p)
+                .unwrap_or_else(|| panic!("no Folder row: {labels:?}"))
+        };
+        let first = at(&app_frame(&mut app, &ctx, vec![]));
+        let mut last = first;
+        for _ in 0..12 {
+            last = at(&app_frame(&mut app, &ctx, vec![]));
+        }
+        assert_eq!(first, last, "the panel grew or shrank while idle");
+    }
+
+    #[test]
+    fn the_default_view_is_a_view_like_the_others_that_stays_and_can_move() {
+        use super::view_panel::BrowserAction;
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let default = app.default_view_id().expect("a model has a default view");
+        assert_eq!(app.views.book.get(&default).unwrap().name, "3D View");
+        let pane = app.views.active_pane().unwrap();
+        assert_eq!(pane.view, Some(default));
+        assert_eq!(pane.title, "3D View");
+
+        // It cannot be deleted while it is the default.
+        app.browser_action(BrowserAction::Delete(default));
+        assert_eq!(app.views.confirm_delete, None);
+        assert!(matches!(app.views.note, Some(Err(_))));
+        app.browser_action(BrowserAction::ConfirmDelete(default));
+        assert!(app.views.book.get(&default).is_some());
+
+        // Another view takes the mark; then the old one is an ordinary view.
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000021").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan", WorkPlane::default(), 5000.0))
+            .unwrap();
+        app.activate_view(Some(id));
+        app.browser_action(BrowserAction::SetDefault(id));
+        assert_eq!(app.default_view_id(), Some(id));
+        assert!(!app.views.book.get(&default).unwrap().is_default);
+        // "No particular view" now means the new default.
+        app.browser_action(BrowserAction::Close(id));
+        app.activate_view(None);
+        assert_eq!(app.views.active(), Some(id));
+        app.browser_action(BrowserAction::ConfirmDelete(default));
+        assert!(app.views.book.get(&default).is_none());
+    }
+
+    #[test]
+    fn a_model_without_a_default_view_gets_one() {
+        let Some(mut app) = headless() else { return };
+        let default = app.default_view_id().unwrap();
+        // A book from a file written before the default view existed has none.
+        let mut view = app.views.book.get(&default).unwrap().clone();
+        view.is_default = false;
+        app.views.book =
+            beamcraft_engine::views::ViewBook::from_parts(vec![view], Vec::new()).unwrap();
+        assert!(app.default_view_id().is_none());
+        app.ensure_default_view();
+        let made = app.views.book.default_view().unwrap();
+        assert_eq!(made.name, "3D View (2)");
+        assert_eq!(app.views.book.len(), 2);
+        // A second call changes nothing.
+        app.ensure_default_view();
+        assert_eq!(app.views.book.len(), 2);
     }
 
     #[test]
@@ -6280,6 +6402,41 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn arranging_four_windows_tiles_a_two_by_two_grid() {
+        use super::work_area::Arrange;
+        let Some(mut app) = headless() else { return };
+        for _ in 0..3 {
+            app.open_pane(None);
+        }
+        let ctx = views_context();
+        let (mut labels, mut rects) = (Vec::new(), Vec::new());
+        views_frame_with(
+            &mut app,
+            &ctx,
+            vec![],
+            &mut labels,
+            &mut rects,
+            false,
+            |_| {},
+        );
+        app.arrange(Arrange::Tile);
+        let columns: std::collections::BTreeSet<u32> = app
+            .views
+            .panes
+            .iter()
+            .map(|p| p.rect.min.x.to_bits())
+            .collect();
+        let rows: std::collections::BTreeSet<u32> = app
+            .views
+            .panes
+            .iter()
+            .map(|p| p.rect.min.y.to_bits())
+            .collect();
+        assert_eq!((columns.len(), rows.len()), (2, 2));
+        assert!(app.views.panes.iter().all(|p| !p.maximized));
+    }
+
+    #[test]
     fn arrange_lays_the_panes_out_inside_the_work_area() {
         use super::work_area::Arrange;
         let Some(mut app) = headless() else { return };
@@ -6380,7 +6537,7 @@ pub(crate) mod tests {
         let (mut labels, mut rects) = (Vec::new(), Vec::new());
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         assert!(labels.iter().any(|(t, _)| t == "No view is open."));
-        assert!(labels.iter().any(|(t, _)| t == "Open the 3D view"));
+        assert!(labels.iter().any(|(t, _)| t == "Open default view"));
         // A click, F and Ctrl+P on an empty work area: nothing to act on, and no panic.
         let key = |key, modifiers| egui::Event::Key {
             key,
@@ -6400,17 +6557,17 @@ pub(crate) mod tests {
             direction: [0.0, 0.0, -1.0],
         };
         assert!(app.creation_hit(ray, false).is_err());
-        // The hint's button opens the free 3D view (laid out again after the full frame).
+        // The hint's button opens the default view (laid out again after the full frame).
         labels.clear();
         views_frame(&mut app, &ctx, vec![], &mut labels, &mut rects);
         let open = labels
             .iter()
-            .find(|(t, _)| t == "Open the 3D view")
+            .find(|(t, _)| t == "Open default view")
             .map(|(_, p)| *p)
             .unwrap_or_else(|| panic!("no open button: {labels:?}"));
         views_frame(&mut app, &ctx, click(open), &mut labels, &mut rects);
         assert_eq!(app.views.panes.len(), 1);
-        assert_eq!(app.views.active_pane().unwrap().title, "3D view");
+        assert_eq!(app.views.active_pane().unwrap().title, "3D View");
         // Opening a view from the browser on an empty work area opens a pane on it.
         app.close_pane(app.views.active_pane().unwrap().key);
         let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();

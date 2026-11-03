@@ -449,6 +449,26 @@ pub fn tile_vertical(area: Rect, count: usize) -> Vec<Rect> {
     } else {
         ((area.width() / MIN_PANE.x).floor() as usize).clamp(1, count.max(1))
     };
+    fill_rows(area, count, columns)
+}
+
+/// A square-ish grid: `ceil(sqrt(count))` columns (so four panes form 2 x 2), fewer when a
+/// column would be narrower than `MIN_PANE.x`. Filled row by row; the last row's panes share
+/// its width. The rects partition the area exactly.
+pub fn tile_grid(area: Rect, count: usize) -> Vec<Rect> {
+    if !usable(area) {
+        return vec![area; count];
+    }
+    let mut columns = 1;
+    while columns * columns < count {
+        columns += 1;
+    }
+    let room = ((area.width() / MIN_PANE.x).floor() as usize).max(1);
+    fill_rows(area, count, columns.min(room).clamp(1, count.max(1)))
+}
+
+/// `count` panes in rows of `columns`, filled row by row; the last row's panes share its width.
+fn fill_rows(area: Rect, count: usize, columns: usize) -> Vec<Rect> {
     let rows = count.div_ceil(columns).max(1);
     (0..count)
         .map(|index| {
@@ -669,6 +689,23 @@ mod tests {
         // Too low for eight strips: a grid whose panes keep the minimum height.
         let grid = tile_horizontal(area, 8);
         assert!(grid.iter().all(|r| r.height() >= MIN_PANE.y), "{grid:?}");
+    }
+
+    #[test]
+    fn the_grid_tiles_four_panes_as_two_by_two() {
+        let area = layout_areas()[0];
+        for count in 1..=9 {
+            assert_partition(area, &tile_grid(area, count), &format!("grid {count}"));
+        }
+        let four = tile_grid(area, 4);
+        let columns: std::collections::BTreeSet<_> =
+            four.iter().map(|r| r.min.x.to_bits()).collect();
+        let rows: std::collections::BTreeSet<_> = four.iter().map(|r| r.min.y.to_bits()).collect();
+        assert_eq!((columns.len(), rows.len()), (2, 2), "{four:?}");
+        // Three panes: two on top, the last one spans the bottom row.
+        let three = tile_grid(area, 3);
+        assert_eq!(three[2].width(), area.width());
+        assert_eq!(three[0].width(), area.width() / 2.0);
     }
 
     #[test]

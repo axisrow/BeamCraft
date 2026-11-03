@@ -240,6 +240,9 @@ pub struct ModelView {
     pub favorite: bool,
     /// Session-only: never written to the saved book.
     pub temporary: bool,
+    /// The model's default view: the one a model opens on. Exactly one view of a model has it,
+    /// it is saved with the model, and it cannot be removed.
+    pub is_default: bool,
     /// Element kinds hidden in this view.
     pub hidden_kinds: KindFilter,
     /// Optional world-space box the view shows.
@@ -271,6 +274,7 @@ impl ModelView {
             folder: String::new(),
             favorite: false,
             temporary: false,
+            is_default: false,
             hidden_kinds: KindFilter::SHOW_ALL,
             work_area: None,
             rotation_rad: [0.0; 2],
@@ -323,6 +327,12 @@ impl ModelView {
             return Err(invalid(
                 "views.name",
                 "a view name needs 1 to 128 characters without outer spaces or controls",
+            ));
+        }
+        if self.is_default && self.temporary {
+            return Err(invalid(
+                "views.default",
+                "the default view is saved with the model, so it cannot be temporary",
             ));
         }
         if !self.span_mm.is_finite() || !(MIN_SPAN_MM..=MAX_SPAN_MM).contains(&self.span_mm) {
@@ -541,6 +551,9 @@ impl ViewBook {
             ));
         }
         self.create_folder_tree(&view.folder)?;
+        if view.is_default {
+            self.clear_default();
+        }
         self.views.push(view);
         Ok(())
     }
@@ -578,21 +591,68 @@ impl ViewBook {
                 "the model already has the maximum number of view folders",
             ));
         }
-        let slot = self
+        let at = self
             .views
-            .iter_mut()
-            .find(|v| v.id == view.id)
+            .iter()
+            .position(|v| v.id == view.id)
             .ok_or_else(|| not_found("views.id", "VIEW_UNKNOWN"))?;
+        if !view.is_default && self.views.get(at).is_some_and(|v| v.is_default) {
+            return Err(CommandError::new(
+                ErrorCode::DependencyConflict,
+                "views.default",
+                "a model always has a default view: make another view the default instead",
+            ));
+        }
         next.extend(fresh);
-        *slot = view;
+        if view.is_default {
+            self.clear_default();
+        }
+        if let Some(slot) = self.views.get_mut(at) {
+            *slot = view;
+        }
         self.folders = next;
         Ok(())
     }
 
-    /// Removes a view by identity, returning it.
-    pub fn remove(&mut self, id: &Uuid7) -> Option<ModelView> {
-        let at = self.views.iter().position(|v| v.id == *id)?;
-        Some(self.views.remove(at))
+    /// The default view: the one the model opens on. `None` only for a book that has no view
+    /// yet or came from a file that marks none.
+    pub fn default_view(&self) -> Option<&ModelView> {
+        self.views.iter().find(|v| v.is_default)
+    }
+
+    fn clear_default(&mut self) {
+        for view in &mut self.views {
+            view.is_default = false;
+        }
+    }
+
+    /// Makes the view the default one; the previous default loses the mark. A temporary view
+    /// cannot be the default.
+    pub fn set_default(&mut self, id: &Uuid7) -> Result<(), CommandError> {
+        let mut view = self
+            .get(id)
+            .cloned()
+            .ok_or_else(|| not_found("views.id", "VIEW_UNKNOWN"))?;
+        view.is_default = true;
+        self.update(view)
+    }
+
+    /// Removes a view by identity, returning it. The default view stays: make another view the
+    /// default first.
+    pub fn remove(&mut self, id: &Uuid7) -> Result<ModelView, CommandError> {
+        let at = self
+            .views
+            .iter()
+            .position(|v| v.id == *id)
+            .ok_or_else(|| not_found("views.id", "VIEW_UNKNOWN"))?;
+        if self.views.get(at).is_some_and(|v| v.is_default) {
+            return Err(CommandError::new(
+                ErrorCode::DependencyConflict,
+                "views.default",
+                "the default view cannot be removed: make another view the default first",
+            ));
+        }
+        Ok(self.views.remove(at))
     }
 
     /// Creates a folder with its ancestors; refuses the root and an existing folder.
@@ -1322,7 +1382,8 @@ mod tests {
         book.create_folder("Details").unwrap();
         assert!(book.create_folder("Details").is_err());
         book.delete_folder("Details").unwrap();
-        assert!(book.remove(&id(1)).is_some());
+        assert!(book.remove(&id(1)).is_ok());
+        assert!(book.remove(&id(1)).is_err(), "the view is gone");
         book.delete_folder("Plans").unwrap();
         assert_eq!(book.folders().count(), 0);
         assert_eq!(book.unique_name("Section A", &[]), "Section A (2)");
@@ -1330,6 +1391,33 @@ mod tests {
             book.unique_name("Grid A", &["grid a".to_owned()]),
             "Grid A (2)"
         );
+    }
+
+    #[test]
+    fn exactly_one_view_is_the_default_and_it_cannot_be_removed() {
+        let mut book = ViewBook::new();
+        assert!(book.default_view().is_none());
+        let mut first = view(1, "3D View");
+        first.is_default = true;
+        book.insert(first).unwrap();
+        book.insert(view(2, "Plan")).unwrap();
+        assert_eq!(book.default_view().unwrap().id, id(1));
+        assert!(book.remove(&id(1)).is_err(), "the default stays");
+        let mut second = view(3, "Other");
+        second.is_default = true;
+        book.insert(second).unwrap();
+        assert_eq!(book.default_view().unwrap().id, id(3), "the mark moves");
+        assert_eq!(book.views().iter().filter(|v| v.is_default).count(), 1);
+        book.set_default(&id(2)).unwrap();
+        assert_eq!(book.default_view().unwrap().id, id(2));
+        let mut unmarked = book.get(&id(2)).unwrap().clone();
+        unmarked.is_default = false;
+        assert!(book.update(unmarked).is_err(), "no update leaves none");
+        book.remove(&id(1)).unwrap();
+        let mut temporary = view(4, "Scratch");
+        temporary.is_default = true;
+        temporary.temporary = true;
+        assert!(book.insert(temporary).is_err());
     }
 
     #[test]

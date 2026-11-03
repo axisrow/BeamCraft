@@ -45,8 +45,12 @@ pub fn load(store: &Path) -> Result<ViewBook, String> {
 }
 
 /// Persists the book through a sibling temporary file, so a failed write keeps the old content.
-/// Temporary views are not written.
+/// Temporary views are not written. A store that is not a directory (no model is open there)
+/// has nothing to keep the views beside, so nothing is written.
 pub fn persist(store: &Path, book: &ViewBook) -> Result<(), String> {
+    if !store.is_dir() {
+        return Ok(());
+    }
     let path = session_path(store);
     let bytes = beamcraft_host::views::book_to_json(book)
         .map_err(|e| format!("the saved views were refused: {e}"))?
@@ -227,14 +231,14 @@ pub struct Form {
     pub id: Option<Uuid7>,
     /// Its plane, kept for an existing view.
     pub plane: WorkPlane,
-    /// Name, or the name prefix of a batch.
+    /// Name, or the name prefix of a batch; empty makes the view temporary.
     pub name: String,
     /// Browser folder.
     pub folder: String,
     /// Quick access mark.
     pub favorite: bool,
-    /// Session only.
-    pub temporary: bool,
+    /// The model's default view.
+    pub default: bool,
     /// How a new view gets its plane.
     pub construction: Construction,
     /// Offset of a coordinate plane, mm.
@@ -291,7 +295,7 @@ impl Default for Form {
             name: String::new(),
             folder: String::new(),
             favorite: false,
-            temporary: false,
+            default: false,
             construction: Construction::default(),
             offset: "0".into(),
             grid: 0,
@@ -333,12 +337,16 @@ impl Form {
         let mut form = Self {
             id: Some(view.id),
             plane: view.plane,
-            name: view.name.clone(),
+            name: String::new(),
             folder: view.folder.clone(),
             favorite: view.favorite,
-            temporary: view.temporary,
+            default: view.is_default,
             ..Self::default()
         };
+        // A temporary view is the one without a name.
+        if !view.temporary {
+            form.name.clone_from(&view.name);
+        }
         form.copy_display(view);
         form
     }
@@ -364,17 +372,25 @@ impl Form {
     }
 
     /// Writes the identity-free properties of the form into `view`: name, folder, marks and
-    /// every display property. The plane is the caller's.
+    /// every display property. The plane is the caller's. An empty name makes the view
+    /// temporary and leaves its book name as it is.
     pub fn apply(&self, view: &mut ModelView) -> Result<(), String> {
         let name = self.name.trim();
-        if name.is_empty() {
-            return Err("give the view a name".into());
+        view.temporary = name.is_empty();
+        if view.temporary {
+            if view.name.is_empty() {
+                return Err("give the view a name".into());
+            }
+        } else {
+            name.clone_into(&mut view.name);
         }
-        name.clone_into(&mut view.name);
         self.folder.trim().clone_into(&mut view.folder);
         validate_folder(&view.folder).map_err(|e| e.to_string())?;
         view.favorite = self.favorite;
-        view.temporary = self.temporary;
+        view.is_default = self.default;
+        if view.is_default && view.temporary {
+            return Err("the default view needs a name".into());
+        }
         view.projection = self.projection;
         view.span_mm = number(&self.span, "the visible height")?;
         view.depth = if self.depth_on {
@@ -428,6 +444,62 @@ impl Picking {
             return true;
         }
         self.face.take().is_some()
+    }
+}
+
+/// What a view looks at, as the browser groups it: a 3D view, a plan, or an elevation or
+/// section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ViewKind {
+    /// A perspective or oblique view, and the default view.
+    ThreeD,
+    /// A view straight down (or up) the vertical axis.
+    Plan,
+    /// A view along a horizontal direction.
+    Elevation,
+}
+
+impl ViewKind {
+    /// The kinds in browser order.
+    pub const ALL: [Self; 3] = [Self::ThreeD, Self::Plan, Self::Elevation];
+
+    /// The group title.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ThreeD => "3D views",
+            Self::Plan => "Plans",
+            Self::Elevation => "Sections and elevations",
+        }
+    }
+
+    /// The kind with this group title.
+    pub fn of_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.label() == label)
+    }
+
+    /// The icon of the kind.
+    pub fn icon(self) -> crate::theme::Icon {
+        match self {
+            Self::ThreeD => crate::theme::Icon::Block,
+            Self::Plan => crate::theme::Icon::Grid,
+            Self::Elevation => crate::theme::Icon::ViewFrame,
+        }
+    }
+}
+
+/// The kind of `view`: from its projection and the direction its camera looks along.
+pub fn view_kind(view: &ModelView) -> ViewKind {
+    if view.is_default || view.projection == Projection::Perspective {
+        return ViewKind::ThreeD;
+    }
+    let normal = view.camera_plane().unwrap_or(view.plane).normal();
+    let up = normal[2].abs();
+    if up > 0.999 {
+        ViewKind::Plan
+    } else if up < 0.001 {
+        ViewKind::Elevation
+    } else {
+        ViewKind::ThreeD
     }
 }
 
@@ -490,6 +562,8 @@ pub struct Views {
     pub tab: BrowserTab,
     /// Browser search.
     pub search: String,
+    /// Group the browser by folder instead of by view kind.
+    pub by_folder: bool,
     /// Show only favourites.
     pub favorites_only: bool,
     /// Show only quick access: favourites, temporary and open views.
@@ -565,9 +639,10 @@ impl Views {
         tint_of(self.active_view())
     }
 
-    /// The views the browser lists under `search`, the favourites and quick-access switches,
-    /// grouped by folder (the root first), each group sorted by name. Empty folders are listed
-    /// unless a filter is on.
+    /// The views the browser lists under `search` and the favourites and quick-access switches.
+    /// Grouped by what the views look at (3D views, plans, sections and elevations, as a
+    /// Revit-style browser does), or, with `by_folder`, by folder (the root first; empty folders
+    /// are listed unless a filter is on). Each group is sorted by name, the default view first.
     pub fn browser_groups(&self) -> Vec<(String, Vec<&ModelView>)> {
         let needle = self.search.trim().to_lowercase();
         let mut groups: BTreeMap<String, Vec<&ModelView>> = BTreeMap::new();
@@ -581,10 +656,16 @@ impl Views {
                     .to_lowercase()
                     .contains(&needle);
             if listed {
-                groups.entry(view.folder.clone()).or_default().push(view);
+                let key = if self.by_folder {
+                    view.folder.clone()
+                } else {
+                    // The kind's position, so the groups come out in kind order.
+                    (view_kind(view) as u8).to_string()
+                };
+                groups.entry(key).or_default().push(view);
             }
         }
-        if !self.favorites_only && !self.quick_access {
+        if self.by_folder && !self.favorites_only && !self.quick_access {
             for folder in self.book.folders() {
                 if folder.to_lowercase().contains(&needle) {
                     groups.entry(folder.to_owned()).or_default();
@@ -592,8 +673,15 @@ impl Views {
             }
         }
         let mut out: Vec<(String, Vec<&ModelView>)> = groups.into_iter().collect();
-        for (_, views) in &mut out {
-            views.sort_by_key(|v| v.name.to_lowercase());
+        for (key, views) in &mut out {
+            views.sort_by_key(|v| (!v.is_default, v.name.to_lowercase()));
+            if !self.by_folder {
+                *key = key
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|n| ViewKind::ALL.get(n))
+                    .map_or_else(String::new, |k| k.label().to_owned());
+            }
         }
         out
     }
@@ -757,17 +845,55 @@ mod tests {
         let mut bad = form.clone();
         bad.span = "tall".into();
         assert!(bad.apply(&mut back).is_err());
-        let mut bad = form.clone();
-        bad.name = "  ".into();
-        assert!(bad.apply(&mut back).is_err());
+        let mut unnamed = form.clone();
+        unnamed.name = "  ".into();
+        unnamed.apply(&mut back).unwrap();
+        assert!(back.temporary, "a view without a name is temporary");
+        assert_eq!(back.name, v.name, "the book name stays");
+        assert!(Form::from_view(&back).name.is_empty());
+        form.apply(&mut back).unwrap();
+        assert!(!back.temporary);
         let mut bad = form;
         bad.folder = "a/../b".into();
         assert!(bad.apply(&mut back).is_err());
     }
 
     #[test]
-    fn the_browser_groups_filters_and_selects() {
+    fn the_browser_groups_views_by_kind_with_the_default_first() {
+        use beamcraft_engine::work_plane::WorkPlane;
         let mut views = Views::default();
+        let mut home = view(1, "Z home", "");
+        home.is_default = true;
+        home.projection = Projection::Perspective;
+        let plan = view(2, "A plan", "");
+        let mut elevation = view(3, "Elevation", "");
+        elevation.plane = WorkPlane::parallel("xz", 0.0).unwrap();
+        let mut spatial = view(4, "B spatial", "");
+        spatial.projection = Projection::Perspective;
+        for v in [plan, elevation, spatial, home] {
+            views.book.insert(v).unwrap();
+        }
+        let groups = views.browser_groups();
+        let names: Vec<(&str, Vec<&str>)> = groups
+            .iter()
+            .map(|(f, v)| (f.as_str(), v.iter().map(|v| v.name.as_str()).collect()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("3D views", vec!["Z home", "B spatial"]),
+                ("Plans", vec!["A plan"]),
+                ("Sections and elevations", vec!["Elevation"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_browser_groups_filters_and_selects() {
+        let mut views = Views {
+            by_folder: true,
+            ..Views::default()
+        };
         views.book.insert(view(1, "b plan", "")).unwrap();
         views.book.insert(view(2, "A plan", "")).unwrap();
         let mut fav = view(3, "Section", "Sections");

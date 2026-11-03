@@ -429,6 +429,38 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> Respo
     response.on_hover_text(label)
 }
 
+/// A compact icon toggle: filled with the selection colour while `active`, highlighted on hover.
+pub fn icon_toggle(ui: &mut Ui, icon: Icon, label: &str, active: bool) -> Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+    let palette = Palette::current(ui);
+    if active || response.hovered() || response.has_focus() {
+        ui.painter()
+            .rect_filled(rect, 4, if active { palette.select } else { palette.head });
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            4,
+            Stroke::new(1.0, palette.link),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let ink = if active { palette.text } else { palette.muted };
+    paint_icon(ui.painter(), rect.shrink(5.0), icon, ink);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, active, label));
+    response.on_hover_text(label)
+}
+
+/// A compact icon toggle: the star of a favourite fills with the link colour while `active`.
+pub fn icon_toggle_filled(ui: &mut Ui, icon: Icon, label: &str, active: bool) -> Response {
+    let response = icon_toggle(ui, icon, label, active);
+    if active {
+        let palette = Palette::current(ui);
+        paint_icon(ui.painter(), response.rect.shrink(5.0), icon, palette.link);
+    }
+    response
+}
+
 /// Paints the blueprint grid of `spacing` points over `rect`.
 pub fn grid(painter: &Painter, rect: Rect, fill: Color32, line: Color32, spacing: f32) {
     painter.rect_filled(rect, 0.0, fill);
@@ -502,6 +534,28 @@ pub enum Icon {
     NewView,
     /// Three cascaded window frames: arrange the view windows.
     Arrange,
+    /// A view frame with a section line: a model view.
+    ViewFrame,
+    /// A page with a folded corner and text lines: a drawing sheet.
+    Sheet,
+    /// A table of rows and columns: a schedule.
+    Table,
+    /// A five-pointed star: favourite.
+    Star,
+    /// A magnifier: search.
+    Search,
+    /// A folder with a plus: create a folder.
+    NewFolder,
+    /// A picture frame with a hill: view previews.
+    Preview,
+    /// A clipboard: paste.
+    Paste,
+    /// A house: the default view.
+    Home,
+    /// A cross: close or cancel.
+    Close,
+    /// A tick: confirm.
+    Check,
 }
 
 #[derive(Clone, Copy)]
@@ -824,6 +878,111 @@ pub fn paint_icon(painter: &Painter, rect: Rect, icon: Icon, line: Color32) {
             polyline(&[[4.0, 7.5], [12.0, 12.0], [20.0, 7.5]]);
             polyline(&[[12.0, 12.0], [12.0, 21.0]]);
         }
+        Icon::ViewFrame => {
+            polyline(&[
+                [3.0, 4.0],
+                [21.0, 4.0],
+                [21.0, 20.0],
+                [3.0, 20.0],
+                [3.0, 4.0],
+            ]);
+            polyline(&[[3.0, 8.0], [21.0, 8.0]]);
+            polyline(&[[7.0, 17.0], [17.0, 11.0]]);
+        }
+        Icon::Sheet => {
+            polyline(&[
+                [5.0, 3.0],
+                [14.0, 3.0],
+                [19.0, 8.0],
+                [19.0, 21.0],
+                [5.0, 21.0],
+                [5.0, 3.0],
+            ]);
+            polyline(&[[14.0, 3.0], [14.0, 8.0], [19.0, 8.0]]);
+            polyline(&[[8.0, 13.0], [16.0, 13.0]]);
+            polyline(&[[8.0, 17.0], [16.0, 17.0]]);
+        }
+        Icon::Table => {
+            polyline(&[
+                [3.0, 5.0],
+                [21.0, 5.0],
+                [21.0, 19.0],
+                [3.0, 19.0],
+                [3.0, 5.0],
+            ]);
+            polyline(&[[3.0, 10.0], [21.0, 10.0]]);
+            polyline(&[[3.0, 14.5], [21.0, 14.5]]);
+            polyline(&[[9.0, 5.0], [9.0, 19.0]]);
+        }
+        Icon::Star => {
+            let points: Vec<[f32; 2]> = (0u8..10)
+                .map(|i| {
+                    let angle =
+                        std::f32::consts::PI * f32::from(i) / 5.0 - std::f32::consts::FRAC_PI_2;
+                    let radius = if i % 2 == 0 { 9.5 } else { 4.0 };
+                    [12.0 + radius * angle.cos(), 12.5 + radius * angle.sin()]
+                })
+                .collect();
+            painter.add(egui::Shape::closed_line(
+                points.into_iter().map(at).collect(),
+                stroke,
+            ));
+        }
+        Icon::Search => {
+            painter.circle_stroke(at([10.0, 10.0]), 6.0 * scale, stroke);
+            polyline(&[[14.5, 14.5], [20.0, 20.0]]);
+        }
+        Icon::NewFolder => {
+            polyline(&[
+                [2.0, 6.0],
+                [8.0, 6.0],
+                [10.0, 8.5],
+                [19.0, 8.5],
+                [19.0, 12.0],
+            ]);
+            polyline(&[[2.0, 6.0], [2.0, 19.0], [13.0, 19.0]]);
+            polyline(&[[19.0, 15.0], [19.0, 21.0]]);
+            polyline(&[[16.0, 18.0], [22.0, 18.0]]);
+        }
+        Icon::Preview => {
+            polyline(&[
+                [3.0, 5.0],
+                [21.0, 5.0],
+                [21.0, 19.0],
+                [3.0, 19.0],
+                [3.0, 5.0],
+            ]);
+            polyline(&[
+                [3.0, 16.0],
+                [9.0, 10.0],
+                [13.0, 14.0],
+                [16.0, 11.0],
+                [21.0, 16.0],
+            ]);
+            painter.circle_stroke(at([16.5, 8.0]), 1.4 * scale, stroke);
+        }
+        Icon::Paste => {
+            polyline(&[
+                [5.0, 5.0],
+                [19.0, 5.0],
+                [19.0, 21.0],
+                [5.0, 21.0],
+                [5.0, 5.0],
+            ]);
+            polyline(&[[9.0, 5.0], [9.0, 3.0], [15.0, 3.0], [15.0, 5.0]]);
+            polyline(&[[8.5, 12.0], [15.5, 12.0]]);
+            polyline(&[[8.5, 16.0], [13.0, 16.0]]);
+        }
+        Icon::Home => {
+            polyline(&[[3.0, 12.0], [12.0, 4.0], [21.0, 12.0]]);
+            polyline(&[[6.0, 10.0], [6.0, 20.0], [18.0, 20.0], [18.0, 10.0]]);
+            polyline(&[[10.0, 20.0], [10.0, 14.0], [14.0, 14.0], [14.0, 20.0]]);
+        }
+        Icon::Close => {
+            polyline(&[[6.0, 6.0], [18.0, 18.0]]);
+            polyline(&[[18.0, 6.0], [6.0, 18.0]]);
+        }
+        Icon::Check => polyline(&[[5.0, 12.5], [10.0, 17.5], [19.0, 7.0]]),
         Icon::Block => faces(BLOCK),
         Icon::Plate => faces(PLATE),
         Icon::Beam => faces(BEAM),

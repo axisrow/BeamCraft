@@ -155,6 +155,7 @@ pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
         ("grids_visible", Json::Bool(view.grids_visible)),
         ("folder", Json::text(&view.folder)),
         ("favorite", Json::Bool(view.favorite)),
+        ("default", Json::Bool(view.is_default)),
         ("hidden_kinds", kinds_to_json(view.hidden_kinds)),
         (
             "work_area",
@@ -211,6 +212,11 @@ pub fn view_from_json(json: &Json) -> Result<ModelView, CommandError> {
     view.grids_visible = flag("grids_visible")?;
     text("folder")?.clone_into(&mut view.folder);
     view.favorite = flag("favorite")?;
+    // Files written before the default view existed have no such key.
+    view.is_default = match optional(json, "default") {
+        Some(_) => flag("default")?,
+        None => false,
+    };
     view.hidden_kinds = kinds_from_json(json)?;
     view.work_area = match optional(json, "work_area") {
         Some(area) => Some(WorkArea::new(numbers(area, "min")?, numbers(area, "max")?)?),
@@ -311,6 +317,7 @@ mod tests {
         full.grids_visible = false;
         full.folder = "Sections/Main".into();
         full.favorite = true;
+        full.is_default = true;
         full.hidden_kinds = KindFilter::SHOW_ALL.hiding(ElementKind::Grid);
         full.work_area = Some(WorkArea::new([0.0; 3], [100.0, 200.0, 300.0]).unwrap());
         full.rotation_rad = [0.5, -0.25];

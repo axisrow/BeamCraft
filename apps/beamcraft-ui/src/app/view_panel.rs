@@ -26,15 +26,180 @@ fn fresh_id() -> Result<Uuid7, String> {
         .map_err(|_| "no view identity could be made".to_owned())
 }
 
+/// A labelled text field: the label has a fixed width so the fields of a panel line up, and
+/// the field takes the rest of the row.
 fn text(ui: &mut egui::Ui, label: &str, value: &mut String) {
     ui.horizontal(|ui| {
-        ui.label(label);
+        ui.add_sized([FIELD_LABEL, 20.0], egui::Label::new(label).truncate());
         ui.add(
             egui::TextEdit::singleline(value)
-                .desired_width(110.0)
+                .desired_width((ui.available_width() - FIT).max(40.0))
                 .char_limit(crate::views::FIELD),
         );
     });
+}
+
+/// Width of the label column of the view panel's rows.
+const FIELD_LABEL: f32 = 92.0;
+
+/// Slack left at the end of a row that fills the panel: a row sized to the exact available
+/// width can come out a pixel wider, and the resizable panel would follow it wider every frame.
+const FIT: f32 = 6.0;
+
+/// A label with its control on the same row, aligned with [`text`].
+fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.add_sized([FIELD_LABEL, 20.0], egui::Label::new(label).truncate());
+        add(ui);
+    });
+}
+
+/// A collapsible group of the view panel with a quiet bold title.
+fn section(ui: &mut egui::Ui, title: &str, open: bool, add: impl FnOnce(&mut egui::Ui)) {
+    egui::CollapsingHeader::new(egui::RichText::new(title).strong().size(12.0))
+        .id_salt(("view-section", title))
+        .default_open(open)
+        .show(ui, add);
+}
+
+/// One tab of the project browser: its icon, and its name beside the icon while it is the
+/// active tab, so the row stays narrow.
+fn browser_tab(ui: &mut egui::Ui, icon: theme::Icon, label: &str, active: bool) -> egui::Response {
+    let palette = theme::Palette::current(ui);
+    let font = egui::FontId::proportional(12.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, palette.text);
+    let width = if active { 40.0 + galley.size().x } else { 32.0 };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::click());
+    if response.hovered() || response.has_focus() {
+        ui.painter().rect_filled(rect, 4, palette.head);
+    }
+    let ink = if active { palette.text } else { palette.muted };
+    theme::paint_icon(
+        ui.painter(),
+        egui::Rect::from_center_size(
+            rect.left_center() + egui::vec2(16.0, -1.0),
+            egui::Vec2::splat(18.0),
+        ),
+        icon,
+        ink,
+    );
+    if active {
+        ui.painter().galley(
+            egui::pos2(
+                rect.left() + 30.0,
+                rect.center().y - galley.size().y / 2.0 - 1.0,
+            ),
+            galley,
+            palette.text,
+        );
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left() + 4.0, rect.bottom() - 2.0),
+                egui::pos2(rect.right() - 4.0, rect.bottom()),
+            ),
+            1,
+            palette.link,
+        );
+    }
+    response.widget_info(|| egui::WidgetInfo::selected(egui::Role::Tab, true, active, label));
+    response.on_hover_text(label)
+}
+
+/// What one row of the project browser shows.
+#[derive(Default)]
+struct BrowserRow<'a> {
+    icon: Option<theme::Icon>,
+    name: &'a str,
+    selected: bool,
+    open: bool,
+    favorite: bool,
+    temporary: bool,
+    default: bool,
+}
+
+/// One row: the icon, the name, and on the right the marks of the view (default house,
+/// favourite star, temporary clock, open dot).
+fn browser_row(ui: &mut egui::Ui, row: BrowserRow<'_>) -> egui::Response {
+    let palette = theme::Palette::current(ui);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 26.0),
+        egui::Sense::click_and_drag(),
+    );
+    if row.selected {
+        ui.painter().rect_filled(rect, 4, palette.select);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 4, palette.head);
+    }
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect,
+            4,
+            egui::Stroke::new(1.0, palette.link),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let centre = |x: f32| egui::pos2(x, rect.center().y);
+    if let Some(icon) = row.icon {
+        theme::paint_icon(
+            ui.painter(),
+            egui::Rect::from_center_size(centre(rect.left() + 14.0), egui::Vec2::splat(16.0)),
+            icon,
+            palette.text,
+        );
+    }
+    let mut right = rect.right() - 8.0;
+    let mut mark = |icon: theme::Icon, colour: egui::Color32| {
+        theme::paint_icon(
+            ui.painter(),
+            egui::Rect::from_center_size(centre(right - 7.0), egui::Vec2::splat(14.0)),
+            icon,
+            colour,
+        );
+        right -= 18.0;
+    };
+    if row.default {
+        mark(theme::Icon::Home, palette.text);
+    }
+    if row.favorite {
+        mark(theme::Icon::Star, palette.link);
+    }
+    if row.temporary {
+        mark(theme::Icon::Recent, palette.muted);
+    }
+    if row.open {
+        ui.painter()
+            .circle_filled(centre(right - 4.0), 3.0, palette.link);
+        right -= 14.0;
+    }
+    let colour = if row.temporary && !row.selected {
+        palette.muted
+    } else {
+        palette.text
+    };
+    ui.painter()
+        .with_clip_rect(egui::Rect::from_min_max(
+            rect.min,
+            egui::pos2(right, rect.max.y),
+        ))
+        .text(
+            egui::pos2(rect.left() + 28.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            row.name,
+            egui::FontId::proportional(12.0),
+            colour,
+        );
+    let hint = if row.temporary {
+        format!("{} (temporary: it is not saved)", row.name)
+    } else if row.default {
+        format!("{} (the default view)", row.name)
+    } else {
+        row.name.to_owned()
+    };
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, row.selected, &hint));
+    response.on_hover_text(hint)
 }
 
 fn axis_combo(ui: &mut egui::Ui, id: &str, label: &str, value: &mut AxisPick) {
@@ -83,11 +248,79 @@ impl App {
         }
     }
 
-    /// Shows `id`, or the free 3D view for `None`: a pane that shows it already is focused;
+    /// The default view's identity: the view a model opens on, and the one that stands for
+    /// "no particular view" (`None`) wherever a view is asked for.
+    pub(crate) fn default_view_id(&self) -> Option<Uuid7> {
+        self.views.book.default_view().map(|v| v.id)
+    }
+
+    /// A model always has a default view. When the book has none (a new model, or a file from
+    /// before the default existed) a "3D View" is made from the first pane's camera and saved.
+    pub(crate) fn ensure_default_view(&mut self) {
+        if self.views.book.default_view().is_some() {
+            return;
+        }
+        let origin = self.view_origin();
+        let (plane, span, orthographic) = self
+            .views
+            .active_pane()
+            .and_then(|p| {
+                p.camera
+                    .frame(origin)
+                    .ok()
+                    .map(|(plane, span)| (plane, span, p.camera.is_orthographic()))
+            })
+            .unwrap_or((
+                WorkPlane::default(),
+                beamcraft_engine::views::DEFAULT_SPAN_MM,
+                false,
+            ));
+        let id = match fresh_id() {
+            Ok(id) => id,
+            Err(e) => return self.view_note(Err(e)),
+        };
+        let name = self.views.book.unique_name("3D View", &[]);
+        let mut view = ModelView::new(id, &name, plane, span);
+        view.projection = if orthographic {
+            Projection::Orthographic
+        } else {
+            Projection::Perspective
+        };
+        view.is_default = true;
+        match self.views.book.insert(view) {
+            Ok(()) => self.persist_views(),
+            Err(e) => self.view_note(Err(e.to_string())),
+        }
+    }
+
+    /// Puts the first pane, which opens as a free camera, on the default view.
+    pub(crate) fn adopt_default_view(&mut self) {
+        let Some(view) = self.views.book.default_view().cloned() else {
+            return;
+        };
+        if let Some(pane) = self.views.panes.iter_mut().find(|p| p.view.is_none()) {
+            pane.mode = view.render_mode;
+            pane.grids = view.grids_visible;
+            pane.set_view(Some(&view));
+        }
+        if !self.views.open.contains(&view.id) {
+            self.views.open.push(view.id);
+        }
+    }
+
+    /// The input frame a view installs: its plane, except for the default view, which leaves the
+    /// model's work plane as it is (a 3D view has no plane of its own to work on).
+    fn input_plane_of(view: &ModelView) -> Option<Option<WorkPlane>> {
+        (!view.is_default).then_some(Some(view.plane))
+    }
+
+    /// Shows `id`, or the default view for `None`: a pane that shows it already is focused;
     /// otherwise the active pane switches to it, and with no pane open one opens. The camera of a
     /// view opened before comes back as the user left it; its render mode, grid guides, hidden
     /// kinds and plane (the input frame) come from the view.
     pub(crate) fn activate_view(&mut self, id: Option<Uuid7>) {
+        let default = self.default_view_id();
+        let id = id.or(default);
         if self.views.active_pane().is_some_and(|p| p.view == id) {
             return;
         }
@@ -114,6 +347,7 @@ impl App {
         else {
             return;
         };
+        let leaving_free = current.is_none() || current == default;
         match current {
             Some(current) => {
                 self.views.cameras.insert(current, camera);
@@ -122,7 +356,6 @@ impl App {
                 if let Some(pane) = self.views.active_pane_mut() {
                     pane.spatial = Some((camera, mode, grids));
                 }
-                self.views_input = Some(input);
             }
         }
         if let Some(pane) = self.views.active_pane_mut() {
@@ -150,7 +383,19 @@ impl App {
                 if !self.views.open.contains(&view.id) {
                     self.views.open.push(view.id);
                 }
-                self.install_plane(Some(view.plane));
+                match Self::input_plane_of(&view) {
+                    Some(plane) => {
+                        if leaving_free {
+                            self.views_input = Some(input);
+                        }
+                        self.install_plane(plane);
+                    }
+                    None => {
+                        if let Some(plane) = self.views_input.take() {
+                            self.install_plane(plane);
+                        }
+                    }
+                }
                 self.tool_note = None;
             }
             None => {
@@ -188,6 +433,7 @@ impl App {
         let plane = self
             .views
             .active_view()
+            .filter(|v| !v.is_default)
             .map(|v| v.plane)
             .or(self.tools.plane)
             .unwrap_or_default();
@@ -228,16 +474,12 @@ impl App {
         }
     }
 
-    /// Opens the view panel on a new view built by `construction`; the constructions that pick
-    /// in the model start picking at once, and Apply creates the view.
-    pub(crate) fn begin_view(&mut self, construction: Construction) {
-        self.set_bench(Bench::View);
-        if self.bench != Bench::View {
-            self.view_note(Err("Wait for the running command to finish.".into()));
-            return;
-        }
+    /// A form for a new view of `construction` that starts from the active pane's camera: its
+    /// height, and for the current camera also its projection, render mode and grids.
+    fn camera_form(&self, construction: Construction) -> Form {
         let mut form = Form {
             construction,
+            name: self.views.book.next_default_name(),
             ..Form::default()
         };
         let pane = self
@@ -260,7 +502,18 @@ impl App {
             form.mode = mode;
             form.grids = grids;
         }
-        form.name = self.views.book.next_default_name();
+        form
+    }
+
+    /// Opens the view panel on a new view built by `construction`; the constructions that pick
+    /// in the model start picking at once, and Apply creates the view.
+    pub(crate) fn begin_view(&mut self, construction: Construction) {
+        self.set_bench(Bench::View);
+        if self.bench != Bench::View {
+            self.view_note(Err("Wait for the running command to finish.".into()));
+            return;
+        }
+        let mut form = self.camera_form(construction);
         if matches!(construction, Construction::GridAxes | Construction::Level) {
             form.name = match construction {
                 Construction::Level => "Plan".into(),
@@ -312,11 +565,7 @@ impl App {
                 if self.bench != Bench::View {
                     return;
                 }
-                self.views.form = Form {
-                    construction: Construction::CurrentCamera,
-                    name: self.views.book.next_default_name(),
-                    ..Form::default()
-                };
+                self.views.form = self.camera_form(Construction::CurrentCamera);
                 self.views.picking = None;
                 self.views.subject = Subject::FreeView(pane);
             }
@@ -480,7 +729,9 @@ impl App {
             pane.filtered = None;
         }
         if self.views.active() == Some(id) {
-            self.install_plane(Some(view.plane));
+            if let Some(plane) = Self::input_plane_of(&view) {
+                self.install_plane(plane);
+            }
             self.tool_note = None;
             if self.views.shown != self.views.active_hidden() {
                 self.recolour();
@@ -490,7 +741,24 @@ impl App {
     }
 
     fn create_views_from_form(&mut self) -> Result<Option<String>, String> {
-        let form = self.views.form.clone();
+        let mut form = self.views.form.clone();
+        // Without a name a view is temporary. The book still needs a name, so it gets a
+        // default one; a batch of grid families is named by its prefixes instead.
+        let batch_named =
+            form.construction == Construction::GridAxes && form.axis_batch == AxisBatch::Families;
+        let unnamed = form.name.trim().is_empty() && !batch_named;
+        if unnamed && form.default {
+            return Err("The default view needs a name.".into());
+        }
+        if unnamed {
+            if matches!(
+                form.construction,
+                Construction::Level | Construction::Assembly
+            ) {
+                return Err("These views are saved with the model: give them a name.".into());
+            }
+            form.name = self.views.book.next_default_name();
+        }
         let origin = self.view_origin();
         let single =
             |plane: WorkPlane| -> Vec<(String, WorkPlane, Option<f64>, Option<Projection>)> {
@@ -615,7 +883,10 @@ impl App {
             let mut view = ModelView::new(fresh_id()?, &name, plane, 1.0);
             let mut each = form.clone();
             each.name = name;
+            // Only the first view of a batch can take the default mark.
+            each.default = form.default && made.is_empty();
             each.apply(&mut view)?;
+            view.temporary = unnamed;
             if let Some(span) = span {
                 view.span_mm = span;
             }
@@ -720,6 +991,8 @@ impl App {
             probe.opacity.to_string(),
             "--favorite".into(),
             probe.favorite.to_string(),
+            "--default".into(),
+            probe.is_default.to_string(),
         ]);
         if !probe.folder.is_empty() {
             args.extend(["--folder".into(), probe.folder.clone()]);
@@ -900,55 +1173,123 @@ impl App {
         );
     }
 
-    /// The browser: views grouped by folder, with search, quick access, favourites,
-    /// multi-select, a context menu, cut/copy/paste and drag to a folder.
+    /// The browser: icon tabs, a search field and icon toggles on top, and below them the
+    /// views grouped by folder, with quick access, favourites, multi-select, a context menu,
+    /// cut/copy/paste and drag to a folder.
     pub(crate) fn view_browser(&mut self, ui: &mut egui::Ui) {
         use crate::views::BrowserTab;
+        let palette = theme::Palette::current(ui);
+        // Every tab keeps the panel as wide as the Views tab has made it.
+        ui.set_min_width(ui.available_width());
         ui.horizontal(|ui| {
-            for (tab, label) in [
-                (BrowserTab::Views, "Views"),
-                (BrowserTab::Drawings, "Drawings"),
-                (BrowserTab::Schedules, "Schedules"),
+            ui.spacing_mut().item_spacing.x = 2.0;
+            for (tab, icon, label) in [
+                (BrowserTab::Views, theme::Icon::ViewFrame, "Views"),
+                (BrowserTab::Drawings, theme::Icon::Sheet, "Drawings"),
+                (BrowserTab::Schedules, theme::Icon::Table, "Schedules"),
             ] {
-                ui.selectable_value(&mut self.views.tab, tab, label);
+                if browser_tab(ui, icon, label, self.views.tab == tab).clicked() {
+                    self.views.tab = tab;
+                }
             }
         });
+        ui.add_space(4.0);
         if self.views.tab != BrowserTab::Views {
             ui.label(
                 egui::RichText::new("Not listed in this browser yet.")
-                    .size(10.0)
-                    .color(crate::theme::Palette::current(ui).muted),
+                    .size(11.0)
+                    .color(palette.muted),
             );
             return;
         }
-        ui.add(
-            egui::TextEdit::singleline(&mut self.views.search)
-                .hint_text("Find views")
-                .char_limit(128)
-                .desired_width(ui.available_width()),
-        );
         ui.horizontal(|ui| {
-            ui.menu_button("New view", |ui| {
-                for (construction, label) in Construction::ALL {
-                    if ui.button(label).clicked() {
-                        self.begin_view(construction);
-                        ui.close();
-                    }
-                }
-            });
-            if ui.small_button("New folder").clicked() {
+            theme::icon(ui, theme::Icon::Search, 16.0, palette.muted);
+            ui.add(
+                egui::TextEdit::singleline(&mut self.views.search)
+                    .hint_text("Search views")
+                    .char_limit(128)
+                    .desired_width((ui.available_width() - FIT).max(40.0)),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let by_folder = theme::icon_toggle(
+                ui,
+                theme::Icon::Folder,
+                "Group by folder instead of by view type",
+                self.views.by_folder,
+            );
+            if by_folder.clicked() {
+                self.views.by_folder = !self.views.by_folder;
+                self.views.new_folder = false;
+            }
+            if self.views.by_folder
+                && theme::icon_toggle(
+                    ui,
+                    theme::Icon::NewFolder,
+                    "New folder",
+                    self.views.new_folder,
+                )
+                .clicked()
+            {
                 self.views.new_folder = !self.views.new_folder;
             }
-        });
-        ui.horizontal(|ui| {
-            ui.checkbox(&mut self.views.quick_access, "Quick access");
-            ui.checkbox(&mut self.views.favorites_only, "Favourites");
-            ui.checkbox(&mut self.views.previews_on, "Previews");
+            ui.add_space(4.0);
+            let quick = theme::icon_toggle(
+                ui,
+                theme::Icon::Recent,
+                "Quick access: favourites, temporary and open views",
+                self.views.quick_access,
+            );
+            if quick.clicked() {
+                self.views.quick_access = !self.views.quick_access;
+            }
+            let fav = theme::icon_toggle(
+                ui,
+                theme::Icon::Star,
+                "Favourites only",
+                self.views.favorites_only,
+            );
+            if fav.clicked() {
+                self.views.favorites_only = !self.views.favorites_only;
+            }
+            let previews = theme::icon_toggle(
+                ui,
+                theme::Icon::Preview,
+                "Show previews",
+                self.views.previews_on,
+            );
+            if previews.clicked() {
+                self.views.previews_on = !self.views.previews_on;
+            }
+            if self.views.selected.len() > 1 {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = format!(
+                        "Open {} selected views in windows",
+                        self.views.selected.len()
+                    );
+                    if theme::icon_toggle(ui, theme::Icon::Arrange, &label, false).clicked() {
+                        for id in self.views.selected.clone() {
+                            self.open_pane(Some(id));
+                        }
+                    }
+                });
+            }
         });
         if self.views.new_folder {
-            text(ui, "Folder", &mut self.views.destination);
             ui.horizontal(|ui| {
-                if ui.button("Create folder").clicked() {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                theme::icon(ui, theme::Icon::Folder, 16.0, palette.muted);
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut self.views.destination)
+                        .hint_text("Folder, e.g. Plans/Level 1")
+                        .char_limit(crate::views::FIELD)
+                        .desired_width((ui.available_width() - 60.0 - FIT).max(40.0)),
+                );
+                let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if theme::icon_toggle(ui, theme::Icon::Check, "Create the folder", false).clicked()
+                    || enter
+                {
                     let folder = self.views.destination.trim().to_owned();
                     match self.views.book.create_folder(&folder) {
                         Ok(()) => {
@@ -958,46 +1299,45 @@ impl App {
                         Err(e) => self.view_note(Err(e.to_string())),
                     }
                 }
-                if ui.button("Cancel").clicked() {
+                if theme::icon_toggle(ui, theme::Icon::Close, "Cancel", false).clicked() {
                     self.views.new_folder = false;
                 }
             });
         }
         if let Some((id, cut)) = self.views.clipboard {
             ui.horizontal(|ui| {
-                ui.label(if cut { "Move to" } else { "Copy to" });
+                ui.spacing_mut().item_spacing.x = 2.0;
+                theme::icon(
+                    ui,
+                    if cut {
+                        theme::Icon::Move
+                    } else {
+                        theme::Icon::Copy
+                    },
+                    16.0,
+                    palette.muted,
+                );
                 ui.add(
                     egui::TextEdit::singleline(&mut self.views.destination)
-                        .hint_text("folder")
-                        .desired_width(90.0)
+                        .hint_text(if cut {
+                            "Move to folder"
+                        } else {
+                            "Copy to folder"
+                        })
+                        .desired_width((ui.available_width() - 60.0 - FIT).max(40.0))
                         .char_limit(crate::views::FIELD),
                 );
-                if ui.small_button("Paste").clicked() {
+                if theme::icon_toggle(ui, theme::Icon::Paste, "Paste here", false).clicked() {
                     self.paste_view(id, cut);
                 }
-                if ui.small_button("×").clicked() {
+                if theme::icon_toggle(ui, theme::Icon::Close, "Drop the clipboard", false).clicked()
+                {
                     self.views.clipboard = None;
                 }
             });
         }
-        if !self.views.selected.is_empty() {
-            ui.horizontal(|ui| {
-                ui.label(format!("{} selected", self.views.selected.len()));
-                if ui.small_button("Open in windows").clicked() {
-                    for id in self.views.selected.clone() {
-                        self.open_pane(Some(id));
-                    }
-                }
-            });
-        }
+        ui.add_space(2.0);
         ui.separator();
-        if ui
-            .selectable_label(self.views.active().is_none(), "{3D}")
-            .on_hover_text("The free 3D view of the whole model")
-            .clicked()
-        {
-            self.activate_view(None);
-        }
         let groups: Vec<(String, Vec<ModelView>)> = self
             .views
             .browser_groups()
@@ -1006,34 +1346,43 @@ impl App {
             .collect();
         let mut actions: Vec<BrowserAction> = Vec::new();
         let mut budget = true;
+        let by_folder = self.views.by_folder;
+        let confirm = self.views.confirm_delete;
+        let footer = if confirm.is_some() { 72.0 } else { 0.0 };
         egui::ScrollArea::vertical()
             .id_salt("view-browser")
-            .max_height(360.0)
+            .max_height((ui.available_height() - footer).max(60.0))
+            .auto_shrink([false, false])
             .show(ui, |ui| {
+                if by_folder && egui::DragAndDrop::has_payload_of_type::<Uuid7>(ui.ctx()) {
+                    let strip = ui.add_sized(
+                        [ui.available_width(), 22.0],
+                        egui::Label::new(
+                            egui::RichText::new("Drop here: top level")
+                                .size(11.0)
+                                .color(palette.muted),
+                        )
+                        .sense(egui::Sense::hover()),
+                    );
+                    if let Some(id) = strip.dnd_release_payload::<Uuid7>() {
+                        actions.push(BrowserAction::Move(*id, String::new()));
+                    }
+                }
+                if groups.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(if self.views.book.views().is_empty() {
+                            "No views yet. Create one with the View commands in the ribbon."
+                        } else {
+                            "No views match."
+                        })
+                        .size(11.0)
+                        .color(palette.muted),
+                    );
+                }
                 for (folder, list) in &groups {
                     let order: Vec<Uuid7> = list.iter().map(|v| v.id).collect();
-                    let header = egui::CollapsingHeader::new(if folder.is_empty() {
-                        "Model views"
-                    } else {
-                        folder.as_str()
-                    })
-                    .id_salt(("view-folder", folder.as_str()))
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        if list.is_empty() && !folder.is_empty() {
-                            if ui.small_button("Delete empty folder").clicked() {
-                                actions.push(BrowserAction::DeleteFolder(folder.clone()));
-                            }
-                        } else {
-                            ui.horizontal(|ui| {
-                                if ui.small_button("Open all").clicked() {
-                                    actions.push(BrowserAction::OpenAll(order.clone()));
-                                }
-                                if ui.small_button("Close all").clicked() {
-                                    actions.push(BrowserAction::CloseAll(order.clone()));
-                                }
-                            });
-                        }
+                    let mut rows = |ui: &mut egui::Ui, actions: &mut Vec<BrowserAction>| {
                         for view in list {
                             if self.views.previews_on {
                                 match self.view_preview(view, &mut budget) {
@@ -1045,17 +1394,18 @@ impl App {
                                     }
                                 }
                             }
-                            let selected = self.views.selected.contains(&view.id)
-                                || self.views.active() == Some(view.id);
-                            let label = format!(
-                                "{}{}{}",
-                                if view.favorite { "★ " } else { "" },
-                                view.name,
-                                if view.temporary { " (temporary)" } else { "" }
-                            );
-                            let response = ui.add(
-                                egui::Button::selectable(selected, label)
-                                    .sense(egui::Sense::click_and_drag()),
+                            let response = browser_row(
+                                ui,
+                                BrowserRow {
+                                    icon: Some(crate::views::view_kind(view).icon()),
+                                    name: &view.name,
+                                    selected: self.views.selected.contains(&view.id)
+                                        || self.views.active() == Some(view.id),
+                                    open: self.views.open.contains(&view.id),
+                                    favorite: view.favorite,
+                                    temporary: view.temporary,
+                                    default: view.is_default,
+                                },
                             );
                             response.dnd_set_drag_payload(view.id);
                             if response.clicked() {
@@ -1089,19 +1439,98 @@ impl App {
                                     BrowserAction::Favorite(view.id),
                                 );
                                 item("Duplicate", BrowserAction::Duplicate(view.id));
+                                if !view.is_default && !view.temporary {
+                                    item("Make default", BrowserAction::SetDefault(view.id));
+                                }
                                 item("Cut", BrowserAction::Clip(view.id, true));
                                 item("Copy", BrowserAction::Clip(view.id, false));
                                 item("Close", BrowserAction::Close(view.id));
-                                item("Delete…", BrowserAction::Delete(view.id));
+                                if !view.is_default {
+                                    item("Delete…", BrowserAction::Delete(view.id));
+                                }
                             });
                         }
-                    });
-                    if let Some(id) = header.header_response.dnd_release_payload::<Uuid7>() {
-                        actions.push(BrowserAction::Move(*id, folder.clone()));
+                    };
+                    if by_folder && folder.is_empty() {
+                        rows(ui, &mut actions);
+                        continue;
+                    }
+                    // Folders collapse; their menu holds the batch actions.
+                    let id = ui.make_persistent_id(("view-folder", folder.as_str()));
+                    let state = egui::collapsing_header::CollapsingState::load_with_default_open(
+                        ui.ctx(),
+                        id,
+                        true,
+                    );
+                    let mut toggle = false;
+                    let header = state
+                        .show_header(ui, |ui| {
+                            let icon = if by_folder {
+                                theme::Icon::Folder
+                            } else {
+                                crate::views::ViewKind::of_label(folder)
+                                    .map_or(theme::Icon::Folder, crate::views::ViewKind::icon)
+                            };
+                            theme::icon(ui, icon, 16.0, palette.text);
+                            let name = ui.add(
+                                egui::Label::new(egui::RichText::new(folder.as_str()).size(12.0))
+                                    .truncate()
+                                    .sense(egui::Sense::click()),
+                            );
+                            ui.label(
+                                egui::RichText::new(list.len().to_string())
+                                    .size(11.0)
+                                    .color(palette.muted),
+                            );
+                            toggle = name.clicked();
+                            name.context_menu(|ui| {
+                                if !list.is_empty() {
+                                    if ui.button("Open all").clicked() {
+                                        actions.push(BrowserAction::OpenAll(order.clone()));
+                                        ui.close();
+                                    }
+                                    if ui.button("Close all").clicked() {
+                                        actions.push(BrowserAction::CloseAll(order.clone()));
+                                        ui.close();
+                                    }
+                                }
+                                if by_folder
+                                    && list.is_empty()
+                                    && ui.button("Delete empty folder").clicked()
+                                {
+                                    actions.push(BrowserAction::DeleteFolder(folder.clone()));
+                                    ui.close();
+                                }
+                            });
+                        })
+                        .body(|ui| {
+                            if list.is_empty() {
+                                ui.label(
+                                    egui::RichText::new("Empty folder")
+                                        .size(11.0)
+                                        .color(palette.muted),
+                                );
+                            }
+                            rows(ui, &mut actions);
+                        });
+                    if toggle {
+                        let mut state =
+                            egui::collapsing_header::CollapsingState::load_with_default_open(
+                                ui.ctx(),
+                                id,
+                                true,
+                            );
+                        state.toggle(ui);
+                        state.store(ui.ctx());
+                    }
+                    if by_folder
+                        && let Some(drop) = header.1.response.dnd_release_payload::<Uuid7>()
+                    {
+                        actions.push(BrowserAction::Move(*drop, folder.clone()));
                     }
                 }
             });
-        if let Some(id) = self.views.confirm_delete {
+        if let Some(id) = confirm {
             let name = self
                 .views
                 .book
@@ -1123,10 +1552,9 @@ impl App {
         }
         if let Some(Err(note)) = &self.views.note {
             let note = note.clone();
-            ui.colored_label(crate::theme::Palette::current(ui).error, note);
+            ui.colored_label(palette.error, note);
         }
     }
-
     pub(crate) fn browser_action(&mut self, action: BrowserAction) {
         match action {
             BrowserAction::Click(id, ctrl, shift, order) => {
@@ -1160,14 +1588,32 @@ impl App {
             }
             // Closing a view closes its panes; the work area may end up empty.
             BrowserAction::Close(id) => self.close_view(id),
-            BrowserAction::Delete(id) => self.views.confirm_delete = Some(id),
+            BrowserAction::Delete(id) => {
+                if self.views.book.get(&id).is_some_and(|v| v.is_default) {
+                    self.view_note(Err(
+                        "The default view cannot be deleted: make another view the default first."
+                            .into(),
+                    ));
+                } else {
+                    self.views.confirm_delete = Some(id);
+                }
+            }
             BrowserAction::ConfirmDelete(id) => {
                 self.views.confirm_delete = None;
+                if self.views.book.get(&id).is_some_and(|v| v.is_default) {
+                    return;
+                }
                 self.close_view(id);
                 self.views.forget(&id);
-                self.views.book.remove(&id);
+                if let Err(e) = self.views.book.remove(&id) {
+                    self.view_note(Err(e.to_string()));
+                }
                 self.persist_views();
             }
+            BrowserAction::SetDefault(id) => match self.views.book.set_default(&id) {
+                Ok(()) => self.persist_views(),
+                Err(e) => self.view_note(Err(e.to_string())),
+            },
             BrowserAction::DeleteFolder(folder) => match self.views.book.delete_folder(&folder) {
                 Ok(()) => self.persist_views(),
                 Err(e) => self.view_note(Err(e.to_string())),
@@ -1207,6 +1653,7 @@ impl App {
         copy.id = id;
         copy.name = name;
         copy.folder = folder;
+        copy.is_default = false;
         match self.views.book.insert(copy) {
             Ok(()) => self.persist_views(),
             Err(e) => self.view_note(Err(e.to_string())),
@@ -1342,10 +1789,11 @@ impl App {
     /// how a new view is built, and every display property, where nothing changes until Apply;
     /// for the free 3D view its display and "Save as view".
     pub(crate) fn view_panel(&mut self, ui: &mut egui::Ui) {
-        if matches!(self.views.subject, Subject::FreeView(_)) {
-            self.free_view_panel(ui);
-            return;
+        if matches!(self.views.subject, Subject::FreeView(_)) && self.views.active().is_some() {
+            // The active pane switched to a saved view: the panel follows it.
+            self.show_view_properties();
         }
+        let free = matches!(self.views.subject, Subject::FreeView(_));
         let mut submit = false;
         let mut reset = false;
         let mut save_camera = false;
@@ -1385,6 +1833,12 @@ impl App {
             .map(|v| (v.id, v.name.clone()))
             .collect();
         let picking = self.views.picking.clone();
+        let default_locked = self
+            .views
+            .form
+            .id
+            .and_then(|id| self.views.book.get(&id))
+            .is_some_and(|v| v.is_default);
         let footer = if self.views.note.is_some() {
             140.0
         } else {
@@ -1397,12 +1851,43 @@ impl App {
             .show(ui, |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     let form = &mut self.views.form;
-                    text(ui, "Name", &mut form.name);
-                    text(ui, "Folder", &mut form.folder);
                     ui.horizontal(|ui| {
-                        ui.checkbox(&mut form.favorite, "Favourite");
-                        ui.checkbox(&mut form.temporary, "Temporary");
+                        ui.add_sized([FIELD_LABEL, 20.0], egui::Label::new("Name"));
+                        let toggles = 2.0 * 26.0 + 3.0 * 8.0;
+                        ui.add(
+                            egui::TextEdit::singleline(&mut form.name)
+                                .hint_text("Unnamed: temporary")
+                                .desired_width((ui.available_width() - toggles - FIT).max(60.0))
+                                .char_limit(crate::views::FIELD),
+                        )
+                        .on_hover_text("A view without a name is temporary: it is not saved");
+                        if theme::icon_toggle_filled(
+                            ui,
+                            theme::Icon::Star,
+                            "Favourite: listed in quick access",
+                            form.favorite,
+                        )
+                        .clicked()
+                        {
+                            form.favorite = !form.favorite;
+                        }
+                        let home = ui.add_enabled_ui(!default_locked, |ui| {
+                            theme::icon_toggle(
+                                ui,
+                                theme::Icon::Home,
+                                if default_locked {
+                                    "The default view: mark another view to move it"
+                                } else {
+                                    "Make this the default view the model opens on"
+                                },
+                                form.default,
+                            )
+                        });
+                        if home.inner.clicked() && !default_locked {
+                            form.default = !form.default;
+                        }
                     });
+                    text(ui, "Folder", &mut form.folder);
                     if form.id.is_none() {
                         ui.separator();
                         ui.label(egui::RichText::new(form.construction.label()).strong());
@@ -1557,95 +2042,127 @@ impl App {
                                 }
                             });
                     } else {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button("Re-pick the plane")
-                                .on_hover_text("Pick three points for a new view plane")
-                                .clicked()
-                            {
-                                restart_pick = true;
-                                form.construction = Construction::ThreePoints;
-                            }
-                            save_camera = ui
-                                .button("Take the current camera")
-                                .on_hover_text("The view plane and height become the camera's")
-                                .clicked();
-                        });
-                    }
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label("Projection");
-                        ui.selectable_value(
-                            &mut form.projection,
-                            Projection::Orthographic,
-                            "Orthographic",
-                        );
-                        ui.selectable_value(
-                            &mut form.projection,
-                            Projection::Perspective,
-                            "Perspective",
-                        );
-                    });
-                    text(ui, "Visible height (mm)", &mut form.span);
-                    ui.label("Camera rotation (degrees)");
-                    ui.horizontal(|ui| {
-                        let [z, x] = &mut form.rotation;
-                        ui.label("about Z");
-                        ui.add(egui::TextEdit::singleline(z).desired_width(50.0));
-                        ui.label("about X");
-                        ui.add(egui::TextEdit::singleline(x).desired_width(50.0));
-                    });
-                    ui.checkbox(&mut form.depth_on, "Limit the view depth");
-                    if form.depth_on {
-                        let [above, below] = &mut form.depth;
-                        text(ui, "Towards the viewer (mm)", above);
-                        text(ui, "Behind the plane (mm)", below);
-                    }
-                    ui.horizontal(|ui| {
-                        ui.label(match form.area {
-                            Some(_) => "Work area: box",
-                            None => "Work area: whole model",
-                        });
-                        let mut area = None;
-                        if ui
-                            .add_enabled(model_bounds.is_some(), egui::Button::new("Model"))
-                            .clicked()
-                        {
-                            area = model_bounds;
-                        }
-                        if ui
-                            .add_enabled(selection_bounds.is_some(), egui::Button::new("Selection"))
-                            .clicked()
-                        {
-                            area = selection_bounds;
-                        }
-                        if let Some(b) = area {
-                            form.area = beamcraft_engine::views::WorkArea::new(b.min, b.max).ok();
-                        }
-                        if ui.button("Clear").clicked() {
-                            form.area = None;
-                        }
-                    });
-                    egui::ComboBox::from_id_salt("view-render-mode")
-                        .selected_text(form.mode.as_token())
-                        .show_ui(ui, |ui| {
-                            for mode in RenderMode::ALL {
-                                ui.selectable_value(&mut form.mode, mode, mode.as_token());
-                            }
-                        });
-                    ui.checkbox(&mut form.grids, "Show grids");
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut form.color_on, "Colour");
-                        if form.color_on {
-                            ui.color_edit_button_rgb(&mut form.color);
-                        }
-                    });
-                    ui.add(egui::Slider::new(&mut form.opacity, 0.0..=1.0).text("Opacity"));
-                    all_appearance = form.id.is_some()
-                        && ui
-                            .small_button("Apply colour and opacity to every view")
+                        save_camera = ui
+                            .button("Take the current camera")
+                            .on_hover_text("The view plane and height become the camera's")
                             .clicked();
-                    ui.collapsing("Object visibility", |ui| {
+                    }
+                    ui.add_space(4.0);
+                    section(ui, "Camera", true, |ui| {
+                        row(ui, "Projection", |ui| {
+                            ui.selectable_value(
+                                &mut form.projection,
+                                Projection::Orthographic,
+                                "Orthographic",
+                            );
+                            ui.selectable_value(
+                                &mut form.projection,
+                                Projection::Perspective,
+                                "Perspective",
+                            );
+                        });
+                        text(ui, "Height, mm", &mut form.span);
+                        row(ui, "Rotation, °", |ui| {
+                            let [z, x] = &mut form.rotation;
+                            let half = ((ui.available_width() - 8.0 - FIT) / 2.0).max(30.0);
+                            ui.add(
+                                egui::TextEdit::singleline(z)
+                                    .hint_text("about Z")
+                                    .desired_width(half),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(x)
+                                    .hint_text("about X")
+                                    .desired_width(half),
+                            );
+                        });
+                    });
+                    section(ui, "Extents", true, |ui| {
+                        row(ui, "Depth", |ui| {
+                            let label = if form.depth_on {
+                                "Limited"
+                            } else {
+                                "Unlimited"
+                            };
+                            egui::ComboBox::from_id_salt("view-depth")
+                                .selected_text(label)
+                                .width((ui.available_width() - FIT).max(40.0))
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut form.depth_on, false, "Unlimited");
+                                    ui.selectable_value(&mut form.depth_on, true, "Limited");
+                                });
+                        });
+                        if form.depth_on {
+                            let [above, below] = &mut form.depth;
+                            text(ui, "Towards, mm", above);
+                            text(ui, "Behind, mm", below);
+                        }
+                        row(ui, "Work area", |ui| {
+                            let label = if form.area.is_some() {
+                                "Box"
+                            } else {
+                                "Whole model"
+                            };
+                            let mut area = None;
+                            egui::ComboBox::from_id_salt("view-area")
+                                .selected_text(label)
+                                .width((ui.available_width() - FIT).max(40.0))
+                                .show_ui(ui, |ui| {
+                                    if ui
+                                        .selectable_label(form.area.is_none(), "Whole model")
+                                        .clicked()
+                                    {
+                                        form.area = None;
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            model_bounds.is_some(),
+                                            egui::Button::selectable(false, "Bounds of the model"),
+                                        )
+                                        .clicked()
+                                    {
+                                        area = model_bounds;
+                                    }
+                                    if ui
+                                        .add_enabled(
+                                            selection_bounds.is_some(),
+                                            egui::Button::selectable(
+                                                false,
+                                                "Bounds of the selection",
+                                            ),
+                                        )
+                                        .clicked()
+                                    {
+                                        area = selection_bounds;
+                                    }
+                                });
+                            if let Some(b) = area {
+                                form.area =
+                                    beamcraft_engine::views::WorkArea::new(b.min, b.max).ok();
+                            }
+                        });
+                    });
+                    section(ui, "Appearance", true, |ui| {
+                        row(ui, "Colour", |ui| {
+                            ui.checkbox(&mut form.color_on, "Override");
+                            if form.color_on {
+                                ui.color_edit_button_rgb(&mut form.color);
+                            }
+                        });
+                        row(ui, "Opacity", |ui| {
+                            ui.add(
+                                egui::Slider::new(&mut form.opacity, 0.0..=1.0).fixed_decimals(2),
+                            );
+                        });
+                        if form.id.is_some()
+                            && ui
+                                .small_button("Use this colour and opacity in every view")
+                                .clicked()
+                        {
+                            all_appearance = true;
+                        }
+                    });
+                    section(ui, "Object visibility", false, |ui| {
                         for kind in crate::views::listed_kinds() {
                             let mut visible = form.hidden.is_visible(kind);
                             if ui.checkbox(&mut visible, kind.as_token()).changed() {
@@ -1661,22 +2178,38 @@ impl App {
             });
         ui.add_space(8.0);
         let mut cancel = false;
+        // A saved view changes only on Apply; the buttons wake up with the first edit.
+        let dirty = self
+            .views
+            .form
+            .id
+            .and_then(|id| self.views.book.get(&id))
+            .is_none_or(|v| self.views.form != crate::views::Form::from_view(v));
         ui.horizontal(|ui| {
             let waiting = self
                 .views
                 .picking
                 .as_ref()
                 .is_some_and(|p| p.done() < p.construction.picks());
-            let apply = theme::button(ui, theme::Kind::Primary, "Apply", !busy && !waiting);
+            let apply = theme::button(
+                ui,
+                theme::Kind::Primary,
+                if free { "Save as view" } else { "Apply" },
+                !busy && !waiting && dirty,
+            );
             submit = if self.views.form.id.is_none() {
-                apply.on_hover_text("Create the view")
+                apply.on_hover_text(if free {
+                    "Keep the 3D view as a saved view"
+                } else {
+                    "Create the view"
+                })
             } else {
                 apply
             }
             .clicked();
             reset = self.views.form.id.is_some()
-                && theme::button(ui, theme::Kind::Secondary, "Reset", !busy).clicked();
-            cancel = theme::button(ui, theme::Kind::Secondary, "Cancel", true).clicked();
+                && theme::button(ui, theme::Kind::Secondary, "Reset", !busy && dirty).clicked();
+            cancel = theme::button(ui, theme::Kind::Secondary, "Close", true).clicked();
             if busy {
                 ui.spinner();
             }
@@ -1745,76 +2278,6 @@ impl App {
         }
     }
 
-    /// The panel of the free 3D view: its name for "Save as view", and its render mode and
-    /// grid guides, which change the active pane at once as the ribbon's Display group does.
-    fn free_view_panel(&mut self, ui: &mut egui::Ui) {
-        let Some((camera, mode, grids)) = self
-            .views
-            .active_pane()
-            .map(|p| (p.camera, p.mode, p.grids))
-        else {
-            ui.label("No view is open.");
-            return;
-        };
-        if self.views.active().is_some() {
-            // The active pane switched to a saved view: the panel follows it.
-            self.show_view_properties();
-            return;
-        }
-        let busy = self.views.job.is_some();
-        text(ui, "Name", &mut self.views.form.name);
-        ui.separator();
-        let mut chosen = mode;
-        egui::ComboBox::from_id_salt("free-view-render-mode")
-            .selected_text(chosen.as_token())
-            .show_ui(ui, |ui| {
-                for mode in RenderMode::ALL {
-                    ui.selectable_value(&mut chosen, mode, mode.as_token());
-                }
-            });
-        if chosen != mode {
-            self.set_active_mode(chosen);
-        }
-        let mut shown = grids;
-        if ui.checkbox(&mut shown, "Grid guides").changed() {
-            self.set_grids_shown(shown);
-            if !shown {
-                self.grid_edit = None;
-            }
-        }
-        let projection = if camera.is_orthographic() {
-            Projection::Orthographic
-        } else {
-            Projection::Perspective
-        };
-        ui.label(format!(
-            "Projection: {}",
-            match projection {
-                Projection::Orthographic => "orthographic",
-                Projection::Perspective => "perspective",
-            }
-        ));
-        ui.add_space(8.0);
-        let save = theme::button(ui, theme::Kind::Primary, "Save as view", !busy)
-            .on_hover_text("Keep the camera as it is now as a saved view")
-            .clicked();
-        self.view_panel_note(ui);
-        if save {
-            let origin = self.view_origin();
-            let (mode, grids) = (self.active_mode(), self.grids_shown());
-            let form = &mut self.views.form;
-            form.id = None;
-            form.construction = Construction::CurrentCamera;
-            form.projection = projection;
-            form.mode = mode;
-            form.grids = grids;
-            if let Ok((_, span)) = camera.frame(origin) {
-                form.span = format!("{}", span.round().max(1.0));
-            }
-            self.submit_view();
-        }
-    }
-
     /// Opens a pane on `view` (or the free 3D view) and focuses it, up to [`MAX_WINDOWS`] panes
     /// in all. A view brings its session camera, or one built from its definition; the free 3D
     /// view copies the active pane's camera. Before the first work-area frame the pane is left
@@ -1826,16 +2289,19 @@ impl App {
             )));
             return;
         }
+        let id = id.or_else(|| self.default_view_id());
         let view = id.and_then(|id| self.views.book.get(&id)).cloned();
+        let active_camera = self.views.active_pane().map(|p| p.camera);
         let camera = match &view {
-            Some(view) => self.views.cameras.get(&view.id).copied().map_or_else(
-                || Camera::from_view(view, self.view_origin(), self.view_extent()),
-                Ok,
-            ),
-            None => self
-                .views
-                .active_pane()
-                .map_or_else(|| Camera::new([0.0; 3], 1000.0, 1.6), |p| Ok(p.camera)),
+            // The default view starts where the user is looking; the others where they were.
+            Some(view) => match self.views.cameras.get(&view.id).copied() {
+                Some(camera) => Ok(camera),
+                None => match active_camera.filter(|_| view.is_default) {
+                    Some(camera) => Ok(camera),
+                    None => Camera::from_view(view, self.view_origin(), self.view_extent()),
+                },
+            },
+            None => active_camera.map_or_else(|| Camera::new([0.0; 3], 1000.0, 1.6), Ok),
         };
         let camera = match camera {
             Ok(camera) => camera,
@@ -1897,19 +2363,25 @@ impl App {
     }
 
     /// The input frame and display follow a newly active pane. `from` is the view of the pane
-    /// that was active before (`Some(None)` the free 3D view, `None` no pane at all). A plane
-    /// change cancels an unfinished view pick and the tool drafts, as `activate_view` does.
+    /// that was active before (`Some(None)` a pane without a view, `None` no pane at all). The
+    /// default view and no view leave the model's own work plane; any other view installs its
+    /// plane. A plane change cancels an unfinished view pick and the tool drafts, as
+    /// `activate_view` does.
     fn pane_focused(&mut self, from: Option<Option<Uuid7>>) {
         let to = self.views.active_pane().map(|p| p.view);
+        let default = self.default_view_id();
+        let free = |id: Option<Uuid7>| id.is_none() || id == default;
         let plane_of = |views: &crate::views::Views, id: Option<Uuid7>| {
-            id.and_then(|id| views.book.get(&id)).map(|v| v.plane)
+            id.filter(|id| Some(*id) != default)
+                .and_then(|id| views.book.get(&id))
+                .map(|v| v.plane)
         };
         let from_view = from.flatten();
         let to_view = to.flatten();
         let mut changed = false;
-        match (from_view, to_view) {
-            // Free to view: the free work plane is kept until the free view comes back.
-            (None, Some(_)) => {
+        match (free(from_view), free(to_view)) {
+            // Free to view: the free work plane is kept until a free view comes back.
+            (true, false) => {
                 if let Some(plane) = plane_of(&self.views, to_view) {
                     self.views_input = Some(self.tools.plane);
                     self.install_plane(Some(plane));
@@ -1917,21 +2389,21 @@ impl App {
                 }
             }
             // View to free (or to no pane): the free work plane comes back.
-            (Some(_), None) => {
+            (false, true) => {
                 if let Some(plane) = self.views_input.take() {
                     self.install_plane(plane);
                     changed = true;
                 }
             }
             // View to view: only a different plane is installed.
-            (Some(_), Some(_)) => {
+            (false, false) => {
                 let next = plane_of(&self.views, to_view);
                 if next.is_some() && next != plane_of(&self.views, from_view) {
                     self.install_plane(next);
                     changed = true;
                 }
             }
-            (None, None) => {}
+            (true, true) => {}
         }
         if changed {
             self.tool_note = None;
@@ -1957,6 +2429,7 @@ pub(crate) enum BrowserAction {
     Window(Uuid7),
     Properties(Uuid7),
     Favorite(Uuid7),
+    SetDefault(Uuid7),
     Duplicate(Uuid7),
     Clip(Uuid7, bool),
     Close(Uuid7),

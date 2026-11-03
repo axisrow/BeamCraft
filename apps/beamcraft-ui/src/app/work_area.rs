@@ -31,6 +31,8 @@ pub(super) struct PaneDraw {
 pub(super) enum Arrange {
     /// Cascade from the top-left corner.
     Cascade,
+    /// A square-ish grid: four panes make 2 x 2.
+    Tile,
     /// Strips stacked top to bottom.
     TileHorizontal,
     /// Columns side by side.
@@ -172,6 +174,7 @@ impl App {
                 }
                 return;
             }
+            Arrange::Tile => panes::tile_grid(area, count),
             Arrange::TileHorizontal => panes::tile_horizontal(area, count),
             Arrange::TileVertical => panes::tile_vertical(area, count),
         };
@@ -294,7 +297,7 @@ impl App {
         }
     }
 
-    /// The empty work area: a hint and the button that opens the free 3D view.
+    /// The empty work area: a hint and the button that opens the default view.
     fn empty_work_area(&mut self, ui: &mut egui::Ui, area: egui::Rect) {
         let palette = theme::Palette::current(ui);
         let mut child = ui.new_child(
@@ -306,7 +309,7 @@ impl App {
         child.add_space((area.height() / 2.0 - 32.0).max(0.0));
         child.label(egui::RichText::new("No view is open.").color(palette.muted));
         child.add_space(8.0);
-        if theme::button(&mut child, theme::Kind::Primary, "Open the 3D view", true).clicked() {
+        if theme::button(&mut child, theme::Kind::Primary, "Open default view", true).clicked() {
             self.open_pane(None);
         }
     }

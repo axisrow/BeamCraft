@@ -176,6 +176,7 @@ const PROPERTY_OPTIONS: &[&str] = &[
     "--opacity",
     "--folder",
     "--favorite",
+    "--default",
     "--copy-from",
 ];
 
@@ -259,7 +260,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         "remove-view" => {
             let mut book = load(file, false)?;
             let id = selected(&book)?;
-            let view = book.remove(&id).ok_or_else(unknown)?;
+            let view = book.remove(&id).map_err(from_engine)?;
             store(file, &book)?;
             Ok(Json::object([
                 ("outcome", Json::text("view_removed")),
@@ -719,6 +720,9 @@ fn apply_properties(
     }
     if let Some(text) = get("--favorite") {
         view.favorite = flag(text)?;
+    }
+    if let Some(text) = get("--default") {
+        view.is_default = flag(text)?;
     }
     view.validate().map_err(from_engine)
 }
