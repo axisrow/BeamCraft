@@ -676,6 +676,7 @@ pub fn evaluate_member(
                         let body = cut_body.unwrap_or(body);
                         crate::engine::member_hole::replay_member_holes(
                             &frame.frame(),
+                            authored.axis_points_mm.first().copied().unwrap_or([0.0; 3]),
                             &body,
                             &authored.hole_records,
                         )?
@@ -735,6 +736,7 @@ pub fn evaluate_member(
                         let body = cut_body.unwrap_or_else(|| result.body().clone());
                         crate::engine::member_hole::replay_member_holes(
                             &frame.frame(),
+                            authored.axis_points_mm.first().copied().unwrap_or([0.0; 3]),
                             &body,
                             &authored.hole_records,
                         )?

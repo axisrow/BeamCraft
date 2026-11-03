@@ -406,7 +406,8 @@ fn permuted_body(body: &Body, axes: &Axes) -> Result<Body, CommandError> {
 
 /// Replays the member's hole records over `body` (the base shape with its plane cuts), in
 /// ordinal order, with the kernel's certified section-aware member-hole operation. The records
-/// come from the member frame; `frame` is the member frame's axes in element coordinates. The
+/// come from the member frame; `frame` is the member frame's axes in element coordinates and
+/// `origin_mm` is the frame origin in element coordinates (the member's first axis point). The
 /// returned mesh is in element coordinates.
 ///
 /// A straight member whose frame axes are exact coordinate axes is served with any
@@ -417,6 +418,7 @@ fn permuted_body(body: &Body, axes: &Axes) -> Result<Body, CommandError> {
 /// valid state.
 pub(crate) fn replay_member_holes(
     frame: &Frame3,
+    origin_mm: [f64; 3],
     body: &Body,
     records: &[MemberHoleRecord],
 ) -> Result<SolidMesh, CommandError> {
@@ -468,16 +470,30 @@ pub(crate) fn replay_member_holes(
                 (lo.min(height(p)), hi.max(height(p)))
             });
         let point = record.axis_point_mm;
-        let t0 = point[0].mul_add(dy, point[1] * dz);
+        // The stored member-frame point `(u, v, w)` resolves through the frame origin into
+        // element coordinates, then into the kernel frame's `a`, transverse line and height
+        // coordinates. For a frame origin at the coordinate origin each resolved component is
+        // the stored one (the cross terms vanish exactly on the signed unit rows), so the
+        // origin-based members keep their byte-exact results.
+        let element = [
+            origin_mm[0] + weighted([bx[0], by[0], bz[0]], point),
+            origin_mm[1] + weighted([bx[1], by[1], bz[1]], point),
+            origin_mm[2] + weighted([bx[2], by[2], bz[2]], point),
+        ];
+        let (a, y_k, z_k) = (
+            weighted(bz, element),
+            weighted(bx, element),
+            weighted(by, element),
+        );
+        let t0 = y_k.mul_add(dy, z_k * dz);
         let (from, to) = match record.extent {
             HoleExtent::Through => (t_lo - CUTTER_OVERSHOOT_MM, t_hi + CUTTER_OVERSHOOT_MM),
             HoleExtent::Range { from_mm, to_mm } => (t0 + from_mm, t0 + to_mm),
         };
-        // The axis point in the footprint plane: `a` along the member axis (the point's `w`
-        // coordinate), `b` along the axis' `e2 = d x e1` (the point's own transverse
-        // coordinate against it). The stored polygon is clockwise in exactly this frame — its
+        // The axis point in the footprint plane: `a` along the member axis, `b` along the
+        // axis' `e2 = d x e1`. The stored polygon is clockwise in exactly this frame — its
         // hole-frame XY is `(Z_m, axis_direction x Z_m)` — so the coordinates carry unchanged.
-        let centre = [point[2], dz * point[0] - dy * point[1]];
+        let centre = [a, dz * y_k - dy * z_k];
         let cavity = Cavity::polygon(
             record
                 .polygon_mm
@@ -708,6 +724,71 @@ mod tests {
         };
         let restored = remove_member_hole(&removal, &authored).unwrap().authored;
         assert!((evaluate(&restored, width, height).volume_mm3 - gross).abs() <= 1e-9);
+    }
+
+    #[test]
+    fn a_member_off_the_origin_replays_its_hole_records() {
+        let (width, height) = (200.0, 300.0);
+        // The same beam as `member()`, based at a non-zero offset: the frame axes stay the
+        // coordinate axes and the frame origin (the first axis point) is (500, 200, 100).
+        let mut placed = member();
+        placed.axis_points_mm = vec![[500.0, 200.0, 100.0], [1500.0, 200.0, 100.0]];
+        let gross = evaluate(&placed, width, height).volume_mm3;
+        // A through hole at the section centre, mid-length: the stored record is the
+        // member-frame point (u, v, w) = (0, 0, 500) and must resolve through the frame
+        // origin, not read as an element coordinate (which would land the cutter near the
+        // world origin, far off this member, and refuse the evaluation).
+        let authored = add_member_hole_after(
+            &member_hole(100.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &placed,
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        let body = evaluate(&authored, width, height);
+        let area = polygon_area(&authored.hole_records[0].polygon_mm);
+        assert!(
+            (body.volume_mm3 - (gross - area * width)).abs() <= 1.0,
+            "through removed {}",
+            gross - body.volume_mm3
+        );
+        // The same cut on the origin-based member certifies the same removed volume: the
+        // record means the same local geometry, wherever the member is placed.
+        let origin = add_member_hole_after(
+            &member_hole(100.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &member(),
+            &|_| false,
+            0,
+        )
+        .unwrap()
+        .authored;
+        let origin_volume = evaluate(&origin, width, height).volume_mm3;
+        assert!((body.volume_mm3 - origin_volume).abs() <= 1.0);
+        // A range extent is measured along the axis direction from the resolved axis point
+        // too: 10 mm past both u-walls removes exactly `area x width`.
+        let ranged = AddHole {
+            hole: HoleSpec::Member(crate::model::command::MemberHole {
+                axis_point_mm: [0.0, 0.0, 500.0],
+                axis_direction: [1.0, 0.0, 0.0],
+                extent: HoleExtent::Range {
+                    from_mm: -110.0,
+                    to_mm: 110.0,
+                },
+                diameter_mm: 50.0,
+            }),
+            ..member_hole(50.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0])
+        };
+        let served = add_member_hole_after(&ranged, &placed, &|_| false, 0)
+            .unwrap()
+            .authored;
+        let body_r = evaluate(&served, width, height);
+        let area_r = polygon_area(&served.hole_records[0].polygon_mm);
+        assert!(
+            (body_r.volume_mm3 - (gross - area_r * width)).abs() <= 1.0,
+            "range removed {}",
+            gross - body_r.volume_mm3
+        );
     }
 
     #[test]
