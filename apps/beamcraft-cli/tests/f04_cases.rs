@@ -54,6 +54,12 @@ const UNSUPPORTED_BY_P01: &[&str] = &[];
 /// Nonplanarity is now checked before support; there are no remaining wrong-code deviations.
 const WRONG_CODE_IN_P01: &[&str] = &[];
 
+/// The wrongly built contours the frozen fixture expects refused, retained degenerate since
+/// amendment A-2 D-7 (decision of 2026-10-19, task P-Degenerate): winding, off-band
+/// planarity, self-intersection. The element is kept authored-only without derived data and
+/// recomputes once its contour is fixed; the frozen fixture text is not edited.
+const DEGENERATE_BY_D7: &[&str] = &["F04-NEG-28", "F04-NEG-29", "F04-NEG-30", "F04-NEG-38"];
+
 #[test]
 fn the_k1_inventory_accounts_for_the_other_commands_and_raw_envelopes() {
     let bytes = std::fs::read(concat!(
@@ -293,6 +299,19 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
                 "{id} no longer deviates: update the lists"
             );
             deviations.insert(id.to_owned());
+        } else if DEGENERATE_BY_D7.contains(&id) {
+            // A-2 D-7 supersedes the frozen refusal: the retained draft applies as authored
+            // data, so the verdict is the accepted one the fixture never predicted.
+            assert_eq!(
+                verdict,
+                Verdict::Applied,
+                "{id} is a declared deviation and must stay retained degenerate"
+            );
+            assert_ne!(
+                verdict, expected_verdict,
+                "{id} no longer deviates: update the lists"
+            );
+            deviations.insert(id.to_owned());
         } else {
             assert_eq!(verdict, expected_verdict, "{id}");
             passed.insert(id.to_owned());
@@ -304,7 +323,7 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
     assert_eq!(skipped.len(), SKIPPED.len());
     assert_eq!(
         deviations.len(),
-        UNSUPPORTED_BY_P01.len() + WRONG_CODE_IN_P01.len()
+        UNSUPPORTED_BY_P01.len() + WRONG_CODE_IN_P01.len() + DEGENERATE_BY_D7.len()
     );
     // Cases that must be among the passing ones: the accepted first-scope plate, replay and reuse,
     // the minimum, the largest plate, large translation, quaternion tolerance, and the codes.
@@ -331,7 +350,6 @@ fn every_decidable_create_plate_case_matches_f04_or_is_a_declared_deviation() {
         "F04-NEG-24",
         "F04-NEG-25",
         "F04-NEG-27",
-        "F04-NEG-28",
         "F04-NEG-31",
         "F04-NEG-32",
         "F04-NEG-34",

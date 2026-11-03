@@ -60,13 +60,30 @@ fn valid_authored_input_is_distinct_from_unsupported_solid_evaluation() {
 }
 
 #[test]
-fn invalid_inputs_and_identity_failures_never_become_unsupported_drafts() {
-    assert_eq!(
-        create_plate_draft(&command(0.875), &|_| false, &no_materials)
-            .unwrap_err()
-            .code,
-        ErrorCode::InvalidArgument
-    );
+fn wrongly_built_contours_are_kept_degenerate_and_hard_failures_still_refuse() {
+    // A reversed contour (A-2 D-7's example) is retained without derived data, with the stable
+    // winding reason and the unmodified authored inputs.
+    let mut reversed = command(0.75);
+    reversed.contour_points_mm.reverse();
+    let PlateDraft::Unsupported(kept) =
+        create_plate_draft(&reversed, &|_| false, &no_materials).unwrap()
+    else {
+        panic!("expected the reversed contour to be retained degenerate")
+    };
+    assert!(kept.degenerate);
+    assert_eq!(kept.reason, "contour_winding_clockwise");
+    assert_eq!(kept.authored.to_command(), reversed);
+    // A contour outside the planarity band is the same retention class, its own reason.
+    let PlateDraft::Unsupported(kept) =
+        create_plate_draft(&command(0.875), &|_| false, &no_materials).unwrap()
+    else {
+        panic!("expected the off-band contour to be retained degenerate")
+    };
+    assert!(kept.degenerate);
+    assert_eq!(kept.reason, "contour_outside_planarity_band");
+    // Hard failures never retain: non-finite input, a duplicate id, holes beside the fault,
+    // and an edge below the geometric floor (the authored layer's storage floor cannot hold
+    // such a contour, so it never enters the degenerate state).
     assert_eq!(
         create_plate_draft(&command(f64::NAN), &|_| false, &no_materials)
             .unwrap_err()
@@ -79,20 +96,70 @@ fn invalid_inputs_and_identity_failures_never_become_unsupported_drafts() {
             .code,
         ErrorCode::DuplicateId
     );
-    let mut wrong = command(0.75);
-    wrong.contour_points_mm.reverse();
+    let mut holed = command(0.75);
+    holed.contour_points_mm.reverse();
+    holed.holes_mm = vec![vec![[10.0, 10.0], [30.0, 10.0], [30.0, 30.0]]];
     assert_eq!(
-        create_plate_draft(&wrong, &|_| false, &no_materials)
+        create_plate_draft(&holed, &|_| false, &no_materials)
             .unwrap_err()
             .code,
         ErrorCode::InvalidArgument
     );
+    let tiny = CreatePlate {
+        contour_points_mm: vec![
+            [0., 0., 0.],
+            [0.0000005, 0., 0.],
+            [1000., 500., 0.],
+            [0., 500., 0.],
+        ],
+        ..command(0.0)
+    };
+    assert_eq!(
+        create_plate_draft(&tiny, &|_| false, &no_materials)
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidArgument
+    );
+    // Supported-admission retention stays distinct: a valid contour with an identity rotation
+    // of the world placement is unsupported, not degenerate.
     let mut rotated = command(0.75);
     rotated.placement.orientation_xyzw = [0., 0., 1., 0.];
-    assert!(matches!(
-        create_plate_draft(&rotated, &|_| false, &no_materials).unwrap(),
-        PlateDraft::Unsupported(_)
-    ));
+    let PlateDraft::Unsupported(kept) =
+        create_plate_draft(&rotated, &|_| false, &no_materials).unwrap()
+    else {
+        panic!("expected the rotated placement to stay in the unsupported class")
+    };
+    assert!(!kept.degenerate);
+    assert_eq!(kept.reason, "contour_not_exactly_planar");
+}
+
+#[test]
+fn a_committed_degenerate_plate_reads_authored_only_and_repairs_into_a_body() {
+    let mut reversed = command(0.75);
+    reversed.contour_points_mm.reverse();
+    let PlateDraft::Unsupported(kept) =
+        create_plate_draft(&reversed, &|_| false, &no_materials).unwrap()
+    else {
+        panic!("expected retention")
+    };
+    // The committed read keeps the degenerate record authored-only, without derived data.
+    let (evaluated, unsupported) =
+        evaluate_committed_drafts(std::slice::from_ref(&kept.authored), &no_materials).unwrap();
+    assert!(evaluated.is_empty());
+    assert_eq!(unsupported, vec![*kept.clone()]);
+    // Once fixed, the same record evaluates: the D-7 repair recomputes geometry and quantities.
+    let mut fixed = kept.authored.clone();
+    fixed.contour_points_mm = vec![
+        [0., 0., 0.],
+        [1000., 0., 0.],
+        [1000., 500., 0.],
+        [0., 500., 0.],
+    ];
+    let (evaluated, unsupported) =
+        evaluate_committed_drafts(std::slice::from_ref(&fixed), &no_materials).unwrap();
+    assert!(unsupported.is_empty());
+    assert_eq!(evaluated.len(), 1);
+    assert_eq!(evaluated[0].authored, fixed);
 }
 
 #[test]

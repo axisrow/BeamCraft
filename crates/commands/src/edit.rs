@@ -37,7 +37,9 @@ use session::pipeline::{
     summarize,
 };
 use std::collections::BTreeMap;
+use steel::engine::committed::PlateRecord;
 pub use steel::engine::part::PartRecord;
+use steel::engine::plate_draft::{PlateDraft, UnsupportedPlate, create_plate_draft};
 use steel::engine::transaction::PriorOp;
 use steel::engine::update::{UpdateEffect, effect};
 use steel::layer as steel_layer;
@@ -61,13 +63,23 @@ pub struct UpdateRequest {
     pub command: UpdateElement,
 }
 
+/// The element an update reports: with its evaluated body when the kernel evaluates it, or as
+/// authored-only data (unsupported or degenerate, P-Degenerate) when it does not.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpdatedPart {
+    /// The element with its evaluated body and quantities.
+    Evaluated(PartRecord),
+    /// The retained authored-only state; no derived data exist for the element.
+    AuthoredOnly(Box<UnsupportedPlate>),
+}
+
 /// Result of `update_element`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Updated {
     /// True when the same operation was already committed and nothing was written.
     pub replayed: bool,
     /// The element after the update (the head's element for a replay).
-    pub element: PartRecord,
+    pub element: UpdatedPart,
     /// The groups the patch changes.
     pub effect: UpdateEffect,
     /// The revision that holds the result.
@@ -84,6 +96,18 @@ fn not_found() -> Refusal {
         "target_id",
         "the element is not in the head revision",
     ))
+}
+
+/// The retained authored-only state of a plate the caller resolved as non-evaluated. An element
+/// that evaluates here contradicts that resolution and is an integrity error.
+fn retained_state(
+    authored: &steel::engine::command::AuthoredPlate,
+    materials: steel::engine::command::MaterialLookup<'_>,
+) -> Result<UnsupportedPlate, Refusal> {
+    match create_plate_draft(&authored.to_command(), &|_| false, materials)? {
+        PlateDraft::Unsupported(record) => Ok(*record),
+        PlateDraft::Evaluated(_) => Err(integrity("an authored-only element evaluates")),
+    }
 }
 
 /// Updates one element and publishes the next revision, or replays the operation.
@@ -118,35 +142,233 @@ pub fn update_element(
         expected,
         ..
     } = base;
-    let (plates, members, definitions, levels, instances) = {
+    let (plates, members, definitions, levels, instances, authored_head) = {
         let mut reader = Reader::default();
         let opened = reader.open(base_request.clone(), &control)?;
         let decoded = decode(&reader, &opened, &control)?;
         let (plates, members) = evaluate_decoded(&decoded)?;
-        if decoded
+        // The plate the kernel cannot evaluate (unsupported or degenerate, P-Degenerate): the
+        // patch applies to its authored record and the result is reclassified below, so an
+        // edit repairs the element instead of refusing it.
+        let authored_head = decoded
             .plates
             .iter()
-            .any(|(p, _)| p.id == command.target_id)
-            && !plates.iter().any(|p| p.authored.id == command.target_id)
-        {
-            return Err(CommandError::new(
-                ErrorCode::DependencyUnavailable,
-                "target_id",
-                "editing an unsupported plate is not implemented",
-            )
-            .into());
-        }
+            .find(|(p, _)| p.id == command.target_id)
+            .filter(|_| !plates.iter().any(|p| p.authored.id == command.target_id))
+            .map(|(p, _)| p.clone());
         (
             plates,
             members,
             decoded.definitions,
             decoded.levels,
             decoded.instances,
+            authored_head,
         )
     };
     let materials = material_lookup(&definitions);
     let patch_effect = effect(&command.patch);
     let new_material = command.patch.material.flatten();
+
+    // The P-Degenerate update (A-2 D-7): an edit of a plate whose body the kernel cannot
+    // evaluate. The patch rewrites the authored record; the reclassified result either repairs
+    // the element (its body and quantities are computed and stored) or keeps it authored-only.
+    // A hard refusal of the patched state still refuses the whole command, so nothing is
+    // dropped or half-written.
+    if let Some(authored) = authored_head {
+        let head_level = levels.level_of(&command.target_id);
+        // Shared-definition edits need the evaluated bodies of the group; the kernel evaluates
+        // none of them here, so a group larger than the element itself refuses. Copies come
+        // from evaluated records only, so a group is expected to hold the element alone.
+        let shared = patch_effect.material || patch_effect.shape;
+        if shared && instances.group(command.target_id)?.len() > 1 {
+            return Err(CommandError::new(
+                ErrorCode::DependencyUnavailable,
+                "target_id",
+                "instances cannot share an element without evaluated geometry",
+            )
+            .into());
+        }
+        let next = steel::engine::update::patch_plate(&authored, &command.patch)?;
+        let unchanged = next == authored && head_level == command.patch.level.unwrap_or(head_level);
+        let op_host = host_uuid(&request.op_id.to_string())?;
+        let fingerprint = command.content_fingerprint()?;
+        let head_revision = head
+            .as_ref()
+            .map(|revision| revision.info().revision().as_str().to_owned());
+        // Replay follows the documented UpdateElement contract; a relative transform (a mirror
+        // here) replays from history as in the evaluated path below.
+        let relative = patch_effect.rotate || patch_effect.mirror || patch_effect.move_mm;
+        let (prior, recorded) = prior_op_with(store, &op_host, || {
+            if unchanged {
+                Ok(fingerprint)
+            } else {
+                digest_of(b"no accepted request matches the head state")
+            }
+        })?;
+        let replayed = match prior {
+            PriorOp::Accepted { fingerprint: seen } => {
+                seen == fingerprint
+                    || (relative
+                        && recorded.as_ref().is_some_and(|(revision, ..)| {
+                            head_revision.as_deref() == Some(revision.as_str())
+                        }))
+            }
+            PriorOp::Unseen => false,
+        };
+        if replayed {
+            // The head's own retained state, reclassified from its authored inputs.
+            let retained = retained_state(&authored, &materials)?;
+            return Ok(Updated {
+                replayed: true,
+                element: UpdatedPart::AuthoredOnly(Box::new(retained)),
+                effect: patch_effect,
+                revision: replay_summary(&head, recorded)?,
+                footprint: None,
+                changed_layers: Vec::new(),
+            });
+        }
+        if let PriorOp::Accepted { .. } = prior {
+            return Err(CommandError::new(
+                ErrorCode::OpIdReuse,
+                "op_id",
+                "operation id was accepted with different content",
+            )
+            .into());
+        }
+        if unchanged {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "changes",
+                "the patch changes nothing",
+            )
+            .into());
+        }
+        let element = match create_plate_draft(&next.to_command(), &|_| false, &materials)? {
+            PlateDraft::Evaluated(outcome) => {
+                UpdatedPart::Evaluated(PartRecord::Plate(Box::new(PlateRecord {
+                    authored: outcome.authored,
+                    body: outcome.body,
+                    quantities: outcome.quantities,
+                })))
+            }
+            PlateDraft::Unsupported(record) => UpdatedPart::AuthoredOnly(Box::new(*record)),
+        };
+        let canonical = instances.definition(command.target_id)?;
+        let id_text = command.target_id.to_string();
+        let definition_text = canonical.to_string();
+        let mut changes = Vec::new();
+        if let Some(class) = command.patch.class {
+            changes.push(Change::PartClass {
+                id: id_text.clone(),
+                class,
+            });
+        }
+        if let Some(name) = &command.patch.name {
+            changes.push(Change::Label {
+                id: id_text.clone(),
+                name: name.clone(),
+            });
+        }
+        if let Some(material) = command.patch.material {
+            changes.push(Change::Material {
+                id: definition_text.clone(),
+                opinion: material.map_or(MaterialOpinion::Empty, MaterialOpinion::Target),
+            });
+        }
+        if let Some(mm) = command.patch.plate.thickness_mm {
+            changes.push(steel_layer::thickness(definition_text.clone(), mm));
+        }
+        if let Some(points) = &command.patch.plate.contour_points_mm {
+            changes.push(steel_layer::contour(
+                definition_text.clone(),
+                points.clone(),
+            ));
+        }
+        if let Some(corners) = &command.patch.plate.corners {
+            changes.push(steel_layer::corners(
+                definition_text.clone(),
+                corners.clone(),
+            ));
+        }
+        if let Some(side) = command.patch.plate.thickness_side {
+            changes.push(steel_layer::thickness_side(definition_text.clone(), side));
+        }
+        // The mirror re-encodes the authored records of the degenerate element, exactly as it
+        // re-encodes an evaluated one; the reclassification above decided the derived writes.
+        if patch_effect.mirror {
+            if let Some(side) = next.thickness_side {
+                changes.push(steel_layer::thickness_side(definition_text.clone(), side));
+            }
+            changes.push(steel_layer::cuts(
+                definition_text.clone(),
+                next.cuts.clone(),
+            ));
+        }
+        if patch_effect.placement || patch_effect.orientation {
+            let placement = &next.placement;
+            let [qx, qy, qz, qw] = placement.orientation_xyzw;
+            changes.push(Change::Placement {
+                id: id_text.clone(),
+                placement: LayerPlacement {
+                    translation_mm: placement.translation_mm,
+                    orientation_xyzw: [qx, qy, qz, qw],
+                },
+            });
+        }
+        if let Some(level) = command.patch.level {
+            changes.push(Change::Level {
+                id: id_text,
+                level: level.map(|l| l.to_string()),
+            });
+        }
+        if let UpdatedPart::Evaluated(record @ PartRecord::Plate(_)) = &element {
+            changes.push(part_mesh_change(record)?);
+        }
+        let mut footprint = Footprint::for_update(
+            command.target_id,
+            patch_effect.name || patch_effect.class,
+            patch_effect.material,
+            patch_effect.shape,
+            patch_effect.placement || patch_effect.orientation,
+            new_material,
+        )?;
+        if let Some(level) = command.patch.level {
+            footprint = footprint.union(levels.assign(command.target_id, level)?.footprint)?;
+        }
+        let schema = schema_identity()?;
+        let (mut author, opened) =
+            crate::scope::open_author(store, base_request, false, schema, &control)?;
+        let (committed, changed_layers) = prepare_and_publish(
+            &mut author,
+            &opened,
+            changes,
+            &footprint,
+            &before,
+            PublicationTail {
+                store,
+                control: &control,
+                schema,
+                fingerprint,
+                project: &project,
+                workspace: &workspace,
+                revision_id: &request.revision_id,
+                op: op_host,
+                op_id: request.op_id.to_string(),
+                actor: request.actor.to_string(),
+                base_generation,
+                expected: &expected,
+            },
+            hook,
+        )?;
+        return Ok(Updated {
+            replayed: false,
+            element,
+            effect: patch_effect,
+            revision: summarize(&committed.info),
+            footprint: Some(footprint),
+            changed_layers,
+        });
+    }
 
     // The element after the patch, its body and its quantities.
     let head_element = PartRecord::find(&plates, &members, command.target_id).ok_or_else(|| {
@@ -201,7 +423,7 @@ pub fn update_element(
     if replayed {
         return Ok(Updated {
             replayed: true,
-            element: head_element,
+            element: UpdatedPart::Evaluated(head_element),
             effect: patch_effect,
             revision: replay_summary(&head, recorded)?,
             footprint: None,
@@ -393,7 +615,7 @@ pub fn update_element(
     )?;
     Ok(Updated {
         replayed: false,
-        element: next,
+        element: UpdatedPart::Evaluated(next),
         effect: patch_effect,
         revision: summarize(&committed.info),
         footprint: Some(footprint),

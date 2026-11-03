@@ -247,7 +247,7 @@ fn apply_hole(
             return Err(CommandError::new(
                 ErrorCode::DependencyUnavailable,
                 "target_id",
-                "editing an unsupported plate is not implemented",
+                "the target plate has no evaluated geometry to drill",
             )
             .into());
         }

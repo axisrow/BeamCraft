@@ -168,7 +168,7 @@ fn copy_with_mode(
             return Err(CommandError::new(
                 ErrorCode::DependencyUnavailable,
                 "source_id",
-                "copying an unsupported plate is not implemented",
+                "the source plate has no evaluated geometry to copy",
             )
             .into());
         }

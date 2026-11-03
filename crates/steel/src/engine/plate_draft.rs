@@ -16,13 +16,18 @@ use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId};
 use std::collections::BTreeSet;
 
-/// Valid authored input whose solid is outside the supported contour evaluation scope.
+/// Valid authored input whose solid is outside the supported contour evaluation scope, or a
+/// wrongly built contour (A-2 D-7) kept without derived data until it is fixed.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnsupportedPlate {
     /// Original inputs, with no repaired or projected coordinates.
     pub authored: AuthoredPlate,
     /// Stable reason for the absent geometry and quantity values.
     pub reason: &'static str,
+    /// True when the authored geometry itself is wrong (`INVALID_ARGUMENT` class, D-7) and the
+    /// element is retained degenerate; false for supported-admission input outside the
+    /// implemented evaluation scope.
+    pub degenerate: bool,
 }
 
 /// Result of admitting authored data; geometry evaluation remains a distinct state.
@@ -34,9 +39,11 @@ pub enum PlateDraft {
     Unsupported(Box<UnsupportedPlate>),
 }
 
-/// Admits a plate as authored data. Invalid, over-cap or uncertain contours are still refused.
-/// Only validated contours outside the implemented plane/rectangle scope can be retained;
-/// operations on an unsupported contour still require their own supported adapters.
+/// Admits a plate as authored data. Invalid caps, uncertain contours and hostile arguments are
+/// still refused. Two bounded classes are retained without derived data: validated contours
+/// outside the implemented plane/rectangle scope, and wrongly built contours (A-2 D-7) whose
+/// topology, winding, area, floor or planarity admission failed. Operations on either still
+/// require their own supported adapters.
 pub fn create_plate_draft(
     command: &CreatePlate,
     existing: &dyn Fn(&ElementId) -> bool,
@@ -46,10 +53,21 @@ pub fn create_plate_draft(
         Ok(outcome) => return Ok(PlateDraft::Evaluated(Box::new(outcome))),
         Err(error) => error,
     };
-    if error.code != ErrorCode::UnsupportedGeometry
-        || error.field != "contour_points_mm"
-        || !command.holes_mm.is_empty()
-    {
+    if !command.holes_mm.is_empty() {
+        return Err(error);
+    }
+    // A wrongly built contour is retained degenerate: the reason token comes from the contour
+    // admission's own stable vocabulary, so an arbitrary evaluation failure never becomes an
+    // accepted authored-only draft (numeric uncertainty and bad arguments never match).
+    if let Some(reason) = crate::kernel::plate_contour::degenerate_reason(&error) {
+        validate_authored_material(command, materials)?;
+        return Ok(PlateDraft::Unsupported(Box::new(UnsupportedPlate {
+            authored: AuthoredPlate::from_command(command),
+            reason,
+            degenerate: true,
+        })));
+    }
+    if error.code != ErrorCode::UnsupportedGeometry || error.field != "contour_points_mm" {
         return Err(error);
     }
     // Repeat the complete geometric admission: an arbitrary evaluation failure must never
@@ -61,6 +79,25 @@ pub fn create_plate_draft(
     if !unsupported_plane {
         return Err(error);
     }
+    validate_authored_material(command, materials)?;
+    Ok(PlateDraft::Unsupported(Box::new(UnsupportedPlate {
+        authored: AuthoredPlate::from_command(command),
+        reason: if contour.exactly_planar {
+            "contour_plane_unsupported"
+        } else {
+            "contour_not_exactly_planar"
+        },
+        degenerate: false,
+    })))
+}
+
+/// Re-validates the pinned material's density independently of evaluation: a retained
+/// authored-only plate has no quantities, so a bad specification refuses the command instead
+/// of hiding behind the absent geometry.
+fn validate_authored_material(
+    command: &CreatePlate,
+    materials: MaterialLookup<'_>,
+) -> Result<(), CommandError> {
     if let Some(material) = command
         .material_digest
         .as_ref()
@@ -73,14 +110,7 @@ pub fn create_plate_draft(
         }
         .validate()?;
     }
-    Ok(PlateDraft::Unsupported(Box::new(UnsupportedPlate {
-        authored: AuthoredPlate::from_command(command),
-        reason: if contour.exactly_planar {
-            "contour_plane_unsupported"
-        } else {
-            "contour_not_exactly_planar"
-        },
-    })))
+    Ok(())
 }
 
 /// One admitted authored operation, before the host atomically commits it.

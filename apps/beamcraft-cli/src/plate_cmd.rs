@@ -17,7 +17,7 @@ use beamcraft_commands::definition::{
     head_definitions, resolve_name,
 };
 use beamcraft_commands::delete::{DeleteRequest, DeletedKind, delete_element};
-use beamcraft_commands::edit::{UpdateRequest, update_element};
+use beamcraft_commands::edit::{UpdateRequest, UpdatedPart, update_element};
 use beamcraft_commands::history::{Direction, Step, step, timeline};
 use beamcraft_commands::hole::{AddHoleRequest, add_hole_command};
 use beamcraft_commands::library::{Lookup, open_lookup};
@@ -388,6 +388,7 @@ const UPDATE_OPTIONS: &[&str] = &[
     "--material-digest",
     "--thickness",
     "--corners",
+    "--contour",
     "--thickness-side",
     "--axis-point",
     "--translation",
@@ -1467,8 +1468,10 @@ fn update_command(
             } else {
                 None
             },
-            // A contour patch has no option: the contour edits (A12.3) build one below.
-            contour_points_mm: None,
+            // A whole-contour replacement: the repair path of a degenerate or unsupported
+            // plate (P-Degenerate) and a shape edit of an evaluated one. Corner treatments
+            // arriving with it are validated against the new contour.
+            contour_points_mm: given("--contour").map(contour_points).transpose()?,
             thickness_mm: given("--thickness")
                 .map(|text| {
                     text.parse::<f64>()
@@ -1504,8 +1507,10 @@ fn update_command(
         &mut NoFault,
     )?;
     let element = match &updated.element {
-        PartRecord::Plate(record) => plate_json(record)?,
-        PartRecord::Member(record) => member_json(record)?,
+        UpdatedPart::Evaluated(PartRecord::Plate(record)) => plate_json(record)?,
+        UpdatedPart::Evaluated(PartRecord::Member(record)) => member_json(record)?,
+        // The element stays without evaluated geometry; its authored inputs are the result.
+        UpdatedPart::AuthoredOnly(record) => unsupported_plate_json(record)?,
     };
     Ok(Json::object([
         (
@@ -1606,45 +1611,39 @@ fn contour_edit_command(
         None => WorkspaceId::from_uuid(fresh()?),
     };
     // The head plate as the caller saw it: the edit names vertices and edges of this contour by
-    // position, and a stale naming is refused by the commit's base-revision rule.
+    // position, and a stale naming is refused by the commit's base-revision rule. A degenerate
+    // or unsupported plate is edited through the same authored inputs (P-Degenerate); the
+    // update reclassifies the result, so a vertex move can also repair the contour.
     let inspection = inspect(store)?;
-    let record = match inspection
+    let authored = if let Some(record) = inspection
         .plates
         .iter()
         .find(|p| p.authored.id == target_id)
     {
-        Some(record) => record,
-        None if inspection
-            .unsupported_plates
-            .iter()
-            .any(|p| p.authored.id == target_id) =>
-        {
-            return Err(Refusal {
-                rule_id: None,
-                code: ErrorCode::DependencyUnavailable,
-                message: "editing an unsupported plate is not implemented",
-            });
-        }
-        None if inspection
-            .members
-            .iter()
-            .any(|m| m.authored.id == target_id) =>
-        {
-            return Err(Refusal {
-                rule_id: None,
-                code: ErrorCode::UnsupportedProperty,
-                message: "only plates have a contour",
-            });
-        }
-        None => {
-            return Err(Refusal {
-                rule_id: None,
-                code: ErrorCode::NotFound,
-                message: "the element is not in the head revision",
-            });
-        }
+        &record.authored
+    } else if let Some(record) = inspection
+        .unsupported_plates
+        .iter()
+        .find(|p| p.authored.id == target_id)
+    {
+        &record.authored
+    } else if inspection
+        .members
+        .iter()
+        .any(|m| m.authored.id == target_id)
+    {
+        return Err(Refusal {
+            rule_id: None,
+            code: ErrorCode::UnsupportedProperty,
+            message: "only plates have a contour",
+        });
+    } else {
+        return Err(Refusal {
+            rule_id: None,
+            code: ErrorCode::NotFound,
+            message: "the element is not in the head revision",
+        });
     };
-    let authored = &record.authored;
     let (points, corners) = match command {
         "move-plate-vertex" => steel::engine::contour_edit::move_vertex(
             &authored.contour_points_mm,
@@ -1704,14 +1703,18 @@ fn contour_edit_command(
         },
         &mut NoFault,
     )?;
-    let PartRecord::Plate(edited) = &updated.element else {
-        return Err(Refusal {
-            rule_id: None,
-            code: ErrorCode::IntegrityError,
-            message: "a contour edit reported a non-plate element",
-        });
+    let element = match &updated.element {
+        UpdatedPart::Evaluated(PartRecord::Plate(edited)) => plate_json(edited)?,
+        // The edit left the plate authored-only; its inputs are the result.
+        UpdatedPart::AuthoredOnly(retained) => unsupported_plate_json(retained)?,
+        UpdatedPart::Evaluated(PartRecord::Member(_)) => {
+            return Err(Refusal {
+                rule_id: None,
+                code: ErrorCode::IntegrityError,
+                message: "a contour edit reported a non-plate element",
+            });
+        }
     };
-    let element = plate_json(edited)?;
     let outcome = if updated.replayed {
         "contour_edit_replayed"
     } else {
@@ -4217,10 +4220,17 @@ fn environment_presets_json(options: &BTreeMap<&str, &str>) -> Run<Json> {
 
 fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
     let authored = &record.authored;
+    // A degenerate record carries wrongly built authored geometry (A-2 D-7): the refusal code
+    // of its class is `INVALID_ARGUMENT`, and the label says so instead of claiming validity.
+    let (validity, status, code) = if record.degenerate {
+        ("degenerate", "degenerate", "INVALID_ARGUMENT")
+    } else {
+        ("valid", "unsupported", "UNSUPPORTED_GEOMETRY")
+    };
     let quantity = |unit| {
         Json::object([
             (unit, Json::Null),
-            ("status", Json::text("unsupported")),
+            ("status", Json::text(status)),
             ("reason", Json::text(record.reason)),
             ("input_signature", Json::Null),
             ("algorithm", Json::Null),
@@ -4238,9 +4248,9 @@ fn unsupported_plate_json(record: &UnsupportedPlate) -> Run<Json> {
         ),
         ("kind", Json::text("plate")),
         ("name", Json::text(&authored.name)),
-        ("validity", Json::text("valid")),
-        ("geometry_status", Json::text("unsupported")),
-        ("geometry_code", Json::text("UNSUPPORTED_GEOMETRY")),
+        ("validity", Json::text(validity)),
+        ("geometry_status", Json::text(status)),
+        ("geometry_code", Json::text(code)),
         ("geometry_reason", Json::text(record.reason)),
         (
             "material_digest",

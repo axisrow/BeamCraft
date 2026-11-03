@@ -39,12 +39,40 @@ signatures. The inspection snapshot lists the identity with no render instance o
 geometry snapshot contains only supported meshes. No bounding-box estimate or zero replaces a
 missing engineering value.
 
-Deletion is supported. Editing, copying, numbering, BOM/IFC export and binary viewport bundle
-export currently require supported geometry and return `DEPENDENCY_UNAVAILABLE` rather than
-misreporting a missing element or silently excluding it. Existing supported plates can coexist
-with unsupported plates and retain their meshes and quantities. Editing/repair and richer
-geometry-free viewport/report protocols need later implementation; this slice does not claim
-their F04/F06 acceptance.
+Deletion is supported. Copying, hole drilling, numbering, BOM/IFC export and binary viewport
+bundle export currently require supported geometry and return `DEPENDENCY_UNAVAILABLE` rather
+than misreporting a missing element or silently excluding it. Existing supported plates can
+coexist with unsupported plates and retain their meshes and quantities.
+
+## P-Degenerate: the degenerate class and repair (A-2 D-7)
+
+Since amendment A-2 D-7 (decision of 2026-10-19, task P-Degenerate, fork issue #422) a wrongly
+built contour is retained as well, as the degenerate class of `UnsupportedPlate`
+(`degenerate: true`): clockwise winding, a zero area vector, an off-band planarity, a zero
+projected edge or a broken topology — every `INVALID_ARGUMENT` fault the contour admission
+reports, minus an edge below the geometric floor, which the authored layer's own storage floor
+refuses, so it keeps refusing with its precise message. The stable reason tokens
+(`contour_winding_clockwise`, `contour_area_vector_zero`, `contour_outside_planarity_band`,
+`contour_projection_zero_edge`, `contour_bad_topology`) are matched against the admission's own
+message vocabulary in `kernel::plate_contour::degenerate_reason`; the frozen F04 fixture cases
+that predicted a refusal (NEG-28, NEG-29, NEG-30, NEG-38) are declared deviations in the K1
+admission driver, superseded by the amendment, not edited.
+
+Editing is implemented for retained plates: `update-element` patches the authored record,
+reclassifies the result once, and either repairs the element (the kernel evaluates the body,
+the mesh and quantity records are stored, the quantities read `current`) or keeps it
+authored-only; a hard refusal of the patched state still refuses the whole command, so nothing
+is dropped or half-written. An update that would degrade an evaluated plate into a wrongly
+built one is therefore refused with the kernel's message and the head keeps its derived data.
+The repair input is a whole-contour replacement (`update-element --contour`); the A12.3 contour
+edits work on a retained plate as well, so a single vertex move can repair a stored fault.
+Shared-definition edits (material or shape with instances beside the target) refuse: the group
+cannot share a body the kernel does not evaluate. The update result type distinguishes the
+classes (`UpdatedPart::Evaluated` / `UpdatedPart::AuthoredOnly`); the JSON labels a retained
+plate `validity: degenerate`, `geometry_status: degenerate`, `geometry_code:
+INVALID_ARGUMENT` for the degenerate class and keeps the K1 labels for the unsupported class.
+Members keep their hard refusals: a member draft state (retention of wrongly built paths and
+profiles) is not implemented and remains later work.
 
 ## Verification
 

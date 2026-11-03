@@ -17,8 +17,40 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use core::cmp::Ordering;
 
+/// The wrongly built contour faults (A-2 D-7): bounded, finite input whose topology, winding,
+/// area, floor or planarity is wrong. The messages are stable tokens of this module; the
+/// retained-degenerate admission of `engine::plate_draft` matches on them, so a wording change
+/// here silently changes that classification and its tests fail.
+pub(crate) const FAULT_BELOW_FLOOR: &str = "contour edge is below the geometric floor";
+pub(crate) const FAULT_PLANARITY_BAND: &str = "contour is outside the planarity band";
+pub(crate) const FAULT_CLOCKWISE: &str = "contour winding is clockwise";
+pub(crate) const FAULT_ZERO_AREA: &str = "contour area vector is zero";
+pub(crate) const FAULT_ZERO_PROJECTED_EDGE: &str = "contour projection has a zero edge";
+pub(crate) const FAULT_BAD_TOPOLOGY: &str = "contour intersects, touches or backtracks";
+
 fn invalid(message: &'static str) -> CommandError {
     CommandError::new(ErrorCode::InvalidArgument, "contour_points_mm", message)
+}
+
+/// The stable reason of a wrongly built contour this module refused, `None` for any other
+/// error. A contour below the geometric floor is deliberately absent: the authored layer's
+/// own storage floor refuses it before a degenerate record could be committed, so such input
+/// keeps refusing here with its precise message instead of retaining.
+pub(crate) fn degenerate_reason(error: &CommandError) -> Option<&'static str> {
+    if error.code != ErrorCode::InvalidArgument || error.field != "contour_points_mm" {
+        return None;
+    }
+    let reasons = [
+        (FAULT_PLANARITY_BAND, "contour_outside_planarity_band"),
+        (FAULT_CLOCKWISE, "contour_winding_clockwise"),
+        (FAULT_ZERO_AREA, "contour_area_vector_zero"),
+        (FAULT_ZERO_PROJECTED_EDGE, "contour_projection_zero_edge"),
+        (FAULT_BAD_TOPOLOGY, "contour_bad_topology"),
+    ];
+    reasons
+        .iter()
+        .find(|(message, _)| *message == error.message)
+        .map(|(_, reason)| *reason)
 }
 
 fn uncertain() -> CommandError {
@@ -129,7 +161,7 @@ pub fn admit(points: &[[f64; 3]], thickness: f64) -> Result<PlateContour, Comman
         error
     })?;
     if edges.iter().any(|l| *l < tolerance.eps_geom_mm()) {
-        return Err(invalid("contour edge is below the geometric floor"));
+        return Err(invalid(FAULT_BELOW_FLOOR));
     }
     let first = *points.first().ok_or_else(uncertain)?;
     let origin = *raw.first().ok_or_else(uncertain)?;
@@ -155,7 +187,7 @@ pub fn admit(points: &[[f64; 3]], thickness: f64) -> Result<PlateContour, Comman
     }
     let sign = area.get(dominant).ok_or_else(uncertain)?.sign();
     if sign == 0 {
-        return Err(invalid("contour area vector is zero"));
+        return Err(invalid(FAULT_ZERO_AREA));
     }
     let component = |v: &Big| {
         v.enclose(exponent * 2)
@@ -176,11 +208,11 @@ pub fn admit(points: &[[f64; 3]], thickness: f64) -> Result<PlateContour, Comman
             .map_err(|_| uncertain())?
             .abs();
         if distance > tolerance.plane_band_mm() {
-            return Err(invalid("contour is outside the planarity band"));
+            return Err(invalid(FAULT_PLANARITY_BAND));
         }
     }
     if sign < 0 {
-        return Err(invalid("contour winding is clockwise"));
+        return Err(invalid(FAULT_CLOCKWISE));
     }
     let projected: Vec<_> = points
         .iter()
@@ -196,7 +228,7 @@ pub fn admit(points: &[[f64; 3]], thickness: f64) -> Result<PlateContour, Comman
         .enumerate()
     {
         if a == b {
-            return Err(invalid("contour projection has a zero edge"));
+            return Err(invalid(FAULT_ZERO_PROJECTED_EDGE));
         }
         for (j, (c, d)) in projected
             .iter()
@@ -210,7 +242,7 @@ pub fn admit(points: &[[f64; 3]], thickness: f64) -> Result<PlateContour, Comman
             if (adjacent && relation != SegRel::Touch)
                 || (!adjacent && relation != SegRel::Disjoint)
             {
-                return Err(invalid("contour intersects, touches or backtracks"));
+                return Err(invalid(FAULT_BAD_TOPOLOGY));
             }
         }
     }

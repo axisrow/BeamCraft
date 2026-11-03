@@ -68,6 +68,7 @@ mod members;
 mod numbering;
 mod numbering_approval;
 mod offline_clients;
+mod p_degenerate;
 mod part_classes;
 mod pick;
 mod plate;
