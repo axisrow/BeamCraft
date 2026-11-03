@@ -738,13 +738,12 @@ fn a_second_hole_keeps_the_first_intact() {
 // G14.2 slice 4: directed cutters through chain walls.
 
 #[test]
-#[ignore = "a directed cutter through multi-facet chains builds an unsealed corner piece when a kink line crosses a footprint edge near a cavity vertex (issue #420)"]
 fn an_oblique_hole_cuts_a_tube_with_a_certified_enclosure() {
     // The oblique cutter through the faceted bands must seal with the moment-based
     // enclosure of the clip pieces and repeat byte for byte, like the +Z tube tests.
-    // Parked until the carve's keep/throw assembly handles the near-coincident kink
-    // crossing (#420): today the seal honestly refuses the candidate
-    // (ResultNotCertified, ShellStatus::Open), never a crash.
+    // The carve's opening arcs carry this chain's ring vertices for the foreign kink
+    // crossings (issue #420): the band walks them, so the carved walls meet the band
+    // on identical vertices.
     let body = tube_body();
     let before = volume(&body);
     let cutter = MemberHoleCutter::directed(circle(L / 2.0, 0.0, 4.0), 3.0, 4.0, -76.0, 76.0, 11);

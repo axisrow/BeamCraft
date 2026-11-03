@@ -1869,6 +1869,51 @@ fn cut_through_chains(
         // A crossed strip carries exactly one clip piece, so the splice runs once.
         {
             let ids = clip_ids.first().ok_or_else(internal)?;
+            // The event behind every clip vertex: the band walks every contour event,
+            // including the kink-line crossings of the other crossed chains (their lines
+            // project to a different `b` than this strip's own). Such a foreign crossing
+            // lies strictly inside a clip edge between two footprint vertices, so the
+            // carved opening must carry this chain's ring vertex for it — the band's
+            // sides otherwise T-junction against the opening's chords and the shell
+            // stays open. A `Body` corner sits on the region's hard edge, not on the
+            // contour, and never carries events.
+            let slot_event: Vec<Option<usize>> = piece
+                .tagged
+                .iter()
+                .map(|tagged| match tagged.src {
+                    ClipSrc::Body(_) => None,
+                    ClipSrc::Footprint(index) => events.iter().position(|e| {
+                        e.edge == index
+                            && e.t == 0.0
+                            && e.ab.x == tagged.ab.x
+                            && e.ab.y == tagged.ab.y
+                    }),
+                    ClipSrc::Kink(_) => events.iter().position(|e| {
+                        (e.ab.x - tagged.ab.x).abs() <= eps && (e.ab.y - tagged.ab.y).abs() <= eps
+                    }),
+                })
+                .collect();
+            // This chain's ring vertices for the events strictly between two contour
+            // positions (event indices, the contour runs forward through the seam).
+            let between = |from: Option<usize>,
+                           to: Option<usize>|
+             -> Result<Vec<(u32, [f64; 3])>, OpFailure> {
+                let (Some(p), Some(q)) = (from, to) else {
+                    return Ok(Vec::new());
+                };
+                if p == q {
+                    return Ok(Vec::new());
+                }
+                let len = events.len();
+                let indices: Box<dyn Iterator<Item = usize>> = if q > p {
+                    Box::new(p + 1..q)
+                } else {
+                    Box::new((p + 1..len).chain(0..q))
+                };
+                indices
+                    .map(|i| chain_ring.get(i).copied().ok_or_else(internal))
+                    .collect()
+            };
             // The boundary contact points of the clip, in clip order: the same physical
             // point (a clip loop that starts and ends on one boundary edge) is one contact.
             let mut contacts: Vec<usize> = Vec::new();
@@ -1888,14 +1933,31 @@ fn cut_through_chains(
             }
             if contacts.is_empty() {
                 // A closed opening: one more clockwise hole; the strip's own loop (never
-                // touched) is re-triangulated with it right here.
+                // touched) is re-triangulated with it right here. The hole loop carries
+                // the ring vertices of the events on its contour runs, like the splice
+                // arcs below.
+                let mut hole: Vec<(u32, [f64; 3])> = Vec::with_capacity(ids.len());
+                for (j, id) in ids.iter().enumerate() {
+                    if j > 0 {
+                        hole.extend(between(
+                            slot_event.get(j - 1).copied().flatten(),
+                            slot_event.get(j).copied().flatten(),
+                        )?);
+                    }
+                    let ab = piece.clip.get(j).ok_or_else(internal)?;
+                    hole.push((
+                        *id,
+                        to_body(ab.x, ab.y, piece.gamma.mul_add(ab.y, piece.delta)),
+                    ));
+                }
+                hole.extend(between(
+                    slot_event.last().copied().flatten(),
+                    slot_event.first().copied().flatten(),
+                )?);
+                let (hole_ids, hole_xyz): (Vec<u32>, Vec<[f64; 3]>) = hole.into_iter().unzip();
                 holes.push(CapLoop {
-                    ids: ids.clone(),
-                    xyz: piece
-                        .clip
-                        .iter()
-                        .map(|p| to_body(p.x, p.y, piece.gamma.mul_add(p.y, piece.delta)))
-                        .collect(),
+                    ids: hole_ids,
+                    xyz: hole_xyz,
                 });
                 let carved = triangulate_cap(
                     &outer,
@@ -2030,19 +2092,38 @@ fn cut_through_chains(
                 }
             }
             // The opening's arcs: the clip slots between consecutive contacts, in clip
-            // order; a straight chord between neighbours contributes none.
+            // order, with the chain's ring vertices for the events on the contour runs
+            // (the band walks those events too, so the carved wall and the band must
+            // meet on them); a straight chord between neighbours contributes none.
             let m = piece.tagged.len();
-            let mut arcs: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+            let clip_at = |i: usize| -> Result<(u32, [f64; 3]), OpFailure> {
+                let ab = piece.tagged.get(i).map(|t| t.ab).ok_or_else(internal)?;
+                let id = *ids.get(i).ok_or_else(internal)?;
+                Ok((
+                    id,
+                    to_body(ab.x, ab.y, piece.gamma.mul_add(ab.y, piece.delta)),
+                ))
+            };
+            let mut arcs: Vec<(usize, usize, Vec<(u32, [f64; 3])>)> = Vec::new();
             for i in 0..n_clip {
                 let (ci, cj) = (
                     *contacts.get(i).ok_or_else(internal)?,
                     *contacts.get((i + 1) % n_clip).ok_or_else(internal)?,
                 );
-                let mut slots = Vec::new();
+                let mut slots: Vec<(u32, [f64; 3])> = Vec::new();
                 let mut at = (ci + 1) % m;
-                while at != cj {
-                    slots.push(at);
-                    at = (at + 1) % m;
+                if at != cj {
+                    // The boundary follows the contour between the contacts; a straight
+                    // chord (no clip vertices between them, both crossings on one kink
+                    // line) stays empty.
+                    let mut prev = slot_event.get(ci).copied().flatten();
+                    while at != cj {
+                        slots.extend(between(prev, slot_event.get(at).copied().flatten())?);
+                        slots.push(clip_at(at)?);
+                        prev = slot_event.get(at).copied().flatten();
+                        at = (at + 1) % m;
+                    }
+                    slots.extend(between(prev, slot_event.get(cj).copied().flatten())?);
                 }
                 if !slots.is_empty() {
                     arcs.push((ci, cj, slots));
@@ -2059,12 +2140,6 @@ fn cut_through_chains(
             }
             // Assemble the pieces: alternate a kept path with the opening's arc at every
             // contact. A notch yields one piece; a cut through a band yields two.
-            let clip_at = |i: usize| -> Result<([f64; 3], u32), OpFailure> {
-                let ab = piece.tagged.get(i).map(|t| t.ab).ok_or_else(internal)?;
-                let id = *ids.get(i).ok_or_else(internal)?;
-                let xyz = to_body(ab.x, ab.y, piece.gamma.mul_add(ab.y, piece.delta));
-                Ok((xyz, id))
-            };
             let mut used_keep = vec![false; keeps.len()];
             let mut used_arc = vec![false; arcs.len()];
             let mut pieces_out: Vec<CapLoop> = Vec::new();
@@ -2099,17 +2174,15 @@ fn cut_through_chains(
                     *used_arc.get_mut(ai).ok_or_else(internal)? = true;
                     let (a, b, slots) = arcs.get(ai).ok_or_else(internal)?;
                     if *a == end {
-                        for slot in slots {
-                            let (xyz, id) = clip_at(*slot)?;
-                            piece_loop.ids.push(id);
-                            piece_loop.xyz.push(xyz);
+                        for (id, xyz) in slots {
+                            piece_loop.ids.push(*id);
+                            piece_loop.xyz.push(*xyz);
                         }
                         end = *b;
                     } else {
-                        for slot in slots.iter().rev() {
-                            let (xyz, id) = clip_at(*slot)?;
-                            piece_loop.ids.push(id);
-                            piece_loop.xyz.push(xyz);
+                        for (id, xyz) in slots.iter().rev() {
+                            piece_loop.ids.push(*id);
+                            piece_loop.xyz.push(*xyz);
                         }
                         end = *a;
                     }

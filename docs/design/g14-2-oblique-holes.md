@@ -295,18 +295,27 @@ operation; this section records where the model layer meets it.
   `A * s / |n . d|` cosine form with the moment enclosure and byte-exact repeats. The
   feature-id grammar admits the amendment's band spelling (`cut:f.h<o>.w<k>.s<j>[.p<r>]`),
   so the holed member keeps its named faces, edges and vertices for picks, dimension
-  anchors and drawings. The directed cutter through **multi-facet** chains (a tube) is
-  parked (#420): when a chain's kink line crosses a footprint edge close to a cavity
-  vertex, the carve's keep/throw assembly emits an unsealed corner piece and the seal
-  honestly refuses (`ResultNotCertified`, never a crash, nothing written).
+  anchors and drawings.
+- **Follow-up (#420).** The directed cutter through **multi-facet** chains initially
+  refused itself honestly (`ResultNotCertified`, an open shell, nothing written): the
+  band walks every contour event, including the kink-line crossings of the *other*
+  crossed chains, whose lines project to a different `b` than this strip's own whenever
+  the walls' kink lines do not coincide in the footprint (any tilt off the one direction
+  where they share a line; the parked test's tilt put the far wall's crossing within a
+  fraction of a millimetre of the cavity's own vertices, the near-coincident family
+  noted after slice 3). The carved walls did not carry those foreign events, so the
+  band's sides T-junctioned against the opening's chords. The carve now splices this
+  chain's ring vertex for every event lying on a contour run of the opening — in the
+  splice arcs and in closed hole loops alike — so the carved walls and the band meet on
+  identical registered vertices; the tube test seals with the moment enclosure and
+  repeats byte for byte.
 
 Refusals still standing, each named exactly: an axial hole direction; a roll or a
 non-coordinate member frame (the exact permutation contract: the axes must be the
 coordinate axes, without roll); a curved member or polybeam with hole records; the mix of
 crossed flat faces and crossed chains (`BodyWallUnsupported`, lifting unassigned); the
 `1/cos(tilt)` shadow-scale deviation of the carved opening (open owner decision; the
-certified volume stays exact); the directed multi-facet chain corner piece (#420, the
-parked test above); and the second member-hole record on one member: the replay maps
+certified volume stays exact); and the second member-hole record on one member: the replay maps
 every record into the member frame afresh, but the first hole's opening ring vertices sit
 on their wall planes only up to rounding, so the second record's body fails the exact
 X-extrusion contract and the replay refuses `BodyNotPrism` (the member keeps its last
