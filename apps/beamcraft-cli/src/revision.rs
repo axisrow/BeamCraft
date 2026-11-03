@@ -175,13 +175,16 @@ fn commit_checked(
         (Err(RevisionError::Aborted(_)), Some(error)) => return Err(error),
         (result, _) => result.map_err(failure)?,
     };
-    Ok(summary(
-        match committed.outcome {
-            CommitOutcome::Created => "revision_committed",
-            CommitOutcome::Replayed => "revision_replayed",
-        },
-        &committed.info,
-    ))
+    let label = match committed.outcome {
+        CommitOutcome::Created => "revision_committed",
+        CommitOutcome::Replayed => "revision_replayed",
+        // `commit-revision` is a store-level command and never runs inside a draft batch; the
+        // session refuses it between the brackets before it reaches this adapter.
+        CommitOutcome::Drafted => {
+            return Err(HostError::logical(ErrorCode::IntegrityError));
+        }
+    };
+    Ok(summary(label, &committed.info))
 }
 
 /// `open-revision`: opens the current root and verifies the manifest and every layer blob.
