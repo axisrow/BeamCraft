@@ -653,6 +653,8 @@ fn tokenize(line: &str) -> Result<Vec<String>, &'static str> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
     use super::*;
 
     fn tokens(line: &str) -> Vec<String> {
