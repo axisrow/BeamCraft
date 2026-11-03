@@ -182,7 +182,12 @@ fn parse_usda(source: &str) -> Usda {
         }
         let skip_after = line.ends_with(" (");
         let line = line.strip_suffix(" (").unwrap_or(line);
-        let (lhs, rhs) = line.split_once(" = ").expect("an attribute line");
+        // A valueless declaration such as `uniform token outputs:surface` (the U08 look)
+        // carries no default; this reader needs only attributes with values.
+        let Some((lhs, rhs)) = line.split_once(" = ") else {
+            skipping = skip_after;
+            continue;
+        };
         let name = lhs.split_whitespace().last().unwrap();
         let path = stack.last().expect("attribute inside a prim").clone();
         usda.prims

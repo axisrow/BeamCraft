@@ -767,6 +767,15 @@ impl Parser {
     fn prim_metadata(&mut self, spec: &mut Spec) -> Result<(), String> {
         if self.literal("prepend") {
             self.skip_space();
+            if self.literal("apiSchemas") {
+                // The applied API schemas of a prim (U08 applies MaterialBindingAPI on a
+                // classed part). Inert to this reader: parse the quoted list and move on.
+                self.skip_space();
+                self.expect(b'=')?;
+                self.skip_space();
+                self.bracketed(b']', 1)?;
+                return Ok(());
+            }
             if !self.literal("references") {
                 return Err(self.error("only references may be prepended"));
             }
@@ -870,6 +879,10 @@ impl Parser {
         if self.literal("custom") {
             self.skip_space();
         }
+        // A uniform attribute such as the U08 primvar or a shader input.
+        if self.peek() == Some(b'u') && self.literal("uniform") {
+            self.skip_space();
+        }
         if self.peek() == Some(b'r') && self.literal("rel") {
             self.skip_space();
             let name = self.word();
@@ -906,6 +919,8 @@ impl Parser {
             "float3[]",
             "point3f[]",
             "normal3f[]",
+            "color3f",
+            "color3f[]",
         ];
         if !TYPES.contains(&type_name.as_str()) {
             return Err(self.error(&format!("unexpected attribute type {type_name:?}")));
@@ -913,8 +928,28 @@ impl Parser {
         self.skip_space();
         let name = self.word();
         self.skip_space();
+        if self.peek() != Some(b'=') {
+            // A valueless output such as `uniform token outputs:surface` declares no default;
+            // the reader records the name and nothing else.
+            return spec.push_attr(name, Value::Text(String::new()));
+        }
         self.expect(b'=')?;
-        let value = self.value(0)?;
+        self.skip_space();
+        // A connection target such as `token outputs:surface.connect = </World/...>`
+        // (the U08 look) reads as its path text, like a relationship.
+        let value = if self.peek() == Some(b'<') {
+            self.expect(b'<')?;
+            let start = self.pos;
+            while self.peek().is_some_and(|b| b != b'>') {
+                self.pos += 1;
+            }
+            let target = String::from_utf8_lossy(self.bytes.get(start..self.pos).unwrap_or(&[]))
+                .into_owned();
+            self.expect(b'>')?;
+            Value::Text(target)
+        } else {
+            self.value(0)?
+        };
         self.skip_space();
         if self.peek() == Some(b'(') {
             self.bump();
