@@ -215,7 +215,10 @@ fn a_plate_from_the_tool_equals_the_plate_made_by_hand() {
         ],
     );
     assert_eq!(created.kind, ToolKind::Plate);
-    assert_eq!(created.mesh_digest, text(&reply, &["plate", "mesh_digest"]));
+    assert_eq!(
+        created.mesh_digest,
+        Some(text(&reply, &["plate", "mesh_digest"]))
+    );
     assert_eq!(
         created.volume_mm3,
         Some(
@@ -340,7 +343,7 @@ fn a_member_from_the_tool_equals_the_member_made_by_hand() {
     assert_eq!(created.kind, ToolKind::Member);
     assert_eq!(
         created.mesh_digest,
-        text(&reply, &["member", "mesh_digest"])
+        Some(text(&reply, &["member", "mesh_digest"]))
     );
     assert_eq!(
         created.volume_mm3,
@@ -675,25 +678,37 @@ fn picked_concave_plate_in_a_work_plane_matches_the_cli_and_refusal_keeps_the_dr
         ],
     );
     assert_eq!(
-        created.mesh_digest,
+        created.mesh_digest.as_deref(),
         direct
             .get("plate")
             .unwrap()
             .get("mesh_digest")
             .unwrap()
             .string()
-            .unwrap()
+            .ok()
     );
-    let before = ok(
-        &cli,
-        &["open-revision", "--store", stores.ui().to_str().unwrap()],
-    );
-    // Crossing vertices are engine refusals; no repair, publication or draft loss.
+    // Crossing vertices of a zero-area contour are kept degenerate (A-2 D-7): the commit
+    // succeeds authored-only, without a mesh or a current volume, and the draft survives.
     let mut crossed = ContourDraft::default();
     for [x, y] in [[0.0, 0.0], [4000.0, 4000.0], [0.0, 4000.0], [4000.0, 0.0]] {
         crossed.push(plane.to_world([x, y, 0.0]).unwrap()).unwrap();
     }
     tools.plate.contour = crossed.contour(Some(plane)).unwrap();
+    let args = tools.preview(&stores.ui()).unwrap().clone();
+    let degenerate = command::commit(&cli, &args, &Stats::default()).unwrap();
+    assert_eq!(degenerate.mesh_digest, None);
+    assert_eq!(degenerate.volume_mm3, None);
+    assert_eq!(crossed.points().len(), 4);
+    // A contour the authored layer cannot store still refuses, and the draft survives it.
+    let before = ok(
+        &cli,
+        &["open-revision", "--store", stores.ui().to_str().unwrap()],
+    );
+    let mut doubled = ContourDraft::default();
+    for [x, y] in [[0.0, 0.0], [0.0, 0.0], [4000.0, 0.0]] {
+        doubled.push(plane.to_world([x, y, 0.0]).unwrap()).unwrap();
+    }
+    tools.plate.contour = doubled.contour(Some(plane)).unwrap();
     let args = tools.preview(&stores.ui()).unwrap().clone();
     assert!(command::commit(&cli, &args, &Stats::default()).is_err());
     assert_eq!(
@@ -703,5 +718,5 @@ fn picked_concave_plate_in_a_work_plane_matches_the_cli_and_refusal_keeps_the_dr
             &["open-revision", "--store", stores.ui().to_str().unwrap()]
         )
     );
-    assert_eq!(crossed.points().len(), 4);
+    assert_eq!(doubled.points().len(), 3);
 }

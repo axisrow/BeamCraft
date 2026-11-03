@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use crate::support;
 use beamcraft_json::{Json, Limits};
-use support::{StoreFixture, at};
+use support::{StoreFixture, at, text};
 
 fn resolve(args: &[&str]) -> (i32, Json) {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_beamcraft"))
@@ -119,19 +119,36 @@ fn construction_contours_accept_either_winding_without_repairing_crossings() {
         }
     }
     let before = f.run("open-revision", &[]);
-    for contour in ["0,0;1000,1000;0,1000;1000,0", "0,0;0,0;1000,0"] {
-        let (code, result) = f.run(
-            "create-plate",
-            &[
-                "--contour",
-                contour,
-                "--thickness",
-                "10",
-                "--normalize-winding",
-                "true",
-            ],
-        );
-        assert_eq!(code, 2, "{result:?}");
-        assert_eq!(before, f.run("open-revision", &[]));
-    }
+    // A repeated point is an edge below the geometric floor: the authored layer cannot store
+    // the contour, so the command refuses and nothing is committed.
+    let (code, result) = f.run(
+        "create-plate",
+        &[
+            "--contour",
+            "0,0;0,0;1000,0",
+            "--thickness",
+            "10",
+            "--normalize-winding",
+            "true",
+        ],
+    );
+    assert_eq!(code, 2, "{result:?}");
+    assert_eq!(before, f.run("open-revision", &[]));
+    // A contour with a zero area vector is wrongly built but storable: it is kept degenerate
+    // without derived data (A-2 D-7), so the winding normalizer has nothing to flip.
+    let (code, kept) = f.run(
+        "create-plate",
+        &[
+            "--contour",
+            "0,0;1000,1000;0,1000;1000,0",
+            "--thickness",
+            "10",
+            "--normalize-winding",
+            "true",
+        ],
+    );
+    assert_eq!(code, 0, "{kept:?}");
+    let plate = at(&kept, &["plate"]);
+    assert_eq!(text(plate, "geometry_status"), "degenerate");
+    assert_eq!(text(plate, "geometry_reason"), "contour_area_vector_zero");
 }

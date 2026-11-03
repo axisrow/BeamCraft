@@ -5,7 +5,8 @@
 
 //! A02.1 end to end through the real `beamcraft` binary: a plate with any simple counter-clockwise
 //! contour in the plane `z = 0` is created, saved, reopened, edited, copied, numbered and exported
-//! like a rectangular plate, and a wrong contour is refused with nothing authored.
+//! like a rectangular plate, a wrongly built contour is kept degenerate (A-2 D-7), and a fault
+//! the authored layer cannot store is refused with nothing authored.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -176,33 +177,20 @@ fn a_rectangle_in_its_3d_body_frame_is_saved_and_reopened() {
         text(&reopened[0], "mesh_digest"),
         text(plate, "mesh_digest")
     );
+    // An off-band planarity is wrongly built but storable: it is kept degenerate (A-2 D-7),
+    // with its revision, while the supported plate above keeps its stored derived data.
+    for contour in [
+        "0,0,0;1000,0,0;1000,500,20;0,500,0",
+        "999000000,0,0;999393216,0,0.875;999393216,524288,0;999000000,524288,0.875",
+    ] {
+        let created = f.ok("create-plate", &["--contour", contour, "--thickness", "10"]);
+        assert_eq!(
+            text(at(&created, &["plate"]), "geometry_reason"),
+            "contour_outside_planarity_band"
+        );
+    }
+    // The holes refusal writes nothing beyond the kept revisions.
     let before = f.ok("open-revision", &[]);
-    assert_eq!(
-        f.rejected(
-            "create-plate",
-            &[
-                "--contour",
-                "0,0,0;1000,0,0;1000,500,20;0,500,0",
-                "--thickness",
-                "10"
-            ]
-        ),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(f.ok("open-revision", &[]), before);
-    assert_eq!(
-        f.rejected(
-            "create-plate",
-            &[
-                "--contour",
-                "999000000,0,0;999393216,0,0.875;999393216,524288,0;999000000,524288,0.875",
-                "--thickness",
-                "10"
-            ]
-        ),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(f.ok("open-revision", &[]), before);
     assert_eq!(
         f.rejected(
             "create-plate",
@@ -418,23 +406,33 @@ fn contour_plates_are_numbered_by_outline_and_exported_to_ifc() {
 }
 
 #[test]
-fn a_wrong_contour_is_refused_and_nothing_is_authored() {
+fn a_wrongly_built_contour_is_kept_degenerate_and_structural_faults_refuse() {
     let f = Fixture::new();
+    // Wrongly built but storable contours are kept degenerate (A-2 D-7): clockwise,
+    // self-crossing (F04-NEG-30), a non-adjacent touch, backtracking, off-band planarity.
+    let kept = |contour: &str, reason: &str| {
+        let created = f.ok("create-plate", &["--contour", contour, "--thickness", "10"]);
+        let plate = at(&created, &["plate"]);
+        assert_eq!(text(plate, "geometry_status"), "degenerate");
+        assert_eq!(text(plate, "geometry_reason"), reason);
+        assert!(matches!(plate.get("mesh_digest"), Ok(Json::Null)));
+    };
+    kept(
+        "0,0;0,600;400,600;400,300;1000,300;1000,0",
+        "contour_winding_clockwise",
+    );
+    kept("0,0;1000,500;0,500;800,0", "contour_bad_topology");
+    kept("0,0;1000,0;1000,500;500,0;0,500", "contour_bad_topology");
+    kept("0,0;500,0;1000,0", "contour_area_vector_zero");
+    kept(
+        "0,0,0;1000,0,0;1000,500,20;0,500,0",
+        "contour_outside_planarity_band",
+    );
     let refused =
         |contour: &str| f.rejected("create-plate", &["--contour", contour, "--thickness", "10"]);
-    // Clockwise, self-crossing (F04-NEG-30), touching itself, doubling back, too few points.
-    assert_eq!(
-        refused("0,0;0,600;400,600;400,300;1000,300;1000,0"),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(refused("0,0;1000,500;0,500;800,0"), "INVALID_ARGUMENT");
-    assert_eq!(
-        refused("0,0;1000,0;1000,500;500,0;0,500"),
-        "INVALID_ARGUMENT"
-    );
-    assert_eq!(refused("0,0;500,0;1000,0"), "INVALID_ARGUMENT");
+    // Fewer than two submissions, malformed text, a repeated point, an overflowing size, a
+    // thickness below the floor.
     assert_eq!(refused("0,0;1000,0"), "INVALID_ARGUMENT");
-    // Malformed text, a repeated point, an overflowing size, a thickness below the floor.
     assert_eq!(refused("0,0;1000,0;1000,x;0,500"), "INVALID_ARGUMENT");
     assert_eq!(refused("0,0;1000,0;1000"), "INVALID_ARGUMENT");
     assert_eq!(
@@ -467,15 +465,9 @@ fn a_wrong_contour_is_refused_and_nothing_is_authored() {
         f.rejected("create-plate", &["--thickness", "10"]),
         "INVALID_ARGUMENT"
     );
-    // Nothing was committed by any of the refusals.
-    let (code, body) = f.raw("inspect-elements", &[]);
-    assert!(
-        code == 0 || text(&body, "outcome") == "rejected",
-        "{body:?}"
-    );
-    if code == 0 {
-        assert!(at(&body, &["plates"]).array().unwrap().is_empty());
-    }
+    // Exactly the kept plates were committed; the refusals wrote nothing.
+    let (_, body) = f.raw("inspect-elements", &[]);
+    assert_eq!(at(&body, &["plates"]).array().unwrap().len(), 5);
 }
 
 #[test]
