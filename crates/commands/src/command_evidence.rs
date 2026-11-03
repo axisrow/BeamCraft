@@ -678,7 +678,7 @@ mod tests {
             fingerprint: "0100000000000000000000000000000000000000000000000000000000000000"
                 .parse()
                 .unwrap(),
-            footprint: Footprint::from_entries(&[entry.clone()], &[entry]).unwrap(),
+            footprint: Footprint::from_entries(&[entry], &[entry]).unwrap(),
             bindings,
         }
     }
