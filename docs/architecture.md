@@ -530,8 +530,10 @@ The rule:
    "Platform and disciplines").
 5. **The readable name is `displayName`** (equal to `bim:name`), which USD viewers show instead of
    the prim name.
-6. **Child prims have fixed names.** `Geometry` is the full body; later representations get their
-   own fixed names (`Proxy`, `Axis`).
+6. **Child prims have fixed names.** `Geometry` is the full body (the `render` purpose); the
+   U12 representation levels get their own fixed names beside it — `Reduced` (`default`,
+   cuts without holes), `Proxy` (`proxy`), `Axis` (`guide`, members) — each only where its
+   body differs, and each marked `bim:exact = false` except the full body.
 7. **Element category folders have `kind = group`.** This keeps the USD model hierarchy intact
    between the project root and its components or assemblies.
 

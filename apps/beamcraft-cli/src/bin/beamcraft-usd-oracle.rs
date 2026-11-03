@@ -548,6 +548,20 @@ impl Parser {
             Some(b'"') => self.quoted().map(Value::Text),
             Some(b'(') => self.bracketed(b')', depth).map(Value::Tuple),
             Some(b'[') => self.bracketed(b']', depth).map(Value::List),
+            // The USD booleans are the bare words `true` and `false`; the reader stores them as
+            // 1.0 and 0.0 and no check reads one back as a number today.
+            Some(b't') | Some(b'f') => {
+                let saved = self.pos;
+                let word = self.word();
+                match word.as_str() {
+                    "true" => Ok(Value::Num(1.0)),
+                    "false" => Ok(Value::Num(0.0)),
+                    _ => {
+                        self.pos = saved;
+                        self.number().map(Value::Num)
+                    }
+                }
+            }
             Some(_) => self.number().map(Value::Num),
             None => Err(self.error("expected a value")),
         }
@@ -849,6 +863,7 @@ impl Parser {
         const TYPES: &[&str] = &[
             "string",
             "token",
+            "bool",
             "double",
             "int",
             "double3",

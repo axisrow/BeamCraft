@@ -3,6 +3,7 @@
 
 use super::*;
 use openusd::{
+    gf::Vec3f,
     sdf::{self, AbstractData},
     usda::TextWriter,
 };
@@ -599,10 +600,35 @@ pub fn author_record_history(
     Ok(())
 }
 
-fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str) -> Result<(), Diagnostic> {
-    let p = format!("{parent}/Geometry");
-    prim(data, &p, Some("Mesh"), true)?;
-    field(data, &p, "kind", sdf::Value::token("subcomponent"))?;
+fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str, purpose: &str) -> Result<(), Diagnostic> {
+    mesh_prim(data, m, &format!("{parent}/Geometry"), purpose, true)?;
+    // The U12 representation levels exist only where their body differs from the full one, so
+    // every authored prim carries content no other level repeats. A level is a display result:
+    // it never carries a quantity record, and each carries `bim:exact = false` (the exactness
+    // marker the acceptance reads; the full mesh stores none, `true` being the default).
+    if let Some(r) = &m.reduced {
+        mesh_prim(data, r, &format!("{parent}/Reduced"), "default", false)?;
+    }
+    if let Some(r) = &m.proxy {
+        mesh_prim(data, r, &format!("{parent}/Proxy"), "proxy", false)?;
+    }
+    if let Some(points) = &m.axis {
+        axis_prim(data, &format!("{parent}/Axis"), points)?;
+    }
+    Ok(())
+}
+
+/// One mesh body at `path`: the standard buffer, the shape key, an optional quantity record and
+/// the U12 purpose/exactness marks. `exact = false` is authored, `true` is stored as absence.
+fn mesh_prim(
+    data: &mut sdf::Data,
+    m: &Mesh,
+    p: &str,
+    purpose: &str,
+    exact: bool,
+) -> Result<(), Diagnostic> {
+    prim(data, p, Some("Mesh"), true)?;
+    field(data, p, "kind", sdf::Value::token("subcomponent"))?;
     let extent = derive::extent(&m.points_mm).ok_or_else(invalid)?;
     let normals =
         derive::face_normals(&m.points_mm, &m.face_counts, &m.indices).ok_or_else(invalid)?;
@@ -635,17 +661,21 @@ fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str) -> Result<(), Diagnostic> 
             sdf::Value::Vec3fVec(normals.iter().map(|n| (*n).into()).collect()),
         ),
     ] {
-        attribute(data, &p, name, ty, Opinion::Value(v), false)?;
+        attribute(data, p, name, ty, Opinion::Value(v), false)?;
     }
     let normals_spec = path(&format!("{p}.normals"))?;
     data.set_field(&normals_spec, "interpolation", sdf::Value::token("uniform"));
+    attr(data, p, "purpose", "token", sdf::Value::token(purpose))?;
     attr(
         data,
-        &p,
+        p,
         "bim:shapeKey",
         "string",
         sdf::Value::String(m.shape_key.to_string()),
     )?;
+    if !exact {
+        attr(data, p, "bim:exact", "bool", sdf::Value::Bool(false))?;
+    }
     if let Some(q) = &m.quantities {
         let mut fields = vec![
             ("bim:volumeMm3", "double", sdf::Value::Double(q.volume_mm3)),
@@ -675,9 +705,48 @@ fn mesh(data: &mut sdf::Data, m: &Mesh, parent: &str) -> Result<(), Diagnostic> 
             fields.push(("bim:massKg", "double", sdf::Value::Double(kg)));
         }
         for (name, ty, value) in fields {
-            attr(data, &p, name, ty, value)?;
+            attr(data, p, name, ty, value)?;
         }
     }
+    Ok(())
+}
+
+/// The U12 axis level: one linear, nonperiodic `BasisCurves` polyline through the element-local
+/// axis points (`purpose = guide`, `bim:exact = false`). A member's display axis, never an
+/// engineering body: it carries no quantity record and no shape key.
+fn axis_prim(data: &mut sdf::Data, p: &str, points: &[[f64; 3]]) -> Result<(), Diagnostic> {
+    prim(data, p, Some("BasisCurves"), true)?;
+    field(data, p, "kind", sdf::Value::token("subcomponent"))?;
+    let count = i32::try_from(points.len()).map_err(|_| invalid())?;
+    for (name, ty, v, uniform) in [
+        (
+            "points",
+            "point3f[]",
+            sdf::Value::Vec3fVec(
+                points
+                    .iter()
+                    .map(|p| Vec3f::from([p[0] as f32, p[1] as f32, p[2] as f32]))
+                    .collect(),
+            ),
+            false,
+        ),
+        (
+            "curveVertexCounts",
+            "int[]",
+            sdf::Value::IntVec(vec![count]),
+            false,
+        ),
+        ("type", "token", sdf::Value::token("linear"), true),
+        ("wrap", "token", sdf::Value::token("nonperiodic"), true),
+    ] {
+        attribute(data, p, name, ty, Opinion::Value(v), false)?;
+        if uniform {
+            let spec = path(&format!("{p}.{name}"))?;
+            data.set_field(&spec, "interpolation", sdf::Value::token("uniform"));
+        }
+    }
+    attr(data, p, "purpose", "token", sdf::Value::token("guide"))?;
+    attr(data, p, "bim:exact", "bool", sdf::Value::Bool(false))?;
     Ok(())
 }
 /// The stored quantity attributes of a mesh prim; a replacement writes them as a whole.
@@ -702,8 +771,10 @@ fn clear_quantities(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic
     }
     Ok(())
 }
-fn erase_mesh(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
-    let p = format!("{parent}/Geometry");
+/// The derived child prims a mesh change owns, beside the properties of `Geometry` itself.
+const MESH_CHILDREN: [&str; 4] = ["Geometry", "Reduced", "Proxy", "Axis"];
+fn erase_level(data: &mut sdf::Data, parent: &str, name: &str) -> Result<(), Diagnostic> {
+    let p = format!("{parent}/{name}");
     let paths = data.spec_paths();
     for path in paths {
         let s = path.to_string();
@@ -712,7 +783,13 @@ fn erase_mesh(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
         }
     }
     if data.has_spec(&path(parent)?) {
-        child(data, parent, "primChildren", "Geometry", true)?;
+        child(data, parent, "primChildren", name, true)?;
+    }
+    Ok(())
+}
+fn erase_mesh(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
+    for name in &MESH_CHILDREN {
+        erase_level(data, parent, name)?;
     }
     Ok(())
 }
@@ -1058,31 +1135,44 @@ pub(super) fn apply(
         if let Change::Mesh(m) = c {
             control.check()?;
             let parent = change_path(&m.id, input, prims)?;
-            let mesh_path = format!("{parent}/Geometry");
-            if prims
-                .iter()
-                .filter(|v| v.path == mesh_path || v.path.starts_with(&format!("{mesh_path}/")))
-                .flat_map(|v| &v.sources)
-                .any(|s| s.layer != targets.derived)
-            {
+            let owned = |name: &str| {
+                prims
+                    .iter()
+                    .filter(|v| {
+                        let p = format!("{parent}/{name}");
+                        v.path == p || v.path.starts_with(&format!("{p}/"))
+                    })
+                    .flat_map(|v| &v.sources)
+                    .any(|s| s.layer != targets.derived)
+            };
+            if MESH_CHILDREN.iter().any(|name| owned(name)) {
                 return Err(fail(
                     ErrorCode::DependencyUnavailable,
                     "mesh writes require exclusive derived layer",
                 ));
             }
             // A mesh change replaces the supported fields and the quantity record as a whole:
-            // stale quantity attributes never survive it, unknown content stays.
+            // stale quantity attributes never survive it, unknown content stays. The U12 level
+            // set is replaced as a whole too: a level the new body does not carry is erased,
+            // never left stale beside the fresh full mesh.
             clear_quantities(&mut derived, &parent)?;
-            mesh(&mut derived, m, &parent)?;
-            if grid::guide_target(input, prims, &m.id) {
-                attr(
-                    &mut derived,
-                    &format!("{parent}/Geometry"),
-                    "purpose",
-                    "token",
-                    sdf::Value::token("guide"),
-                )?;
+            for (carried, name) in [
+                (m.reduced.is_some(), "Reduced"),
+                (m.proxy.is_some(), "Proxy"),
+                (m.axis.is_some(), "Axis"),
+            ] {
+                if !carried {
+                    erase_level(&mut derived, &parent, name)?;
+                }
             }
+            // The U12 purpose of the full body: a grid's only geometry is its display guide
+            // (T01.7); an element body is the exact render level.
+            let purpose = if grid::guide_target(input, prims, &m.id) {
+                "guide"
+            } else {
+                "render"
+            };
+            mesh(&mut derived, m, &parent, purpose)?;
         }
     }
     let opinions = capture(input, prims, &authored, &derived, original.budgets)?;
@@ -1260,15 +1350,42 @@ fn capture(
                 }
             }
             Change::Mesh(m) => {
-                if grid::guide_target(input, prims, &m.id) {
-                    add("purpose", "token", 1);
-                }
+                add("purpose", "token", 1);
                 for &(name, ty) in MESH {
                     add(name, ty, 1);
                 }
                 // Every quantity field is reported: absent ones as removals.
                 for (name, ty) in QUANTITY_FIELDS {
                     add(name, ty, 1);
+                }
+                // The U12 level prims report the fields they author, and a level the change
+                // erases from the pre-state reports its removals: the level set is replaced
+                // as a whole, never partially.
+                let parent = change_path(&m.id, input, prims)?;
+                for (carried, name, place) in [
+                    (m.reduced.is_some(), "Reduced", 3u8),
+                    (m.proxy.is_some(), "Proxy", 4),
+                ] {
+                    let stale = prims.iter().any(|p| p.path == format!("{parent}/{name}"));
+                    if carried || stale {
+                        add("purpose", "token", place);
+                        add("bim:exact", "bool", place);
+                        for &(name, ty) in MESH {
+                            add(name, ty, place);
+                        }
+                    }
+                }
+                if m.axis.is_some() || prims.iter().any(|p| p.path == format!("{parent}/Axis")) {
+                    for (name, ty) in [
+                        ("points", "point3f[]"),
+                        ("curveVertexCounts", "int[]"),
+                        ("type", "token"),
+                        ("wrap", "token"),
+                        ("purpose", "token"),
+                        ("bim:exact", "bool"),
+                    ] {
+                        add(name, ty, 5);
+                    }
                 }
             }
             // User attributes (I04) are dynamic-named values outside the fixed supported
@@ -1288,13 +1405,18 @@ fn capture(
     let mut result = Vec::new();
     for ((id, name, place), ty) in fields {
         let p = change_path(&id, input, prims)?;
-        let p = match place {
-            1 => format!("{p}/Geometry"),
-            2 => format!("{p}/{}", reference::CORRECTION),
-            _ => p,
+        // Place of a property: 0 the element, 2 the wrapper's units level, the rest the derived
+        // bodies of the element (1 the full mesh, 3 reduced, 4 proxy, 5 the axis guide).
+        let (p, derived_data) = match place {
+            1 => (format!("{p}/Geometry"), true),
+            3 => (format!("{p}/Reduced"), true),
+            4 => (format!("{p}/Proxy"), true),
+            5 => (format!("{p}/Axis"), true),
+            2 => (format!("{p}/{}", reference::CORRECTION), false),
+            _ => (p, false),
         };
         let spec = path(&format!("{p}.{name}"))?;
-        let data = if place == 1 { derived } else { authored };
+        let data = if derived_data { derived } else { authored };
         let opinion = if !data.has_spec(&spec) {
             Opinion::Remove
         } else if ty == "rel" {

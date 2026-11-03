@@ -1917,9 +1917,142 @@ pub(crate) fn replay_summary(
     }
 }
 
-/// The U02 mesh change of a steel part: its body and the quantity record of its kind.
-pub(crate) fn part_mesh_change(part: &steel::engine::part::PartRecord) -> Result<Change, Refusal> {
-    mesh_change(&part.id(), part.solid(), &part.quantity_record())
+/// The evaluated record a U12 mesh change draws its full body and levels from. Borrowed, so a
+/// command never clones a body to describe its own mesh.
+pub(crate) enum PartSource<'a> {
+    /// A plate.
+    Plate(&'a PlateRecord),
+    /// A beam or a column.
+    Member(&'a MemberRecord),
+}
+
+impl<'a> From<&'a steel::engine::part::PartRecord> for PartSource<'a> {
+    fn from(part: &'a steel::engine::part::PartRecord) -> Self {
+        match part {
+            steel::engine::part::PartRecord::Plate(r) => Self::Plate(r),
+            steel::engine::part::PartRecord::Member(r) => Self::Member(r),
+        }
+    }
+}
+
+impl<'a> From<&'a PlateRecord> for PartSource<'a> {
+    fn from(r: &'a PlateRecord) -> Self {
+        Self::Plate(r)
+    }
+}
+
+impl<'a> From<&'a Box<PlateRecord>> for PartSource<'a> {
+    fn from(r: &'a Box<PlateRecord>) -> Self {
+        Self::Plate(r)
+    }
+}
+
+impl<'a> From<&'a Box<MemberRecord>> for PartSource<'a> {
+    fn from(r: &'a Box<MemberRecord>) -> Self {
+        Self::Member(r)
+    }
+}
+
+impl<'a> From<&'a MemberRecord> for PartSource<'a> {
+    fn from(r: &'a MemberRecord) -> Self {
+        Self::Member(r)
+    }
+}
+
+/// The U12 mesh change of a steel part (U02): its body, the quantity record of its kind, and the
+/// representation levels that differ from the body (axis, simplified, reduced; the full body
+/// itself is the render level through the purpose the storage layer authors). Each level is one
+/// more bounded kernel evaluation of the same record with the display-only operations cleared;
+/// a level the kernel refuses, or one whose body repeats another level, is not authored.
+pub(crate) fn part_mesh_change<'a>(part: impl Into<PartSource<'a>>) -> Result<Change, Refusal> {
+    let part = part.into();
+    let (id, solid, record, axis) = match &part {
+        PartSource::Plate(r) => (&r.authored.id, &r.body.solid, plate_record(r), None),
+        PartSource::Member(r) => (
+            &r.authored.id,
+            &r.body.solid,
+            member_record(r),
+            Some(r.authored.axis_points_mm.clone()),
+        ),
+    };
+    let full = solid.digest();
+    let (reduced, proxy) = match &part {
+        PartSource::Plate(r) => {
+            let mut reduced_inputs = r.authored.clone();
+            reduced_inputs.holes_mm = Vec::new();
+            reduced_inputs.hole_records = Vec::new();
+            let mut proxy_inputs = reduced_inputs.clone();
+            proxy_inputs.cuts = Vec::new();
+            let reduced = steel::engine::command::evaluate_plate(&reduced_inputs)
+                .ok()
+                .and_then(|b| level_mesh(&r.authored.id, &b.solid, full));
+            let proxy = steel::engine::command::evaluate_plate(&proxy_inputs)
+                .ok()
+                .and_then(|b| level_mesh(&r.authored.id, &b.solid, full));
+            (reduced, proxy)
+        }
+        PartSource::Member(r) => {
+            let mut reduced_inputs = r.authored.clone();
+            reduced_inputs.hole_records = Vec::new();
+            let mut proxy_inputs = reduced_inputs.clone();
+            proxy_inputs.cuts = Vec::new();
+            let reduced =
+                steel::engine::member::evaluate_member(&reduced_inputs, r.body.profile.clone())
+                    .ok()
+                    .and_then(|b| level_mesh(&r.authored.id, &b.solid, full));
+            let proxy =
+                steel::engine::member::evaluate_member(&proxy_inputs, r.body.profile.clone())
+                    .ok()
+                    .and_then(|b| level_mesh(&r.authored.id, &b.solid, full));
+            (reduced, proxy)
+        }
+    };
+    // The proxy level repeats the reduced one exactly when no cut separates the two bodies; one
+    // prim per distinct body keeps the layer bytes inside the recorded budgets.
+    let proxy = match (&reduced, proxy) {
+        (Some(r), Some(p)) if r.shape_key == p.shape_key => None,
+        (_, proxy) => proxy,
+    };
+    mesh_change(id, solid, &record, reduced, proxy, axis)
+}
+
+/// One U12 level body, or `None` when the body repeats the full one (`full`) or cannot be built.
+fn level_mesh(
+    id: &ElementId,
+    solid: &SolidMesh,
+    full: ContentDigest,
+) -> Option<Box<beamcraft_layer_engine::authored::Mesh>> {
+    if solid.digest() == full {
+        return None;
+    }
+    let mesh = kernel_mesh(solid).ok()?;
+    let indices = mesh
+        .indices
+        .iter()
+        .map(|i| i32::try_from(*i))
+        .collect::<Result<_, _>>()
+        .ok()?;
+    Some(Box::new(beamcraft_layer_engine::authored::Mesh {
+        id: id.to_string(),
+        shape_key: solid.digest(),
+        quantities: None,
+        points_mm: mesh.points,
+        face_counts: vec![3; mesh.counts.len()],
+        indices,
+        reduced: None,
+        proxy: None,
+        axis: None,
+    }))
+}
+
+/// The U02 mesh change of a body with no U12 levels: a lofted plate (A11), whose authored record
+/// is not a re-evaluable plate shape this slice.
+pub(crate) fn plain_mesh_change(
+    id: &ElementId,
+    solid: &SolidMesh,
+    record: &QuantityRecord,
+) -> Result<Change, Refusal> {
+    mesh_change(id, solid, record, None, None, None)
 }
 
 /// The U02 mesh change of a kernel body.
@@ -1927,6 +2060,9 @@ pub(crate) fn mesh_change(
     id: &ElementId,
     solid: &SolidMesh,
     record: &QuantityRecord,
+    reduced: Option<Box<beamcraft_layer_engine::authored::Mesh>>,
+    proxy: Option<Box<beamcraft_layer_engine::authored::Mesh>>,
+    axis: Option<Vec<[f64; 3]>>,
 ) -> Result<Change, Refusal> {
     let mesh = kernel_mesh(solid)?;
     Ok(Change::Mesh(beamcraft_layer_engine::authored::Mesh {
@@ -1941,6 +2077,9 @@ pub(crate) fn mesh_change(
             .map(|i| i32::try_from(*i))
             .collect::<Result<_, _>>()
             .map_err(|_| integrity("mesh index does not fit"))?,
+        reduced,
+        proxy,
+        axis,
     }))
 }
 
@@ -2093,11 +2232,7 @@ pub fn create_plate(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(
-                    &outcome.authored.id,
-                    &record.body.solid,
-                    &plate_record(&record),
-                )?,
+                part_mesh_change(&record)?,
             ],
         },
         &control,

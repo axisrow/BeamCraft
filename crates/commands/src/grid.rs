@@ -50,6 +50,9 @@ fn guide_change(grid: &Grid) -> Result<Change, Refusal> {
         face_counts: mesh.face_counts,
         indices: mesh.indices,
         quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
     }))
 }
 fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, Refusal> {

@@ -29,8 +29,7 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    check_footprint, decode, evaluate_decoded, member_record, mesh_change, plate_record,
-    prior_op_with, replay_summary,
+    check_footprint, decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -456,8 +455,8 @@ fn apply_cut(
     let (mut author, opened) =
         crate::scope::open_author(store, base_request, false, schema, &control)?;
     let record = |element: &CutElement| match element {
-        CutElement::Plate(r) => mesh_change(&r.authored.id, &r.body.solid, &plate_record(r)),
-        CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
+        CutElement::Plate(r) => part_mesh_change(r),
+        CutElement::Member(r) => part_mesh_change(r),
     };
     let mut changes = vec![
         steel_layer::cuts(id_text, element.cuts().to_vec()),
@@ -1333,8 +1332,8 @@ pub fn a13_record(
 /// The mesh change of one element, for either kind.
 fn mesh_change_of(element: &CutElement) -> Result<Change, Refusal> {
     match element {
-        CutElement::Plate(r) => mesh_change(&r.authored.id, &r.body.solid, &plate_record(r)),
-        CutElement::Member(r) => mesh_change(&r.authored.id, &r.body.solid, &member_record(r)),
+        CutElement::Plate(r) => part_mesh_change(r),
+        CutElement::Member(r) => part_mesh_change(r),
     }
 }
 

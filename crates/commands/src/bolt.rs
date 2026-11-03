@@ -25,8 +25,8 @@
 use crate::assembly::read_prims;
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    check_footprint, decode, evaluate_decoded, mesh_change, number, plate_record, prior_op_with,
-    property, replay_summary, text,
+    check_footprint, decode, evaluate_decoded, number, part_mesh_change, prior_op_with, property,
+    replay_summary, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -705,7 +705,7 @@ fn hole_changes(
             part.to_string(),
             next.hole_records.clone(),
         ));
-        changes.push(mesh_change(&part, &body.solid, &plate_record(&record))?);
+        changes.push(part_mesh_change(&record)?);
         footprint = footprint.union(Footprint::for_update(
             part, false, false, true, false, None,
         )?)?;

@@ -20,7 +20,8 @@
 
 use crate::assembly::read_prims;
 use crate::plate::{
-    check_footprint, mesh_change, number, numbers, prior_op_with, property, replay_summary, text,
+    check_footprint, number, numbers, plain_mesh_change, prior_op_with, property, replay_summary,
+    text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -423,7 +424,7 @@ pub fn create_weld(
         material: None,
     })];
     if let Some(solid) = &solid {
-        changes.push(mesh_change(
+        changes.push(plain_mesh_change(
             &command.new_id,
             solid.mesh(),
             &weld_record(solid)?,

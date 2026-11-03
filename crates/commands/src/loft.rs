@@ -6,7 +6,7 @@
 
 use crate::definition::material_lookup;
 use crate::plate::{
-    DerivedMesh, check_footprint, decode, mesh_change, prior_op_with, replay_summary,
+    DerivedMesh, check_footprint, decode, plain_mesh_change, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -173,7 +173,7 @@ pub fn create_lofted(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(&outcome.authored.id, &outcome.body.solid, &record)?,
+                plain_mesh_change(&outcome.authored.id, &outcome.body.solid, &record)?,
             ],
         },
         &control,

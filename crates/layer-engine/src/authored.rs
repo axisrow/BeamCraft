@@ -161,10 +161,16 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "derived=<element>/Geometry:Mesh;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
     "subdivisionScheme=token(none);orientation=token(rightHanded);",
     "extent=float3[](min,max of points);normals=normal3f[](uniform,one unit Newell normal per face);",
-    "bim:shapeKey=string(sha256);",
+    "bim:shapeKey=string(sha256);purpose=token(render,guide on a grid guide mesh);",
     "quantities(optional,all or none)=bim:volumeMm3=double;bim:volumeStatus=token;bim:massKg=double(optional);",
     "bim:massStatus=token;bim:shapeSignature=string(sha256);bim:massSignature=string(sha256);",
     "bim:quantityAlgorithm=string\n",
+    "representations(U12,each only where its body differs from the full one,never quantities)=",
+    "<part>/Reduced:Mesh(cuts kept,holes dropped;purpose=default);<part>/Proxy:Mesh(no cuts,no holes;purpose=proxy);",
+    "<part>/Axis:BasisCurves(member axis points;element-local;type=token(linear,uniform);wrap=token(nonperiodic,uniform);",
+    "curveVertexCounts=int[](one polyline);purpose=token(guide));",
+    "every representation carries bim:exact=bool(false) and no bim:shapeKey record beyond its own body's;",
+    "a plate authors no Axis;a part without holes and cuts authors no level prims\n",
     "reference=/World/References/REF_<uuid7-32>;type=Xform;kind=group;bim:elementKind=reference;bim:geometryMode=reference;",
     "bim:reference:sourceDigest=string(sha256);bim:reference:sourceBytes=int;bim:reference:sourceFormat=token(usda|usdc);",
     "bim:reference:sourceVersion=int;bim:reference:sourceLabel=string;bim:reference:sourceDefaultPrim=string;",
@@ -179,7 +185,7 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "property=(name,type_name,optional-value);relationship=(name,ordered-targets)\n",
     "prepare=(context,op_id,actor,schema,resources,changes);resource=(digest,definition);",
     "element=(id,name,shape,placement,optional-material);placement=(translation_mm[3],orientation_xyzw[4]);",
-    "mesh=(id,shape_key,points_mm,face_counts,indices);",
+    "mesh=(id,shape_key,points_mm,face_counts,indices,reduced?,proxy?,axis?);",
     "authored-item=(element_id,attribute,type_name,opinion);install=(context,token,op_id,Accepted);",
     "discard=(context,token,op_id,Undecided|Rejected);unknown=OUTCOME_UNKNOWN\n",
 );
@@ -416,6 +422,18 @@ pub struct Mesh {
     pub indices: Vec<i32>,
     /// Optional stored quantity records of this body. A rewrite replaces them as a whole.
     pub quantities: Option<StoredQuantities>,
+    /// The U12 reduced level: cuts kept, holes dropped. Authored as `<part>/Reduced`
+    /// (`purpose = default`, `bim:exact = false`) when its body differs from the full one.
+    /// Never carries quantities: engineering reads the full mesh only.
+    pub reduced: Option<Box<Mesh>>,
+    /// The U12 simplified level: no cuts and no holes. Authored as `<part>/Proxy`
+    /// (`purpose = proxy`, `bim:exact = false`) when its body differs from the full and the
+    /// reduced one. Never carries quantities.
+    pub proxy: Option<Box<Mesh>>,
+    /// The U12 axis level of a member: the element-local axis points, authored as
+    /// `<part>/Axis` (linear `BasisCurves`, `purpose = guide`, `bim:exact = false`).
+    /// A plate has no axis data in storage and authors none.
+    pub axis: Option<Vec<[f64; 3]>>,
 }
 
 /// Closed batch items, produced by a trusted engine, never raw USD setters.

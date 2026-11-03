@@ -178,6 +178,9 @@ fn mesh() -> Mesh {
         face_counts: vec![4],
         indices: vec![0, 1, 2, 3],
         quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
     }
 }
 fn batch(context: &Context, changes: Vec<Change>) -> Prepare {
@@ -4727,4 +4730,102 @@ fn the_edit_target_must_be_the_authorized_write_layer() {
         )
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::InvalidArgument);
+}
+
+#[test]
+fn representation_levels_are_authored_purpose_marked_and_replaced_with_their_mesh() {
+    let (mut a, o) = populated();
+    // A plate with a reduced and a simplified body beside the full mesh, and a member with its
+    // guide axis. The level bodies are engine results this fixture fabricates, as every other
+    // mesh fixture here is.
+    let mut plate_mesh = mesh();
+    let mut reduced = mesh();
+    reduced.shape_key = digest(b"reduced");
+    plate_mesh.reduced = Some(Box::new(reduced));
+    let mut proxy = mesh();
+    proxy.shape_key = digest(b"proxy");
+    plate_mesh.proxy = Some(Box::new(proxy));
+    let mut member_mesh = mesh();
+    member_mesh.id = MEMBER.into();
+    member_mesh.axis = Some(vec![[0.0, 0.0, 0.0], [0.0, 0.0, 2000.0]]);
+    let (_, next) = installed(
+        &mut a,
+        &o,
+        vec![Change::Mesh(plate_mesh), Change::Mesh(member_mesh)],
+    );
+    let all = snapshot(&a, &next.context);
+    let prop = |prim: &Prim, name: &str| -> Option<Value> {
+        prim.properties
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| p.value.clone())
+    };
+    let prim_at = |all: &[Prim], base: &str, name: &str| -> Prim {
+        all.iter()
+            .find(|p| p.path == format!("{base}/{name}"))
+            .unwrap()
+            .clone()
+    };
+    let plate_path = path(PLATE);
+    let member_path = path(MEMBER);
+    // The full body is the render level; a level body carries its purpose and the inexact mark.
+    assert_eq!(
+        prop(&prim_at(&all, &plate_path, "Geometry"), "purpose"),
+        Some(Value::Text("render".into()))
+    );
+    let reduced = prim_at(&all, &plate_path, "Reduced");
+    assert_eq!(reduced.type_name.as_deref(), Some("Mesh"));
+    assert_eq!(
+        prop(&reduced, "purpose"),
+        Some(Value::Text("default".into()))
+    );
+    assert_eq!(prop(&reduced, "bim:exact"), Some(Value::Bool(false)));
+    assert_eq!(prop(&reduced, "bim:volumeMm3"), None);
+    let proxy = prim_at(&all, &plate_path, "Proxy");
+    assert_eq!(prop(&proxy, "purpose"), Some(Value::Text("proxy".into())));
+    assert_eq!(prop(&proxy, "bim:exact"), Some(Value::Bool(false)));
+    // The axis guide of a member: a linear BasisCurves with the guide purpose.
+    let axis = prim_at(&all, &member_path, "Axis");
+    assert_eq!(axis.type_name.as_deref(), Some("BasisCurves"));
+    assert_eq!(prop(&axis, "purpose"), Some(Value::Text("guide".into())));
+    assert_eq!(prop(&axis, "bim:exact"), Some(Value::Bool(false)));
+    assert_eq!(
+        prop(&axis, "curveVertexCounts"),
+        Some(Value::Array(vec![Value::Int(2)]))
+    );
+    // A replacement without levels erases the stale ones wholesale, never partially.
+    let mut plain_plate = mesh();
+    plain_plate.reduced = Some(Box::new({
+        let mut level = mesh();
+        level.shape_key = digest(b"reduced-2");
+        level
+    }));
+    let mut plain_member = mesh();
+    plain_member.id = MEMBER.into();
+    let (_, next) = installed(
+        &mut a,
+        &next,
+        vec![Change::Mesh(plain_plate), Change::Mesh(plain_member)],
+    );
+    let all = snapshot(&a, &next.context);
+    assert!(all.iter().all(|p| !p.path.ends_with("/Proxy")));
+    assert!(all.iter().all(|p| !p.path.ends_with("/Axis")));
+    let reduced = all
+        .iter()
+        .find(|p| p.path == format!("{plate_path}/Reduced"))
+        .unwrap();
+    assert_eq!(
+        prop(reduced, "bim:shapeKey"),
+        Some(Value::Text(digest(b"reduced-2").to_string()))
+    );
+    // An axis under a plate is refused: only a beam or a column has an axis.
+    let mut plate_axis = mesh();
+    plate_axis.axis = Some(vec![[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0]]);
+    let error = a
+        .prepare(
+            batch(&next.context, vec![Change::Mesh(plate_axis)]),
+            &control(),
+        )
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::UnsupportedProperty);
 }

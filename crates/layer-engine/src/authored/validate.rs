@@ -80,6 +80,17 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 count(m.points_mm.len().checked_mul(3).ok_or_else(limit)?, 4)?;
                 count(m.face_counts.len(), 4)?;
                 count(m.indices.len(), 4)?;
+                // The U12 level bodies charge the same caps as the full mesh they accompany.
+                for r in m.reduced.iter().chain(m.proxy.iter()) {
+                    count(r.points_mm.len().checked_mul(3).ok_or_else(limit)?, 4)?;
+                    count(r.face_counts.len(), 4)?;
+                    count(r.indices.len(), 4)?;
+                }
+                if let Some(points) = &m.axis {
+                    count(points.len().checked_mul(3).ok_or_else(limit)?, 4)?;
+                    finite(points.iter().flatten().copied())?;
+                    cap(points.iter().flatten().copied(), 1e9)?;
+                }
             }
             _ => (),
         }
@@ -616,15 +627,32 @@ pub(super) fn snapshot(
         .iter()
         .filter(|p| p.type_name.as_deref() == Some("Mesh") && p.sources.iter().all(|s| s.owned))
     {
-        let Some((parent, "Geometry")) = p.path.rsplit_once('/') else {
+        // The full mesh and the U12 level bodies share the encoding and every structural rule;
+        // a level body never carries a quantity record (engineering reads the full mesh only).
+        let Some((parent, name)) = p.path.rsplit_once('/') else {
             continue;
         };
+        if !matches!(name, "Geometry" | "Reduced" | "Proxy") {
+            continue;
+        }
         let Some(element) = prims
             .iter()
             .find(|p| p.path == parent && p.element_id.is_some())
         else {
             continue;
         };
+        if name != "Geometry"
+            && (text(p, "purpose", "token")? != expected_purpose(name)
+                || required(p, "bim:exact", "bool")? != &Value::Bool(false)
+                // A level is a display body: a quantity record on one is outside the profile.
+                || p.properties.iter().any(|v| {
+                    v.name.starts_with("bim:volume")
+                        || v.name.starts_with("bim:mass")
+                        || v.name == "bim:quantityAlgorithm"
+                }))
+        {
+            return Err(unsupported());
+        }
         // An assembly, a level or a weld without a path has no body: a Geometry mesh under one
         // is refused, authored or loaded. A grid carries only derived guide meshes (T01.7);
         // only the A15 weld with an authored path carries a derived solid.
@@ -678,6 +706,9 @@ pub(super) fn snapshot(
             face_counts: integers("faceVertexCounts")?,
             indices: integers("faceVertexIndices")?,
             quantities: None,
+            reduced: None,
+            proxy: None,
+            axis: None,
         };
         mesh(&result, Budgets::default())?;
         if p.kind.as_deref() != Some("subcomponent") {
@@ -716,6 +747,7 @@ pub(super) fn snapshot(
             return Err(unsupported());
         }
     }
+    axis_guides(prims)?;
     Ok(Validation {
         profile: "u02-structural-v1",
         rules: &[
@@ -1665,10 +1697,96 @@ fn finite_change(c: &Change) -> Result<(), Diagnostic> {
                     .iter()
                     .flat_map(|q| [q.volume_mm3].into_iter().chain(q.mass_kg)),
             ),
-        ),
+        )
+        .and_then(|()| {
+            for r in m.reduced.iter().chain(m.proxy.iter()) {
+                finite(r.points_mm.iter().flatten().map(|n| f64::from(*n)))?;
+            }
+            finite(m.axis.iter().flatten().flatten().copied())
+        }),
         _ => Ok(()),
     }
 }
+/// The one U12 purpose a level body may carry: the reduced level is the `default` body a plain
+/// viewer draws, the simplified level is the `proxy` stand-in (owner decision: standard
+/// `purpose`; Full `render`, Simplified `proxy`, Axis `guide`).
+fn expected_purpose(name: &str) -> &'static str {
+    match name {
+        "Reduced" => "default",
+        "Proxy" => "proxy",
+        _ => "render",
+    }
+}
+
+/// The U12 axis guides: a member's `BasisCurves` display axis under `<part>/Axis` carries the
+/// guide purpose with the inexact mark and stores no engineering record. Every other owned
+/// `BasisCurves` prim (a drawing view's curves, for example) stays outside this rule.
+fn axis_guides(prims: &[Prim]) -> Result<(), Diagnostic> {
+    for p in prims.iter().filter(|p| {
+        p.type_name.as_deref() == Some("BasisCurves") && p.sources.iter().all(|s| s.owned)
+    }) {
+        let Some((_, "Axis")) = p.path.rsplit_once('/') else {
+            continue;
+        };
+        let Some(parent) = p.path.rsplit_once('/').map(|(parent, _)| parent.to_owned()) else {
+            continue;
+        };
+        let Some(element) = prims
+            .iter()
+            .find(|p| p.path == parent && p.element_id.is_some())
+        else {
+            return Err(unsupported());
+        };
+        // Only a beam or column authors an axis; a plate has no axis data in storage. The kind
+        // token is platform-owned and readable without a registered discipline.
+        let kind = text(element, "bim:elementKind", "token")?;
+        if !matches!(kind, "beam" | "column")
+            || text(p, "purpose", "token")? != "guide"
+            || required(p, "bim:exact", "bool")? != &Value::Bool(false)
+            || text(p, "type", "token")? != "linear"
+            || text(p, "wrap", "token")? != "nonperiodic"
+            || p.properties.iter().any(|v| {
+                v.name.starts_with("bim:volume")
+                    || v.name.starts_with("bim:mass")
+                    || v.name == "bim:quantityAlgorithm"
+                    || v.name == "bim:shapeKey"
+            })
+        {
+            return Err(unsupported());
+        }
+        let Value::Array(values) = required(p, "points", "point3f[]")? else {
+            return Err(invalid());
+        };
+        let ok_point = |v: &Value| {
+            matches!(
+                v,
+                Value::Array(a) if matches!(
+                    a.as_slice(),
+                    [Value::Number(x), Value::Number(y), Value::Number(z)]
+                        if x.is_finite() && y.is_finite() && z.is_finite()
+                )
+            )
+        };
+        if values.is_empty() || values.iter().any(|v| !ok_point(v)) {
+            return Err(invalid());
+        }
+        let Value::Array(counts) = required(p, "curveVertexCounts", "int[]")? else {
+            return Err(invalid());
+        };
+        if counts.as_slice()
+            != [Value::Int(
+                i64::try_from(values.len()).map_err(|_| invalid())?,
+            )]
+        {
+            return Err(invalid());
+        }
+        if p.kind.as_deref() != Some("subcomponent") {
+            return Err(invalid());
+        }
+    }
+    Ok(())
+}
+
 fn quantities(q: &StoredQuantities) -> Result<(), Diagnostic> {
     let status = |s: &str| matches!(s, "current" | "stale" | "unknown");
     if !status(&q.volume_status)

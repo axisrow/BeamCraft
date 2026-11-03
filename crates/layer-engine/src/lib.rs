@@ -131,9 +131,10 @@ impl Budgets {
     /// * `layer_bytes` 32 MiB: one layer is one host blob (`host::storage::MAX_BLOB_BYTES`).
     /// * `total_bytes` 64 MiB: the host's content-verification bound for one revision
     ///   (`host::revision::MAX_CONTENT_VERIFY_BYTES`).
-    /// * `prims` 262,144: four prims per element at the engine's 65,536-element view cap (element,
-    ///   geometry, representation and a definition or relationship target).
-    /// * `values` 4,194,304: 64 fields per element at the same cap.
+    /// * `prims` 393,216: six prims per element at the engine's 65,536-element view cap (element,
+    ///   geometry, the three U12 representation levels and a definition or relationship target).
+    /// * `values` 8,388,608: 128 fields per element at the same cap, counting a full mesh with
+    ///   its quantity record and every authored representation level.
     /// * `array_items` 1,572,864: one element mesh at the engine blob caps (524,288 triangles
     ///   are 1,572,864 indices; 262,144 vertices are 786,432 scalars).
     /// * `text_bytes` 64 KiB: a bounded allowance for imported USD string/token values, including
@@ -153,8 +154,8 @@ impl Budgets {
         // a fixed, shallow set. Pins beyond this refuse with LIMIT_EXCEEDED.
         layers: 16,
         depth: 16,
-        prims: 262_144,
-        values: 4_194_304,
+        prims: 393_216,
+        values: 8_388_608,
         array_items: 1_572_864,
         text_bytes: 64 * 1024,
         decoded_bytes: 256 * 1024 * 1024,

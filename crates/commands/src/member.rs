@@ -13,7 +13,7 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    Recorded, check_footprint, decode, evaluate_decoded, member_record, mesh_change, prior_op_with,
+    Recorded, check_footprint, decode, evaluate_decoded, part_mesh_change, prior_op_with,
     replay_summary,
 };
 use crate::publication::{PublishRequest, publish_revision};
@@ -483,11 +483,7 @@ fn finish_member(
                     },
                     material: outcome.authored.material,
                 }),
-                mesh_change(
-                    &outcome.authored.id,
-                    &record.body.solid,
-                    &member_record(&record),
-                )?,
+                part_mesh_change(&record)?,
             ],
         },
         &control(),

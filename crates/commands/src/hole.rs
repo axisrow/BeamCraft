@@ -18,8 +18,7 @@
 
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
-    check_footprint, decode, evaluate_decoded, member_record, mesh_change, plate_record,
-    prior_op_with, replay_summary,
+    check_footprint, decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -371,14 +370,10 @@ fn apply_hole(
                     canonical.to_string(),
                     next.authored.hole_records.clone(),
                 ),
-                mesh_change(&next.authored.id, &next.body.solid, &plate_record(&next))?,
+                part_mesh_change(&next)?,
             ];
             for other in &others {
-                changes.push(mesh_change(
-                    &other.authored.id,
-                    &other.body.solid,
-                    &plate_record(other),
-                )?);
+                changes.push(part_mesh_change(other)?);
             }
             (HoleElement::Plate(Box::new(next)), changes)
         }
@@ -438,14 +433,10 @@ fn apply_hole(
                     canonical.to_string(),
                     next.authored.hole_records.clone(),
                 ),
-                mesh_change(&next.authored.id, &next.body.solid, &member_record(&next))?,
+                part_mesh_change(&next)?,
             ];
             for other in &others {
-                changes.push(mesh_change(
-                    &other.authored.id,
-                    &other.body.solid,
-                    &member_record(other),
-                )?);
+                changes.push(part_mesh_change(other)?);
             }
             (HoleElement::Member(Box::new(next)), changes)
         }

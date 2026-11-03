@@ -20,9 +20,7 @@
 //! engine, as in `plate`.
 
 use crate::definition::material_lookup;
-use crate::plate::{
-    decode, evaluate_decoded, mesh_change, plate_record, prior_op_with, replay_summary,
-};
+use crate::plate::{decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary};
 use crate::publication::{PublicationTail, prepare_and_publish};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, RevisionStore, Uuid7};
@@ -263,7 +261,7 @@ pub fn delete_element(
                 next.id.to_string(),
                 next.hole_records.clone(),
             ));
-            changes.push(mesh_change(&next.id, &body.solid, &plate_record(&record))?);
+            changes.push(part_mesh_change(&record)?);
             footprint = footprint.union(Footprint::for_update(
                 next.id, false, false, true, false, None,
             )?)?;

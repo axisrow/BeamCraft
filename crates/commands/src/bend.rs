@@ -14,7 +14,7 @@
 //! record is removed by undoing its command; there is no removal command in this slice.
 
 use crate::definition::material_lookup;
-use crate::plate::{check_footprint, decode, evaluate_decoded, mesh_change, plate_record};
+use crate::plate::{check_footprint, decode, evaluate_decoded, part_mesh_change};
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionStore, Uuid7};
@@ -166,11 +166,7 @@ pub fn bend_plate_record(
             command.target_id.to_string(),
             element.authored.bends.clone(),
         ),
-        mesh_change(
-            &element.authored.id,
-            &element.body.solid,
-            &plate_record(&element),
-        )?,
+        part_mesh_change(&element)?,
     ];
     // Every instance of a shared definition takes the same records and the same body.
     let mut others: Vec<PlateRecord> = Vec::new();
@@ -194,11 +190,7 @@ pub fn bend_plate_record(
             body,
             quantities,
         };
-        changes.push(mesh_change(
-            &other.authored.id,
-            &other.body.solid,
-            &plate_record(&other),
-        )?);
+        changes.push(part_mesh_change(&other)?);
         others.push(other);
     }
     let schema = schema_identity()?;
