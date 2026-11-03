@@ -10,7 +10,7 @@
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
 use beamcraft_host::revision::{
     EvidencePin, MAX_MANIFEST_BYTES, MAX_OPERATION_EVIDENCE_BYTES, Manifest, REPLAY_LOOKBACK,
-    Revision, RevisionInfo, RevisionStore, Uuid7,
+    Revision, RevisionError, RevisionInfo, RevisionStore, Uuid7,
 };
 use beamcraft_model::changeset::{
     Access, Dependency, DependencyGroup, DependencyTarget, MAX_OPERATIONS, Operation,
@@ -345,7 +345,13 @@ pub(crate) fn carried(
     let mut sequence = store.head()?.map(|info| info.sequence());
     for _ in 0..REPLAY_LOOKBACK {
         let Some(current) = sequence else { break };
-        let info = store.info_at(current)?;
+        // Below the compaction floor the history is gone: the walk stops quietly there,
+        // exactly as the host's own replay walk stops at an unreadable ancestor.
+        let info = match store.info_at(current) {
+            Ok(info) => info,
+            Err(RevisionError::Compacted) => break,
+            Err(error) => return Err(error.into()),
+        };
         let fingerprint = bound_fingerprint(store, &info, op)?;
         if let Some(fingerprint) = fingerprint {
             return Ok(Some((fingerprint, info)));
