@@ -1828,7 +1828,20 @@ pub(crate) fn prior_op_with(
                 Some((revision.as_str().to_owned(), sequence, manifest)),
             ))
         }
-        Outcome::Aborted { .. } | Outcome::NotFound => Ok((PriorOp::Unseen, None)),
+        // A command carried by a batch has no ledger record of its own; its acceptance and
+        // request fingerprint come from the batch revision's evidence bindings.
+        Outcome::NotFound => match crate::command_evidence::carried(store, op)? {
+            Some((fingerprint, info)) => Ok((
+                PriorOp::Accepted { fingerprint },
+                Some((
+                    info.revision().to_string(),
+                    info.sequence(),
+                    info.manifest_digest(),
+                )),
+            )),
+            None => Ok((PriorOp::Unseen, None)),
+        },
+        Outcome::Aborted { .. } => Ok((PriorOp::Unseen, None)),
         Outcome::Unknown => Err(Refusal::new(
             ErrorCode::OutcomeUnknown,
             "the operation id may or may not have been committed; run recover-revision",

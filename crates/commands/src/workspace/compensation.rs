@@ -366,6 +366,7 @@ pub fn compensate_workspace(
         &op,
         compensation_fingerprint(request, &meta.workspace_id, &target_pin)?,
         &captured.footprint,
+        &[],
     )?;
     let next = RevisionDraft {
         project: d.project().clone(),

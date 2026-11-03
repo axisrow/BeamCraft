@@ -360,7 +360,42 @@ pub fn create_curved_beam(
                 )
                 .into())
             }
-            _ => Ok(None),
+            // A command carried by a batch has no ledger record of its own: the batch
+            // revision's evidence bindings answer for it, and a different request under this
+            // id is reuse exactly as for a standalone operation.
+            beamcraft_host::ledger::Outcome::NotFound => {
+                match crate::command_evidence::carried(store, &op_host)? {
+                    Some((bound, info)) => {
+                        if bound != fingerprint {
+                            return Err(beamcraft_model::command::CommandError::new(
+                                beamcraft_model::error::ErrorCode::OpIdReuse,
+                                "op_id",
+                                "operation was accepted with different arguments",
+                            )
+                            .into());
+                        }
+                        let revision = store.open_at(info.sequence())?;
+                        let old = crate::plate::inspect_revision(&revision)?;
+                        let member = old
+                            .members
+                            .into_iter()
+                            .find(|m| m.authored.id == request.command.member.new_id)
+                            .ok_or_else(|| {
+                                session::pipeline::integrity(
+                                    "carried member is absent from its batch revision",
+                                )
+                            })?;
+                        Ok(Some(CreatedMember {
+                            replayed: true,
+                            member,
+                            revision: old.revision,
+                            footprint: None,
+                        }))
+                    }
+                    None => Ok(None),
+                }
+            }
+            beamcraft_host::ledger::Outcome::Aborted { .. } => Ok(None),
         }
     };
     if let Some(accepted) = replay()? {

@@ -423,6 +423,7 @@ pub fn step(
                 &request.op_id,
                 fingerprint,
                 footprint,
+                &[],
             )?)
         }
         None => None,
