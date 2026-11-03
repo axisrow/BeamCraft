@@ -521,8 +521,18 @@ fn author_install_reopen_standard_mesh_relationships_and_exact_unknown_opinions(
         value_on_path(&composed, &asset_path, "points")
     );
     let asset_spec = openusd::sdf::Path::new(&format!("{asset_path}.points")).unwrap();
+    // The asset prim itself composes from the referenced asset layer (U15).
+    let assets_layer = exported
+        .iter()
+        .find(|a| a.name == GEOMETRY_ASSET_LAYER)
+        .unwrap();
+    let assets_parsed =
+        openusd::usda::parse(std::str::from_utf8(&assets_layer.bytes).unwrap()).unwrap();
     assert_eq!(
-        parsed.get_field(&asset_spec, "typeName").unwrap().as_ref(),
+        assets_parsed
+            .get_field(&asset_spec, "typeName")
+            .unwrap()
+            .as_ref(),
         &openusd::sdf::Value::token("point3f[]")
     );
     assert!(
@@ -1158,11 +1168,15 @@ fn validator_rejects_schema_markers_changed_definition_bytes_and_loaded_bad_mesh
         ErrorCode::IntegrityError
     );
     let mut assets = base.clone();
-    let element = element_layer(PLATE).unwrap();
-    let derived = assets.iter_mut().find(|a| a.name == element).unwrap();
-    *derived = asset(
-        &element,
-        String::from_utf8(derived.bytes.clone())
+    // The buffers live in the referenced asset layer (U11/U15): a bad index there is a bad
+    // mesh, whatever layer cites it.
+    let assets_layer = assets
+        .iter_mut()
+        .find(|a| a.name == GEOMETRY_ASSET_LAYER)
+        .unwrap();
+    *assets_layer = asset(
+        GEOMETRY_ASSET_LAYER,
+        String::from_utf8(assets_layer.bytes.clone())
             .unwrap()
             .replace("[0, 1, 2, 3]", "[0, 1, 2, 999]"),
     );
@@ -2431,15 +2445,14 @@ fn one_pass_open_validated_answers_like_validate_layers_then_open() {
     // Broken stages: the same code and message, and the live view stays the earlier one.
     let digest_text = schema.digest.to_string();
     let incorrect = digest(b"incorrect schema").to_string();
-    // The mesh content lives in the element's own layer (U15).
-    let element = element_layer(PLATE).unwrap();
+    // The mesh buffers live in the referenced asset layer (U11/U15).
     for (layer, from, to) in [
         (
             "authored.usda",
             "steel:profile:widthMm = 100.0",
             "steel:profile:widthMm = 101.0",
         ),
-        (&element, "[0, 1, 2, 3]", "[0, 1, 2, 999]"),
+        (GEOMETRY_ASSET_LAYER, "[0, 1, 2, 3]", "[0, 1, 2, 999]"),
         ("root.usda", digest_text.as_str(), incorrect.as_str()),
         ("authored.usda", "#usda 1.0", "#usda 9.9"),
     ] {
@@ -2551,7 +2564,8 @@ fn standard_usd_metadata_kind_display_name_extent_and_flat_normals() {
 #[test]
 fn validator_refuses_a_wrong_display_name_kind_extent_or_normal() {
     let (a, o) = populated();
-    // The derived mesh content lives in the element's own layer (U15).
+    // The mesh buffers live in the referenced asset layer (U11/U15); the element's own prim
+    // stays in the element file.
     let element = element_layer(PLATE).unwrap();
     for (layer, from, to) in [
         (
@@ -2561,15 +2575,23 @@ fn validator_refuses_a_wrong_display_name_kind_extent_or_normal() {
         ),
         ("authored.usda", "kind = \"component\"", "kind = \"group\""),
         (&element, "kind = \"subcomponent\"", "kind = \"component\""),
-        (&element, "(1000.0, 500.0, 0.0)]", "(1000.0, 500.0, 1.0)]"),
-        (&element, "[(0.0, 0.0, 1.0)]", "[(0.0, 0.0, -1.0)]"),
         (
-            &element,
+            GEOMETRY_ASSET_LAYER,
+            "(1000.0, 500.0, 0.0)]",
+            "(1000.0, 500.0, 1.0)]",
+        ),
+        (
+            GEOMETRY_ASSET_LAYER,
+            "[(0.0, 0.0, 1.0)]",
+            "[(0.0, 0.0, -1.0)]",
+        ),
+        (
+            GEOMETRY_ASSET_LAYER,
             "interpolation = \"uniform\"",
             "interpolation = \"vertex\"",
         ),
         (
-            &element,
+            GEOMETRY_ASSET_LAYER,
             "interpolation = \"uniform\"",
             "doc = \"no interpolation\"",
         ),
@@ -4887,6 +4909,9 @@ fn mesh_for(id: &str, shape_key: &[u8]) -> Mesh {
         face_counts: vec![4],
         indices: vec![0, 1, 2, 3],
         quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
     }
 }
 
@@ -4945,9 +4970,14 @@ fn u15_a_mesh_edit_rewrites_only_its_element_layer() {
     let (mut a, opened, first) = two_meshed_parts();
     let one = element_layer(PLATE).unwrap();
     let two = element_layer(TREATED).unwrap();
+    // The stack lists the element files and the referenced asset layer.
     assert_eq!(
         layer_sublayers(&owned(&first, "derived.usda").bytes).unwrap(),
-        [stack_entry_of(PLATE), stack_entry_of(TREATED)]
+        [
+            stack_entry_of(PLATE),
+            stack_entry_of(TREATED),
+            GEOMETRY_ASSET_LAYER.to_owned()
+        ]
     );
     let stack_digest = owned(&first, "derived.usda").digest;
     let authored_digest = owned(&first, "authored.usda").digest;
@@ -4961,7 +4991,8 @@ fn u15_a_mesh_edit_rewrites_only_its_element_layer() {
     );
     let prepared = a.prepare(input, &control()).unwrap();
     assert_ne!(owned(&prepared, &one).digest, owned(&first, &one).digest);
-    // The sibling's file, the stack and the authored layer keep their exact bytes.
+    // The sibling's file, the stack and the authored layer keep their exact bytes. The new
+    // body lands in the referenced asset layer, which is not part of this claim.
     assert_eq!(owned(&prepared, &two).digest, owned(&first, &two).digest);
     assert_eq!(owned(&prepared, "derived.usda").digest, stack_digest);
     assert_eq!(owned(&prepared, "authored.usda").digest, authored_digest);
@@ -4982,7 +5013,7 @@ fn u15_a_delete_drops_its_element_layer_and_stack_entry() {
     assert!(prepared.layers.iter().all(|l| l.name != two));
     assert_eq!(
         layer_sublayers(&owned(&prepared, "derived.usda").bytes).unwrap(),
-        [stack_entry_of(PLATE)]
+        [stack_entry_of(PLATE), GEOMETRY_ASSET_LAYER.to_owned()]
     );
     // The sibling's file keeps its exact bytes.
     assert_eq!(owned(&prepared, &one).digest, after_first);
@@ -5076,21 +5107,26 @@ fn u15_a_legacy_mesh_moves_to_its_element_layer_on_first_rewrite() {
     let base = a.export(&opened.context, &control()).unwrap();
     let one = element_layer(PLATE).unwrap();
     let entry = stack_entry_of(PLATE);
-    // A faithful pre-U15 stage: the element file's body pasted into the shared derived
-    // layer, the file and its stack entry gone.
+    // A faithful pre-U15 stage: the element file's body pasted into the shared derived layer
+    // with its external asset reference turned into the U11 internal form, the file and its
+    // stack entry gone, and the shared asset inlined in that layer.
     let file = owned_ref(&base, &one);
     let text = String::from_utf8(file.bytes.clone()).unwrap();
     let (_, body) = text.split_once(")\n").unwrap();
+    let body = body.replace("@geometry.usda@", "");
+    let asset_text =
+        String::from_utf8(owned_ref(&base, "derived/geometry.usda").bytes.clone()).unwrap();
+    let asset_body = asset_text.split_once(")\n").unwrap().1;
     let derived_text = String::from_utf8(owned_ref(&base, "derived.usda").bytes.clone()).unwrap();
     let legacy_derived = derived_text
         .lines()
         .filter(|line| !line.trim_start().starts_with("subLayers"))
         .collect::<Vec<_>>()
         .join("\n");
-    let legacy = format!("{legacy_derived}\n{body}");
+    let legacy = format!("{legacy_derived}\n{body}\n{asset_body}");
     let assets: Vec<_> = base
         .iter()
-        .filter(|a| element_layer_id(&a.name).is_none())
+        .filter(|a| element_layer_id(&a.name).is_none() && a.name != GEOMETRY_ASSET_LAYER)
         .map(|a| {
             if a.name == "derived.usda" {
                 asset("derived.usda", &legacy)
@@ -5118,13 +5154,19 @@ fn u15_a_legacy_mesh_moves_to_its_element_layer_on_first_rewrite() {
     let prepared = a.prepare(input, &control()).unwrap();
     let derived = String::from_utf8(owned(&prepared, "derived.usda").bytes.clone()).unwrap();
     assert!(
-        !derived.contains("point3f[]"),
-        "the legacy mesh must be gone"
+        !derived.contains("instanceable"),
+        "the legacy element prim must be gone"
     );
     assert_eq!(
         layer_sublayers(&owned(&prepared, "derived.usda").bytes).unwrap(),
-        [entry]
+        [entry, GEOMETRY_ASSET_LAYER.to_owned()]
     );
+    // The body is content-addressed: the rewritten element file cites the shared asset layer,
+    // which carries the body once.
+    let assets = owned(&prepared, GEOMETRY_ASSET_LAYER);
+    assert!(String::from_utf8_lossy(&assets.bytes).contains("def Mesh \"GEO_"));
     let moved = owned(&prepared, &one);
-    assert!(String::from_utf8_lossy(&moved.bytes).contains("point3f[]"));
+    let moved_text = String::from_utf8_lossy(&moved.bytes).into_owned();
+    assert!(moved_text.contains("instanceable = true"));
+    assert!(moved_text.contains("@geometry.usda@"));
 }

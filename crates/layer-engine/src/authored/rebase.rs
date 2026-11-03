@@ -18,8 +18,9 @@ use std::collections::BTreeMap;
 
 type Writes = BTreeSet<(T, G)>;
 
-/// Rebuilds the derived stack's element-file list from the candidate asset set (U15): the
-/// stack is derived state, a sorted set of exactly the element files the manifest carries.
+/// Rebuilds the derived stack's sublayer list from the candidate asset set (U15): the stack is
+/// derived state, a sorted set of the referenced asset layer (when the manifest carries it)
+/// plus exactly the element files.
 fn reconcile_element_stack(
     candidate: &mut OpenRequest,
     targets: &EditTargets,
@@ -30,6 +31,13 @@ fn reconcile_element_stack(
         .filter(|a| element_layer_id(&a.name).is_some())
         .map(|a| a.name.clone())
         .collect();
+    if candidate
+        .assets
+        .iter()
+        .any(|a| a.name == super::GEOMETRY_ASSET_LAYER)
+    {
+        entries.push(super::GEOMETRY_ASSET_LAYER.to_owned());
+    }
     entries.sort();
     entries.dedup();
     let asset = candidate
@@ -598,15 +606,20 @@ pub fn prepare(
             }
         }
     }
+    // The layer set of a delta may change by whole element files (U15) and by the referenced
+    // geometry-asset layer: any other layer that the base or the source holds alone is outside
+    // this API's closed transfer form.
+    let transferable =
+        |name: &str| element_layer_id(name).is_some() || name == super::GEOMETRY_ASSET_LAYER;
     for asset in &base.assets {
         let in_source = source.assets.iter().any(|a| a.name == asset.name);
-        if !in_source && element_layer_id(&asset.name).is_none() {
+        if !in_source && !transferable(&asset.name) {
             return Err(unsupported_delta());
         }
     }
     for asset in &source.assets {
         let in_base = base.assets.iter().any(|a| a.name == asset.name);
-        if !in_base && element_layer_id(&asset.name).is_none() {
+        if !in_base && !transferable(&asset.name) {
             return Err(unsupported_delta());
         }
     }
@@ -629,7 +642,10 @@ pub fn prepare(
             if source_asset.digest == old.digest {
                 continue;
             }
-            if old.name != targets.authored && old.name != targets.derived && !element_file {
+            if old.name != targets.authored
+                && old.name != targets.derived
+                && !transferable(&old.name)
+            {
                 return Err(unsupported_delta());
             }
             let target = match candidate.assets.iter_mut().find(|a| a.name == old.name) {
@@ -657,14 +673,31 @@ pub fn prepare(
                 };
             }
         }
-        // Element files the source added: a locally created element's results ride with the
-        // batch; the authored prim arrives through the authored-layer merge.
+        // Layers the source added: locally created element files (U15) and the referenced
+        // geometry-asset layer ride with the batch; the authored prim arrives through the
+        // authored-layer merge.
         for added in &source.assets {
             if base.assets.iter().any(|a| a.name == added.name) {
                 continue;
             }
-            if element_layer_id(&added.name).is_none() {
+            if !transferable(&added.name) {
                 return Err(unsupported_delta());
+            }
+            // A new or rewritten body asset carries the U11 content identity in the verified
+            // writes: every GEO_ body of the added layer must be named by a definition write.
+            if added.name == super::GEOMETRY_ASSET_LAYER {
+                let text = String::from_utf8_lossy(&added.bytes).into_owned();
+                for digest in text.match_indices("GEO_").filter_map(|(at, _)| {
+                    text.get(at + 4..at + 68)
+                        .filter(|label| label.len() == 64)
+                        .and_then(|label| label.parse::<ContentDigest>().ok())
+                }) {
+                    require(
+                        &writes,
+                        &format!("{}/GEO_{digest}", super::edit::GEOMETRY_ASSETS),
+                        "specifier",
+                    )?;
+                }
             }
             candidate.assets.push(added.clone());
             candidate.owned_layers.insert(added.name.clone());

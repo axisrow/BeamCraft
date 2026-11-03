@@ -1410,8 +1410,9 @@ fn a_source_above_the_blob_cap_is_refused_without_changing_the_revision() {
 
 #[test]
 fn the_stage_budget_limits_how_many_distinct_sources_a_revision_can_hold() {
-    // Sixteen layers in all (F12 raised the stage budget from eight to hold coordination
-    // closures): root, authored, derived and thirteen distinct foreign layers.
+    // The stage layer budget follows the U15 element-layer scale (70,000 at the engine's
+    // element view cap; the boundary itself is the layer engine's `Budgets` test), so a
+    // CLI-scale attach batch no longer approaches it: many foreign sources attach and read.
     let f = Fixture::new();
     for n in 0..13 {
         let source = f.source(
@@ -1420,16 +1421,10 @@ fn the_stage_budget_limits_how_many_distinct_sources_a_revision_can_hold() {
         );
         f.attach(&source, &[]);
     }
-    let before = f.listing();
     let fourteenth = f.source(
         "site-13.usda",
         SITE.replace("declared by the source", "number thirteen"),
     );
-    let (code, body) = f.run("attach-reference", &["--source", &fourteenth]);
-    assert_eq!(
-        (code, text(&body, "code")),
-        (2, "LIMIT_EXCEEDED".to_owned())
-    );
-    assert_eq!(f.listing(), before, "the refused attach stored nothing");
-    assert_eq!(at(&f.inspect(), &["references"]).array().unwrap().len(), 13);
+    f.attach(&fourteenth, &[]);
+    assert_eq!(at(&f.inspect(), &["references"]).array().unwrap().len(), 14);
 }

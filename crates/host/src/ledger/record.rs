@@ -25,7 +25,7 @@ use beamcraft_model::digest::{ContentDigest, Sha256};
 use crate::revision::{MAX_ENTRIES, Uuid7};
 
 /// Longest record line the parser accepts, including its newline. A maximal intent lists
-/// [`MAX_INTENT_BLOBS`] blob digests (~4.6 MB at the U15 entry cap), so the line cap follows
+/// `MAX_INTENT_BLOBS` blob digests (~4.6 MB at the U15 entry cap), so the line cap follows
 /// the manifest entry cap with headroom.
 pub const MAX_RECORD_BYTES: usize = 8_388_608;
 const VERSION: &str = "L1";

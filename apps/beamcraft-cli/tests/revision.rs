@@ -546,6 +546,7 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
     let blob_put = |assets: &[Asset]| {
         for a in assets {
             let file = fx.0.join("files").join(&a.name);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
             fs::write(&file, &a.bytes).unwrap();
             let (exit, body) = run(&[
                 "put-blob",
@@ -636,7 +637,8 @@ fn real_binary_commits_u02_layers_and_a_fresh_process_and_reader_verify_them() {
     assert_eq!(exit, 0, "{opened_json:?}");
     assert_eq!(text(&opened_json, "outcome"), "revision_verified");
     assert_eq!(text(&opened_json, "manifest_digest"), manifest1);
-    assert_eq!(opened_json.get("layers").unwrap().array().unwrap().len(), 4);
+    // U15: root, authored, derived stack, the plate's element file and the asset layer.
+    assert_eq!(opened_json.get("layers").unwrap().array().unwrap().len(), 6);
 
     // A second revision from the real engine, on top of the first.
     let opened2 = relabel(&mut author, &opened.context, OP2, PLATE, "Renamed plate");

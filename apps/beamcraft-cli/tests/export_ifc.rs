@@ -773,8 +773,11 @@ fn an_unknown_density_leaves_the_mass_out_and_says_so() {
 fn a_stale_quantity_is_left_out_and_listed() {
     let f = Fixture::new();
     let s = f.scene();
+    // One element's stored volume is tampered in its own derived layer (U15); the others stay
+    // current.
+    let plate_layer = format!("derived/{}.usda", s.plate.replace('-', ""));
     f.tamper(|name, layer| {
-        if name.starts_with("derived/") {
+        if name == plate_layer {
             layer.replacen(
                 "custom double bim:volumeMm3 = ",
                 "custom double bim:volumeMm3 = 1",

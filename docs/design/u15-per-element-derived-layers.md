@@ -9,19 +9,25 @@ results.
 ## Layout
 
 `derived.usda` stays a manifest asset and a root-stack entry, but becomes a thin stack: its
-`subLayers` list the owned per-element layers. Each element with derived results owns exactly one
-layer, `derived/<32 hex digits of the element id>.usda`, which carries its `/Geometry` prims under
-the same absolute paths as before. Composition is unchanged for readers: the stage merges the
-root's two sublayers and, under the derived stack, one file per element. The stack is a canonical
-set — sorted, exactly the element files the manifest carries — so its bytes do not depend on edit
-order.
+`subLayers` list the owned per-element layers and the referenced asset layer. Each element with
+derived results owns exactly one layer, `derived/<32 hex digits of the element id>.usda`, which
+carries its `/Geometry` prims under the same absolute paths as before — the instanceable wrapper,
+its U12 level prims, purposes and quantity records. The shared U11 bodies
+(`/World/Definitions/Geometry/GEO_<digest>`) live once per distinct body in the referenced
+`derived/geometry.usda`, which every element file composes by an explicit external reference
+(`references = @geometry.usda@</World/Definitions/Geometry/GEO_…>`); the composition stays
+acyclic, and the asset layer is never sublayered by anything that an element file sublayers.
+The element-file list is a canonical set — sorted, exactly the element files the manifest
+carries — so its bytes do not depend on edit order.
 
 * `authored::element_layer(id)` and `authored::element_layer_id(name)` are the naming seam; the
   `derived/` prefix is engine-reserved, and an asset outside the fixed name shape is refused.
 * A mesh write creates the element's file on first use (units header included) and rewrites that
   file alone. Unchanged elements' files are retained byte for byte: the same digest, no new blob,
-  no re-serialization.
+  no re-serialization. A new body publishes its asset into the referenced asset layer, which
+  changes only when a distinct body appears.
 * Deleting an element removes its authored prim and drops its file and stack entry with it.
+  Assets are content-addressed definitions: they are not dropped with the last citing element.
 * Result prims must live in exactly one owned location. A pre-U15 store keeps its meshes in
   `derived.usda`; a rewrite of such a mesh empties the legacy location and moves the results into
   the element's file. Reads of old stores are unchanged, and no migration pass exists.
@@ -34,12 +40,14 @@ budgets instead of a fixed small stack: the engine's model `layers` budget is 70
 pins), and the host manifest admits the same entry count (`MAX_ENTRIES`) with
 `MAX_MANIFEST_BYTES` at 16 MiB. Composition depth stays at three for a project stage.
 
-Manifest entries carry a role; every `derived/<id>.usda` entry is `derived`, and the U19 scope
-guard exempts derived layers by role (they follow their owning authored inputs), so scoped stores
-behave as before. The rebase materializer merges per-element files like the derived target and
-reconciles the candidate's stack from its asset set; the pseudo-root of an edit layer (units,
-schema pin, stack) is engine bookkeeping and never merges as content. Changesets already list
-every manifest entry with per-layer base digests and carry blobs only for changed layers.
+Manifest entries carry a role; every `derived/<id>.usda` and the asset layer are `derived`, and
+the U19 scope guard exempts derived layers by role (they follow their owning authored inputs), so
+scoped stores behave as before. The rebase materializer merges per-element files and the asset
+layer like the derived target — a new body asset must be named by a definition write, exactly
+like the U11 asset delta — and reconciles the candidate's stack from its asset set; the
+pseudo-root of an edit layer (units, schema pin, stack) is engine bookkeeping and never merges as
+content. Changesets already list every manifest entry with per-layer base digests and carry blobs
+only for changed layers.
 
 ## Remaining limits
 

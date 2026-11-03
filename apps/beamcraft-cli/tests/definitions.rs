@@ -17,7 +17,7 @@ use crate::support;
 use support::{at, text};
 
 use beamcraft_json::{Json, Limits};
-use beamcraft_layer_engine::authored::{Definition, Resource};
+use beamcraft_layer_engine::authored::{Definition, Resource, element_layer_id};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -192,9 +192,10 @@ fn a_material_with_density_gives_the_plate_a_current_mass_across_processes() {
     assert!(authored.contains(&format!(
         "custom rel bim:material = </World/Definitions/Materials/MAT_{digest}>"
     )));
-    // Physical material only: the U08 appearance is presentation under /World/Looks; the
-    // engineering definition carries no shader or binding of its own, and no layer (U15 adds
-    // element files and the asset layer) carries a shader.
+    // Physical material only: the U08 appearance is presentation under /World/Looks (its
+    // shader lives in the authored layer); the engineering definition carries no shader or
+    // binding of its own, and no derived layer — the stack, the per-element files (U15) or the
+    // asset layer — carries an appearance.
     assert!(authored.contains("def Scope \"Looks\""), "{authored}");
     assert!(
         authored.contains("custom rel material:binding = </World/Looks/PartClass0>"),
@@ -206,11 +207,19 @@ fn a_material_with_density_gives_the_plate_a_current_mass_across_processes() {
         .unwrap()
         .to_vec();
     for layer in &layers {
-        let body = f.layer_text(text(layer, "name").as_str(), &created);
-        assert!(!body.contains("Shader"), "{}", text(layer, "name"));
+        let name = text(layer, "name");
+        let is_derived_role = name == "derived.usda"
+            || name == "derived/geometry.usda"
+            || element_layer_id(&name).is_some();
+        if !is_derived_role {
+            continue;
+        }
+        let body = f.layer_text(&name, &created);
+        assert!(
+            !body.contains("Shader") && !body.contains("material:binding"),
+            "{name}"
+        );
     }
-    let derived = f.layer_text("derived.usda", &created);
-    assert!(!derived.contains("material:binding"));
 }
 
 #[test]

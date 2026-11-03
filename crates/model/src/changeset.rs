@@ -35,10 +35,11 @@ use crate::limits::MAX_FOOTPRINT_ENTRIES;
 pub const MAX_CHANGESET_BYTES: usize = 1_048_576;
 /// Most operations in one changeset.
 pub const MAX_OPERATIONS: usize = 4096;
-/// Most layers of the resulting revision.
-pub const MAX_LAYERS: usize = 16;
+/// Most layers of the resulting revision (U15: one derived layer per element, at the host's
+/// [`crate::limits`] manifest entry scale).
+pub const MAX_LAYERS: usize = 70_000;
 /// Most immutable blobs a changeset requires.
-pub const MAX_ASSETS: usize = 256;
+pub const MAX_ASSETS: usize = 70_000;
 /// Largest layer or blob a changeset may name (the host's 32 MiB blob cap).
 pub const MAX_ASSET_BYTES: u64 = 32 * 1024 * 1024;
 /// Longest layer name.
@@ -256,8 +257,11 @@ fn layer_name_valid(name: &str) -> bool {
         && name.len() <= MAX_LAYER_NAME_BYTES
         && name.ends_with(".usda")
         && !name.starts_with('.')
-        && name.bytes().all(|b| {
-            b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+        && name.split('/').all(|segment| {
+            !segment.is_empty()
+                && segment.bytes().all(|b| {
+                    b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
+                })
         })
 }
 

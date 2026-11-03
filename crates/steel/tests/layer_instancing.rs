@@ -137,9 +137,13 @@ fn run(author: &mut Author, opened: &Opened, changes: Vec<Change>) -> (OpenReque
         .unwrap();
     let mut request = empty();
     request.assets = prepared.layers.clone();
-    request.owned_layers = ["root.usda", "authored.usda", "derived.usda"]
-        .map(String::from)
-        .into();
+    // Prepared.layers are exactly the owned assets of the candidate (U15 adds element files
+    // and the referenced asset layer to the owned set).
+    request.owned_layers = prepared
+        .layers
+        .iter()
+        .map(|a| a.name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     request.manifest = request.manifest_digest().unwrap();
     (request, prepared)
 }
@@ -154,17 +158,20 @@ fn install(author: &mut Author, opened: &Opened, prepared: &Prepared) -> Opened 
         )
         .unwrap()
 }
-fn derived_text(head: &OpenRequest) -> String {
-    std::str::from_utf8(
-        &head
-            .assets
-            .iter()
-            .find(|a| a.name == "derived.usda")
-            .unwrap()
-            .bytes,
-    )
-    .unwrap()
-    .to_owned()
+/// The bytes of one owned layer of the candidate, as UTF-8 (U15 splits the derived scope:
+/// bodies live in the referenced asset layer, element prims in per-element files).
+fn layer_text(head: &OpenRequest, name: &str) -> String {
+    std::str::from_utf8(&head.assets.iter().find(|a| a.name == name).unwrap().bytes)
+        .unwrap()
+        .to_owned()
+}
+/// The text of every per-element derived layer of the candidate, in manifest order.
+fn element_texts(head: &OpenRequest) -> Vec<String> {
+    head.assets
+        .iter()
+        .filter(|a| element_layer_id(&a.name).is_some())
+        .map(|a| layer_text(head, &a.name))
+        .collect()
 }
 fn snapshot(author: &Author, context: &Context) -> Vec<Prim> {
     let mut prims = Vec::new();
@@ -200,14 +207,28 @@ fn identical_bodies_in_one_batch_share_one_immutable_asset() {
             Change::Mesh(body(2, 5.0)),
         ],
     );
-    let derived = derived_text(&head);
-    assert_eq!(derived.matches("def Mesh \"GEO_").count(), 1, "{derived}");
-    assert_eq!(derived.matches("instanceable = true").count(), 2);
+    // The shared body asset lives once in the referenced asset layer (U15); the per-element
+    // instanceable references compose it from there.
+    let assets = layer_text(&head, "derived/geometry.usda");
+    assert_eq!(assets.matches("def Mesh \"GEO_").count(), 1, "{assets}");
+    let elements = element_texts(&head);
+    assert_eq!(elements.len(), 2, "{elements:?}");
+    assert_eq!(
+        elements
+            .iter()
+            .map(|t| t.matches("instanceable = true").count())
+            .sum::<usize>(),
+        2
+    );
     let asset_digest = mesh_asset_digest(&body(1, 5.0)).unwrap();
     let asset_path = format!("/World/Definitions/Geometry/GEO_{asset_digest}");
-    assert!(derived.contains(&format!("references = <{asset_path}>")));
+    assert!(
+        elements
+            .iter()
+            .all(|t| t.contains(&format!("references = @{}@<{asset_path}>", "geometry.usda")))
+    );
     // The element's own prim authors no buffers.
-    assert!(!derived.contains("/Geometry.points"));
+    assert!(elements.iter().all(|t| !t.contains("/Geometry.points")));
     // The writes carry the asset's content identity (U11 evidence).
     let identity = asset_digest.to_string();
     assert!(prepared.writes.contains(&Footprint {
@@ -247,17 +268,27 @@ fn identical_bodies_in_one_batch_share_one_immutable_asset() {
             .find(|p| p.name == "points")
             .map(|p| p.value.as_ref().unwrap())
     );
-    // A tampered asset name no longer recomposes from its content.
-    let relabelled = derived_text(&head).replace(
-        &format!("GEO_{asset_digest}"),
-        &format!("GEO_{}", digest(b"other")),
-    );
+    // A tampered asset name no longer recomposes from its content (the bodies live in the
+    // referenced asset layer, U15).
+    // A tampered asset name no longer recomposes from its content (U15): the body lives in
+    // the referenced asset layer, and every per-element reference is relabelled with it, so
+    // the naming still recomposes and the digest identity is what fails.
+    let other = digest(b"other").to_string();
     let mut forged = head.clone();
-    *forged
-        .assets
-        .iter_mut()
-        .find(|a| a.name == "derived.usda")
-        .unwrap() = asset("derived.usda", &relabelled);
+    for a in forged.assets.iter_mut() {
+        if a.name == "derived/geometry.usda" || element_layer_id(&a.name).is_some() {
+            let text = String::from_utf8_lossy(&a.bytes).into_owned();
+            let needle = format!("GEO_{asset_digest}");
+            println!(
+                "U15DBG {} contains={} len={}",
+                a.name,
+                text.contains(&needle),
+                text.len()
+            );
+            let relabelled = text.replace(&needle, &format!("GEO_{other}"));
+            *a = asset(&a.name, &relabelled);
+        }
+    }
     forged.manifest = forged.manifest_digest().unwrap();
     let mut reader = Reader::default();
     assert_eq!(
@@ -285,7 +316,7 @@ fn a_new_body_publishes_one_new_asset_and_never_rewrites_the_shared_one() {
         &opened,
         vec![plate(1), Change::Mesh(body(1, 5.0))],
     );
-    let before = derived_text(&head);
+    let before = layer_text(&head, "derived/geometry.usda");
     assert_eq!(before.matches("def Mesh \"GEO_").count(), 1);
     let live = install(&mut author, &opened, &prepared);
     // A different body for the second element: one new asset, the first untouched.
@@ -294,7 +325,7 @@ fn a_new_body_publishes_one_new_asset_and_never_rewrites_the_shared_one() {
         &live,
         vec![plate(2), Change::Mesh(body(2, 12.0))],
     );
-    let after = derived_text(&head2);
+    let after = layer_text(&head2, "derived/geometry.usda");
     assert_eq!(after.matches("def Mesh \"GEO_").count(), 2);
     let old = mesh_asset_digest(&body(1, 5.0)).unwrap();
     let new = mesh_asset_digest(&body(2, 12.0)).unwrap();
@@ -341,23 +372,32 @@ fn a_thousand_copies_share_one_prototype() {
         let _ = head;
     }
     let exported = author.export(&opened.context, &control()).unwrap();
-    let derived = std::str::from_utf8(
-        &exported
+    let layer_named = |name: &str| {
+        std::str::from_utf8(&exported.iter().find(|a| a.name == name).unwrap().bytes).unwrap()
+    };
+    let assets = layer_named("derived/geometry.usda");
+    let element_texts: Vec<String> = exported
+        .iter()
+        .filter(|a| element_layer_id(&a.name).is_some())
+        .map(|a| layer_named(&a.name).to_owned())
+        .collect();
+    // 1000 copies, one immutable geometry asset in the referenced layer (U15), 1000
+    // instanceable references in the per-element files.
+    assert_eq!(assets.matches("def Mesh \"GEO_").count(), 1, "{assets}");
+    assert_eq!(
+        element_texts
             .iter()
-            .find(|a| a.name == "derived.usda")
-            .unwrap()
-            .bytes,
-    )
-    .unwrap();
-    // 1000 copies, one immutable geometry asset, 1000 instanceable references.
-    assert_eq!(derived.matches("def Mesh \"GEO_").count(), 1, "{derived}");
-    assert_eq!(derived.matches("instanceable = true").count(), 1000);
+            .map(|t| t.matches("instanceable = true").count())
+            .sum::<usize>(),
+        1000
+    );
     // The stage still opens, composes and validates within the model budgets.
     let mut request = empty();
+    request.owned_layers = exported
+        .iter()
+        .map(|a| a.name.clone())
+        .collect::<std::collections::BTreeSet<_>>();
     request.assets = exported;
-    request.owned_layers = ["root.usda", "authored.usda", "derived.usda"]
-        .map(String::from)
-        .into();
     request.identity.generation += 1;
     request.manifest = request.manifest_digest().unwrap();
     let mut reader = Reader::default();

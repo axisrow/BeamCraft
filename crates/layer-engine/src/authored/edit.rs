@@ -130,9 +130,10 @@ pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<()
             "edit layers must participate in root stack",
         ));
     }
-    // U15: the derived stack lists exactly the per-element derived layers of the manifest.
-    // A `derived/` asset outside the fixed name shape, an unlisted file or a stack entry
-    // without its file is a broken stage, not a layer the engine may edit.
+    // U15: the derived stack lists exactly the per-element derived layers of the manifest. An
+    // element-file name outside the fixed shape, an unlisted file or a stack entry without its
+    // file is a broken stage, not a layer the engine may edit. The stack root's own name
+    // ("derived.usda") is not 32 hex digits, so it never classifies as an element file.
     let derived_asset = request
         .assets
         .iter()
@@ -154,7 +155,7 @@ pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<()
     };
     let mut element_files = BTreeSet::new();
     for asset in &request.assets {
-        if asset.name.starts_with("derived/") {
+        if element_layer_id(&asset.name).is_some() {
             let Some(id) = element_layer_id(&asset.name) else {
                 return Err(corrupt());
             };
@@ -167,7 +168,30 @@ pub(super) fn targets(request: &OpenRequest, targets: &EditTargets) -> Result<()
             element_files.insert(asset.name.clone());
         }
     }
-    if stack.len() != element_files.len() {
+    // The referenced asset layer (U15) hangs beside the stack as a plain member.
+    let geometry_present = request
+        .assets
+        .iter()
+        .any(|a| a.name == GEOMETRY_ASSET_LAYER);
+    let stack_without_elements = stack
+        .iter()
+        .filter(|n| element_layer_id(n).is_none())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let expected = if geometry_present {
+        let mut expected = BTreeSet::new();
+        expected.insert(GEOMETRY_ASSET_LAYER.to_owned());
+        expected
+    } else {
+        BTreeSet::new()
+    };
+    if stack_without_elements != expected {
+        return Err(corrupt());
+    }
+    if geometry_present
+        && (!request.owned_layers.contains(GEOMETRY_ASSET_LAYER)
+            || !stack.contains(GEOMETRY_ASSET_LAYER))
+    {
         return Err(corrupt());
     }
     Ok(())
@@ -740,7 +764,10 @@ fn mesh(
     }
     // The element's own prim is an instanceable reference (U11): the composed Mesh comes from
     // the shared asset, and only the U12 purpose and the per-element quantity record stay
-    // local. The exactness marker is absent (`true` being the default), as U12 stores it.
+    // local. The reference targets the asset layer explicitly (U15): the body lives in the
+    // sibling `derived/geometry.usda`, so the anchored external target composes the shared
+    // body in every reader without a layer-stack cycle. The exactness marker is absent
+    // (`true` being the default), as U12 stores it.
     let p = format!("{parent}/Geometry");
     prim(data, &p, Some("Mesh"), true)?;
     field(data, &p, "kind", sdf::Value::token("subcomponent"))?;
@@ -750,7 +777,10 @@ fn mesh(
         &p,
         "references",
         sdf::Value::ReferenceListOp(sdf::ListOp::explicit([sdf::Reference {
-            asset_path: String::new(),
+            asset_path: super::GEOMETRY_ASSET_LAYER
+                .rsplit_once('/')
+                .map(|(_, file)| file.to_owned())
+                .unwrap_or_else(|| super::GEOMETRY_ASSET_LAYER.to_owned()),
             prim_path: path(&asset)?,
             layer_offset: sdf::LayerOffset::IDENTITY,
             custom_data: Default::default(),
@@ -1101,6 +1131,16 @@ fn stack_remove(derived: &mut sdf::Data, entry: &str) -> Result<(), Diagnostic> 
     Ok(())
 }
 
+/// Whether one contributing prim site of a composed result prim is a U11 body-asset
+/// contribution: the shared immutable body every instanceable reference composes, never a
+/// per-element result location of its own. The body lives in the referenced asset layer (U15)
+/// or inline in the derived stack root of a pre-U15 store; the result-location checks of
+/// `apply` skip it.
+fn asset_contribution(s: &Provenance, targets: &EditTargets) -> bool {
+    s.path.starts_with(GEOMETRY_ASSETS)
+        && (s.layer == GEOMETRY_ASSET_LAYER || s.layer == targets.derived)
+}
+
 /// Loads, or creates on the first mesh write, the per-element derived layer of one element
 /// (U15): an owned asset beside the derived stack, listed once in the stack's `subLayers`.
 /// A new element file rewrites alone on every later edit of the element, so unchanged elements
@@ -1189,6 +1229,16 @@ pub(super) fn apply(
     units(&mut derived, Some(input.schema))?;
     // The per-element derived layers (U15) touched by this batch: element id, parsed bytes.
     let mut element_layers: BTreeMap<String, sdf::Data> = BTreeMap::new();
+    // The shared U11 geometry assets live in their own referenced layer (U15): loaded when the
+    // batch or the base carries it, created with the first body asset.
+    let mut geometry_assets = match original
+        .assets
+        .iter()
+        .find(|a| a.name == GEOMETRY_ASSET_LAYER)
+    {
+        Some(asset) => Some(data(asset)?),
+        None => None,
+    };
     let mut resources = input.resources.iter().collect::<Vec<_>>();
     resources.sort_by_key(|r| r.digest.to_string());
     let mut seen = BTreeSet::new();
@@ -1403,6 +1453,9 @@ pub(super) fn apply(
                         if s.layer == targets.authored {
                             continue;
                         }
+                        if asset_contribution(s, targets) {
+                            continue;
+                        }
                         let shared = s.layer == targets.derived;
                         if !shared && s.layer.as_str() != layer_name {
                             return Err(fail(
@@ -1449,12 +1502,17 @@ pub(super) fn apply(
         if matches!(c, Change::Discipline(hook) if hook.0.invalidates_derived()) {
             // Never reveal a weaker stale result after removing the derived opinion. The
             // result prims must live in exactly one owned location: the element's own U15
-            // layer or the shared derived layer of a pre-U15 store.
+            // layer or the shared derived layer of a pre-U15 store. The composed `/Geometry`
+            // also cites the shared U11 body asset from the derived stack root; that
+            // contribution is bookkeeping of the immutable body, not a result location.
             let mesh_path = format!("{p}/Geometry");
             let layer_name = element_layer(id)?;
             let mut location: Option<bool> = None;
             for v in prims.iter().filter(|v| v.path == mesh_path) {
                 for s in &v.sources {
+                    if asset_contribution(s, targets) {
+                        continue;
+                    }
                     let shared = s.layer == targets.derived;
                     if !shared && s.layer.as_str() != layer_name {
                         return Err(fail(
@@ -1498,12 +1556,17 @@ pub(super) fn apply(
             let layer_name = element_layer(&m.id)?;
             // The result prims must live in exactly one owned location: the element's own U15
             // layer, or the shared derived layer of a pre-U15 store, which this write empties.
+            // The composed `/Geometry` also cites the shared U11 body asset; see
+            // `asset_contribution`.
             let mut legacy = false;
             for v in prims
                 .iter()
                 .filter(|v| v.path == mesh_path || v.path.starts_with(&format!("{mesh_path}/")))
             {
                 for s in &v.sources {
+                    if asset_contribution(s, targets) {
+                        continue;
+                    }
                     let shared = s.layer == targets.derived;
                     if !shared && s.layer.as_str() != layer_name {
                         return Err(fail(
@@ -1530,6 +1593,23 @@ pub(super) fn apply(
                 &m.id,
                 input.schema,
             )?;
+            // The body asset composes from the referenced asset layer (U15): created with the
+            // first asset this batch writes, owned, and sublayered from the derived stack so
+            // the asset prims compose at their own paths.
+            let created_layer = geometry_assets.is_none();
+            if created_layer {
+                let mut fresh = sdf::Data::new();
+                units(&mut fresh, Some(input.schema))?;
+                request.assets.push(Asset {
+                    name: GEOMETRY_ASSET_LAYER.to_owned(),
+                    digest: Sha256::digest(b"").map_err(|_| limit())?,
+                    bytes: Vec::new(),
+                });
+                request.owned_layers.insert(GEOMETRY_ASSET_LAYER.to_owned());
+                geometry_assets = Some(fresh);
+                stack_append(&mut derived, GEOMETRY_ASSET_LAYER)?;
+            }
+            let assets_data = geometry_assets.as_mut().ok_or_else(corrupt)?;
             if legacy {
                 erase_mesh(&mut derived, &parent)?;
             }
@@ -1554,13 +1634,7 @@ pub(super) fn apply(
             } else {
                 "render"
             };
-            mesh(
-                &mut derived,
-                element,
-                m,
-                &parent,
-                purpose,
-            )?;
+            mesh(assets_data, element, m, &parent, purpose)?;
         }
     }
     // The element-layer stack is a canonical set: sorted, whatever the edit order.
@@ -1587,6 +1661,15 @@ pub(super) fn apply(
             continue;
         };
         a.bytes = serialize(element, request.budgets.layer_bytes)?;
+        a.digest = Sha256::digest(&a.bytes).map_err(|_| limit())?;
+    }
+    if let Some(assets_data) = &geometry_assets {
+        let a = request
+            .assets
+            .iter_mut()
+            .find(|a| a.name == GEOMETRY_ASSET_LAYER)
+            .ok_or_else(corrupt)?;
+        a.bytes = serialize(assets_data, request.budgets.layer_bytes)?;
         a.digest = Sha256::digest(&a.bytes).map_err(|_| limit())?;
     }
     Ok((request, opinions))

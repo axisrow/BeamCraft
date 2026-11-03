@@ -207,6 +207,9 @@ fn mesh_for(n: usize) -> Change {
         face_counts: vec![4],
         indices: vec![0, 1, 2, 3],
         quantities: None,
+        reduced: None,
+        proxy: None,
+        axis: None,
     })
 }
 
@@ -227,12 +230,25 @@ fn u15_a_local_element_file_and_stack_survive_a_rebase() {
         .find(|a| a.name == file)
         .unwrap()
         .clone();
-    let merged = prepare(&base, &source, &accepted, &lifecycle(10)).unwrap();
+    // The transfer's evidence names the new immutable asset (U11) by content digest; without
+    // that write the shared prim's delta is outside the verified writes.
+    let element_text = String::from_utf8(source_file.bytes.clone()).unwrap();
+    let marker = "/World/Definitions/Geometry/GEO_";
+    let at = element_text.find(marker).unwrap();
+    let asset_digest = element_text[at + marker.len()..at + marker.len() + 64].to_string();
+    let mut writes = lifecycle(10);
+    writes.push(Dependency {
+        target: T::Definition(asset_digest.parse().unwrap()),
+        group: G::Derived,
+        access: Access::Write,
+    });
+    let merged = prepare(&base, &source, &accepted, &writes).unwrap();
     // The locally created element's derived file is carried whole.
     let carried = merged.assets.iter().find(|a| a.name == file).unwrap();
     assert_eq!(carried.digest, source_file.digest);
     assert!(merged.owned_layers.contains(&file));
-    // The accepted stack is rebuilt from the candidate's asset set: both meshed elements.
+    // The accepted stack is rebuilt from the candidate's asset set: both meshed elements and
+    // the referenced asset layer.
     let stack_bytes = &merged
         .assets
         .iter()
@@ -241,7 +257,14 @@ fn u15_a_local_element_file_and_stack_survive_a_rebase() {
         .bytes;
     let mut stack = layer_sublayers(stack_bytes).unwrap();
     stack.sort();
-    assert_eq!(stack, [element_file(10), element_file(12)]);
+    assert_eq!(
+        stack,
+        [
+            element_file(10),
+            element_file(12),
+            "derived/geometry.usda".to_owned()
+        ]
+    );
     // The remote authored work survives beside it.
     assert_eq!(
         value(&merged, &format!("{}.bim:name", path(11)), "default"),
@@ -593,17 +616,32 @@ fn a_mesh_transfer_carries_its_shared_asset_over_an_accepted_rename() {
         access: Access::Write,
     });
     let merged = prepare(&base, &local, &accepted, &writes).unwrap();
-    let derived = std::str::from_utf8(
+    // The element file (U15) carries the instanceable reference; the asset body lives in the
+    // referenced layer, carried by the same transfer.
+    let element = element_layer(&id(11).to_string()).unwrap();
+    let element_text = std::str::from_utf8(
         &merged
             .assets
             .iter()
-            .find(|a| a.name == "derived.usda")
+            .find(|a| a.name == element)
             .unwrap()
             .bytes,
     )
     .unwrap();
-    assert!(derived.contains("instanceable = true"));
-    assert!(derived.contains(&format!("GEO_{asset_digest}")));
+    assert!(element_text.contains("instanceable = true"));
+    assert!(element_text.contains(&format!(
+        "references = @geometry.usda@</World/Definitions/Geometry/GEO_{asset_digest}>"
+    )));
+    let assets = std::str::from_utf8(
+        &merged
+            .assets
+            .iter()
+            .find(|a| a.name == "derived/geometry.usda")
+            .unwrap()
+            .bytes,
+    )
+    .unwrap();
+    assert!(assets.contains(&format!("GEO_{asset_digest}")));
     let authored = std::str::from_utf8(
         &merged
             .assets

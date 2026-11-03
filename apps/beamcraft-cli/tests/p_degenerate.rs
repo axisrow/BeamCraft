@@ -150,7 +150,15 @@ fn a_wrongly_built_plate_is_kept_degenerate_and_repairs_once_fixed() {
     );
     // (1000 * 500 * 10) mm3 * 7850 kg/m3 = 39.25 kg.
     assert_eq!(num_at(element, &["quantities", "mass", "kg"]), 39.25);
-    assert_eq!(changed_layers(&repaired), ["authored.usda", "derived.usda"]);
+    assert_eq!(
+        changed_layers(&repaired),
+        [
+            "authored.usda".to_owned(),
+            "derived.usda".to_owned(),
+            format!("derived/{}.usda", id.replace('-', "")),
+            "derived/geometry.usda".to_owned()
+        ]
+    );
 
     // A fresh read sees the repaired element with its derived data.
     let inspection = f.inspected();

@@ -11,6 +11,7 @@ use super::{
 use crate::{
     command_evidence as evidence,
     plate::{self},
+    publication::role_of,
 };
 use beamcraft_engine::rebase::{Conflict, Decision, plan};
 use beamcraft_host::{
@@ -308,8 +309,8 @@ pub fn rebase_workspace(
                     .entries()
                     .iter()
                     .find(|e| e.name() == asset.name)
-                    .ok_or_else(|| integrity("candidate layer has no accepted role"))?
-                    .role();
+                    .map(|e| e.role())
+                    .unwrap_or_else(|| role_of(&asset.name));
                 entries.push(LayerEntry::from_bytes(&asset.name, role, &asset.bytes)?);
             }
         }

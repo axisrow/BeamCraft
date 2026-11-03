@@ -16,6 +16,7 @@ use crate::support;
 use support::{at, text};
 
 use beamcraft_json::Json;
+use beamcraft_layer_engine::authored::element_layer_id;
 use std::fs;
 
 struct Fixture {
@@ -41,13 +42,35 @@ impl Fixture {
         self.ok("create-plate", &args)
     }
     fn derived_text(&self, revision: &Json) -> String {
+        // U15: the element prims (levels, purposes, quantity records) live in the element's
+        // own derived layer; the shared body asset lives in the referenced asset layer. The
+        // level prims are what these checks read.
         let layers = at(revision, &["revision", "manifest", "layers"])
             .array()
             .unwrap();
         let layer = layers
             .iter()
-            .find(|l| text(l, "name") == "derived.usda")
+            .find(|l| element_layer_id(text(l, "name").as_str()).is_some())
+            .expect("element layer in manifest");
+        let digest = text(layer, "digest");
+        let path = self
+            .shared
+            .root
+            .join("store")
+            .join("blobs")
+            .join(&digest[..2])
+            .join(&digest);
+        String::from_utf8(fs::read(path).unwrap()).unwrap()
+    }
+    /// The referenced asset layer's text: the shared U11 bodies.
+    fn asset_text(&self, revision: &Json) -> String {
+        let layers = at(revision, &["revision", "manifest", "layers"])
+            .array()
             .unwrap();
+        let layer = layers
+            .iter()
+            .find(|l| text(l, "name") == "derived/geometry.usda")
+            .expect("asset layer in manifest");
         let digest = text(layer, "digest");
         let path = self
             .shared
@@ -152,11 +175,17 @@ fn a_plain_plate_authors_no_level_prims() {
     let f = Fixture::new();
     let created = f.plate(&[]);
     let derived = f.derived_text(&created);
-    // No holes and no cuts: one body, the render level, and nothing else. U11 stores the body
-    // twice by name only — the immutable shared asset and the instanceable wrapper that
-    // composes it.
-    assert_eq!(derived.matches("def Mesh").count(), 2, "{derived}");
+    let assets = f.asset_text(&created);
+    // No holes and no cuts: one body, the render level, and nothing else. The body is stored
+    // once as the immutable shared asset (U11) and cited by the instanceable wrapper in the
+    // element's own layer (U15).
+    assert_eq!(
+        derived.matches("def Mesh").count() + assets.matches("def Mesh").count(),
+        2,
+        "{derived}{assets}"
+    );
     assert!(derived.contains("instanceable = true"), "{derived}");
+    assert!(assets.contains("custom string bim:shapeKey"), "{assets}");
     assert!(derived.contains("custom token purpose = \"render\""),);
     assert!(!derived.contains("def Mesh \"Reduced\""), "{derived}");
     assert!(!derived.contains("def Mesh \"Proxy\""), "{derived}");
@@ -183,9 +212,14 @@ fn a_member_authors_its_axis_as_a_guide_curve() {
         ],
     );
     let derived = f.derived_text(&created);
-    // A plain member has one body and one guide: the axis polyline. U11 names the body twice —
-    // the shared immutable asset and the instanceable wrapper.
-    assert_eq!(derived.matches("def Mesh").count(), 2, "{derived}");
+    let assets = f.asset_text(&created);
+    // A plain member has one body and one guide: the axis polyline. The body is the shared
+    // asset; the wrapper and the guide live in the element's own layer (U15).
+    assert_eq!(
+        derived.matches("def Mesh").count() + assets.matches("def Mesh").count(),
+        2,
+        "{derived}{assets}"
+    );
     assert!(derived.contains("instanceable = true"), "{derived}");
     let axis = derived
         .split("def BasisCurves \"Axis\"")

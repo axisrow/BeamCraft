@@ -1006,12 +1006,19 @@ impl Reader {
 /// The derived layer of one element (U15): the manifest name of the owned USDA file whose
 /// sublayer carries exactly this element's `/Geometry` result prims. The engine creates the
 /// file on the element's first mesh write and drops it with the element; every other edit of
-/// the element rewrites this file alone, so unchanged elements are never re-serialized.
+/// the element rewrites this file alone, so unchanged elements are never re-serialized. The
+/// instanceable reference composes the shared U11 body asset from the sibling
+/// [`GEOMETRY_ASSET_LAYER`] with an explicit external target.
 pub fn element_layer(id: &str) -> Result<String, Diagnostic> {
     let uuid = beamcraft_model::id::ElementId::parse(id)
         .map_err(|_| fail(ErrorCode::InvalidId, "invalid full element identity"))?;
     Ok(format!("derived/{}.usda", uuid.uuid().hex32()))
 }
+
+/// The owned layer holding the immutable U11 geometry assets of a project (U15): the bodies
+/// live here once per distinct body, and every element file composes them by explicit
+/// external reference. Referenced, never sublayered: the composition stays acyclic.
+pub const GEOMETRY_ASSET_LAYER: &str = "derived/geometry.usda";
 
 /// Whether `name` is an [`element_layer`] file, and the canonical hyphenated id of the element
 /// it belongs to. The reversed seam the host, the rebase and the publication use to classify

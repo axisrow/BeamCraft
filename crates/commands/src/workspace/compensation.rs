@@ -21,6 +21,7 @@ use super::{WorkspaceState, rebase_receipt::RevisionPin, unusable};
 use crate::{
     command_evidence as evidence,
     plate::{self},
+    publication::role_of,
     workspace::rebase_receipt::RebaseReceipt,
 };
 use beamcraft_engine::rebase::{Conflict, Decision, Operation as PlannedOperation, plan};
@@ -351,12 +352,14 @@ pub fn compensate_workspace(
             .blobs()
             .publish(&asset.bytes)
             .map_err(|_| integrity("candidate blob could not be stored"))?;
+        // The accepted manifest may not know layers the candidate created (U15 element files
+        // and the referenced asset layer): classify by name.
         let role = a
             .entries()
             .iter()
             .find(|e| e.name() == asset.name)
-            .ok_or_else(|| integrity("candidate layer has no accepted role"))?
-            .role();
+            .map(|e| e.role())
+            .unwrap_or_else(|| role_of(&asset.name));
         entries.push(LayerEntry::from_bytes(&asset.name, role, &asset.bytes)?);
     }
     // The compensation's own evidence is the target's footprint: it writes the same semantic

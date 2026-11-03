@@ -328,13 +328,15 @@ fn pins_are_exact_explicit_and_retained() {
     assert_eq!(connections.len(), 2);
     assert_eq!(text(&connections[0], "id"), CONNECTION_KM);
     assert_eq!(text(&connections[0], "source_revision"), km_revision);
-    assert_eq!(list(&connections[0], "layers").len(), 3);
+    // Every source layer is pinned (U15 adds element files and the asset layer beside the
+    // roots).
+    assert_eq!(list(&connections[0], "layers").len(), 5);
     assert_eq!(text(&connections[1], "scope"), "section");
     assert_eq!(text(&connections[1], "scope_id"), KMD_SECTION);
     let resolved = list(&shown, "connections");
     for status in resolved {
         assert!(flag(status, "complete"), "{status:?}");
-        assert_eq!(list(status, "pins").len(), 3);
+        assert_eq!(list(status, "pins").len(), 5);
     }
 
     // PC-COORD-001: publishing a newer source revision leaves the pin unchanged.

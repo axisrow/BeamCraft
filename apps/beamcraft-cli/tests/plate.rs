@@ -158,12 +158,18 @@ fn parse_usda(source: &str) -> Usda {
         }
         if skipping {
             // Prim or attribute metadata (kind, displayName, interpolation): not needed here,
-            // except the U11 internal reference that names the shared geometry asset. The prim
-            // enters the stack only at its `{`, so the capture rides on `pending`.
-            if let Some(target) = line
+            // except the reference naming the shared geometry asset — the U11 internal form
+            // (`references = </World/...>`) or the U15 external form (`references =
+            // @geometry.usda@</World/...>`). The prim enters the stack only at its `{`, so the
+            // capture rides on `pending`.
+            let external = line
+                .strip_prefix("references = @")
+                .and_then(|rest| rest.split_once("@<").map(|(_, target)| target));
+            let target = line
                 .strip_prefix("references = <")
                 .and_then(|rest| rest.strip_suffix('>'))
-            {
+                .or_else(|| external.and_then(|t| t.strip_suffix('>')));
+            if let Some(target) = target {
                 pending_refs = Some(target.to_owned());
             }
             skipping = line != ")";
@@ -234,15 +240,24 @@ struct Mesh {
     triangles: Vec<[usize; 3]>,
 }
 
-/// The prim's own attributes composed over the shared geometry asset (U11): one internal
-/// reference hop, exactly what a plain reader composes for `instanceable`.
+/// The prim's own attributes composed over the shared geometry asset (U11/U15): one reference
+/// hop — internal on master's layout, external to the asset layer here — exactly what a plain
+/// reader composes for `instanceable`.
 fn composed<'a>(stage: &'a Usda, path: &str) -> &'a BTreeMap<String, String> {
     let prim = &stage.prims[path];
     match prim.get("references") {
+        // The U15 external form carries the asset layer: `@geometry.usda@</target>`.
         Some(target) => {
-            let asset = &stage.prims[target];
+            // The raw value is `@geometry.usda@</World/...>`: the asset layer name and the
+            // target prim path.
+            let bare = target
+                .rsplit_once('>')
+                .map(|(_, path)| path)
+                .unwrap_or(target);
+            let bare = bare.trim_start_matches('>');
+            let asset = &stage.prims[bare];
             assert!(
-                target.starts_with("/World/Definitions/Geometry/GEO_"),
+                bare.starts_with("/World/Definitions/Geometry/GEO_"),
                 "the reference names a shared geometry asset: {target}"
             );
             assert!(

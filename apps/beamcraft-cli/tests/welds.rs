@@ -397,7 +397,8 @@ fn a_path_weld_keeps_its_symbol_data_and_reports_the_analytic_volume() {
         [
             "authored.usda".to_owned(),
             "derived.usda".to_owned(),
-            weld_layer
+            weld_layer,
+            "derived/geometry.usda".to_owned()
         ]
     );
     let welds = f.welds();
