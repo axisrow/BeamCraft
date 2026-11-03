@@ -52,6 +52,11 @@ pub enum CommitOutcome {
     /// The same operation with identical content was already committed; the recorded revision
     /// is returned and nothing was written to the root.
     Replayed,
+    /// The candidate was admitted into an open draft batch instead of the store: no blob, no
+    /// manifest and no ledger record was written, and the returned info previews the
+    /// revision the batch's commit will publish. The batch session reports this outcome; a
+    /// plain command never sees it.
+    Drafted,
 }
 
 /// A successful commit: the revision that is, or was at its time, the root.

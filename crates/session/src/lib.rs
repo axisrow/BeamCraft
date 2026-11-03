@@ -10,6 +10,8 @@
 //! - [`recent`]: the recent-project list over the settings and the project folders.
 //! - [`pipeline`]: the layer names, the base a revision is authored on, the project claim and the
 //!   revision summary every command shares.
+//! - [`draft`]: the in-memory draft batch of the CLI session: commands between `batch-open` and
+//!   `batch-commit` accumulate prepared layers here and commit nothing until the batch commits.
 //! - [`foreign`]: one read-only, self-contained USD layer from outside the project, opened under
 //!   fixed budgets (a library or an environment file).
 //!
@@ -17,6 +19,7 @@
 //! one layer above `beamcraft-host`, which stays disk-only, and both applications call it
 //! in-process. Every function is bounded and returns a typed error instead of panicking.
 
+pub mod draft;
 pub mod environment;
 pub mod foreign;
 pub mod pipeline;

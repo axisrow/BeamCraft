@@ -9,8 +9,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::digest::{ContentDigest, Sha256};
 
+use super::manifest::{BaseRef, Content, RevisionDraft};
 use super::{MAX_REVISIONS, RevisionError, Uuid7, manifest::Manifest};
 
 /// Directory below the store root that holds the head log.
@@ -139,6 +140,30 @@ impl RevisionInfo {
     /// Manifest digest: the identity a fresh U01 reader pins as `Identity::revision`.
     pub const fn manifest_digest(&self) -> ContentDigest {
         self.record.manifest
+    }
+
+    /// Builds the info of the revision a draft's manifest would become, without committing
+    /// anything: the manifest is assembled from the draft with the given head-log sequence and
+    /// no base or index evidence, and its digest is computed, never stored. The CLI session
+    /// reports drafted batch commands from this; the revision the batch commit later
+    /// publishes carries the batch's own operation, revision id, sequence and base, so only
+    /// the layer set of a preview is the promised one. Nothing reaches the root, the blobs or
+    /// the ledger.
+    pub fn preview(
+        draft: &RevisionDraft,
+        sequence: u64,
+        base: Option<BaseRef>,
+    ) -> Result<Self, RevisionError> {
+        let content = Content::from_draft(draft)?;
+        let manifest = Manifest::assemble(content, sequence, base, None)?;
+        // A short canonical manifest is far below the SHA-256 length domain; the store would
+        // refuse it long before the digest could fail.
+        let digest =
+            Sha256::digest(&manifest.encode()).map_err(|_| RevisionError::LimitExceeded)?;
+        Ok(Self {
+            record: RootRecord::new(sequence, draft.revision.clone(), digest),
+            manifest,
+        })
     }
 }
 

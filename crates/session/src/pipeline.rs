@@ -193,6 +193,7 @@ pub fn summarize_manifest(manifest: &Manifest, digest: ContentDigest) -> Revisio
 }
 
 /// The layers a new revision is authored over: the verified head, or the empty initial model.
+#[derive(Debug, Clone)]
 pub struct Base {
     /// The project the layers belong to.
     pub project: String,
@@ -252,6 +253,14 @@ pub fn load_base(
     workspace: &WorkspaceId,
 ) -> Result<(Option<Revision>, Base), Refusal> {
     let claim = CLAIMED_PROJECT.with(Cell::get);
+    // While a draft batch is open the base comes from the draft's accumulated layers, not
+    // from the store: nothing between the brackets touches the disk, and the batch's commit
+    // later checks the pinned base at the root exactly as this function would.
+    if crate::draft::is_open() {
+        let base = crate::draft::with(|draft| draft.base_for(claim))
+            .ok_or_else(|| integrity("a draft batch vanished while a command ran"))??;
+        return Ok((None, base));
+    }
     let head = match store.open() {
         Ok(revision) => Some(revision),
         Err(RevisionError::NoRevision) => None,
