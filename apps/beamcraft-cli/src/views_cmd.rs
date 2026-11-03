@@ -24,6 +24,7 @@ use beamcraft_model::id::{ElementId, Uuid7};
 use session::Refusal;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::OsString;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 type Run<T> = Result<T, Refusal>;
 
@@ -197,7 +198,7 @@ fn run(args: &[OsString]) -> Run<Json> {
         .ok_or_else(|| invalid("a command is required"))?;
     let own: &[&str] = match *command {
         "list-views" => &["--file", "--store"],
-        "save-view" => &["--file", "--name", "--new-id"],
+        "save-view" => &["--file", "--name", "--new-id", "--author", "--comment"],
         "update-view" => &["--file", "--view", "--name"],
         "remove-view" | "apply-view" => &["--file", "--store", "--view"],
         _ => return Err(invalid("unknown named-view command")),
@@ -239,7 +240,8 @@ fn run(args: &[OsString]) -> Run<Json> {
         }
         "save-view" => {
             let mut book = load(file, true)?;
-            let created = save_view(&options, &book)?;
+            let mut created = save_view(&options, &book)?;
+            stamp_provenance(&mut created, &options)?;
             let ids: Vec<Uuid7> = created.iter().map(|v| v.id).collect();
             book.insert_all(created).map_err(from_engine)?;
             store(file, &book)?;
@@ -291,6 +293,15 @@ fn run(args: &[OsString]) -> Run<Json> {
             Ok(Json::object([
                 ("outcome", Json::text("view_applied")),
                 ("view", views_json::view_to_json(view).map_err(from_engine)?),
+                (
+                    "provenance",
+                    match &view.provenance {
+                        Some(stamp) => {
+                            views_json::provenance_to_json(stamp).map_err(from_engine)?
+                        }
+                        None => Json::Null,
+                    },
+                ),
                 (
                     "camera_plane",
                     views_json::plane_to_json(&camera).map_err(from_engine)?,
@@ -710,6 +721,49 @@ fn apply_properties(
         view.favorite = flag(text)?;
     }
     view.validate().map_err(from_engine)
+}
+
+/// Stamps the W01 provenance on every created view when `--author` is given: the model head
+/// revision comes from `--store`, the time from the clock. A `--comment` without `--author` is
+/// refused, so a stamp never records an unknown author.
+fn stamp_provenance(views: &mut [ModelView], options: &BTreeMap<&str, &str>) -> Run<()> {
+    let author = match options.get("--author").map(|a| a.trim()) {
+        Some("") | None => {
+            if options.contains_key("--author") || options.contains_key("--comment") {
+                return Err(invalid(
+                    "--author is required to stamp provenance, --store supplies the revision",
+                ));
+            }
+            return Ok(());
+        }
+        Some(author) => author,
+    };
+    let root = options
+        .get("--store")
+        .ok_or_else(|| invalid("--store is required to stamp provenance"))?;
+    let blobs = BlobStore::new(root).map_err(|e| refusal(e.code(), "store root is not usable"))?;
+    let revision = beamcraft_model::id::Uuid7::parse(
+        RevisionStore::new(blobs)
+            .open()
+            .map_err(|e| refusal(e.code(), "the model revision could not be read"))?
+            .info()
+            .revision()
+            .as_str(),
+    )
+    .map_err(|_| refusal(ErrorCode::InvalidId, "the model revision is not a UUIDv7"))?;
+    let created_at_ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| refusal(ErrorCode::BackendUnavailable, "no clock is available"))?
+            .as_millis(),
+    )
+    .map_err(|_| refusal(ErrorCode::BackendUnavailable, "the clock is out of range"))?;
+    let comment = options.get("--comment").copied().unwrap_or_default();
+    for view in views {
+        view.stamp_provenance(author, comment, revision, created_at_ms)
+            .map_err(from_engine)?;
+    }
+    Ok(())
 }
 
 fn save_view(options: &BTreeMap<&str, &str>, book: &ViewBook) -> Run<Vec<ModelView>> {

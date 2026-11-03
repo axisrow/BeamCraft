@@ -1943,6 +1943,8 @@ pub const COMMANDS: &[Command] = &[
             req("--file", "FILE"),
             opt("--name", "TEXT"),
             opt("--new-id", "UUID"),
+            opt("--author", "TEXT"),
+            opt("--comment", "TEXT"),
             opt("--store", "ROOT"),
             opt("--target", "X,Y,Z"),
             opt("--yaw", "RAD"),

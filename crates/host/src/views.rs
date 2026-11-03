@@ -6,7 +6,7 @@
 //! admission rule lives in `beamcraft_engine::views`. Temporary views are session state and are
 //! never written.
 
-use beamcraft_engine::views::{ModelView, Projection, ViewBook, WorkArea};
+use beamcraft_engine::views::{ModelView, Projection, ViewBook, ViewProvenance, WorkArea};
 use beamcraft_engine::work_plane::WorkPlane;
 use beamcraft_engine::{ElementKind, KindFilter, RenderMode};
 use beamcraft_json::Json;
@@ -14,8 +14,10 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::Uuid7;
 
-/// The format version this module writes and reads.
-pub const VERSION: u64 = 1;
+/// The format version this module writes.
+pub const VERSION: u64 = 2;
+/// Version 1 predates the W01 provenance stamp; its files still read, without provenance.
+const READ_VERSIONS: [u64; 2] = [1, VERSION];
 
 fn unread(field: &'static str) -> CommandError {
     CommandError::new(
@@ -105,6 +107,35 @@ fn kinds_from_json(json: &Json) -> Result<KindFilter, CommandError> {
     Ok(filter)
 }
 
+/// A provenance stamp as JSON (W01).
+pub fn provenance_to_json(provenance: &ViewProvenance) -> Result<Json, CommandError> {
+    Ok(Json::object([
+        ("author", Json::text(&provenance.author)),
+        ("created_at_ms", Json::uint(provenance.created_at_ms)),
+        ("comment", Json::text(&provenance.comment)),
+        (
+            "model_revision",
+            Json::text(provenance.model_revision.to_string()),
+        ),
+    ]))
+}
+
+fn provenance_from_json(json: &Json) -> Result<ViewProvenance, CommandError> {
+    let text = |key: &'static str| {
+        json.get(key)
+            .and_then(Json::string)
+            .map(str::to_owned)
+            .map_err(|_| unread(key))
+    };
+    let revision = Uuid7::parse(&text("model_revision")?).map_err(|_| unread("model_revision"))?;
+    let created = json
+        .get("created_at_ms")
+        .and_then(Json::unsigned)
+        .map_err(|_| unread("created_at_ms"))?;
+    ViewProvenance::new(&text("author")?, &text("comment")?, revision, created)
+        .map_err(|_| unread("views.provenance"))
+}
+
 /// One view as JSON, in the session file's element shape.
 pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
     Ok(Json::object([
@@ -141,6 +172,13 @@ pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
             },
         ),
         ("opacity", number(view.opacity, "views.opacity")?),
+        (
+            "provenance",
+            match &view.provenance {
+                Some(provenance) => provenance_to_json(provenance)?,
+                None => Json::Null,
+            },
+        ),
     ]))
 }
 
@@ -187,6 +225,10 @@ pub fn view_from_json(json: &Json) -> Result<ModelView, CommandError> {
         .get("opacity")
         .and_then(Json::float)
         .map_err(|_| unread("opacity"))?;
+    view.provenance = match optional(json, "provenance") {
+        Some(stamp) => Some(provenance_from_json(stamp)?),
+        None => None,
+    };
     view.validate()?;
     Ok(view)
 }
@@ -216,7 +258,7 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
         .get("version")
         .and_then(Json::unsigned)
         .map_err(|_| unread("version"))?;
-    if version != VERSION {
+    if !READ_VERSIONS.contains(&version) {
         return Err(CommandError::new(
             ErrorCode::InvalidArgument,
             "views.version",
@@ -250,9 +292,12 @@ pub fn book_from_json(json: &Json) -> Result<ViewBook, CommandError> {
 mod tests {
     use super::*;
 
+    fn id(n: u64) -> Uuid7 {
+        Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap()
+    }
+
     fn view(n: u64, name: &str) -> ModelView {
-        let id = Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012}")).unwrap();
-        ModelView::new(id, name, WorkPlane::default(), 4000.0)
+        ModelView::new(id(n), name, WorkPlane::default(), 4000.0)
     }
 
     #[test]
@@ -271,6 +316,9 @@ mod tests {
         full.rotation_rad = [0.5, -0.25];
         full.color = Some([0.25, 0.5, 0.75]);
         full.opacity = 0.4;
+        let stamp_revision = Uuid7::parse("019a7bf0-0000-7000-8000-000000000009").unwrap();
+        full.stamp_provenance("Ana", "frame front", stamp_revision, 1_760_000_000_000)
+            .unwrap();
         let mut temp = view(2, "Scratch");
         temp.temporary = true;
         let mut book = ViewBook::new();
@@ -292,7 +340,7 @@ mod tests {
         let good = book_to_json(&ViewBook::new()).unwrap();
         assert!(book_from_json(&good).unwrap().is_empty());
         let wrong_version = Json::object([
-            ("version", Json::uint(2)),
+            ("version", Json::uint(3)),
             ("folders", Json::Array(vec![])),
             ("views", Json::Array(vec![])),
         ]);
@@ -319,5 +367,42 @@ mod tests {
             ),
         ]);
         assert!(book_from_json(&twice).is_err(), "names stay unique");
+    }
+
+    #[test]
+    fn provenance_stamps_round_trip_and_version_one_files_read() {
+        let mut stamped = view(1, "Provenance");
+        stamped
+            .stamp_provenance("Ana", "frame front", id(9), 1_760_000_000_000)
+            .unwrap();
+        let mut book = ViewBook::new();
+        book.insert(stamped.clone()).unwrap();
+        book.insert(view(2, "Plain")).unwrap();
+        let back = book_from_json(&book_to_json(&book).unwrap()).unwrap();
+        assert_eq!(
+            back.get(&stamped.id).unwrap().provenance,
+            stamped.provenance
+        );
+        assert_eq!(back.get(&id(2)).unwrap().provenance, None);
+        // A version 1 file has no provenance keys at all and reads as before.
+        let mut plain = view_to_json(&stamped).unwrap();
+        if let Json::Object(map) = &mut plain {
+            map.remove("provenance");
+        }
+        let legacy = Json::object([
+            ("version", Json::uint(1)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![plain])),
+        ]);
+        let read = book_from_json(&legacy).unwrap();
+        assert_eq!(read.get(&stamped.id).unwrap().provenance, None);
+        // A stamp that breaks the admission rules refuses its read, so the file refuses whole.
+        let empty_author = Json::object([
+            ("author", Json::text("")),
+            ("created_at_ms", Json::uint(1)),
+            ("comment", Json::text("")),
+            ("model_revision", Json::text(stamped.id.to_string())),
+        ]);
+        assert!(provenance_from_json(&empty_author).is_err());
     }
 }

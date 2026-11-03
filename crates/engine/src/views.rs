@@ -34,6 +34,10 @@ pub const MAX_FOLDERS: usize = 512;
 pub const MAX_FOLDER_DEPTH: usize = 8;
 /// Most characters in a view name.
 pub const MAX_NAME_CHARS: usize = 128;
+/// Most characters in a provenance author.
+pub const MAX_AUTHOR_CHARS: usize = 128;
+/// Most characters in a provenance comment.
+pub const MAX_COMMENT_CHARS: usize = 512;
 /// Most bytes in a folder path.
 const MAX_FOLDER_BYTES: usize = 512;
 /// Visible height bounds, millimetres.
@@ -157,6 +161,59 @@ pub fn folder_within(folder: &str, parent: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
+/// The W01 provenance of a saved view: who saved the camera, when, why and against which model
+/// revision. It rides on the view in the views layer and is display state only: recording or
+/// restoring it never touches the model, so model keys and numbering stay as they were.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewProvenance {
+    /// Who saved the view, 1 to [`MAX_AUTHOR_CHARS`] characters without controls or outer
+    /// spaces.
+    pub author: String,
+    /// Unix time of the save, in milliseconds.
+    pub created_at_ms: u64,
+    /// Free-text comment, at most [`MAX_COMMENT_CHARS`] characters without controls; may be
+    /// empty.
+    pub comment: String,
+    /// The model revision the view was captured against.
+    pub model_revision: Uuid7,
+}
+
+impl ViewProvenance {
+    /// Admits a provenance record; the author is trimmed, the comment is kept as given.
+    pub fn new(
+        author: &str,
+        comment: &str,
+        model_revision: Uuid7,
+        created_at_ms: u64,
+    ) -> Result<Self, CommandError> {
+        let out = Self {
+            author: author.trim().to_owned(),
+            created_at_ms,
+            comment: comment.to_owned(),
+            model_revision,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+
+    /// Admits the record: a bounded, printable author and comment.
+    pub fn validate(&self) -> Result<(), CommandError> {
+        let bounded = |text: &str, max: usize| {
+            text.chars().count() <= max && !text.chars().any(char::is_control)
+        };
+        if !bounded(&self.author, MAX_AUTHOR_CHARS)
+            || self.author.is_empty()
+            || !bounded(&self.comment, MAX_COMMENT_CHARS)
+        {
+            return Err(invalid(
+                "views.provenance",
+                "the provenance needs an author and a comment within their bounds",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// One named view: its identity, name, view plane and display properties, in model millimetres.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelView {
@@ -193,6 +250,9 @@ pub struct ModelView {
     pub color: Option<[f64; 3]>,
     /// Display opacity in `0..=1`.
     pub opacity: f64,
+    /// The saved view's provenance (W01), when it was saved through a provenance-bearing
+    /// capture; the free view and temporary views carry none.
+    pub provenance: Option<ViewProvenance>,
 }
 
 impl ModelView {
@@ -216,7 +276,26 @@ impl ModelView {
             rotation_rad: [0.0; 2],
             color: None,
             opacity: 1.0,
+            provenance: None,
         }
+    }
+
+    /// Stamps the provenance of a saved view: who saved it, when, why and against which model
+    /// revision. The camera and display properties stay untouched.
+    pub fn stamp_provenance(
+        &mut self,
+        author: &str,
+        comment: &str,
+        model_revision: Uuid7,
+        created_at_ms: u64,
+    ) -> Result<(), CommandError> {
+        self.provenance = Some(ViewProvenance::new(
+            author,
+            comment,
+            model_revision,
+            created_at_ms,
+        )?);
+        Ok(())
     }
 
     /// Copies the display properties of `source`; identity, name, plane, folder and the
@@ -284,6 +363,9 @@ impl ModelView {
             ));
         }
         WorkPlane::new(self.plane.origin(), self.plane.x(), self.plane.y())?;
+        if let Some(provenance) = &self.provenance {
+            provenance.validate()?;
+        }
         Ok(())
     }
 
@@ -1108,6 +1190,59 @@ mod tests {
         assert!(v.validate().is_err());
         v.name = "x".repeat(129);
         assert!(v.validate().is_err());
+    }
+
+    #[test]
+    fn provenance_stamps_and_validates() {
+        let mut v = view(1, "Section");
+        assert_eq!(v.provenance, None, "a new view carries no provenance");
+        v.stamp_provenance("Ana", "frame front", id(9), 1_760_000_000_000)
+            .unwrap();
+        let stamp = v.provenance.clone().unwrap();
+        assert_eq!(stamp.author, "Ana");
+        assert_eq!(stamp.comment, "frame front");
+        assert_eq!(stamp.model_revision, id(9));
+        assert_eq!(stamp.created_at_ms, 1_760_000_000_000);
+        v.validate().unwrap();
+        // The stamp never moves the camera.
+        let before = v.camera_plane().unwrap();
+        v.stamp_provenance("Bo", "", id(10), 1).unwrap();
+        assert_eq!(v.camera_plane().unwrap(), before);
+        // An author is trimmed; an empty or oversized one is refused, as is an oversized or
+        // control-bearing comment.
+        assert_eq!(
+            ViewProvenance::new("  Ana  ", "", id(9), 0).unwrap().author,
+            "Ana"
+        );
+        assert!(ViewProvenance::new("   ", "", id(9), 0).is_err());
+        assert!(ViewProvenance::new(&"x".repeat(129), "", id(9), 0).is_err());
+        assert!(ViewProvenance::new("Ana", &"x".repeat(513), id(9), 0).is_err());
+        assert!(ViewProvenance::new("A\nB", "", id(9), 0).is_err());
+        assert!(ViewProvenance::new("Ana", "a\tb", id(9), 0).is_err());
+        v.provenance = Some(ViewProvenance {
+            author: "x".repeat(129),
+            created_at_ms: 0,
+            comment: String::new(),
+            model_revision: id(9),
+        });
+        assert!(v.validate().is_err(), "the book validation reads the stamp");
+        v.provenance = None;
+        v.validate().unwrap();
+    }
+
+    #[test]
+    fn a_book_keeps_provenance_through_insert_update_and_find() {
+        let mut book = ViewBook::new();
+        let mut v = view(1, "Section");
+        v.stamp_provenance("Ana", "front", id(9), 42).unwrap();
+        book.insert(v.clone()).unwrap();
+        assert_eq!(book.find("section").unwrap().provenance, v.provenance);
+        let mut updated = v;
+        updated.stamp_provenance("Bo", "", id(10), 43).unwrap();
+        book.update(updated).unwrap();
+        let stored = book.get(&id(1)).unwrap();
+        assert_eq!(stored.provenance.as_ref().unwrap().author, "Bo");
+        assert_eq!(stored.provenance.as_ref().unwrap().model_revision, id(10));
     }
 
     #[test]

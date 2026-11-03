@@ -181,6 +181,97 @@ fn every_plane_builds_a_view_and_the_model_stays_unchanged() {
 }
 
 #[test]
+fn provenance_stamps_the_camera_with_author_time_comment_and_revision() {
+    let v = Views::new();
+    let plate = v.ok(
+        "create-plate",
+        &["--width", "500", "--length", "250", "--thickness", "8"],
+    );
+    let plate_id = text(at(&plate, &["plate"]), "element_id");
+    let head = v.ok("open-revision", &[]);
+    let revision = text(&head, "revision_id");
+
+    // A provenance-bearing save records the author, the comment, the save time and the model
+    // revision the view was captured against.
+    let saved = v.view(
+        "save-view",
+        &[
+            "--name",
+            "Front",
+            "--parallel",
+            "xz",
+            "--author",
+            "Ana",
+            "--comment",
+            "member frames",
+        ],
+    );
+    let stamp = at(&list(&saved, "views")[0], &["provenance"]);
+    assert_eq!(text(stamp, "author"), "Ana");
+    assert_eq!(text(stamp, "comment"), "member frames");
+    assert_eq!(text(stamp, "model_revision"), revision);
+    let created = at(stamp, &["created_at_ms"]).unsigned().unwrap();
+    assert!(created > 1_700_000_000_000, "the stamp carries a real time");
+
+    // Restoring returns the camera with its stamp; the book lists it too.
+    let applied = v.view("apply-view", &["--view", "front"]);
+    assert_eq!(
+        numbers(at(&applied, &["camera_plane", "origin_mm"])),
+        [0.0; 3]
+    );
+    assert_eq!(text(at(&applied, &["provenance"]), "author"), "Ana");
+    assert_eq!(
+        text(at(&applied, &["provenance"]), "model_revision"),
+        revision
+    );
+    let listed = v.view("list-views", &[]);
+    assert_eq!(
+        text(at(&list(&listed, "views")[0], &["provenance"]), "author"),
+        "Ana"
+    );
+
+    // A batch stamps every created view with the same revision.
+    let four = v.view(
+        "save-view",
+        &[
+            "--name",
+            "Part",
+            "--element",
+            &plate_id,
+            "--side",
+            "four",
+            "--author",
+            "Bo",
+        ],
+    );
+    assert_eq!(list(&four, "views").len(), 4);
+    for entry in list(&four, "views") {
+        assert_eq!(text(at(entry, &["provenance"]), "author"), "Bo");
+        assert_eq!(text(at(entry, &["provenance"]), "model_revision"), revision);
+    }
+    // A plain save carries no stamp at all.
+    let plain = v.view("save-view", &["--name", "Plain", "--parallel", "yz"]);
+    assert!(matches!(
+        at(&list(&plain, "views")[0], &["provenance"]),
+        Json::Null
+    ));
+
+    // A comment without an author, an empty author, and a stamp rewrite are refused.
+    v.refuse(
+        "save-view",
+        &["--name", "Bad", "--parallel", "xy", "--comment", "c"],
+    );
+    v.refuse(
+        "save-view",
+        &["--name", "Bad", "--parallel", "xy", "--author", "   "],
+    );
+    v.refuse("update-view", &["--view", "Front", "--author", "Bo"]);
+
+    // Views never write the model: the head, and with it the keys and numbering, is unchanged.
+    assert_eq!(v.ok("open-revision", &[]), head);
+}
+
+#[test]
 fn properties_update_apply_and_remove() {
     let v = Views::new();
     let saved = v.view(
