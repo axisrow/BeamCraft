@@ -81,8 +81,7 @@ impl App {
         self.beam_mode = false;
         self.beam.reset();
         self.ghost_end = None;
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.clear_ghost();
         self.grid_form = grid.form.clone();
         self.grid_line = crate::grid::DrawLineForm::default();
         self.grid_drawn = !grid.editable;
@@ -113,7 +112,7 @@ impl App {
         if !kinds.is_empty()
             && let Some(loaded) = &self.loaded
         {
-            let grids = if self.grids_visible {
+            let grids = if self.grids_shown() {
                 self.grid_scene.query_grids.as_slice()
             } else {
                 &[]
@@ -310,7 +309,7 @@ impl App {
     }
 
     pub(super) fn grid_framing(&self, summary: &crate::scene::SceneSummary) -> ([f32; 3], f32) {
-        if self.grids_visible {
+        if self.grids_shown() {
             self.grid_scene.framing(summary)
         } else {
             summary.framing()
@@ -511,7 +510,7 @@ impl App {
         self.grid_job = None;
         match result {
             Ok(_) => {
-                self.grids_visible = true;
+                self.set_grids_shown(true);
                 self.grid_refresh_edit = self.grid_edit.is_some();
                 self.grid_note = Some(Ok(if self.grid_refresh_edit {
                     "Grid updated."

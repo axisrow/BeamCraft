@@ -312,3 +312,32 @@ fn properties_update_apply_and_remove() {
     v.refuse("save-view", &["--name", "New", "--parallel", "xy"]);
     assert_eq!(std::fs::read(&v.file).unwrap(), b"{\"version\":7}");
 }
+
+#[test]
+fn save_view_names_views_by_default() {
+    let v = Views::new();
+    for (name, elevation) in [("Ground", "0"), ("First", "4000")] {
+        v.ok("create-level", &["--name", name, "--elevation", elevation]);
+    }
+    v.view("save-view", &["--parallel", "xy"]);
+    v.view("save-view", &["--parallel", "xy"]);
+    assert_eq!(v.names(), ["View 1", "View 2"]);
+    v.view("remove-view", &["--view", "View 1"]);
+    v.view("save-view", &["--parallel", "xz"]);
+    let mut names = v.names();
+    names.sort();
+    assert_eq!(names, ["View 1", "View 2"]);
+
+    // A batch without --name is named by its labels alone.
+    let batch = v.view("save-view", &["--levels", "all"]);
+    assert_eq!(
+        list(&batch, "views")
+            .iter()
+            .map(|j| text(j, "name"))
+            .collect::<Vec<_>>(),
+        ["Ground", "First"]
+    );
+
+    // An explicit empty name is refused, not replaced by a default.
+    v.refuse("save-view", &["--name", "  ", "--parallel", "xy"]);
+}

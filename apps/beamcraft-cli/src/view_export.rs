@@ -169,8 +169,10 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
         message: "the view snapshot could not be bundled",
     })?;
     if framed {
+        // The store is named so the project's environment profiles are listed beside the model's.
+        let listing = BTreeMap::from([("--store", *store)]);
         let definitions =
-            with_definitions.then(|| printed(definitions_json(&inspection, &BTreeMap::new())));
+            with_definitions.then(|| printed(definitions_json(&inspection, &listing)));
         let element = with_element.map(|id| printed(inspection_json(&inspection, Some(id))));
         let mut head = if with_grids {
             GRID_FRAME_MAGIC

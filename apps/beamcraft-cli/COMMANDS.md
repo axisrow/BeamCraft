@@ -1169,7 +1169,7 @@ list-views --file FILE [--store ROOT]
 write.
 
 ```text
-save-view --file FILE --name TEXT [--new-id UUID] [--store ROOT] [--target X,Y,Z] [--yaw RAD]
+save-view --file FILE [--name TEXT] [--new-id UUID] [--store ROOT] [--target X,Y,Z] [--yaw RAD]
     [--pitch RAD] [--parallel xy|xz|yz] [--offset MM] [--plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ]
     [--two-points X,Y,Z;X,Y,Z] [--work-plane OX,OY,OZ,XX,XY,XZ,YX,YY,YZ]
     [--three-points X,Y,Z;X,Y,Z;X,Y,Z] [--grid SELECTOR] [--axis LABEL|ID]

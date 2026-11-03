@@ -8,14 +8,16 @@
 //! of every edit made in the window. "Don't show at start" skips the start window next time.
 //!
 //! The start page lists the recently opened projects, the projects of a folder, and creates a new
-//! project from a template. Shared (cloud) projects are not available yet; the tab says so.
+//! project from a template with the shared new-model form (`NewModelForm` in [`crate::library`]).
+//! Shared (cloud) projects are not available yet; the tab says so.
 //!
-//! The settings, the environments, the recent list, the projects of a folder and the next free
-//! project name come from the `session` crate, called in this process on a worker thread. Creating
-//! a project is a command: it runs `create-project` in a separate process, and its reply is read
-//! with `crate::tools::rejection` so a refusal is shown with the CLI's code and message.
+//! The settings, the environments, the recent list and the projects of a folder come from the
+//! `session` crate, called in this process on a worker thread. Creating a project is a command:
+//! the form runs `create-project` in a separate process, and its reply is read here
+//! ([`parse_project`]) with `crate::tools::rejection` so a refusal is shown with the CLI's code
+//! and message.
 
-use crate::command;
+use crate::library::{self, DEFAULT_MODEL_NAME, FormEvent, Host, NewModelForm};
 use crate::stats::Stats;
 use crate::theme::{self, Icon, Kind, Palette};
 use crate::tools::{ToolError, decode, rejection, text};
@@ -27,7 +29,7 @@ use session::Refusal;
 use session::environment::{
     EnvironmentEntry, EnvironmentState, environment_folders, list_environments,
 };
-use session::project::{ProjectInfo, ProjectState, list_projects, next_project_name};
+use session::project::{ProjectInfo, ProjectState, list_projects};
 use session::recent::{RecentError, recent_projects, remember_project};
 use session::settings::{self, Settings, SettingsError};
 use std::path::{Path, PathBuf};
@@ -36,11 +38,9 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
 /// How long one start command may run.
-const DEADLINE: Duration = Duration::from_secs(60);
+pub(crate) const DEADLINE: Duration = Duration::from_secs(60);
 /// Longest text in a field.
-const MAX_FIELD: usize = 1_024;
-/// Initial editable model name; translate with the UI when other languages are added.
-const DEFAULT_MODEL_NAME: &str = "New Model";
+pub(crate) const MAX_FIELD: usize = 1_024;
 
 /// The author as the settings hold it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -158,7 +158,8 @@ fn settings_failure(error: SettingsError) -> ToolError {
     failure(error.code, error.message)
 }
 
-fn refusal(error: Refusal) -> ToolError {
+/// A refusal of the `session` crate as the page shows it.
+pub(crate) fn refusal(error: Refusal) -> ToolError {
     failure(error.code, error.message)
 }
 
@@ -250,6 +251,12 @@ fn recent_views(dir: &Path) -> Result<Vec<ProjectView>, ToolError> {
     Ok(recent.iter().map(|r| project_view(&r.project)).collect())
 }
 
+/// The recent projects of the configuration directory, newest first. Projects whose folder has
+/// gone are dropped from the settings file on the way.
+pub(crate) fn load_recent(config_dir: Option<&Path>) -> Result<Vec<ProjectView>, ToolError> {
+    recent_views(&resolve_config_dir(config_dir)?)
+}
+
 /// Everything the page shows at start: the settings, the environments and the recent projects.
 fn load_state(
     config_dir: Option<&Path>,
@@ -301,7 +308,7 @@ fn list_folder_projects(
 }
 
 /// Remembers the project at `path` as opened now and returns it.
-fn remember(config_dir: Option<&Path>, path: &str) -> Result<ProjectView, ToolError> {
+pub(crate) fn remember(config_dir: Option<&Path>, path: &str) -> Result<ProjectView, ToolError> {
     let dir = resolve_config_dir(config_dir)?;
     let info = remember_project(&dir, Path::new(path), now_ms()).map_err(recent_failure)?;
     Ok(project_view(&info))
@@ -414,11 +421,7 @@ enum Reply {
     Saved(Result<(SettingsView, Vec<ProjectView>), ToolError>),
     Listed(Result<Vec<ProjectView>, ToolError>),
     Opened(Result<ProjectView, ToolError>),
-    Suggested {
-        parent: String,
-        previous: String,
-        name: Result<String, ToolError>,
-    },
+    Recent(Result<Vec<ProjectView>, ToolError>),
 }
 
 struct PreviewJob {
@@ -447,9 +450,7 @@ pub struct StartPage {
     recent: Vec<ProjectView>,
     all: Vec<ProjectView>,
     folder: String,
-    new_name: String,
-    suggested_name: String,
-    new_parent: String,
+    create: NewModelForm,
     note: Option<Result<String, String>>,
     open: Option<PathBuf>,
     search: String,
@@ -481,9 +482,7 @@ impl StartPage {
             recent: Vec::new(),
             all: Vec::new(),
             folder: String::new(),
-            new_name: DEFAULT_MODEL_NAME.to_owned(),
-            suggested_name: DEFAULT_MODEL_NAME.to_owned(),
-            new_parent: String::new(),
+            create: NewModelForm::new(),
             note: None,
             open: None,
             search: String::new(),
@@ -514,13 +513,6 @@ impl StartPage {
     /// The chosen environment id.
     pub fn environment(&self) -> Option<&str> {
         self.settings.environment.as_deref()
-    }
-
-    /// Runs a command of the CLI (a separate process) on a worker thread.
-    fn spawn(&mut self, work: impl FnOnce(&Path, &Stats) -> Reply + Send + 'static) {
-        let cli = self.cli.clone();
-        let stats = Arc::clone(&self.stats);
-        self.run_worker(move || work(&cli, &stats));
     }
 
     /// Runs `work` on a worker thread; the page polls for its reply.
@@ -585,77 +577,30 @@ impl StartPage {
     fn browse(&mut self, title: &str) -> Option<String> {
         let start = match self.tab {
             Tab::All => self.folder.trim(),
-            _ => self.new_parent.trim(),
+            _ => self.create.parent().trim(),
         };
-        match crate::dialog::pick_folder(title, Some(Path::new(start))) {
-            Ok(Some(dir)) => match dir.to_str() {
-                Some(text) => Some(text.to_owned()),
-                None => {
-                    self.note = Some(Err("the chosen folder's path is not UTF-8 text".into()));
-                    None
-                }
-            },
-            Ok(None) => None,
+        match library::browse_folder(title, start) {
+            Ok(dir) => dir,
             Err(e) => {
-                self.note = Some(Err(e.to_string()));
+                self.note = Some(Err(e));
                 None
             }
         }
     }
 
-    fn suggest_project_name(&mut self) {
-        if self.job.is_some()
-            || self.new_name != self.suggested_name
-            || self.new_parent.trim().is_empty()
-        {
-            return;
-        }
-        let parent = self.new_parent.trim().to_owned();
-        let previous = self.new_name.clone();
-        self.run_worker(move || {
-            let name = next_project_name(Path::new(&parent), DEFAULT_MODEL_NAME).map_err(refusal);
-            Reply::Suggested {
-                parent,
-                previous,
-                name,
-            }
-        });
-    }
-
-    fn create_project(&mut self) {
-        // A typed location is checked here, so the refusal names the path that was typed.
-        let parent = self.new_parent.trim();
-        if !Path::new(parent).is_dir() {
-            self.note = Some(Err(format!(
-                "The folder \"{parent}\" does not exist. Choose an existing folder with Browse…"
-            )));
-            return;
-        }
-
-        let args = project_create_args(
-            self.config_dir.as_deref(),
-            self.new_parent.trim(),
-            if self.new_name == self.suggested_name {
-                DEFAULT_MODEL_NAME
-            } else {
-                self.new_name.trim()
-            },
-            self.actor_id().as_deref(),
-            self.environment.as_deref(),
-        );
-        self.spawn(move |cli, stats| {
-            Reply::Opened(
-                command::run(cli, &args, DEADLINE, stats)
-                    .and_then(|out| parse_project(out.code, &out.stdout, "project_created")),
-            )
-        });
-    }
-
-    pub(crate) fn show_create(&mut self) {
+    fn show_create(&mut self) {
         self.note = None;
         self.tab = Tab::Create;
         self.selected = None;
-        self.suggest_project_name();
+        self.create.show();
+    }
+
+    /// Adopts a project that was opened or created: it is opened and put first in Recent.
+    fn opened(&mut self, project: ProjectView) {
+        self.open = Some(PathBuf::from(&project.path));
+        self.recent.retain(|recent| recent.path != project.path);
+        self.recent.insert(0, project);
+        self.recent.truncate(20);
     }
 
     fn adopt(&mut self, settings: SettingsView) {
@@ -667,13 +612,16 @@ impl StartPage {
         if self.folder.is_empty() {
             self.folder = settings.models_dir.clone().unwrap_or_default();
         }
-        if self.new_parent.is_empty() {
-            self.new_parent = settings.models_dir.clone().unwrap_or_default();
-        }
+        self.create
+            .seed_parent(settings.models_dir.as_deref().unwrap_or_default());
         self.settings = settings;
     }
 
     fn poll(&mut self) {
+        // The form's reply is read here too, so a created project is never left unread.
+        if let Some(FormEvent::Created(project)) = self.create.poll() {
+            self.opened(project);
+        }
         let Some(rx) = &self.job else { return };
         let reply = match rx.try_recv() {
             Ok(reply) => reply,
@@ -686,19 +634,6 @@ impl StartPage {
         };
         self.job = None;
         match reply {
-            Reply::Suggested {
-                parent,
-                previous,
-                name,
-            } => {
-                if self.new_parent.trim() == parent
-                    && self.new_name == previous
-                    && let Ok(name) = name
-                {
-                    self.new_name = name.clone();
-                    self.suggested_name = name;
-                }
-            }
             Reply::Loaded(Ok((settings, environments, recent))) => {
                 self.loaded = true;
                 self.environments = environments;
@@ -730,14 +665,10 @@ impl StartPage {
                 self.note = Some(Ok(format!("{} project(s)", projects.len())));
                 self.all = projects;
             }
-            Reply::Opened(Ok(project)) => {
-                self.open = Some(PathBuf::from(&project.path));
-                self.recent.retain(|recent| recent.path != project.path);
-                self.recent.insert(0, project);
-                self.recent.truncate(20);
-            }
+            Reply::Opened(Ok(project)) => self.opened(project),
+            Reply::Recent(Ok(recent)) => self.recent = recent,
             Reply::Loaded(Err(e)) | Reply::Saved(Err(e)) => self.note = Some(Err(e.to_string())),
-            Reply::Listed(Err(e)) | Reply::Opened(Err(e)) => {
+            Reply::Listed(Err(e)) | Reply::Opened(Err(e)) | Reply::Recent(Err(e)) => {
                 self.note = Some(Err(e.to_string()));
             }
         }
@@ -747,7 +678,7 @@ impl StartPage {
     pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
         self.poll();
         self.poll_preview(ui.ctx());
-        let busy = self.job.is_some();
+        let busy = self.busy();
         if busy {
             ui.ctx().request_repaint_after(Duration::from_millis(50));
         }
@@ -788,7 +719,9 @@ impl StartPage {
         self.open.take()
     }
 
-    /// Returns to the model library without asking for the author again.
+    /// Returns to the model library without asking for the author again. The recent list is read
+    /// again, so models opened from a model window's menu are listed; a reply still pending is
+    /// never replaced, and the settings and the start window are not loaded again.
     pub(crate) fn return_to_models(&mut self) {
         self.previews.clear();
         if let Some(job) = &mut self.preview_job {
@@ -798,10 +731,14 @@ impl StartPage {
         self.search.clear();
         self.selected = None;
         self.small_window = None;
+        if self.job.is_none() {
+            let config = self.config_dir.clone();
+            self.run_worker(move || Reply::Recent(load_recent(config.as_deref())));
+        }
     }
 
     pub(crate) fn busy(&self) -> bool {
-        self.job.is_some()
+        self.job.is_some() || self.create.busy()
     }
 
     pub(crate) fn resizable(&self) -> bool {
@@ -982,9 +919,9 @@ impl StartPage {
         ui.columns(2, |cols| {
             if let [left, right] = cols {
                 left.label(theme::bold("Your name", 14.0));
-                field(left, &mut self.name, 128);
+                library::field(left, &mut self.name, 128);
                 right.label(theme::bold("E-mail", 14.0));
-                field(right, &mut self.email, 254);
+                library::field(right, &mut self.email, 254);
             }
         });
         ui.label(
@@ -1545,76 +1482,27 @@ impl StartPage {
     }
 
     fn create_ui(&mut self, ui: &mut egui::Ui, busy: bool) {
-        let palette = Palette::current(ui);
         self.header(ui, "New model", true, busy);
-        egui::Frame::new()
+        let actor = self.actor_id();
+        let event = egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(32, 24))
             .show(ui, |ui| {
                 ui.set_max_width(800.0);
-                ui.label(theme::bold("Name", 14.0));
-                field(ui, &mut self.new_name, 100);
-                ui.label(
-                    egui::RichText::new("Also the name of the model's folder.")
-                        .small()
-                        .color(palette.muted),
-                );
-                ui.add_space(8.0);
-                ui.label(theme::bold("Location", 14.0));
-                ui.horizontal(|ui| {
-                    let location = ui.add(
-                        egui::TextEdit::singleline(&mut self.new_parent)
-                            .hint_text("Choose a folder with Browse…")
-                            .desired_width(ui.available_width() - 130.0)
-                            .min_size(egui::vec2(0.0, 42.0))
-                            .align(egui::Align2::LEFT_CENTER)
-                            .margin(egui::Margin::symmetric(12, 8))
-                            .char_limit(MAX_FIELD),
-                    );
-                    if location.lost_focus() {
-                        self.suggest_project_name();
-                    }
-                    if theme::button(ui, Kind::Secondary, "Browse…", !busy).clicked()
-                        && let Some(dir) = self.browse("Where to create the model")
-                    {
-                        self.new_parent = dir;
-                        self.suggest_project_name();
-                    }
-                });
-                ui.add_space(8.0);
-                ui.label(theme::bold("Template", 14.0));
-                ui.horizontal(|ui| {
-                    template_card(ui, "Blank", "An empty model with no grids or levels.", true);
-                    template_card(ui, "Grid and levels", "Coming with the model tools.", false);
-                    template_card(
-                        ui,
-                        "Your templates",
-                        "Save any model as a template, later.",
-                        false,
-                    );
-                });
-                ui.add_space(8.0);
-                ui.label(theme::bold("Who works on it", 14.0));
-                ui.horizontal(|ui| {
-                    let _ = ui.radio(true, "Just me");
-                    ui.add_enabled(false, egui::RadioButton::new(false, "A team (coming soon)"));
-                });
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    let ready =
-                        !self.new_name.trim().is_empty() && !self.new_parent.trim().is_empty();
-                    if theme::button(ui, Kind::Primary, "Create and open", ready && !busy).clicked()
-                    {
-                        self.create_project();
-                    }
-                    if theme::button(ui, Kind::Secondary, "Cancel", !busy).clicked() {
-                        self.tab = Tab::Recent;
-                    }
-                    if busy {
-                        ui.spinner();
-                    }
-                });
-                self.note_ui(ui);
-            });
+                let host = Host {
+                    cli: &self.cli,
+                    config_dir: self.config_dir.as_deref(),
+                    actor: actor.as_deref(),
+                    environment: self.environment.as_deref(),
+                    stats: &self.stats,
+                };
+                self.create.ui(ui, &host, busy)
+            })
+            .inner;
+        match event {
+            Some(FormEvent::Cancelled) => self.tab = Tab::Recent,
+            Some(FormEvent::Created(project)) => self.opened(project),
+            None => {}
+        }
     }
 }
 
@@ -1624,17 +1512,6 @@ pub const LAUNCHER_SIZE: egui::Vec2 = egui::vec2(460.0, 520.0);
 const PROFILE_CARD_HEIGHT: f32 = 108.0;
 /// Height of one row of the model list; tall enough for a model preview.
 const ROW_HEIGHT: f32 = 82.0;
-
-fn field(ui: &mut egui::Ui, text: &mut String, limit: usize) -> egui::Response {
-    ui.add(
-        egui::TextEdit::singleline(text)
-            .desired_width(ui.available_width())
-            .min_size(egui::vec2(0.0, 36.0))
-            .align(egui::Align2::LEFT_CENTER)
-            .margin(egui::Margin::symmetric(12, 8))
-            .char_limit(limit),
-    )
-}
 
 fn nav_item(
     ui: &mut egui::Ui,
@@ -1681,43 +1558,6 @@ fn nav_item(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-fn template_card(ui: &mut egui::Ui, title: &str, text: &str, available: bool) {
-    let palette = Palette::current(ui);
-    let frame = if available {
-        theme::card(palette)
-    } else {
-        egui::Frame::new()
-            .fill(palette.head)
-            .stroke(egui::Stroke::new(1.0, palette.rule))
-            .corner_radius(egui::CornerRadius::same(5))
-    };
-    frame.show(ui, |ui| {
-        ui.vertical(|ui| {
-            ui.set_width(230.0);
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(230.0, 110.0), egui::Sense::hover());
-            if available {
-                theme::paint_preview(ui.painter(), rect);
-            }
-            egui::Frame::new()
-                .inner_margin(egui::Margin::symmetric(14, 10))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        let color = if available {
-                            palette.text
-                        } else {
-                            palette.muted
-                        };
-                        ui.label(theme::bold(title, 14.0).color(color));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add_enabled(available, egui::RadioButton::new(available, ""));
-                        });
-                    });
-                    ui.label(egui::RichText::new(text).small().color(palette.muted));
-                });
-        });
-    });
-}
-
 fn parent_of(path: &str) -> String {
     Path::new(path)
         .parent()
@@ -1726,7 +1566,8 @@ fn parent_of(path: &str) -> String {
         .to_owned()
 }
 
-fn now_ms() -> u64 {
+/// The current time, Unix milliseconds; 0 before 1970.
+pub(crate) fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
@@ -1766,31 +1607,6 @@ mod tests {
     /// A configuration directory of its own, so a test never reads or writes the user's settings.
     fn scratch_config(tag: &str) -> Option<PathBuf> {
         Some(std::env::temp_dir().join(format!("ui-start-{tag}-{}", std::process::id())))
-    }
-
-    #[test]
-    fn new_model_entry_suggests_a_name_and_keeps_user_edits_during_the_reply() {
-        let mut page = StartPage::new(
-            PathBuf::from("missing-test-cli"),
-            scratch_config("page"),
-            Arc::new(Stats::default()),
-        );
-        page.job = None;
-        page.show_create();
-        assert_eq!(page.tab, Tab::Create);
-        assert_eq!(page.new_name, DEFAULT_MODEL_NAME);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        page.job = Some(receiver);
-        page.new_name = "My structure".into();
-        sender
-            .send(Reply::Suggested {
-                parent: page.new_parent.clone(),
-                previous: DEFAULT_MODEL_NAME.into(),
-                name: Ok("New model 3".into()),
-            })
-            .unwrap();
-        page.poll();
-        assert_eq!(page.new_name, "My structure");
     }
 
     #[test]
@@ -1956,6 +1772,56 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn returning_to_models_refreshes_the_recent_list() {
+        let config = std::env::temp_dir().join(format!(
+            "ui-start-return-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        std::fs::create_dir_all(&config).unwrap();
+        let mut page = StartPage::new(
+            PathBuf::from("missing-test-cli"),
+            Some(config.clone()),
+            Arc::new(Stats::default()),
+        );
+        // The load started by `new` answers first.
+        for _ in 0..250 {
+            page.poll();
+            if page.job.is_none() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(page.job.is_none(), "the start load answers");
+        let model = |name: &str| ProjectView {
+            name: name.into(),
+            path: format!("/m/{name}"),
+            state: "ready".into(),
+            created_ms: Some(0),
+            modified_ms: Some(0),
+        };
+
+        page.return_to_models();
+        assert!(page.job.is_some(), "returning reads the recent list");
+        // The reply of that read replaces the list.
+        let (tx, rx) = std::sync::mpsc::channel();
+        page.job = Some(rx);
+        tx.send(Reply::Recent(Ok(vec![model("Switched")]))).unwrap();
+        page.poll();
+        assert_eq!(page.recent, vec![model("Switched")]);
+        assert!(page.job.is_none());
+
+        // A reply still pending is kept: returning starts no read over it.
+        let (tx, rx) = std::sync::mpsc::channel();
+        page.job = Some(rx);
+        page.return_to_models();
+        tx.send(Reply::Recent(Ok(vec![model("Pending")]))).unwrap();
+        page.poll();
+        assert_eq!(page.recent, vec![model("Pending")]);
+        let _ = std::fs::remove_dir_all(&config);
     }
 
     #[test]

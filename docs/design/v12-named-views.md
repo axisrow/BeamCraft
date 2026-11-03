@@ -44,7 +44,9 @@ the model never fails over views.
 Headlessly the same file is served by `list-views`, `save-view`, `update-view`, `remove-view`
 and `apply-view` (`--file`). `save-view` builds a view from exactly one plane option and takes
 every display property as an option; grids, levels, parts, assemblies and faces are read from a
-read-only `--store`. Batches suffix repeated names. `apply-view` returns the view, its camera
+read-only `--store`. Without `--name` a single view is named `View N` (the lowest free number)
+and a batch by its labels alone; the window's new-view form starts with the same name. Batches
+suffix repeated names. `apply-view` returns the view, its camera
 frame and its clip planes and touches no store. Folders, favourites in the browser, windows and
 previews need no agent and have no command.
 
@@ -55,15 +57,24 @@ previews need no agent and have no command.
   menu (open, open in a new window, properties, favourite, duplicate, cut, copy, close, delete
   with confirmation), new and empty-folder deletion, and drag to a folder. `{3D}` is the free
   view.
-* The View tab: Create view (every construction), View properties, 3D / plane (Ctrl+P),
+* The View tab: Create view (an icon dropdown of every construction),
+  3D / plane (Ctrl+P, shown in its tooltip),
   Direction (top, bottom, front, back, left, right: the camera turns, the input plane stays),
-  New view window, Tile windows, and Redraw views. The command palette lists the same.
+  New view window, Arrange (an icon dropdown: Cascade, Tile horizontal, Tile vertical,
+  Maximize / restore), and Redraw views. The command palette lists the same, and
+  "View properties".
 * Creating by picking: two points, three points, a face, or a face and an edge are picked in
-  the model with the creation snaps; the last pick builds the view. A pick that makes no plane
-  is dropped and the earlier ones stay; Esc cancels and Backspace removes the last pick.
-* The properties window edits the name, folder, marks, projection, visible height, rotation,
-  depth, work area (model or selection bounds), render mode, grids, colour, opacity and object
-  visibility; Create or Apply is the only action that changes the book. "Take the current
+  the model with the creation snaps; the last pick fills the view plane and Apply creates the
+  view. A pick that makes no plane is dropped and the earlier ones stay; Esc cancels the pick
+  and Backspace removes the last pick. Apply refuses while a pick runs or after a cancelled one.
+* The view properties live in the right panel. Clicking empty space in the viewport shows them:
+  "View properties" for a saved view, "3D view" for the free view (its render mode and grid
+  guides, and "Save as view", which keeps the camera as a new view named `View N`). Create
+  view fills a "New view" form there. The form edits the name, folder, marks, projection,
+  visible height, rotation, depth, work area (model or selection bounds), render mode, grids,
+  colour, opacity and object visibility; Apply is the only action that changes the book, and
+  after a create the panel shows the new view's properties. An empty click keeps unsaved edits
+  of the view already shown; Esc, Cancel or the Select tool close the panel. "Take the current
   camera" saves the camera as the view plane.
 * Activating a view builds a plane-aligned camera (`Camera::from_view`), takes its render mode,
   grids and plane, hides its kinds from the scene, tints the model (`View::tint`, a uniform the
@@ -71,9 +82,20 @@ previews need no agent and have no command.
   the transparent mode), and adds its slab and work area to the cut. Picking and snapping see
   only what it shows. Each view keeps its session camera; Ctrl+Tab cycles the open views; the
   free 3D view and its work plane come back as they were.
-* Up to eight windows besides the main viewport show a view or the free 3D view with their own
-  camera, cut, tint, hidden kinds, render mode and grid guides; they tile and dock to an edge.
-  Selection and tools stay in the main viewport.
+* The work area holds up to eight equal view windows, drawn inside it and never over the side
+  panels. Each shows a view or the free 3D view with its own camera, cut, tint, hidden kinds,
+  render mode and grid guides, and has a title bar (the view's name, or "3D view"), move,
+  resize, maximize and close. The topmost window is the active one: its frame and title bar are
+  highlighted, and selection, picking, snapping and every tool work in it. A primary press
+  focuses a window (a press on a popup or dialog over the work area does not); with a tool
+  armed that click only focuses, and the next one places. Scroll zoom and middle-drag pan act on
+  the window under the pointer without focusing it. The first window opens maximized; the last
+  one may be closed, which leaves "No view is open." and "Open the 3D view". Arrange: Cascade
+  steps the windows from the top-left corner with the active one in front; Tile horizontal
+  stacks full-width strips and Tile vertical sets full-height columns side by side, the active
+  window first, falling back to a grid when a strip or column would be smaller than a window
+  can be; both leave no window maximized; Maximize / restore toggles the active window. Window
+  layout is not saved.
 
 ## Not in this slice
 

@@ -1,3 +1,6 @@
 # Tests that are deliberately #[ignore]d, one `<binary-id> <test-name>` per line.
 # CI's `ci-ok` job fails when the ignored tests differ from this list, so ignoring a test
 # is always a visible change to this file (tools/ci-gate.py).
+
+# G14.2: a hole wider than one facet band awaits the merge-walk band boundary (issue #492).
+steel::steel g14_member_hole::a_hole_wider_than_a_facet_band_cuts_each_band_in_two

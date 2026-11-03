@@ -562,6 +562,16 @@ impl ViewBook {
             .find(|name| !taken(name))
             .unwrap_or_else(|| base.to_owned())
     }
+
+    /// The lowest free default name: `View 1`, `View 2`, ... Names compare case-insensitively, as
+    /// every view name does. The book holds at most [`MAX_VIEWS`] views, so one of the first
+    /// `MAX_VIEWS + 1` numbers is always free.
+    pub fn next_default_name(&self) -> String {
+        (1..=MAX_VIEWS.saturating_add(1))
+            .map(|n| format!("View {n}"))
+            .find(|name| !self.name_taken(name, None))
+            .unwrap_or_else(|| format!("View {}", MAX_VIEWS.saturating_add(1)))
+    }
 }
 
 /// The view plane a free 3D camera orbit looks at: `target` is the origin, the local +Z points
@@ -1185,6 +1195,27 @@ mod tests {
             book.unique_name("Grid A", &["grid a".to_owned()]),
             "Grid A (2)"
         );
+    }
+
+    #[test]
+    fn default_names_take_the_lowest_free_number() {
+        let named = |names: &[&str]| {
+            let mut book = ViewBook::new();
+            for (n, name) in names.iter().enumerate() {
+                book.insert(view(n as u64 + 1, name)).unwrap();
+            }
+            book
+        };
+        assert_eq!(ViewBook::new().next_default_name(), "View 1");
+        assert_eq!(named(&["View 1", "view 2"]).next_default_name(), "View 3");
+        assert_eq!(named(&["View 2"]).next_default_name(), "View 1");
+        assert_eq!(named(&["View 1 (2)"]).next_default_name(), "View 1");
+        let mut full = ViewBook::new();
+        let batch: Vec<ModelView> = (0..MAX_VIEWS as u64)
+            .map(|n| view(n + 1, &format!("View {}", n + 1)))
+            .collect();
+        full.insert_all(batch).unwrap();
+        assert_eq!(full.next_default_name(), "View 257");
     }
 
     #[test]

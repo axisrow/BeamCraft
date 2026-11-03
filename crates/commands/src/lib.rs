@@ -45,6 +45,7 @@ pub mod numbering;
 pub mod numbering_approval;
 pub mod plate;
 pub mod plate_draft;
+pub mod preset;
 pub mod project;
 mod publication;
 pub mod reference;

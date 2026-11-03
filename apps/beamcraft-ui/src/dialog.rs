@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! The operating system's folder dialog.
+//! The operating system's folder dialog and file manager.
 //!
 //! Windows and macOS show their own dialog through `rfd` (no extra runtime). Linux has no
 //! dependency-free system dialog, so the desktop's own dialog program is asked instead: `zenity`
@@ -102,6 +102,54 @@ fn desktop_dialog(title: &str, start: Option<&Path>) -> Result<Option<PathBuf>, 
     Err(DialogError::Unavailable)
 }
 
+/// The command that shows `dir` in the system's file manager: Explorer on Windows, Finder on
+/// macOS, the desktop's `xdg-open` handler elsewhere.
+pub fn folder_command(dir: &Path) -> std::process::Command {
+    #[cfg(windows)]
+    let program = "explorer";
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let program = "xdg-open";
+    let mut command = std::process::Command::new(program);
+    command.arg(dir);
+    command
+}
+
+/// Shows `dir` in the system's file manager without waiting for it. The reason is returned when
+/// the folder is gone or the launcher cannot start; never panics.
+pub fn open_folder(dir: &Path) -> Result<(), String> {
+    use std::process::Stdio;
+    if !dir.is_dir() {
+        return Err("the model folder no longer exists".into());
+    }
+    let dir = std::path::absolute(dir)
+        .map_err(|_| "the model folder's path cannot be resolved".to_owned())?;
+    let mut command = folder_command(&dir);
+    let program = command.get_program().to_string_lossy().into_owned();
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                format!("no file manager launcher was found ({program})")
+            }
+            kind => format!("the folder could not be opened ({kind})"),
+        })?;
+    // The exit status is not read: `explorer` returns 1 even when the folder opened. The child
+    // is only waited for, so Unix leaves no zombie behind. When the thread cannot start, the
+    // child is dropped unwaited and on Unix its zombie lasts until the window exits; the folder
+    // still opens, so that is no failure.
+    let _ = std::thread::Builder::new()
+        .name("beamcraft-open-folder".into())
+        .spawn(move || {
+            let _ = child.wait();
+        });
+    Ok(())
+}
+
 /// The folder a dialog program printed: its first line, without the line end; `None` when empty.
 #[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
 fn chosen(stdout: &[u8]) -> Option<PathBuf> {
@@ -128,5 +176,29 @@ mod tests {
         );
         assert_eq!(chosen(b"\n"), None);
         assert_eq!(chosen(b""), None);
+    }
+
+    #[test]
+    fn builds_the_file_manager_command() {
+        let command = folder_command(Path::new("/m/Model A"));
+        #[cfg(windows)]
+        assert_eq!(command.get_program(), "explorer");
+        #[cfg(target_os = "macos")]
+        assert_eq!(command.get_program(), "open");
+        #[cfg(not(any(windows, target_os = "macos")))]
+        assert_eq!(command.get_program(), "xdg-open");
+        // A path with a space stays one argument.
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, [std::ffi::OsStr::new("/m/Model A")]);
+    }
+
+    #[test]
+    fn a_missing_folder_is_refused_without_spawning() {
+        let missing = std::env::temp_dir().join(format!(
+            "beamcraft-open-folder-missing-{}",
+            std::process::id()
+        ));
+        let error = open_folder(&missing).unwrap_err();
+        assert!(error.contains("no longer exists"), "{error}");
     }
 }

@@ -48,6 +48,8 @@ pub struct EnvironmentInfo {
     pub bytes: u64,
     /// `bim:environment:libraries`, strongest first, exactly as written.
     pub libraries: Vec<String>,
+    /// `bim:environment:presets`, the contained relative path of the part presets, when declared.
+    pub presets: Option<String>,
 }
 
 const fn refuse(code: ErrorCode, message: &'static str) -> Refusal {
@@ -144,12 +146,24 @@ pub fn parse_environment(bytes: Vec<u8>) -> Result<EnvironmentInfo, Refusal> {
         }
         libraries.push(reference.clone());
     }
+    let presets = match data.get("bim:environment:presets") {
+        None => None,
+        Some(Value::Text(reference)) if contained_reference(reference) => Some(reference.clone()),
+        Some(Value::Text(_)) => {
+            return Err(refuse(
+                ErrorCode::PermissionDenied,
+                "the environment presets are not a relative path inside the environment directory",
+            ));
+        }
+        Some(_) => return Err(invalid("the environment presets are not a string")),
+    };
     Ok(EnvironmentInfo {
         id,
         title,
         digest: layer.digest,
         bytes: layer.bytes,
         libraries,
+        presets,
     })
 }
 
@@ -351,6 +365,21 @@ mod tests {
         assert_eq!(info.id, "steel");
         assert_eq!(info.libraries, ["a.usda", "sub/b.usda"]);
         assert_eq!(info.title, None);
+    }
+
+    #[test]
+    fn an_environment_may_declare_contained_presets() {
+        let declared = |reference: &str| {
+            format!(
+                "#usda 1.0\n(\n    metersPerUnit = 0.001\n    upAxis = \"Z\"\n    customLayerData = {{\n        string \"bim:environment:id\" = \"e\"\n        string[] \"bim:environment:libraries\" = [\"a.usda\"]\n        string \"bim:environment:presets\" = \"{reference}\"\n    }}\n)\n"
+            )
+        };
+        let info = parse_environment(declared("presets.usda").into_bytes()).unwrap();
+        assert_eq!(info.presets.as_deref(), Some("presets.usda"));
+        let none = parse_environment(layer("e", "[\"a.usda\"]").into_bytes()).unwrap();
+        assert_eq!(none.presets, None);
+        let escaped = parse_environment(declared("../presets.usda").into_bytes()).unwrap_err();
+        assert_eq!(escaped.code, ErrorCode::PermissionDenied);
     }
 
     #[test]

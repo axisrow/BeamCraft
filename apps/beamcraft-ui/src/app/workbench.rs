@@ -7,9 +7,10 @@
 //! as before; tools that do not exist yet are shown disabled, with a tooltip saying so.
 
 use super::App;
+use super::work_area::Arrange;
 use crate::edit::EditKind;
 use crate::publish::Phase;
-use crate::theme::{self, Icon, Palette};
+use crate::theme::{self, Icon, Kind, Palette};
 use crate::tools::{MemberKind, ToolKind};
 use egui::{Rect, RichText, Sense, Stroke, StrokeKind, Ui, vec2};
 
@@ -39,6 +40,8 @@ pub(crate) enum Bench {
     Colour,
     /// D06 annotations: place dimensions, marks and leaders, watch their binding states.
     Annotations,
+    /// A view's properties, or a new view.
+    View,
 }
 
 impl Bench {
@@ -56,6 +59,7 @@ impl Bench {
             Self::CutPlane => "Cut plane",
             Self::Colour => "Colour",
             Self::Annotations => "Annotations",
+            Self::View => "View properties",
         }
     }
 
@@ -72,7 +76,8 @@ impl Bench {
             | Self::Grid
             | Self::CutPlane
             | Self::Colour
-            | Self::Annotations => None,
+            | Self::Annotations
+            | Self::View => None,
         }
     }
 }
@@ -91,31 +96,53 @@ pub(crate) enum RibbonTab {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum MenuSection {
+    New,
+    Open,
     Import,
     Export,
+    Project,
     Settings,
     #[default]
     Catalogs,
     Editors,
-    Diagnose,
     Help,
-    Extend,
     Profiles,
     Materials,
     About,
 }
 
 impl MenuSection {
+    /// The section a sub-page belongs to; `None` for a top-level section.
+    const fn parent(self) -> Option<Self> {
+        match self {
+            Self::Profiles | Self::Materials => Some(Self::Catalogs),
+            Self::About => Some(Self::Help),
+            _ => None,
+        }
+    }
+
+    /// The navigation row that is highlighted for this page.
+    const fn top(self) -> Self {
+        match self.parent() {
+            Some(parent) => parent,
+            None => self,
+        }
+    }
+
     fn heading(self) -> (&'static str, &'static str) {
         match self {
+            Self::New => ("New model", "Create a model from a template and open it"),
+            Self::Open => ("Open model", "Recent models, or any model folder"),
             Self::Import => ("Import", "Bring model data into the workspace"),
             Self::Export => ("Export", "Export model data"),
+            Self::Project => (
+                "Project properties",
+                "The open model's project and this session",
+            ),
             Self::Settings => ("Settings", "Application and workspace preferences"),
             Self::Catalogs => ("Catalogs", "Profiles, materials and components"),
             Self::Editors => ("Editors", "Templates, reports and custom components"),
-            Self::Diagnose => ("Diagnose & repair", "Model checks and maintenance"),
             Self::Help => ("Help", "Navigation and application information"),
-            Self::Extend => ("Extend", "Application extensions"),
             Self::Profiles => (
                 "Profile catalog",
                 "Profiles in the open model's definitions",
@@ -152,10 +179,13 @@ impl MenuSection {
                 "Report editor",
                 "Custom component editor",
             ],
-            Self::Diagnose => &["Diagnose model", "Repair model"],
             Self::Help => &["Help", "About BeamCraft"],
-            Self::Extend => &["Extensions", "Extension manager"],
-            Self::Profiles | Self::Materials | Self::About => &[],
+            Self::New
+            | Self::Open
+            | Self::Project
+            | Self::Profiles
+            | Self::Materials
+            | Self::About => &[],
         }
     }
 }
@@ -243,7 +273,34 @@ fn tool_button(
     active: bool,
     enabled: bool,
 ) -> egui::Response {
+    tool_button_inner(ui, icon, label, active, enabled, false)
+}
+
+/// A ribbon button that opens `items` in a popup under it; no default action.
+fn dropdown_button(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    enabled: bool,
+    items: impl FnOnce(&mut Ui),
+) -> egui::Response {
+    let response = tool_button_inner(ui, icon, label, false, enabled, true);
+    egui::Popup::menu(&response).show(items);
+    response
+}
+
+/// The ribbon button behind [`tool_button`] and [`dropdown_button`]; `chevron` adds a small
+/// down-pointing triangle right of the caption.
+fn tool_button_inner(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    active: bool,
+    enabled: bool,
+    chevron: bool,
+) -> egui::Response {
     let palette = Palette::current(ui);
+    let extra = if chevron { 12.0 } else { 0.0 };
     let label_width = ui
         .painter()
         .layout_no_wrap(
@@ -256,7 +313,7 @@ fn tool_button(
     let response = ui.add_enabled(
         enabled,
         egui::Button::new("")
-            .min_size(vec2((label_width + 12.0).max(54.0), 64.0))
+            .min_size(vec2((label_width + 12.0).max(54.0) + extra, 64.0))
             .fill(if active {
                 palette.select
             } else {
@@ -285,13 +342,27 @@ fn tool_button(
     faint.multiply_opacity(alpha);
     theme::paint_icon(&faint, icon_rect, icon, line);
     let text = palette.text;
+    // With a chevron the caption shifts left by half its width, so the two stay centred.
+    let caption_at = rect.center_bottom() - vec2(extra / 2.0, 13.0);
     faint.text(
-        rect.center_bottom() - vec2(0.0, 13.0),
+        caption_at,
         egui::Align2::CENTER_CENTER,
         label,
         egui::FontId::proportional(11.0),
         text,
     );
+    if chevron {
+        let left = caption_at.x + label_width / 2.0 + 4.0;
+        faint.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(left, caption_at.y - 2.0),
+                egui::pos2(left + 6.0, caption_at.y - 2.0),
+                egui::pos2(left + 3.0, caption_at.y + 2.0),
+            ],
+            line,
+            Stroke::NONE,
+        ));
+    }
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
@@ -331,19 +402,28 @@ impl App {
         self.beam.reset();
         self.ghost_end = None;
         self.beam_hover = None;
-        self.renderer
-            .set_ghost(&self.state.device, &self.state.queue, None);
+        self.clear_ghost();
         self.plane_pick = false;
         self.bench = bench;
+        // The view panel's pick and subject never outlive the panel.
+        if bench != Bench::View {
+            self.views.picking = None;
+            self.views.subject = crate::views::Subject::default();
+        }
         match bench {
-            Bench::Plate => self.tools.active = ToolKind::Plate,
+            Bench::Plate => {
+                self.tools.active = ToolKind::Plate;
+                self.tools.use_preset("plate", None);
+            }
             Bench::Beam => {
                 self.tools.active = ToolKind::Member;
                 self.tools.member.kind = MemberKind::Beam;
+                self.tools.use_preset("beam", None);
             }
             Bench::Column => {
                 self.tools.active = ToolKind::Member;
                 self.tools.member.kind = MemberKind::Column;
+                self.tools.use_preset("column", None);
             }
             Bench::Move | Bench::Copy | Bench::Delete => {
                 if let Some(kind) = bench.edit() {
@@ -354,12 +434,12 @@ impl App {
             Bench::CutPlane => {}
             Bench::Colour => {}
             Bench::Annotations => {}
+            Bench::View => {}
             Bench::Grid => {
                 self.beam_mode = false;
                 self.beam.reset();
                 self.ghost_end = None;
-                self.renderer
-                    .set_ghost(&self.state.device, &self.state.queue, None);
+                self.clear_ghost();
             }
         }
         if bench == Bench::Annotations {
@@ -538,6 +618,8 @@ impl App {
                 let selected = self.editor.selected().is_some() && !grid_selected;
                 let edits_free = !self.editor.busy() && !self.other_command_running();
                 let has_workspace = self.source.workspace.is_some();
+                // Every viewport command needs a pane to act on.
+                let has_pane = self.views.active_pane().is_some();
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
                 egui::ScrollArea::horizontal().id_salt("ribbon-tools").show(ui, |ui| {
@@ -554,7 +636,7 @@ impl App {
                     let bench = self.bench;
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::Edit) {
                     group(ui, "Select", &mut |ui| {
-                        if tool_button(ui, Icon::Select, "Select", bench == Bench::Select, edits_free)
+                        if tool_button(ui, Icon::Select, "Select", matches!(bench, Bench::Select | Bench::View), edits_free)
                             .clicked()
                         {
                             pick = Some(Bench::Select);
@@ -600,7 +682,7 @@ impl App {
                     }
                     if self.ribbon_tab == RibbonTab::View {
                     group(ui, "Views", &mut |ui| {
-                        ui.menu_button("Create view", |ui| {
+                        dropdown_button(ui, Icon::NewView, "Create view", true, |ui| {
                             for (construction, label) in crate::views::Construction::ALL {
                                 if ui.button(label).clicked() {
                                     self.begin_view(construction);
@@ -608,29 +690,46 @@ impl App {
                                 }
                             }
                         });
-                        if tool_button(ui, Icon::Block, "View properties", self.views.editing, true).clicked() {
-                            match self.views.active {
-                                Some(id) => self.edit_view(id),
-                                None => self.views.editing = !self.views.editing,
-                            }
-                        }
-                        if tool_button(ui, Icon::Fit, "3D / plane (Ctrl+P)", self.views.toggled.is_some(), true).clicked() {
+                        let shortcut = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::P));
+                        let toggled = self.views.active_pane().is_some_and(|p| p.toggled.is_some());
+                        if tool_button(ui, Icon::Fit, "3D / plane", toggled, has_pane)
+                            .on_hover_text(format!("Look straight at the view plane and back ({shortcut})"))
+                            .clicked()
+                        {
                             self.toggle_view_plane();
                         }
-                        ui.menu_button("Direction", |ui| {
-                            for (direction, label) in crate::views::Direction::ALL {
+                        ui.add_enabled_ui(has_pane, |ui| {
+                            ui.menu_button("Direction", |ui| {
+                                for (direction, label) in crate::views::Direction::ALL {
+                                    if ui.button(label).clicked() {
+                                        self.orient_view(direction);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                        });
+                    });
+                    group(ui, "Windows", &mut |ui| {
+                        if tool_button(ui, Icon::Copy, "New view window", false, self.views.panes.len() < crate::views::MAX_WINDOWS).clicked() {
+                            self.open_pane(self.views.active());
+                        }
+                        dropdown_button(ui, Icon::Arrange, "Arrange", has_pane, |ui| {
+                            for (how, label) in [
+                                (Arrange::Cascade, "Cascade"),
+                                (Arrange::TileHorizontal, "Tile horizontal"),
+                                (Arrange::TileVertical, "Tile vertical"),
+                            ] {
                                 if ui.button(label).clicked() {
-                                    self.orient_view(direction);
+                                    self.arrange(how);
                                     ui.close();
                                 }
                             }
+                            ui.separator();
+                            if ui.button("Maximize / restore").clicked() {
+                                self.arrange(Arrange::ToggleMaximize);
+                                ui.close();
+                            }
                         });
-                        if tool_button(ui, Icon::Copy, "New view window", false, self.views.windows.len() < crate::views::MAX_WINDOWS).clicked() {
-                            self.open_view_window(self.views.active);
-                        }
-                        if tool_button(ui, Icon::Grid, "Tile windows", false, !self.views.windows.is_empty()).clicked() {
-                            self.views.tile = true;
-                        }
                     });
                     group(ui, "Display", &mut |ui| {
                         for (mode, label) in [
@@ -640,13 +739,26 @@ impl App {
                             (beamcraft_engine::RenderMode::Shaded, "Shaded"),
                             (beamcraft_engine::RenderMode::SelectedOnly, "Selected only"),
                         ] {
-                            if tool_button(ui, Icon::Block, label, self.mode == mode, true).clicked() {
-                                self.mode = mode;
+                            if tool_button(ui, Icon::Block, label, has_pane && self.active_mode() == mode, has_pane).clicked() {
+                                self.set_active_mode(mode);
                             }
                         }
-                        if tool_button(ui, Icon::Grid, "Grid guides", self.grids_visible, true).clicked() {
-                            self.grids_visible = !self.grids_visible;
-                            if !self.grids_visible { self.grid_edit = None; }
+                        if tool_button(ui, Icon::Grid, "Grid guides", self.grids_shown(), has_pane).clicked() {
+                            let on = !self.grids_shown();
+                            self.set_grids_shown(on);
+                            if !on { self.grid_edit = None; }
+                        }
+                    });
+                    group(ui, "Colour", &mut |ui| {
+                        if tool_button(ui, Icon::Block, "Colour", self.bench == Bench::Colour, true)
+                            .clicked()
+                        {
+                            pick = Some(Bench::Colour);
+                        }
+                    });
+                    group(ui, "Cut", &mut |ui| {
+                        if tool_button(ui, Icon::Block, "Cut plane", self.bench == Bench::CutPlane, true).clicked() {
+                            pick = Some(Bench::CutPlane);
                         }
                     });
                     group(ui, "Colour", &mut |ui| {
@@ -666,8 +778,8 @@ impl App {
                             self.reload();
                         }
                         if tool_button(ui, Icon::Refresh, "Redraw views", false, true).clicked() {
-                            for window in &mut self.views.windows {
-                                window.filtered = None;
+                            for pane in &mut self.views.panes {
+                                pane.filtered = None;
                             }
                             self.recolour();
                         }
@@ -676,7 +788,7 @@ impl App {
                     if matches!(self.ribbon_tab, RibbonTab::Steel | RibbonTab::View) {
                         group(ui, "Inspect", &mut |ui| {
                             tool_button(ui, Icon::Plate, "Measure", false, false);
-                            if tool_button(ui, Icon::Fit, "Fit model", false, true).clicked() {
+                            if tool_button(ui, Icon::Fit, "Fit model", false, has_pane).clicked() {
                                 self.pending_fit = true;
                             }
                         });
@@ -748,6 +860,8 @@ impl App {
                     ui.label(
                         RichText::new(if self.grid_edit.is_some() {
                             "Grid properties"
+                        } else if self.bench == Bench::View {
+                            self.views.subject.title()
                         } else {
                             self.bench.title()
                         })
@@ -777,6 +891,11 @@ impl App {
                     self.grid_panel(ui);
                     return;
                 }
+                if self.bench == Bench::View {
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    self.view_panel(ui);
+                    return;
+                }
                 if self.bench == Bench::Select && self.props.selected().is_some() {
                     egui::Panel::bottom("property-actions")
                         .exact_size(54.0)
@@ -801,6 +920,7 @@ impl App {
                             Bench::CutPlane => self.cut_panel(ui),
                             Bench::Colour => self.colour_panel(ui),
                             Bench::Annotations => self.annotation_panel(ui),
+                            Bench::View => self.view_panel(ui),
                         }
                         ui.add_space(12.0);
                         egui::CollapsingHeader::new("Publishing")
@@ -959,7 +1079,10 @@ impl App {
             "View properties",
             "3D / plane view",
             "New view window",
-            "Tile view windows",
+            "Cascade view windows",
+            "Tile view windows horizontally",
+            "Tile view windows vertically",
+            "Maximize or restore the view window",
             "Next open view",
         ] {
             if label.to_lowercase().contains(&query)
@@ -968,13 +1091,13 @@ impl App {
                     .clicked()
             {
                 match label {
-                    "View properties" => match self.views.active {
-                        Some(id) => self.edit_view(id),
-                        None => self.views.editing = true,
-                    },
+                    "View properties" => self.show_view_properties(),
                     "3D / plane view" => self.toggle_view_plane(),
-                    "New view window" => self.open_view_window(self.views.active),
-                    "Tile view windows" => self.views.tile = true,
+                    "New view window" => self.open_pane(self.views.active()),
+                    "Cascade view windows" => self.arrange(Arrange::Cascade),
+                    "Tile view windows horizontally" => self.arrange(Arrange::TileHorizontal),
+                    "Tile view windows vertically" => self.arrange(Arrange::TileVertical),
+                    "Maximize or restore the view window" => self.arrange(Arrange::ToggleMaximize),
                     _ => {
                         if let Some(next) = self.views.next_open() {
                             self.activate_view(Some(next));
@@ -993,14 +1116,22 @@ impl App {
             "Publish",
             "Model library",
         ] {
+            // A running menu create or open must finish in this window: leaving it would lose
+            // the model it opens, and an edit would be dropped by the switch that follows.
             let enabled = match label {
-                "Undo" | "Redo" => self.source.workspace.is_some() && !self.other_command_running(),
+                "Undo" | "Redo" => {
+                    self.source.workspace.is_some()
+                        && !self.other_command_running()
+                        && !self.menu_busy()
+                }
                 "Publish" => {
                     self.publisher.target().is_ok()
                         && !self.other_command_running()
                         && self.publisher.phase() == Phase::Idle
                 }
-                "Model library" => self.from_library && !self.other_command_running(),
+                "Model library" => {
+                    self.from_library && !self.other_command_running() && !self.menu_busy()
+                }
                 _ => true,
             };
             if label.to_lowercase().contains(&query)
@@ -1031,11 +1162,218 @@ impl App {
         false
     }
 
+    /// Whether a menu page runs a job that opens a model: a `create-project` on New, or a
+    /// remember on Open. The menu waits for it; the name suggestion and the recent-list read are
+    /// background reads and do not count.
+    pub(crate) fn menu_busy(&self) -> bool {
+        self.menu_new.creating() || self.menu_models.opening()
+    }
+
+    /// Esc and "‹ Back" in the menu: a sub-page returns to its section, a top-level page closes
+    /// the menu and shows the model again. Nothing happens while `menu_busy`.
+    pub(crate) fn menu_back(&mut self) {
+        if self.menu_busy() {
+            return;
+        }
+        match self.menu_section.parent() {
+            Some(parent) => self.menu_section = parent,
+            None => self.close_menu(),
+        }
+    }
+
+    /// Closes the menu. Every way out goes through here (Esc, Cancel, "Back to model"), so page
+    /// resets belong here and a reopened menu never shows a stale form or stale facts: the New,
+    /// Open and Project pages give way to the default page. Nothing happens while `menu_busy`.
+    pub(crate) fn close_menu(&mut self) {
+        if self.menu_busy() {
+            return;
+        }
+        if matches!(
+            self.menu_section,
+            MenuSection::New | MenuSection::Open | MenuSection::Project
+        ) {
+            self.menu_section = MenuSection::default();
+        }
+        self.menu_open = false;
+        self.menu_note = None;
+    }
+
+    /// The menu's New page: the new-model form. A created model becomes the window's
+    /// `open_request`; the menu stays open until the window has switched or reported why not.
+    fn menu_new_page(&mut self, ui: &mut Ui) {
+        let outer_busy = self.other_command_running();
+        let host = crate::library::Host {
+            cli: &self.source.cli,
+            config_dir: self.source.config_dir.as_deref(),
+            actor: self.source.actor.as_deref(),
+            environment: self.source.environment.as_deref(),
+            stats: &self.stats,
+        };
+        match self.menu_new.ui(ui, &host, outer_busy) {
+            Some(crate::library::FormEvent::Created(project)) => {
+                self.open_request = Some(std::path::PathBuf::from(project.path));
+            }
+            Some(crate::library::FormEvent::Cancelled) => self.menu_back(),
+            None => {}
+        }
+    }
+
+    /// The menu's Open page: the recent models and "Browse…". A chosen model becomes the
+    /// window's `open_request`, as on the New page.
+    fn menu_open_page(&mut self, ui: &mut Ui) {
+        let outer_busy = self.other_command_running();
+        match self.menu_models.ui(
+            ui,
+            self.source.config_dir.as_deref(),
+            &self.source.store,
+            outer_busy,
+        ) {
+            Some(crate::library::PickEvent::Opened(path)) => self.open_request = Some(path),
+            Some(crate::library::PickEvent::Cancelled) => self.menu_back(),
+            None => {}
+        }
+    }
+
+    /// Starts reading the open model's project for the Project page, on a worker thread; the
+    /// facts shown before are dropped.
+    fn read_project(&mut self) {
+        self.project_facts = None;
+        let store = self.source.store.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-project".into())
+            .spawn(move || {
+                let _ = tx.send(crate::library::project_facts(&store));
+            });
+        if spawned.is_ok() {
+            self.project_job = Some(rx);
+        } else {
+            self.project_job = None;
+            self.project_facts = Some(Err("the project could not be read".into()));
+        }
+    }
+
+    /// Takes the Project page's facts once the read has answered, and repaints while it runs.
+    fn poll_project(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &self.project_job else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(facts) => {
+                self.project_job = None;
+                self.project_facts = Some(facts);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.project_job = None;
+                self.project_facts = Some(Err("the project read ended without an answer".into()));
+            }
+        }
+    }
+
+    /// The menu's Project page: the project as the store's head records it and this window's
+    /// session, read-only. Project information fields do not exist in models yet; the page says
+    /// so instead of offering fields it cannot keep.
+    fn menu_project_page(&mut self, ui: &mut Ui) {
+        let palette = Palette::current(ui);
+        let key = |ui: &mut Ui, text: &str| {
+            ui.label(RichText::new(text).color(palette.muted));
+        };
+        let time = |ms: Option<u64>| {
+            ms.map_or_else(
+                || "—".to_owned(),
+                |ms| format!("{} UTC", crate::start::format_time(ms)),
+            )
+        };
+        ui.label(theme::bold("Project", 14.0));
+        ui.add_space(8.0);
+        match &self.project_facts {
+            Some(Ok(facts)) => {
+                egui::Grid::new("menu-project-facts")
+                    .num_columns(2)
+                    .spacing(vec2(24.0, 8.0))
+                    .show(ui, |ui| {
+                        for (name, value) in [
+                            ("Name", facts.name.clone()),
+                            ("Folder", facts.path.clone()),
+                            (
+                                "Project ID",
+                                facts.project_id.clone().unwrap_or_else(|| "—".to_owned()),
+                            ),
+                            ("Created", time(facts.created_ms)),
+                            ("Last change", time(facts.modified_ms)),
+                            ("State", facts.state.clone()),
+                        ] {
+                            key(ui, name);
+                            ui.add(egui::Label::new(value).wrap());
+                            ui.end_row();
+                        }
+                    });
+            }
+            Some(Err(error)) => {
+                ui.label(RichText::new(error).color(palette.error).strong());
+            }
+            None => {
+                ui.spinner();
+            }
+        }
+        ui.add_space(20.0);
+        ui.label(theme::bold("This session", 14.0));
+        ui.add_space(8.0);
+        let revision = self
+            .revision_on_screen()
+            .unwrap_or_else(|| "No model loaded".to_owned());
+        let elements = self
+            .loaded
+            .as_ref()
+            .map_or_else(|| "—".to_owned(), |l| l.summary.elements.to_string());
+        let or_dash = |text: &Option<String>| text.clone().unwrap_or_else(|| "—".to_owned());
+        egui::Grid::new("menu-project-session")
+            .num_columns(2)
+            .spacing(vec2(24.0, 8.0))
+            .show(ui, |ui| {
+                for (name, value) in [
+                    ("Environment", or_dash(&self.source.environment)),
+                    ("Author", or_dash(&self.source.author)),
+                    ("Units", "mm".to_owned()),
+                    ("Revision on screen", revision),
+                    ("Elements", elements),
+                ] {
+                    key(ui, name);
+                    ui.add(egui::Label::new(value).wrap());
+                    ui.end_row();
+                }
+            });
+        ui.add_space(20.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "Project information (number, client, building and site address, designer, \
+                     dates and custom fields) is not stored in models yet.",
+                )
+                .color(palette.muted),
+            )
+            .wrap(),
+        );
+    }
+
     /// Full native application menu, using the same real actions as the ribbon.
     pub(crate) fn menu_page(&mut self, ui: &mut Ui) {
+        self.poll_project(ui.ctx());
+        let shown = self.menu_section;
+        self.menu_page_ui(ui);
+        // A note belongs to the page it was reported on.
+        if self.menu_section != shown {
+            self.menu_note = None;
+        }
+    }
+
+    fn menu_page_ui(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         if ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-            self.menu_open = false;
+            self.menu_back();
         }
         egui::Panel::left("application-menu-navigation")
             .exact_size(232.0)
@@ -1045,8 +1383,10 @@ impl App {
                     .max_height((ui.available_height() - 84.0).max(0.0))
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
-                        if menu_navigation(ui, Icon::Back, "Back to model", false, true).clicked() {
-                            self.menu_open = false;
+                        // While a page opens a model, the menu waits for it.
+                        let idle = !self.menu_busy();
+                        if menu_navigation(ui, Icon::Back, "Back to model", false, idle).clicked() {
+                            self.close_menu();
                         }
                         ui.add_space(14.0);
                         ui.horizontal(|ui| {
@@ -1054,69 +1394,85 @@ impl App {
                             ui.label(theme::bold("Menu", 23.0).color(palette.side_text()));
                         });
                         ui.add_space(14.0);
-                        let free = self.from_library && !self.other_command_running();
-                        if menu_navigation(ui, Icon::Plus, "New", false, free).clicked() {
-                            self.return_to_create = true;
-                            self.return_to_library = true;
+                        let free = idle && self.from_library && !self.other_command_running();
+                        let new = MenuSection::New;
+                        if menu_navigation(ui, Icon::Plus, "New", self.menu_section == new, free)
+                            .clicked()
+                        {
+                            self.menu_section = new;
+                            if let Some(parent) =
+                                self.source.store.parent().and_then(|p| p.to_str())
+                            {
+                                self.menu_new.seed_parent(parent);
+                            }
+                            self.menu_new.show();
                         }
-                        if menu_navigation(ui, Icon::Folder, "Open", false, free).clicked() {
-                            self.return_to_library = true;
+                        let open = MenuSection::Open;
+                        if menu_navigation(
+                            ui,
+                            Icon::Folder,
+                            "Open",
+                            self.menu_section == open,
+                            free,
+                        )
+                        .clicked()
+                        {
+                            self.menu_section = open;
+                            self.menu_models.refresh(self.source.config_dir.as_deref());
                         }
                         menu_navigation(ui, Icon::Copy, "Save as", false, false);
-                        menu_navigation(ui, Icon::Folder, "Open model folder", false, false);
+                        if menu_navigation(ui, Icon::Folder, "Open model folder", false, idle)
+                            .clicked()
+                        {
+                            self.menu_note = crate::dialog::open_folder(&self.source.store)
+                                .err()
+                                .map(Err);
+                        }
                         for (section, icon, label) in [
                             (MenuSection::Import, Icon::Back, "Import"),
                             (MenuSection::Export, Icon::Shared, "Export"),
                         ] {
-                            if menu_navigation(ui, icon, label, self.menu_section == section, true)
+                            if menu_navigation(ui, icon, label, self.menu_section == section, idle)
                                 .clicked()
                             {
                                 self.menu_section = section;
                             }
                         }
-                        if menu_navigation(ui, Icon::Block, "Project properties", false, true)
-                            .clicked()
+                        let project = MenuSection::Project;
+                        if menu_navigation(
+                            ui,
+                            Icon::Block,
+                            "Project properties",
+                            self.menu_section == project,
+                            idle,
+                        )
+                        .clicked()
                         {
-                            self.details = true;
-                            self.menu_open = false;
+                            self.menu_section = project;
+                            self.read_project();
                         }
                         for (section, icon, label) in [
                             (MenuSection::Settings, Icon::Grid, "Settings"),
                             (MenuSection::Catalogs, Icon::Wire, "Catalogs"),
                             (MenuSection::Editors, Icon::Plate, "Editors"),
                         ] {
-                            let active = self.menu_section == section
-                                || (section == MenuSection::Catalogs
-                                    && matches!(
-                                        self.menu_section,
-                                        MenuSection::Profiles | MenuSection::Materials
-                                    ));
-                            if menu_navigation(ui, icon, label, active, true).clicked() {
+                            let active = self.menu_section.top() == section;
+                            if menu_navigation(ui, icon, label, active, idle).clicked() {
                                 self.menu_section = section;
                             }
                         }
                         menu_navigation(ui, Icon::Recent, "Logs", false, false);
-                        for (section, icon, label) in [
-                            (MenuSection::Diagnose, Icon::Fit, "Diagnose & repair"),
-                            (MenuSection::Help, Icon::Recent, "Help"),
-                            (MenuSection::Extend, Icon::Plus, "Extend"),
-                        ] {
-                            if menu_navigation(ui, icon, label, self.menu_section == section, true)
-                                .clicked()
-                            {
-                                self.menu_section = section;
-                            }
-                        }
+                        let help = MenuSection::Help;
                         if menu_navigation(
                             ui,
-                            Icon::Back,
-                            "Exit BeamCraft",
-                            false,
-                            !self.other_command_running(),
+                            Icon::Recent,
+                            "Help",
+                            self.menu_section.top() == help,
+                            idle,
                         )
                         .clicked()
                         {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                            self.menu_section = help;
                         }
                     });
                 ui.add_space((ui.available_height() - 64.0).max(16.0));
@@ -1148,13 +1504,52 @@ impl App {
             )
             .show(ui, |ui| {
                 let (title, description) = self.menu_section.heading();
-                ui.label(theme::bold(title, 28.0));
+                ui.horizontal(|ui| {
+                    if self.menu_section.parent().is_some()
+                        && theme::button(ui, Kind::Secondary, "‹ Back", !self.menu_busy()).clicked()
+                    {
+                        self.menu_back();
+                    }
+                    ui.label(theme::bold(title, 28.0));
+                });
                 ui.label(RichText::new(description).size(12.0).color(palette.muted));
+                match &self.menu_note {
+                    Some(Ok(note)) => {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(note).color(palette.muted));
+                    }
+                    Some(Err(error)) => {
+                        ui.add_space(8.0);
+                        ui.label(RichText::new(error).color(palette.error).strong());
+                    }
+                    None => {}
+                }
                 ui.add_space(30.0);
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.set_width(ui.available_width().min(620.0));
+                    // The New page is wider, so the template cards fit side by side.
+                    let width = if self.menu_section == MenuSection::New {
+                        800.0
+                    } else {
+                        620.0
+                    };
+                    ui.set_width(ui.available_width().min(width));
                     ui.separator();
                     ui.add_space(15.0);
+                    match self.menu_section {
+                        MenuSection::New => {
+                            self.menu_new_page(ui);
+                            return;
+                        }
+                        MenuSection::Open => {
+                            self.menu_open_page(ui);
+                            return;
+                        }
+                        MenuSection::Project => {
+                            self.menu_project_page(ui);
+                            return;
+                        }
+                        _ => {}
+                    }
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for label in self.menu_section.commands() {
                         let enabled = matches!(

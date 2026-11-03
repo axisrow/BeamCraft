@@ -713,16 +713,19 @@ fn apply_properties(
 }
 
 fn save_view(options: &BTreeMap<&str, &str>, book: &ViewBook) -> Run<Vec<ModelView>> {
-    let name = options
-        .get("--name")
-        .ok_or_else(|| invalid("--name is required"))?
-        .trim();
-    let planned = plan(options, name, true)?
-        .ok_or_else(|| invalid("give one way to build the view plane"))?;
     // A batch option suffixes repeated names even when it selects one view.
     let many = options.contains_key("--levels")
         || (options.contains_key("--grid") && !options.contains_key("--axis"))
         || options.get("--side") == Some(&"four");
+    let name = match options.get("--name") {
+        // An explicit empty name is still refused by validation.
+        Some(text) => text.trim().to_owned(),
+        // A batch is named by its labels alone (see `join`).
+        None if many => String::new(),
+        None => book.next_default_name(),
+    };
+    let planned = plan(options, &name, true)?
+        .ok_or_else(|| invalid("give one way to build the view plane"))?;
     if planned.is_empty() {
         return Err(invalid("the batch selects no view"));
     }

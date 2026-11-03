@@ -1941,7 +1941,7 @@ pub const COMMANDS: &[Command] = &[
         Ids::None,
         &[
             req("--file", "FILE"),
-            req("--name", "TEXT"),
+            opt("--name", "TEXT"),
             opt("--new-id", "UUID"),
             opt("--store", "ROOT"),
             opt("--target", "X,Y,Z"),

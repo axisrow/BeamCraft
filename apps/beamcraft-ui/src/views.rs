@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! V12 model views in the window: the session sidecar, the view-properties form, the browser
-//! state and the extra view windows. A view is display state: the book never touches the loaded
-//! snapshot, and the model is never written.
+//! state and the panes of the work area. A view is display state: the book never touches the
+//! loaded snapshot, and the model is never written.
 
 use crate::camera::Camera;
 use beamcraft_engine::views::{
@@ -279,6 +279,8 @@ pub struct Form {
     pub color: [f32; 3],
     /// Opacity, 0..1.
     pub opacity: f32,
+    /// Whether the picks of a pick-based construction are all in.
+    pub picked: bool,
 }
 
 impl Default for Form {
@@ -312,6 +314,7 @@ impl Default for Form {
             color_on: false,
             color: [0.65, 0.75, 0.8],
             opacity: 1.0,
+            picked: false,
         }
     }
 }
@@ -428,6 +431,35 @@ impl Picking {
     }
 }
 
+/// What the view panel shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject {
+    /// The free 3D view of the pane with this key (`None` when no pane is open): its display
+    /// and "Save as view".
+    FreeView(Option<u64>),
+    /// A new view being defined; Apply creates it.
+    NewView,
+    /// A saved view; Apply updates it.
+    SavedView(Uuid7),
+}
+
+impl Default for Subject {
+    fn default() -> Self {
+        Self::FreeView(None)
+    }
+}
+
+impl Subject {
+    /// The inspector title.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::FreeView(_) => "3D view",
+            Self::NewView => "New view",
+            Self::SavedView(_) => "View properties",
+        }
+    }
+}
+
 /// The views of one opened model in the window.
 #[derive(Default)]
 pub struct Views {
@@ -435,26 +467,25 @@ pub struct Views {
     pub book: ViewBook,
     /// Why the last action failed, or what it did.
     pub note: Option<Result<String, String>>,
-    /// The view the main viewport shows; `None` is the free 3D view.
-    pub active: Option<Uuid7>,
+    /// The panes of the work area in z-order: the last one is active.
+    pub panes: Vec<crate::panes::ViewPane>,
+    /// The last key handed to a pane.
+    pub pane_serial: u64,
     /// The session camera of each opened view, so returning to a view keeps its navigation.
     pub cameras: BTreeMap<Uuid7, Camera>,
-    /// The free 3D camera and display, kept while a view is active.
-    pub spatial: Option<(Camera, RenderMode, bool)>,
-    /// The camera Ctrl+P returns to.
-    pub toggled: Option<Camera>,
     /// Views opened in this session, in opening order (Ctrl+Tab cycles them).
     pub open: Vec<Uuid7>,
     /// The properties form.
     pub form: Form,
-    /// Whether the properties window is shown.
-    pub editing: bool,
+    /// What the view panel shows while the inspector is on the view bench.
+    pub subject: Subject,
     /// A pick in progress.
     pub picking: Option<Picking>,
-    /// The extra view windows.
-    pub windows: Vec<ViewWindow>,
-    /// Lay the windows out in a grid on the next frame.
-    pub tile: bool,
+    /// The last work-area rect, in points; `None` before the first work-area frame.
+    pub area: Option<egui::Rect>,
+    /// The pane a primary press just focused, until that button is released: its click only
+    /// focuses unless it may select.
+    pub focus_press: Option<u64>,
     /// Browser tab.
     pub tab: BrowserTab,
     /// Browser search.
@@ -477,18 +508,16 @@ pub struct Views {
     pub confirm_delete: Option<Uuid7>,
     /// A store-backed construction running in the CLI.
     pub job: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
-    /// The hidden kinds the main scene was built with.
+    /// The hidden kinds the loaded scene was built with.
     pub shown: KindFilter,
-    /// The last key handed to a view window.
-    pub window_serial: u64,
     /// Whether the browser shows previews.
     pub previews_on: bool,
     /// The rendered previews: the key they were drawn for (snapshot and definition) and the
     /// offscreen target, at most [`MAX_PREVIEWS`].
-    pub previews: BTreeMap<Uuid7, (u64, ViewWindow)>,
+    pub previews: BTreeMap<Uuid7, (u64, crate::panes::RenderTarget)>,
 }
 
-/// Most windows besides the main viewport.
+/// Most view panes open at once in the work area.
 pub const MAX_WINDOWS: usize = 8;
 /// Most previews kept rendered.
 pub const MAX_PREVIEWS: usize = 64;
@@ -505,9 +534,24 @@ pub fn preview_key(token: &str, view: &ModelView) -> u64 {
 }
 
 impl Views {
+    /// The view the active pane shows; `None` is the free 3D view or no pane at all.
+    pub fn active(&self) -> Option<Uuid7> {
+        self.panes.last().and_then(|p| p.view)
+    }
+
+    /// The active pane: the last in z-order.
+    pub fn active_pane(&self) -> Option<&crate::panes::ViewPane> {
+        self.panes.last()
+    }
+
+    /// The active pane, to change.
+    pub fn active_pane_mut(&mut self) -> Option<&mut crate::panes::ViewPane> {
+        self.panes.last_mut()
+    }
+
     /// The active view.
     pub fn active_view(&self) -> Option<&ModelView> {
-        self.active.and_then(|id| self.book.get(&id))
+        self.active().and_then(|id| self.book.get(&id))
     }
 
     /// The hidden kinds of the active view.
@@ -586,19 +630,21 @@ impl Views {
             .copied()
             .filter(|id| self.book.get(id).is_some())
             .collect();
-        let at = self.active.and_then(|a| open.iter().position(|v| *v == a));
+        let at = self
+            .active()
+            .and_then(|a| open.iter().position(|v| *v == a));
         match at {
             Some(i) => open.get((i + 1) % open.len().max(1)).copied(),
             None => open.first().copied(),
         }
     }
 
-    /// Forgets a view in the session: its camera, its window, the active and open marks.
+    /// Forgets a view in the session: its camera, the open and selected marks and the
+    /// clipboard. Its panes are closed by the window.
     pub fn forget(&mut self, id: &Uuid7) {
         self.cameras.remove(id);
         self.open.retain(|v| v != id);
         self.selected.remove(id);
-        self.windows.retain(|w| w.view != Some(*id));
         if self.clipboard.is_some_and(|(c, _)| c == *id) {
             self.clipboard = None;
         }
@@ -649,165 +695,6 @@ pub fn display_clip(
 /// The element kinds the object-visibility list offers: every registered kind.
 pub fn listed_kinds() -> impl Iterator<Item = ElementKind> {
     ElementKind::ALL.into_iter()
-}
-
-/// Where an extra window sits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Dock {
-    /// Where the user drags it.
-    #[default]
-    Float,
-    /// Along the left edge.
-    Left,
-    /// Along the right edge.
-    Right,
-    /// Along the top edge.
-    Top,
-    /// Along the bottom edge.
-    Bottom,
-}
-
-/// One extra view window: a model view (or the free 3D view) through its own camera, on its own
-/// targets. A window draws and navigates; selection and tools stay in the main viewport.
-pub struct ViewWindow {
-    /// The view it shows; `None` is a free 3D window.
-    pub view: Option<Uuid7>,
-    /// Stable identity of the egui window.
-    pub(crate) key: u64,
-    pub(crate) camera: Camera,
-    pub(crate) open: bool,
-    pub(crate) dock: Dock,
-    /// Render mode, its own.
-    pub(crate) mode: RenderMode,
-    /// Grid guides shown.
-    pub(crate) grids: bool,
-    pub(crate) title: String,
-    renderer: Option<crate::render::Renderer>,
-    texture: Option<egui::TextureId>,
-    /// The scene of this window's hidden kinds when they differ from the main scene's, keyed by
-    /// the snapshot token it was built for.
-    pub(crate) filtered: Option<(String, KindFilter, crate::render::Uploaded)>,
-    /// Placement for the next frame (tiling).
-    pub(crate) place: Option<egui::Rect>,
-}
-
-impl ViewWindow {
-    pub(crate) fn new(view: Option<&ModelView>, camera: Camera, index: usize) -> Self {
-        Self {
-            view: view.map(|v| v.id),
-            key: 0,
-            camera,
-            open: true,
-            dock: Dock::Float,
-            mode: view.map_or(RenderMode::Shaded, |v| v.render_mode),
-            grids: view.is_none_or(|v| v.grids_visible),
-            title: view.map_or_else(|| format!("3D view {}", index + 2), |v| v.name.clone()),
-            renderer: None,
-            texture: None,
-            filtered: None,
-            place: None,
-        }
-    }
-
-    /// Resizes or creates the offscreen targets, keeping the egui texture in step. Returns the
-    /// aspect of the drawn image.
-    pub(crate) fn resize(
-        &mut self,
-        state: &eframe::egui_wgpu::RenderState,
-        width: u32,
-        height: u32,
-        samples: Option<u32>,
-        stats: &crate::stats::Stats,
-    ) -> Result<f32, crate::Error> {
-        if width == 0 || height == 0 {
-            // egui reports a zero-size content rect before the window lays out; wait for real
-            // pixels rather than building empty targets.
-            return Err(crate::Error::Input("window not laid out yet"));
-        }
-        if let Some(renderer) = &mut self.renderer {
-            if (renderer.width != width || renderer.height != height)
-                && renderer.resize(&state.device, width, height, stats)?
-                && let Some(texture) = self.texture
-            {
-                // The targets changed: egui's copy of the texture follows them.
-                state
-                    .renderer
-                    .write()
-                    .update_egui_texture_from_wgpu_texture(
-                        &state.device,
-                        &renderer.view,
-                        wgpu::FilterMode::Linear,
-                        texture,
-                    );
-            }
-        } else {
-            let renderer = crate::render::Renderer::with_samples(
-                &state.adapter,
-                &state.device,
-                width,
-                height,
-                samples,
-                stats,
-            )?;
-            let texture = state.renderer.write().register_native_texture(
-                &state.device,
-                &renderer.view,
-                wgpu::FilterMode::Linear,
-            );
-            self.texture = Some(texture);
-            self.renderer = Some(renderer);
-        }
-        let renderer = self.renderer.as_ref().ok_or(crate::Error::NoAdapter)?;
-        Ok((renderer.width as f32 / renderer.height as f32).clamp(0.05, 20.0))
-    }
-
-    /// The egui texture of the drawn image, once targets exist.
-    pub(crate) fn texture(&self) -> Option<egui::TextureId> {
-        self.texture
-    }
-
-    pub(crate) fn renderer(&self) -> Option<&crate::render::Renderer> {
-        self.renderer.as_ref()
-    }
-
-    /// Frees the egui texture of a closed window.
-    pub(crate) fn release(&mut self, state: &eframe::egui_wgpu::RenderState) {
-        if let Some(texture) = self.texture.take() {
-            state.renderer.write().free_texture(&texture);
-        }
-    }
-}
-
-/// The rectangle of window `index` of `count` tiled in two columns over `area`.
-pub fn tile_rect(area: egui::Rect, index: usize, count: usize) -> egui::Rect {
-    let columns = 2usize.min(count.max(1));
-    let rows = count.max(1).div_ceil(columns);
-    let width = area.width() / columns as f32;
-    let height = area.height() / rows as f32;
-    let column = (index % columns) as f32;
-    let row = (index / columns) as f32;
-    egui::Rect::from_min_size(
-        area.min + egui::vec2(column * width, row * height),
-        egui::vec2(width, height),
-    )
-    .shrink(4.0)
-}
-
-/// The rectangle a docked window takes inside `area`.
-pub fn dock_rect(area: egui::Rect, dock: Dock) -> Option<egui::Rect> {
-    let (w, h) = (area.width(), area.height());
-    let r = match dock {
-        Dock::Float => return None,
-        Dock::Left => egui::Rect::from_min_size(area.min, egui::vec2(w * 0.4, h)),
-        Dock::Right => {
-            egui::Rect::from_min_size(area.min + egui::vec2(w * 0.6, 0.0), egui::vec2(w * 0.4, h))
-        }
-        Dock::Top => egui::Rect::from_min_size(area.min, egui::vec2(w, h * 0.4)),
-        Dock::Bottom => {
-            egui::Rect::from_min_size(area.min + egui::vec2(0.0, h * 0.6), egui::vec2(w, h * 0.4))
-        }
-    };
-    Some(r.shrink(4.0))
 }
 
 #[cfg(test)]
@@ -914,9 +801,14 @@ mod tests {
         assert!(!views.selected.contains(&id(1)));
         // Ctrl+Tab cycles the open views.
         views.open = vec![id(1), id(3)];
-        views.active = Some(id(1));
+        assert_eq!(views.active(), None, "no pane is open");
+        let camera = Camera::new([0.0; 3], 1000.0, 1.6).unwrap();
+        views
+            .panes
+            .push(crate::panes::ViewPane::new(None, camera, 1));
+        views.panes.last_mut().unwrap().view = Some(id(1));
         assert_eq!(views.next_open(), Some(id(3)));
-        views.active = Some(id(3));
+        views.panes.last_mut().unwrap().view = Some(id(3));
         assert_eq!(views.next_open(), Some(id(1)));
         views.forget(&id(1));
         assert_eq!(views.open, [id(3)]);
@@ -958,10 +850,15 @@ mod tests {
         assert!(p.undo() && p.undo());
         assert!(!p.undo());
         assert_eq!(Construction::TwoPoints.label(), "Section by two points");
-        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
-        assert!(tile_rect(rect, 3, 4).min.y > 290.0);
-        assert!(dock_rect(rect, Dock::Float).is_none());
-        assert!(dock_rect(rect, Dock::Right).unwrap().min.x > 470.0);
         assert!(Direction::Front.plane([0.0; 3]).is_ok());
+    }
+
+    #[test]
+    fn the_panel_starts_on_the_free_view_with_nothing_picked() {
+        assert!(!Form::default().picked);
+        assert_eq!(Subject::default(), Subject::FreeView(None));
+        assert_eq!(Subject::FreeView(Some(1)).title(), "3D view");
+        assert_eq!(Subject::NewView.title(), "New view");
+        assert_eq!(Subject::SavedView(id(1)).title(), "View properties");
     }
 }

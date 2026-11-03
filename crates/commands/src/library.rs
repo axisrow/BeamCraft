@@ -208,7 +208,7 @@ fn read_info(
     })
 }
 
-fn read_all(
+pub(crate) fn read_all(
     reader: &Reader,
     opened: &beamcraft_layer_engine::Opened,
     control: &beamcraft_layer_engine::Control,

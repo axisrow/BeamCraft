@@ -6,5 +6,6 @@
         string "bim:environment:id" = "blank"
         string "bim:environment:title" = "Blank"
         string[] "bim:environment:libraries" = ["profiles.usda"]
+        string "bim:environment:presets" = "presets.usda"
     }
 )
