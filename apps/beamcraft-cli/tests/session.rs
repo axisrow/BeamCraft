@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+
 //! `session` end to end (`I424`): a real `beamcraft session` process over pipes, driven one
 //! command line at a time, with the store checked from separate one-shot processes. The
 //! scenarios follow the design note: unbracketed commands behave exactly as today, a batch
