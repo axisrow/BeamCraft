@@ -279,3 +279,66 @@ fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
     let inspected = f.ok("inspect-elements", &[]);
     assert_eq!(num(&inspected, &["member_count"]), 8.0);
 }
+
+#[test]
+fn a_chs_member_hole_has_a_gross_that_ignores_it_and_certifies_the_drop() {
+    // The #447 constant: the holed net used to be the faceted mesh volume while the gross
+    // stayed the analytic `area x length`, so every CHS 114x5 hole overstated the drop by the
+    // arc approximation times the length (~10 980 mm3), far past the engine's `2 * A * t`
+    // bound. The measured rule pins the d = 6/10/20 triplet end to end through the binary.
+    let f = Fixture::new();
+    let profile = defined(
+        &f,
+        &[
+            "--family",
+            "chs",
+            "--d",
+            "114",
+            "--t",
+            "5",
+            "--designation",
+            "EX-CHS114",
+        ],
+    );
+    for (index, diameter) in [6.0, 10.0, 20.0].iter().enumerate() {
+        let created = member(&f, "beam", "0,0,0", "1000,0,0", &profile);
+        let id = text(&created, "element_id");
+        let gross = num(&created, &["quantities", "volume", "mm3"]);
+        let op = format!("019a7bf0-0000-7000-8000-00000000aa3{index}");
+        let hole = f.ok(
+            "add-hole",
+            &[
+                "--id",
+                &id,
+                "--operation-id",
+                &op,
+                "--axis-point",
+                "0,0,500",
+                "--axis-direction",
+                "1,0,0",
+                "--diameter",
+                &format!("{diameter}"),
+            ],
+        );
+        let q = at(&hole, &["element", "quantities"]);
+        // The gross ignores the hole (the plate rule); the net and the removed volume carry
+        // the drop, and it certifies within the engine bound of the smooth tube.
+        let after_gross = num(q, &["volume_gross_mm3"]);
+        assert!(
+            (after_gross - gross).abs() <= 1e-9 * gross,
+            "d={diameter}: gross {after_gross} was {gross}"
+        );
+        let net = num(q, &["volume_net_mm3"]);
+        let removed = num(q, &["removed_volume_mm3"]);
+        let bound = 2.0 * std::f64::consts::PI * diameter * diameter / 4.0 * 5.0;
+        let drop = gross - net;
+        assert!(
+            drop > 0.0 && drop <= bound,
+            "d={diameter}: drop {drop} past bound {bound}"
+        );
+        assert!(
+            (removed - drop).abs() <= 1e-6 * drop,
+            "d={diameter}: removed {removed} vs drop {drop}"
+        );
+    }
+}

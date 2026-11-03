@@ -40,6 +40,9 @@ const SLOPED_MEMBER: &str = "019a7bf0-0000-7000-8000-00000000aa72";
 const SLOPED_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa73";
 const AXIAL_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa76";
 const SECOND_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa77";
+// The tube remainder (fork #447): the CHS member and its hole operation id.
+const TUBE_MEMBER: &str = "019a7bf0-0000-7000-8000-00000000aa78";
+const TUBE_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa79";
 
 /// Closed-form volumes of the five parts before any tool touches them (as in the original
 /// scenario): two columns, the cut beam, and two plates with one rectangular hole each.
@@ -1600,9 +1603,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     // member is the standing BodyNotPrism refusal the slice-4 delivery records. The stored
     // polygon stays the geometry: d = 20 takes the regular 32-gon of F06 section 2, the
     // same hole_area as the perpendicular hole above, and the volume tolerances below are
-    // the certified enclosures' own width bounds. The faceted-tube hole stays out of the
-    // story: the CLI path's certified drop carries a constant extra volume the engine
-    // suite does not reproduce (fork #420 neighbourhood), an honest open cell.
+    // the certified enclosures' own width bounds.
     let outline = |points: [(f64, f64); 4]| {
         points
             .iter()
@@ -1836,4 +1837,93 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             .expect("the G14.2 member is present");
         assert_eq!(found, again, "{id} must read byte-identically");
     }
+
+    // The faceted-tube hole (Q01 slice D remainder, fork #447): a CHS member takes a radial
+    // through hole whose drop certifies within the engine's own `2 * A * t` bound, and the
+    // gross stays the nominal `area x length` across it (the plate rule: a gross that
+    // ignores the hole, a net that does not). The old CLI path reported the faceted mesh
+    // volume as the net, a constant ~10,980 mm3 past the bound on this very section.
+    s.ok(
+        "draft",
+        "define-profile",
+        &[
+            "--family",
+            "chs",
+            "--d",
+            "114",
+            "--t",
+            "5",
+            "--designation",
+            "Q01-D-CHS",
+        ],
+    );
+    let tube = s.ok(
+        "draft",
+        "create-member",
+        &[
+            "--new-id",
+            TUBE_MEMBER,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "1000,0,0",
+            "--profile",
+            "Q01-D-CHS",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01-D tube hole beam",
+        ],
+    );
+    let tube_gross = at(&tube, &["member", "quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    let tube_holed = s.ok(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            TUBE_MEMBER,
+            "--operation-id",
+            TUBE_HOLE_OP,
+            "--axis-point",
+            "0,0,500",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "20",
+        ],
+    );
+    assert_eq!(text(&tube_holed, "outcome"), "hole_added");
+    let tube_element = at(&tube_holed, &["element"]);
+    let tube_net = at(tube_element, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    // The analytic bound of the smooth tube: the d = 20 hole circle through both 5 mm walls.
+    let tube_bound = 2.0 * std::f64::consts::PI * 100.0 * 5.0;
+    let tube_drop = tube_gross - tube_net;
+    assert!(
+        tube_drop > 0.0 && tube_drop <= tube_bound,
+        "tube drop {tube_drop} past bound {tube_bound}"
+    );
+    close(
+        at(tube_element, &["quantities", "volume_gross_mm3"])
+            .float()
+            .unwrap(),
+        tube_gross,
+    );
+    let tube_digest = text(tube_element, "mesh_digest");
+    // The tube hole survives the reopen with the same figures (the fresh-reader check).
+    let tube_read = parts(&s.ok("draft", "inspect-elements", &[]));
+    let tube_found = tube_read
+        .iter()
+        .find(|(other, _, _)| other == TUBE_MEMBER)
+        .expect("the tube member is present");
+    close(tube_found.1, tube_net);
+    assert_eq!(
+        tube_found.2, tube_digest,
+        "tube mesh must survive the reopen"
+    );
 }

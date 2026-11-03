@@ -294,9 +294,14 @@ pub struct MemberBody {
     pub section_area_mm2: f64,
     /// Where the effective area came from.
     pub area_source: AreaSource,
-    /// Gross volume in cubic millimetres: `section_area_mm2 * axis_length_mm`. A member has no
-    /// operation yet, so this is also its net volume.
+    /// NET volume in cubic millimetres. Without operations this is the P-Mass gross
+    /// `section_area_mm2 * axis_length_mm`; with operations it is that gross minus
+    /// [`Self::removed_volume_mm3`], so the gross a reader compares across revisions stays the
+    /// nominal one while the drop stays certified on the meshes.
     pub volume_mm3: f64,
+    /// Volume removed by the member's operations in mm3, measured as the mesh before them minus
+    /// the mesh after (`0.0` without operations).
+    pub removed_volume_mm3: f64,
     /// Version label of the volume algorithm.
     pub algorithm: &'static str,
 }
@@ -459,6 +464,11 @@ fn rectangle_outline(
     }))
 }
 
+/// The evaluated body pieces of one member path: the certified mesh, the axis length, the
+/// volume algorithm label and, when operations replayed, their certified `(net, removed)`
+/// volumes in mm3.
+type EvaluatedBody = (SolidMesh, f64, &'static str, Option<(f64, f64)>);
+
 /// The body of a polybeam: the one section swept along the polyline path (G12), every interior
 /// vertex mitred. The quantity of record stays analytic — the effective section area times the
 /// path length; a cut replaces both mesh and volume with the certified replay result.
@@ -467,7 +477,7 @@ fn evaluate_polybeam_body(
     profile: &ProfileInfo,
     points: &[[f64; 3]],
     arc_deviation: &mut Option<f64>,
-) -> Result<(SolidMesh, f64, &'static str, Option<f64>), CommandError> {
+) -> Result<EvaluatedBody, CommandError> {
     let shape = match profile {
         ProfileInfo::Rectangle {
             width_mm,
@@ -537,7 +547,15 @@ fn evaluate_polybeam_body(
             &authored.cuts,
         )?;
         let volume = solid.volume_mm3();
-        Ok((solid, path_length_mm, CUT_VOLUME_ALGORITHM, Some(volume)))
+        // The swept body's gross is not the analytic `area x path length` (the mitres are not),
+        // so the polybeam keeps the certified mesh volume as its net and reports no removed
+        // volume; its gross baseline stays the mesh one.
+        Ok((
+            solid,
+            path_length_mm,
+            CUT_VOLUME_ALGORITHM,
+            Some((volume, 0.0)),
+        ))
     }
 }
 
@@ -597,6 +615,7 @@ pub fn evaluate_member(
         .map(|p| Point3::new(p[0], p[1], p[2]))
         .collect();
     let (width_mm, height_mm) = profile.extent_mm();
+    let (section_area_mm2, area_source) = profile.effective_area();
     // The P14 end offsets lengthen or shorten the solid along the axis; the kernel builders
     // validate the offsets and refuse a non-positive net length.
     let section_placement = authored.section_placement.unwrap_or_default();
@@ -607,8 +626,7 @@ pub fn evaluate_member(
     }
     .validate()?;
     let mut arc_deviation_mm = None;
-    let (solid, axis_length_mm, algorithm, cut_volume_mm3) = if authored.curved || points.len() > 2
-    {
+    let (solid, axis_length_mm, algorithm, cut_volumes) = if authored.curved || points.len() > 2 {
         evaluate_polybeam_body(
             authored,
             &profile,
@@ -662,12 +680,13 @@ pub fn evaluate_member(
                 let axis_length_mm = frame.scale().axis_length_mm() + length_delta_mm;
                 // The cuts replace both the mesh and the analytic volume with the certified replay
                 // result; without one the P-Mass `area x length` volume stands.
-                let (solid, cut_volume) = if authored.cuts.is_empty()
+                let (solid, cut_volumes) = if authored.cuts.is_empty()
                     && authored.hole_records.is_empty()
                 {
                     (SolidMesh::from_box(&result), None)
                 } else {
                     let body = Body::from_plate(&result).map_err(|f: OpFailure| map_cut(&f))?;
+                    let gross_mesh_mm3 = SolidMesh::from_box(&result).volume_mm3();
                     let (solid, cut_body) =
                         replay_cuts_with_body(&body, SolidMesh::from_box(&result), &authored.cuts)?;
                     let solid = if authored.hole_records.is_empty() {
@@ -680,18 +699,23 @@ pub fn evaluate_member(
                             &authored.hole_records,
                         )?
                     };
-                    let volume = solid.volume_mm3();
-                    (solid, Some(volume))
+                    // The measured rule of the plate volumes: the removed volume is the mesh
+                    // before the operations minus the mesh after them, and the net anchors to
+                    // the P-Mass gross. The gross box is exact, so this is the certified mesh
+                    // net of the box members.
+                    let removed_mm3 = gross_mesh_mm3 - solid.volume_mm3();
+                    let gross_mm3 = section_area_mm2 * axis_length_mm;
+                    (solid, Some((gross_mm3 - removed_mm3, removed_mm3)))
                 };
                 (
                     solid,
                     axis_length_mm,
-                    if cut_volume.is_some() {
+                    if cut_volumes.is_some() {
                         CUT_VOLUME_ALGORITHM
                     } else {
                         MEMBER_VOLUME_ALGORITHM
                     },
-                    cut_volume,
+                    cut_volumes,
                 )
             }
             ProfileInfo::Section { shape, .. } => {
@@ -724,6 +748,8 @@ pub fn evaluate_member(
                                     "member frame could not be built",
                                 )
                             })?;
+                    let gross_mesh_mm3 =
+                        crate::engine::solid_mesh::from_section(&result).volume_mm3();
                     let (solid, cut_body) = replay_cuts_with_body(
                         result.body(),
                         crate::engine::solid_mesh::from_section(&result),
@@ -739,21 +765,26 @@ pub fn evaluate_member(
                             &authored.hole_records,
                         )?
                     };
-                    let volume = solid.volume_mm3();
+                    // The measured rule of the plate volumes: the removed volume is the mesh
+                    // before the operations minus the mesh after them, and the net anchors to
+                    // the P-Mass gross. Both meshes belong to the faceted outline, so the drop
+                    // stays certified there; the raw mesh volume after the operations belongs
+                    // to a different baseline than the analytic gross and would misstate the
+                    // drop by the arc approximation times the length (the #447 constant).
+                    let removed_mm3 = gross_mesh_mm3 - solid.volume_mm3();
+                    let gross_mm3 = section_area_mm2 * result.axis_length_mm();
                     (
                         solid,
                         result.axis_length_mm(),
                         CUT_VOLUME_ALGORITHM,
-                        Some(volume),
+                        Some((gross_mm3 - removed_mm3, removed_mm3)),
                     )
                 }
             }
         }
     };
-    let (section_area_mm2, area_source) = profile.effective_area();
-    // A cut member's volume is the certified cut result (A03); otherwise the P-Mass gross
-    // volume `effective area x axis length` (no operation on an uncut member yet).
-    let volume_mm3 = cut_volume_mm3.unwrap_or(section_area_mm2 * axis_length_mm);
+    let (volume_mm3, removed_volume_mm3) =
+        cut_volumes.unwrap_or((section_area_mm2 * axis_length_mm, 0.0));
     if !volume_mm3.is_finite() || volume_mm3 <= 0.0 {
         return Err(CommandError::new(
             ErrorCode::UnsupportedGeometry,
@@ -771,21 +802,25 @@ pub fn evaluate_member(
         section_area_mm2,
         area_source,
         volume_mm3,
+        removed_volume_mm3,
         algorithm,
     })
 }
 
-/// The quantity records of a member body with the physical material of the element: gross is the
-/// effective area times the axis length, and net is the same (no operation on a member yet).
+/// The quantity records of a member body with the physical material of the element. Without
+/// operations gross and net are one value; with operations the gross stays the nominal
+/// `effective area x axis length` and the net carries the certified removed volume (the plate
+/// rule: a gross that ignores the operations and a net that does not).
 pub fn member_quantities(
     body: &MemberBody,
     material: Option<MaterialInfo>,
 ) -> Result<Quantities, CommandError> {
-    let mut quantities = quantities_with_material(
-        Volumes::unchanged(body.volume_mm3),
-        body.algorithm,
-        material,
-    )?;
+    let volumes = Volumes {
+        gross_mm3: body.volume_mm3 + body.removed_volume_mm3,
+        removed_mm3: body.removed_volume_mm3,
+        net_mm3: body.volume_mm3,
+    };
+    let mut quantities = quantities_with_material(volumes, body.algorithm, material)?;
     quantities.section_area_mm2 = Some(body.section_area_mm2);
     quantities.area_source = Some(body.area_source);
     Ok(quantities)

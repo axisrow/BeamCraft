@@ -889,7 +889,7 @@ mod tests {
     }
 
     #[test]
-    fn a_chs_member_hole_cuts_the_faceted_tube_walls() {
+    fn a_chs_member_hole_certifies_the_removed_volume_within_the_engine_bound() {
         let chs = || ProfileInfo::Section {
             shape: SectionShape::Parametric(
                 ParametricSection::new(SectionFamily::Chs, vec![114.0, 5.0]).unwrap(),
@@ -897,36 +897,53 @@ mod tests {
             declared_area_mm2: None,
         };
         let head = member();
-        let gross = evaluate_member(&head, chs()).unwrap();
-        let authored = add_member_hole_after(
-            &member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
-            &head,
-            &|_| false,
-            0,
-        )
-        .unwrap()
-        .authored;
-        let body = evaluate_member(&authored, chs()).unwrap();
-        // The certified replay volume belongs to the faceted outline, so the drop is
-        // measured against the same baseline (`from_section` stores the polygon's analytic
-        // volume), not against the closed-form ring area of the uncut evaluation.
-        let drop = gross.solid.volume_mm3() - body.volume_mm3;
-        let area = polygon_area(&authored.hole_records[0].polygon_mm);
-        let expected = 2.0 * area * 5.0;
-        assert!(
-            (drop - expected).abs() <= 0.12 * expected,
-            "{drop} vs {expected}"
-        );
-        // The replay is byte-stable: a second evaluation returns the same body.
-        let again = evaluate_member(&authored, chs()).unwrap();
-        assert_eq!(body, again);
-        assert!(
-            body.solid
-                .scene_mesh()
-                .face_table
-                .iter()
-                .any(|id| id == "cut:f.h0.w0.s0")
-        );
+        // The gross stays the uncut P-Mass volume across every hole of the triplet.
+        let gross_mm3 = evaluate_member(&head, chs()).unwrap().volume_mm3;
+        for diameter in [6.0, 10.0, 20.0] {
+            let authored = add_member_hole_after(
+                &member_hole(diameter, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+                &head,
+                &|_| false,
+                0,
+            )
+            .unwrap()
+            .authored;
+            let body = evaluate_member(&authored, chs()).unwrap();
+            // The measured rule: the drop is the mesh before the hole minus the mesh after,
+            // both belonging to the faceted outline, so it certifies against the faceted
+            // value (`from_section` stores that polygon's analytic volume, the F06 regular
+            // 32-gon hole area times both wall crossings).
+            let drop = gross_mm3 - body.volume_mm3;
+            let area = polygon_area(&authored.hole_records[0].polygon_mm);
+            let expected = 2.0 * area * 5.0;
+            assert!(
+                (drop - expected).abs() <= 0.12 * expected,
+                "d={diameter}: {drop} vs {expected}"
+            );
+            // The analytic bound of the smooth tube: the hole circle area through both walls
+            // of the 5 mm ring. The drop must never leave it (the #447 constant did).
+            let bound = 2.0 * std::f64::consts::PI * (diameter / 2.0) * (diameter / 2.0) * 5.0;
+            assert!(drop <= bound, "d={diameter}: {drop} past {bound}");
+            // The reported triple agrees with the drop, and the gross stays the nominal one.
+            assert!((body.removed_volume_mm3 - drop).abs() <= 1e-6 * drop);
+            let quantities = crate::engine::member::member_quantities(&body, None).unwrap();
+            assert!(
+                (quantities.volume_gross_mm3 - gross_mm3).abs() <= 1e-9 * gross_mm3,
+                "d={diameter}: gross {} vs {gross_mm3}",
+                quantities.volume_gross_mm3
+            );
+            assert!((quantities.volume_mm3 - body.volume_mm3).abs() <= 1e-9 * gross_mm3);
+            // The replay is byte-stable: a second evaluation returns the same body.
+            let again = evaluate_member(&authored, chs()).unwrap();
+            assert_eq!(body, again);
+            assert!(
+                body.solid
+                    .scene_mesh()
+                    .face_table
+                    .iter()
+                    .any(|id| id == "cut:f.h0.w0.s0")
+            );
+        }
     }
 
     #[test]
