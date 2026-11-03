@@ -2504,7 +2504,12 @@ pub const COMMANDS: &[Command] = &[
         "batch-commit",
         Access::Write,
         Ids::None,
-        &[opt("--op-id", "UUID"), opt("--revision-id", "UUID")],
+        &[
+            opt("--op-id", "UUID"),
+            opt("--revision-id", "UUID"),
+            opt("--timeout-ms", "MS"),
+            opt("--cancel-after-ms", "MS"),
+        ],
     ),
     entry(
         Route::Batch,

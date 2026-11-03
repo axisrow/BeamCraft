@@ -281,3 +281,76 @@ pub(crate) fn commit_verified_with_evidence(
     }
     Ok(store.commit_with_evidence(draft, expected, evidence, Some(&PlateVerifier), hook)?)
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+    use super::*;
+    use beamcraft_host::ids::IdSource;
+    use beamcraft_host::revision::RevisionStore as Store;
+    use beamcraft_host::revision::{ExpectedBase, NoFault};
+    use beamcraft_host::storage::BlobStore;
+    use std::collections::BTreeSet;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+
+    /// The direct materializer funnel refuses while a draft batch is open, and the refusal
+    /// is the guard's own: once the batch ends, the same call gets past it (to whatever the
+    /// commit itself makes of the draft on an empty store).
+    #[test]
+    fn the_direct_funnel_refuses_under_an_open_draft() {
+        let root = std::env::temp_dir().join(format!(
+            "beamcraft-funnel-guard-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = Store::new(BlobStore::new(root).unwrap());
+        let mut ids = IdSource::system();
+        let mut fresh = || ids.next_id().unwrap().to_string();
+        let base = session::pipeline::Base {
+            project: fresh(),
+            workspace: fresh(),
+            digest: session::pipeline::digest_of(b"funnel-guard-base").unwrap(),
+            generation: 1,
+            assets: Vec::new(),
+            external: BTreeSet::new(),
+            expected: ExpectedBase::Initial,
+        };
+        let guard = session::draft::hold(base, 1).unwrap();
+        let draft = RevisionDraft {
+            project: session::pipeline::host_uuid(&fresh()).unwrap(),
+            workspace: session::pipeline::host_uuid(&fresh()).unwrap(),
+            revision: session::pipeline::host_uuid(&fresh()).unwrap(),
+            op: session::pipeline::host_uuid(&fresh()).unwrap(),
+            workspace_generation: 2,
+            schema: session::pipeline::digest_of(b"schema").unwrap(),
+            root_layer: session::pipeline::ROOT_LAYER.into(),
+            entries: vec![
+                LayerEntry::from_bytes(
+                    "authored.usda",
+                    LayerRole::Authored,
+                    session::pipeline::EMPTY_LAYER.as_bytes(),
+                )
+                .unwrap(),
+            ],
+        };
+        let expected = ExpectedBase::Initial;
+        let refused = commit_verified(&store, &draft, &expected, &mut NoFault).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert_eq!(
+            refused.message,
+            "this command commits directly and may not run inside a draft batch"
+        );
+        // The batch's own commit ends the draft first, so the funnel opens for it.
+        drop(session::draft::take());
+        let error = commit_verified(&store, &draft, &expected, &mut NoFault).unwrap_err();
+        assert_ne!(
+            error.message,
+            "this command commits directly and may not run inside a draft batch"
+        );
+        drop(guard);
+    }
+}

@@ -1515,7 +1515,7 @@ batch-open
 write.
 
 ```text
-batch-commit [--op-id UUID] [--revision-id UUID]
+batch-commit [--op-id UUID] [--revision-id UUID] [--timeout-ms MS] [--cancel-after-ms MS]
 ```
 
 ### batch-abort
