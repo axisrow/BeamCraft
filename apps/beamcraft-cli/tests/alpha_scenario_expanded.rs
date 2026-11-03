@@ -32,6 +32,14 @@ const SPLIT_OP: &str = "019a7bf0-0000-7000-8000-00000000aa20";
 const GRID: &str = "019a7bf0-0000-7000-8000-00000000aa21";
 const LEVEL: &str = "019a7bf0-0000-7000-8000-00000000aa22";
 const MEMBER_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa24";
+// Q01 slice D (the delivered G14.2 surface): the oblique/sloped members and their hole
+// operation ids.
+const OBLIQUE_MEMBER: &str = "019a7bf0-0000-7000-8000-00000000aa70";
+const OBLIQUE_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa71";
+const SLOPED_MEMBER: &str = "019a7bf0-0000-7000-8000-00000000aa72";
+const SLOPED_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa73";
+const AXIAL_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa76";
+const SECOND_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa77";
 
 /// Closed-form volumes of the five parts before any tool touches them (as in the original
 /// scenario): two columns, the cut beam, and two plates with one rectangular hole each.
@@ -1582,5 +1590,250 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             intent.contains(&format!("custom string drawing:title = \"{title}\"")),
             "{title}"
         );
+    }
+
+    // Member holes, oblique and sloped walls (Q01 slice D, fork #368: the delivered G14.2
+    // surface). Each case gets its own member based at the world origin: the replay maps
+    // the record's member-frame axis point into element coordinates without the member's
+    // own origin, so a member moved off the origin refuses the hole as not fitting (a
+    // delivered-surface limitation recorded in the matrix), and a second hole record on one
+    // member is the standing BodyNotPrism refusal the slice-4 delivery records. The stored
+    // polygon stays the geometry: d = 20 takes the regular 32-gon of F06 section 2, the
+    // same hole_area as the perpendicular hole above, and the volume tolerances below are
+    // the certified enclosures' own width bounds. The faceted-tube hole stays out of the
+    // story: the CLI path's certified drop carries a constant extra volume the engine
+    // suite does not reproduce (fork #420 neighbourhood), an honest open cell.
+    let outline = |points: [(f64, f64); 4]| {
+        points
+            .iter()
+            .map(|(x, y)| format!("{x},{y}"))
+            .collect::<Vec<_>>()
+            .join(";")
+    };
+    let square = [(-50.0, -50.0), (50.0, -50.0), (50.0, 50.0), (-50.0, 50.0)];
+    s.ok(
+        "draft",
+        "define-profile",
+        &[
+            "--family",
+            "custom",
+            "--outer",
+            &outline(square),
+            "--designation",
+            "Q01-D-SQUARE",
+        ],
+    );
+    // The same square rotated by 20 degrees: every wall is one sloped single-strip chain,
+    // the merge-walk case of the G14.2 slice 3.
+    let (cos20, sin20) = (20.0_f64.to_radians().cos(), 20.0_f64.to_radians().sin());
+    let rotated = square.map(|(u, v)| (u * cos20 - v * sin20, u * sin20 + v * cos20));
+    s.ok(
+        "draft",
+        "define-profile",
+        &[
+            "--family",
+            "custom",
+            "--outer",
+            &outline(rotated),
+            "--designation",
+            "Q01-D-SLOPED",
+        ],
+    );
+    s.ok(
+        "draft",
+        "create-member",
+        &[
+            "--new-id",
+            OBLIQUE_MEMBER,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "1000,0,0",
+            "--profile",
+            "Q01-D-SQUARE",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01-D oblique hole beam",
+        ],
+    );
+    s.ok(
+        "draft",
+        "create-member",
+        &[
+            "--new-id",
+            SLOPED_MEMBER,
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,1000,0",
+            "--profile",
+            "Q01-D-SLOPED",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01-D sloped wall beam",
+        ],
+    );
+    let before_d = parts(&s.ok("draft", "inspect-elements", &[]));
+
+    // An oblique, non-unit direction through the flat walls of the square: (12,5,0) names
+    // the direction, the walls perpendicular to u are 100 apart and |n.d| = 12/13, so the
+    // cut removes the 32-gon area times 100 * 13 / 12.
+    let oblique = s.ok(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            OBLIQUE_MEMBER,
+            "--operation-id",
+            OBLIQUE_HOLE_OP,
+            "--axis-point",
+            "0,0,500",
+            "--axis-direction",
+            "12,5,0",
+            "--diameter",
+            "20",
+        ],
+    );
+    assert_eq!(text(&oblique, "outcome"), "hole_added");
+    let oblique_element = at(&oblique, &["element"]);
+    let oblique_records = at(oblique_element, &["hole_records"]).array().unwrap();
+    assert_eq!(oblique_records.len(), 1);
+    assert_eq!(text(&oblique_records[0], "extent"), "through");
+    let oblique_volume = at(oblique_element, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    let oblique_removed = volume_of(&before_d, OBLIQUE_MEMBER) - oblique_volume;
+    assert!(
+        (oblique_removed - hole_area * 100.0 * 13.0 / 12.0).abs() <= 1.0,
+        "oblique removed {oblique_removed}"
+    );
+    let oblique_digest = text(oblique_element, "mesh_digest");
+
+    // A sloped wall: the rotated square's walls tilt 20 degrees against the cut, the two
+    // crossed walls stay parallel 100 apart, so the removed column is the footprint area
+    // times 100 / cos(20 degrees) — the moment certification of the merge walk.
+    let sloped = s.ok(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            SLOPED_MEMBER,
+            "--operation-id",
+            SLOPED_HOLE_OP,
+            "--axis-point",
+            "0,0,500",
+            "--axis-direction",
+            "0,1,0",
+            "--diameter",
+            "20",
+        ],
+    );
+    assert_eq!(text(&sloped, "outcome"), "hole_added");
+    let sloped_element = at(&sloped, &["element"]);
+    let sloped_records = at(sloped_element, &["hole_records"]).array().unwrap();
+    assert_eq!(sloped_records.len(), 1);
+    let sloped_volume = at(sloped_element, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    let sloped_removed = volume_of(&before_d, SLOPED_MEMBER) - sloped_volume;
+    assert!(
+        (sloped_removed - hole_area * 100.0 / cos20).abs() <= 1.0,
+        "sloped removed {sloped_removed}"
+    );
+    let sloped_digest = text(sloped_element, "mesh_digest");
+
+    // An axial direction has no section-plane part: refused at admission, nothing written
+    // (the sloped member's one record below proves the refusal wrote no second record).
+    let axial = s.run(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            SLOPED_MEMBER,
+            "--operation-id",
+            AXIAL_HOLE_OP,
+            "--axis-point",
+            "0,0,500",
+            "--axis-direction",
+            "0,0,1",
+            "--diameter",
+            "20",
+        ],
+        2,
+    );
+    assert_eq!(text(&axial, "code"), "UNSUPPORTED_GEOMETRY");
+
+    // A second record on one member is the standing BodyNotPrism limitation of the G14.2
+    // delivery: the first hole's opening ring vertices sit on their wall planes only up to
+    // rounding, so the replay refuses (a direction and position that fit a virgin member)
+    // and the member keeps its last valid state.
+    let second = s.run(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            OBLIQUE_MEMBER,
+            "--operation-id",
+            SECOND_HOLE_OP,
+            "--axis-point",
+            "0,30,500",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "20",
+        ],
+        2,
+    );
+    assert_eq!(text(&second, "code"), "UNSUPPORTED_GEOMETRY");
+
+    // The identical oblique command replays the recorded revision, not a second cut.
+    let retry = s.ok(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            OBLIQUE_MEMBER,
+            "--operation-id",
+            OBLIQUE_HOLE_OP,
+            "--axis-point",
+            "0,0,500",
+            "--axis-direction",
+            "12,5,0",
+            "--diameter",
+            "20",
+        ],
+    );
+    assert_eq!(text(&retry, "outcome"), "hole_add_replayed");
+    assert_eq!(
+        text(at(&retry, &["revision"]), "revision_id"),
+        text(at(&oblique, &["revision"]), "revision_id")
+    );
+
+    // Fresh processes read both members back with the exact volumes and digests the
+    // add-hole replies reported (the refused second record changed neither), and a second
+    // read is byte-identical.
+    let d_read = parts(&s.ok("draft", "inspect-elements", &[]));
+    let d_repeat = parts(&s.ok("draft", "inspect-elements", &[]));
+    for (id, volume, digest) in [
+        (OBLIQUE_MEMBER, oblique_volume, oblique_digest.as_str()),
+        (SLOPED_MEMBER, sloped_volume, sloped_digest.as_str()),
+    ] {
+        let found = d_read
+            .iter()
+            .find(|(other, _, _)| other == id)
+            .expect("the G14.2 member is present");
+        close(found.1, volume);
+        assert_eq!(found.2, digest, "{id} mesh must survive the reopen");
+        let again = d_repeat
+            .iter()
+            .find(|(other, _, _)| other == id)
+            .expect("the G14.2 member is present");
+        assert_eq!(found, again, "{id} must read byte-identically");
     }
 }
