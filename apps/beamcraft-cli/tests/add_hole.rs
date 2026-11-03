@@ -382,7 +382,7 @@ fn a_member_target_takes_a_member_hole_and_a_polygon_generator_stays_unsupported
 }
 
 #[test]
-fn a_member_hole_that_no_longer_fits_refuses_and_a_ranged_one_waits_for_the_kernel() {
+fn a_member_hole_that_no_longer_fits_refuses_a_ranged_one_cuts_and_a_blind_one_refuses() {
     let f = Fixture::new();
     let profile = text(
         at(
@@ -425,7 +425,8 @@ fn a_member_hole_that_no_longer_fits_refuses_and_a_ranged_one_waits_for_the_kern
         ],
     );
     assert_eq!(code, "INVALID_ARGUMENT");
-    // A range ends the cutter inside the body: the kernel slice G14.1 certifies it later.
+    // A range that ends inside the body is the kernel's own blind refusal now (G14.2 serves
+    // ranges whose ends lie in free space), and the typed code stays UNSUPPORTED_GEOMETRY.
     let code = f.rejected(
         "add-hole",
         &[
@@ -469,6 +470,161 @@ fn a_member_hole_that_no_longer_fits_refuses_and_a_ranged_one_waits_for_the_kern
             .len(),
         1
     );
+    // An oblique direction is served: for (12,5,0) the u-walls are 200 apart and
+    // |n.d| = 12/13, so the cut removes the 52-gon area of r = 25 (F06 section 2) times
+    // 200 * 13 / 12 = 424,389.56 mm3 of the 360,000,000 gross.
+    let oblique = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "Beam B3",
+        ],
+    );
+    let oblique_id = text(at(&oblique, &["member"]), "element_id");
+    let cut = f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &oblique_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000da",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "12,5,0",
+            "--diameter",
+            "50",
+        ],
+    );
+    let element = at(&cut, &["element"]);
+    let records = at(element, &["hole_records"]).array().unwrap();
+    assert_eq!(records.len(), 1);
+    // 360,000,000 - 424,389.56.
+    assert!((num(element, &["quantities", "volume", "mm3"]) - 359_575_610.4).abs() <= 10.0);
+    // A steeper oblique direction with the same diameter refuses honestly: at (3,4) the
+    // u-wall's own footprint span is too narrow for the r = 25 disc, so the replay refuses
+    // the record and nothing changes on the member.
+    let code = f.rejected(
+        "add-hole",
+        &[
+            "--id",
+            &oblique_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000df",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "3,4,0",
+            "--diameter",
+            "50",
+        ],
+    );
+    assert_eq!(code, "UNSUPPORTED_GEOMETRY");
+    // A positive range ending in free space past both u-walls removes the same column as
+    // the through hole: exactly area x 200, the very same expected volume.
+    let ranged = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "Beam B4",
+        ],
+    );
+    let ranged_id = text(at(&ranged, &["member"]), "element_id");
+    let cut = f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &ranged_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000dc",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
+            "--from",
+            "-110",
+            "--to",
+            "110",
+        ],
+    );
+    let element = at(&cut, &["element"]);
+    let records = at(element, &["hole_records"]).array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(text(&records[0], "extent"), "range");
+    // 360,000,000 - 391,744.21.
+    assert!((num(element, &["quantities", "volume", "mm3"]) - 359_608_255.8).abs() <= 10.0);
+    // An axial direction has no section-plane part: refused, and nothing is written.
+    let axial = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "Beam B5",
+        ],
+    );
+    let axial_id = text(at(&axial, &["member"]), "element_id");
+    let code = f.rejected(
+        "add-hole",
+        &[
+            "--id",
+            &axial_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000dd",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "0,0,1",
+            "--diameter",
+            "50",
+        ],
+    );
+    assert_eq!(code, "UNSUPPORTED_GEOMETRY");
+    // The refusal wrote nothing: the fit hole is accepted as the member's first record,
+    // with the same area x 200 removal.
+    let cut = f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &axial_id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000de",
+            "--axis-point",
+            "0,0,3000",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "50",
+        ],
+    );
+    let element = at(&cut, &["element"]);
+    assert_eq!(at(element, &["hole_records"]).array().unwrap().len(), 1);
+    // 360,000,000 - 391,744.21.
+    assert!((num(element, &["quantities", "volume", "mm3"]) - 359_608_255.8).abs() <= 10.0);
 }
 
 #[test]
@@ -567,4 +723,51 @@ fn a_copy_takes_fresh_operation_ids_and_the_same_ordinals() {
         num(&copy, &["quantities", "volume", "mm3"]),
         num(&source, &["quantities", "volume", "mm3"])
     );
+}
+
+#[test]
+fn probe_tmp_feature_list_after_member_hole() {
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let member = f.ok(
+        "create-member",
+        &[
+            "--kind",
+            "column",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,1000",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "Col F",
+        ],
+    );
+    let id = text(at(&member, &["member"]), "element_id");
+    let before = f.run("list-feature", &["--id", &id]);
+    println!("PROBE BEFORE code={} body={:?}", before.0, before.1);
+    let _holed = f.ok(
+        "add-hole",
+        &[
+            "--id",
+            &id,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-0000000000f2",
+            "--axis-point",
+            "0,0,500",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "20",
+        ],
+    );
+    let after = f.run("list-feature", &["--id", &id]);
+    println!("PROBE AFTER code={} body={:?}", after.0, after.1);
 }

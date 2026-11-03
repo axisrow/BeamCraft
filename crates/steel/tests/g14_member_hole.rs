@@ -735,6 +735,65 @@ fn a_second_hole_keeps_the_first_intact() {
     assert!(second.face_table().iter().any(|id| id == "cut:f.h2.w0.s0"));
 }
 
+// G14.2 slice 4: directed cutters through chain walls.
+
+#[test]
+#[ignore = "a directed cutter through multi-facet chains builds an unsealed corner piece when a kink line crosses a footprint edge near a cavity vertex (issue #420)"]
+fn an_oblique_hole_cuts_a_tube_with_a_certified_enclosure() {
+    // The oblique cutter through the faceted bands must seal with the moment-based
+    // enclosure of the clip pieces and repeat byte for byte, like the +Z tube tests.
+    // Parked until the carve's keep/throw assembly handles the near-coincident kink
+    // crossing (#420): today the seal honestly refuses the candidate
+    // (ResultNotCertified, ShellStatus::Open), never a crash.
+    let body = tube_body();
+    let before = volume(&body);
+    let cutter = MemberHoleCutter::directed(circle(L / 2.0, 0.0, 4.0), 3.0, 4.0, -76.0, 76.0, 11);
+    let res = member_through_hole(&body, &cutter).unwrap();
+    assert_sealed(&res);
+    assert_eq!(res.kind(), OpKind::MemberThroughHole);
+    // The solid section is genus 0; the through hole adds one more.
+    assert_eq!(genus(&res), 1);
+    let removed = before - volume(res.body());
+    assert!(removed > 0.0);
+    let analytic = res.analytic_volume_mm3().unwrap();
+    assert!(analytic.hi - analytic.lo < 1.0);
+    assert!(analytic.lo <= before - removed && before - removed <= analytic.hi);
+    assert!(
+        res.face_table()
+            .iter()
+            .any(|id| id.starts_with("cut:f.h11.w0."))
+    );
+    // The merge walk is deterministic.
+    let second = member_through_hole(&body, &cutter).unwrap();
+    assert_eq!(res.blob(), second.blob());
+    assert_eq!(res.mesh_digest(), second.mesh_digest());
+}
+
+#[test]
+fn an_oblique_hole_crosses_sloped_walls_with_the_closed_cosine_volume() {
+    // A square section rotated by 20 degrees, the cutter axis 10 degrees off +Z: the two
+    // crossed walls stay parallel, so the removed column is the wall-to-wall distance
+    // 100 over |n . d| = cos(20 deg + 10 deg).
+    let body = rotated_square_body(20.0);
+    let before = volume(&body);
+    let axis = ((10.0f64).to_radians().sin(), (10.0f64).to_radians().cos());
+    let res = drill_directed(&body, circle(L / 2.0, 0.0, 8.0), axis, -76.0, 76.0, 12);
+    assert_sealed(&res);
+    assert_eq!(genus(&res), 1);
+    let segments = circle(0.0, 0.0, 8.0).approximation().unwrap().segments;
+    let footprint = regular_polygon_area(segments, 8.0);
+    let expected = footprint * 100.0 / (30.0f64).to_radians().cos();
+    let removed = before - volume(res.body());
+    assert!(
+        (removed - expected).abs() < 1e-6 * expected,
+        "{removed} vs {expected}"
+    );
+    let analytic = res.analytic_volume_mm3().unwrap();
+    let expect_result = before - expected;
+    assert!(analytic.lo <= expect_result && expect_result <= analytic.hi);
+    assert!(res.face_table().iter().any(|id| id == "cut:f.h12.w0.s0"));
+}
+
 // G14.2 slice 1: directed oblique cutters through flat walls.
 
 fn drill_directed(

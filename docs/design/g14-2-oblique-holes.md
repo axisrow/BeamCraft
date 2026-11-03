@@ -261,3 +261,53 @@ Known limitations still standing:
   open owner decision.
 - Re-cutting a body after a faceted wall hole keeps the slice-1 limitation: the new
   band walls are not X-parallel, so a later hole on them is refused with `BodyNotPrism`.
+
+## Status after slice 4 (the acceptance surface)
+
+Slice 4 closes the slice plan: the F06 command layer admits what the kernel serves, the
+engine replays the stored records through the directed cutter, and the acceptance suite
+certifies the stack end to end. The slices above stay the specification of the kernel
+operation; this section records where the model layer meets it.
+
+- **Model admission.** `MemberHole::validate` (`crates/steel/src/model/command.rs`) admits
+  any section-plane direction `(u, v, 0)` with a nonzero transverse part; the magnitude
+  names nothing (the replay normalizes the axis line), the coordinate cap and finiteness
+  apply to the direction as to every hole coordinate, and an axial component stays the
+  command-layer refusal (`UNSUPPORTED_GEOMETRY`) — the kernel cutter is perpendicular to
+  the member axis.
+- **Engine replay.** The records replay through the kernel's section-aware member-hole
+  operation with `MemberHoleCutter::directed` (`crates/steel/src/engine/member_hole.rs`):
+  the body is mapped into the kernel frame by the exact cyclic rotation of the member
+  frame (X = the member axis), the cavity is the stored polygon in the footprint plane
+  `(a, b)` unchanged, `through` spans the body's full height along the axis plus the
+  1 mm overshoot, and a `range` runs from the axis point along the axis. This retires the
+  pending-kernel-slice refusals for ranged extents and for non-axis-aligned hole
+  directions.
+- **Section profiles.** Served through the same replay (`crates/steel/src/engine/member.rs`):
+  the rectangle-only guard is lifted, so a CHS or any A07.1 section member's faceted walls
+  (the tube surface) are reachable end to end; the cuts replay before the holes as before.
+- **Volume.** Exactly the slice-3 state: the chains certify from the clip pieces' exact
+  moments with outward-rounded enclosures, and the flat walls keep the slice-1 divergence
+  sum bit for bit.
+- **Acceptance.** The G14.2 certification suite closes with the engine volumes of oblique,
+  non-unit, ranged and CHS holes, the CLI oblique and ranged holes end to end, and the
+  kernel's directed single-strip chains: the sloped-wall hole against the closed
+  `A * s / |n . d|` cosine form with the moment enclosure and byte-exact repeats. The
+  feature-id grammar admits the amendment's band spelling (`cut:f.h<o>.w<k>.s<j>[.p<r>]`),
+  so the holed member keeps its named faces, edges and vertices for picks, dimension
+  anchors and drawings. The directed cutter through **multi-facet** chains (a tube) is
+  parked (#420): when a chain's kink line crosses a footprint edge close to a cavity
+  vertex, the carve's keep/throw assembly emits an unsealed corner piece and the seal
+  honestly refuses (`ResultNotCertified`, never a crash, nothing written).
+
+Refusals still standing, each named exactly: an axial hole direction; a roll or a
+non-coordinate member frame (the exact permutation contract: the axes must be the
+coordinate axes, without roll); a curved member or polybeam with hole records; the mix of
+crossed flat faces and crossed chains (`BodyWallUnsupported`, lifting unassigned); the
+`1/cos(tilt)` shadow-scale deviation of the carved opening (open owner decision; the
+certified volume stays exact); the directed multi-facet chain corner piece (#420, the
+parked test above); and the second member-hole record on one member: the replay maps
+every record into the member frame afresh, but the first hole's opening ring vertices sit
+on their wall planes only up to rounding, so the second record's body fails the exact
+X-extrusion contract and the replay refuses `BodyNotPrism` (the member keeps its last
+valid state, as F04 section 4 says).

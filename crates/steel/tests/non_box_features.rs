@@ -293,6 +293,9 @@ fn token_families_accept_only_canonical_bounded_roles() {
         "extrusion:v.z1.c2.7",
         "cut:f.h7.s3",
         "cut:f.p8",
+        // The G14.2 member cutter: the crossing `.w<k>` and the `.p<run>` suffix.
+        "cut:f.h0.w0.s0",
+        "cut:f.h9.w3.s31.p2",
     ] {
         let text = format!("fid1:{ID}:{local}");
         assert_eq!(FeatureId::parse(&text).unwrap().to_string(), text);

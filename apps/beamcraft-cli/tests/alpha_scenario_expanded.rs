@@ -322,10 +322,34 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         volume_of(&after_chamfer, PARTS[3]),
     );
 
-    // Member holes (A04.2, the G14.1 transverse slice): a through round hole along the
-    // section width (u) direction at the section centre, half way up the first column. The
-    // stored polygon is the geometry: d = 20 takes the regular 32-gon of F06 section 2, so
-    // the hole removes its area times the 100 mm width from the gross column volume.
+    // Member holes (A04.2, the G14.2 transverse slice). The no-fit refusal runs on the
+    // plain member first: a transverse coordinate outside the section leaves no fit and
+    // writes nothing (the axis point stays mid-member — at the member's end the end-cap
+    // clearance would refuse first), and the successful hole after it proves that.
+    let head_before_hole = s.head("draft");
+    let refused_hole = s.run(
+        "draft",
+        "add-hole",
+        &[
+            "--id",
+            PARTS[0],
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000aa25",
+            "--axis-point",
+            "0,500,250",
+            "--axis-direction",
+            "1,0,0",
+            "--diameter",
+            "20",
+        ],
+        2,
+    );
+    assert_eq!(text(&refused_hole, "code"), "INVALID_ARGUMENT");
+    assert_eq!(s.head("draft"), head_before_hole);
+    // The through round hole along the section width (u) direction at the section centre,
+    // half way up the first column. The stored polygon is the geometry: d = 20 takes the
+    // regular 32-gon of F06 section 2, so the hole removes its area times the 100 mm width
+    // from the gross column volume.
     let holed = s.ok(
         "draft",
         "add-hole",
@@ -354,27 +378,6 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             .unwrap(),
         5_000_000.0 - hole_area * 100.0,
     );
-    // A transverse coordinate outside the section leaves no fit and writes nothing.
-    let head_before_hole = s.head("draft");
-    let refused_hole = s.run(
-        "draft",
-        "add-hole",
-        &[
-            "--id",
-            PARTS[0],
-            "--operation-id",
-            "019a7bf0-0000-7000-8000-00000000aa25",
-            "--axis-point",
-            "0,500,500",
-            "--axis-direction",
-            "1,0,0",
-            "--diameter",
-            "20",
-        ],
-        2,
-    );
-    assert_eq!(text(&refused_hole, "code"), "INVALID_ARGUMENT");
-    assert_eq!(s.head("draft"), head_before_hole);
 
     // User attributes (I04): definitions are project data, values ride on any element, and
     // an undefined name or an off-choice value is refused, never stored silently.

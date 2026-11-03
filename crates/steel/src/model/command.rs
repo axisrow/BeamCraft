@@ -1333,10 +1333,10 @@ pub struct MemberHole {
     /// A point `(u, v, w)` on the hole axis in the member frame, finite, within the coordinate
     /// cap.
     pub axis_point_mm: [f64; 3],
-    /// The unit direction of the hole axis in the member frame. The first slice admits exactly
-    /// one of `(+-1, 0, 0)` or `(0, +-1, 0)`, the section directions; any other direction,
-    /// including one with a component along the member axis, is `UNSUPPORTED_GEOMETRY` until
-    /// G14.2.
+    /// The direction of the hole axis in the member frame: any section-plane direction
+    /// `(u, v, 0)` with a nonzero transverse part (G14.2). The magnitude names nothing — the
+    /// replay normalizes the axis line — and a component along the member axis stays
+    /// `UNSUPPORTED_GEOMETRY` (the kernel cutter is perpendicular to the member axis).
     pub axis_direction: [f64; 3],
     /// How far the cutter reaches.
     pub extent: HoleExtent,
@@ -1359,15 +1359,21 @@ impl MemberHole {
                 "a hole diameter must be positive",
             ));
         }
-        let is_section_direction = matches!(
-            self.axis_direction,
-            [1.0, 0.0, 0.0] | [-1.0, 0.0, 0.0] | [0.0, 1.0, 0.0] | [0.0, -1.0, 0.0]
-        );
-        if !is_section_direction {
+        hole_values_finite(self.axis_direction.iter().copied())?;
+        hole_values_in_cap(self.axis_direction.iter().copied())?;
+        let [u, v, w] = self.axis_direction;
+        if w != 0.0 {
             return Err(CommandError::new(
                 ErrorCode::UnsupportedGeometry,
                 "hole.axis_direction",
-                "only a section direction (+-X_r, +-Y_r) is supported until G14.2",
+                "the hole axis must stay in the member's section plane (no axial component)",
+            ));
+        }
+        if u == 0.0 && v == 0.0 {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "hole.axis_direction",
+                "the hole axis direction needs a nonzero transverse part",
             ));
         }
         self.extent.validate()
@@ -1653,8 +1659,8 @@ pub struct MemberHoleRecord {
     pub ordinal: usize,
     /// A point `(u, v, w)` on the hole axis in the member frame.
     pub axis_point_mm: [f64; 3],
-    /// The unit direction of the hole axis in the member frame: a section direction of the
-    /// first slice (`(+-1, 0, 0)` or `(0, +-1, 0)`).
+    /// The direction of the hole axis in the member frame: any section-plane direction
+    /// `(u, v, 0)` with a nonzero transverse part; the replay normalizes the axis line.
     pub axis_direction: [f64; 3],
     /// How far the cutter reaches.
     pub extent: HoleExtent,

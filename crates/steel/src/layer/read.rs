@@ -252,8 +252,10 @@ pub(super) const MAX_HOLE_POINTS: usize = 1024;
 /// attributes or none, the counts add up to the points, every polygon has at least three
 /// in-cap points with every `z` zero, there is one full UUIDv7 and one strictly increasing
 /// non-negative ordinal per polygon, each axis point is finite and in cap, each axis direction
-/// is a signed unit token, and each extent is `through` (zero range) or a `from < to` range.
-/// Winding, placement and fit are the engine's decision on replay, never re-derived here.
+/// is finite, in cap and stays in the section plane with a nonzero transverse part (the
+/// magnitude names nothing; the replay normalizes the axis line), and each extent is `through`
+/// (zero range) or a `from < to` range. Winding, placement and fit are the engine's decision
+/// on replay, never re-derived here.
 pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     let present = |name: &str| prim.properties.iter().any(|p| p.name == name);
     let names = [
@@ -312,10 +314,12 @@ pub(super) fn member_hole_records(prim: &Prim) -> Result<(), Diagnostic> {
     }
     cap(polygons.iter().flatten().copied(), 1e9)?;
     cap(axis.iter().flatten().copied(), 1e9)?;
+    cap(directions.iter().flatten().copied(), 1e9)?;
+    // Each axis direction stays in the member's section plane with a nonzero transverse
+    // part (G14.2); the replay normalizes the axis line, so the magnitude names nothing.
     for direction in &directions {
-        let unit = direction.iter().filter(|v| **v != 0.0).count() == 1
-            && direction.iter().all(|v| matches!(v, 1.0 | -1.0 | 0.0));
-        if !unit {
+        let [u, v, w] = *direction;
+        if w != 0.0 || !((u != 0.0 || v != 0.0) && u.is_finite() && v.is_finite()) {
             return Err(invalid());
         }
     }

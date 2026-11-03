@@ -583,15 +583,12 @@ pub fn evaluate_member(
     profile: ProfileInfo,
 ) -> Result<MemberBody, CommandError> {
     authored.placement.validate()?;
-    // A hole record replays through the kernel's through-hole operation, which this slice
-    // serves on a straight rectangle-profile member only; everything else waits for G14.1.
-    if !authored.hole_records.is_empty()
-        && (authored.curved
-            || authored.axis_points_mm.len() > 2
-            || !matches!(profile, ProfileInfo::Rectangle { .. }))
-    {
+    // A hole record replays through the kernel's section-aware member-hole operation, which
+    // serves straight members of every profile family (the rectangle and the A07.1 sections,
+    // faceted walls included); a curved member or polybeam has no straight X-extrusion body.
+    if !authored.hole_records.is_empty() && (authored.curved || authored.axis_points_mm.len() > 2) {
         return Err(crate::engine::member_hole::pending_member_holes(
-            "the member hole needs the kernel slice G14.1: only a straight rectangle-profile member is served in this slice",
+            "a member hole needs a straight member; curved members and polybeams are not served",
         ));
     }
     let points: Vec<Point3> = authored
@@ -708,7 +705,7 @@ pub fn evaluate_member(
                     placement: section_placement,
                 })
                 .map_err(|failure| map_section(&failure))?;
-                if authored.cuts.is_empty() {
+                if authored.cuts.is_empty() && authored.hole_records.is_empty() {
                     (
                         crate::engine::solid_mesh::from_section(&result),
                         result.axis_length_mm(),
@@ -716,11 +713,32 @@ pub fn evaluate_member(
                         None,
                     )
                 } else {
-                    let solid = replay_cuts(
+                    // The same certified replay as the rectangle: the cuts first, then the
+                    // hole records over the cut body, through the member's own frame.
+                    let frame =
+                        MemberFrame::new(start, end, width_mm, height_mm, authored.roll_rad)
+                            .map_err(|_| {
+                                CommandError::new(
+                                    ErrorCode::UnsupportedGeometry,
+                                    "axis_points_mm",
+                                    "member frame could not be built",
+                                )
+                            })?;
+                    let (solid, cut_body) = replay_cuts_with_body(
                         result.body(),
                         crate::engine::solid_mesh::from_section(&result),
                         &authored.cuts,
                     )?;
+                    let solid = if authored.hole_records.is_empty() {
+                        solid
+                    } else {
+                        let body = cut_body.unwrap_or_else(|| result.body().clone());
+                        crate::engine::member_hole::replay_member_holes(
+                            &frame.frame(),
+                            &body,
+                            &authored.hole_records,
+                        )?
+                    };
                     let volume = solid.volume_mm3();
                     (
                         solid,

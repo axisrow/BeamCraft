@@ -27,11 +27,26 @@ pub(super) fn parse_role(body: BodyKind, token: &str) -> Option<FeatureKind> {
         if let Some(p) = face.strip_prefix('p') {
             return decimal(p, 999).map(|_| FeatureKind::Face);
         }
+        // The hole walls: `cut:f.h<ordinal>` (one curved wall), the F06 amendment's
+        // `cut:f.h<ordinal>.s<side>` (the plate cutter) and the G14.2 member cutter's
+        // `cut:f.h<ordinal>.w<crossing>.s<side>` with a `.p<run>` suffix past the first
+        // planar run of a side.
         let hole = face.strip_prefix('h')?;
+        let (hole, run) = match hole.split_once(".p") {
+            Some((h, r)) => (h, Some(r)),
+            None => (hole, None),
+        };
         let valid = if let Some((h, side)) = hole.split_once(".s") {
-            decimal(h, 999).is_some() && decimal(side, 1023).is_some()
+            let (h, crossing) = match h.split_once(".w") {
+                Some((h, w)) => (h, Some(w)),
+                None => (h, None),
+            };
+            decimal(h, 999).is_some()
+                && crossing.is_none_or(|w| decimal(w, 999).is_some())
+                && decimal(side, 1023).is_some()
+                && run.is_none_or(|r| decimal(r, 1023).is_some())
         } else {
-            decimal(hole, 999).is_some()
+            run.is_none() && decimal(hole, 999).is_some()
         };
         return valid.then_some(FeatureKind::Face);
     }
