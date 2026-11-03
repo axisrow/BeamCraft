@@ -248,12 +248,21 @@ pub(super) fn validate_looks(prims: &[Prim]) -> Result<(), Diagnostic> {
         }
         let name = p.path.rsplit_once('/').map_or(p.path.as_str(), |(_, n)| n);
         let shader = name == "PreviewSurface";
-        let exact = |prop: &str, ty: &str| -> Result<(), Diagnostic> {
-            match p.properties.iter().find(|a| a.name == prop) {
-                Some(a) if a.type_name == ty => Ok(()),
-                _ => Err(invalid()),
-            }
+        // The closed property set of a look: a Material carries only its valueless surface
+        // output; the shader adds the UsdPreviewSurface identity and its diffuse colour.
+        // Any other property, with or without a value, is outside the reserved scope.
+        let allowed: &[&str] = if shader {
+            &["info:id", "inputs:diffuseColor", "outputs:surface"]
+        } else {
+            &["outputs:surface"]
         };
+        if p.properties.len() != allowed.len()
+            || p.properties
+                .iter()
+                .any(|a| !allowed.contains(&a.name.as_str()))
+        {
+            return Err(unsupported());
+        }
         // The look's index names the palette entry: the material path for a shader child,
         // the prim's own path otherwise.
         let holder = if shader {
@@ -275,50 +284,45 @@ pub(super) fn validate_looks(prims: &[Prim]) -> Result<(), Diagnostic> {
             Some(colour) => linear(*colour),
             None => return Err(unsupported()),
         };
-        if shader {
-            if p.type_name.as_deref() != Some("Shader")
-                || text(p, "info:id", "token")? != "UsdPreviewSurface"
-            {
-                return Err(unsupported());
-            }
-            exact("inputs:diffuseColor", "color3f")?;
-            exact("outputs:surface", "token")?;
-        } else {
-            if p.type_name.as_deref() != Some("Material") {
-                return Err(unsupported());
-            }
-            exact("outputs:surface", "token")?;
-        }
-        // The diffuse colour lives on the shader; the material names the palette and binds.
-        let colour_stored = |prop: &str| -> Result<Option<[f32; 3]>, Diagnostic> {
-            let value = match p.properties.iter().find(|a| a.name == prop) {
-                Some(a) => a.value.as_ref(),
-                None => return Ok(None),
-            };
-            match value {
-                None => Ok(None),
-                Some(Value::Array(items)) => match items.as_slice() {
-                    [Value::Number(r), Value::Number(g), Value::Number(b)] => {
-                        Ok(Some([*r as f32, *g as f32, *b as f32]))
-                    }
-                    _ => Err(invalid()),
-                },
-                Some(_) => Err(invalid()),
-            }
-        };
-        let stored = if shader {
-            colour_stored("inputs:diffuseColor")?.ok_or_else(invalid)?
-        } else if colour_stored("inputs:diffuseColor")?.is_some() {
-            return Err(invalid());
-        } else {
-            expected
-        };
-        if stored
+        let output = p
+            .properties
             .iter()
-            .zip(expected)
-            .any(|(s, e)| (s - e).abs() > 1.0 / 255.0)
-        {
+            .find(|a| a.name == "outputs:surface")
+            .ok_or_else(invalid)?;
+        if output.type_name != "token" {
             return Err(invalid());
+        }
+        if shader {
+            if p.type_name.as_deref() != Some("Shader") {
+                return Err(unsupported());
+            }
+            if text(p, "info:id", "token")? != "UsdPreviewSurface" {
+                return Err(invalid());
+            }
+            // The diffuse colour is declared with an exact value, never valueless.
+            let diffuse = match p
+                .properties
+                .iter()
+                .find(|a| a.name == "inputs:diffuseColor")
+                .map(|a| a.value.as_ref())
+            {
+                Some(Some(Value::Array(items))) => match items.as_slice() {
+                    [Value::Number(r), Value::Number(g), Value::Number(b)] => {
+                        [*r as f32, *g as f32, *b as f32]
+                    }
+                    _ => return Err(invalid()),
+                },
+                _ => return Err(invalid()),
+            };
+            if diffuse
+                .iter()
+                .zip(expected)
+                .any(|(s, e)| (s - e).abs() > 1.0 / 255.0)
+            {
+                return Err(invalid());
+            }
+        } else if p.type_name.as_deref() != Some("Material") {
+            return Err(unsupported());
         }
         if p.relationships.iter().any(|r| !r.targets.is_empty()) {
             return Err(invalid());

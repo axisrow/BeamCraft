@@ -252,6 +252,70 @@ fn serialize(data: &sdf::Data) -> Vec<u8> {
     TextWriter::write(data, &mut buffer).unwrap();
     buffer
 }
+/// Adds `name` to the property children of a prim in a parsed layer.
+fn push_property(data: &mut sdf::Data, holder: &str, name: &str) {
+    let at = openusd::sdf::Path::new(holder).unwrap();
+    let mut children = match data.try_field(&at, "propertyChildren") {
+        Ok(Some(v)) => match v.as_ref() {
+            sdf::Value::TokenVec(v) => v.clone(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    };
+    children.push(name.into());
+    data.set_field(&at, "propertyChildren", sdf::Value::TokenVec(children));
+}
+/// Authors a uniform attribute spec on `holder` in a parsed layer, with or without a default.
+fn author_attribute(
+    data: &mut sdf::Data,
+    holder: &str,
+    name: &str,
+    ty: &str,
+    default: Option<sdf::Value>,
+) {
+    let full = openusd::sdf::Path::new(&format!("{holder}.{name}")).unwrap();
+    data.create_spec(full.clone(), sdf::SpecType::Attribute);
+    push_property(data, holder, name);
+    data.set_field(&full, "typeName", sdf::Value::token(ty));
+    data.set_field(&full, "custom", sdf::Value::Bool(false));
+    data.set_field(
+        &full,
+        "variability",
+        sdf::Value::Variability(sdf::Variability::Uniform),
+    );
+    if let Some(v) = default {
+        data.set_field(&full, "default", v);
+    }
+}
+/// Applies `edit` to the authored layer of a live store and returns the strict-profile
+/// refusal of the tampered bytes.
+fn tampered_refusal(
+    author: &Author,
+    context: &Context,
+    edit: impl FnOnce(&mut sdf::Data),
+) -> Diagnostic {
+    let mut data = authored_data(author, context);
+    edit(&mut data);
+    let bytes = serialize(&data);
+    let exported = author.export(context, &control()).unwrap();
+    let assets = exported
+        .into_iter()
+        .map(|mut a| {
+            if a.name == "authored.usda" {
+                a.bytes = bytes.clone();
+                a.digest = digest(&a.bytes);
+            }
+            a
+        })
+        .collect();
+    validate_layers(
+        request(assets, &OWNED),
+        schema_identity().unwrap(),
+        &control(),
+    )
+    .err()
+    .unwrap_or_else(|| panic!("tampered layers must be refused"))
+}
 
 #[test]
 fn a_created_part_carries_the_portable_appearance_of_its_class() {
@@ -405,64 +469,83 @@ fn the_appearance_never_moves_with_the_engineering_material() {
 #[test]
 fn a_tampered_look_is_refused_by_the_strict_profile() {
     let (author, opened, _) = with_plate();
-    let mut data = authored_data(&author, &opened.context);
-    let shader = "/World/Looks/PartClass0/PreviewSurface.inputs:diffuseColor";
-    data.set_field(
-        &openusd::sdf::Path::new(shader).unwrap(),
-        "default",
-        sdf::Value::Vec3f([0.0, 0.0, 0.0].into()),
-    );
-    let tampered = serialize(&data);
-    let exported = author.export(&opened.context, &control()).unwrap();
-    let assets = exported
-        .into_iter()
-        .map(|mut a| {
-            if a.name == "authored.usda" {
-                a.bytes = tampered.clone();
-                a.digest = digest(&a.bytes);
-            }
-            a
-        })
-        .collect();
-    let error = validate_layers(
-        request(assets, &OWNED),
-        schema_identity().unwrap(),
-        &control(),
-    )
-    .unwrap_err();
+    let error = tampered_refusal(&author, &opened.context, |data| {
+        data.set_field(
+            &openusd::sdf::Path::new("/World/Looks/PartClass0/PreviewSurface.inputs:diffuseColor")
+                .unwrap(),
+            "default",
+            sdf::Value::Vec3f([0.0, 0.0, 0.0].into()),
+        );
+    });
     assert_eq!(error.code, ErrorCode::InvalidArgument, "{}", error.message);
 }
 
 #[test]
 fn a_tampered_binding_is_refused_by_the_strict_profile() {
     let (author, opened, _) = with_plate();
-    let mut data = authored_data(&author, &opened.context);
-    let binding = format!("{}.material:binding", plate_path());
-    data.set_field(
-        &openusd::sdf::Path::new(&binding).unwrap(),
-        "targetPaths",
-        sdf::Value::PathListOp(sdf::ListOp::explicit(vec![
-            openusd::sdf::Path::new("/World/Looks/PartClass7").unwrap(),
-        ])),
+    let error = tampered_refusal(&author, &opened.context, |data| {
+        data.set_field(
+            &openusd::sdf::Path::new(&format!("{}.material:binding", plate_path())).unwrap(),
+            "targetPaths",
+            sdf::Value::PathListOp(sdf::ListOp::explicit(vec![
+                openusd::sdf::Path::new("/World/Looks/PartClass7").unwrap(),
+            ])),
+        );
+    });
+    assert_eq!(error.code, ErrorCode::InvalidArgument, "{}", error.message);
+}
+
+#[test]
+fn an_extra_property_on_a_look_is_refused_by_the_strict_profile() {
+    // The looks are closed content: an extra shader input, value and all, is outside the
+    // reserved scope.
+    let (author, opened, _) = with_plate();
+    let error = tampered_refusal(&author, &opened.context, |data| {
+        author_attribute(
+            data,
+            "/World/Looks/PartClass0/PreviewSurface",
+            "inputs:metallic",
+            "float",
+            Some(sdf::Value::Float(0.5)),
+        );
+    });
+    assert_eq!(
+        error.code,
+        ErrorCode::UnsupportedProperty,
+        "{}",
+        error.message
     );
-    let tampered = serialize(&data);
-    let exported = author.export(&opened.context, &control()).unwrap();
-    let assets = exported
-        .into_iter()
-        .map(|mut a| {
-            if a.name == "authored.usda" {
-                a.bytes = tampered.clone();
-                a.digest = digest(&a.bytes);
-            }
-            a
-        })
-        .collect();
-    let error = validate_layers(
-        request(assets, &OWNED),
-        schema_identity().unwrap(),
-        &control(),
-    )
-    .unwrap_err();
+}
+
+#[test]
+fn a_declared_diffuse_colour_outside_the_shader_is_refused() {
+    let (author, opened, _) = with_plate();
+    // A declared-but-valueless diffuse colour on the material: the property is outside the
+    // material's closed set, with or without a value.
+    let error = tampered_refusal(&author, &opened.context, |data| {
+        author_attribute(
+            data,
+            "/World/Looks/PartClass0",
+            "inputs:diffuseColor",
+            "color3f",
+            None,
+        );
+    });
+    assert_eq!(
+        error.code,
+        ErrorCode::UnsupportedProperty,
+        "{}",
+        error.message
+    );
+    // The same property on the shader without a value is a declared-but-empty colour:
+    // refused as invalid, never read as absent.
+    let error = tampered_refusal(&author, &opened.context, |data| {
+        data.erase_field(
+            &openusd::sdf::Path::new("/World/Looks/PartClass0/PreviewSurface.inputs:diffuseColor")
+                .unwrap(),
+            "default",
+        );
+    });
     assert_eq!(error.code, ErrorCode::InvalidArgument, "{}", error.message);
 }
 
