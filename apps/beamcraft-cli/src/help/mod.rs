@@ -36,6 +36,7 @@ mod rebase;
 mod reference;
 mod revision;
 mod schedules;
+mod session;
 mod start;
 mod store;
 mod view;
@@ -92,6 +93,7 @@ const SECTIONS: &[&str] = &[
     schedules::HELP,
     store::HELP,
     drawing::DOCUMENTS,
+    session::HELP,
 ];
 
 /// Write the same help for no arguments, `--help` and `-h`.

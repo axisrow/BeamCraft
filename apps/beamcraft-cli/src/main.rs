@@ -6,6 +6,7 @@
 mod help;
 mod report;
 mod revision;
+mod session_cmd;
 
 use beamcraft_commands::registry::{self, Route};
 use beamcraft_host::{
@@ -70,6 +71,41 @@ fn main() -> std::process::ExitCode {
     let route = args.first().and_then(|c| registry::route(c));
     match route {
         Some(Route::Commands) => return list_commands(args.get(1..).unwrap_or_default()),
+        Some(Route::Session) => return session_cmd::execute(&args),
+        Some(Route::Batch) => {
+            // Parse the options exactly as the session would, so an unlisted one is refused
+            // as unknown; a batch word then only exists inside a running session.
+            let word = args
+                .first()
+                .and_then(|w| w.to_str())
+                .unwrap_or_default()
+                .to_owned();
+            let tail = args.get(1..).unwrap_or_default();
+            if let Err(refusal) = session_cmd::check_batch_options(&word, tail) {
+                let json = Json::object([
+                    ("outcome", Json::text("rejected")),
+                    ("code", Json::text(refusal.code.as_str())),
+                    ("message", Json::text(refusal.message)),
+                    ("observed_context", Json::Null),
+                    ("diagnostics", Json::Array(vec![])),
+                ]);
+                return print_json(&json, session_cmd::refusal_exit(refusal.code));
+            }
+            let error = HostError::logical(ErrorCode::InvalidArgument);
+            let json = Json::object([
+                ("outcome", Json::text("rejected")),
+                ("code", Json::text(error.code.as_str())),
+                (
+                    "message",
+                    Json::text(
+                        "this batch word belongs to a running beamcraft session and takes no process of its own",
+                    ),
+                ),
+                ("observed_context", Json::Null),
+                ("diagnostics", Json::Array(vec![])),
+            ]);
+            return print_json(&json, error.exit_code());
+        }
         Some(Route::ExportView) => return export_view(&args),
         Some(Route::Export) => {
             // The report lists every element, so it can exceed the control-message bounds that
@@ -86,42 +122,55 @@ fn main() -> std::process::ExitCode {
     };
     // Dispatch is by registry route only; an unregistered word takes the store-level path, which
     // refuses it.
-    let (json, exit) = match route {
-        Some(Route::View) => view::execute(&args),
-        Some(Route::Views) => views_cmd::execute(&args),
-        Some(Route::Annotation) => annotation_cmd::execute(&args),
-        Some(Route::History) => history_cmd::execute(&args),
-        Some(Route::Reference) => reference_cmd::execute(&args),
-        Some(Route::Assembly) => assembly_cmd::execute(&args),
-        Some(Route::Rebase) => rebase_cmd::execute(&args),
-        Some(Route::Resolve) => resolve_cmd::execute(&args),
-        Some(Route::Compensate) => compensate_cmd::execute(&args),
-        Some(Route::Changeset) => changeset_cmd::execute(&args),
-        Some(Route::Coordinator) => coordinator_cmd::execute(&args),
-        Some(Route::Drawing) => drawing_cmd::execute(&args),
-        Some(Route::WorkPlane) => work_plane_cmd::execute(&args),
-        Some(Route::Pick) => pick_cmd::execute(&args),
-        Some(Route::Filters) => filters_cmd::execute(&args),
-        Some(Route::Construction) => construction_cmd::execute(&args),
-        Some(Route::Weld) => weld_cmd::execute(&args),
-        Some(Route::Bolt) => bolt_cmd::execute(&args),
-        Some(Route::Bom) => bom_cmd::execute(&args),
-        Some(Route::Schedule) => schedule_cmd::execute(&args),
-        Some(Route::Library) => library_cmd::execute(&args),
-        Some(Route::Fastener) => fastener_cmd::execute(&args),
-        Some(Route::Project) => project_cmd::execute(&args),
-        Some(Route::Grid) => grid_cmd::execute(&args),
-        Some(Route::Level) => level_cmd::execute(&args),
-        Some(Route::Coordination) => coordination_cmd::execute(&args),
-        Some(Route::Attribute) => attribute_cmd::execute(&args),
-        Some(Route::Numbering) => numbering_cmd::execute(&args),
-        Some(Route::Plate) => plate_cmd::execute(&args),
-        // The early returns above already took these three.
-        Some(Route::Generic | Route::Commands | Route::ExportView | Route::Export) | None => {
-            run_store_command(args)
-        }
-    };
+    let (json, exit) = dispatch(route, &args);
     print_json(&json, exit)
+}
+
+/// The one-process dispatch by registry route; the session reuses it per line, so a command
+/// refuses and answers identically in either mode. `None` takes the store-level path, which
+/// refuses an unregistered word.
+fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
+    match route {
+        Some(Route::View) => view::execute(args),
+        Some(Route::Views) => views_cmd::execute(args),
+        Some(Route::Annotation) => annotation_cmd::execute(args),
+        Some(Route::History) => history_cmd::execute(args),
+        Some(Route::Reference) => reference_cmd::execute(args),
+        Some(Route::Assembly) => assembly_cmd::execute(args),
+        Some(Route::Rebase) => rebase_cmd::execute(args),
+        Some(Route::Resolve) => resolve_cmd::execute(args),
+        Some(Route::Compensate) => compensate_cmd::execute(args),
+        Some(Route::Changeset) => changeset_cmd::execute(args),
+        Some(Route::Coordinator) => coordinator_cmd::execute(args),
+        Some(Route::Drawing) => drawing_cmd::execute(args),
+        Some(Route::WorkPlane) => work_plane_cmd::execute(args),
+        Some(Route::Pick) => pick_cmd::execute(args),
+        Some(Route::Filters) => filters_cmd::execute(args),
+        Some(Route::Construction) => construction_cmd::execute(args),
+        Some(Route::Weld) => weld_cmd::execute(args),
+        Some(Route::Bolt) => bolt_cmd::execute(args),
+        Some(Route::Bom) => bom_cmd::execute(args),
+        Some(Route::Schedule) => schedule_cmd::execute(args),
+        Some(Route::Library) => library_cmd::execute(args),
+        Some(Route::Fastener) => fastener_cmd::execute(args),
+        Some(Route::Project) => project_cmd::execute(args),
+        Some(Route::Grid) => grid_cmd::execute(args),
+        Some(Route::Level) => level_cmd::execute(args),
+        Some(Route::Coordination) => coordination_cmd::execute(args),
+        Some(Route::Attribute) => attribute_cmd::execute(args),
+        Some(Route::Numbering) => numbering_cmd::execute(args),
+        Some(Route::Plate) => plate_cmd::execute(args),
+        // The early returns above already took these four.
+        Some(
+            Route::Generic
+            | Route::Commands
+            | Route::ExportView
+            | Route::Export
+            | Route::Session
+            | Route::Batch,
+        )
+        | None => run_store_command(args.to_vec()),
+    }
 }
 /// Runs a store-level blob or revision command, or refuses an unregistered word.
 fn run_store_command(args: Vec<std::ffi::OsString>) -> (Json, u8) {

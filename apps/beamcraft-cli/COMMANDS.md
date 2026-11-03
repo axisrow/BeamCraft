@@ -1491,3 +1491,37 @@ read.
 ```text
 commands
 ```
+
+## session
+
+### session
+
+read.
+
+```text
+session --store ROOT
+```
+
+### batch-open
+
+read.
+
+```text
+batch-open
+```
+
+### batch-commit
+
+write.
+
+```text
+batch-commit [--op-id UUID] [--revision-id UUID]
+```
+
+### batch-abort
+
+read.
+
+```text
+batch-abort
+```

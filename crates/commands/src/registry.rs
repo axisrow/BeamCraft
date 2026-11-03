@@ -84,6 +84,10 @@ pub enum Route {
     Numbering,
     /// The modelling, definition, edit and workspace commands.
     Plate,
+    /// `session`, which holds one store and runs commands from stdin.
+    Session,
+    /// The batch words of a running session.
+    Batch,
 }
 
 /// What a command changes.
@@ -2474,6 +2478,38 @@ pub const COMMANDS: &[Command] = &[
         Route::Commands,
         "commands",
         "commands",
+        Access::Read,
+        Ids::None,
+        &[],
+    ),
+    entry(
+        Route::Session,
+        "session",
+        "session",
+        Access::Read,
+        Ids::None,
+        &[req("--store", "ROOT")],
+    ),
+    entry(
+        Route::Batch,
+        "session",
+        "batch-open",
+        Access::Read,
+        Ids::None,
+        &[],
+    ),
+    entry(
+        Route::Batch,
+        "session",
+        "batch-commit",
+        Access::Write,
+        Ids::None,
+        &[opt("--op-id", "UUID"), opt("--revision-id", "UUID")],
+    ),
+    entry(
+        Route::Batch,
+        "session",
+        "batch-abort",
         Access::Read,
         Ids::None,
         &[],

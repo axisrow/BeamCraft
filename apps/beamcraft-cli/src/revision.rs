@@ -38,6 +38,19 @@ fn generation(text: &str) -> Option<u64> {
 }
 
 fn summary(outcome: &str, info: &RevisionInfo) -> Json {
+    let mut fields = Json::Object(Default::default());
+    if let Json::Object(entries) = &mut fields {
+        entries.insert("outcome".to_owned(), Json::text(outcome));
+        for (key, value) in revision_fields(info) {
+            entries.insert(key.to_owned(), value);
+        }
+    }
+    fields
+}
+
+/// The revision fields of a summary without an outcome label, for callers that nest them
+/// (the session's `batch-commit` nests the committed revision under `revision`).
+pub(crate) fn revision_fields(info: &RevisionInfo) -> Vec<(&'static str, Json)> {
     let manifest = info.manifest();
     let content = manifest.content();
     let layers = content
@@ -52,8 +65,7 @@ fn summary(outcome: &str, info: &RevisionInfo) -> Json {
             ])
         })
         .collect();
-    Json::object([
-        ("outcome", Json::text(outcome)),
+    vec![
         ("revision_id", Json::text(info.revision().as_str())),
         ("sequence", Json::text(info.sequence().to_string())),
         (
@@ -88,7 +100,7 @@ fn summary(outcome: &str, info: &RevisionInfo) -> Json {
             }),
         ),
         ("layers", Json::Array(layers)),
-    ])
+    ]
 }
 
 /// `commit-revision`: all layer blobs must already be in the store (`put-blob`). Each
