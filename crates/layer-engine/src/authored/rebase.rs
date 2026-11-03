@@ -699,8 +699,37 @@ pub fn prepare(
                     )?;
                 }
             }
-            candidate.assets.push(added.clone());
-            candidate.owned_layers.insert(added.name.clone());
+            // The accepted head may carry a layer of the same name already (reachable: both
+            // branches create their first meshed element and both add the asset layer). An
+            // identical copy adds nothing; a diverging one merges under the verified writes
+            // and conflicts on overlapping opinions — pushing a second entry would die later
+            // in composition, not at the overlap.
+            match candidate.assets.iter_mut().find(|a| a.name == added.name) {
+                Some(target) => {
+                    if target.digest == added.digest {
+                        continue;
+                    }
+                    let mut merged = edit::data(target)?;
+                    if merge_layer(
+                        &edit::data(target)?,
+                        &edit::data(added)?,
+                        &mut merged,
+                        &writes,
+                        control,
+                    )? {
+                        let bytes = edit::serialize(&merged, accepted.budgets.layer_bytes)?;
+                        *target = Asset {
+                            name: target.name.clone(),
+                            digest: Sha256::digest(&bytes).map_err(|_| limit())?,
+                            bytes,
+                        };
+                    }
+                }
+                None => {
+                    candidate.assets.push(added.clone());
+                    candidate.owned_layers.insert(added.name.clone());
+                }
+            }
         }
         candidate.assets.retain(|a| !dropped.contains(&a.name));
         reconcile_element_stack(&mut candidate, targets)?;

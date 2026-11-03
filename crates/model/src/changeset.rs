@@ -31,8 +31,10 @@ use crate::error::ErrorCode;
 use crate::id::{ActorId, ElementId, OpId, ProjectId, RevisionId, Uuid7, WorkspaceId};
 use crate::limits::MAX_FOOTPRINT_ENTRIES;
 
-/// Largest canonical encoding a receiver decodes.
-pub const MAX_CHANGESET_BYTES: usize = 1_048_576;
+/// Largest canonical encoding a receiver decodes. The layer list names every manifest entry
+/// (~88-120 bytes each at the U15 entry scale), so the cap mirrors the host's 16 MiB manifest
+/// cap instead of bounding a small hand-off.
+pub const MAX_CHANGESET_BYTES: usize = 16_777_216;
 /// Most operations in one changeset.
 pub const MAX_OPERATIONS: usize = 4096;
 /// Most layers of the resulting revision (U15: one derived layer per element, at the host's
