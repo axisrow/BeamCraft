@@ -57,18 +57,13 @@ this machine. No new native-UI automation was added to Q01, per the standing rul
 tests without kittest, and visual acceptance belongs to the owner's eyes.
 
 The extended native-UI cells (selection switches V11, render modes V16, cut plane V15, named
-views V12, colour sets V17, sheet editor D05) are traced to the slice F runbook artifact
-(`ui-runbook-q01-slice-f.md`, prepared by worker session beamcraft-174 on 2026-11-01 and
-re-checked against master `d8249fff`) plus the four-step runbook in
-[q01-alpha-scenario.md](q01-alpha-scenario.md). No step of it has been executed yet; every
-cell stays open until the owner runs it and accepts each visual result by eye.
-Preparation note for the slice F runbook: its step 0.1 keeps the libtest filter
-`alpha_scenario::` (with `::`), which matches only the original story, so the
-`Q01 expanded artifacts:` path never prints and the runbook's step 0.2 has no expanded root
-to launch on. Generate both artifact roots with the documented entry point command without
-the `::` (run with `--no-capture` while `BEAMCRAFT_Q01_KEEP=1` is set, see
-[q01-alpha-scenario.md](q01-alpha-scenario.md)); the corrected preparation command is
-`BEAMCRAFT_Q01_KEEP=1 cargo nextest run --locked -p beamcraft-cli --test cli --no-capture alpha_scenario`.
+views V12, colour sets V17, sheet editor D05) are traced to the "Extended native UI cells"
+section of the manual runbook in [q01-alpha-scenario.md](q01-alpha-scenario.md), next to the
+four-step runbook there; its preparation step generates both artifact roots with the
+documented entry point and `--no-capture`. No step has been executed yet; every cell stays
+open until the owner runs it and accepts each visual result by eye. Results are recorded
+separately from the instructions, in this table and on fork issue #318, never inside the
+runbook.
 
 ## Acceptance traceability
 
@@ -89,7 +84,7 @@ recorded open and stay open until they execute on real hardware.
 | Invalid files and crash regressions | Story refusal/cancellation rows above; the hook-driven interrupted-commit path lives in `apps/beamcraft-cli/tests/recovery.rs` (U07) and ran in the workspace run | Executed locally (macOS, Apple silicon) |
 | In the CLI, end to end | The documented entry point of [q01-alpha-scenario.md](q01-alpha-scenario.md): one command runs both stories, exit 0 | Executed locally (macOS, Apple silicon) |
 | In the UI, original four steps | Runbook in [q01-alpha-scenario.md](q01-alpha-scenario.md) | Open until the owner executes and accepts |
-| In the UI, extended cells (V11, V16, V15, V12, V17, D05) | Slice F runbook artifact (`ui-runbook-q01-slice-f.md`, session beamcraft-174) | Open until the owner executes and accepts |
+| In the UI, extended cells (V11, V16, V15, V12, V17, D05) | "Extended native UI cells" section of [q01-alpha-scenario.md](q01-alpha-scenario.md) | Open until the owner executes and accepts |
 | Windows and Linux (native UI and packaging) | No such machine in this workspace; mocks forbidden by the acceptance rule | Recorded open |
 | GPU variety beyond Apple M5/Metal 4 | Single-GPU hardware; Vulkan and D3D12 paths did not execute | Recorded open |
 
