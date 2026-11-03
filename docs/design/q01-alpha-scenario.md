@@ -24,7 +24,9 @@ The same substring runs both stories there too. Setting `BEAMCRAFT_Q01_KEEP=1` (
 documents for inspection, and each story then prints its absolute artifact directory path on
 stderr when it ends (`Q01 artifacts:` for the original story, `Q01 expanded artifacts:` for
 the expanded one). A runner captures a passing test's output, which would hide those paths,
-so run the nextest command with `--no-capture`, or the libtest form with `-- --nocapture`,
+so run the nextest command with `--no-capture`, or the libtest form as
+`cargo test --locked -p beamcraft-cli --test cli -- --nocapture alpha_scenario` (the flag
+goes after the `--`, before the filter; a second `--` would leave capture on),
 whenever KEEP is set. This invocation
 is the acceptance run of the two stories, not the recorded test gate: the gate
 (`tools/test-gate`) remains the workspace-wide evidence behind a PR. Every item of the expanded
