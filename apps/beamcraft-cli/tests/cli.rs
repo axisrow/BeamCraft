@@ -98,6 +98,7 @@ mod transform;
 mod u19_scopes;
 mod undo;
 mod update;
+mod validation_layer;
 mod version;
 mod view_clipping;
 mod view_export;
