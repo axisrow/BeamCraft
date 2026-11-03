@@ -33,7 +33,8 @@ pub struct Limits {
     pub max_candidate_pairs: u64,
     /// Nodes of the spatial index (clamped to [`MAX_INDEX_NODES`]).
     pub max_index_nodes: usize,
-    /// Exact-integer predicate fallbacks over the whole analysis.
+    /// Exact-integer predicate fallbacks over the whole analysis; a repeated exact
+    /// question served from the predicate reuse table charges nothing.
     pub max_exact_predicates: u64,
 }
 

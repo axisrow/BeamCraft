@@ -23,6 +23,7 @@ mod g06_shells;
 mod g09_budget_fuzz;
 mod g09_cut;
 mod g09_hole;
+mod g10_capacity;
 mod rectangular_plate;
 
 /// With `autotests = false` a suite file missing from the list above would never build or run,

@@ -8,6 +8,13 @@
 //! binary64 inputs, so a decided sign is never a guess and zero is exact zero.
 //! No epsilon from the geometric tolerance policy enters any sign (G04 section 4).
 //!
+//! An exact `orient3d` sign is reused within one `Predicates` instance: the
+//! self-intersection scan re-asks the same plane-side question for pair after
+//! pair, and a sign is a pure function of the four coordinates. A repeated
+//! question is served from the reuse table and is not a new exact evaluation,
+//! so it charges no budget (G10); the count stays an upper bound on work, and
+//! every decided sign is still exact.
+//!
 //! Filter derivation. For `orient3d` the nine differences are each rounded
 //! once (relative error at most `u = 2^-53`), every one of the six triple
 //! products is formed with two multiplications, one subtraction and two sums of
@@ -19,6 +26,7 @@
 //! when the permanent is below `1e-200`, far above any such absolute term.
 
 use crate::bigint::{Big, Overflow};
+use std::collections::HashMap;
 
 /// Unit roundoff `2^-53`.
 const U: f64 = 1.110_223_024_625_156_5e-16;
@@ -167,14 +175,22 @@ pub const fn project(p: [f64; 3], k: usize) -> [f64; 2] {
 pub(crate) struct Predicates {
     exact_calls: u64,
     exact_limit: u64,
+    /// Reused exact `orient3d` signs, keyed by the raw bits of the four
+    /// coordinates. The scan re-asks the same plane-side questions for pair
+    /// after pair (a triangle's plane against each neighbour's corners); a
+    /// sign is a pure function of the coordinates, so serving a repeat cannot
+    /// change a decision. A hit is not a new exact evaluation: it charges no
+    /// budget, it removes recomputation.
+    orient3d_sides: HashMap<[u64; 12], i8>,
 }
 
 impl Predicates {
     /// Allows at most `exact_limit` exact fallbacks.
-    pub(crate) const fn new(exact_limit: u64) -> Self {
+    pub(crate) fn new(exact_limit: u64) -> Self {
         Self {
             exact_calls: 0,
             exact_limit,
+            orient3d_sides: HashMap::new(),
         }
     }
 
@@ -213,6 +229,13 @@ impl Predicates {
         if permanent > FILTER_FLOOR && det.abs() > 16.0 * U * permanent {
             return Ok(sign_of(det));
         }
+        let mut key = [0u64; 12];
+        for (slot, value) in key.iter_mut().zip([a, b, c, d].iter().flatten()) {
+            *slot = value.to_bits();
+        }
+        if let Some(sign) = self.orient3d_sides.get(&key) {
+            return Ok(*sign);
+        }
         self.charge()?;
         let e = min_exponent([a, b, c, d].into_iter().flatten());
         let d = scaled3(d, e)?;
@@ -222,7 +245,9 @@ impl Predicates {
             diff3(&scaled3(c, e)?, &d)?,
         ];
         let [r0, r1, r2] = &rows;
-        Ok(det3(r0, r1, r2)?.sign())
+        let sign = det3(r0, r1, r2)?.sign();
+        self.orient3d_sides.insert(key, sign);
+        Ok(sign)
     }
 
     /// Sign of `(a-c) x (b-c)`: positive when `a, b, c` turn counter-clockwise.
