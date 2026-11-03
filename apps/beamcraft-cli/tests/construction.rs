@@ -20,6 +20,14 @@ fn ok(f: &StoreFixture, command: &str, args: &[&str]) -> Json {
 fn list<'a>(value: &'a Json, key: &str) -> &'a [Json] {
     at(value, &[key]).array().unwrap()
 }
+fn point_of(candidate: &Json) -> Vec<f64> {
+    at(candidate, &["point_world_mm"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|n| n.float().unwrap())
+        .collect()
+}
 /// Builds a store with one plate and one helper of each kind at fixed coordinates.
 fn build(f: &StoreFixture) {
     ok(
@@ -115,6 +123,119 @@ fn construction_objects_are_stored_helpers_that_reopen_exactly() {
 }
 
 #[test]
+fn snaps_resolve_helper_points_lines_circles_and_planes() {
+    let f = StoreFixture::new("t02-snaps");
+    build(&f);
+    let snap = |args: &[&str]| ok(&f, "snap", args);
+    let kinds = "construction_point,construction_end,construction_line,construction_center,construction_circle,construction_plane";
+    // The helper point.
+    let result = snap(&[
+        "--point",
+        "5000.4,0,0",
+        "--radius",
+        "1",
+        "--kinds",
+        kinds,
+        "--max-hits",
+        "16",
+    ]);
+    let candidates = list(&result, "candidates");
+    assert_eq!(candidates.len(), 1, "{result:?}");
+    assert_eq!(text(&candidates[0], "kind"), "construction_point");
+    assert_eq!(text(&candidates[0], "element_id"), POINT);
+    assert_eq!(point_of(&candidates[0]), vec![5000.0, 0.0, 0.0]);
+    // The line: its start end and its nearest point; the nearest point is nearer.
+    let result = snap(&[
+        "--point",
+        "10000,0.4,0",
+        "--radius",
+        "1",
+        "--kinds",
+        "construction_end,construction_line",
+        "--max-hits",
+        "16",
+    ]);
+    let candidates = list(&result, "candidates");
+    assert_eq!(candidates.len(), 2, "{result:?}");
+    assert_eq!(text(&candidates[0], "kind"), "construction_line");
+    assert_eq!(point_of(&candidates[0]), vec![10000.0, 0.4, 0.0]);
+    assert_eq!(text(&candidates[1], "kind"), "construction_end");
+    assert_eq!(point_of(&candidates[1]), vec![10000.0, 0.0, 0.0]);
+    // Nearest off: the continuous line candidate drops, the discrete end stays.
+    let result = snap(&[
+        "--point",
+        "10000,0.4,0",
+        "--radius",
+        "1",
+        "--kinds",
+        "construction_end,construction_line",
+        "--nearest",
+        "false",
+        "--max-hits",
+        "16",
+    ]);
+    let candidates = list(&result, "candidates");
+    assert_eq!(candidates.len(), 1, "{result:?}");
+    assert_eq!(text(&candidates[0], "kind"), "construction_end");
+    // The construction source off: no helper candidates at all.
+    let result = snap(&[
+        "--point",
+        "5000.4,0,0",
+        "--radius",
+        "1",
+        "--kinds",
+        "construction_point",
+        "--construction-snaps",
+        "false",
+        "--max-hits",
+        "16",
+    ]);
+    assert!(list(&result, "candidates").is_empty(), "{result:?}");
+    // The circle supplies its centre and the nearest circumference point.
+    let result = snap(&[
+        "--point",
+        "20000,499.5,0",
+        "--radius",
+        "1",
+        "--kinds",
+        "construction_circle",
+        "--max-hits",
+        "16",
+    ]);
+    let candidates = list(&result, "candidates");
+    assert_eq!(candidates.len(), 1, "{result:?}");
+    assert_eq!(point_of(&candidates[0]), vec![20000.0, 500.0, 0.0]);
+    let result = snap(&[
+        "--point",
+        "20000.4,0,0",
+        "--radius",
+        "1",
+        "--kinds",
+        "construction_center",
+        "--max-hits",
+        "16",
+    ]);
+    let candidates = list(&result, "candidates");
+    assert_eq!(candidates.len(), 1, "{result:?}");
+    assert_eq!(text(&candidates[0], "element_id"), CIRCLE);
+    // The plane supplies the perpendicular foot of the query point.
+    let result = snap(&[
+        "--point",
+        "30000,0,5000.4",
+        "--radius",
+        "1",
+        "--kinds",
+        "construction_plane",
+        "--max-hits",
+        "16",
+    ]);
+    let candidates = list(&result, "candidates");
+    assert_eq!(candidates.len(), 1, "{result:?}");
+    assert_eq!(text(&candidates[0], "element_id"), PLANE);
+    assert_eq!(point_of(&candidates[0]), vec![30000.0, 0.0, 5000.0]);
+}
+
+#[test]
 fn schedules_and_numbering_never_see_a_helper_element() {
     let f = StoreFixture::new("t02-excluded");
     build(&f);
@@ -149,4 +270,19 @@ fn a_helper_element_deletes_like_any_other_element() {
     assert_eq!(text(&deleted, "kind"), "construction");
     let listed = ok(&f, "list-construction", &[]);
     assert_eq!(list(&listed, "objects").len(), 3);
+    let result = ok(
+        &f,
+        "snap",
+        &[
+            "--point",
+            "5000.4,0,0",
+            "--radius",
+            "1",
+            "--kinds",
+            "construction_point",
+            "--max-hits",
+            "16",
+        ],
+    );
+    assert!(list(&result, "candidates").is_empty(), "{result:?}");
 }

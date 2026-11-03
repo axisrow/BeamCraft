@@ -478,7 +478,6 @@ fn a_tube_hole_repeats_byte_for_byte() {
 }
 
 #[test]
-#[ignore = "a hole wider than one band awaits the merge-walk band boundary decision (issue #492)"]
 fn a_hole_wider_than_a_facet_band_cuts_each_band_in_two() {
     let body = tube_body();
     let before = volume(&body);
