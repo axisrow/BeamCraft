@@ -743,11 +743,18 @@ pub fn export(
     let line = flipped_about(line, 0.0);
     let arrows = flipped_about(arrows, 0.0);
     let label = flipped_about(label, 0.0);
+    // Bounds live in the painted (flipped) space too: a drawn object outside the view's
+    // paper extent must widen the viewBox instead of painting outside it and being
+    // clipped from the export.
+    let flipped_drafting: Vec<Vec<[[f64; 2]; 2]>> = drafting
+        .iter()
+        .map(|layer| flipped_about(layer.strokes.clone(), 0.0))
+        .collect();
     let [min_x, min_y, max_x, max_y] = bounds(
         [&body, &extension, &line, &arrows, &label]
             .into_iter()
             .flatten()
-            .chain(drafting.iter().flat_map(|layer| layer.strokes.iter())),
+            .chain(flipped_drafting.iter().flatten()),
     );
     let lo_x = ((min_x - MARGIN_MM) * 100.0).floor() / 100.0;
     let lo_y = ((min_y - MARGIN_MM) * 100.0).floor() / 100.0;
@@ -809,12 +816,13 @@ mod tests {
     use super::*;
     use crate::drawing::projection::{ProjectedEdge, UnresolvedReason};
     use crate::drawing::{
-        DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DrawingSpec, Plane, SourceModelPin, ViewSpec,
+        DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DraftingGeometry, DraftingSpec, DrawingSpec,
+        LayerSpec, LineType, Plane, SourceModelPin, ViewSpec,
     };
     use crate::query::feature::FeatureId;
     use beamcraft_model::digest::ContentDigest;
     use beamcraft_model::id::{
-        DimensionId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
+        DimensionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
     };
 
     const A: &str = "01900000-0000-7000-8000-000000000001";
@@ -930,6 +938,76 @@ mod tests {
             body.contains("M 0.1000 -0.0500 L 10.1000 -0.0500"),
             "{body}"
         );
+    }
+
+    #[test]
+    fn a_loose_export_bounds_every_flipped_drawn_object() {
+        // Regression: the viewBox mixed flipped dimension groups with unflipped drafted
+        // strokes, so a drawn object beyond the view's paper extent painted outside the
+        // viewport and was clipped from the export. The drafted line reaches paper y 500,
+        // so the painted bounds must reach flipped y -510, never 500.
+        let drawing = drawing_with_drafting("Member projection");
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bytes = export(&drawing, version, &projection("2500")).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let view_box = text
+            .split("viewBox=\"")
+            .nth(1)
+            .unwrap_or_default()
+            .split('"')
+            .next()
+            .unwrap_or_default();
+        assert!(view_box.contains("-515.00"), "{view_box}");
+        assert!(!view_box.contains("495.00"), "{view_box}");
+    }
+
+    fn drawing_with_drafting(name: &str) -> Drawing {
+        let layer = DraftingEntityId::parse("01900000-0000-7000-8000-000000000005").unwrap();
+        Drawing::admit(DrawingSpec {
+            id: DrawingId::parse(A).unwrap(),
+            name: name.to_owned(),
+            source: SourceModelPin {
+                project: ProjectId::parse(A).unwrap(),
+                revision: RevisionId::parse(B).unwrap(),
+                manifest: ContentDigest::from_bytes([1; 32]),
+                schema: ContentDigest::from_bytes([2; 32]),
+                generation: 42,
+            },
+            member: ElementId::parse(MEMBER).unwrap(),
+            view: ViewSpec {
+                id: DrawingViewId::parse(B).unwrap(),
+                plane: Plane::Front,
+                scale_denominator: DEFAULT_SCALE_DENOMINATOR,
+                paper_origin_mm: [0.0, 0.0],
+                title: None,
+            },
+            dimension: DimensionSpec {
+                id: DimensionId::parse(C).unwrap(),
+                anchors: ["v.x0.y0.z0", "v.x0.y0.z1"]
+                    .map(|role| FeatureId::parse(&format!("fid1:{MEMBER}:member:{role}")).unwrap()),
+                paper_offset_mm: 10.0,
+                decimal_places: 0,
+            },
+            drafting: vec![DraftingSpec {
+                id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000006").unwrap(),
+                geometry: DraftingGeometry::Line {
+                    a: [10.0, 500.0],
+                    b: [20.0, 510.0],
+                },
+                layer,
+                line_type: LineType::Continuous,
+            }],
+            layers: vec![LayerSpec {
+                id: layer,
+                name: "Notes".to_owned(),
+                visible: true,
+            }],
+            views: Vec::new(),
+            sections: Vec::new(),
+            details: Vec::new(),
+            sheet: None,
+        })
+        .unwrap()
     }
 
     #[test]

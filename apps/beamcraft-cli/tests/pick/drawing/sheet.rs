@@ -511,7 +511,7 @@ fn the_whole_sheet_reaches_the_svg_and_the_pdf_alike() {
         placements.push(flag.to_owned());
         placements.push(value);
     }
-    let (_, placed) = edit(
+    let (code, placed) = edit(
         &f,
         "edit-views",
         &document_dir,
@@ -520,7 +520,7 @@ fn the_whole_sheet_reaches_the_svg_and_the_pdf_alike() {
         REV_VIEWS,
         &placements.iter().map(String::as_str).collect::<Vec<_>>(),
     );
-    assert_eq!(text(&placed, "revision_id"), text(&placed, "revision_id"));
+    assert_eq!(code, 0, "{placed:?}");
     let placed_head = text(&placed, "revision_id");
 
     let mut drafts = vec!["--layer".to_owned(), format!("{LAYER}:Notes:on")];
