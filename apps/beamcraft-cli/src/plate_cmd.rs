@@ -3114,6 +3114,15 @@ fn workspace_command(
     };
     match command {
         "create-workspace" => {
+            // The zone and shared flags authorize partitions of a section scope (U19); without
+            // the section pair they name nothing, so they are refused instead of ignored.
+            if (given("--scope-zone").is_some() || given("--scope-shared").is_some())
+                && (given("--scope-code").is_none() || given("--scope-section").is_none())
+            {
+                return Err(invalid(
+                    "--scope-zone and --scope-shared need --scope-code and --scope-section",
+                ));
+            }
             let scope = match (given("--scope-code"), given("--scope-section")) {
                 (None, None) => None,
                 (Some(code), Some(section)) => {

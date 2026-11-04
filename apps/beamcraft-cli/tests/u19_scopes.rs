@@ -824,3 +824,32 @@ fn a_scoped_workspace_edits_its_bolt_groups() {
     );
     let _ = published;
 }
+
+#[test]
+fn orphan_scope_flags_are_refused_not_ignored() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
+    let dir = f.shared.root.join("w-orphan");
+    let refused = f.raw_rejected(&[
+        "create-workspace",
+        "--store",
+        &store,
+        "--workspace-dir",
+        dir.to_str().unwrap(),
+        "--scope-zone",
+        "K1",
+    ]);
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    let refused = f.raw_rejected(&[
+        "create-workspace",
+        "--store",
+        &store,
+        "--workspace-dir",
+        dir.to_str().unwrap(),
+        "--scope-shared",
+        "true",
+    ]);
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    // The paired case still creates the scoped workspace.
+    f.workspace(&store, dir.to_str().unwrap(), "2401-DEMO", "KMD", Some("K1"), true);
+}
