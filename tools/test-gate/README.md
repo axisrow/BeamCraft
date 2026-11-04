@@ -1,7 +1,7 @@
 # BeamCraft recorded test gate
 
-Development-only Rust tool, MPL-2.0, never shipped with the applications. The
-[owner policy](../../docs/plan/test-gate.md) replaces the literal-Cargo rule from #346.
+Development-only Rust tool, MPL-2.0, never shipped with the applications. This
+runner replaces the literal-Cargo rule.
 Requires Rust 1.96+, Git and cargo-nextest **0.9.149**; report publication/CI discovery also
 requires an authenticated `gh` CLI. No Python or native GUI dependency is used by this tool.
 

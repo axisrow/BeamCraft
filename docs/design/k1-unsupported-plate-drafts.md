@@ -46,7 +46,7 @@ coexist with unsupported plates and retain their meshes and quantities.
 
 ## P-Degenerate: the degenerate class and repair (A-2 D-7)
 
-Since amendment A-2 D-7 (decision of 2026-10-19, task P-Degenerate, fork issue #422) a wrongly
+Since amendment A-2 D-7 (decision of 2026-10-19, task P-Degenerate, upstream issue #495) a wrongly
 built contour is retained as well, as the degenerate class of `UnsupportedPlate`
 (`degenerate: true`): clockwise winding, a zero area vector, an off-band planarity, a zero
 projected edge or a broken topology — every `INVALID_ARGUMENT` fault the contour admission

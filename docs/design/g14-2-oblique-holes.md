@@ -296,7 +296,7 @@ operation; this section records where the model layer meets it.
   feature-id grammar admits the amendment's band spelling (`cut:f.h<o>.w<k>.s<j>[.p<r>]`),
   so the holed member keeps its named faces, edges and vertices for picks, dimension
   anchors and drawings.
-- **Follow-up (#420).** The directed cutter through **multi-facet** chains initially
+- **Follow-up.** The directed cutter through **multi-facet** chains initially
   refused itself honestly (`ResultNotCertified`, an open shell, nothing written): the
   band walks every contour event, including the kink-line crossings of the *other*
   crossed chains, whose lines project to a different `b` than this strip's own whenever

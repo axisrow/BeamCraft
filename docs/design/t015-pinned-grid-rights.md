@@ -1,7 +1,7 @@
 # T01.5: pinned grids and rights
 
-Contributor-original MPL-2.0. Closes fork #360 (upstream #461). Builds on the delivered U19
-scope routing (#371), the F12 descriptor and pins (#372) and the zoned Grids layers (#375);
+Contributor-original MPL-2.0. Closes upstream #461. Builds on the delivered U19
+scope routing, the F12 descriptor and pins and the zoned Grids layers;
 behaviour follows the T01 contract (`docs/contracts/t01-project-grids-draft-v0.1.md`) §9 and
 the F10 0.2 / F12 scope rules. This slice does not claim the T01 parent gate.
 

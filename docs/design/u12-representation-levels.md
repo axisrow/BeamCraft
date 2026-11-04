@@ -1,6 +1,6 @@
 # U12: representation levels
 
-Date: 2026-11-03. Status: **delivered slice**. Fork issue #427 (upstream Apibim-com#484,
+Date: 2026-11-03. Status: **delivered slice**. Upstream issue [#484](https://github.com/Apibim-com/BeamCraft/issues/484),
 owner decision 2026-11-03: bring the CLI to 100%). Depends on U09 and V02 (delivered
 historically); U10 payload loading is PostMVP and is not pulled in.
 

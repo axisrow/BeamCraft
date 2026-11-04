@@ -1,8 +1,7 @@
 # U22: vocabulary 0.2.0 coordination record schema
 
 Date: 2026-11-01. Status: **delivered slice; store commands and scope authorization remain
-U19/U20**. Branch: `ao/vocabulary-schema/feat/u22-vocabulary-02`; fork issue #362 (upstream
-#228, parent epic #189).
+U19/U20** (upstream #228, parent epic #189).
 
 ## What this changes
 

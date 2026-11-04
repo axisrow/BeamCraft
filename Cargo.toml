@@ -45,7 +45,7 @@ indexing_slicing = "warn"
 # openusd sits at 3, one above the rest: every CLI/store command re-parses the whole
 # revision layer stack, and the per-element cost of that parse (SDF path validation
 # and friends) is what the integration suites spend their time on — at 1 it measured
-# ~16 ms per stored element per write command, at 3 ~3.7 ms (#285, 2026-11-01).
+# ~16 ms per stored element per write command, at 3 ~3.7 ms (measured 2026-11-01).
 [profile.test.package]
 beamcraft-geom = { opt-level = 1 }
 beamcraft-kernel = { opt-level = 1 }

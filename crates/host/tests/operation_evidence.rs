@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 /// One random value per process boot: a pid alone is not unique across runs — the OS recycles
-/// pids against directories left by killed processes (the #157/#408 recycling class).
+/// pids against directories left by killed processes (the pid-recycling class).
 fn boot_nonce() -> u64 {
     use std::hash::{BuildHasher, RandomState};
     static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();

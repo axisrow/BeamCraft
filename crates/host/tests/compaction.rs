@@ -769,7 +769,7 @@ fn an_uninterrupted_compaction_reports_exactly_twenty_three_steps() {
 
 /// The crash-at-every-step case, one step per test so the shards run in parallel: each shard
 /// crashes its own store at one step of the compaction and asserts what the single loop
-/// asserted there (issue #285: the 23-step loop was a 28 s serial straggler).
+/// asserted there (the 23-step loop was a 28 s serial straggler).
 fn a_crash_at_step_leaves_the_old_or_the_new_store_and_a_rerun_finishes(crash_at: usize) {
     let done = uninterrupted_compaction();
     let point = done.points[crash_at];

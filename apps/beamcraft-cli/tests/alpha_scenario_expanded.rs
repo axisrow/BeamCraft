@@ -40,7 +40,7 @@ const SLOPED_MEMBER: &str = "019a7bf0-0000-7000-8000-00000000aa72";
 const SLOPED_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa73";
 const AXIAL_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa76";
 const SECOND_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa77";
-// The tube remainder (fork #447): the CHS member and its hole operation id.
+// The tube remainder: the CHS member and its hole operation id.
 const TUBE_MEMBER: &str = "019a7bf0-0000-7000-8000-00000000aa78";
 const TUBE_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa79";
 
@@ -1602,7 +1602,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         );
     }
 
-    // Member holes, oblique and sloped walls (Q01 slice D, fork #368: the delivered G14.2
+    // Member holes, oblique and sloped walls (Q01 slice D: the delivered G14.2
     // surface). Each case gets its own member based at the world origin: the replay maps
     // the record's member-frame axis point into element coordinates without the member's
     // own origin, so a member moved off the origin refuses the hole as not fitting (a
@@ -1845,7 +1845,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         assert_eq!(found, again, "{id} must read byte-identically");
     }
 
-    // The faceted-tube hole (Q01 slice D remainder, fork #447): a CHS member takes a radial
+    // The faceted-tube hole (Q01 slice D remainder): a CHS member takes a radial
     // through hole whose drop certifies within the engine's own `2 * A * t` bound, and the
     // gross stays the nominal `area x length` across it (the plate rule: a gross that
     // ignores the hole, a net that does not). The old CLI path reported the faceted mesh

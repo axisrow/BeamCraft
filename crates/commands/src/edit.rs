@@ -524,7 +524,7 @@ pub fn update_element(
             opinion: material.map_or(MaterialOpinion::Empty, MaterialOpinion::Target),
         });
     }
-    // The kind halves author their own layer changes on the canonical part (#389): the shape
+    // The kind halves author their own layer changes on the canonical part: the shape
     // inputs the patch names, plus the local re-encoding a mirror writes read back from the
     // patched record. The adapter adds only the platform changes around them.
     changes.extend(steel_layer::patch_changes(

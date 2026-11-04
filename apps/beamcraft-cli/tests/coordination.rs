@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic coordination projects, MPL-2.0.
 
-//! F12 core end to end through the real CLI binary (fork issue #364, U20 + U21):
+//! F12 core end to end through the real CLI binary (U20 + U21):
 //! the project descriptor with its section/zone registries of the 0.2 record shapes,
 //! several independent section projects (KM and KMD, both `steel`) coordinated by a third
 //! store through exact pinned revisions, the explicit verified update, and the retained

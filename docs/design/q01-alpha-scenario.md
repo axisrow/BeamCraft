@@ -104,8 +104,8 @@ The cells below extend the manual portion to the newer UI surfaces: the selectio
 colour sets (V17) and the sheet editor (D05). They run on the expanded artifacts, which carry
 the grid and level the steps need. Every cell stays open until the owner runs it and accepts
 each visual result by eye. Observed results are recorded separately from these instructions —
-in the acceptance traceability of [q01-alpha-matrix.md](q01-alpha-matrix.md) and on fork
-issue #318 — never inside this file; the per-cell checklists are filled in that record. All
+in the acceptance traceability of [q01-alpha-matrix.md](q01-alpha-matrix.md) and on upstream
+issue #334 — never inside this file; the per-cell checklists are filled in that record. All
 labels, shortcuts and limits are read from the source; a discrepancy against the running app
 is a recorded failure, not a reason to improvise.
 

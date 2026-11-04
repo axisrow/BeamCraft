@@ -77,7 +77,7 @@ Dependencies are checked in `[dependencies]`,
 | beamcraft-ui | apps/beamcraft-ui | app | 8 | beamcraft-model, beamcraft-json, beamcraft-engine, beamcraft-host, session, steel | now | V03 (window and viewport; reads the accepted snapshot from the CLI in a separate process); V05.1 (create tools; decodes the CLI's JSON replies with the JSON crate); V05.2 (edit tools; same edges); #763 (settings, recent projects, project names and environments through `session`, no child process) |
 | beamcraft-fixtures | tools/fixtures | tool | 9 | - | now | F07 |
 | beamcraft-boundaries | apps/boundaries | tool | 9 | - | now | F08 |
-| beamcraft-test-gate | tools/test-gate | tool | 9 | - | now | Fork #342: recorded test gate |
+| beamcraft-test-gate | tools/test-gate | tool | 9 | - | now | recorded test gate |
 <!-- module-table:end -->
 
 No `domain` crate has a third-party dependency. The apps do: the window's third-party crates

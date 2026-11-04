@@ -3668,7 +3668,7 @@ impl ElementMirror {
     }
 }
 
-/// The plate half of an [`ElementPatch`] (#389): the fields only a plate owns. A member
+/// The plate half of an [`ElementPatch`]: the fields only a plate owns. A member
 /// target refuses every field of it (`UNSUPPORTED_PROPERTY`), field by field with the
 /// standing messages.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -3861,7 +3861,7 @@ impl MemberPatch {
 /// `None` is left unchanged. `material` distinguishes no change (`None`), clearing the reference
 /// (`Some(None)`) and pinning a definition (`Some(Some(digest))`). There is no raw USD setter.
 ///
-/// The patch is split by element kind (#389): the generic fields every kind shares stand on the
+/// The patch is split by element kind: the generic fields every kind shares stand on the
 /// patch, and each kind's own fields live in its [`PlatePatch`] or [`MemberPatch`] half. A half
 /// is carried whole and unnamed fields default, so a request mixes kinds only when it names
 /// fields of both halves — the engine refuses the wrong half on the target. The bytes of the
@@ -5380,7 +5380,7 @@ mod tests {
         assert_ne!(rename.content_fingerprint().unwrap(), bottom);
     }
 
-    /// Pins the `BeamCraft/P04/UpdateElement/v2` bytes field by field (#389): the digest of one
+    /// Pins the `BeamCraft/P04/UpdateElement/v2` bytes field by field: the digest of one
     /// patch per field, captured before the `ElementPatch` split moved the plate and member
     /// fields into their payload halves. Stored journal fingerprints compare against these
     /// bytes on a replayed operation, so a changed digest here is an `OP_ID_REUSE` waiting to

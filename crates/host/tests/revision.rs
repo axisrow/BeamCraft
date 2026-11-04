@@ -612,8 +612,8 @@ fn a_retry_with_a_different_expected_base_is_not_a_replay() {
     );
 }
 
-/// The lost-race replay case, sharded four rounds per test so the shards run in parallel
-/// (issue #285). Every round makes the same assertions the single loop made; the per-round
+/// The lost-race replay case, sharded four rounds per test so the shards run in parallel.
+/// Every round makes the same assertions the single loop made; the per-round
 /// setup uses one constant filler content, which no assertion reads.
 fn a_lost_race_replay_also_compares_the_expected_base_rounds(rounds: std::ops::Range<usize>) {
     // Two writers with the same op but different bases: exactly one commit, never two, and the
@@ -1206,8 +1206,8 @@ fn torn_or_inconsistent_head_logs_are_refused_with_typed_errors() {
     assert_eq!(again.info.sequence(), 3);
 }
 
-/// The two-writers race, sharded ten rounds per test so the shards run in parallel (issue
-/// #285: the 100-round loop was a 27 s serial straggler). Every round makes the same
+/// The two-writers race, sharded ten rounds per test so the shards run in parallel: the
+/// 100-round loop was a 27 s serial straggler. Every round makes the same
 /// assertions the single loop made.
 fn two_writers_on_one_base_never_both_win_rounds(rounds: std::ops::Range<usize>) {
     for round in rounds {
@@ -1268,7 +1268,7 @@ two_writer_shards! {
     two_writers_on_one_base_never_both_win_rounds_090_099 => 90..100,
 }
 
-/// The same-op race, sharded four rounds per test so the shards run in parallel (issue #285).
+/// The same-op race, sharded four rounds per test so the shards run in parallel.
 /// Every round makes the same assertions the single loop made; the per-round setup uses one
 /// constant filler content, which no assertion reads.
 fn two_writers_with_the_same_op_commit_once_and_the_other_replays_rounds(
