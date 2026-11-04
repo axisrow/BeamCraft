@@ -56,6 +56,7 @@ impl Story {
             .join(format!("q01-expanded-{}", crate::support::boot_nonce()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
+        fs::create_dir(root.join("curved-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -2117,4 +2118,167 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         tube_found.2, tube_digest,
         "tube mesh must survive the reopen"
     );
+}
+
+/// The curved and poly story (P12/P13): its own published store, so the numbered frame
+/// above keeps the exact part counts the manual runbook records, and its own test, so
+/// the documented entry point still runs both and the per-test budget stays honest.
+#[test]
+fn curved_and_poly_members_run_their_own_published_store() {
+    let s = Story::new();
+    // The store numbers a poly member, but refuses once the curved member exists
+    // (`UNSUPPORTED_GEOMETRY`, a delivered-surface limit), so the curved story cannot
+    // join the numbered frame yet. The mitred polybeam quantity drops the corners out
+    // exactly; the arc quantity is the exact analytic sweep, only the mesh facets.
+    s.ok(
+        "curved-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-ARC",
+            "--width",
+            "100",
+            "--height",
+            "100",
+        ],
+    );
+    s.ok(
+        "curved-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "curved-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("curved-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let poly = s.ok(
+        "curved-draft",
+        "create-polybeam",
+        &[
+            "--points",
+            "0,0,0;2000,0,0;2000,3000,0",
+            "--profile",
+            "Q01-ARC",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01 poly gutter",
+        ],
+    );
+    assert_eq!(text(&poly, "outcome"), "polybeam_created");
+    let poly_member = at(&poly, &["member"]);
+    assert_eq!(text(poly_member, "kind"), "beam");
+    assert_eq!(
+        at(poly_member, &["section_mm", "width"]).float().unwrap(),
+        100.0
+    );
+    assert_eq!(
+        at(poly_member, &["section_mm", "height"]).float().unwrap(),
+        100.0
+    );
+    // The mitres drop out of the quantity: area x polyline length, exactly.
+    let poly_volume = at(poly_member, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    close(poly_volume, 50_000_000.0);
+    close(
+        at(poly_member, &["quantities", "mass", "kg"])
+            .float()
+            .unwrap(),
+        392.5,
+    );
+    assert_eq!(
+        at(poly_member, &["axis_points_mm"]).array().unwrap().len(),
+        3
+    );
+    let poly_id = text(poly_member, "element_id");
+    let poly_digest = text(poly_member, "mesh_digest");
+    s.ok("curved-draft", "preview-numbering", &[]);
+
+    // The radius-mode semicircle: the axis length and the quantity are the exact arc
+    // values (area x arc length); only the stored mesh facets the sweep.
+    let arc = s.ok(
+        "curved-draft",
+        "create-curved-beam",
+        &[
+            "--start",
+            "1000,0,0",
+            "--end",
+            "-1000,0,0",
+            "--radius",
+            "1000",
+            "--normal",
+            "0,0,1",
+            "--profile",
+            "Q01-ARC",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01 arc hanger",
+        ],
+    );
+    let arc_member = at(&arc, &["member"]);
+    assert_eq!(text(arc_member, "path_type"), "arc");
+    let arc_length = 1000.0 * std::f64::consts::PI;
+    close(
+        at(arc_member, &["axis_length_mm"]).float().unwrap(),
+        arc_length,
+    );
+    assert!(at(arc_member, &["arc_deviation_mm"]).float().unwrap() <= 0.05);
+    let arc_volume = at(arc_member, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    close(arc_volume, 10_000.0 * arc_length);
+    let arc_id = text(arc_member, "element_id");
+    let arc_digest = text(arc_member, "mesh_digest");
+
+    let curved_head = s.head("curved-draft");
+    let degenerate = s.run(
+        "curved-draft",
+        "create-polybeam",
+        &["--points", "0,0,0;2000,0,0", "--profile", "Q01-ARC"],
+        2,
+    );
+    assert_eq!(text(&degenerate, "outcome"), "rejected");
+    let unnumbered = s.run("curved-draft", "preview-numbering", &[], 2);
+    assert_eq!(text(&unnumbered, "code"), "UNSUPPORTED_GEOMETRY");
+    assert_eq!(s.head("curved-draft"), curved_head);
+
+    // The arc creation undoes and redoes as one command.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("curved-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    assert_eq!(
+        parts(&s.ok("curved-draft", "inspect-elements", &[])).len(),
+        1
+    );
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("curved-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    let curved_published = s.ok(
+        "curved-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("curved-draft")],
+    );
+    assert_eq!(text(&curved_published, "outcome"), "workspace_published");
+    let reopened_curved = parts(&s.ok("curved-published", "inspect-elements", &[]));
+    assert_eq!(reopened_curved.len(), 2);
+    for (id, volume, digest, label) in [
+        (poly_id.as_str(), poly_volume, poly_digest.as_str(), "poly"),
+        (arc_id.as_str(), arc_volume, arc_digest.as_str(), "arc"),
+    ] {
+        let found = reopened_curved
+            .iter()
+            .find(|(other, _, _)| other == id)
+            .unwrap_or_else(|| panic!("{label} member is present"));
+        close(found.1, volume);
+        assert_eq!(found.2, digest, "{label} mesh must survive the round trip");
+    }
 }

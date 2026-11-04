@@ -16,7 +16,9 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, one test). Every step is
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, two tests: the
+expanded story and, in its own published store so the numbered frame keeps its recorded
+counts, the curved and poly member story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
@@ -27,6 +29,7 @@ steps ran and passed on this machine.
 | Member holes (A04.2, G14.1 slice) | `add-hole` on a member (`--axis-point`, `--axis-direction`, `--diameter`): a through d = 20 hole removes the regular 32-gon area times the 100 mm section width; a transverse coordinate outside the section refuses with the head unchanged | Passed |
 | Member holes, oblique and sloped walls (G14.2) | dedicated members based at the world origin: an oblique non-unit `(12,5,0)` d = 20 hole through the flat walls of a square section removes `A·100·13/12` (|n·d| = 12/13); the rotated-20° square's sloped walls remove `A·100/cos(20°)`; an axial direction and a second record on one member refuse `UNSUPPORTED_GEOMETRY` with nothing written; the identical command replays the recorded revision and fresh processes read the same volumes and `mesh_digest` byte for byte | Passed |
 | Member holes, curved tube wall (G14.2 remainder) | a CHS 114x5 member takes a radial d = 20 hole: the reported drop certifies within the engine suite's own `2·A·t` bound of the smooth tube (measured 3,121.4 mm3 ≤ 3,141.6 mm3) and equals the certified removed volume; the gross stays the nominal `area x length` across the hole (the plate rule: a gross that ignores the hole, a net that does not); the hole survives the reopen with the same volume and `mesh_digest`; the d = 6/10/20 triplet is pinned by the engine test (`a_chs_member_hole_certifies_the_removed_volume_within_the_engine_bound`) and the CLI suite (`sections.rs`) | Passed |
+| Modelling: poly and curved members (P12/P13) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a mitred L-path polybeam stores the exact `area x path length` (50,000,000 mm3, 392.5 kg at 7850 kg/m3) and numbers; a radius-mode semicircular arc reports `path_type arc`, the exact axis length `1000·pi` and the analytic `area x arc length` quantity (only the stored mesh facets); a two-point path refuses and numbering refuses the arc with `UNSUPPORTED_GEOMETRY` (a delivered-surface limit, nothing written); the arc creation undoes and redoes as one command; both members survive publication with their exact volumes and `mesh_digest`s | Passed |
 | Workspace history | `undo-workspace` / `redo-workspace` around the chamfer: the undone volume returns, redo restores it | Passed |
 | Model data: grids and levels | `create-grid` (`0 1000` u-expression), `create-level` (elevation 1000), `list-grids` / `levels` | Passed |
 | User attributes (I04) | `attribute-define` (choice with options, number with a unit), `attribute-set`, `attribute-get`, `attributes`; an undefined name (`NOT_FOUND`) and an off-choice value (`INVALID_ARGUMENT`) refuse | Passed |
@@ -75,7 +78,7 @@ recorded open and stay open until they execute on real hardware.
 
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
-| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, grids/levels, attributes, assembly/bolt/weld, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, poly and curved members, grids/levels, attributes, assembly/bolt/weld, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
 | View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |
