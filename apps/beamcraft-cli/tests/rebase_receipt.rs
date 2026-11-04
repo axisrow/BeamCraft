@@ -12,11 +12,13 @@ use beamcraft_commands::workspace::{
     rebase_receipt::{RebaseReceipt, RevisionPin},
 };
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
+use beamcraft_engine::scope::WorkspaceScope;
 use beamcraft_host::revision::{MAX_OPERATION_EVIDENCE_BYTES, MAX_REVISIONS, Uuid7};
 use beamcraft_model::changeset::{MAX_OPERATIONS, Operation};
 use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::id::{ElementId, OpId};
 use beamcraft_model::limits::MAX_FOOTPRINT_ENTRIES;
+use std::collections::BTreeSet;
 
 fn id(n: usize) -> Uuid7 {
     Uuid7::parse(&format!("019a7bf0-0000-7000-8000-{n:012x}")).unwrap()
@@ -120,6 +122,40 @@ fn canonical_receipts_bind_all_input_coordinates_without_advancing_the_local_pre
             RebaseReceipt::decode(&changed.encode().unwrap()).unwrap(),
             changed
         );
+    }
+}
+
+#[test]
+fn a_scoped_workspace_keeps_its_scope_through_the_receipt() {
+    let mut receipt = sample();
+    receipt.old_meta.scope = Some(WorkspaceScope {
+        code: "2401-DEMO".into(),
+        section: "KMD".into(),
+        zones: BTreeSet::from(["K1".to_owned()]),
+        shared: true,
+    });
+    let bytes = receipt.encode().unwrap();
+    let decoded = RebaseReceipt::decode(&bytes).unwrap();
+    assert_eq!(decoded, receipt);
+    let (request, _) = blocks(&bytes);
+    assert!(request.contains("scope 2401-DEMO KMD true K1\n"));
+    // The unzoned partition drops the fifth token; both layouts decode canonically.
+    receipt.old_meta.scope.as_mut().unwrap().zones.clear();
+    let bytes = receipt.encode().unwrap();
+    let decoded = RebaseReceipt::decode(&bytes).unwrap();
+    assert_eq!(decoded.old_meta.scope, receipt.old_meta.scope);
+    assert!(decoded.old_meta.scope.as_ref().unwrap().zone().is_none());
+    let (request, _) = blocks(&bytes);
+    assert!(request.contains("scope 2401-DEMO KMD true\n"));
+    // Malformed scope lines never decode.
+    let (request, proof) = blocks(&bytes);
+    for forged in [
+        request.replacen("scope 2401-DEMO KMD true", "scope 2401-DEMO KMD", 1),
+        request.replacen("scope 2401-DEMO KMD true", "scope 2401-DEMO KMD true K1 K2", 1),
+        request.replacen("scope 2401-DEMO KMD true", "scope 2401-DEMO KMD yes", 1),
+        request.replacen("scope 2401-DEMO KMD true", "scope 2401-DEMO Grids true", 1),
+    ] {
+        assert!(RebaseReceipt::decode(&wrap(&forged, proof)).is_err());
     }
 }
 

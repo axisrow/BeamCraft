@@ -10,6 +10,7 @@
 use super::WorkspaceMeta;
 use crate::command_evidence::CapturedFootprint;
 use beamcraft_engine::footprint::Footprint;
+use beamcraft_engine::scope::WorkspaceScope;
 use beamcraft_host::revision::{MAX_OPERATION_EVIDENCE_BYTES, MAX_REVISIONS, RevisionInfo, Uuid7};
 use beamcraft_model::changeset::{MAX_OPERATIONS, Operation};
 use beamcraft_model::command::CommandError;
@@ -195,12 +196,28 @@ impl RebaseReceipt {
     fn request(&self) -> Result<Vec<u8>, CommandError> {
         self.validate()?;
         let mut out = format!(
-            "{REQUEST_MAGIC}\nop {}\nproject {}\nschema {}\nworkspace {}\nuser {}\nbase {} {} {}\nprefix {}\nrebase_sequence {}\ndraft {} {} {}\naccepted {} {} {}\noperations {}\n",
+            "{REQUEST_MAGIC}\nop {}\nproject {}\nschema {}\nworkspace {}\nuser {}\n",
             self.op_id,
             self.project,
             self.schema,
             self.old_meta.workspace_id,
             self.old_meta.user_id,
+        );
+        if let Some(scope) = &self.old_meta.scope {
+            // Written by four tokens when the workspace authors the unzoned partition and by
+            // five with the authorized zone last; codes cannot contain spaces (U19 validation).
+            let _ = match scope.zone() {
+                Some(zone) => writeln!(
+                    out,
+                    "scope {} {} {} {}",
+                    scope.code, scope.section, scope.shared, zone
+                ),
+                None => writeln!(out, "scope {} {} {}", scope.code, scope.section, scope.shared),
+            };
+        }
+        let _ = write!(
+            out,
+            "base {} {} {}\nprefix {}\nrebase_sequence {}\ndraft {} {} {}\naccepted {} {} {}\noperations {}\n",
             self.old_meta.base_revision,
             self.old_meta.base_manifest,
             self.old_base_sequence,
@@ -270,7 +287,7 @@ impl RebaseReceipt {
             return Err(invalid());
         }
         let captured = CapturedFootprint::decode(footprint.as_bytes())?;
-        let mut lines = request.strip_suffix('\n').ok_or_else(invalid)?.split('\n');
+        let mut lines = request.strip_suffix('\n').ok_or_else(invalid)?.split('\n').peekable();
         if lines.next() != Some(REQUEST_MAGIC) {
             return Err(invalid());
         }
@@ -281,6 +298,37 @@ impl RebaseReceipt {
             .map_err(|_| invalid())?;
         let workspace_id = uuid(field(&mut lines, "workspace")?)?;
         let user_id = uuid(field(&mut lines, "user")?)?;
+        // The scope line is optional: older receipts keep decoding as the unscoped metadata
+        // they describe, and the four-or-five token layout stays canonical per workspace.
+        let scope = if lines.peek().is_some_and(|line| line.starts_with("scope ")) {
+            let words: Vec<&str> = lines
+                .next()
+                .ok_or_else(invalid)?["scope ".len()..]
+                .split(' ')
+                .collect();
+            let (code, section, shared, zone) = match words.as_slice() {
+                [code, section, shared] => (*code, *section, *shared, None),
+                [code, section, shared, zone] => (*code, *section, *shared, Some(*zone)),
+                _ => return Err(invalid()),
+            };
+            if shared != "true" && shared != "false" {
+                return Err(invalid());
+            }
+            let mut zones = BTreeSet::new();
+            if let Some(zone) = zone {
+                zones.insert(zone.to_owned());
+            }
+            let scope = WorkspaceScope {
+                code: code.to_owned(),
+                section: section.to_owned(),
+                zones,
+                shared: shared == "true",
+            };
+            scope.validate().map_err(|_| invalid())?;
+            Some(scope)
+        } else {
+            None
+        };
         let base = pin(field(&mut lines, "base")?)?;
         let synced_sequence = decimal(field(&mut lines, "prefix")?)?;
         let rebase_sequence = decimal(field(&mut lines, "rebase_sequence")?)?;
@@ -318,7 +366,7 @@ impl RebaseReceipt {
                 base_manifest: base.manifest,
                 synced_sequence,
                 rebase_sequence,
-                scope: None,
+                scope,
             },
             old_base_sequence: base.sequence,
             draft,
