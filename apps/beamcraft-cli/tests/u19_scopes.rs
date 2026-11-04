@@ -747,3 +747,80 @@ fn a_scoped_rebase_keeps_its_receipt_scope_and_stays_usable() {
         f.layer_of(&store, &published, "2401-DEMO_KM.usda")
     );
 }
+
+#[test]
+fn a_scoped_workspace_edits_its_bolt_groups() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
+    let seed = f.shared.root.join("w-bseed");
+    f.workspace(&store, seed.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    let p1 = "019a7bf0-0000-7000-8000-0000000000b1";
+    let p2 = "019a7bf0-0000-7000-8000-0000000000b2";
+    for (id, name) in [(p1, "One plate"), (p2, "Two plate")] {
+        f.ok_in(
+            seed.to_str().unwrap(),
+            "create-plate",
+            &plate_args(id, name),
+        );
+    }
+    f.publish(&store, seed.to_str().unwrap());
+
+    // The scoped workspace authors the group through its authorized section...
+    let wb = f.shared.root.join("w-bolt");
+    f.workspace(&store, wb.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    let group = "019a7bf0-0000-7000-8000-000000710001";
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/libraries/synthetic-fasteners.usda"
+    );
+    let parts = format!("{p1},{p2}");
+    f.ok_in(
+        wb.to_str().unwrap(),
+        "create-bolt-group",
+        &[
+            "--name",
+            "G1",
+            "--new-id",
+            group,
+            "--parts",
+            parts.as_str(),
+            "--fastener-library",
+            library,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,250,0",
+            "--point2",
+            "600,250,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "100",
+            "--spacings",
+            "150",
+        ],
+    );
+    // ...and amends it: the amendment was the one write path still bound to the classic
+    // authored/derived targets, refusing on a sectioned store with FOREIGN_READ_ONLY.
+    let moved = f.ok_in(
+        wb.to_str().unwrap(),
+        "update-bolt-group",
+        &["--target", group, "--point2", "700,250,0"],
+    );
+    assert_eq!(text(&moved, "outcome"), "bolt_group_committed");
+    let published = f.publish(&store, wb.to_str().unwrap());
+    let groups = f.ok_in(&store, "bolts", &[]);
+    let listed = at(&groups, &["bolt_groups"]).array().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        at(listed.first().unwrap(), &["point2_mm"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|v| v.string().unwrap().to_owned())
+            .collect::<Vec<_>>(),
+        ["700", "250", "0"],
+        "the amendment rides the committed store through the scope"
+    );
+    let _ = published;
+}
