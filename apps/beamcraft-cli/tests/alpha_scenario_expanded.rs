@@ -931,6 +931,11 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "COLUMN A",
             "--scale",
             "20",
+            // The sheet export renders the whole fixed sheet, so the primary view must
+            // sit inside the A3 frame: the 1000 mm column at 1:20 spans 50 mm of paper
+            // y from this origin, clear of the 10 mm inset.
+            "--origin",
+            "40,60",
             "--op-id",
             &create_op,
             "--revision-id",
@@ -1100,7 +1105,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "--drafting",
             &format!("{mark}:text:240,84,4,0:{annotations}:continuous:MARK P/1(1)"),
             "--drafting",
-            &format!("{free}:free_dimension:0,0,1000,0,15,1:{annotations}:dashdot"),
+            &format!("{free}:free_dimension:40,60,90,60,15,1:{annotations}:dashdot"),
             "--drafting",
             &format!("{hidden}:circle:290,70,8:{construction}:dashed"),
         ],

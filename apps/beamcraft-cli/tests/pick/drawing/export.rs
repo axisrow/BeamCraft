@@ -128,7 +128,9 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
     assert!(svg.ends_with("</svg>\n"));
     assert!(svg.contains(&format!("version={VERSION}")));
     assert!(svg.contains("label_mm=3000"));
-    assert!(svg.contains("L 30.0000 9.7500"));
+    // The export is upright in SVG's Y-down space: the +10 mm offset line at paper y 9.75
+    // flips above the geometry to svg y -9.75.
+    assert!(svg.contains("L 30.0000 -9.7500"));
     for hostile in [
         "<script",
         "<image",

@@ -26,6 +26,18 @@ const REV_REMOVE2: &str = "01900000-0000-7000-8000-000000000337";
 const VERSION: &str = "01900000-0000-7000-8000-000000000338";
 const VERSION2: &str = "01900000-0000-7000-8000-000000000339";
 const VERSION3: &str = "01900000-0000-7000-8000-000000000340";
+const SECTION: &str = "01900000-0000-7000-8000-000000000348";
+const DETAIL: &str = "01900000-0000-7000-8000-000000000349";
+const LAYER: &str = "01900000-0000-7000-8000-000000000350";
+const NOTE: &str = "01900000-0000-7000-8000-000000000351";
+const LEADER: &str = "01900000-0000-7000-8000-000000000352";
+const RING: &str = "01900000-0000-7000-8000-000000000353";
+const BOX: &str = "01900000-0000-7000-8000-000000000354";
+const OP_DRAFT: &str = "01900000-0000-7000-8000-000000000355";
+const REV_DRAFT: &str = "01900000-0000-7000-8000-000000000356";
+const OP_PUBLISH: &str = "01900000-0000-7000-8000-000000000357";
+const REV_PUBLISH: &str = "01900000-0000-7000-8000-000000000358";
+const VERSION4: &str = "01900000-0000-7000-8000-000000000359";
 
 /// Standard document arguments of this suite; `extra` carries the per-case sheet options.
 fn base_args(document_dir: &str, command: &str, head: Option<&str>) -> Vec<String> {
@@ -443,4 +455,175 @@ fn unsupported_sizes_and_malformed_sheet_requests_refuse() {
     assert_eq!(code, 2, "{refusal:?}");
     assert_eq!(text(&refusal, "code"), "LIMIT_EXCEEDED");
     assert!(!out.exists(), "a refused export writes no file");
+}
+
+#[test]
+fn the_whole_sheet_reaches_the_svg_and_the_pdf_alike() {
+    // Findings 1-3 of docs/visual-bug-evidence-2026-11-04: the sheet SVG rendered the
+    // Y-up paper unflipped into Y-down SVG space (mirrored glyphs, title block on top),
+    // the PDF of a sheet document dropped the frame, the title block and every view but
+    // the primary, and the drawn objects on a visible layer never reached either surface.
+    let f = Fixture::new();
+    f.model();
+    let document_dir = f
+        .shared
+        .root
+        .join("whole-sheet-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut created = create_args(&document_dir);
+    created.extend(
+        [
+            "--sheet-size",
+            "a3",
+            "--sheet-project",
+            "NORTH WAREHOUSE EXTENSION PHASE TWO 2026",
+            "--sheet-author",
+            "J. Smith",
+        ]
+        .iter()
+        .map(|value| (*value).to_owned()),
+    );
+    let created = f.ok(
+        &created[0],
+        &created[1..].iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    let head = text(&created, "revision_id");
+
+    // A placed view, a section and a detail, then four drawn objects on a visible layer,
+    // exactly the objects the evidence reproducer drafts.
+    let mut placements = Vec::new();
+    for (flag, value) in [
+        // The fixture member sits at model y 2000, so the placements keep every view
+        // inside the A3 frame: the plan view at 1:20 needs 100 mm of paper y for the
+        // model depth, the section at 1:20 needs 20 and the detail magnifies 2x.
+        ("--placed-view", format!("{TOP}:top:20:40,230:PLAN")),
+        (
+            "--placed-section",
+            format!("{SECTION}:right:1500:positive:100:240,250:SECTION A-A"),
+        ),
+        (
+            "--placed-detail",
+            format!("{DETAIL}:{VIEW}:45,40:5:50:220,330:DETAIL B"),
+        ),
+    ] {
+        placements.push(flag.to_owned());
+        placements.push(value);
+    }
+    let (_, placed) = edit(
+        &f,
+        "edit-views",
+        &document_dir,
+        &head,
+        OP_VIEWS,
+        REV_VIEWS,
+        &placements.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    assert_eq!(text(&placed, "revision_id"), text(&placed, "revision_id"));
+    let placed_head = text(&placed, "revision_id");
+
+    let mut drafts = vec!["--layer".to_owned(), format!("{LAYER}:Notes:on")];
+    for entity in [
+        format!("{NOTE}:text:30,80,5,0:{LAYER}:continuous:MARK B-1 (2 PCS)"),
+        format!("{LEADER}:line:60,95,90,150:{LAYER}:continuous"),
+        format!("{RING}:circle:200,110,10:{LAYER}:dashed"),
+        format!("{BOX}:rectangle:25,70,120,95:{LAYER}:continuous"),
+    ] {
+        drafts.push("--drafting".to_owned());
+        drafts.push(entity);
+    }
+    let (code, drafted) = edit(
+        &f,
+        "edit-drafting",
+        &document_dir,
+        &placed_head,
+        OP_DRAFT,
+        REV_DRAFT,
+        &drafts.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    assert_eq!(code, 0, "{drafted:?}");
+    let (_, published) = edit(
+        &f,
+        "publish-drawing",
+        &document_dir,
+        &text(&drafted, "revision_id"),
+        OP_PUBLISH,
+        REV_PUBLISH,
+        &["--version-id", VERSION4],
+    );
+    assert_eq!(text(&published, "version_id"), VERSION4);
+
+    // The SVG: the whole sheet, upright, with every drawn object and its line type.
+    let svg_out = f.shared.root.join("whole-sheet.svg");
+    f.ok(
+        "export-drawing",
+        &[
+            "--document-dir",
+            &document_dir,
+            "--version-id",
+            VERSION4,
+            "--out",
+            svg_out.to_str().unwrap(),
+        ],
+    );
+    let svg = String::from_utf8(fs::read(&svg_out).unwrap()).unwrap();
+    assert!(svg.contains("class=\"frame\""));
+    assert!(svg.contains("class=\"titleblock\""));
+    for id in [TOP, SECTION, DETAIL] {
+        assert!(svg.contains(&format!("data-view=\"{id}\"")), "{id}");
+    }
+    for id in [NOTE, LEADER, RING, BOX] {
+        assert!(svg.contains(&format!("data-drafting=\"{id}\"")), "{id}");
+    }
+    assert!(
+        svg.contains(&format!(
+            "data-drafting=\"{RING}\" stroke-dasharray=\"3 3\""
+        )),
+        "the dashed circle keeps its line type"
+    );
+    // Upright: the frame's bottom edge lands at svg y 410 (420 mm minus the 10 mm
+    // inset), the top edge at y 10; the unflipped writer drew them the other way round.
+    assert!(
+        svg.contains("M 10.0000 410.0000 L 287.0000 410.0000"),
+        "{svg}"
+    );
+    assert!(svg.contains("M 287.0000 10.0000 L 10.0000 10.0000"));
+    // The drafted note's first glyph stroke starts at its anchor (30, 80); the 5 mm
+    // glyphs rise to paper y 85, flipped to svg y 335.
+    assert!(
+        svg.contains("M 30.0000 340.0000 L 30.0000 335.0000"),
+        "note anchor"
+    );
+
+    // The PDF renders the same sheet: A3 paper, the title block, the placed views and
+    // the drawn objects. The primary-only print never drew any of these.
+    let pdf_out = f.shared.root.join("whole-sheet.pdf");
+    f.ok(
+        "export-drawing",
+        &[
+            "--document-dir",
+            &document_dir,
+            "--version-id",
+            VERSION4,
+            "--format",
+            "pdf",
+            "--out",
+            pdf_out.to_str().unwrap(),
+        ],
+    );
+    let pdf = String::from_utf8(fs::read(&pdf_out).unwrap()).unwrap();
+    assert!(pdf.contains("/MediaBox [0 0 841.8898 1190.5512]"));
+    assert!(pdf.contains("sheet=a3"));
+    // The title block's left edge runs from paper (127, 10) mm -> (360.0000, 28.3465) pt.
+    assert!(pdf.contains("360.0000 28.3465 m"), "title block left edge");
+    // The leader line reaches the page: (60, 95) mm -> pt.
+    assert!(pdf.contains("170.0787 269.2913 m"), "leader endpoint");
+    // The drafted note's first glyph stroke starts at its anchor (30, 80) mm -> pt.
+    assert!(pdf.contains("85.0394 226.7717 m"), "note anchor");
+    // The dashed circle paints with its authored line type: a 3 mm dash in points.
+    assert!(
+        pdf.contains("[8.5039 8.5039] 0 d"),
+        "dashed circle dash pattern"
+    );
 }

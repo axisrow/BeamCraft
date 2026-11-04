@@ -11,9 +11,9 @@
 //! BeamCraft's own stroke geometry.
 
 use super::Drawing;
-use super::pdf;
+use super::pdf::{self, PagePath};
 use super::projection::{ALGORITHM, Projection};
-use super::svg::{bounds, stroke_groups};
+use super::svg::{bounds, dash_array, drafting_layers, stroke_groups};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::DocumentVersionId;
@@ -26,9 +26,10 @@ pub const PRINT_CONTRACT: &str = "beamcraft-drawing-print/1";
 /// Blank margin kept clear along every sheet edge, in millimetres.
 pub const SHEET_MARGIN_MM: f64 = 10.0;
 
-/// Lays the exact resolved published geometry out 1:1, centred on `sheet`, and renders the
-/// print-ready page through the PDF writer. The output stays bound to `version`; the
-/// caller's model and document are never touched. Content beyond the sheet margin refuses.
+/// Lays the exact resolved published geometry out 1:1, centred on `sheet`, with every
+/// drawn object on a visible layer, and renders the print-ready page through the PDF
+/// writer. The output stays bound to `version`; the caller's model and document are never
+/// touched. Content beyond the sheet margin refuses.
 pub fn export(
     drawing: &Drawing,
     version: DocumentVersionId,
@@ -36,7 +37,13 @@ pub fn export(
     sheet: Sheet,
 ) -> Result<Vec<u8>, CommandError> {
     let (groups, _) = stroke_groups(projection)?;
-    let [min_x, min_y, max_x, max_y] = bounds(&groups);
+    let drafting = drafting_layers(drawing)?;
+    let [min_x, min_y, max_x, max_y] = bounds(
+        groups
+            .iter()
+            .flatten()
+            .chain(drafting.iter().flat_map(|layer| layer.strokes.iter())),
+    );
     let [width_mm, height_mm] = sheet.size_mm();
     if max_x - min_x > width_mm - 2.0 * SHEET_MARGIN_MM
         || max_y - min_y > height_mm - 2.0 * SHEET_MARGIN_MM
@@ -64,7 +71,18 @@ pub fn export(
         spec.source.manifest,
         ALGORITHM,
     );
-    pdf::write_page(width_mm, height_mm, &groups, origin, &spec.name, &keywords)
+    let mut paths: Vec<PagePath> = groups
+        .iter()
+        .map(|group| PagePath {
+            strokes: group.clone(),
+            dash_mm: None,
+        })
+        .collect();
+    paths.extend(drafting.iter().map(|layer| PagePath {
+        strokes: layer.strokes.clone(),
+        dash_mm: dash_array(layer.line_type),
+    }));
+    pdf::write_page(width_mm, height_mm, &paths, origin, &spec.name, &keywords)
 }
 
 #[cfg(test)]

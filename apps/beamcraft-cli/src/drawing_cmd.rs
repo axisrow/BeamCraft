@@ -1061,36 +1061,62 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let snapshot = published.source.inspect()?.snapshot;
             let projection = projection::resolve(&published.drawing, &snapshot)?;
             let format = options.get("--format").copied().unwrap_or("svg");
+            // A sheet document resolves every derived view once and both surfaces render
+            // the same fixed sheet; a loose document keeps the tight-bounds export. Both
+            // stay bound to the exact version.
+            let sheet = published.drawing.sheet();
+            let mut bodies = Vec::new();
+            let mut sections = Vec::new();
+            let mut details = Vec::new();
+            if sheet.is_some() {
+                for view in published.drawing.views() {
+                    bodies.push(projection::resolve_view(
+                        &published.drawing,
+                        view,
+                        &snapshot,
+                    )?);
+                }
+                for section in published.drawing.sections() {
+                    sections.push(projection::resolve_section(
+                        &published.drawing,
+                        section,
+                        &snapshot,
+                    )?);
+                }
+                for detail in published.drawing.details() {
+                    details.push(projection::resolve_detail(
+                        &published.drawing,
+                        detail,
+                        &snapshot,
+                    )?);
+                }
+            }
             let bytes = match format {
-                // A sheet document renders its whole sheet; a loose document keeps the
-                // earlier tight-bounds export. Both stay bound to the exact version.
-                "svg" => match published.drawing.sheet() {
-                    Some(_) => {
-                        let mut bodies = Vec::with_capacity(published.drawing.views().len());
-                        for view in published.drawing.views() {
-                            bodies.push(projection::resolve_view(
-                                &published.drawing,
-                                view,
-                                &snapshot,
-                            )?);
+                "svg" => match sheet {
+                    Some(_) => sheet::export_svg(
+                        &published.drawing,
+                        version,
+                        &projection,
+                        &bodies,
+                        &sections,
+                        &details,
+                    )?,
+                    None => svg::export(&published.drawing, version, &projection)?,
+                },
+                "pdf" => match sheet {
+                    // The sheet document prints its own fixed sheet; a different --sheet
+                    // is a contradictory request and refuses.
+                    Some(spec) => {
+                        if let Some(requested) = options.get("--sheet") {
+                            let parsed = Sheet::parse(requested)
+                                .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+                            if parsed.as_str() != spec.size.as_str() {
+                                return Err(invalid(
+                                    "--sheet contradicts the document's own sheet",
+                                ));
+                            }
                         }
-                        let mut sections = Vec::with_capacity(published.drawing.sections().len());
-                        for section in published.drawing.sections() {
-                            sections.push(projection::resolve_section(
-                                &published.drawing,
-                                section,
-                                &snapshot,
-                            )?);
-                        }
-                        let mut details = Vec::with_capacity(published.drawing.details().len());
-                        for detail in published.drawing.details() {
-                            details.push(projection::resolve_detail(
-                                &published.drawing,
-                                detail,
-                                &snapshot,
-                            )?);
-                        }
-                        sheet::export_svg(
+                        sheet::export_pdf(
                             &published.drawing,
                             version,
                             &projection,
@@ -1099,19 +1125,12 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                             &details,
                         )?
                     }
-                    None => svg::export(&published.drawing, version, &projection)?,
+                    None => {
+                        let sheet = Sheet::parse(options.get("--sheet").copied().unwrap_or("a4"))
+                            .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+                        print::export(&published.drawing, version, &projection, sheet)?
+                    }
                 },
-                "pdf" => {
-                    let sheet = print::Sheet::parse(
-                        options
-                            .get("--sheet")
-                            .copied()
-                            .or_else(|| published.drawing.sheet().map(|sheet| sheet.size.as_str()))
-                            .unwrap_or("a4"),
-                    )
-                    .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
-                    print::export(&published.drawing, version, &projection, sheet)?
-                }
                 _ => return Err(invalid("format must be svg or pdf")),
             };
             // Reserve the destination only after the exact version verified and rendered; an
