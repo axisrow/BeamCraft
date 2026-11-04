@@ -2682,7 +2682,12 @@ fn tools_rotate_mirror_and_array_exactly() {
     // place.
     let turned = numbers(at(rotated, &["placement", "orientation_xyzw"]));
     assert!((turned[2] - 0.5_f64.sqrt()).abs() < 1e-6, "{turned:?}");
-    assert_eq!(numbers(&mirrored_points[0]), [-2000.0, 0.0, 0.0]);
+    let rotated_path = at(rotated, &["axis_points_mm"]).array().unwrap();
+    assert_eq!(
+        numbers(&rotated_path[0]),
+        [-2000.0, 0.0, 0.0],
+        "the rotation keeps the authored path"
+    );
     let rotate_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("tools-draft")]);
     assert_eq!(rotate_undo.0, 0);
     let undone_inspection = s.ok("tools-draft", "inspect-elements", &[]);
