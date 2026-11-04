@@ -10,8 +10,8 @@ cargo nextest run --locked -p beamcraft-cli --test cli alpha_scenario
 The `alpha_scenario` substring filter selects both stories of the package's `cli` integration
 target: `alpha_scenario.rs` (the original) and `alpha_scenario_expanded.rs` (the expanded one,
 which includes the original frame as its opening and runs the curved/poly members, the
-bent/lofted plates and the rotate/mirror/array tool story each in their own published store as
-its further tests). The
+bent/lofted plates, the rotate/mirror/array tool story and the bolt-group story each in their
+own published store as its further tests). The
 expected exit is 0. On success the
 stories themselves are silent; the runner prints one result line per test. A failing step
 aborts its story with the exact command and its expected and actual JSON in the assert panic

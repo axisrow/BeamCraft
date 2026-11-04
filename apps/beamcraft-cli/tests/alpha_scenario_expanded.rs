@@ -48,6 +48,17 @@ const TUBE_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa79";
 /// scenario): two columns, the cut beam, and two plates with one rectangular hole each.
 const STARTING_VOLUMES: [f64; 5] = [5_000_000.0, 5_000_000.0, 4_750_000.0, 396_000.0, 396_000.0];
 
+/// The shipped synthetic fastener library (contributor-original, MPL-2.0).
+const SYNTHETIC_FASTENERS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/libraries/synthetic-fasteners.usda"
+);
+
+/// The measured quantity drop of one connected plate under its group's two generated
+/// washered d 12 holes (the engine suites certify the hole geometry; the story pins the
+/// executed drop).
+const BOLT_DROP_MM3: f64 = 2_838.81;
+
 struct Story(PathBuf);
 
 impl Story {
@@ -59,6 +70,7 @@ impl Story {
         fs::create_dir(root.join("curved-published")).unwrap();
         fs::create_dir(root.join("plates-published")).unwrap();
         fs::create_dir(root.join("tools-published")).unwrap();
+        fs::create_dir(root.join("bolts-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -2749,4 +2761,166 @@ fn tools_rotate_mirror_and_array_exactly() {
         (published_turn[2] - 0.5_f64.sqrt()).abs() < 1e-6,
         "the transformed orientation survives publication: {published_turn:?}"
     );
+}
+
+/// The bolt-group story (A14.3/A14.4): its own published store, so the numbered frame
+/// keeps the counts the manual runbook records, and its own test for the per-test budget.
+/// A group commits one atomic edit, generates one group-owned hole record per crossing
+/// fastener on every connected plate, and undoes as one unit.
+#[test]
+fn a_bolt_group_generates_its_holes_and_survives_publication() {
+    let s = Story::new();
+    s.ok(
+        "bolts-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "bolts-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("bolts-draft"), "--user-id", USER],
+    );
+    let spliced = |id: &str, z: &str, name: &str| -> String {
+        let created = s.ok(
+            "bolts-draft",
+            "create-plate",
+            &[
+                "--name",
+                name,
+                "--new-id",
+                id,
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--translation",
+                z,
+            ],
+        );
+        text(at(&created, &["plate"]), "element_id")
+    };
+    let low = spliced(
+        "019a7bf0-0000-7000-8000-00000000bbb1",
+        "0,0,0",
+        "Q01 splice low",
+    );
+    let high = spliced(
+        "019a7bf0-0000-7000-8000-00000000bbb2",
+        "0,0,10",
+        "Q01 splice high",
+    );
+    let parts_arg = format!("{low},{high}");
+    let group = s.ok(
+        "bolts-draft",
+        "create-bolt-group",
+        &[
+            "--name",
+            "Q01 splice group",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000bbb3",
+            "--parts",
+            parts_arg.as_str(),
+            "--fastener-library",
+            SYNTHETIC_FASTENERS,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,250,0",
+            "--point2",
+            "600,250,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "100",
+            "--spacings",
+            "150",
+        ],
+    );
+    assert_eq!(text(&group, "outcome"), "bolt_group_committed");
+    let group_id = text(&group, "element_id");
+    // The record: the auto length resolves over the grip and its hardware; the group
+    // generates its holes.
+    let bolts_book = s.ok("bolts-draft", "bolts", &[]);
+    let record = &at(&bolts_book, &["bolt_groups"]).array().unwrap()[0];
+    assert_eq!(text(record, "id"), group_id);
+    assert_eq!(text(record, "hole_mode"), "generate");
+    assert_eq!(text(record, "length_mode"), "auto");
+    assert_eq!(text(record, "length_mm"), "40");
+    assert_eq!(text(record, "count"), "2");
+    let bolted = parts(&s.ok("bolts-draft", "inspect-elements", &[]));
+    assert_eq!(bolted.len(), 2);
+    for id in [&low, &high] {
+        let found = bolted
+            .iter()
+            .find(|(element, _, _)| element == id)
+            .expect("the spliced plate is present");
+        assert!(
+            (5_000_000.0 - found.1 - BOLT_DROP_MM3).abs() <= 1.0,
+            "the plate volume {} misses the two generated holes",
+            found.1
+        );
+    }
+    let bolted_inspection = s.ok("bolts-draft", "inspect-elements", &[]);
+    for entry in at(&bolted_inspection, &["plates"]).array().unwrap().iter() {
+        let records = at(entry, &["hole_records"]).array().unwrap();
+        assert_eq!(records.len(), 2, "{}", text(entry, "element_id"));
+        for record in records {
+            assert_eq!(text(record, "generated_by"), group_id);
+        }
+    }
+
+    // One atomic edit and one undo unit: the undo returns the blank plates, the redo
+    // regenerates the same drops.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("bolts-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    for found in parts(&s.ok("bolts-draft", "inspect-elements", &[])) {
+        close(found.1, 5_000_000.0);
+    }
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("bolts-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    let bolts_published = s.ok(
+        "bolts-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("bolts-draft")],
+    );
+    assert_eq!(text(&bolts_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("bolts-published", "inspect-elements", &[]));
+    assert_eq!(reopened.len(), 2);
+    for id in [&low, &high] {
+        let found = reopened
+            .iter()
+            .find(|(element, _, _)| element == id)
+            .expect("the spliced plate is present");
+        assert!(
+            (5_000_000.0 - found.1 - BOLT_DROP_MM3).abs() <= 1.0,
+            "the plate volume {} misses the generated holes after publication",
+            found.1
+        );
+    }
+    let reopened_inspection = s.ok("bolts-published", "inspect-elements", &[]);
+    for entry in at(&reopened_inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+    {
+        let records = at(entry, &["hole_records"]).array().unwrap();
+        assert_eq!(records.len(), 2, "{}", text(entry, "element_id"));
+        for record in records {
+            assert_eq!(
+                text(record, "generated_by"),
+                group_id,
+                "the generated holes keep their owner across publication"
+            );
+        }
+    }
+    let published_book = s.ok("bolts-published", "bolts", &[]);
+    let published_record = &at(&published_book, &["bolt_groups"]).array().unwrap()[0];
+    assert_eq!(text(published_record, "hole_mode"), "generate");
+    assert_eq!(text(published_record, "count"), "2");
+    assert_eq!(text(published_record, "length_mm"), "40");
 }

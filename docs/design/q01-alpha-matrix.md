@@ -16,10 +16,10 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, four tests: the
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, five tests: the
 expanded story and — each in its own published store so the numbered frame keeps its recorded
-counts — the curved and poly member story, the bent and lofted plate story and the model-tool
-transform story). Every step is
+counts — the curved and poly member story, the bent and lofted plate story, the model-tool
+transform story and the bolt-group story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
@@ -37,6 +37,7 @@ steps ran and passed on this machine.
 | Model data: grids and levels | `create-grid` (`0 1000` u-expression), `create-level` (elevation 1000), `list-grids` / `levels` | Passed |
 | User attributes (I04) | `attribute-define` (choice with options, number with a unit), `attribute-set`, `attribute-get`, `attributes`; an undefined name (`NOT_FOUND`) and an off-choice value (`INVALID_ARGUMENT`) refuse | Passed |
 | Connections and assembly | `create-assembly`, `attach-to-assembly` x7, `create-bolt`, `create-weld` | Passed |
+| Bolt groups with generated holes (A14.3/A14.4) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a two-fastener group over two stacked plates commits one atomic edit, resolves the auto length over the grip and its hardware (40 mm), and generates one group-owned hole record per crossing fastener on every connected plate (`hole_mode generate`, `generated_by` the group); each plate's quantity drops by the measured two-hole amount (2,838.81 mm3, within 1 mm3), the undo returns the blank plates and the redo regenerates, and publication preserves the drops, the hole ownership and the group record | Passed |
 | Numbering | `preview-numbering` + `approve-numbering`, 8 marks (7 parts + assembly) | Passed |
 | Schedules (I05) | `schedule-export` over the numbered head: CSV, group totals that keep unknown cells counted, and HTML reproduce byte for byte; an unknown attribute column stays visible and is reported; a kind filter narrows to one row | Passed |
 | Views/filters (real store) | `export-view` twice for one head: byte-identical bundles; a repeat export into an existing file is refused without overwriting | Passed |
@@ -81,7 +82,7 @@ recorded open and stay open until they execute on real hardware.
 
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
-| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, poly and curved members, bent and lofted plates, grids/levels, attributes, assembly/bolt/weld, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, poly and curved members, bent and lofted plates, grids/levels, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
 | View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |
