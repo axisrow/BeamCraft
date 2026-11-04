@@ -2352,7 +2352,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--scale", "N"),
             opt("--origin", "X,Y"),
             opt("--offset", "MM"),
-            opt("--decimals", "0..255"),
+            opt("--decimals", "0..3"),
             opt("--intent-out", "FILE"),
         ],
     ),
@@ -2380,7 +2380,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--scale", "N"),
             opt("--origin", "X,Y"),
             opt("--offset", "MM"),
-            opt("--decimals", "0..255"),
+            opt("--decimals", "0..3"),
         ],
     ),
     entry(
@@ -2408,7 +2408,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--scale", "N"),
             opt("--origin", "X,Y"),
             opt("--offset", "MM"),
-            opt("--decimals", "0..255"),
+            opt("--decimals", "0..3"),
         ],
     ),
     entry(

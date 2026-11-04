@@ -32,8 +32,9 @@ const TITLE_BLOCK_LABEL_MM: f64 = 30.0;
 const TITLE_BLOCK_ROWS: usize = 4;
 /// Gap between a title block cell edge and its text.
 const TITLE_BLOCK_PAD_MM: f64 = 2.0;
-/// Gap between a view's lowest stroke and its annotation line below it.
-const VIEW_TITLE_GAP_MM: f64 = 3.0;
+/// Gap between a view's lowest stroke and its annotation line below it. Above the 3.5 mm
+/// glyph height, so the title clears the geometry it annotates (visual audit finding 5).
+const VIEW_TITLE_GAP_MM: f64 = 5.0;
 /// Exact contract of the whole-sheet export, independent of the loose-paper contract.
 pub const SHEET_EXPORT_CONTRACT: &str = "beamcraft-drawing-sheet/1";
 
@@ -193,11 +194,18 @@ fn layout(
         let y = inset + row as f64 * row_height;
         block.push([[block_x, y], [inner_x, y]]);
     }
-    block.push([[block_x, inset], [block_x, inset + TITLE_BLOCK_HEIGHT_MM]]);
+    // The block closes at the top: the frame owns the bottom, left and right edges.
     block.push([
-        [inner_x - TITLE_BLOCK_LABEL_MM, inset],
+        [block_x, inset + TITLE_BLOCK_HEIGHT_MM],
+        [inner_x, inset + TITLE_BLOCK_HEIGHT_MM],
+    ]);
+    block.push([[block_x, inset], [block_x, inset + TITLE_BLOCK_HEIGHT_MM]]);
+    // The divider follows the label column, so labels and values sit in separate cells
+    // and a long value never strikes through its label (visual audit finding 6).
+    block.push([
+        [block_x + TITLE_BLOCK_LABEL_MM, inset],
         [
-            inner_x - TITLE_BLOCK_LABEL_MM,
+            block_x + TITLE_BLOCK_LABEL_MM,
             inset + TITLE_BLOCK_HEIGHT_MM,
         ],
     ]);
@@ -670,6 +678,69 @@ mod tests {
         assert!(
             frame.contains("M 200.0000 10.0000 L 10.0000 10.0000"),
             "{frame}"
+        );
+    }
+
+    #[test]
+    fn a_view_title_clears_the_lowest_stroke_of_its_view() {
+        // Finding 5: the 3.0 mm gap is smaller than the 3.5 mm glyphs, so the title rose
+        // 0.5 mm into the geometry. The title's tallest glyph must stay below the view's
+        // lowest stroke: in flipped SVG space the title's closest point sits below the
+        // geometry's own edge.
+        let base = sheet_drawing(Sheet::A4, &[D]);
+        let mut spec = base.spec().clone();
+        spec.view.title = Some("ELEVATION".to_owned());
+        let drawing = Drawing::admit(spec).unwrap();
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bodies = vec![placed_body([65.0, 45.0])];
+        let bytes = export_svg(&drawing, version, &projection(), &bodies, &[], &[]).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let title = text
+            .split("<path class=\"viewtitle\" data-view=\"B\" d=\"")
+            .nth(1)
+            .unwrap_or_default();
+        let title = title.split("\"/>").next().unwrap_or_default();
+        // The primary geometry's lowest stroke sits at paper y 45, flipped to svg y 252;
+        // every title point must be below it.
+        let numbers: Vec<f64> = title
+            .split_whitespace()
+            .filter_map(|token| token.parse::<f64>().ok())
+            .collect();
+        let highest_title_y = numbers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| index % 2 == 1)
+            .fold(f64::INFINITY, |min, (_, value)| min.min(*value));
+        assert!(highest_title_y >= 252.0, "{title}");
+    }
+
+    #[test]
+    fn the_title_block_closes_at_the_top_and_divides_after_the_label_column() {
+        // Finding 6: the block was open at the top and its only vertical divider sat 30
+        // mm from the frame's right edge, so labels and values shared one column and a
+        // long project name struck through. The divider follows the label column and the
+        // block closes at the top.
+        let drawing = sheet_drawing(Sheet::A4, &[D]);
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bodies = vec![placed_body([65.0, 45.0])];
+        let bytes = export_svg(&drawing, version, &projection(), &bodies, &[], &[]).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let block = text
+            .split("<path class=\"titleblock\" d=\"")
+            .nth(1)
+            .unwrap_or_default();
+        let block = block.split("\"/>").next().unwrap_or_default();
+        // A4: inner_x 200, block_x 40; the block's top edge sits at paper y 54, flipped
+        // to svg y 243.
+        assert!(
+            block.contains("M 40.0000 243.0000 L 200.0000 243.0000"),
+            "{block}"
+        );
+        // The divider runs after the 30 mm label column: paper x 70, flipped top to
+        // bottom of the block.
+        assert!(
+            block.contains("M 70.0000 287.0000 L 70.0000 243.0000"),
+            "{block}"
         );
     }
 

@@ -57,6 +57,8 @@ impl Story {
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
         fs::create_dir(root.join("curved-published")).unwrap();
+        fs::create_dir(root.join("plates-published")).unwrap();
+        fs::create_dir(root.join("tools-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -2281,4 +2283,470 @@ fn curved_and_poly_members_run_their_own_published_store() {
         close(found.1, volume);
         assert_eq!(found.2, digest, "{label} mesh must survive the round trip");
     }
+}
+
+/// The bent and lofted plate story (A10/A11): its own published store, so the numbered
+/// frame keeps the counts the manual runbook records, and its own test for the per-test
+/// budget. The lofted plate is the certified ruled loft with the exact analytic volume;
+/// the fold keeps the blank's `t x area` volume within the certified bound and the
+/// unfold stays the authored contour.
+#[test]
+fn bent_and_lofted_plates_run_their_own_published_store() {
+    let s = Story::new();
+    // The project's steel seeds the store head; the workspace forks from it.
+    s.ok(
+        "plates-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "plates-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("plates-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+
+    // The lofted plate between two translated contours: the oblique prism of the square,
+    // with the exact analytic volume in the reply and in the stored quantities.
+    let lofted = s.ok(
+        "plates-draft",
+        "create-lofted-plate",
+        &[
+            "--name",
+            "Q01 lofted transition",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000aa90",
+            "--start",
+            "0,0,0;200,0,0;200,100,0;0,100,0",
+            "--end",
+            "0,0,50;200,0,50;200,100,50;0,100,50",
+        ],
+    );
+    assert_eq!(text(&lofted, "outcome"), "lofted_plate_created");
+    let lofted_id = text(at(&lofted, &["plate"]), "id");
+    assert!(
+        (at(&lofted, &["geometry", "volume_mm3"]).float().unwrap() - 1_000_000.0).abs() < 1e-6,
+        "the lofted oblique prism volume"
+    );
+    let stored_lofts = s.ok("plates-draft", "inspect-lofted-plates", &[]);
+    assert_eq!(text(&stored_lofts, "outcome"), "lofted_plates");
+    let lofts = at(&stored_lofts, &["plates"]).array().unwrap();
+    assert_eq!(lofts.len(), 1);
+    assert_eq!(text(&lofts[0], "id"), lofted_id);
+    assert_eq!(text(&lofts[0], "volume_status"), "current");
+    assert!(
+        (at(&lofts[0], &["volume_mm3"]).float().unwrap() - 1_000_000.0).abs() < 1e-6,
+        "the stored lofted quantity"
+    );
+
+    // The folded plate: one right-angle fold on radius 8 keeps the volume at the blank's
+    // t x area within the certified bound, the outline becomes the unfold contour, and
+    // the bend record carries its parameters.
+    let flat = s.ok(
+        "plates-draft",
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "2000",
+            "--thickness",
+            "2",
+            "--name",
+            "Q01 folded bracket",
+        ],
+    );
+    let flat_id = text(at(&flat, &["plate"]), "element_id");
+    let fold_args = [
+        "--id",
+        flat_id.as_str(),
+        "--operation-id",
+        "019a7bf0-0000-7000-8000-00000000aa91",
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000aa92",
+        "--kind",
+        "fold",
+        "--point-a",
+        "0,1000,0",
+        "--point-b",
+        "1000,1000,0",
+        "--radius",
+        "8",
+        "--angle-rad",
+        "1.5707963267948966",
+    ];
+    let bent = s.ok("plates-draft", "bend-plate", &fold_args);
+    assert_eq!(text(&bent, "outcome"), "bend_applied");
+    let inspection = s.ok("plates-draft", "inspect-elements", &[]);
+    let bent_parts = parts(&inspection);
+    assert_eq!(
+        bent_parts.len(),
+        1,
+        "the loft lists separately from the plates"
+    );
+    let bent_found = bent_parts
+        .iter()
+        .find(|(element, _, _)| element == flat_id.as_str())
+        .expect("the folded plate is present");
+    let bent_volume = bent_found.1;
+    assert!(
+        (bent_volume - 4_000_000.0).abs() <= 8_000.0,
+        "bent volume {bent_volume} past the fold bound"
+    );
+    let bent_digest = bent_found.2.clone();
+    let folded_entry = at(&inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|p| text(p, "element_id") == flat_id)
+        .expect("the folded plate entry is present");
+    assert_eq!(text(folded_entry, "outline"), "contour");
+    let bends = at(folded_entry, &["bends"]).array().unwrap();
+    assert_eq!(bends.len(), 1);
+    assert_eq!(text(&bends[0], "bend"), "fold");
+
+    let plates_head = s.head("plates-draft");
+    let replay = s.ok("plates-draft", "bend-plate", &fold_args);
+    assert_eq!(text(&replay, "outcome"), "bend_replayed");
+    assert_eq!(
+        s.head("plates-draft"),
+        plates_head,
+        "the replay writes nothing"
+    );
+    let overlapping = s.run(
+        "plates-draft",
+        "bend-plate",
+        &[
+            "--id",
+            flat_id.as_str(),
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000aa93",
+            "--kind",
+            "fold",
+            "--point-a",
+            "0,1001,0",
+            "--point-b",
+            "1000,1001,0",
+            "--radius",
+            "8",
+            "--angle-rad",
+            "1.5707963267948966",
+        ],
+        2,
+    );
+    assert_eq!(text(&overlapping, "outcome"), "rejected");
+    assert_eq!(s.head("plates-draft"), plates_head);
+
+    // The bend is one undo unit: the fold rolls back to the exact flat blank and the
+    // redo restores the bent volume.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("plates-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    let unfolded = parts(&s.ok("plates-draft", "inspect-elements", &[]));
+    close(volume_of(&unfolded, flat_id.as_str()), 4_000_000.0);
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("plates-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    let plates_published = s.ok(
+        "plates-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("plates-draft")],
+    );
+    assert_eq!(text(&plates_published, "outcome"), "workspace_published");
+    let reopened_plates = parts(&s.ok("plates-published", "inspect-elements", &[]));
+    assert_eq!(reopened_plates.len(), 1);
+    let folded_back = reopened_plates
+        .iter()
+        .find(|(other, _, _)| other == flat_id.as_str())
+        .expect("the folded plate is present");
+    close(folded_back.1, bent_volume);
+    assert_eq!(
+        folded_back.2, bent_digest,
+        "folded mesh must survive the round trip"
+    );
+    let reopened_lofts = s.ok("plates-published", "inspect-lofted-plates", &[]);
+    assert_eq!(text(&reopened_lofts, "outcome"), "lofted_plates");
+    let reopened_loft_entries = at(&reopened_lofts, &["plates"]).array().unwrap();
+    assert_eq!(reopened_loft_entries.len(), 1);
+    assert_eq!(text(&reopened_loft_entries[0], "id"), lofted_id);
+    assert_eq!(text(&reopened_loft_entries[0], "volume_status"), "current");
+    assert!(
+        (at(&reopened_loft_entries[0], &["volume_mm3"])
+            .float()
+            .unwrap()
+            - 1_000_000.0)
+            .abs()
+            < 1e-6,
+        "the lofted quantity must survive the round trip"
+    );
+    assert!(
+        at(&reopened_loft_entries[0], &["triangles"])
+            .unsigned()
+            .unwrap()
+            > 0
+    );
+}
+
+/// The model-tool story (T03): rotate, mirror and the arrays run in their own published
+/// store, so the numbered frame keeps the counts the manual runbook records, and in its
+/// own test for the per-test budget. Every transform is exactly one placement or shape
+/// step and one undo unit; the arrays land independent copies in one revision.
+#[test]
+fn tools_rotate_mirror_and_array_exactly() {
+    let s = Story::new();
+    s.ok(
+        "tools-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-BAR",
+            "--width",
+            "100",
+            "--height",
+            "100",
+        ],
+    );
+    s.ok(
+        "tools-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("tools-draft"), "--user-id", USER],
+    );
+    let tool_volume = 10_000_000.0;
+    let strut = |id: &str, start: &str, end: &str, name: &str| -> String {
+        let created = s.ok(
+            "tools-draft",
+            "create-member",
+            &[
+                "--new-id",
+                id,
+                "--kind",
+                "beam",
+                "--start",
+                start,
+                "--end",
+                end,
+                "--profile",
+                "Q01-BAR",
+                "--name",
+                name,
+            ],
+        );
+        text(at(&created, &["member"]), "element_id")
+    };
+
+    // The linear array lands three independent copies in one revision: stepped
+    // placements, the source body and quantity each, and one undo removes them all.
+    let arrayed = strut(
+        "019a7bf0-0000-7000-8000-00000000aaa0",
+        "0,0,0",
+        "1000,0,0",
+        "Q01 array strut",
+    );
+    let array = s.ok(
+        "tools-draft",
+        "array-linear",
+        &[
+            "--id",
+            &arrayed,
+            "--count",
+            "3",
+            "--direction",
+            "1,0,0",
+            "--spacing",
+            "2000",
+        ],
+    );
+    assert_eq!(text(&array, "outcome"), "element_arrayed");
+    for (index, element) in at(&array, &["elements"])
+        .array()
+        .unwrap()
+        .iter()
+        .enumerate()
+    {
+        let expected = 2000.0 * (index as f64 + 1.0);
+        assert_eq!(
+            numbers(at(element, &["placement", "translation_mm"]))[0],
+            expected,
+            "the copy at the stepped placement"
+        );
+        assert_eq!(
+            at(element, &["quantities", "volume", "mm3"])
+                .float()
+                .unwrap(),
+            tool_volume
+        );
+    }
+    assert_eq!(
+        parts(&s.ok("tools-draft", "inspect-elements", &[])).len(),
+        4
+    );
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("tools-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    assert_eq!(
+        parts(&s.ok("tools-draft", "inspect-elements", &[])).len(),
+        1,
+        "one undo removes every copy"
+    );
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("tools-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    // The mirror reflects the path across the plane, keeping the length and the volume;
+    // a mirrored polybeam path is not expressible and refuses with nothing written.
+    let mirrored_strut = strut(
+        "019a7bf0-0000-7000-8000-00000000aaa1",
+        "2000,0,0",
+        "3000,0,0",
+        "Q01 mirrored strut",
+    );
+    let mirror = s.ok(
+        "tools-draft",
+        "update-element",
+        &[
+            "--id",
+            &mirrored_strut,
+            "--mirror-point",
+            "0,0,0",
+            "--mirror-normal",
+            "1,0,0",
+        ],
+    );
+    assert_eq!(text(&mirror, "outcome"), "element_updated");
+    let mirror_element = at(&mirror, &["element"]);
+    let mirrored_points = at(mirror_element, &["axis_points_mm"]).array().unwrap();
+    assert_eq!(mirrored_points.len(), 2);
+    assert_eq!(
+        numbers(&mirrored_points[0]),
+        [-2000.0, 0.0, 0.0],
+        "the path reflects across x = 0"
+    );
+    assert_eq!(
+        at(mirror_element, &["axis_length_mm"]).float().unwrap(),
+        1000.0
+    );
+    let poly = s.ok(
+        "tools-draft",
+        "create-polybeam",
+        &[
+            "--points",
+            "0,0,0;1000,0,0;1000,1000,0",
+            "--profile",
+            "Q01-BAR",
+            "--name",
+            "Q01 tool gutter",
+        ],
+    );
+    let poly_id = text(at(&poly, &["member"]), "element_id");
+    let tools_head = s.head("tools-draft");
+    let refused_mirror = s.run(
+        "tools-draft",
+        "update-element",
+        &[
+            "--id",
+            &poly_id,
+            "--mirror-point",
+            "0,0,0",
+            "--mirror-normal",
+            "1,0,0",
+        ],
+        2,
+    );
+    assert_eq!(text(&refused_mirror, "code"), "UNSUPPORTED_GEOMETRY");
+    assert_eq!(s.head("tools-draft"), tools_head);
+
+    // The rotation is one placement step: the quarter turn about Z moves the mirrored
+    // placement onto -Y and composes the orientation; undo and redo each restore one step.
+    let rotation = s.ok(
+        "tools-draft",
+        "update-element",
+        &[
+            "--id",
+            &mirrored_strut,
+            "--rotate-about",
+            "0,0,0",
+            "--rotate-axis",
+            "0,0,1",
+            "--rotate-angle",
+            "1.5707963267948966",
+        ],
+    );
+    assert_eq!(text(&rotation, "outcome"), "element_updated");
+    let rotated = at(&rotation, &["element"]);
+    // The turn composes the orientation and keeps the authored path: the member turns in
+    // place.
+    let turned = numbers(at(rotated, &["placement", "orientation_xyzw"]));
+    assert!((turned[2] - 0.5_f64.sqrt()).abs() < 1e-6, "{turned:?}");
+    let rotated_path = at(rotated, &["axis_points_mm"]).array().unwrap();
+    assert_eq!(
+        numbers(&rotated_path[0]),
+        [-2000.0, 0.0, 0.0],
+        "the rotation keeps the authored path"
+    );
+    let rotate_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("tools-draft")]);
+    assert_eq!(rotate_undo.0, 0);
+    let undone_inspection = s.ok("tools-draft", "inspect-elements", &[]);
+    assert_eq!(parts(&undone_inspection).len(), 6);
+    let restored_entry = at(&undone_inspection, &["members"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|e| text(e, "element_id") == mirrored_strut)
+        .expect("the mirrored strut entry is present");
+    let upright = numbers(at(restored_entry, &["placement", "orientation_xyzw"]));
+    assert!(
+        (upright[2]).abs() < 1e-9 && (upright[3] - 1.0).abs() < 1e-9,
+        "{upright:?}"
+    );
+    let rotate_redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("tools-draft")]);
+    assert_eq!(rotate_redo.0, 0);
+    assert_eq!(text(&rotate_redo.1, "outcome"), "workspace_redone");
+    let final_inspection = s.ok("tools-draft", "inspect-elements", &[]);
+    let final_parts = parts(&final_inspection);
+    assert_eq!(final_parts.len(), 6);
+    let rotated_again = at(&final_inspection, &["members"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|e| text(e, "element_id") == mirrored_strut)
+        .expect("the mirrored strut entry is present");
+    let turned_again = numbers(at(rotated_again, &["placement", "orientation_xyzw"]));
+    assert!(
+        (turned_again[2] - 0.5_f64.sqrt()).abs() < 1e-6,
+        "{turned_again:?}"
+    );
+
+    let tools_published = s.ok(
+        "tools-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("tools-draft")],
+    );
+    assert_eq!(text(&tools_published, "outcome"), "workspace_published");
+    let reopened_tools = parts(&s.ok("tools-published", "inspect-elements", &[]));
+    assert_eq!(reopened_tools.len(), final_parts.len());
+    for (id, volume, digest) in &final_parts {
+        let found = reopened_tools
+            .iter()
+            .find(|(other, _, _)| other == id)
+            .unwrap_or_else(|| panic!("{id} is present"));
+        close(found.1, *volume);
+        assert_eq!(found.2, *digest, "{id} mesh must survive the round trip");
+    }
+    let published_inspection = s.ok("tools-published", "inspect-elements", &[]);
+    let published_entry = at(&published_inspection, &["members"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|e| text(e, "element_id") == mirrored_strut)
+        .expect("the mirrored strut entry is present");
+    let published_turn = numbers(at(published_entry, &["placement", "orientation_xyzw"]));
+    assert!(
+        (published_turn[2] - 0.5_f64.sqrt()).abs() < 1e-6,
+        "the transformed orientation survives publication: {published_turn:?}"
+    );
 }

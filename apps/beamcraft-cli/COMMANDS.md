@@ -1410,7 +1410,7 @@ write.
 ```text
 preview-drawing --store ROOT --id UUID --drawing-id UUID --view-id UUID --dimension-id UUID
     --anchor-a FEATURE_ID --anchor-b FEATURE_ID [--name TEXT] [--plane front|top|right]
-    [--scale N] [--origin X,Y] [--offset MM] [--decimals 0..255] [--intent-out FILE]
+    [--scale N] [--origin X,Y] [--offset MM] [--decimals 0..3] [--intent-out FILE]
 ```
 
 ### create-drawing
@@ -1421,7 +1421,7 @@ write.
 create-drawing --store ROOT --document-dir DIR --op-id UUID --revision-id UUID --actor-id UUID
     --id UUID --drawing-id UUID --view-id UUID --dimension-id UUID --anchor-a FEATURE_ID
     --anchor-b FEATURE_ID [--name TEXT] [--view-title TEXT] [--plane front|top|right] [--scale N]
-    [--origin X,Y] [--offset MM] [--decimals 0..255]
+    [--origin X,Y] [--offset MM] [--decimals 0..3]
 ```
 
 ### refresh-drawing
@@ -1433,7 +1433,7 @@ refresh-drawing --store ROOT --document-dir DIR --expected-head UUID --op-id UUI
     --revision-id UUID --actor-id UUID --id UUID --drawing-id UUID --view-id UUID
     --dimension-id UUID --anchor-a FEATURE_ID --anchor-b FEATURE_ID [--name TEXT]
     [--view-title TEXT] [--plane front|top|right] [--scale N] [--origin X,Y] [--offset MM]
-    [--decimals 0..255]
+    [--decimals 0..3]
 ```
 
 ### edit-drafting

@@ -58,6 +58,24 @@ fn an_unregistered_word_is_unsupported() {
 }
 
 #[test]
+fn a_command_help_answers_with_help_not_a_refusal() {
+    // Finding 11: `create-plate --help` answered with a JSON INVALID_ARGUMENT refusal
+    // because only the top-level `--help` printed help. A per-command help now answers
+    // with the command family's own sections: exit 0, plain text.
+    let (code, out) = run(&["create-plate", "--help"]);
+    assert_eq!(code, Some(0));
+    assert!(!out.trim_start().starts_with('{'), "{out}");
+    assert!(out.contains("create-plate"), "{out}");
+    let (mid_code, mid_out) = run(&["create-plate", "--thickness", "12", "--help"]);
+    assert_eq!(mid_code, Some(0));
+    assert!(!mid_out.trim_start().starts_with('{'), "{mid_out}");
+    // A `-h` in a value position stays a value: the command refuses it as its argument.
+    let (value_code, value_out) = run(&["create-plate", "--thickness", "-h"]);
+    assert_ne!(value_code, Some(0));
+    assert!(value_out.trim_start().starts_with('{'), "{value_out}");
+}
+
+#[test]
 fn every_registered_command_is_routed_by_the_binary() {
     let store = scratch_store();
     for command in COMMANDS {

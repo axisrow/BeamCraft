@@ -208,7 +208,9 @@ pub(crate) fn csv(header: &str, rows: impl IntoIterator<Item = Vec<String>>) -> 
     out
 }
 
-/// The per-element table as CSV.
+/// The per-element table as CSV. Quantity cells round to their unit's display precision
+/// with trailing zeros trimmed, so human-facing reports show 10020.01 and 0.79 without
+/// binary noise (visual audit finding 8) while 3000 stays 3000.
 pub fn elements_csv(bom: &Bom) -> String {
     let rows = bom.elements.iter().map(|e| {
         vec![
@@ -218,11 +220,11 @@ pub fn elements_csv(bom: &Bom) -> String {
             e.name.clone(),
             e.profile.clone(),
             e.material.clone(),
-            e.length_mm.map_or(String::new(), num),
-            e.area_mm2.map_or(String::new(), num),
-            num(e.volume_mm3),
-            num(e.volume_m3),
-            e.mass_kg.map_or(String::new(), num),
+            e.length_mm.map_or(String::new(), |v| quantity(v, 2)),
+            e.area_mm2.map_or(String::new(), |v| quantity(v, 2)),
+            quantity(e.volume_mm3, 2),
+            quantity(e.volume_m3, 9),
+            e.mass_kg.map_or(String::new(), |v| quantity(v, 2)),
         ]
     });
     csv(
@@ -231,7 +233,7 @@ pub fn elements_csv(bom: &Bom) -> String {
     )
 }
 
-/// The summary table as CSV.
+/// The summary table as CSV, with the same per-unit rounding as the element table.
 pub fn summary_csv(bom: &Bom) -> String {
     let rows = bom.groups.iter().map(|g| {
         vec![
@@ -239,10 +241,10 @@ pub fn summary_csv(bom: &Bom) -> String {
             g.profile.clone(),
             g.material.clone(),
             g.count.to_string(),
-            g.total_length_mm.map_or(String::new(), num),
-            num(g.total_area_m2),
-            num(g.total_volume_m3),
-            g.total_mass_kg.map_or(String::new(), num),
+            g.total_length_mm.map_or(String::new(), |v| quantity(v, 2)),
+            quantity(g.total_area_m2, 2),
+            quantity(g.total_volume_m3, 9),
+            g.total_mass_kg.map_or(String::new(), |v| quantity(v, 2)),
             g.mass_unknown.to_string(),
         ]
     });
@@ -252,10 +254,30 @@ pub fn summary_csv(bom: &Bom) -> String {
     )
 }
 
-/// The shortest round-trip text of a finite number: no exponent padding, no separators.
-/// Shared with the schedule renderer, which writes the same dialect.
+/// The shortest round-trip text of a finite number after binary-noise stripping: the
+/// value rounds to twelve significant decimal digits before printing, so
+/// 10020.009999999998 prints as 10020.01 while a tiny volume keeps its scale. Shared
+/// with the schedule renderer, which writes the same dialect.
 pub(crate) fn num(value: f64) -> String {
-    format!("{value}")
+    if value == 0.0 || !value.is_finite() {
+        return format!("{value}");
+    }
+    let digits = (12.0 - value.abs().log10().floor() - 1.0).clamp(0.0, 15.0);
+    let cleaned: f64 = format!("{value:.0$}", digits as usize)
+        .parse()
+        .unwrap_or(value);
+    format!("{cleaned}")
+}
+
+/// One quantity cell at its unit's display precision, trailing zeros trimmed.
+fn quantity(value: f64, decimals: usize) -> String {
+    let text = format!("{value:.decimals$}");
+    let trimmed = text.trim_end_matches('0').trim_end_matches('.');
+    if trimmed == "-0" {
+        "0".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
 }
 
 #[cfg(test)]
@@ -327,6 +349,28 @@ mod tests {
     }
 
     #[test]
+    fn report_cells_show_rounded_values_without_binary_noise() {
+        // Finding 8: a 100.1 x 100.1 mm plate printed area 10020.009999999998 and mass
+        // 0.7865707849999998; human-facing quantity cells round to their unit's
+        // precision, and derived m3 cells keep their scale without the noise tail.
+        let mut plate = row(1, ElementKind::Plate, "PL10", Some(0.7865707849999998));
+        plate.area_mm2 = Some(10020.009999999998);
+        plate.volume_mm3 = 100200.09999999998;
+        let bom = tables(&[plate], 10).unwrap();
+        let text = elements_csv(&bom);
+        let line = text.lines().nth(1).unwrap_or_default();
+        assert!(line.contains(",10020.01,"), "{line}");
+        assert!(
+            line.ends_with(",,10020.01,100200.1,0.0001002,0.79"),
+            "{line}"
+        );
+        let summary = summary_csv(&bom);
+        let group = summary.lines().nth(1).unwrap_or_default();
+        assert!(group.contains(",0.01,"), "{group}");
+        assert!(group.ends_with(",0.0001002,0.79,0"), "{group}");
+    }
+
+    #[test]
     fn csv_quotes_only_fields_that_need_it() {
         let mut evil = BomRow {
             id: id(1),
@@ -357,7 +401,8 @@ mod tests {
                 .lines()
                 .nth(1)
                 .unwrap()
-                .ends_with(",0.0785")
+                .ends_with(",0.08"),
+            "mass cells round to the unit's display precision"
         );
         assert_eq!(
             summary_csv(&bom).lines().next().unwrap(),
