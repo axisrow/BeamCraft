@@ -270,7 +270,8 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
     }
 }
 
-/// Positions the label glyphs centred on the dimension line, on the side the line is offset to.
+/// Positions the label glyphs past the dimension line, along the line's own normal on
+/// the side away from the anchors.
 pub(super) fn label_strokes(
     label: &str,
     line: [[f64; 2]; 2],
@@ -289,33 +290,30 @@ pub(super) fn label_strokes(
         })
         .sum::<f64>()
         - GLYPH_GAP;
-    // The line's own shape picks the side: a horizontal line keeps the label above or
-    // below it; a vertical or inclined line places the label beside the line, on the
-    // side away from the anchors, so the line never strikes through its own glyphs
-    // (visual audit finding 4). Glyphs keep their own upright direction on every side.
-    let vertical = (lb[0] - la[0]).abs() < (lb[1] - la[1]).abs();
-    let (x, bottom) = if vertical {
-        (
-            if line_mid[0] >= anchor_mid[0] {
-                line_mid[0] + LABEL_GAP_MM
-            } else {
-                line_mid[0] - LABEL_GAP_MM - width
-            },
-            line_mid[1] - GLYPH_HEIGHT / 2.0,
-        )
+    // The label sits at the label gap past the line, along the line's own normal, on
+    // the side away from the anchors, and the box is offset by half its extent along
+    // that normal — so every line direction, the horizontal main frame and the 45
+    // degree knee brace alike, keeps its glyphs clear of the strokes (visual audit
+    // finding 4). Glyphs keep their own upright direction on every side.
+    let (dx, dy) = (lb[0] - la[0], lb[1] - la[1]);
+    let length = dx.hypot(dy);
+    let toward = [anchor_mid[0] - line_mid[0], anchor_mid[1] - line_mid[1]];
+    let normal = if length > 0.0 {
+        let mut n = [-dy / length, dx / length];
+        if n[0] * toward[0] + n[1] * toward[1] > 0.0 {
+            n = [-n[0], -n[1]];
+        }
+        n
+    } else if line_mid[1] >= anchor_mid[1] {
+        [0.0, 1.0]
     } else {
-        let above = line_mid[1] >= anchor_mid[1];
-        (
-            line_mid[0] - width / 2.0,
-            if above {
-                line_mid[1] + LABEL_GAP_MM
-            } else {
-                line_mid[1] - LABEL_GAP_MM - GLYPH_HEIGHT
-            },
-        )
+        [0.0, -1.0]
     };
+    let extent = width * normal[0].abs() + GLYPH_HEIGHT * normal[1].abs();
+    let offset = LABEL_GAP_MM + extent / 2.0;
+    let mut x = line_mid[0] + normal[0] * offset - width / 2.0;
+    let bottom = line_mid[1] + normal[1] * offset - GLYPH_HEIGHT / 2.0;
     let mut strokes = Vec::new();
-    let mut x = x;
     for ch in label.chars() {
         let advance = if ch == '.' {
             DOT_ADVANCE
@@ -1063,6 +1061,24 @@ mod tests {
             .filter(|(index, _)| index % 2 == 0)
             .fold(f64::NEG_INFINITY, |max, (_, value)| max.max(*value));
         assert!(highest_x <= 0.1 - 1.5, "{label}");
+    }
+
+    #[test]
+    fn an_inclined_dimension_label_clears_its_line() {
+        // The inclined half of finding 4: the steep-line rule left a 45-degree
+        // knee-brace dimension on the above/below path, where the shallow line crosses
+        // the glyph box of a wide label. Every glyph point must sit at least the label
+        // gap away from the line, measured across it.
+        let label = label_strokes("2500", [[0.0, 0.0], [100.0, 100.0]], [65.35, 35.3]);
+        for stroke in &label {
+            for point in stroke {
+                let distance = (point[1] - point[0]).abs() / std::f64::consts::SQRT_2;
+                assert!(
+                    distance + 1e-6 >= 1.5,
+                    "{point:?} sits {distance} from the line"
+                );
+            }
+        }
     }
 
     #[test]
