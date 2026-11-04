@@ -60,11 +60,14 @@ delimited machine block in the description; it preserves human text and rechecks
 PR head/base and local clean snapshot. No publication happens during `check`. A new commit or
 base requires another local gate and publication. A PR edit retriggers CI selection.
 
-CI selects exactly the two operating systems other than the one recorded locally. Both run
-the complete workspace. A local CLI-only receipt deliberately omits UI on that native OS;
-the report and CI plan say so explicitly. Missing/stale/incomplete reports fail the plan and
-the aggregate `CI verdict`, instead of silently choosing a default matrix. Formatter/docs
-run on the first selected quality lane; WASM, licences, fixtures and boundaries remain checked.
+CI selects exactly the two operating systems other than the one recorded locally for the
+quality lanes of `ci.yml`: format, Clippy, fixtures, boundaries, docs on the first selected
+lane, plus WASM, licences and the cold release gate. The complete workspace runs on all three
+operating systems in the separate platform-track workflow (`ci-platform.yml`) on every
+integration push, nightly and manual dispatch, with the same fixed budgets and evidence; it
+does not wait inside the CI wall. A local CLI-only receipt deliberately omits UI on that
+native OS; the report and CI plan say so explicitly. Missing/stale/incomplete reports fail
+the plan and the aggregate `CI verdict`, instead of silently choosing a default matrix.
 Manual CI can name a source PR with the `pr_number` workflow input.
 
 A `pull_request` run starts before its receipt exists, because publication follows the push that

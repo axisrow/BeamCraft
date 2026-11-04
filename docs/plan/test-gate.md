@@ -79,21 +79,37 @@ Publication itself fires `pull_request edited`, whose run replans with the recei
 through the workflow's `cancel-in-progress` group, may supersede the still-waiting first run: the
 PR then goes green on that run while the superseded run ends cancelled, not red.
 
-| Local report OS | CI workspace platforms |
-| --- | --- |
-| Linux | macOS, Windows |
-| macOS | Linux, Windows |
-| Windows | Linux, macOS |
+| Local report OS | CI quality lanes (ci.yml) | Complete workspace tests (platform track) |
+| --- | --- | --- |
+| Linux | macOS, Windows | Linux, macOS, Windows |
+| macOS | Linux, Windows | Linux, macOS, Windows |
+| Windows | Linux, macOS | Linux, macOS, Windows |
 
-CI always runs the complete workspace on its two selected platforms, even after a local
-CLI-only run. That choice intentionally omits UI verification on the local OS for independent
-CLI changes; it must not be described as full UI coverage on all three OSes. Architecture is
-recorded; this is an OS-selection policy, not an expansion of the release target matrix.
+Owner decision 2026-11-05 (CI wall time, issue [Apibim-com#239](https://github.com/Apibim-com/BeamCraft/issues/239)):
+the CI wall no longer waits for cross-platform test execution; two workflows split the duty.
+`ci.yml` is the required aggregate of every pull request, push and dispatch: `ci-plan` still
+validates a current local receipt exactly as before and selects the two operating systems other
+than the recorded local one for the compile-and-lint quality lanes (format, Clippy, fixtures,
+boundaries, docs on the primary lane), plus WASM, licences and the cold release gate; a single
+`CI verdict` remains the required check. `ci-platform.yml` runs the complete workspace on all
+three operating systems — nextest archives, existing per-platform partitions with the same fixed
+budgets, and full evidence uploads — on every integration push, on a nightly schedule and on
+manual dispatch, as a parallel track that does not wait inside the CI wall. A release is cut
+from an integration commit whose push has already passed the full track; dispatch remains
+available before a release. Per-PR cross-OS test execution is intentionally moved from the CI
+wall to that track: the PR's test evidence is the local receipt on its recorded OS, the quality
+lanes re-verify compilation and lint on the other two, and every integration push plus the
+nightly cadence executes the complete workspace everywhere. This selection is an OS-selection
+policy, not an expansion of the release target matrix; a local CLI-only receipt intentionally
+omits UI verification on the local OS for independent CLI changes and must not be described as
+full UI coverage on all three OSes. Every partition of a platform's canonical shard count must
+run: dropping a partition for runner-capacity convenience is a coverage regression, not a
+scheduling choice.
 
-Retain existing per-platform test partitions. Format, documentation, WASM, licence and boundary
-checks must not disappear when an OS is excluded. A single `CI verdict` fails if planning or any
-required check fails or is unexpectedly skipped. Missing/invalid/stale reports fail planning;
-never fall back to silently skipping another OS or accepting an old green result.
+Format, documentation, WASM, licence and boundary checks must not disappear from `ci.yml`.
+A single `CI verdict` fails if planning or any required check fails or is unexpectedly skipped.
+Missing/invalid/stale reports fail planning; never fall back to silently skipping another OS or
+accepting an old green result.
 
 On master pushes, locate the merged PR and require its tested tree to equal the actual commit
 tree, supporting merge, squash and rebase integration. Manual runs need the same applicable
@@ -112,5 +128,6 @@ reports when the implementation is enabled.
 Exercise CLI-only selection without UI artifacts, rejection of shared changes, ordinary-test
 and doctest failures, individual/global timeout process cleanup on all three OSes, empty or
 missing reports, stale head/base/tree rejection, all three two-OS selections, PR merge-tree
-matching, sync report binding, cross-worktree locking, and missing UI prerequisites. Use real
-small subprocess fixtures for failure/timeout cases, not only command-string assertions.
+matching, sync report binding, cross-worktree locking, missing UI prerequisites, and the
+verdict that accepts the platform-track hand-off. Use real small subprocess fixtures for
+failure/timeout cases, not only command-string assertions.
