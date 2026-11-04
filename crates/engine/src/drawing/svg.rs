@@ -138,11 +138,11 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
         ]),
         'B' => Some(&[
             [[0.0, 3.5], [0.0, 0.0]],
-            [[0.0, 3.5], [1.8, 3.5]],
-            [[1.8, 3.5], [1.8, 1.75]],
-            [[0.0, 1.75], [1.8, 1.75]],
-            [[1.8, 1.75], [1.8, 0.0]],
-            [[0.0, 0.0], [1.8, 0.0]],
+            [[0.0, 3.5], [1.4, 3.5]],
+            [[1.4, 3.5], [1.4, 1.75]],
+            [[0.0, 1.75], [1.4, 1.75]],
+            [[0.0, 0.0], [1.1, 0.0]],
+            [[1.1, 0.0], [1.1, 1.75]],
         ]),
         'C' => Some(&[
             [[2.0, 3.5], [0.0, 3.5]],
@@ -204,10 +204,14 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[2.0, 0.0], [2.0, 3.5]],
         ]),
         'O' => Some(&[
-            [[0.0, 3.5], [2.0, 3.5]],
-            [[2.0, 3.5], [2.0, 0.0]],
-            [[2.0, 0.0], [0.0, 0.0]],
-            [[0.0, 0.0], [0.0, 3.5]],
+            [[0.6, 3.5], [1.4, 3.5]],
+            [[1.4, 3.5], [2.0, 2.9]],
+            [[2.0, 2.9], [2.0, 0.6]],
+            [[2.0, 0.6], [1.4, 0.0]],
+            [[1.4, 0.0], [0.6, 0.0]],
+            [[0.6, 0.0], [0.0, 0.6]],
+            [[0.0, 0.6], [0.0, 2.9]],
+            [[0.0, 2.9], [0.6, 3.5]],
         ]),
         'P' => Some(&[
             [[0.0, 3.5], [0.0, 0.0]],
@@ -230,11 +234,11 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[1.0, 1.75], [2.0, 0.0]],
         ]),
         'S' => Some(&[
-            [[2.0, 3.5], [0.0, 3.5]],
-            [[0.0, 3.5], [0.0, 1.75]],
-            [[0.0, 1.75], [2.0, 1.75]],
-            [[2.0, 1.75], [2.0, 0.0]],
-            [[2.0, 0.0], [0.0, 0.0]],
+            [[2.0, 3.5], [0.4, 3.5]],
+            [[0.4, 3.5], [0.4, 1.75]],
+            [[0.4, 1.75], [1.6, 1.75]],
+            [[1.6, 1.75], [1.6, 0.0]],
+            [[1.6, 0.0], [0.0, 0.0]],
         ]),
         'T' => Some(&[[[0.0, 3.5], [2.0, 3.5]], [[1.0, 3.5], [1.0, 0.0]]]),
         'U' => Some(&[
@@ -269,9 +273,11 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
 /// Positions the label glyphs centred on the dimension line, on the side the line is offset to.
 pub(super) fn label_strokes(
     label: &str,
-    line_mid: [f64; 2],
+    line: [[f64; 2]; 2],
     anchor_mid: [f64; 2],
 ) -> Vec<[[f64; 2]; 2]> {
+    let [la, lb] = line;
+    let line_mid = [(la[0] + lb[0]) / 2.0, (la[1] + lb[1]) / 2.0];
     let width: f64 = label
         .chars()
         .map(|ch| {
@@ -283,16 +289,33 @@ pub(super) fn label_strokes(
         })
         .sum::<f64>()
         - GLYPH_GAP;
-    // Above the line when the line sits above the anchors, else below; glyphs keep their own
-    // upright direction on both sides.
-    let above = line_mid[1] >= anchor_mid[1];
-    let bottom = if above {
-        line_mid[1] + LABEL_GAP_MM
+    // The line's own shape picks the side: a horizontal line keeps the label above or
+    // below it; a vertical or inclined line places the label beside the line, on the
+    // side away from the anchors, so the line never strikes through its own glyphs
+    // (visual audit finding 4). Glyphs keep their own upright direction on every side.
+    let vertical = (lb[0] - la[0]).abs() < (lb[1] - la[1]).abs();
+    let (x, bottom) = if vertical {
+        (
+            if line_mid[0] >= anchor_mid[0] {
+                line_mid[0] + LABEL_GAP_MM
+            } else {
+                line_mid[0] - LABEL_GAP_MM - width
+            },
+            line_mid[1] - GLYPH_HEIGHT / 2.0,
+        )
     } else {
-        line_mid[1] - LABEL_GAP_MM - GLYPH_HEIGHT
+        let above = line_mid[1] >= anchor_mid[1];
+        (
+            line_mid[0] - width / 2.0,
+            if above {
+                line_mid[1] + LABEL_GAP_MM
+            } else {
+                line_mid[1] - LABEL_GAP_MM - GLYPH_HEIGHT
+            },
+        )
     };
     let mut strokes = Vec::new();
-    let mut x = line_mid[0] - width / 2.0;
+    let mut x = x;
     for ch in label.chars() {
         let advance = if ch == '.' {
             DOT_ADVANCE
@@ -452,9 +475,8 @@ pub(super) fn stroke_groups(
             .chain(arrow_strokes(lb, [-inward[0], -inward[1]]))
             .collect(),
     )?;
-    let line_mid = [(la[0] + lb[0]) / 2.0, (la[1] + lb[1]) / 2.0];
     let anchor_mid = [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0];
-    let label = normalized(label_strokes(label_mm, line_mid, anchor_mid))?;
+    let label = normalized(label_strokes(label_mm, *line_paper_mm, anchor_mid))?;
     Ok((
         [body, extension, line, arrows, label],
         (*label_mm).to_owned(),
@@ -622,13 +644,12 @@ fn geometry_strokes(geometry: &DraftingGeometry) -> Vec<[[f64; 2]; 2]> {
             let line_length = (lb[0] - la[0]).hypot(lb[1] - la[1]);
             let inward = [(lb[0] - la[0]) / line_length, (lb[1] - la[1]) / line_length];
             let label = format!("{:.*}", usize::from(*decimal_places), length);
-            let line_mid = [(la[0] + lb[0]) / 2.0, (la[1] + lb[1]) / 2.0];
             let anchor_mid = [(from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0];
             vec![[*from, la], [*to, lb], [la, lb]]
                 .into_iter()
                 .chain(arrow_strokes(la, inward))
                 .chain(arrow_strokes(lb, [-inward[0], -inward[1]]))
-                .chain(label_strokes(&label, line_mid, anchor_mid))
+                .chain(label_strokes(&label, [la, lb], anchor_mid))
                 .collect()
         }
     }
@@ -1008,6 +1029,74 @@ mod tests {
             sheet: None,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn a_vertical_dimension_label_sits_beside_the_line() {
+        // Finding 4: the label always centred on the line's midpoint and its offset rule
+        // only handled a horizontal line, so a vertical dimension line ran through its
+        // own label ("25|00"). Every glyph must clear the line on the side away from the
+        // anchors.
+        let drawing = drawing("Member projection");
+        let version = DocumentVersionId::parse(C).unwrap();
+        let mut projected = projection("2500");
+        if let DimensionProjection::Resolved(geometry) = &mut projected.dimension {
+            geometry.anchors_paper_mm = [[10.1, 0.05], [10.1, 125.05]];
+            geometry.line_paper_mm = [[0.1, 0.05], [0.1, 125.05]];
+        }
+        let bytes = export(&drawing, version, &projected).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let label = text
+            .split("<path class=\"label\" d=\"")
+            .nth(1)
+            .unwrap_or_default();
+        let label = label.split("\"/>").next().unwrap_or_default();
+        // Path data alternates x and y; the line runs at paper x 0.1, so the label's
+        // rightmost glyph point must stay at least the 1.5 mm label gap left of it.
+        let numbers: Vec<f64> = label
+            .split_whitespace()
+            .filter_map(|token| token.parse::<f64>().ok())
+            .collect();
+        let highest_x = numbers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| index % 2 == 0)
+            .fold(f64::NEG_INFINITY, |max, (_, value)| max.max(*value));
+        assert!(highest_x <= 0.1 - 1.5, "{label}");
+    }
+
+    #[test]
+    fn letters_b_s_and_o_have_shapes_of_their_own() {
+        // Finding 7: S shared 5's strokes exactly, O shared 0's, and B differed from 8
+        // only by a 0.2 mm narrower box, so a mark B1 was indistinguishable from 81.
+        // Every letter draws a shape of its own on the shared glyph box.
+        let canonical = |ch: char| -> Vec<[[f64; 2]; 2]> {
+            let segments = glyph(ch).unwrap_or(&[]);
+            let min_x = segments
+                .iter()
+                .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
+                .fold(f64::INFINITY, f64::min);
+            let min_y = segments
+                .iter()
+                .flat_map(|[[_, ay], [_, by]]| [*ay, *by])
+                .fold(f64::INFINITY, f64::min);
+            segments
+                .iter()
+                .map(|[[ax, ay], [bx, by]]| [[ax - min_x, ay - min_y], [bx - min_x, by - min_y]])
+                .collect()
+        };
+        // Shifted to a common corner the letter and the digit it resembled must not
+        // become the same shape.
+        assert_ne!(canonical('S'), canonical('5'), "S must differ from 5");
+        assert_ne!(canonical('O'), canonical('0'), "O must differ from 0");
+        // B draws visibly inside the box: its right-side strokes sit well left of the
+        // full-width digits, not merely 0.2 mm inside.
+        let right_edge = glyph('B')
+            .unwrap_or(&[])
+            .iter()
+            .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(right_edge <= 1.4, "B's right side at {right_edge}");
     }
 
     #[test]
