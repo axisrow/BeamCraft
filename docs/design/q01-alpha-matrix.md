@@ -16,9 +16,10 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, three tests: the
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, four tests: the
 expanded story and — each in its own published store so the numbered frame keeps its recorded
-counts — the curved and poly member story and the bent and lofted plate story). Every step is
+counts — the curved and poly member story, the bent and lofted plate story and the model-tool
+transform story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
@@ -26,6 +27,7 @@ steps ran and passed on this machine.
 |---|---|---|
 | Modelling: frame with plates | `create-member` x3, `cut-by-plane`, `create-plate` x2 with `--hole-rect`; closed-form volumes 5,000,000 / 5,000,000 / 4,750,000 / 396,000 / 396,000 mm3 | Passed |
 | Model tools | `split-part` (column at mid height, halves sum to the closed-form volume), `copy-element` (copy equals source volume), `chamfer-part` (volume strictly decreases, every other part unchanged) | Passed |
+| Model tools: rotate, mirror and arrays (T03) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a linear array lands three independent copies in one revision at the stepped placements with the source volume each, and one undo removes them all; a mirror reflects the member path across the plane keeping the length and the volume; a mirrored polybeam path refuses `UNSUPPORTED_GEOMETRY` with nothing written; the quarter-turn rotation composes the orientation and keeps the authored path, so the member turns in place, undoing and redoing as one step; all six members survive publication with their exact volumes, meshes and the transformed orientation | Passed |
 | Member holes (A04.2, G14.1 slice) | `add-hole` on a member (`--axis-point`, `--axis-direction`, `--diameter`): a through d = 20 hole removes the regular 32-gon area times the 100 mm section width; a transverse coordinate outside the section refuses with the head unchanged | Passed |
 | Member holes, oblique and sloped walls (G14.2) | dedicated members based at the world origin: an oblique non-unit `(12,5,0)` d = 20 hole through the flat walls of a square section removes `A·100·13/12` (|n·d| = 12/13); the rotated-20° square's sloped walls remove `A·100/cos(20°)`; an axial direction and a second record on one member refuse `UNSUPPORTED_GEOMETRY` with nothing written; the identical command replays the recorded revision and fresh processes read the same volumes and `mesh_digest` byte for byte | Passed |
 | Member holes, curved tube wall (G14.2 remainder) | a CHS 114x5 member takes a radial d = 20 hole: the reported drop certifies within the engine suite's own `2·A·t` bound of the smooth tube (measured 3,121.4 mm3 ≤ 3,141.6 mm3) and equals the certified removed volume; the gross stays the nominal `area x length` across the hole (the plate rule: a gross that ignores the hole, a net that does not); the hole survives the reopen with the same volume and `mesh_digest`; the d = 6/10/20 triplet is pinned by the engine test (`a_chs_member_hole_certifies_the_removed_volume_within_the_engine_bound`) and the CLI suite (`sections.rs`) | Passed |
