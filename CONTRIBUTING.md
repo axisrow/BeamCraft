@@ -20,8 +20,9 @@ Thanks for helping. Humans and AI agents follow the same rules.
    Independent CLI changes may use `--scope cli --ui-independent-reason "..."`; shared code,
    contracts, build settings and dependencies require full verification. Explicitly publish
    the resulting report with `publish --report PATH --pr NUMBER`. CI requires a current
-   head/base/tree report and checks the complete workspace on the two other operating systems.
-   See [the gate guide](tools/test-gate/README.md).
+   head/base/tree report and runs the quality lanes on the two other operating systems;
+   the complete workspace runs in the separate platform track on integration pushes,
+   nightly and dispatch. See [the gate guide](tools/test-gate/README.md).
 4. Add a test for new behaviour. For a bug fix, confirm the test fails without the fix.
 5. Open a PR with the template filled in. CI must be green.
 6. Keep the fork aligned with upstream: `bash tools/fork-sync.sh status` inspects the

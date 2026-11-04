@@ -46,7 +46,9 @@ Publish the successful report explicitly:
 cargo run --locked -p beamcraft-test-gate -- publish --report target/test-gate/RUN/report.json --pr NUMBER
 ```
 
-CI validates the current head/base/tree and checks the whole workspace on the two other OSes.
+CI validates the current head/base/tree and runs the quality lanes on the two other OSes;
+the complete workspace runs in the separate platform track on integration pushes, nightly
+and dispatch.
 A CLI-only receipt explicitly means UI was omitted locally. Missing/stale reports fail the
 aggregate `CI verdict`. Integration reuses a PR result only for the identical source tree; a
 sync merge binds its full native gate to the merge tree and lands as a direct push to `master`
@@ -251,7 +253,9 @@ Apple M5 run described above.
 ## Everything CI checks
 
 CI (`.github/workflows/ci.yml`) runs on pull requests, pushes to `master` and manual dispatches.
-A fresh local report chooses the two other operating systems; both test the whole workspace.
+A fresh local report chooses the two other operating systems for the quality lanes; the separate
+platform track (`ci-platform.yml`) runs the whole workspace on all three operating systems on
+every integration push, nightly and manual dispatch.
 The first selected quality lane runs format/docs checks, with WASM, licences, fixtures and
 boundaries retained. New commits/base snapshots need a new local report. The commands below
 show the component checks; use the recorded runner for an eligible final result. To run the

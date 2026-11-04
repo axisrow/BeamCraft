@@ -38,8 +38,10 @@ The recorded gate runs unfiltered nextest 0.9.149 **and mandatory doctests**, fo
 Clippy and documentation with warnings denied. It enforces execution budgets, serializes heavy
 checks across worktrees and requires the committed source to stay unchanged. Independent
 CLI-only changes may use `--scope cli --ui-independent-reason "..."` when no shared code,
-dependencies, build settings or UI-consumed commands/options/JSON change. CI then tests the
-whole workspace on the two other operating systems; missing or stale local evidence fails CI.
+dependencies, build settings or UI-consumed commands/options/JSON change. CI validates the
+receipt and runs the quality lanes on the two other operating systems; the complete workspace
+runs in the parallel platform track on integration pushes, nightly and dispatch; missing or
+stale local evidence fails CI.
 Publish the report explicitly with the runner's `publish --report PATH --pr NUMBER` command.
 New head/base snapshots require a new report. See `tools/test-gate/README.md` and the owner
 policy in `docs/plan/test-gate.md`; this supersedes the literal-Cargo rule from #346.

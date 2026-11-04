@@ -4,6 +4,25 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-05
+
+- **CI wall time: quality lanes on pull requests, complete-workspace tests in a parallel
+  platform track.** The owner approved the CI wall-time amendments to the
+  [test-gate policy](test-gate.md) and the [CI convergence record](ci-convergence.md)
+  (fork issue for the owner decision: [Apibim-com#239](https://github.com/Apibim-com/BeamCraft/issues/239)).
+  `ci.yml` stays the receipt-gated aggregate of every pull request, push and dispatch:
+  planning validates a current local report, the two selected operating systems run the
+  compile-and-lint quality lanes, and `CI verdict` remains the single required check.
+  Complete-workspace test execution moves to `ci-platform.yml` beside the canonical file,
+  on every integration push, nightly and manual dispatch, on all three operating systems
+  with the same budgets and evidence. Per-PR cross-OS test execution is intentionally
+  moved from the CI wall to that track; the PR's test evidence is the local receipt on
+  its recorded OS. Every partition of a platform's canonical shard count must run: the
+  platform track also restores the macOS sixth partition that the old wall's five-shard
+  tuning silently dropped. The canonical-file change ships upstream in the next wave so
+  the convergence contract holds. This entry authorizes the implementation; the policy
+  takes effect with its implementation PR.
+
 ## 2026-11-04
 
 - **Syncs land by direct push to the fork's `master`; upstream receives one batch PR.** Owner
