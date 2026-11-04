@@ -107,6 +107,7 @@ fn scaffold(path: &str) -> bool {
                 | "/World/Steel/Assemblies"
                 | "/World/Steel/Connections"
                 | "/World/Levels"
+                | "/World/Grids"
                 | "/World/Definitions"
                 | "/World/Definitions/Materials"
                 | "/World/Definitions/Profiles"
