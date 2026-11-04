@@ -619,6 +619,14 @@ impl ProjectDescriptor {
         if sorted != connection.layers {
             return Err(bad_layers("the pinned layers must be sorted by name"));
         }
+        // Sorted adjacency catches the duplicate name: two entries with one source layer
+        // name would let a name-keyed reader silently pick one of the two digests.
+        if sorted
+            .windows(2)
+            .any(|pair| matches!(pair, [a, b] if a.0 == b.0))
+        {
+            return Err(bad_layers("a pinned source layer name appears twice"));
+        }
         for (name, digest) in &connection.layers {
             if name.is_empty()
                 || name.len() > 255
@@ -854,6 +862,18 @@ mod tests {
         empty_layers.layers = Vec::new();
         assert_eq!(
             code_of(&d.put_connection(empty_layers).unwrap_err()),
+            ErrorCode::InvalidArgument
+        );
+        // A duplicated source layer name is refused even when sorted: a name-keyed reader
+        // would silently take one of the two digests.
+        let mut duplicated_name = pin();
+        duplicated_name.id = ConnectionId::parse("019a7bf0-0000-7000-8000-00000000c305").unwrap();
+        duplicated_name.layers = vec![
+            ("a.usda".to_owned(), SCHEMA.to_owned()),
+            ("a.usda".to_owned(), "0200000000000000000000000000000000000000000000000000000000000000".to_owned()),
+        ];
+        assert_eq!(
+            code_of(&d.put_connection(duplicated_name).unwrap_err()),
             ErrorCode::InvalidArgument
         );
     }
