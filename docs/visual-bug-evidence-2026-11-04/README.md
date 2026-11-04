@@ -45,7 +45,7 @@ Code references are permalinks to the audited commit.
 | --- | --- | --- | --- |
 | 1 | The SVG export is mirrored vertically: the 2500 mm dimension reads **5200**, a title block `SCALE 1:20` reads **1:50**, the title block sits at the top and all text is upside down. The PDF of the same version is upright. | [01](01-svg-mirrored-2500-reads-5200.png), [02](02-sheet-svg-upside-down.png), [03](03-title-block-scale-reads-1-50.png) | Paper coordinates are Y-up ([`projection.rs:103`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing/projection.rs#L103)); the SVG writers emit them unflipped ([`svg.rs:507`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing/svg.rs#L507), [`sheet.rs:283`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing/sheet.rs#L283)) into SVG's Y-down space |
 | 2 | The PDF of a sheet document renders only the primary view: no frame, title block, placed view, section, detail or view titles. `docs/design/d05-drawing-sheets.md` says every export surface renders the same fixed sheet. | [04](04-pdf-drops-sheet-content.png) | The `pdf` branch passes only the primary projection to `print::export` ([`drawing_cmd.rs:1104`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/apps/beamcraft-cli/src/drawing_cmd.rs#L1104)) |
-| 3 | Objects added with `edit-drafting` on a visible layer (text, leader, circle, rectangle) appear in neither the SVG nor the PDF, although `inspect-drawing` lists them under `visible_drafting`. | [05](05-drafting-not-rendered.png) | No exporter reads [`Drawing::visible_drafting`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing.rs#L587) |
+| 3 | Objects added with `edit-drafting` on a visible layer (text, line, circle, rectangle; the line is drawn towards the text as a leader would be) appear in neither the SVG nor the PDF, although `inspect-drawing` lists them under `visible_drafting`. | [05](05-drafting-not-rendered.png) | No exporter reads [`Drawing::visible_drafting`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing.rs#L587) |
 | 4 | A vertical dimension's label is struck through by its own dimension line ("25\|00"), in SVG and PDF. | [06](06-dimension-line-through-label.png) | The label is always horizontal and centred on the line's midpoint ([`svg.rs:266`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing/svg.rs#L266)) |
 | 5 | View titles overlap the lowest edge of their view (ELEVATION, PLAN, SECTION A-A, DETAIL B). | [07](07-view-title-overlaps-geometry.png) | The 3.0 mm gap is smaller than the 3.5 mm glyph height ([`sheet.rs:34`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing/sheet.rs#L34)) |
 | 6 | The title block has no top edge; its column divider sits 30 mm from the right edge instead of after the label column and strikes through an accepted 40-character project name. | [08](08-title-block-layout.png) | [`sheet.rs:152-163`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing/sheet.rs#L152-L163) |
@@ -62,7 +62,12 @@ instead of help.
 
 Checked and not counted as findings: A3 is portrait by contract; IFC export encodes
 non-ASCII names correctly (`\X2\...\X0\`); characters without a glyph (Cyrillic, `/`, `(`)
-advance a blank gap, as the drawing contract documents.
+advance a blank gap. No contract documents that gap; it is intended exporter behaviour stated
+only in the doc comments of
+[`glyph`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing/svg.rs#L63-L64)
+and
+[`text_strokes`](https://github.com/axisrow/BeamCraft/blob/b614bb871e7c9d94d247e53b9b0d201a3213cfe6/crates/engine/src/drawing/svg.rs#L311-L314)
+in `svg.rs`.
 
 ## Checksums (SHA-256)
 
@@ -71,7 +76,7 @@ advance a blank gap, as the drawing contract documents.
 baf670da7ae55be54246aed42dfb96d8418579914fd2622e1084a6d3e8f535ee  02-sheet-svg-upside-down.png
 4a71a6ec331c55aca0a292b2f721154b5ec9d98113ce4317a8a4deb98579604c  03-title-block-scale-reads-1-50.png
 07ce8cc9cbff4e2ff366dc79a39ed41e74699826ae98350df7e23d5ca76583dc  04-pdf-drops-sheet-content.png
-da07c9a305a928852f70e2d128b4791ee646bf3046420b630881fa34bb7259e8  05-drafting-not-rendered.png
+545ec1f9e16654d9d74da986873a98091149fe3fade06a232fbcc0c698a78f7f  05-drafting-not-rendered.png
 3ae7bbe09ef337fa8bfce89c930d3e126e557918204296c2fc636df7acae00f3  06-dimension-line-through-label.png
 ae682bfd2d9d35ac3da32e4dc0772e4608bb9555a41636065c35498a330010a3  07-view-title-overlaps-geometry.png
 006a9be3a75014fc93abc3e73a65037c1522d9408c671e2718c12ed08bcc50ab  08-title-block-layout.png
