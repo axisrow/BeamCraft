@@ -16,10 +16,10 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, five tests: the
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, six tests: the
 expanded story and — each in its own published store so the numbered frame keeps its recorded
 counts — the curved and poly member story, the bent and lofted plate story, the model-tool
-transform story and the bolt-group story). Every step is
+transform story, the bolt-group story and the model-data tool story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
@@ -35,6 +35,7 @@ steps ran and passed on this machine.
 | Modelling: bent and lofted plates (A10/A11) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a lofted plate between two translated contours stores the exact oblique-prism volume (1,000,000 mm3) in its reply and its stored quantities (`volume_status current`); one right-angle fold on radius 8 keeps the volume at the blank's `t x area` within the certified bound (within 8,000 mm3 of 4,000,000 mm3), the outline becomes the unfold contour and the bend record carries its parameters; the identical bend replays without writing, an overlapping second fold refuses with the head unchanged, the bend undoes and redoes as one command, and publication preserves the folded plate's exact volume and `mesh_digest` and the lofted plate's exact stored quantity and triangle count | Passed |
 | Workspace history | `undo-workspace` / `redo-workspace` around the chamfer: the undone volume returns, redo restores it | Passed |
 | Model data: grids and levels | `create-grid` (`0 1000` u-expression), `create-level` (elevation 1000), `list-grids` / `levels` | Passed |
+| Model data: construction objects and grid line tools (T01/T02) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a drawn V axis joins a one-axis grid and survives reshape (exact start/end), relabel and remove with its identity; one undo returns the removed axis with its label and geometry; the four construction kinds (point, line, circle with its exact radius, plane) store as helpers, list exactly, and survive the publication round trip with the drawn grid | Passed |
 | User attributes (I04) | `attribute-define` (choice with options, number with a unit), `attribute-set`, `attribute-get`, `attributes`; an undefined name (`NOT_FOUND`) and an off-choice value (`INVALID_ARGUMENT`) refuse | Passed |
 | Connections and assembly | `create-assembly`, `attach-to-assembly` x7, `create-bolt`, `create-weld` | Passed |
 | Bolt groups with generated holes (A14.3/A14.4) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a two-fastener group over two stacked plates commits one atomic edit, resolves the auto length over the grip and its hardware (40 mm), and generates one group-owned hole record per crossing fastener on every connected plate (`hole_mode generate`, `generated_by` the group); each plate's quantity drops by the measured two-hole amount (2,838.81 mm3, within 1 mm3), the undo returns the blank plates and the redo regenerates, and publication preserves the drops, the hole ownership and the group record | Passed |
@@ -82,7 +83,7 @@ recorded open and stay open until they execute on real hardware.
 
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
-| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, poly and curved members, bent and lofted plates, grids/levels, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, poly and curved members, bent and lofted plates, grids/levels, construction objects and grid line tools, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
 | View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |

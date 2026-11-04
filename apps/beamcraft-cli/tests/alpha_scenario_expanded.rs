@@ -71,6 +71,7 @@ impl Story {
         fs::create_dir(root.join("plates-published")).unwrap();
         fs::create_dir(root.join("tools-published")).unwrap();
         fs::create_dir(root.join("bolts-published")).unwrap();
+        fs::create_dir(root.join("data-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -2923,4 +2924,206 @@ fn a_bolt_group_generates_its_holes_and_survives_publication() {
     assert_eq!(text(published_record, "hole_mode"), "generate");
     assert_eq!(text(published_record, "count"), "2");
     assert_eq!(text(published_record, "length_mm"), "40");
+}
+
+/// The model-data tool story (T01/T02): construction objects and the drawn grid line
+/// tools run in their own published store, so the numbered frame keeps the counts the
+/// manual runbook records, and in its own test for the per-test budget. The grid line
+/// edits keep the axis identity through reshape, relabel and remove, and the construction
+/// helpers reopen exactly as they were stored.
+#[test]
+fn model_data_construction_and_grid_line_tools() {
+    let s = Story::new();
+    s.ok(
+        "data-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "data-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("data-draft"), "--user-id", USER],
+    );
+
+    // The drawn grid starts with one U axis; the V axis is drawn, reshaped, relabelled
+    // and removed, each edit keeping the identity it was given.
+    s.ok(
+        "data-draft",
+        "create-grid",
+        &[
+            "--name",
+            "Q01 tool grid",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--u-from",
+            "1000,0",
+            "--u-to",
+            "1000,8000",
+            "--u-label",
+            "1",
+            "--u-axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc2",
+        ],
+    );
+    s.ok(
+        "data-draft",
+        "draw-grid-line",
+        &[
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--family",
+            "v",
+            "--new-axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc3",
+            "--label",
+            "A",
+            "--from",
+            "0,5000",
+            "--to",
+            "9000,5000",
+        ],
+    );
+    s.ok(
+        "data-draft",
+        "reshape-grid-line",
+        &[
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc3",
+            "--from",
+            "0,6000",
+            "--to",
+            "12000,6000",
+        ],
+    );
+    s.ok(
+        "data-draft",
+        "relabel-grid-line",
+        &[
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc3",
+            "--label",
+            "B",
+        ],
+    );
+    let shaped = s.ok("data-draft", "list-grids", &[]);
+    let shaped_grid = at(&shaped, &["grids"]).array().unwrap();
+    assert_eq!(shaped_grid.len(), 1);
+    assert_eq!(
+        text(&shaped_grid[0], "id"),
+        "019a7bf0-0000-7000-8000-00000000ccc1"
+    );
+    let shaped_v = at(&shaped_grid[0], &["v", "lines"]).array().unwrap();
+    assert_eq!(shaped_v.len(), 1);
+    assert_eq!(
+        text(&shaped_v[0], "axis_id"),
+        "019a7bf0-0000-7000-8000-00000000ccc3"
+    );
+    assert_eq!(text(&shaped_v[0], "label"), "B");
+    assert_eq!(numbers(at(&shaped_v[0], &["start_mm"])), [0.0, 6000.0, 0.0]);
+    assert_eq!(
+        numbers(at(&shaped_v[0], &["end_mm"])),
+        [12000.0, 6000.0, 0.0]
+    );
+    s.ok(
+        "data-draft",
+        "remove-grid-line",
+        &[
+            "--id",
+            "019a7bf0-0000-7000-8000-00000000ccc1",
+            "--axis-id",
+            "019a7bf0-0000-7000-8000-00000000ccc3",
+        ],
+    );
+    let removed = s.ok("data-draft", "list-grids", &[]);
+    let removed_v = at(
+        &at(&removed, &["grids"]).array().unwrap()[0],
+        &["v", "lines"],
+    )
+    .array()
+    .unwrap();
+    assert_eq!(removed_v.len(), 0);
+    // One undo brings the drawn axis back with its label and geometry.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("data-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    let restored = s.ok("data-draft", "list-grids", &[]);
+    let restored_v = at(
+        &at(&restored, &["grids"]).array().unwrap()[0],
+        &["v", "lines"],
+    )
+    .array()
+    .unwrap();
+    assert_eq!(restored_v.len(), 1);
+    assert_eq!(text(&restored_v[0], "label"), "B");
+    assert_eq!(
+        numbers(at(&restored_v[0], &["start_mm"])),
+        [0.0, 6000.0, 0.0]
+    );
+
+    // The construction helpers are stored elements of every kind; the listing reports
+    // them exactly.
+    for (kind, extra) in [
+        ("point", vec![]),
+        ("line", vec!["--b", "10000,2000,0"]),
+        ("circle", vec!["--b", "0,0,1", "--radius", "500"]),
+        ("plane", vec!["--b", "0,0,1"]),
+    ] {
+        let mut args = vec![
+            "--name",
+            "Q01 helper",
+            "--kind",
+            kind,
+            "--a",
+            "5000,0,0",
+            "--new-id",
+            "",
+        ];
+        args.extend(extra.iter().copied());
+        let id_index = args.iter().position(|a| a.is_empty()).unwrap();
+        let id = match kind {
+            "point" => "019a7bf0-0000-7000-8000-00000000ccc4",
+            "line" => "019a7bf0-0000-7000-8000-00000000ccc5",
+            "circle" => "019a7bf0-0000-7000-8000-00000000ccc6",
+            _ => "019a7bf0-0000-7000-8000-00000000ccc7",
+        };
+        args[id_index] = id;
+        s.ok("data-draft", "create-construction", &args);
+    }
+    let helpers = s.ok("data-draft", "list-construction", &[]);
+    let objects = at(&helpers, &["objects"]).array().unwrap();
+    assert_eq!(objects.len(), 4);
+    let kinds: Vec<String> = objects.iter().map(|o| text(o, "kind")).collect();
+    assert_eq!(kinds, ["point", "line", "circle", "plane"]);
+    assert_eq!(at(&objects[2], &["radius_mm"]).float().unwrap(), 500.0);
+
+    let data_published = s.ok(
+        "data-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("data-draft")],
+    );
+    assert_eq!(text(&data_published, "outcome"), "workspace_published");
+    let reopened_grids = s.ok("data-published", "list-grids", &[]);
+    let reopened_grid = at(&reopened_grids, &["grids"]).array().unwrap();
+    assert_eq!(reopened_grid.len(), 1);
+    let reopened_v = at(&reopened_grid[0], &["v", "lines"]).array().unwrap();
+    assert_eq!(reopened_v.len(), 1);
+    assert_eq!(
+        text(&reopened_v[0], "axis_id"),
+        "019a7bf0-0000-7000-8000-00000000ccc3"
+    );
+    assert_eq!(text(&reopened_v[0], "label"), "B");
+    assert_eq!(
+        numbers(at(&reopened_v[0], &["start_mm"])),
+        [0.0, 6000.0, 0.0]
+    );
+    let reopened_helpers = s.ok("data-published", "list-construction", &[]);
+    assert_eq!(
+        at(&reopened_helpers, &["objects"]).array().unwrap().len(),
+        4,
+        "the helpers survive the round trip"
+    );
 }
