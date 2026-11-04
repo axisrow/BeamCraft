@@ -43,7 +43,7 @@ fn evidence_bindings(commands: &[DraftCommand]) -> Result<Vec<(OpId, ContentDige
         .iter()
         .map(|command| (command.op, command.fingerprint))
         .collect::<Vec<_>>();
-    bindings.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    bindings.sort_unstable_by_key(|binding| binding.0);
     if bindings
         .windows(2)
         .any(|pair| matches!(pair, [a, b] if a.0 == b.0))
