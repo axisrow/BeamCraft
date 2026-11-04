@@ -72,6 +72,7 @@ impl Story {
         fs::create_dir(root.join("tools-published")).unwrap();
         fs::create_dir(root.join("bolts-published")).unwrap();
         fs::create_dir(root.join("data-published")).unwrap();
+        fs::create_dir(root.join("contour-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -3125,5 +3126,183 @@ fn model_data_construction_and_grid_line_tools() {
         at(&reopened_helpers, &["objects"]).array().unwrap().len(),
         4,
         "the helpers survive the round trip"
+    );
+}
+
+/// The contour plate story (A12.3): the vertex, insert and edge edits shape a plate's
+/// contour in their own published store, so the numbered frame keeps the counts the
+/// manual runbook records, and in its own test for the per-test budget. Every edit is one
+/// shape revision with the closed-form polygon volume, and a treated corner rides along.
+#[test]
+fn contour_plate_edits_shape_exactly_and_survive_publication() {
+    let s = Story::new();
+    s.ok(
+        "contour-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "contour-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("contour-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let contoured = s.ok(
+        "contour-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 contour web",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000ddd1",
+            "--width",
+            "1000",
+            "--length",
+            "1000",
+            "--thickness",
+            "10",
+        ],
+    );
+    let web = text(at(&contoured, &["plate"]), "element_id");
+    close(
+        volume_of(
+            &parts(&s.ok("contour-draft", "inspect-elements", &[])),
+            &web,
+        ),
+        10_000_000.0,
+    );
+
+    // Case 6 of the amendment: a vertex delete gives the half square, the collinear
+    // insert keeps the body, and the outward move adds the 1000 x 500 / 2 triangle.
+    let deleted = s.ok(
+        "contour-draft",
+        "delete-plate-vertex",
+        &[
+            "--id",
+            &web,
+            "--vertex",
+            "0",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000ddd3",
+        ],
+    );
+    assert_eq!(text(&deleted, "outcome"), "plate_vertex_deleted");
+    assert_eq!(at(&deleted, &["effect", "shape"]), &Json::Bool(true));
+    s.ok(
+        "contour-draft",
+        "insert-plate-vertex",
+        &["--id", &web, "--edge", "1", "--point", "500,1000"],
+    );
+    let web_parts = parts(&s.ok("contour-draft", "inspect-elements", &[]));
+    close(volume_of(&web_parts, &web), 5_000_000.0);
+    let moved = s.ok(
+        "contour-draft",
+        "move-plate-vertex",
+        &["--id", &web, "--vertex", "2", "--to", "500,1500"],
+    );
+    assert_eq!(text(&moved, "outcome"), "plate_vertex_moved");
+    let web_parts = parts(&s.ok("contour-draft", "inspect-elements", &[]));
+    close(volume_of(&web_parts, &web), 7_500_000.0);
+    let web_digest = web_parts
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the contour web is present")
+        .2
+        .clone();
+
+    // The edge move changes exactly its two end vertices and the treated corner rides
+    // along: the 200 mm growth adds 2,000,000 mm3 to the chamfered blank.
+    let chamfered = s.ok(
+        "contour-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 chamfered flange",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000ddd2",
+            "--width",
+            "1000",
+            "--length",
+            "1000",
+            "--thickness",
+            "10",
+            "--corners",
+            "2=chamfer:100",
+        ],
+    );
+    let flange = text(at(&chamfered, &["plate"]), "element_id");
+    let flange_parts = parts(&s.ok("contour-draft", "inspect-elements", &[]));
+    close(volume_of(&flange_parts, &flange), 9_950_000.0);
+    s.ok(
+        "contour-draft",
+        "move-plate-edge",
+        &["--id", &flange, "--edge", "3", "--delta", "-200,0"],
+    );
+    let edge_inspection = s.ok("contour-draft", "inspect-elements", &[]);
+    let edge_parts = parts(&edge_inspection);
+    close(volume_of(&edge_parts, &flange), 11_950_000.0);
+    let flange_entry = at(&edge_inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|p| text(p, "element_id") == flange)
+        .expect("the chamfered plate entry is present");
+    let corners = at(flange_entry, &["corners"]).array().unwrap();
+    assert_eq!(corners.len(), 1);
+    assert_eq!(at(&corners[0], &["vertex"]).float().unwrap(), 2.0);
+
+    // The edge move is the last shape revision: one undo rolls it back to the chamfered
+    // blank while the pentagon keeps its shape, and the redo restores the growth.
+    let contour_undo = s.execute(&[
+        "undo-workspace",
+        "--workspace-dir",
+        &s.path("contour-draft"),
+    ]);
+    assert_eq!(contour_undo.0, 0);
+    let undone = parts(&s.ok("contour-draft", "inspect-elements", &[]));
+    close(volume_of(&undone, &web), 7_500_000.0);
+    close(volume_of(&undone, &flange), 9_950_000.0);
+    let contour_redo = s.execute(&[
+        "redo-workspace",
+        "--workspace-dir",
+        &s.path("contour-draft"),
+    ]);
+    assert_eq!(contour_redo.0, 0);
+    assert_eq!(text(&contour_redo.1, "outcome"), "workspace_redone");
+
+    let contour_published = s.ok(
+        "contour-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("contour-draft")],
+    );
+    assert_eq!(text(&contour_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("contour-published", "inspect-elements", &[]));
+    assert_eq!(reopened.len(), 2);
+    close(volume_of(&reopened, &web), 7_500_000.0);
+    close(volume_of(&reopened, &flange), 11_950_000.0);
+    let reopened_web = reopened
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the contour web is present");
+    assert_eq!(
+        reopened_web.2, web_digest,
+        "the web mesh must survive the round trip"
+    );
+    let reopened_flange = reopened
+        .iter()
+        .find(|(element, _, _)| element == flange.as_str())
+        .expect("the chamfered flange is present");
+    assert_eq!(
+        reopened_flange.2,
+        edge_parts
+            .iter()
+            .find(|(element, _, _)| element == flange.as_str())
+            .expect("the chamfered flange is present")
+            .2,
+        "the flange mesh must survive the round trip"
     );
 }
