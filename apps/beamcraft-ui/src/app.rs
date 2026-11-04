@@ -12,6 +12,7 @@ mod creation_panel;
 mod grid_panel;
 mod switches;
 mod view_panel;
+mod weld_panel;
 mod work_area;
 mod workbench;
 
@@ -177,6 +178,8 @@ pub struct App {
     grid_refresh_edit: bool,
     /// D06 annotations: placement tool, listed rows and their jobs.
     annotation: annotation_panel::Panel,
+    /// The V10 Weld bench: the picked pair, the form and its commit job.
+    weld: weld_panel::Panel,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
     /// The page the application menu shows.
@@ -839,6 +842,7 @@ impl App {
             grid_job: None,
             grid_note: None,
             annotation: annotation_panel::Panel::empty(),
+            weld: weld_panel::Panel::empty(),
             menu_section: workbench::MenuSection::default(),
             menu_note: None,
             menu_new: crate::library::NewModelForm::new(),
@@ -1506,6 +1510,7 @@ impl App {
             || self.colour_job.is_some()
             || self.annotation.list_job.is_some()
             || self.annotation.commit_job.is_some()
+            || self.weld.commit_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -2842,6 +2847,7 @@ impl eframe::App for App {
         self.poll_commit();
         self.poll_grid();
         self.poll_annotations();
+        self.poll_weld();
         self.poll_edit();
         self.poll_props();
         self.poll_publish();
@@ -4076,6 +4082,289 @@ pub(crate) mod tests {
             || text.contains(member_id)
             || text.contains("--")));
         output.drop_without_applying_deltas();
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_weld_ribbon_button_picks_two_parts_and_commits_the_cli_weld_command() {
+        let mut app =
+            headless().expect("a native/software adapter is required for modelling acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-weld-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let hand = root.join("hand");
+        for folder in [&store, &hand] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        // The plates the weld connects, made by hand in both stores so the tool's result and
+        // the CLI's must agree.
+        let run = |store: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        let plate = |store: &std::path::Path, width: &str, name: &str, x: &str| {
+            run(
+                store,
+                &[
+                    "create-plate",
+                    "--width",
+                    width,
+                    "--length",
+                    "500",
+                    "--thickness",
+                    "10",
+                    "--name",
+                    name,
+                    "--translation",
+                    &format!("{x},0,0"),
+                ],
+            );
+            let listing = run(store, &["inspect-elements"]);
+            listing
+                .get("plates")
+                .and_then(|j| j.array())
+                .unwrap()
+                .iter()
+                .find(|p| p.get("name").ok().and_then(|j| j.string().ok()) == Some(name))
+                .and_then(|p| p.get("element_id").ok())
+                .and_then(|j| j.string().ok())
+                .map(str::to_owned)
+                .unwrap_or_else(|| panic!("{name} is not listed"))
+        };
+        let (a, b) = (
+            plate(&store, "1000", "Plate A", "0"),
+            plate(&store, "2000", "Plate B", "3000"),
+        );
+        let (hand_a, hand_b) = (
+            plate(&hand, "1000", "Plate A", "0"),
+            plate(&hand, "2000", "Plate B", "3000"),
+        );
+        // The window shows the accepted revision, as a reload delivers it.
+        let snapshot =
+            Arc::new(crate::source::load(&cli, &store, &crate::stats::Stats::default()).unwrap());
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            uploaded,
+        });
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    app.project_browser(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            let labels: Vec<(String, egui::Pos2)> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        // The ribbon's Weld button opens the bench, as a user's click does.
+        let weld_button = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Weld")
+            .map(|(_, pos)| *pos)
+            .expect("the ribbon shows the Weld button");
+        frame(&mut app, click(weld_button));
+        assert_eq!(app.bench, super::workbench::Bench::Weld);
+        // The picks resolve on the snapshot on screen: the two plates, in order.
+        let ray = |x, y| crate::edit::Ray {
+            origin: [x, y, 5000.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        app.weld_click(ray(500.0, 250.0));
+        assert_eq!(app.weld.main.as_deref(), Some(a.as_str()));
+        app.weld_click(ray(4000.0, 250.0));
+        assert_eq!(app.weld.secondary.as_deref(), Some(b.as_str()));
+        app.weld.name = "Weld 1".into();
+        app.weld.size = "6".into();
+        app.weld.location = super::weld_panel::Location::Workshop;
+        app.weld.side = super::weld_panel::Side::Both;
+        // The panel's Create weld button starts the same `weld create-weld` a user types.
+        let labels = frame(&mut app, vec![]);
+        let create = labels
+            .iter()
+            .find(|(text, _)| text == "Create weld")
+            .map(|(_, pos)| *pos)
+            .expect("the Weld bench shows Create weld");
+        frame(&mut app, click(create));
+        assert!(app.weld.commit_job.is_some(), "the click starts the commit");
+        let wait = |app: &mut App| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.weld.commit_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_weld();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.weld.commit_job.is_none(), "the weld commit timed out");
+        };
+        wait(&mut app);
+        assert!(matches!(app.weld.note, Some(Ok(_))), "{:?}", app.weld.note);
+        assert!(app.weld.main.is_none() && app.weld.secondary.is_none());
+        let listing = |store: &std::path::Path| {
+            let reply = run(store, &["welds"]);
+            let welds = reply.get("welds").and_then(|j| j.array()).unwrap();
+            assert_eq!(welds.len(), 1);
+            welds[0].clone()
+        };
+        let made = listing(&store);
+        let expected = [
+            ("name", "Weld 1"),
+            ("main", a.as_str()),
+            ("secondary", b.as_str()),
+            ("type", "fillet"),
+            ("size_mm", "6"),
+            ("location", "workshop"),
+            ("side", "both"),
+        ];
+        for (key, value) in expected {
+            assert_eq!(
+                made.get(key).ok().and_then(|j| j.string().ok()),
+                Some(value),
+                "{key}"
+            );
+        }
+        // The same command by hand saves the same weld: every user-visible field agrees.
+        let _ = run(
+            &hand,
+            &[
+                "create-weld",
+                "--name",
+                "Weld 1",
+                "--main",
+                hand_a.as_str(),
+                "--secondary",
+                hand_b.as_str(),
+                "--type",
+                "fillet",
+                "--size",
+                "6",
+                "--location",
+                "workshop",
+                "--side",
+                "both",
+            ],
+        );
+        let by_hand = listing(&hand);
+        for (key, _) in expected {
+            let user_visible = !matches!(key, "main" | "secondary");
+            let left = made.get(key).ok().and_then(|j| j.string().ok());
+            let right = by_hand.get(key).ok().and_then(|j| j.string().ok());
+            if user_visible {
+                assert_eq!(left, right, "{key}");
+            } else {
+                assert_ne!(left, right, "{key} names each store's own part");
+            }
+        }
+        assert_eq!(
+            by_hand.get("main").ok().and_then(|j| j.string().ok()),
+            Some(hand_a.as_str())
+        );
+        // A non-positive size is the engine's refusal through the real command path: it
+        // reaches the panel and publishes nothing.
+        app.weld.size = "0".into();
+        app.weld_click(ray(500.0, 250.0));
+        app.weld_click(ray(4000.0, 250.0));
+        // The panel's layout moved with the note and the new picks; click where it is now.
+        let create_now = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Create weld")
+            .map(|(_, pos)| *pos)
+            .expect("the Weld bench still shows Create weld");
+        frame(&mut app, click(create_now));
+        assert!(
+            app.weld.commit_job.is_some(),
+            "the click starts the refused commit"
+        );
+        wait(&mut app);
+        let refused = match &app.weld.note {
+            Some(Err(message)) => message.clone(),
+            other => panic!("a zero size must be refused, got {other:?}"),
+        };
+        assert!(refused.contains("size must be greater than 0"), "{refused}");
+        assert_eq!(
+            run(&store, &["welds"])
+                .get("welds")
+                .and_then(|j| j.array())
+                .map(|w| w.len())
+                .ok(),
+            Some(1),
+            "the refusal published nothing"
+        );
         drop(app);
         std::fs::remove_dir_all(root).unwrap();
     }

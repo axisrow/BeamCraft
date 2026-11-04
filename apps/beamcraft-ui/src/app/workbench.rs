@@ -38,6 +38,8 @@ pub(crate) enum Bench {
     CutPlane,
     /// Colour by a saved representation set (V17); a display overlay, never a model change.
     Colour,
+    /// Create a fillet weld between two picked parts (V10); the A06 create-weld command.
+    Weld,
     /// D06 annotations: place dimensions, marks and leaders, watch their binding states.
     Annotations,
     /// A view's properties, or a new view.
@@ -58,6 +60,7 @@ impl Bench {
             Self::Delete => "Delete",
             Self::CutPlane => "Cut plane",
             Self::Colour => "Colour",
+            Self::Weld => "Weld",
             Self::Annotations => "Annotations",
             Self::View => "View properties",
         }
@@ -76,6 +79,7 @@ impl Bench {
             | Self::Grid
             | Self::CutPlane
             | Self::Colour
+            | Self::Weld
             | Self::Annotations
             | Self::View => None,
         }
@@ -433,6 +437,7 @@ impl App {
             Bench::Select => {}
             Bench::CutPlane => {}
             Bench::Colour => {}
+            Bench::Weld => {}
             Bench::Annotations => {}
             Bench::View => {}
             Bench::Grid => {
@@ -658,7 +663,9 @@ impl App {
                     });
                     group(ui, "Connect", &mut |ui| {
                         tool_button(ui, Icon::Bolt, "Bolts", false, false);
-                        tool_button(ui, Icon::Weld, "Weld", false, false);
+                        if tool_button(ui, Icon::Weld, "Weld", bench == Bench::Weld, true).clicked() {
+                            pick = Some(Bench::Weld);
+                        }
                     });
                     }
                     if self.ribbon_tab == RibbonTab::Edit {
@@ -910,6 +917,7 @@ impl App {
                             Bench::Move | Bench::Copy | Bench::Delete => self.edit_panel(ui),
                             Bench::CutPlane => self.cut_panel(ui),
                             Bench::Colour => self.colour_panel(ui),
+                            Bench::Weld => self.weld_panel(ui),
                             Bench::Annotations => self.annotation_panel(ui),
                             Bench::View => self.view_panel(ui),
                         }
@@ -1030,6 +1038,7 @@ impl App {
             ("Rectangular grid", Bench::Grid),
             ("Beam", Bench::Beam),
             ("Plate", Bench::Plate),
+            ("Weld", Bench::Weld),
             ("Move", Bench::Move),
             ("Copy", Bench::Copy),
             ("Delete", Bench::Delete),
