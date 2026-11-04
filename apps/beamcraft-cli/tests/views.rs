@@ -470,6 +470,7 @@ fn the_views_file_is_a_camera_prim_layer_and_a_json_sidecar_migrates() {
         1234.0,
     );
     old.folder = "Old".into();
+    old.is_default = true;
     book.insert(old).unwrap();
     let legacy = beamcraft_host::views::book_to_json(&book)
         .unwrap()
@@ -489,6 +490,13 @@ fn the_views_file_is_a_camera_prim_layer_and_a_json_sidecar_migrates() {
     );
     let listed = v.view("list-views", &[]);
     assert_eq!(list(&listed, "views").len(), 2);
+    // The default mark rides through the migration on the camera prim, so the window never
+    // replaces the restored default view with a fresh one.
+    let migrated = list(&listed, "views")
+        .iter()
+        .find(|entry| text(entry, "name") == "Old Plan")
+        .unwrap();
+    assert!(at(migrated, &["default"]).boolean().unwrap());
 
     // Views never write the model, in either file form.
     assert_eq!(v.ok("open-revision", &[]), head);

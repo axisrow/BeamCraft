@@ -29,7 +29,7 @@ pub const VIEWS_SCHEMA_DESCRIPTOR: &str = concat!(
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient);projection=token(orthographic|perspective)\n",
     "bim:view:id=string(uuid7);bim:view:spanMm=double(0,2e7];bim:view:depthMm=double[](exactly 2,(0,2e7] each);\n",
     "bim:view:renderMode=token(<=64 bytes);bim:view:grids=bool;bim:view:hiddenKinds=token[](<=16);bim:view:folder=string(<=512 bytes);\n",
-    "bim:view:favorite=bool;bim:view:workAreaMm=double3[](exactly 2 entries,min then max,optional,finite,abs<=1e9);\n",
+    "bim:view:favorite=bool;bim:view:default=bool;bim:view:workAreaMm=double3[](exactly 2 entries,min then max,optional,finite,abs<=1e9);\n",
     "bim:view:rotationRad=double[](exactly 2,finite);bim:view:colorRgb=double3(optional,0..=1 each);bim:view:opacity=double(0..=1)\n",
     "bim:view:folders=string[](on the views scope,exactly the folders no view uses,sorted unique,each at most 512 bytes,\n",
     "at most 8 nonempty segments without controls,outer spaces or dot names,at most 512 entries,optional)\n",
@@ -167,6 +167,9 @@ pub struct SavedView {
     pub folder: String,
     /// Listed in quick access.
     pub favorite: bool,
+    /// Whether this view is the book's default view; at most one view of a book carries the
+    /// mark, which the engine's book enforces, not this profile.
+    pub default: bool,
     /// Optional world-space box the view shows, `[min, max]` in millimetres.
     pub work_area_mm: Option<[[f64; 3]; 2]>,
     /// Camera rotations about the view's local Z, then X, in radians.
@@ -200,6 +203,7 @@ impl SavedView {
             hidden_kinds: Vec::new(),
             folder: String::new(),
             favorite: false,
+            default: false,
             work_area_mm: None,
             rotation_rad: [0.0; 2],
             color_rgb: None,
@@ -306,6 +310,7 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("bim:view:hiddenKinds", "token[]"),
     ("bim:view:folder", "string"),
     ("bim:view:favorite", "bool"),
+    ("bim:view:default", "bool"),
     ("bim:view:workAreaMm", "double3[]"),
     ("bim:view:rotationRad", "double[]"),
     ("bim:view:colorRgb", "double3"),
@@ -438,6 +443,13 @@ fn author(data: &mut sdf::Data, view: &SavedView) -> Result<(), Diagnostic> {
         "bim:view:favorite",
         "bool",
         sdf::Value::Bool(view.favorite),
+    )?;
+    edit::attr(
+        data,
+        &p,
+        "bim:view:default",
+        "bool",
+        sdf::Value::Bool(view.default),
     )?;
     if let Some([min, max]) = view.work_area_mm {
         edit::attr(
@@ -677,6 +689,10 @@ pub fn read(p: &Prim) -> Result<SavedView, Diagnostic> {
         hidden_kinds: tokens(p, "bim:view:hiddenKinds")?,
         folder: text(p, "bim:view:folder", "string")?.to_owned(),
         favorite: boolean(p, "bim:view:favorite")?,
+        // The mark predates the layer form, so its absence is the unmarked default, while a
+        // present property of another USD type still refuses the prim (`optional`).
+        default: optional(p, "bim:view:default", |p| boolean(p, "bim:view:default"))?
+            .unwrap_or(false),
         work_area_mm: optional(p, "bim:view:workAreaMm", |p| {
             let Value::Array(entries) = property(p, "bim:view:workAreaMm", "double3[]")? else {
                 return Err(invalid());
@@ -743,12 +759,13 @@ pub fn read_layer(prims: &[Prim]) -> Result<ViewsLayer, Diagnostic> {
                 layer.views.push(read(p)?);
             }
             _ if p.path == VIEWS_FOLDER => {
-                if let Some(Value::Array(entries)) = p
-                    .properties
-                    .iter()
-                    .find(|v| v.name == "bim:view:folders" && v.type_name == "string[]")
-                    .and_then(|v| v.value.as_ref())
-                {
+                // Presence is by name alone: a `bim:view:folders` of another USD type, or one
+                // whose parsed value is not an array, refuses the prim, never silently absent
+                // (the same rule the optional record attributes follow).
+                if p.properties.iter().any(|v| v.name == "bim:view:folders") {
+                    let Value::Array(entries) = property(p, "bim:view:folders", "string[]")? else {
+                        return Err(invalid());
+                    };
                     if entries.len() > 512 {
                         return Err(limit());
                     }

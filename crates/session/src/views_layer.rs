@@ -115,6 +115,7 @@ fn to_saved(view: &ModelView) -> Result<SavedView, CommandError> {
         .collect();
     saved.folder = view.folder.clone();
     saved.favorite = view.favorite;
+    saved.default = view.is_default;
     saved.work_area_mm = view.work_area.as_ref().map(|area| [area.min, area.max]);
     saved.rotation_rad = view.rotation_rad;
     saved.color_rgb = view.color;
@@ -164,6 +165,7 @@ fn to_view(saved: SavedView) -> Result<ModelView, CommandError> {
     view.hidden_kinds = hidden;
     view.folder = saved.folder;
     view.favorite = saved.favorite;
+    view.is_default = saved.default;
     view.work_area = match saved.work_area_mm {
         Some([min, max]) => Some(WorkArea::new(min, max)?),
         None => None,

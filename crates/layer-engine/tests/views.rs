@@ -107,6 +107,7 @@ fn full_view(id_text: &str, name: &str) -> SavedView {
     view.hidden_kinds = vec!["grid".to_owned(), "level".to_owned()];
     view.folder = "Review/North".to_owned();
     view.favorite = true;
+    view.default = true;
     view.work_area_mm = Some([[-500.0, -600.0, -700.0], [500.0, 600.0, 700.0]]);
     view.rotation_rad = [0.25, -0.5];
     view.color_rgb = Some([0.1, 0.2, 0.3]);
@@ -194,6 +195,15 @@ fn a_wrong_typed_optional_attribute_is_refused() {
     );
     assert!(broken != text, "the depth record text form was expected");
     assert!(views::read_layer(&prims_of(broken.as_bytes())).is_err());
+    // The same presence rule for the default mark: a wrong USD type refuses, never a silent
+    // unmarked view.
+    let broken = text.replacen(
+        "bool bim:view:default = true",
+        "double bim:view:default = 1",
+        1,
+    );
+    assert!(broken != text, "the default mark text form was expected");
+    assert!(views::read_layer(&prims_of(broken.as_bytes())).is_err());
 }
 
 #[test]
@@ -251,6 +261,17 @@ fn empty_folders_survive_the_round_trip_sorted_and_unique() {
     })
     .unwrap();
     assert_eq!(bytes, same);
+    // A folders record of another USD type refuses the scope: presence is by name alone, so a
+    // record redeclared as a parsable `token[]` of the same values is a refusal, never a
+    // silent absence.
+    let text = std::str::from_utf8(&bytes).unwrap();
+    let broken = text.replacen(
+        "string[] bim:view:folders = [\"Review/East\", \"South\"]",
+        "token[] bim:view:folders = [\"Review/East\", \"South\"]",
+        1,
+    );
+    assert!(broken != text, "the folders record text form was expected");
+    assert!(views::read_layer(&prims_of(broken.as_bytes())).is_err());
     // A folder that breaks the path rules is refused.
     let bad = views::ViewsLayer {
         views: Vec::new(),
