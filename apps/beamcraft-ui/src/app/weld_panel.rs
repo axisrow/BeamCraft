@@ -191,7 +191,8 @@ pub(crate) fn create_args(
 
 impl App {
     /// Resolves a placement click on the viewport: the first click picks the main part, the
-    /// second the secondary part. The switches apply, as they do to selection.
+    /// second the secondary part. The switches apply, as they do to selection, and with an
+    /// active model view only what the view shows can be picked (V12), as selection does.
     pub(crate) fn weld_click(&mut self, ray: Ray) {
         if self.other_command_running() || self.weld.busy() {
             return;
@@ -199,7 +200,19 @@ impl App {
         let Some(loaded) = &self.loaded else {
             return;
         };
-        let picked = pick_in(&loaded.snapshot, &ray, self.selection.filter());
+        let view = self.views.active_view().cloned();
+        let picked = match view.as_ref() {
+            Some(view) => beamcraft_engine::views::pick_visible(
+                &loaded.snapshot,
+                view,
+                ray.origin,
+                ray.direction,
+                self.selection.filter(),
+            )
+            .map(|hit| hit.map(|part| part.element_id.to_string()))
+            .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string())),
+            None => pick_in(&loaded.snapshot, &ray, self.selection.filter()),
+        };
         match picked {
             Ok(Some(id)) => {
                 let slot = if self.weld.main.is_none() {
