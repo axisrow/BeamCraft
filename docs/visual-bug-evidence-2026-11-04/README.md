@@ -15,6 +15,13 @@ desktop application was out of scope. This directory changes no application code
   was rendered with Liberation Serif 2.1.5 (`OFL-1.1`) embedded for the capture, so no
   other system font appears. Panel captions use Liberation Sans 2.1.5 (`OFL-1.1`).
 
+## Status after the audit
+
+The images record the audited build above. #464 (`f3e74cf`) later fixed findings 1–3 on
+`master`: running `reproduce.sh` against `master` at `81d0f80` gives an upright SVG (the
+column reads 2500), a sheet PDF that matches the sheet SVG, and the drafted text, line,
+circle and rectangle on both. Findings 4–9 still reproduce there.
+
 ## Reproduce
 
 ```sh
