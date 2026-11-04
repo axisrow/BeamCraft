@@ -17,6 +17,7 @@ use beamcraft_host::ids::IdSource;
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
 use beamcraft_host::views as views_json;
+use beamcraft_host::views_layer;
 use beamcraft_json::{Json, Limits};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -101,7 +102,9 @@ fn element_id(text: &str) -> Run<ElementId> {
     ElementId::parse(text).map_err(|_| refusal(ErrorCode::InvalidId, "expected a canonical UUIDv7"))
 }
 
-/// Reads the session file; a missing or empty file is an empty book when `allow_missing`.
+/// Reads the session file; a missing or empty file is an empty book when `allow_missing`. The
+/// file is a views layer (W01); a legacy JSON sidecar still reads, and the next save rewrites
+/// it in the layer form.
 fn load(path: &str, allow_missing: bool) -> Run<ViewBook> {
     let bytes = match read_file(path, FILE_CAP) {
         Ok(bytes) => bytes,
@@ -111,18 +114,18 @@ fn load(path: &str, allow_missing: bool) -> Run<ViewBook> {
     if bytes.is_empty() {
         return Ok(ViewBook::new());
     }
+    if views_layer::looks_like_layer(&bytes) {
+        return views_layer::book_from_layer(&bytes).map_err(from_engine);
+    }
     let json = beamcraft_json::decode(&bytes, &Limits::DEFAULT)
         .map_err(|_| invalid("the view file is not valid JSON"))?;
     views_json::book_from_json(&json).map_err(from_engine)
 }
 
 /// Writes the session file through a sibling temporary file, so a failed write keeps the old
-/// content readable.
+/// content readable. The file is the canonical views layer.
 fn store(path: &str, book: &ViewBook) -> Run<()> {
-    let bytes = views_json::book_to_json(book)
-        .map_err(from_engine)?
-        .encode(&Limits::DEFAULT)
-        .map_err(|_| invalid("the view file content exceeds the JSON limits"))?;
+    let bytes = views_layer::layer_bytes(book).map_err(from_engine)?;
     if bytes.len() > FILE_CAP {
         return Err(refusal(
             ErrorCode::LimitExceeded,

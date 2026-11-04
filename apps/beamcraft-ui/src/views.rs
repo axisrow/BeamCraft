@@ -16,9 +16,16 @@ use beamcraft_model::id::Uuid7;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// The session sidecar of one store: a sibling `<store>.views.json` file, never inside the
-/// store itself.
+/// The session sidecar of one store: a sibling `<store>.views.usda` file — the W01 views
+/// layer — never inside the store itself. A legacy `<store>.views.json` sidecar still loads.
 pub fn session_path(store: &Path) -> PathBuf {
+    let mut name = store.as_os_str().to_os_string();
+    name.push(".views.usda");
+    PathBuf::from(name)
+}
+
+/// The legacy JSON sidecar of one store; it is read when no layer exists and is never written.
+fn legacy_path(store: &Path) -> PathBuf {
     let mut name = store.as_os_str().to_os_string();
     name.push(".views.json");
     PathBuf::from(name)
@@ -29,16 +36,31 @@ pub fn session_path(store: &Path) -> PathBuf {
 pub fn load(store: &Path) -> Result<ViewBook, String> {
     let bytes = match std::fs::read(session_path(store)) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(ViewBook::new()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // A legacy JSON sidecar still carries the views of a store saved before the layer.
+            return match std::fs::read(legacy_path(store)) {
+                Ok(bytes) => load_bytes(&bytes),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(ViewBook::new()),
+                Err(e) => Err(format!("the saved views could not be read: {}", e.kind())),
+            };
+        }
         Err(e) => return Err(format!("the saved views could not be read: {}", e.kind())),
     };
+    load_bytes(&bytes)
+}
+
+fn load_bytes(bytes: &[u8]) -> Result<ViewBook, String> {
     if bytes.is_empty() {
         return Ok(ViewBook::new());
     }
     if bytes.len() > 1024 * 1024 {
         return Err("the saved views file exceeds 1 MiB".to_owned());
     }
-    let json = beamcraft_json::decode(&bytes, &Limits::DEFAULT)
+    if beamcraft_host::views_layer::looks_like_layer(bytes) {
+        return beamcraft_host::views_layer::book_from_layer(bytes)
+            .map_err(|e| format!("the saved views were refused: {}", e.message));
+    }
+    let json = beamcraft_json::decode(bytes, &Limits::DEFAULT)
         .map_err(|_| "the saved views file is not valid JSON".to_owned())?;
     beamcraft_host::views::book_from_json(&json)
         .map_err(|e| format!("the saved views were refused: {e}"))
@@ -52,11 +74,12 @@ pub fn persist(store: &Path, book: &ViewBook) -> Result<(), String> {
         return Ok(());
     }
     let path = session_path(store);
-    let bytes = beamcraft_host::views::book_to_json(book)
-        .map_err(|e| format!("the saved views were refused: {e}"))?
-        .encode(&Limits::DEFAULT)
-        .map_err(|_| "the saved views exceed the JSON limits".to_owned())?;
-    let temp = path.with_extension("json.tmp");
+    let bytes = beamcraft_host::views_layer::layer_bytes(book)
+        .map_err(|e| format!("the saved views were refused: {}", e.message))?;
+    if bytes.len() > 1024 * 1024 {
+        return Err("the saved views exceed the file limit".to_owned());
+    }
+    let temp = path.with_extension("usda.tmp");
     std::fs::write(&temp, &bytes)
         .and_then(|()| std::fs::rename(&temp, &path))
         .map_err(|e| format!("the saved views could not be written: {}", e.kind()))
@@ -807,18 +830,49 @@ mod tests {
         let store = dir.join("m.store");
         std::fs::create_dir_all(&store).unwrap();
         assert!(load(&store).unwrap().is_empty());
-        assert_eq!(session_path(&store), dir.join("m.store.views.json"));
+        assert_eq!(session_path(&store), dir.join("m.store.views.usda"));
         let mut book = ViewBook::new();
         book.insert(view(1, "Plan", "Plans")).unwrap();
         let mut temp = view(2, "Scratch", "");
         temp.temporary = true;
         book.insert(temp).unwrap();
         persist(&store, &book).unwrap();
+        // The sidecar is the views layer: a camera-prim USD document, not JSON.
+        let written = std::fs::read(session_path(&store)).unwrap();
+        assert!(beamcraft_host::views_layer::looks_like_layer(&written));
         let back = load(&store).unwrap();
         assert_eq!(back.len(), 1, "temporary views are not written");
         assert_eq!(back.get(&id(1)), book.get(&id(1)));
         std::fs::write(session_path(&store), b"{not json").unwrap();
         assert!(load(&store).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_legacy_json_sidecar_still_loads_and_never_preempts_the_layer() {
+        let dir =
+            std::env::temp_dir().join(format!("beamcraft-views-ui-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("m.store");
+        std::fs::create_dir_all(&store).unwrap();
+        let mut book = ViewBook::new();
+        book.insert(view(1, "Plan", "Plans")).unwrap();
+        std::fs::write(
+            legacy_path(&store),
+            beamcraft_host::views::book_to_json(&book)
+                .unwrap()
+                .encode(&Limits::DEFAULT)
+                .unwrap(),
+        )
+        .unwrap();
+        let back = load(&store).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back.get(&id(1)), book.get(&id(1)));
+        // A layer beside the legacy sidecar wins; the JSON copy is never read again.
+        persist(&store, &back).unwrap();
+        std::fs::write(legacy_path(&store), b"{broken").unwrap();
+        let layer = load(&store).unwrap();
+        assert_eq!(layer.len(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
