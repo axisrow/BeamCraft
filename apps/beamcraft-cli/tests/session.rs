@@ -302,3 +302,24 @@ fn a_session_runs_commands_batches_and_refusals_like_the_design_says() {
     assert!(status.success());
     assert_eq!(store.sequence(), 4);
 }
+
+#[test]
+fn a_definition_the_head_already_holds_answers_inside_a_batch() {
+    let (_root, store) = fresh();
+    let root = store.arg();
+    // The first revision belongs outside a batch: one material definition sets it.
+    let material = format!("define-material --store {root} --density 7850");
+    let created = store.run(material.split_whitespace().collect::<Vec<_>>().as_slice());
+    assert_eq!(Session::outcome(&created), "definition_created");
+
+    let mut session = Session::start(&store);
+    assert_eq!(Session::outcome(&session.ask("batch-open")), "batch_opened");
+    // The head already holds this exact definition: the same answer as outside the batch,
+    // and the batch survives the command (an integrity loss used to abandon it).
+    let again = session.ask(&material);
+    assert_eq!(Session::outcome(&again), "definition_exists");
+    assert_eq!(
+        Session::outcome(&session.ask("batch-abort")),
+        "batch_abandoned"
+    );
+}

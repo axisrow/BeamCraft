@@ -709,7 +709,13 @@ pub fn define(
     let opened = reader.open(base_request.clone(), &control)?;
     let decoded = decode(&reader, &opened, &control)?;
     if decoded.definitions.contains_key(&digest) {
-        let head = head.ok_or_else(|| integrity("definitions exist without a revision"))?;
+        // Inside a draft batch the base has no head revision of its own; the definition
+        // already lives in the committed store, and a batch is only open on a store that
+        // has one, so the committed head answers for the already-held definition.
+        let head = match head {
+            Some(head) => head,
+            None => store.open().map_err(|_| integrity("definitions exist without a revision"))?,
+        };
         return Ok(Defined {
             already_defined: true,
             digest,
