@@ -892,7 +892,10 @@ mod tests {
         duplicated_name.id = ConnectionId::parse("019a7bf0-0000-7000-8000-00000000c305").unwrap();
         duplicated_name.layers = vec![
             ("a.usda".to_owned(), SCHEMA.to_owned()),
-            ("a.usda".to_owned(), "0200000000000000000000000000000000000000000000000000000000000000".to_owned()),
+            (
+                "a.usda".to_owned(),
+                "0200000000000000000000000000000000000000000000000000000000000000".to_owned(),
+            ),
         ];
         assert_eq!(
             code_of(&d.put_connection(duplicated_name).unwrap_err()),

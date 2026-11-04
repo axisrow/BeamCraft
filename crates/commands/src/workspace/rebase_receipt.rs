@@ -212,7 +212,11 @@ impl RebaseReceipt {
                     "scope {} {} {} {}",
                     scope.code, scope.section, scope.shared, zone
                 ),
-                None => writeln!(out, "scope {} {} {}", scope.code, scope.section, scope.shared),
+                None => writeln!(
+                    out,
+                    "scope {} {} {}",
+                    scope.code, scope.section, scope.shared
+                ),
             };
         }
         let _ = write!(
@@ -287,7 +291,11 @@ impl RebaseReceipt {
             return Err(invalid());
         }
         let captured = CapturedFootprint::decode(footprint.as_bytes())?;
-        let mut lines = request.strip_suffix('\n').ok_or_else(invalid)?.split('\n').peekable();
+        let mut lines = request
+            .strip_suffix('\n')
+            .ok_or_else(invalid)?
+            .split('\n')
+            .peekable();
         if lines.next() != Some(REQUEST_MAGIC) {
             return Err(invalid());
         }
@@ -301,9 +309,7 @@ impl RebaseReceipt {
         // The scope line is optional: older receipts keep decoding as the unscoped metadata
         // they describe, and the four-or-five token layout stays canonical per workspace.
         let scope = if lines.peek().is_some_and(|line| line.starts_with("scope ")) {
-            let words: Vec<&str> = lines
-                .next()
-                .ok_or_else(invalid)?["scope ".len()..]
+            let words: Vec<&str> = lines.next().ok_or_else(invalid)?["scope ".len()..]
                 .split(' ')
                 .collect();
             let (code, section, shared, zone) = match words.as_slice() {

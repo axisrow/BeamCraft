@@ -714,7 +714,9 @@ pub fn define(
         // has one, so the committed head answers for the already-held definition.
         let head = match head {
             Some(head) => head,
-            None => store.open().map_err(|_| integrity("definitions exist without a revision"))?,
+            None => store
+                .open()
+                .map_err(|_| integrity("definitions exist without a revision"))?,
         };
         return Ok(Defined {
             already_defined: true,

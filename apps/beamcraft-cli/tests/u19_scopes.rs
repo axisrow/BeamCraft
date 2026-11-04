@@ -681,7 +681,14 @@ fn a_scoped_rebase_keeps_its_receipt_scope_and_stays_usable() {
     // One seed workspace authors the shared element and its definitions first, so the two
     // rebase participants fork from a settled head instead of racing their own definitions.
     let seed = f.shared.root.join("w-seed");
-    f.workspace(&store, seed.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    f.workspace(
+        &store,
+        seed.to_str().unwrap(),
+        "2401-DEMO",
+        "KM",
+        None,
+        false,
+    );
     let a = "019a7bf0-0000-7000-8000-0000000000a6";
     let b = "019a7bf0-0000-7000-8000-0000000000a7";
     f.ok_in(
@@ -739,8 +746,10 @@ fn a_scoped_rebase_keeps_its_receipt_scope_and_stays_usable() {
         String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_K1_KMD.usda"))
             .contains("B plate")
     );
-    assert!(String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_KM.usda"))
-        .contains("A plate"));
+    assert!(
+        String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_KM.usda"))
+            .contains("A plate")
+    );
     // The scope keeps the KMD/K1 workspace out of the KM section, byte for byte.
     assert_eq!(
         f.layer_of(&store, &before, "2401-DEMO_KM.usda"),
@@ -753,7 +762,14 @@ fn a_scoped_workspace_edits_its_bolt_groups() {
     let f = Fixture::new();
     let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
     let seed = f.shared.root.join("w-bseed");
-    f.workspace(&store, seed.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    f.workspace(
+        &store,
+        seed.to_str().unwrap(),
+        "2401-DEMO",
+        "KM",
+        None,
+        false,
+    );
     let p1 = "019a7bf0-0000-7000-8000-0000000000b1";
     let p2 = "019a7bf0-0000-7000-8000-0000000000b2";
     for (id, name) in [(p1, "One plate"), (p2, "Two plate")] {
@@ -851,5 +867,12 @@ fn orphan_scope_flags_are_refused_not_ignored() {
     ]);
     assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
     // The paired case still creates the scoped workspace.
-    f.workspace(&store, dir.to_str().unwrap(), "2401-DEMO", "KMD", Some("K1"), true);
+    f.workspace(
+        &store,
+        dir.to_str().unwrap(),
+        "2401-DEMO",
+        "KMD",
+        Some("K1"),
+        true,
+    );
 }

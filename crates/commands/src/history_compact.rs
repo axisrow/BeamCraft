@@ -277,10 +277,7 @@ fn hold_serving_lease(
     args: &[std::ffi::OsString],
     command_word: &str,
 ) -> Result<Option<StoreLease>, Refusal> {
-    if args
-        .first()
-        .is_none_or(|command| command != command_word)
-    {
+    if args.first().is_none_or(|command| command != command_word) {
         return Ok(None);
     }
     let store = args

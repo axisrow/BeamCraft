@@ -15,8 +15,8 @@
 //! alive, a moved base fails the batch, and a carried command replays by its own operation
 //! id from a later process.
 
-use beamcraft_json::{Json, Limits, decode};
 use crate::support::{at, text};
+use beamcraft_json::{Json, Limits, decode};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -348,7 +348,10 @@ fn an_open_session_holds_the_compaction_lease() {
         "--dry-run",
     ]);
     assert_eq!(Session::outcome(&compact), "compaction_dry_run");
-    assert_eq!(compact.get("would_proceed").unwrap().boolean().unwrap(), false);
+    assert_eq!(
+        compact.get("would_proceed").unwrap().boolean().unwrap(),
+        false
+    );
     assert_eq!(
         text(&at(&compact, &["blockers"]).array().unwrap()[0], "kind"),
         "store_in_use"

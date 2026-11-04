@@ -151,7 +151,11 @@ fn a_scoped_workspace_keeps_its_scope_through_the_receipt() {
     let (request, proof) = blocks(&bytes);
     for forged in [
         request.replacen("scope 2401-DEMO KMD true", "scope 2401-DEMO KMD", 1),
-        request.replacen("scope 2401-DEMO KMD true", "scope 2401-DEMO KMD true K1 K2", 1),
+        request.replacen(
+            "scope 2401-DEMO KMD true",
+            "scope 2401-DEMO KMD true K1 K2",
+            1,
+        ),
         request.replacen("scope 2401-DEMO KMD true", "scope 2401-DEMO KMD yes", 1),
         request.replacen("scope 2401-DEMO KMD true", "scope 2401-DEMO Grids true", 1),
     ] {
