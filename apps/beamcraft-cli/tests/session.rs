@@ -336,7 +336,7 @@ fn an_open_session_holds_the_compaction_lease() {
     let created = store.run(first.split_whitespace().collect::<Vec<_>>().as_slice());
     assert_eq!(Session::outcome(&created), "plate_created");
 
-    let mut session = Session::start(&store);
+    let session = Session::start(&store);
     // The open session holds the shared store lease, so compaction refuses while it serves
     // (U14): a compaction used to be able to start under a live session, including the
     // middle of a batch.
@@ -348,10 +348,7 @@ fn an_open_session_holds_the_compaction_lease() {
         "--dry-run",
     ]);
     assert_eq!(Session::outcome(&compact), "compaction_dry_run");
-    assert_eq!(
-        compact.get("would_proceed").unwrap().boolean().unwrap(),
-        false
-    );
+    assert!(!compact.get("would_proceed").unwrap().boolean().unwrap());
     assert_eq!(
         text(&at(&compact, &["blockers"]).array().unwrap()[0], "kind"),
         "store_in_use"
@@ -367,5 +364,5 @@ fn an_open_session_holds_the_compaction_lease() {
         "--dry-run",
     ]);
     assert_eq!(Session::outcome(&after), "compaction_dry_run");
-    assert_eq!(after.get("would_proceed").unwrap().boolean().unwrap(), true);
+    assert!(after.get("would_proceed").unwrap().boolean().unwrap());
 }
