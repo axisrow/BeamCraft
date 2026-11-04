@@ -192,24 +192,12 @@ pub fn inspect(bytes: &[u8]) -> Result<Inspection, ReadError> {
         })?;
     let digest = Sha256::digest(bytes).map_err(|_| ReadError::TooLarge)?;
     let bom: &[u8] = &[0xEF, 0xBB, 0xBF];
-    let text = core::str::from_utf8(bytes.strip_prefix(bom).unwrap_or(bytes));
-    let text = match text {
+    let text = match core::str::from_utf8(bytes.strip_prefix(bom).unwrap_or(bytes)) {
         // ISO 10303-21 restricts the physical file to a subset of ASCII, so every accepted
-        // file is UTF-8; the two checks agree.
+        // file is UTF-8; the two checks agree. Bytes that are not text at all cannot be a
+        // STEP file, so they are refused like any other framing break.
         Ok(text) => text,
-        Err(_) => {
-            let mut out = Inspection::new(digest, bytes_u64);
-            push_loss(
-                &mut out.losses,
-                &mut out.losses_truncated,
-                Loss {
-                    code: "NOT_TEXT",
-                    detail: "the bytes are not valid UTF-8 text, so nothing was inventoried"
-                        .to_owned(),
-                },
-            );
-            return Ok(out);
-        }
+        Err(_) => return Err(ReadError::NotAStepFile("the bytes are not ASCII text")),
     };
     let mut lines = text.split('\n').peekable();
     let first = lines.next().map(strip_cr);
@@ -651,10 +639,30 @@ impl Scan {
 
     /// The length reading of the `IfcUnitAssignment` at `#id`: its SI length units. The
     /// conversion-based ones are counted by the instance scan; their factors are losses.
+    /// Every shape the scan cannot split is a loss, never a silent `None`.
     fn units_of_assignment(&mut self, id: u64) -> Option<UnitsReading> {
         let body = self.interpreted_by_id(id).map(|e| e.body.clone())?;
-        let list = split_args(&body)?.into_iter().next()?;
-        let list = list.trim().strip_prefix('(')?.strip_suffix(')')?;
+        let Some(list) = split_args(&body).and_then(|args| args.into_iter().next()) else {
+            self.loss(
+                "PROJECT_UNITS_UNREADABLE",
+                format!(
+                    "the attributes of the units assignment #{id} cannot be split into \
+                     arguments"
+                ),
+            );
+            return None;
+        };
+        let Some(list) = list
+            .trim()
+            .strip_prefix('(')
+            .and_then(|rest| rest.strip_suffix(')'))
+        else {
+            self.loss(
+                "PROJECT_UNITS_UNREADABLE",
+                format!("the units assignment #{id} does not hold a units list"),
+            );
+            return None;
+        };
         let mut si: Vec<f64> = Vec::new();
         for token in list.split(',') {
             let Some(id) = token.trim().strip_prefix('#').and_then(|d| d.parse().ok()) else {
@@ -1002,6 +1010,32 @@ mod tests {
                 instance: 8,
                 global_id: "1Anr5VMOX0PO8jvHqZabcd".to_owned(),
             }]
+        );
+    }
+
+    #[test]
+    fn bytes_that_are_not_text_are_refused() {
+        let mut not_text = minimal_ifc4().into_bytes();
+        let at = not_text.len() - 8;
+        not_text[at] = 0xFF;
+        assert_eq!(
+            inspect(&not_text),
+            Err(ReadError::NotAStepFile("the bytes are not ASCII text"))
+        );
+    }
+
+    #[test]
+    fn an_unreadable_units_assignment_is_a_loss_not_a_silent_null() {
+        let file =
+            minimal_ifc4().replace("#3=IFCUNITASSIGNMENT((#5));", "#3=IFCUNITASSIGNMENT((#5);");
+        let out = inspect_str(&file);
+        assert_eq!(out.length_unit, None);
+        assert!(
+            out.losses
+                .iter()
+                .any(|l| l.code == "PROJECT_UNITS_UNREADABLE"),
+            "{:?}",
+            out.losses
         );
     }
 

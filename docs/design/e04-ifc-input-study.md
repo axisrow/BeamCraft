@@ -32,7 +32,7 @@ The same bytes always answer with the same JSON. Refusal cases stop before any i
 |---|---|---|
 | Original-byte SHA-256 and size | `source.sha256`, `source.bytes` | XR-SOURCE-002; the received filename stays descriptive (`header.file_name`) |
 | Input cap | 32 MiB (`read::MAX_INPUT_BYTES`) | the same ceiling as a stored foreign source (`model::reference::MAX_SOURCE_BYTES`), because the received IFC bytes are the source evidence the workflow retains |
-| Framing refusal | `NOT_A_STEP_FILE` (`INVALID_ARGUMENT`) | bytes that do not start `ISO-10303-21;`/`HEADER;`, or that end without `ENDSEC;` and `END-ISO-10303-21;` — a truncated delivery is refused, never pinned |
+| Framing refusal | `NOT_A_STEP_FILE` (`INVALID_ARGUMENT`) | bytes that are not ASCII text at all, that do not start `ISO-10303-21;`/`HEADER;`, or that end without `ENDSEC;` and `END-ISO-10303-21;` — a truncated or undecodable delivery is refused, never pinned |
 | Declared schema | `declared_schema.token`, `.recognized` | recognized means the IFC4 subset this crate writes and studies; any other declared token (IFC2X3, IFC4X3, …) is a `SCHEMA_OUTSIDE_STUDIED_SET` loss, not a refusal — the supported subset is an owner decision |
 | Descriptive header | `header.{file_name,time_stamp,preprocessor_version,originating_system}` | `FILE_NAME` facts; omitted as a loss when unreadable or over 256 bytes; never version identity |
 | Entity inventory | `entities.{count,names,unclassified,non_instance_lines}` | one instance per line is interpreted; multi-line instances are counted as unclassifiable lines, never guessed |
