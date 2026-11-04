@@ -1,8 +1,7 @@
 # U19: authored section and zone scopes, the active section
 
 Date: 2026-11-01. Status: **delivered slice; the F12 registries, the 0.2 record wiring and
-the store commands remain U20/#364**. Branch: `ao/beamcraft-169/feat/u19-scope-layers`;
-fork issue #363 (upstream #230, parent epic #189). Contracts:
+the store commands remain U20**. Upstream issue #230, parent epic #189. Contracts:
 [f10-domain-vocabulary-v0.2](../contracts/f10-domain-vocabulary-v0.2.md) (DV-SCOPE-001..004),
 [f12-project-coordination-v0.1](../contracts/f12-project-coordination-v0.1.md) section 3.
 
@@ -68,14 +67,14 @@ holes:
   workspace is refused on it; zones are labels until F12 (U20), so the contract's "the
   zone's own frame" binds when zone records carry frames — prims author in project
   coordinates with unchanged paths and identities.
-- Read-only pinned coordination grids are coordination-project composition (U21/#364);
+- Read-only pinned coordination grids are coordination-project composition (U21);
   this slice scopes only the project's own store, where foreign content is already
   `FOREIGN_READ_ONLY` by ownership.
 
 ## Deliberate limits
 
 - Codes are labels (`2401-DEMO`, `KM`, `K1`): the section and zone registries with their
-  UUIDv7 identities are U20/#364 on top of U22's `SectionRecord`/`ZoneRecord`; the
+  UUIDv7 identities are U20 on top of U22's `SectionRecord`/`ZoneRecord`; the
   workspace metadata carries the code until then, and the layer-participation check is
   what makes a mislabelled scope unusable rather than authoritative. The section code
   `Grids` is reserved (`section_layer` refuses it): it would name a section layer exactly

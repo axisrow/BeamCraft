@@ -8,7 +8,10 @@
 
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use crate::support;
-use beamcraft_json::Json;
+use beamcraft_engine::views::{ModelView, ViewBook};
+use beamcraft_engine::work_plane::WorkPlane;
+use beamcraft_json::{Json, Limits};
+use beamcraft_model::id::Uuid7;
 use support::{StoreFixture, at, list, text};
 
 struct Views {
@@ -431,4 +434,70 @@ fn save_view_names_views_by_default() {
 
     // An explicit empty name is refused, not replaced by a default.
     v.refuse("save-view", &["--name", "  ", "--parallel", "xy"]);
+}
+
+#[test]
+fn the_views_file_is_a_camera_prim_layer_and_a_json_sidecar_migrates() {
+    let v = Views::new();
+    v.ok(
+        "create-plate",
+        &["--width", "500", "--length", "250", "--thickness", "8"],
+    );
+    let head = v.ok("open-revision", &[]);
+    v.view(
+        "save-view",
+        &["--name", "Front", "--parallel", "xz", "--author", "Ana"],
+    );
+
+    // The stored file is the W01 views layer: a USD document of placed camera prims, not JSON.
+    let bytes = std::fs::read(&v.file).unwrap();
+    assert!(
+        bytes.starts_with(b"#usda"),
+        "the views file is a USD views layer"
+    );
+    let body = std::str::from_utf8(&bytes).unwrap();
+    assert!(body.contains("def Camera"), "a saved view is a camera prim");
+    // Restoring reads the camera prim back with its provenance.
+    let applied = v.view("apply-view", &["--view", "front"]);
+    assert_eq!(text(at(&applied, &["provenance"]), "author"), "Ana");
+
+    // A legacy JSON sidecar still reads, and the next save migrates it into the layer form.
+    let mut book = ViewBook::new();
+    let mut old = ModelView::new(
+        Uuid7::parse("0199e7a0-0000-7000-8000-0000000000aa").unwrap(),
+        "Old Plan",
+        WorkPlane::default(),
+        1234.0,
+    );
+    old.folder = "Old".into();
+    old.is_default = true;
+    book.insert(old).unwrap();
+    let legacy = beamcraft_host::views::book_to_json(&book)
+        .unwrap()
+        .encode(&Limits::DEFAULT)
+        .unwrap();
+    std::fs::write(&v.file, &legacy).unwrap();
+    let listed = v.view("list-views", &[]);
+    assert_eq!(text(&list(&listed, "views")[0], "name"), "Old Plan");
+    v.view(
+        "save-view",
+        &["--name", "New", "--parallel", "yz", "--author", "Bo"],
+    );
+    let bytes = std::fs::read(&v.file).unwrap();
+    assert!(
+        bytes.starts_with(b"#usda"),
+        "the save migrated the sidecar into the layer form"
+    );
+    let listed = v.view("list-views", &[]);
+    assert_eq!(list(&listed, "views").len(), 2);
+    // The default mark rides through the migration on the camera prim, so the window never
+    // replaces the restored default view with a fresh one.
+    let migrated = list(&listed, "views")
+        .iter()
+        .find(|entry| text(entry, "name") == "Old Plan")
+        .unwrap();
+    assert!(at(migrated, &["default"]).boolean().unwrap());
+
+    // Views never write the model, in either file form.
+    assert_eq!(v.ok("open-revision", &[]), head);
 }

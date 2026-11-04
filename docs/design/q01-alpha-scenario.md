@@ -9,7 +9,8 @@ cargo nextest run --locked -p beamcraft-cli --test cli alpha_scenario
 
 The `alpha_scenario` substring filter selects both stories of the package's `cli` integration
 target: `alpha_scenario.rs` (the original) and `alpha_scenario_expanded.rs` (the expanded one,
-which includes the original frame as its opening). The expected exit is 0. On success the
+which includes the original frame as its opening and runs the curved and poly members in their
+own published store as its second test). The expected exit is 0. On success the
 stories themselves are silent; the runner prints one result line per test. A failing step
 aborts its story with the exact command and its expected and actual JSON in the assert panic
 message. If cargo-nextest is not installed, the libtest
@@ -104,8 +105,8 @@ The cells below extend the manual portion to the newer UI surfaces: the selectio
 colour sets (V17) and the sheet editor (D05). They run on the expanded artifacts, which carry
 the grid and level the steps need. Every cell stays open until the owner runs it and accepts
 each visual result by eye. Observed results are recorded separately from these instructions —
-in the acceptance traceability of [q01-alpha-matrix.md](q01-alpha-matrix.md) and on fork
-issue #318 — never inside this file; the per-cell checklists are filled in that record. All
+in the acceptance traceability of [q01-alpha-matrix.md](q01-alpha-matrix.md) and on upstream
+issue #334 — never inside this file; the per-cell checklists are filled in that record. All
 labels, shortcuts and limits are read from the source; a discrepancy against the running app
 is a recorded failure, not a reason to improvise.
 

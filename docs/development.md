@@ -48,8 +48,9 @@ cargo run --locked -p beamcraft-test-gate -- publish --report target/test-gate/R
 
 CI validates the current head/base/tree and checks the whole workspace on the two other OSes.
 A CLI-only receipt explicitly means UI was omitted locally. Missing/stale reports fail the
-aggregate `CI verdict`. Integration reuses a PR result only for the identical source tree;
-upstream sync binds its full native gate to the merge tree. Release packaging is unchanged.
+aggregate `CI verdict`. Integration reuses a PR result only for the identical source tree; a
+sync merge binds its full native gate to the merge tree and lands as a direct push to `master`
+(`AGENTS.md` §7). Release packaging is unchanged.
 
 ### Iteration runs
 

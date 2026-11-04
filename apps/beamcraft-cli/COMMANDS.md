@@ -1180,8 +1180,8 @@ save-view --file FILE [--name TEXT] [--new-id UUID] [--author TEXT] [--comment T
     [--span MM] [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
-    [--opacity 0..1] [--folder PATH] [--favorite true|false] [--default true|false]
-    [--copy-from VIEW]
+    [--opacity 0..1] [--representation full|simplified] [--colour-set none|NAME] [--folder PATH]
+    [--favorite true|false] [--default true|false] [--copy-from VIEW]
 ```
 
 ### update-view
@@ -1198,8 +1198,8 @@ update-view --file FILE --view ID|NAME [--name TEXT] [--store ROOT] [--target X,
     [--span MM] [--depth none|ABOVE,BELOW] [--rotation Z_DEG,X_DEG]
     [--render-mode wireframe|transparent|grey|shaded|selected] [--grids true|false]
     [--hidden-kinds none|KIND,...] [--work-area none|MM,MM,MM,MM,MM,MM] [--color default|R,G,B]
-    [--opacity 0..1] [--folder PATH] [--favorite true|false] [--default true|false]
-    [--copy-from VIEW]
+    [--opacity 0..1] [--representation full|simplified] [--colour-set none|NAME] [--folder PATH]
+    [--favorite true|false] [--default true|false] [--copy-from VIEW]
 ```
 
 ### remove-view
@@ -1216,6 +1216,40 @@ read.
 
 ```text
 apply-view --file FILE --view ID|NAME [--store ROOT]
+```
+
+### define-preset
+
+write.
+
+```text
+define-preset --file FILE --name TEXT [--store ROOT] [--hidden-kinds none|KIND,...]
+    [--depth none|ABOVE,BELOW] [--representation full|simplified] [--colour-set none|NAME]
+    [--grids true|false]
+```
+
+### list-presets
+
+read.
+
+```text
+list-presets --file FILE [--store ROOT]
+```
+
+### remove-preset
+
+write.
+
+```text
+remove-preset --file FILE --name TEXT [--store ROOT]
+```
+
+### apply-preset
+
+write.
+
+```text
+apply-preset --file FILE --views-file FILE --preset NAME --view ID|NAME [--store ROOT]
 ```
 
 ## annotation

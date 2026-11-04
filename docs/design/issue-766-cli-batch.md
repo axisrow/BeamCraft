@@ -4,8 +4,8 @@ Date: 2026-11-03. Status: **phase 2 implemented** on top of this note: `beamcraf
 with explicit batch bracketing, the design proposal below with the open questions resolved
 as proposed (bracketing default, stop-on-first-refusal, fail on a moved head, full
 per-command JSON, no token — `AGENTS.md` §3 holds by construction). The implementation
-decisions are recorded at the end of this note. Fork card #424 (upstream Apibim-com#766,
-slice 6 of #753). Per the upstream card, the design note precedes any code; the owner
+decisions are recorded at the end of this note. Upstream card
+[#766](https://github.com/Apibim-com/BeamCraft/issues/766), slice 6 of #753. Per the upstream card, the design note precedes any code; the owner
 approved the design before implementation.
 
 ## Measured baseline

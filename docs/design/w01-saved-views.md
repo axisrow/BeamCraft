@@ -33,24 +33,28 @@ The session sidecar becomes format version 2 and writes the stamp as
 `provenance: {author, created_at_ms, comment, model_revision}` or null; version 1 files
 (without the key) still read, stampless.
 
-## Not in this slice
-
-The shared-review-layer answer to the open owner question of where views live (workspace vs
-a shared review layer) is open. This slice delivers the provenance contract, its engine API,
-its CLI and its persistence in the views layer file.
-
 ## The USD form of the views layer
 
-The USD form is delivered in two steps. The layer profile is here:
+The USD form is delivered in two steps. The layer profile:
 `beamcraft_layer_engine::authored::views` is the closed views-layer profile — `bytes`
 produces the canonical layer text (a `bimViewsSchemaDigest` pin, then one standard USD
-`Camera` prim per saved view under `/World/Views`), `read_views` reads the owned camera
-prims of a composed snapshot back, and the mapping identity (`views_schema_identity`) is
-separate from the element profile's pin. A view prim carries no `bim:id`: a saved view is
+`Camera` prim per saved view under `/World/Views`, plus `bim:view:folders` on the views
+scope for the folders no view uses), `read_layer` reads the owned camera prims and the
+folder record of a composed snapshot back, and the mapping identity (`views_schema_identity`)
+is separate from the element profile's pin. A view prim carries no `bim:id`: a saved view is
 display state, not model data, so it enters no element index and no model key or number
 can move. The W01 provenance rides on the prim as `bim:view:author`, `bim:view:savedAtMs`,
 `bim:view:comment` and `bim:view:modelRevision`, all four or none, with the same bounds as
-the record above. The restore path through the session file and the CLI is the next step;
-whether the layer also becomes a manifest layer of the store revision stays with the owner
-question above.
+the record above.
+
+The restore path: the session file of a store is now the views layer itself
+(`beamcraft_session::views_layer` maps the book to the layer and back, through the reader's
+manifest commitment). The V12 commands keep their surface: `--file` stays the caller-chosen
+path, a save writes the layer form, and a legacy JSON sidecar (versions 1 and 2) still
+loads until the next save rewrites it in the layer form. The window's sidecar is the
+sibling `<store>.views.usda`, with the legacy `<store>.views.json` still loading beside a
+layer. Restoring a view restores its camera and its provenance; the store head stays
+byte-identical across every view operation, so model keys and numbering never move.
+Whether the layer additionally becomes a manifest layer of the store revision stays with
+the owner question above.
 

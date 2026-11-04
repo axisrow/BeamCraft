@@ -1,7 +1,6 @@
 # P09 validation layer
 
-Date: 2026-11-03. Base: `a5089be0` (verified `origin/master`). Branch
-`ao/beamcraft-195/feat/p09-validation`. Status: acceptance evidence for the shared validator;
+Date: 2026-11-03. Status: acceptance evidence for the shared validator;
 the validator itself is existing delivered code and was not duplicated.
 
 ## One validator, two doors

@@ -164,6 +164,12 @@ fn stage(name: &str, command: &mut Command, output: &Path, limit: Duration) -> S
     }
 }
 
+/// Recognizes cargo's refusal to run doctests for a selection without any library target:
+/// such a selection holds no doctests at all, so the doctest step passes vacuously.
+pub fn no_library_targets(stderr: &str) -> bool {
+    stderr.contains("no library targets found in package")
+}
+
 /// Counts the exact runnable tests selected by the nextest list JSON, not a log-line heuristic.
 pub fn inventory(text: &str) -> Result<u64> {
     let value: Value = serde_json::from_str(text)?;
@@ -447,7 +453,7 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
     };
     let executed = finish_tests(&mut tests, output, expected, options.scope.budget_ms());
     stages.push(tests);
-    let docs = if prepared {
+    let mut docs = if prepared {
         stage(
             "doctests",
             cargo(root)
@@ -465,6 +471,15 @@ pub fn check(root: &Path, options: Options) -> Result<PathBuf> {
             timed_out: false,
         }
     };
+    // A bin-only selection (the CLI package ships no library target) gives cargo no
+    // doctests to run; the refusal stays in the stage's stderr log for auditing.
+    if docs.exit_code != 0
+        && !docs.timed_out
+        && read(&output.join("doctests.stderr.log")).is_ok_and(|text| no_library_targets(&text))
+    {
+        eprintln!("gate: doctests: the selection has no library targets; no doctests to run");
+        docs.exit_code = 0;
+    }
     stages.push(docs);
     stages.push(stage(
         "docs",

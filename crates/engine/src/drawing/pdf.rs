@@ -11,7 +11,7 @@
 
 use super::Drawing;
 use super::projection::{ALGORITHM, Projection};
-use super::svg::{MARGIN_MM, MAX_EXPORT_BYTES, StrokeGroups, bounds, stroke_groups};
+use super::svg::{MARGIN_MM, MAX_EXPORT_BYTES, bounds, drafting_layers, stroke_groups};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::DocumentVersionId;
@@ -23,6 +23,15 @@ pub const PDF_EXPORT_CONTRACT: &str = "beamcraft-drawing-pdf/1";
 const MM_TO_PT: f64 = 72.0 / 25.4;
 /// Stroke width matching the SVG export, in millimetres.
 const STROKE_MM: f64 = 0.25;
+
+/// One painted path of a page: its strokes and the authored dash pattern in paper
+/// millimetres, when the path carries one.
+pub(super) struct PagePath {
+    /// Paper-millimetre strokes.
+    pub strokes: Vec<[[f64; 2]; 2]>,
+    /// The dash pattern in millimetres; unbroken when `None`.
+    pub dash_mm: Option<&'static [f64]>,
+}
 
 /// Escapes one PDF literal string: backslash and parentheses get backslash escapes and
 /// every byte outside printable ASCII becomes a three-digit octal escape, so arbitrary
@@ -48,12 +57,21 @@ fn pt(value: f64) -> String {
     format!("{value:.4}")
 }
 
-/// Draws all stroke groups as one path of absolute move/line subpaths translated by
-/// `origin_mm`, the paper point mapped onto the page's lower-left corner.
-fn content_stream(groups: &StrokeGroups, origin_mm: [f64; 2]) -> String {
+/// Paints every path as absolute move/line subpaths translated by `origin_mm`, the
+/// paper point mapped onto the page's lower-left corner; each path sets and clears its
+/// own dash pattern.
+fn content_stream(paths: &[PagePath], origin_mm: [f64; 2]) -> String {
     let mut path = String::new();
-    for group in groups {
-        for [start, end] in group {
+    for group in paths {
+        if let Some(dash) = group.dash_mm {
+            let pattern = dash
+                .iter()
+                .map(|value| pt(*value))
+                .collect::<Vec<_>>()
+                .join(" ");
+            path.push_str(&format!("[{pattern}] 0 d\n"));
+        }
+        for [start, end] in &group.strokes {
             let [sx, sy] = *start;
             let [ex, ey] = *end;
             path.push_str(&format!(
@@ -64,23 +82,26 @@ fn content_stream(groups: &StrokeGroups, origin_mm: [f64; 2]) -> String {
                 pt(ey - origin_mm[1]),
             ));
         }
+        path.push_str("S\n");
+        if group.dash_mm.is_some() {
+            path.push_str("[] 0 d\n");
+        }
     }
-    path.push_str("S\n");
     format!("{:.4} w 1 J 1 j 0 0 0 RG\n{path}", STROKE_MM * MM_TO_PT)
 }
 
 /// Writes one deterministic single-page PDF whose page box is `width_mm` by `height_mm`
-/// and whose strokes are mapped from paper millimetres through `origin_mm`. The document
-/// carries no `/ID`, clock or random field; the byte cap matches the SVG export.
+/// and whose painted paths are mapped from paper millimetres through `origin_mm`. The
+/// document carries no `/ID`, clock or random field; the byte cap matches the SVG export.
 pub(super) fn write_page(
     width_mm: f64,
     height_mm: f64,
-    groups: &StrokeGroups,
+    paths: &[PagePath],
     origin_mm: [f64; 2],
     title: &str,
     keywords: &str,
 ) -> Result<Vec<u8>, CommandError> {
-    let content = content_stream(groups, origin_mm);
+    let content = content_stream(paths, origin_mm);
     let objects = [
         String::from("<< /Type /Catalog /Pages 2 0 R >>"),
         String::from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
@@ -126,15 +147,22 @@ pub(super) fn write_page(
 }
 
 /// Renders the exact resolved published geometry as a deterministic stroke-only PDF bound
-/// to `version`, on a tight page with the SVG export's margin. Unresolved geometry,
-/// unbounded coordinates and an over-cap result refuse.
+/// to `version`, on a tight page with the SVG export's margin, with every drawn object on
+/// a visible layer. Unresolved geometry, unbounded coordinates and an over-cap result
+/// refuse.
 pub fn export(
     drawing: &Drawing,
     version: DocumentVersionId,
     projection: &Projection,
 ) -> Result<Vec<u8>, CommandError> {
     let (groups, _) = stroke_groups(projection)?;
-    let [min_x, min_y, max_x, max_y] = bounds(&groups);
+    let drafting = drafting_layers(drawing)?;
+    let [min_x, min_y, max_x, max_y] = bounds(
+        groups
+            .iter()
+            .flatten()
+            .chain(drafting.iter().flat_map(|layer| layer.strokes.iter())),
+    );
     let origin = [min_x - MARGIN_MM, min_y - MARGIN_MM];
     let width = max_x - min_x + 2.0 * MARGIN_MM;
     let height = max_y - min_y + 2.0 * MARGIN_MM;
@@ -150,7 +178,18 @@ pub fn export(
         spec.source.manifest,
         ALGORITHM,
     );
-    write_page(width, height, &groups, origin, &spec.name, &keywords)
+    let mut paths: Vec<PagePath> = groups
+        .iter()
+        .map(|group| PagePath {
+            strokes: group.clone(),
+            dash_mm: None,
+        })
+        .collect();
+    paths.extend(drafting.iter().map(|layer| PagePath {
+        strokes: layer.strokes.clone(),
+        dash_mm: super::svg::dash_array(layer.line_type),
+    }));
+    write_page(width, height, &paths, origin, &spec.name, &keywords)
 }
 
 #[cfg(test)]

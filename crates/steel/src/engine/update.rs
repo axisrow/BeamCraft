@@ -89,7 +89,7 @@ pub const fn effect(patch: &ElementPatch) -> UpdateEffect {
     }
 }
 
-/// The kind-specific half of an element patch (#389): how one part kind's fields refuse the
+/// The kind-specific half of an element patch: how one part kind's fields refuse the
 /// other kind, and how they land on an authored part. [`PlatePatch`] and [`MemberPatch`]
 /// implement it; `patch_plate`, `patch_member` and the derived-layer authoring dispatch
 /// through it, so the update path names no kind outside these impls.

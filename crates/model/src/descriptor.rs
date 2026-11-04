@@ -528,11 +528,23 @@ impl ProjectDescriptor {
         if text == "whole" {
             return Ok(ScopeSelection::WholeProject);
         }
-        if let Some(section) = self.section_by_code(text) {
+        // The registries deliberately allow one code in both of them (a section and a zone),
+        // so a text scope with such a code is refused instead of silently picking the section.
+        let section = self.section_by_code(text);
+        let zone = self.zone_by_code(text);
+        if section.is_some() && zone.is_some() {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "scope",
+                "the scope code names a section and a zone at once; a text scope cannot resolve it",
+            )
+            .with_rule("PC-ID-001"));
+        }
+        if let Some(section) = section {
             let id = SectionId::parse(&section.id).map_err(|_| bad_registry_id())?;
             return Ok(ScopeSelection::Section(id));
         }
-        if let Some(zone) = self.zone_by_code(text) {
+        if let Some(zone) = zone {
             let id = ZoneId::parse(&zone.id).map_err(|_| bad_registry_id())?;
             return Ok(ScopeSelection::Zone(id));
         }
@@ -618,6 +630,14 @@ impl ProjectDescriptor {
         sorted.sort();
         if sorted != connection.layers {
             return Err(bad_layers("the pinned layers must be sorted by name"));
+        }
+        // Sorted adjacency catches the duplicate name: two entries with one source layer
+        // name would let a name-keyed reader silently pick one of the two digests.
+        if sorted
+            .windows(2)
+            .any(|pair| matches!(pair, [a, b] if a.0 == b.0))
+        {
+            return Err(bad_layers("a pinned source layer name appears twice"));
         }
         for (name, digest) in &connection.layers {
             if name.is_empty()
@@ -805,6 +825,16 @@ mod tests {
             ErrorCode::InvalidArgument
         );
         assert_eq!(d.scope_of("XX").unwrap_err().rule_id, Some("PC-ID-001"));
+        // One code in both registries is allowed by them and unresolvable as a text scope:
+        // the silence would have preferred the section and hidden the zone forever.
+        let mut both = descriptor();
+        both.put_section(section("KM")).unwrap();
+        both.put_zone(zone("KM")).unwrap();
+        assert_eq!(
+            code_of(&both.scope_of("KM").unwrap_err()),
+            ErrorCode::InvalidArgument
+        );
+        assert_eq!(both.scope_of("KM").unwrap_err().rule_id, Some("PC-ID-001"));
     }
 
     #[test]
@@ -854,6 +884,21 @@ mod tests {
         empty_layers.layers = Vec::new();
         assert_eq!(
             code_of(&d.put_connection(empty_layers).unwrap_err()),
+            ErrorCode::InvalidArgument
+        );
+        // A duplicated source layer name is refused even when sorted: a name-keyed reader
+        // would silently take one of the two digests.
+        let mut duplicated_name = pin();
+        duplicated_name.id = ConnectionId::parse("019a7bf0-0000-7000-8000-00000000c305").unwrap();
+        duplicated_name.layers = vec![
+            ("a.usda".to_owned(), SCHEMA.to_owned()),
+            (
+                "a.usda".to_owned(),
+                "0200000000000000000000000000000000000000000000000000000000000000".to_owned(),
+            ),
+        ];
+        assert_eq!(
+            code_of(&d.put_connection(duplicated_name).unwrap_err()),
             ErrorCode::InvalidArgument
         );
     }

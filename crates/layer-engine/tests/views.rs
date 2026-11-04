@@ -85,6 +85,14 @@ fn view(id_text: &str, name: &str) -> SavedView {
     SavedView::new(id, name, placement([1000.0, 2000.0, 3000.0], 1.0), 4321.0).unwrap()
 }
 
+/// A layer of exactly these views and no empty folders.
+fn layer_of(views: &[SavedView]) -> views::ViewsLayer {
+    views::ViewsLayer {
+        views: views.to_vec(),
+        empty_folders: Vec::new(),
+    }
+}
+
 const ID_A: &str = "0199e7a0-0000-7000-8000-0000000000aa";
 const ID_B: &str = "0199e7a0-0000-7000-8000-0000000000bb";
 const REVISION: &str = "0199e7a0-0000-7000-8000-0000000000cc";
@@ -99,10 +107,13 @@ fn full_view(id_text: &str, name: &str) -> SavedView {
     view.hidden_kinds = vec!["grid".to_owned(), "level".to_owned()];
     view.folder = "Review/North".to_owned();
     view.favorite = true;
+    view.default = true;
     view.work_area_mm = Some([[-500.0, -600.0, -700.0], [500.0, 600.0, 700.0]]);
     view.rotation_rad = [0.25, -0.5];
     view.color_rgb = Some([0.1, 0.2, 0.3]);
     view.opacity = 0.75;
+    view.representation = "simplified".to_owned();
+    view.colour_set = Some("Part classes".to_owned());
     view.stamp = Some(
         ViewStamp::new(
             "  author  ",
@@ -118,10 +129,10 @@ fn full_view(id_text: &str, name: &str) -> SavedView {
 #[test]
 fn canonical_bytes_round_trip_through_the_reader() {
     let saved = [full_view(ID_A, "Front"), view(ID_B, "Top")];
-    let bytes = views::bytes(&saved).unwrap();
+    let bytes = views::bytes(&layer_of(&saved)).unwrap();
     assert_eq!(
         bytes,
-        views::bytes(&saved).unwrap(),
+        views::bytes(&layer_of(&saved)).unwrap(),
         "the layer text must be canonical"
     );
     assert_eq!(views::layer_digest(&bytes).unwrap(), digest(&bytes));
@@ -139,10 +150,10 @@ fn canonical_bytes_round_trip_through_the_reader() {
         text.contains("def Camera"),
         "a saved view is a standard USD camera prim"
     );
-    let read = views::read_views(&prims_of(&bytes)).unwrap();
-    assert_eq!(read.len(), 2);
+    let read = views::read_layer(&prims_of(&bytes)).unwrap();
+    assert_eq!(read.views.len(), 2);
     assert_eq!(
-        read,
+        read.views,
         saved.to_vec(),
         "the reader restores the exact saved views"
     );
@@ -157,11 +168,40 @@ fn canonical_bytes_round_trip_through_the_reader() {
 }
 
 #[test]
+fn representation_and_colour_set_round_trip_and_default_when_absent() {
+    // The full view carries both attributes; the plain view carries neither, and the prim
+    // reads with the display defaults, so layer files written before V07 still read.
+    let saved = [full_view(ID_A, "Front"), view(ID_B, "Top")];
+    let bytes = views::bytes(&layer_of(&saved)).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(
+        text.contains("bim:view:representation"),
+        "the view authors its representation"
+    );
+    assert!(
+        text.contains("bim:view:colourSet"),
+        "the view authors its colour set name"
+    );
+    let read = views::read_layer(&prims_of(&bytes)).unwrap();
+    assert_eq!(read.views, saved.to_vec());
+    let plain = &read.views[1];
+    assert_eq!(plain.representation, "full");
+    assert_eq!(plain.colour_set, None);
+    // A present attribute of another USD type refuses the prim, never silently absent.
+    let mut wrong = full_view(ID_A, "Front");
+    wrong.representation = String::new();
+    assert!(views::bytes(&layer_of(&[wrong])).is_err());
+    let mut bad_set = full_view(ID_A, "Front");
+    bad_set.colour_set = Some("a\tb".to_owned());
+    assert!(views::bytes(&layer_of(&[bad_set])).is_err());
+}
+
+#[test]
 fn canonical_order_is_identity_order() {
-    let bytes = views::bytes(&[view(ID_B, "Top"), view(ID_A, "Front")]).unwrap();
-    let read = views::read_views(&prims_of(&bytes)).unwrap();
-    assert_eq!(read[0].id.to_string(), ID_A);
-    assert_eq!(read[1].id.to_string(), ID_B);
+    let bytes = views::bytes(&layer_of(&[view(ID_B, "Top"), view(ID_A, "Front")])).unwrap();
+    let read = views::read_layer(&prims_of(&bytes)).unwrap();
+    assert_eq!(read.views[0].id.to_string(), ID_A);
+    assert_eq!(read.views[1].id.to_string(), ID_B);
 }
 
 #[test]
@@ -169,13 +209,13 @@ fn a_camera_outside_the_views_folder_is_inert() {
     // A sibling scope's name shares the folder's prefix but not its namespace; an owned camera
     // there is foreign content and stays uninterpreted, never a refusal of the whole read.
     let stranger = "#usda 1.0\n(metersPerUnit = 0.001\nupAxis = \"Z\")\ndef Xform \"World\" { def Scope \"ViewsFoo\" { def Camera \"Stranger\" { double height = 1 } } }\n";
-    let read = views::read_views(&prims_of(stranger.as_bytes())).unwrap();
-    assert!(read.is_empty());
+    let read = views::read_layer(&prims_of(stranger.as_bytes())).unwrap();
+    assert!(read.views.is_empty());
 }
 
 #[test]
 fn a_wrong_typed_optional_attribute_is_refused() {
-    let bytes = views::bytes(&[full_view(ID_A, "Front")]).unwrap();
+    let bytes = views::bytes(&layer_of(&[full_view(ID_A, "Front")])).unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();
     // The depth record redeclared with another USD type (and a value valid for that type) must
     // refuse the prim, never read the record as silently absent.
@@ -185,14 +225,23 @@ fn a_wrong_typed_optional_attribute_is_refused() {
         1,
     );
     assert!(broken != text, "the depth record text form was expected");
-    assert!(views::read_views(&prims_of(broken.as_bytes())).is_err());
+    assert!(views::read_layer(&prims_of(broken.as_bytes())).is_err());
+    // The same presence rule for the default mark: a wrong USD type refuses, never a silent
+    // unmarked view.
+    let broken = text.replacen(
+        "bool bim:view:default = true",
+        "double bim:view:default = 1",
+        1,
+    );
+    assert!(broken != text, "the default mark text form was expected");
+    assert!(views::read_layer(&prims_of(broken.as_bytes())).is_err());
 }
 
 #[test]
 fn the_stamp_survives_the_round_trip_exactly() {
-    let bytes = views::bytes(&[full_view(ID_A, "Front")]).unwrap();
-    let read = views::read_views(&prims_of(&bytes)).unwrap();
-    let stamp = read[0].stamp.as_ref().unwrap();
+    let bytes = views::bytes(&layer_of(&[full_view(ID_A, "Front")])).unwrap();
+    let read = views::read_layer(&prims_of(&bytes)).unwrap();
+    let stamp = read.views[0].stamp.as_ref().unwrap();
     assert_eq!(
         stamp.author, "author",
         "the author is trimmed once at capture"
@@ -201,9 +250,9 @@ fn the_stamp_survives_the_round_trip_exactly() {
     assert_eq!(stamp.created_at_ms, 1_762_000_000_000);
     assert_eq!(stamp.model_revision.to_string(), REVISION);
     // An unstamped view reads without provenance.
-    let plain = views::bytes(&[view(ID_B, "Top")]).unwrap();
+    let plain = views::bytes(&layer_of(&[view(ID_B, "Top")])).unwrap();
     assert!(
-        views::read_views(&prims_of(&plain)).unwrap()[0]
+        views::read_layer(&prims_of(&plain)).unwrap().views[0]
             .stamp
             .is_none()
     );
@@ -211,25 +260,74 @@ fn the_stamp_survives_the_round_trip_exactly() {
 
 #[test]
 fn a_half_stamped_prim_is_refused() {
-    let bytes = views::bytes(&[full_view(ID_A, "Front")]).unwrap();
+    let bytes = views::bytes(&layer_of(&[full_view(ID_A, "Front")])).unwrap();
     let text = std::str::from_utf8(&bytes).unwrap();
     // Rename exactly one provenance attribute: the prim then carries three of four.
     let broken = text.replacen("bim:view:comment", "bim:view:note", 1);
-    assert!(views::read_views(&prims_of(broken.as_bytes())).is_err());
+    assert!(views::read_layer(&prims_of(broken.as_bytes())).is_err());
+}
+
+#[test]
+fn empty_folders_survive_the_round_trip_sorted_and_unique() {
+    let layer = views::ViewsLayer {
+        views: vec![full_view(ID_A, "Front")],
+        empty_folders: vec![
+            "South".to_owned(),
+            "Review/East".to_owned(),
+            "South".to_owned(),
+        ],
+    };
+    let bytes = views::bytes(&layer).unwrap();
+    let read = views::read_layer(&prims_of(&bytes)).unwrap();
+    // Sorted, deduplicated, and kept apart from the folder a view names.
+    assert_eq!(
+        read.empty_folders,
+        vec!["Review/East".to_owned(), "South".to_owned()]
+    );
+    assert_eq!(read.views[0].folder, "Review/North");
+    // The canonical text stores them sorted, so the same set commits one digest.
+    let same = views::bytes(&views::ViewsLayer {
+        views: layer.views.clone(),
+        empty_folders: vec!["Review/East".to_owned(), "South".to_owned()],
+    })
+    .unwrap();
+    assert_eq!(bytes, same);
+    // A folders record of another USD type refuses the scope: presence is by name alone, so a
+    // record redeclared as a parsable `token[]` of the same values is a refusal, never a
+    // silent absence.
+    let text = std::str::from_utf8(&bytes).unwrap();
+    let broken = text.replacen(
+        "string[] bim:view:folders = [\"Review/East\", \"South\"]",
+        "token[] bim:view:folders = [\"Review/East\", \"South\"]",
+        1,
+    );
+    assert!(broken != text, "the folders record text form was expected");
+    assert!(views::read_layer(&prims_of(broken.as_bytes())).is_err());
+    // A folder that breaks the path rules is refused.
+    let bad = views::ViewsLayer {
+        views: Vec::new(),
+        empty_folders: vec!["  spaced".to_owned()],
+    };
+    assert!(views::bytes(&bad).is_err());
+    let dot = views::ViewsLayer {
+        views: Vec::new(),
+        empty_folders: vec!["a/./b".to_owned()],
+    };
+    assert!(views::bytes(&dot).is_err());
 }
 
 #[test]
 fn bounds_are_refused() {
     let mut bad = view(ID_A, "Front");
     bad.span_mm = 0.0;
-    assert!(views::bytes(&[bad]).is_err());
+    assert!(views::bytes(&layer_of(&[bad])).is_err());
     let mut bad = view(ID_A, "Front");
     bad.span_mm = views::MAX_SPAN_MM * 2.0;
-    assert!(views::bytes(&[bad]).is_err());
+    assert!(views::bytes(&layer_of(&[bad])).is_err());
     // A non-unit orientation is not a camera placement.
     let mut bad = view(ID_A, "Front");
     bad.placement.orientation_xyzw = [0.0, 0.0, 0.1, 0.1];
-    assert!(views::bytes(&[bad]).is_err());
+    assert!(views::bytes(&layer_of(&[bad])).is_err());
     // Provenance bounds: length, controls and a non-empty author.
     let too_long_author = "a".repeat(129);
     assert!(ViewStamp::new(&too_long_author, "", Uuid7::parse(REVISION).unwrap(), 1).is_err());
@@ -250,11 +348,11 @@ fn bounds_are_refused() {
     let mut bad = view(ID_A, "Front");
     bad.stamp = Some(ViewStamp::new("author", "", Uuid7::parse(REVISION).unwrap(), 1).unwrap());
     bad.opacity = 1.5;
-    assert!(views::bytes(&[bad]).is_err());
+    assert!(views::bytes(&layer_of(&[bad])).is_err());
     // Duplicate identities are refused, never merged.
     let duplicate = [view(ID_A, "One"), view(ID_A, "Two")];
     assert_eq!(
-        views::bytes(&duplicate).unwrap_err().code,
+        views::bytes(&layer_of(&duplicate)).unwrap_err().code,
         ErrorCode::InvalidId
     );
     // The count cap binds.
@@ -262,7 +360,7 @@ fn bounds_are_refused() {
         .map(|i| view(&format!("0199e7a0-0000-7000-8000-{:012x}", i), "many"))
         .collect::<Vec<_>>();
     assert_eq!(
-        views::bytes(&over).unwrap_err().code,
+        views::bytes(&layer_of(&over)).unwrap_err().code,
         ErrorCode::LimitExceeded
     );
 }

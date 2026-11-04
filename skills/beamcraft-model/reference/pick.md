@@ -95,7 +95,7 @@ beamcraft lookup-feature --store STORE --feature-id "fid1:ELEMENT_UUID:member:f.
 ```
 
 Resolve a hit's id with `lookup-feature` instead of reading geometry out of the letter; the
-frame still needs documenting in the CLI (follow-up issue #147).
+frame still needs documenting in the CLI.
 
 The captured letter-to-normal map, quoted from real runs against the member above (all four
 outputs are from the same head, unedited apart from line wrapping). The ray onto the +width

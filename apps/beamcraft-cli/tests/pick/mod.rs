@@ -19,7 +19,7 @@ use std::process::Command;
 
 // The D02–D07 drawing suites are an ordinary module directory of this suite: `mod drawing;`
 // resolves to `drawing/mod.rs`, which declares every file there by a plain `mod` line and
-// shares the helpers below through `use super::*;` (issue #289).
+// shares the helpers below through `use super::*;`.
 mod drawing;
 
 const PLATE: &str = "019a7bf0-0000-7000-8000-000000700001";
@@ -872,7 +872,7 @@ fn a_small_member_far_from_the_origin_keeps_its_features() {
     assert!(number(at(c, &["distance_mm"])) < 1e-3);
 }
 
-/// The axis snap of a 45-degree sloped beam (issue #132 acceptance): the F06 Horizontal branch
+/// The axis snap of a 45-degree sloped beam: the F06 Horizontal branch
 /// projects world +Z onto the plane perpendicular to the axis, so `Y_m = (-1,0,1)/sqrt(2)` and
 /// `X_m = +Y`, and the axis is the authored segment `(0,0,0)..(4000,0,4000)` — the snap
 /// endpoints are its world `f.z0`/`f.z1` face centres, the nearest point its projection.
@@ -953,7 +953,7 @@ fn snap_answers_axis_start_end_and_nearest_for_a_45_degree_sloped_beam() {
 /// `a_rotated_member_reopens_with_world_bounds_and_unchanged_shape` (members.rs), where the
 /// instance rotation maps the authored axis `(0,0,0)..(4000,0,0)` answers in
 /// world at `(-50,70,1000)..(-50,4070,1000)`. A rotated member must not land in the skipped
-/// bucket (issue #132).
+/// bucket.
 #[test]
 fn snap_answers_the_axis_of_a_member_with_a_rotated_placement() {
     let f = Fixture::new();

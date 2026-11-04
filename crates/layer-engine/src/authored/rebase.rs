@@ -107,6 +107,7 @@ fn scaffold(path: &str) -> bool {
                 | "/World/Steel/Assemblies"
                 | "/World/Steel/Connections"
                 | "/World/Levels"
+                | "/World/Grids"
                 | "/World/Definitions"
                 | "/World/Definitions/Materials"
                 | "/World/Definitions/Profiles"
@@ -198,9 +199,13 @@ fn scope(path: &str, field: &str) -> Result<(T, G), Diagnostic> {
         }
         return Ok((T::Definition(digest), G::Derived));
     }
-    let (element, geometry) = prim
-        .strip_suffix("/Geometry")
-        .map_or((prim, false), |p| (p, true));
+    // U12 representation levels are sibling prims of the geometry on the element
+    // (`<part>/Reduced`, `<part>/Proxy`, `<part>/Axis`): derived state of the element,
+    // classified like `/Geometry` with the level bodies' own extra fields.
+    let (element, derived_suffix) = ["/Geometry", "/Reduced", "/Proxy", "/Axis"]
+        .iter()
+        .find_map(|suffix| prim.strip_suffix(suffix).map(|p| (p, true)))
+        .unwrap_or((prim, false));
     let indexed = crate::index::ElementId::from_path(element).map_err(|_| unsupported_delta())?;
     // Reference wrappers and their foreign-facing descendants retain the R01-specific writer.
     if element.starts_with("/World/References/") {
@@ -210,8 +215,8 @@ fn scope(path: &str, field: &str) -> Result<(T, G), Diagnostic> {
         ));
     }
     let id = ElementId::parse(&indexed.to_string()).map_err(|_| corrupt())?;
-    let group = if geometry {
-        if property.is_some_and(|p| !geometry_property(p)) {
+    let group = if derived_suffix {
+        if property.is_some_and(|p| !level_property(p)) {
             return Err(unsupported_delta());
         }
         G::Derived
@@ -225,6 +230,13 @@ fn scope(path: &str, field: &str) -> Result<(T, G), Diagnostic> {
     Ok((T::Element(id), group))
 }
 
+/// The property vocabulary of one element representation body (the full mesh, a U12 level
+/// or a shared geometry asset): mesh fields plus the axis curve's own fields and the
+/// level's exactness mark.
+fn level_property(name: &str) -> bool {
+    geometry_property(name) || matches!(name, "bim:exact" | "type" | "wrap" | "curveVertexCounts")
+}
+
 fn permitted(writes: &Writes, entry: (T, G)) -> bool {
     writes.contains(&entry)
         // Existing A09 approval declares label writes; do not change that historical evidence.
@@ -236,8 +248,7 @@ fn require(writes: &Writes, path: &str, field: &str) -> Result<(), Diagnostic> {
         matches!(
             field,
             "typeName" | "default" | "custom" | "variability" | "targetPaths"
-        ) || (field == "interpolation"
-            && (path.ends_with("/Geometry.normals") || geometry_asset_path(path)))
+        ) || (field == "interpolation" && (path.ends_with(".normals") || geometry_asset_path(path)))
     } else {
         // `apiSchemas` is the prim metadata a U08 classed part applies at create; U11: an
         // element's derived prim is an instanceable reference to the shared geometry asset.
@@ -444,8 +455,35 @@ fn merge_layer(
         control.check()?;
         // The pseudo-root of an edit layer carries engine bookkeeping (units, schema pin, and
         // since U15 the element-file stack): the candidate keeps the accepted side of it, and
-        // only prim content merges.
+        // only the root prim children merge — a workspace may author its first element, and
+        // the writer lists prims from that children field, so a skipped root drops them.
         if path.to_string() == "/" {
+            let before = names(
+                accepted
+                    .try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+            )?;
+            merge_names(
+                &path,
+                "primChildren",
+                old.try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+                source
+                    .try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+                accepted,
+                writes,
+            )?;
+            changed |= before
+                != names(
+                    accepted
+                        .try_field(&path, "primChildren")
+                        .map_err(|_| corrupt())?
+                        .as_deref(),
+                )?;
             continue;
         }
         let before = fields(old, &path)?;

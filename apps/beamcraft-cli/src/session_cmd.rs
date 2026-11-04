@@ -46,8 +46,8 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
         Err(refusal) => return print_refusal(&refusal),
     };
     // A serving session holds its store for as long as it runs, so a compaction cannot start
-    // under it (U14) — the same lease every one-process command holds while it runs.
-    let lease = match crate::history_cmd::coordinator_lease(args) {
+    // under it (U14) — the shared lease a compaction respects, like the coordinator's.
+    let lease = match crate::history_cmd::session_lease(args) {
         Ok(lease) => lease,
         Err((json, _)) => {
             let _ = print_json(&json);
@@ -61,7 +61,8 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
     };
-    let _ = lease;
+    // Bound by name: `let _` would drop the lease (and the lock) right here.
+    let _lease = lease;
     if print_json(&Json::object([("outcome", Json::text("session_ready"))])).is_err() {
         return std::process::ExitCode::from(3);
     }
@@ -253,27 +254,27 @@ impl<'a> Session<'a> {
         if draft::is_open() {
             return Err(invalid_session("a batch is already open"));
         }
-        let head = match self.store.open() {
-            Ok(head) => head,
-            Err(e) => {
-                return Err(Refusal::new(
-                    e.code(),
-                    "the store has no revision to batch on; create the first revision outside a batch",
-                ));
-            }
-        };
-        let sequence = head.info().sequence();
         let mut ids = IdSource::system();
         // The base of a verified head is the head's own; the given ids are only a
         // first-revision default, which a batch never creates.
         let mut fresh = |what: &'static str| ids.next_id().map_err(|_| invalid_session(what));
         let project = fresh("no identity could be generated")?;
         let workspace = fresh("no identity could be generated")?;
-        let (_, base) = load_base(
+        // One open serves both the base and the reported sequence: a second open could land
+        // on a different head under a concurrent writer and report a base pair that never
+        // existed (the commit still verifies the pins, this report does not lie).
+        let (head, base) = load_base(
             self.store,
             &ProjectId::from_uuid(project),
             &WorkspaceId::from_uuid(workspace),
         )?;
+        let head = head.ok_or_else(|| {
+            Refusal::new(
+                ErrorCode::NotFound,
+                "the store has no revision to batch on; create the first revision outside a batch",
+            )
+        })?;
+        let sequence = head.info().sequence();
         let digest = base.digest.to_string();
         // Drop a stale guard first: every path that consumes the batch clears the field, so
         // a guard left here belongs to an already-empty slot and its drop must not run

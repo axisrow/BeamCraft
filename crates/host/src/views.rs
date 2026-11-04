@@ -8,7 +8,7 @@
 
 use beamcraft_engine::views::{ModelView, Projection, ViewBook, ViewProvenance, WorkArea};
 use beamcraft_engine::work_plane::WorkPlane;
-use beamcraft_engine::{ElementKind, KindFilter, RenderMode};
+use beamcraft_engine::{ElementKind, KindFilter, RenderMode, Representation};
 use beamcraft_json::Json;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -173,6 +173,14 @@ pub fn view_to_json(view: &ModelView) -> Result<Json, CommandError> {
             },
         ),
         ("opacity", number(view.opacity, "views.opacity")?),
+        ("representation", Json::text(view.representation.as_token())),
+        (
+            "colour_set",
+            match &view.colour_set {
+                Some(set) => Json::text(set),
+                None => Json::Null,
+            },
+        ),
         (
             "provenance",
             match &view.provenance {
@@ -231,6 +239,17 @@ pub fn view_from_json(json: &Json) -> Result<ModelView, CommandError> {
         .get("opacity")
         .and_then(Json::float)
         .map_err(|_| unread("opacity"))?;
+    // The representation and the colour set postdate the provenance stamp, so files written
+    // earlier read with the display defaults; a present key of another type still refuses.
+    view.representation = match optional(json, "representation") {
+        Some(_) => Representation::parse(text("representation")?)
+            .ok_or_else(|| unread("representation"))?,
+        None => Representation::Full,
+    };
+    view.colour_set = match optional(json, "colour_set") {
+        Some(_) => Some(text("colour_set")?.to_owned()),
+        None => None,
+    };
     view.provenance = match optional(json, "provenance") {
         Some(stamp) => Some(provenance_from_json(stamp)?),
         None => None,
@@ -323,6 +342,8 @@ mod tests {
         full.rotation_rad = [0.5, -0.25];
         full.color = Some([0.25, 0.5, 0.75]);
         full.opacity = 0.4;
+        full.representation = Representation::Simplified;
+        full.colour_set = Some("Part classes".into());
         let stamp_revision = Uuid7::parse("019a7bf0-0000-7000-8000-000000000009").unwrap();
         full.stamp_provenance("Ana", "frame front", stamp_revision, 1_760_000_000_000)
             .unwrap();
@@ -403,6 +424,33 @@ mod tests {
         ]);
         let read = book_from_json(&legacy).unwrap();
         assert_eq!(read.get(&stamped.id).unwrap().provenance, None);
+        // A file from before the representation and colour set existed reads with the display
+        // defaults; the round trip above proves a present key still carries the values.
+        let mut plain = view_to_json(&stamped).unwrap();
+        if let Json::Object(map) = &mut plain {
+            map.remove("representation");
+            map.remove("colour_set");
+        }
+        let older = Json::object([
+            ("version", Json::uint(2)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![plain])),
+        ]);
+        let read = book_from_json(&older).unwrap();
+        let plain_view = read.get(&stamped.id).unwrap();
+        assert_eq!(plain_view.representation, Representation::Full);
+        assert_eq!(plain_view.colour_set, None);
+        // A present key of another type refuses the read.
+        let mut wrong = view_to_json(&stamped).unwrap();
+        if let Json::Object(map) = &mut wrong {
+            map.insert("representation".into(), Json::uint(3));
+        }
+        let wrong_file = Json::object([
+            ("version", Json::uint(2)),
+            ("folders", Json::Array(vec![])),
+            ("views", Json::Array(vec![wrong])),
+        ]);
+        assert!(book_from_json(&wrong_file).is_err());
         // A stamp that breaks the admission rules refuses its read, so the file refuses whole.
         let empty_author = Json::object([
             ("author", Json::text("")),

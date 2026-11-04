@@ -12,9 +12,11 @@
 //! fit the frame refuses instead of being rescaled or clipped.
 
 use super::svg::{
-    MAX_EXPORT_BYTES, escape, normalized, path, stroke_groups, text_strokes, text_width,
+    MAX_EXPORT_BYTES, StrokeGroups, dash_array, drafting_layers, escape, flipped_about, normalized,
+    path, path_element, stroke_groups, text_strokes, text_width,
 };
 use super::{Drawing, SheetSpec};
+use crate::drawing::pdf::{self, PagePath};
 use crate::drawing::projection::{BodyProjection, DetailProjection, Projection, SectionProjection};
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
@@ -63,6 +65,44 @@ fn annotation(title: &Option<String>, scale_denominator: f64) -> String {
 /// keyed for the SVG `data-view` paths.
 type RenderedView = (String, Vec<[[f64; 2]; 2]>, Vec<[[f64; 2]; 2]>);
 
+/// One rendered sheet layer in draw order: the SVG class, its optional view or drafting
+/// key, its authored dash pattern and its paper-millimetre strokes.
+pub(super) struct SheetLayer {
+    /// The SVG class: frame, titleblock, body, viewtitle or drafting.
+    pub class: &'static str,
+    /// The placed view, section or detail id, the SVG `data-view` key.
+    pub data_view: Option<String>,
+    /// The drawn object's id, the SVG `data-drafting` key.
+    pub data_drafting: Option<String>,
+    /// The authored dash pattern; unbroken when `None`.
+    pub dash: Option<&'static [f64]>,
+    /// Paper-millimetre strokes of the layer.
+    pub strokes: Vec<[[f64; 2]; 2]>,
+}
+
+/// The whole rendered sheet in paper millimetres, shared by the SVG and PDF writers so
+/// every export surface renders the same fixed sheet.
+pub(super) struct SheetLayout {
+    /// Paper width.
+    pub width_mm: f64,
+    /// Paper height.
+    pub height_mm: f64,
+    /// The contract metadata line both surfaces quote.
+    pub metadata: String,
+    /// Furniture, view bodies and annotations and drawn objects, in draw order.
+    pub layers: Vec<SheetLayer>,
+    /// The primary view's dimension groups, keeping the loose-paper classes.
+    pub primary: StrokeGroups,
+}
+
+/// The `data-view` or `data-drafting` key of one layer, for the SVG path element.
+fn layer_key(layer: &SheetLayer) -> Option<(&'static str, &str)> {
+    if let Some(id) = &layer.data_drafting {
+        return Some(("data-drafting", id));
+    }
+    layer.data_view.as_deref().map(|id| ("data-view", id))
+}
+
 /// Renders one view of the sheet: its resolved geometry strokes plus the annotation line
 /// (title and scale) centred below the geometry's lowest stroke — below the view origin
 /// when the geometry is empty, as for a section whose cut misses the member box. The
@@ -103,20 +143,20 @@ fn render_view(
     ))
 }
 
-/// Renders the exact resolved published geometry of every view as deterministic
-/// stroke-only sheet SVG bytes. The document must carry an admitted sheet, the primary
-/// projection must be fully resolved, and one resolved body must be supplied per placed
-/// view, section and detail in document order; anything unresolved, out of the frame or
-/// over the byte cap refuses. Every view is annotated below its geometry with its title
-/// and display scale.
-pub fn export_svg(
+/// Lays out the exact resolved published geometry of every view plus every drawn object
+/// on a visible layer. The document must carry an admitted sheet, the primary projection
+/// must be fully resolved, and one resolved body must be supplied per placed view,
+/// section and detail in document order; anything unresolved, out of the frame or over
+/// the byte cap refuses. Every view is annotated below its geometry with its title and
+/// display scale.
+fn layout(
     drawing: &Drawing,
     version: DocumentVersionId,
     primary: &Projection,
     placed_bodies: &[BodyProjection],
     section_bodies: &[SectionProjection],
     detail_bodies: &[DetailProjection],
-) -> Result<Vec<u8>, CommandError> {
+) -> Result<SheetLayout, CommandError> {
     let Some(sheet) = drawing.sheet() else {
         return Err(invalid("the document carries no sheet"));
     };
@@ -181,11 +221,8 @@ pub fn export_svg(
         ));
     }
     let block = normalized(block)?;
-    // Placed views draw their resolved wireframes in document order, then the primary
-    // view's dimension groups keep the classes of the loose-paper export.
-    // Every view renders its resolved geometry and its annotation line. The primary view's
-    // geometry stays in the dimension groups below, so only its annotation is kept here; the
-    // placed views, sections and details render as their own data-view paths.
+    // Placed views draw their resolved wireframes in document order; the primary view's
+    // geometry stays in the dimension groups, so only its annotation is a layer here.
     let spec = drawing.spec();
     let BodyProjection::Resolved(primary_edges) = &primary.body else {
         return Err(invalid("unresolved drawing geometry cannot be exported"));
@@ -197,18 +234,47 @@ pub fn export_svg(
         spec.view.paper_origin_mm,
         primary_edges.iter().map(|edge| edge.paper_mm).collect(),
     )?;
-    let mut views = Vec::new();
+    let mut layers = vec![
+        SheetLayer {
+            class: "frame",
+            data_view: None,
+            data_drafting: None,
+            dash: None,
+            strokes: frame,
+        },
+        SheetLayer {
+            class: "titleblock",
+            data_view: None,
+            data_drafting: None,
+            dash: None,
+            strokes: block,
+        },
+    ];
     for (view, body) in drawing.views().iter().zip(placed_bodies) {
         let BodyProjection::Resolved(edges) = body else {
             return Err(invalid("unresolved drawing geometry cannot be exported"));
         };
-        views.push(render_view(
+        let (id, strokes, title) = render_view(
             &view.id,
             &view.title,
             view.scale_denominator,
             view.paper_origin_mm,
             edges.iter().map(|edge| edge.paper_mm).collect(),
-        )?);
+        )?;
+        layers.push(SheetLayer {
+            class: "body",
+            data_view: Some(id.clone()),
+            data_drafting: None,
+            dash: None,
+            strokes,
+        });
+        layers.push(SheetLayer {
+            class: "viewtitle",
+            data_view: Some(id),
+            data_drafting: None,
+            dash: None,
+            strokes: title,
+        });
     }
     for (section, projection) in drawing.sections().iter().zip(section_bodies) {
         let SectionProjection::Resolved(geometry) = projection else {
@@ -224,52 +290,88 @@ pub fn export_svg(
         if let [first, .., last] = contour.as_slice() {
             strokes.push([*last, *first]);
         }
-        views.push(render_view(
+        let (id, body, title) = render_view(
             &section.id,
             &section.title,
             section.scale_denominator,
             section.paper_origin_mm,
             strokes,
-        )?);
+        )?;
+        layers.push(SheetLayer {
+            class: "body",
+            data_view: Some(id.clone()),
+            data_drafting: None,
+            dash: None,
+            strokes: body,
+        });
+        layers.push(SheetLayer {
+            class: "viewtitle",
+            data_view: Some(id),
+            data_drafting: None,
+            dash: None,
+            strokes: title,
+        });
     }
     for (detail, projection) in drawing.details().iter().zip(detail_bodies) {
         let DetailProjection::Resolved(geometry) = projection else {
             return Err(invalid("unresolved drawing geometry cannot be exported"));
         };
-        views.push(render_view(
+        let (id, body, title) = render_view(
             &detail.id,
             &detail.title,
             detail.scale_denominator,
             detail.paper_origin_mm,
             geometry.edges.iter().map(|edge| edge.paper_mm).collect(),
-        )?);
+        )?;
+        layers.push(SheetLayer {
+            class: "body",
+            data_view: Some(id.clone()),
+            data_drafting: None,
+            dash: None,
+            strokes: body,
+        });
+        layers.push(SheetLayer {
+            class: "viewtitle",
+            data_view: Some(id),
+            data_drafting: None,
+            dash: None,
+            strokes: title,
+        });
     }
-    let [body, extension, line, arrows, label] = groups;
-    let everything: Vec<&[[f64; 2]; 2]> = frame
+    // Drawn objects on visible layers sit above the views they annotate.
+    for layer in drafting_layers(drawing)? {
+        layers.push(SheetLayer {
+            class: "drafting",
+            data_view: None,
+            data_drafting: Some(layer.id),
+            dash: dash_array(layer.line_type),
+            strokes: layer.strokes,
+        });
+    }
+    layers.push(SheetLayer {
+        class: "viewtitle",
+        data_view: Some(spec.view.id.to_string()),
+        data_drafting: None,
+        dash: None,
+        strokes: primary_title,
+    });
+    // Every stroke must lie inside the frame; content that does not fit refuses instead
+    // of being silently rescaled or clipped.
+    for [x, y] in layers
         .iter()
-        .chain(block.iter())
-        .chain(views.iter().flat_map(|(_, strokes, _)| strokes.iter()))
-        .chain(views.iter().flat_map(|(_, _, title)| title.iter()))
-        .chain(primary_title.iter())
-        .chain(body.iter())
-        .chain(extension.iter())
-        .chain(line.iter())
-        .chain(arrows.iter())
-        .chain(label.iter())
-        .collect();
-    // Every stroke must lie inside the frame; content that does not fit refuses instead of
-    // being silently rescaled or clipped.
-    for group in everything.iter() {
-        for [x, y] in group.iter() {
-            if *x < inset || *x > inner_x || *y < inset || *y > inner_y {
-                return Err(CommandError::new(
-                    ErrorCode::LimitExceeded,
-                    "drawing_sheet",
-                    "drawing content does not fit the sheet frame",
-                ));
-            }
+        .flat_map(|layer| layer.strokes.iter())
+        .chain(groups.iter().flatten())
+        .flat_map(|stroke| [stroke[0], stroke[1]])
+    {
+        if x < inset || x > inner_x || y < inset || y > inner_y {
+            return Err(CommandError::new(
+                ErrorCode::LimitExceeded,
+                "drawing_sheet",
+                "drawing content does not fit the sheet frame",
+            ));
         }
     }
+
     let metadata = format!(
         "{SHEET_EXPORT_CONTRACT} drawing={} version={} sheet={} source_revision={} \
          source_manifest={} scale_denominator={}",
@@ -280,43 +382,70 @@ pub fn export_svg(
         escape(&spec.source.manifest.to_string()),
         spec.view.scale_denominator,
     );
+    Ok(SheetLayout {
+        width_mm,
+        height_mm,
+        metadata,
+        layers,
+        primary: groups,
+    })
+}
+
+/// Renders the exact resolved published geometry of every view as deterministic
+/// stroke-only sheet SVG bytes, upright in SVG's Y-down space. The document must carry an
+/// admitted sheet and fully resolved views; anything unresolved, out of the frame or over
+/// the byte cap refuses. Every view is annotated below its geometry with its title and
+/// display scale, and every drawn object on a visible layer renders on the sheet.
+pub fn export_svg(
+    drawing: &Drawing,
+    version: DocumentVersionId,
+    primary: &Projection,
+    placed_bodies: &[BodyProjection],
+    section_bodies: &[SectionProjection],
+    detail_bodies: &[DetailProjection],
+) -> Result<Vec<u8>, CommandError> {
+    let layout = layout(
+        drawing,
+        version,
+        primary,
+        placed_bodies,
+        section_bodies,
+        detail_bodies,
+    )?;
+    let spec = drawing.spec();
     let mut text = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
-         <svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"{width_mm:.2}mm\" \
-         height=\"{height_mm:.2}mm\" viewBox=\"0 0 {width_mm:.2} {height_mm:.2}\">\n\
-         <title>{}</title>\n<metadata>{metadata}</metadata>\n\
-         <g fill=\"none\" stroke=\"#000000\" stroke-width=\"0.25\" stroke-linecap=\"round\">\n\
-         <path class=\"frame\" d=\"{}\"/>\n<path class=\"titleblock\" d=\"{}\"/>\n",
+         <svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"{:.2}mm\" \
+         height=\"{:.2}mm\" viewBox=\"0 0 {:.2} {:.2}\">\n\
+         <title>{}</title>\n<metadata>{}</metadata>\n\
+         <g fill=\"none\" stroke=\"#000000\" stroke-width=\"0.25\" stroke-linecap=\"round\">\n",
+        layout.width_mm,
+        layout.height_mm,
+        layout.width_mm,
+        layout.height_mm,
         escape(&spec.name),
-        path(&frame),
-        path(&block),
+        layout.metadata,
     );
-    for (id, strokes, title) in &views {
-        text.push_str(&format!(
-            "<path class=\"body\" data-view=\"{}\" d=\"{}\"/>\n",
-            escape(id),
-            path(strokes),
-        ));
-        text.push_str(&format!(
-            "<path class=\"viewtitle\" data-view=\"{}\" d=\"{}\"/>\n",
-            escape(id),
-            path(title),
+    for layer in &layout.layers {
+        text.push_str(&path_element(
+            layer.class,
+            layer_key(layer),
+            layer.dash,
+            &layer.strokes,
+            layout.height_mm,
         ));
     }
-    text.push_str(&format!(
-        "<path class=\"viewtitle\" data-view=\"{}\" d=\"{}\"/>\n",
-        escape(&spec.view.id.to_string()),
-        path(&primary_title),
-    ));
+    let [body, extension, line, arrows, label] = layout.primary;
+    let top = layout.height_mm;
     text.push_str(&format!(
         "<path class=\"body\" d=\"{}\"/>\n<path class=\"extension\" d=\"{}\"/>\n\
          <path class=\"dimension\" d=\"{}\"/>\n<path class=\"arrow\" d=\"{}\"/>\n\
          <path class=\"label\" d=\"{}\"/>\n</g>\n</svg>\n",
-        path(&body),
-        path(&extension),
-        path(&line),
-        path(&arrows),
-        path(&label),
+        path(&flipped_about(body, top)),
+        path(&flipped_about(extension, top)),
+        path(&flipped_about(line, top)),
+        path(&flipped_about(arrows, top)),
+        path(&flipped_about(label, top)),
     ));
     if text.len() > MAX_EXPORT_BYTES {
         return Err(CommandError::new(
@@ -326,6 +455,48 @@ pub fn export_svg(
         ));
     }
     Ok(text.into_bytes())
+}
+
+/// Renders the exact resolved published sheet as a deterministic stroke-only PDF on the
+/// sheet's own paper: the same fixed sheet the SVG surface renders, with the frame, the
+/// title block, every resolved view and every drawn object on a visible layer. Anything
+/// unresolved, out of the frame or over the byte cap refuses.
+pub fn export_pdf(
+    drawing: &Drawing,
+    version: DocumentVersionId,
+    primary: &Projection,
+    placed_bodies: &[BodyProjection],
+    section_bodies: &[SectionProjection],
+    detail_bodies: &[DetailProjection],
+) -> Result<Vec<u8>, CommandError> {
+    let layout = layout(
+        drawing,
+        version,
+        primary,
+        placed_bodies,
+        section_bodies,
+        detail_bodies,
+    )?;
+    let mut paths: Vec<PagePath> = layout
+        .layers
+        .iter()
+        .map(|layer| PagePath {
+            strokes: layer.strokes.clone(),
+            dash_mm: layer.dash,
+        })
+        .collect();
+    paths.extend(layout.primary.iter().map(|group| PagePath {
+        strokes: group.clone(),
+        dash_mm: None,
+    }));
+    pdf::write_page(
+        layout.width_mm,
+        layout.height_mm,
+        &paths,
+        [0.0, 0.0],
+        &drawing.spec().name,
+        &layout.metadata,
+    )
 }
 
 #[cfg(test)]
@@ -474,6 +645,32 @@ mod tests {
         for hostile in ["<script", "<image", "href", "url(", "@import"] {
             assert!(!text.contains(hostile));
         }
+    }
+
+    #[test]
+    fn the_sheet_svg_renders_upright_not_mirrored() {
+        // Finding 1 of the visual audit: the sheet writer emitted Y-up paper straight
+        // into Y-down SVG, so the title block drew at the top and every glyph mirrored.
+        // The frame's bottom edge must land at the largest SVG y, the top edge at the
+        // smallest: A4 is 210 x 297 mm with a 10 mm inset.
+        let drawing = sheet_drawing(Sheet::A4, &[D]);
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bodies = vec![placed_body([65.0, 45.0])];
+        let bytes = export_svg(&drawing, version, &projection(), &bodies, &[], &[]).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let frame = text
+            .split("<path class=\"frame\" d=\"")
+            .nth(1)
+            .unwrap_or_default();
+        let frame = frame.split("/>").next().unwrap_or_default();
+        assert!(
+            frame.contains("M 10.0000 287.0000 L 200.0000 287.0000"),
+            "{frame}"
+        );
+        assert!(
+            frame.contains("M 200.0000 10.0000 L 10.0000 10.0000"),
+            "{frame}"
+        );
     }
 
     #[test]

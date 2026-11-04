@@ -772,7 +772,7 @@ pub fn evaluate_member(
                     // the P-Mass gross. Both meshes belong to the faceted outline, so the drop
                     // stays certified there; the raw mesh volume after the operations belongs
                     // to a different baseline than the analytic gross and would misstate the
-                    // drop by the arc approximation times the length (the #447 constant).
+                    // drop by the arc approximation times the length (the tube-hole constant).
                     let removed_mm3 = gross_mesh_mm3 - solid.volume_mm3();
                     let gross_mm3 = section_area_mm2 * result.axis_length_mm();
                     (

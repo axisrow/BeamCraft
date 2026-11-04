@@ -365,10 +365,12 @@ impl Footprint {
     /// `connects` record are replaced as a whole, so both groups of the group are read and
     /// written and no derived group exists for a connection. The parts' lifecycles are only
     /// read; the definition is read for the placement and written when a `repin` pins it.
+    /// A rename adds the label group to the writes.
     pub fn for_bolt_group_edit(
         id: ElementId,
         parts: &[ElementId],
         fastener: ContentDigest,
+        renamed: bool,
     ) -> Result<Self, CommandError> {
         let entry = |group| Entry {
             target: Target::Element(id),
@@ -390,14 +392,15 @@ impl Footprint {
             group: Group::Relationship,
         };
         reads.insert(definition);
-        let footprint = Self {
-            reads,
-            writes: BTreeSet::from([
-                entry(Group::ShapeInputs),
-                entry(Group::Relationship),
-                definition,
-            ]),
-        };
+        let mut writes = BTreeSet::from([
+            entry(Group::ShapeInputs),
+            entry(Group::Relationship),
+            definition,
+        ]);
+        if renamed {
+            writes.insert(entry(Group::Label));
+        }
+        let footprint = Self { reads, writes };
         footprint.check_bound()?;
         Ok(footprint)
     }

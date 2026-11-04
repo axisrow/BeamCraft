@@ -40,7 +40,7 @@ const SLOPED_MEMBER: &str = "019a7bf0-0000-7000-8000-00000000aa72";
 const SLOPED_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa73";
 const AXIAL_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa76";
 const SECOND_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa77";
-// The tube remainder (fork #447): the CHS member and its hole operation id.
+// The tube remainder: the CHS member and its hole operation id.
 const TUBE_MEMBER: &str = "019a7bf0-0000-7000-8000-00000000aa78";
 const TUBE_HOLE_OP: &str = "019a7bf0-0000-7000-8000-00000000aa79";
 
@@ -56,6 +56,7 @@ impl Story {
             .join(format!("q01-expanded-{}", crate::support::boot_nonce()));
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
+        fs::create_dir(root.join("curved-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -109,6 +110,14 @@ fn close(actual: f64, expected: f64) {
         (actual - expected).abs() <= 1e-8 * expected.abs().max(1.0),
         "actual {actual}, expected {expected}"
     );
+}
+
+fn numbers(json: &Json) -> Vec<f64> {
+    json.array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect()
 }
 
 /// (element_id, volume mm3, mesh_digest) of every part, sorted by id.
@@ -595,6 +604,130 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         1
     );
 
+    // Named views (V12): the storey plan, a grid-axis elevation and a free orbit become
+    // named views in the W01 camera prim layer beside the store. A view is display state:
+    // the draft head and the layer bytes stay identical across every read and every
+    // refusal, and each provenance-bearing save captures the draft revision it was taken
+    // against.
+    let views_file = s.path("story-views.usda");
+    let draft_head = s.head("draft");
+    let save_named = |args: &[&str]| -> Json {
+        let mut all = vec!["--file", views_file.as_str()];
+        all.extend_from_slice(args);
+        s.ok("draft", "save-view", &all)
+    };
+    let plan = save_named(&[
+        "--name",
+        "Q01 plan",
+        "--parallel",
+        "xy",
+        "--offset",
+        "1000",
+        "--author",
+        "Q01 story",
+        "--comment",
+        "the storey plan",
+    ]);
+    assert_eq!(text(&plan, "outcome"), "view_saved");
+    let plan_view = &at(&plan, &["views"]).array().unwrap()[0];
+    assert_eq!(text(plan_view, "name"), "Q01 plan");
+    assert_eq!(
+        numbers(at(plan_view, &["plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0]
+    );
+    let stamp = at(plan_view, &["provenance"]);
+    assert_eq!(text(stamp, "author"), "Q01 story");
+    assert_eq!(text(stamp, "comment"), "the storey plan");
+    assert_eq!(text(stamp, "model_revision"), draft_head);
+    assert!(at(stamp, &["created_at_ms"]).unsigned().unwrap() > 1_700_000_000_000);
+    let axis = save_named(&[
+        "--name",
+        "Q01 axis 2",
+        "--grid",
+        "Q01 grid",
+        "--axis",
+        "2",
+        "--author",
+        "Q01 story",
+    ]);
+    let axis_view = &at(&axis, &["views"]).array().unwrap()[0];
+    assert_eq!(text(axis_view, "name"), "Q01 axis 2");
+    assert_eq!(
+        numbers(at(axis_view, &["plane", "origin_mm"])),
+        [1000.0, -2000.0, 0.0],
+        "the elevation stands on the second U axis: its plane origin sits on the x = 1000 line"
+    );
+    let level_plan = save_named(&["--name", "Q01 level plan", "--level", "Q01 level"]);
+    let level_view = &at(&level_plan, &["views"]).array().unwrap()[0];
+    assert_eq!(text(level_view, "name"), "Q01 level plan");
+    assert_eq!(
+        numbers(at(level_view, &["plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0],
+        "the level plan is the model XY plane at the level elevation"
+    );
+    assert!(matches!(at(level_view, &["provenance"]), Json::Null));
+    let orbit = save_named(&["--name", "Q01 3d", "--yaw", "0.7", "--pitch", "0.85"]);
+    let orbit_view = &at(&orbit, &["views"]).array().unwrap()[0];
+    assert_eq!(text(orbit_view, "name"), "Q01 3d");
+    assert_eq!(text(orbit_view, "projection"), "perspective");
+    let listed = s.ok("draft", "list-views", &["--file", &views_file]);
+    assert_eq!(at(&listed, &["view_count"]).unsigned().unwrap(), 4);
+    let mut names: Vec<String> = at(&listed, &["views"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| text(v, "name"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["Q01 3d", "Q01 axis 2", "Q01 level plan", "Q01 plan"]
+    );
+    assert_eq!(at(&listed, &["folders"]).array().unwrap().len(), 0);
+    let layer_bytes = fs::read(&views_file).unwrap();
+    let applied = s.ok(
+        "draft",
+        "apply-view",
+        &["--file", &views_file, "--view", "q01 axis 2"],
+    );
+    assert_eq!(text(&applied, "outcome"), "view_applied");
+    assert_eq!(
+        numbers(at(&applied, &["camera_plane", "origin_mm"])),
+        [1000.0, -2000.0, 0.0]
+    );
+    assert_eq!(text(at(&applied, &["provenance"]), "author"), "Q01 story");
+    assert_eq!(
+        text(at(&applied, &["provenance"]), "model_revision"),
+        draft_head
+    );
+    let duplicate = s.run(
+        "draft",
+        "save-view",
+        &[
+            "--file",
+            &views_file,
+            "--name",
+            "Q01 PLAN",
+            "--parallel",
+            "xy",
+        ],
+        2,
+    );
+    assert_eq!(text(&duplicate, "outcome"), "rejected");
+    let missing = s.run(
+        "draft",
+        "apply-view",
+        &["--file", &views_file, "--view", "no such view"],
+        2,
+    );
+    assert_eq!(text(&missing, "outcome"), "rejected");
+    assert_eq!(
+        fs::read(&views_file).unwrap(),
+        layer_bytes,
+        "reads and refusals never rewrite the layer"
+    );
+    assert_eq!(s.head("draft"), draft_head, "views never write the model");
+
     // Assembly, bolts and welds complete the frame (the original scenario keeps the details).
     let assembly = text(
         &s.ok(
@@ -659,6 +792,58 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         close(found.1, *volume);
         assert_eq!(found.2, *digest, "{id} mesh must survive the round trip");
     }
+
+    // The named views survive the publication round trip: the camera prim layer is
+    // store-independent display state, so the published head lists the same four views,
+    // restores the exact camera, and the captured provenance still names the draft
+    // revision the view was taken against.
+    assert_eq!(
+        s.ok("published", "list-views", &["--file", &views_file])
+            .get("view_count")
+            .unwrap()
+            .unsigned()
+            .unwrap(),
+        4
+    );
+    let restored = s.ok(
+        "published",
+        "apply-view",
+        &["--file", &views_file, "--view", "Q01 plan"],
+    );
+    assert_eq!(text(&restored, "outcome"), "view_applied");
+    assert_eq!(
+        numbers(at(&restored, &["camera_plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0]
+    );
+    assert_eq!(
+        text(at(&restored, &["provenance"]), "model_revision"),
+        draft_head
+    );
+    assert_eq!(
+        fs::read(&views_file).unwrap(),
+        layer_bytes,
+        "publication and reads never rewrite the layer"
+    );
+    let removed = s.ok(
+        "published",
+        "remove-view",
+        &["--file", &views_file, "--view", "Q01 3d"],
+    );
+    assert_eq!(text(&removed, "outcome"), "view_removed");
+    assert_eq!(text(&removed, "name"), "Q01 3d");
+    assert_eq!(at(&removed, &["view_count"]).unsigned().unwrap(), 3);
+    let gone = s.run(
+        "published",
+        "apply-view",
+        &["--file", &views_file, "--view", "Q01 3d"],
+        2,
+    );
+    assert_eq!(text(&gone, "outcome"), "rejected");
+    assert_eq!(
+        s.head("published"),
+        accepted_head,
+        "views never write the model"
+    );
 
     // Views: the kind filter over the real frame is exercised through query-elements above;
     // snapshot-view still runs on its synthetic kernel plate scene because P01 does not
@@ -931,6 +1116,11 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "COLUMN A",
             "--scale",
             "20",
+            // The sheet export renders the whole fixed sheet, so the primary view must
+            // sit inside the A3 frame: the 1000 mm column at 1:20 spans 50 mm of paper
+            // y from this origin, clear of the 10 mm inset.
+            "--origin",
+            "40,60",
             "--op-id",
             &create_op,
             "--revision-id",
@@ -1100,7 +1290,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
             "--drafting",
             &format!("{mark}:text:240,84,4,0:{annotations}:continuous:MARK P/1(1)"),
             "--drafting",
-            &format!("{free}:free_dimension:0,0,1000,0,15,1:{annotations}:dashdot"),
+            &format!("{free}:free_dimension:40,60,90,60,15,1:{annotations}:dashdot"),
             "--drafting",
             &format!("{hidden}:circle:290,70,8:{construction}:dashed"),
         ],
@@ -1597,7 +1787,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         );
     }
 
-    // Member holes, oblique and sloped walls (Q01 slice D, fork #368: the delivered G14.2
+    // Member holes, oblique and sloped walls (Q01 slice D: the delivered G14.2
     // surface). Each case gets its own member based at the world origin: the replay maps
     // the record's member-frame axis point into element coordinates without the member's
     // own origin, so a member moved off the origin refuses the hole as not fitting (a
@@ -1840,7 +2030,7 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         assert_eq!(found, again, "{id} must read byte-identically");
     }
 
-    // The faceted-tube hole (Q01 slice D remainder, fork #447): a CHS member takes a radial
+    // The faceted-tube hole (Q01 slice D remainder): a CHS member takes a radial
     // through hole whose drop certifies within the engine's own `2 * A * t` bound, and the
     // gross stays the nominal `area x length` across it (the plate rule: a gross that
     // ignores the hole, a net that does not). The old CLI path reported the faceted mesh
@@ -1928,4 +2118,167 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         tube_found.2, tube_digest,
         "tube mesh must survive the reopen"
     );
+}
+
+/// The curved and poly story (P12/P13): its own published store, so the numbered frame
+/// above keeps the exact part counts the manual runbook records, and its own test, so
+/// the documented entry point still runs both and the per-test budget stays honest.
+#[test]
+fn curved_and_poly_members_run_their_own_published_store() {
+    let s = Story::new();
+    // The store numbers a poly member, but refuses once the curved member exists
+    // (`UNSUPPORTED_GEOMETRY`, a delivered-surface limit), so the curved story cannot
+    // join the numbered frame yet. The mitred polybeam quantity drops the corners out
+    // exactly; the arc quantity is the exact analytic sweep, only the mesh facets.
+    s.ok(
+        "curved-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-ARC",
+            "--width",
+            "100",
+            "--height",
+            "100",
+        ],
+    );
+    s.ok(
+        "curved-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "curved-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("curved-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let poly = s.ok(
+        "curved-draft",
+        "create-polybeam",
+        &[
+            "--points",
+            "0,0,0;2000,0,0;2000,3000,0",
+            "--profile",
+            "Q01-ARC",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01 poly gutter",
+        ],
+    );
+    assert_eq!(text(&poly, "outcome"), "polybeam_created");
+    let poly_member = at(&poly, &["member"]);
+    assert_eq!(text(poly_member, "kind"), "beam");
+    assert_eq!(
+        at(poly_member, &["section_mm", "width"]).float().unwrap(),
+        100.0
+    );
+    assert_eq!(
+        at(poly_member, &["section_mm", "height"]).float().unwrap(),
+        100.0
+    );
+    // The mitres drop out of the quantity: area x polyline length, exactly.
+    let poly_volume = at(poly_member, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    close(poly_volume, 50_000_000.0);
+    close(
+        at(poly_member, &["quantities", "mass", "kg"])
+            .float()
+            .unwrap(),
+        392.5,
+    );
+    assert_eq!(
+        at(poly_member, &["axis_points_mm"]).array().unwrap().len(),
+        3
+    );
+    let poly_id = text(poly_member, "element_id");
+    let poly_digest = text(poly_member, "mesh_digest");
+    s.ok("curved-draft", "preview-numbering", &[]);
+
+    // The radius-mode semicircle: the axis length and the quantity are the exact arc
+    // values (area x arc length); only the stored mesh facets the sweep.
+    let arc = s.ok(
+        "curved-draft",
+        "create-curved-beam",
+        &[
+            "--start",
+            "1000,0,0",
+            "--end",
+            "-1000,0,0",
+            "--radius",
+            "1000",
+            "--normal",
+            "0,0,1",
+            "--profile",
+            "Q01-ARC",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01 arc hanger",
+        ],
+    );
+    let arc_member = at(&arc, &["member"]);
+    assert_eq!(text(arc_member, "path_type"), "arc");
+    let arc_length = 1000.0 * std::f64::consts::PI;
+    close(
+        at(arc_member, &["axis_length_mm"]).float().unwrap(),
+        arc_length,
+    );
+    assert!(at(arc_member, &["arc_deviation_mm"]).float().unwrap() <= 0.05);
+    let arc_volume = at(arc_member, &["quantities", "volume", "mm3"])
+        .float()
+        .unwrap();
+    close(arc_volume, 10_000.0 * arc_length);
+    let arc_id = text(arc_member, "element_id");
+    let arc_digest = text(arc_member, "mesh_digest");
+
+    let curved_head = s.head("curved-draft");
+    let degenerate = s.run(
+        "curved-draft",
+        "create-polybeam",
+        &["--points", "0,0,0;2000,0,0", "--profile", "Q01-ARC"],
+        2,
+    );
+    assert_eq!(text(&degenerate, "outcome"), "rejected");
+    let unnumbered = s.run("curved-draft", "preview-numbering", &[], 2);
+    assert_eq!(text(&unnumbered, "code"), "UNSUPPORTED_GEOMETRY");
+    assert_eq!(s.head("curved-draft"), curved_head);
+
+    // The arc creation undoes and redoes as one command.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("curved-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    assert_eq!(
+        parts(&s.ok("curved-draft", "inspect-elements", &[])).len(),
+        1
+    );
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("curved-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    let curved_published = s.ok(
+        "curved-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("curved-draft")],
+    );
+    assert_eq!(text(&curved_published, "outcome"), "workspace_published");
+    let reopened_curved = parts(&s.ok("curved-published", "inspect-elements", &[]));
+    assert_eq!(reopened_curved.len(), 2);
+    for (id, volume, digest, label) in [
+        (poly_id.as_str(), poly_volume, poly_digest.as_str(), "poly"),
+        (arc_id.as_str(), arc_volume, arc_digest.as_str(), "arc"),
+    ] {
+        let found = reopened_curved
+            .iter()
+            .find(|(other, _, _)| other == id)
+            .unwrap_or_else(|| panic!("{label} member is present"));
+        close(found.1, volume);
+        assert_eq!(found.2, digest, "{label} mesh must survive the round trip");
+    }
 }

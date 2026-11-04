@@ -4,6 +4,16 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-04
+
+- **Syncs land by direct push to the fork's `master`; upstream receives one batch PR.** Owner
+  decision: an upstream-sync merge commit lands on `master` as a direct push, never as a fork
+  pull request, through the recorded gate's no-PR flow (`check --scope full --staged-merge`,
+  `sync-trailer` before commit, `verify-sync` before push; the receipt binds the merge tree and
+  both merge parents). The upstream repository receives the accumulated fork delta as one batch
+  PR per sync wave, as with #734 and #830. Fork pull requests remain the path for regular
+  feature, fix and docs work; a sync PR like #466 is not opened again.
+
 ## 2026-10-31
 
 - **Recorded local gate and two other CI platforms.** The owner approved the

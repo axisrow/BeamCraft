@@ -1002,7 +1002,7 @@ mod tests {
                 "d={diameter}: {drop} vs {expected}"
             );
             // The analytic bound of the smooth tube: the hole circle area through both walls
-            // of the 5 mm ring. The drop must never leave it (the #447 constant did).
+            // of the 5 mm ring. The drop must never leave it (the old constant did).
             let bound = 2.0 * std::f64::consts::PI * (diameter / 2.0) * (diameter / 2.0) * 5.0;
             assert!(drop <= bound, "d={diameter}: {drop} past {bound}");
             // The reported triple agrees with the drop, and the gross stays the nominal one.

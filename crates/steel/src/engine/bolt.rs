@@ -578,6 +578,7 @@ impl crate::engine::weld::Parts {
             command.target_id,
             &command.inputs.parts,
             command.inputs.fastener_digest,
+            command.name.is_some(),
         )?;
         Ok((placed, footprint))
     }
@@ -1189,6 +1190,7 @@ mod tests {
         // The update decision reads before it places and names its target.
         let edit = UpdateBoltGroup {
             target_id: id(9),
+            name: None,
             inputs: group_inputs(),
         };
         assert_eq!(

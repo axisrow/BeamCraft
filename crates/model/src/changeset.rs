@@ -178,7 +178,8 @@ pub enum LayerRole {
 /// One layer of the resulting revision.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LayerDelta {
-    /// Virtual layer name (`[a-z0-9._-]`, ends in `.usda`).
+    /// Virtual layer name: `.usda`-suffixed, bounded lowercase segments separated by `/`
+    /// (`[a-z0-9._-]` per segment), so U15 element files and section layers fit.
     pub name: String,
     /// Manifest role.
     pub role: LayerRole,

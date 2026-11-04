@@ -192,8 +192,9 @@ See the [U16 design note](../../docs/design/u16-prim-naming.md).
 `authored::views` is the closed profile of a standalone views layer:
 `authored::views::bytes` produces its canonical text (header with the
 `bimViewsSchemaDigest` pin of `views_schema_identity()`, then one standard USD `Camera`
-prim per saved view under `/World/Views`), and `authored::views::read_views` reads the
-owned camera prims of a composed snapshot back. A saved view is display state, not model
+prim per saved view under `/World/Views`, plus `bim:view:folders` on the views scope for
+the folders no view uses), and `authored::views::read_layer` reads the owned camera prims
+and the folder record of a composed snapshot back. A saved view is display state, not model
 data: a view prim carries no `bim:id`, so it enters no element index and links to nothing,
 and saving or restoring views never moves model keys or numbering. The camera is an
 ordinary placed USD camera (`xformOp:translate`, `xformOp:orient`, the standard

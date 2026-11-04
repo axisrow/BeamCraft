@@ -20,8 +20,8 @@ static NEXT: AtomicU64 = AtomicU64::new(0);
 
 /// One random value per process boot, for fixture directory names. A pid alone is not unique
 /// across runs — the OS recycles pids, and a directory left behind by a killed process then
-/// collides with a later run whose counter restarted at zero (the #157 class, seen again in
-/// #408 and #405). A process-wide random nonce cannot collide with any other boot.
+/// collides with a later run whose counter restarted at zero (a known collision class). A
+/// process-wide random nonce cannot collide with any other boot.
 pub(crate) fn boot_nonce() -> u64 {
     use std::hash::{BuildHasher, RandomState};
     static NONCE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();

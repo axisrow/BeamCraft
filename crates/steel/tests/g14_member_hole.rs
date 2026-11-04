@@ -742,7 +742,7 @@ fn an_oblique_hole_cuts_a_tube_with_a_certified_enclosure() {
     // The oblique cutter through the faceted bands must seal with the moment-based
     // enclosure of the clip pieces and repeat byte for byte, like the +Z tube tests.
     // The carve's opening arcs carry this chain's ring vertices for the foreign kink
-    // crossings (issue #420): the band walks them, so the carved walls meet the band
+    // crossings: the band walks them, so the carved walls meet the band
     // on identical vertices.
     let body = tube_body();
     let before = volume(&body);

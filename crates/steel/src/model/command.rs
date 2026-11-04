@@ -3517,19 +3517,32 @@ impl CreateBoltGroup {
 /// A14.3 `UpdateBoltGroup`: one atomic edit of an existing group (bolt amendment section 6).
 /// The caller sends the complete new inputs — an edit of one value sends the others unchanged,
 /// and a `repin` sends the digest and definition of the current library entry. A stored A05
-/// group is upgraded by supplying the placement inputs and a fastener.
+/// group is upgraded by supplying the placement inputs and a fastener. A rename travels with
+/// the edit; `None` keeps the stored label.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateBoltGroup {
     /// Identity of the edited group.
     pub target_id: ElementId,
+    /// A new label (`DV-BASE-003`); `None` keeps the stored one.
+    pub name: Option<String>,
     /// The complete new placement inputs.
     pub inputs: BoltGroupInputs,
 }
 
 impl UpdateBoltGroup {
-    /// Admits the request: the inputs and a group that is not one of its own parts
-    /// (`DV-REL-006`).
+    /// Admits the request: the label (`DV-BASE-003`), the inputs and a group that is not one of
+    /// its own parts (`DV-REL-006`).
     pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if let Some(name) = &self.name
+            && !label_is_valid(name)
+        {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "name",
+                "label must be 1 to 256 bytes without control characters",
+            )
+            .with_rule("DV-BASE-003"));
+        }
         self.inputs.validate_arguments()?;
         if self.inputs.parts.contains(&self.target_id) {
             return Err(CommandError::new(
@@ -3545,9 +3558,17 @@ impl UpdateBoltGroup {
     /// SHA-256 of a versioned, length-prefixed encoding of the validated request.
     pub fn content_fingerprint(&self) -> Result<ContentDigest, CommandError> {
         self.validate_arguments()?;
-        let mut bytes = Vec::with_capacity(64);
-        bytes.extend_from_slice(b"BeamCraft/A14/UpdateBoltGroup/v1\0");
+        let mut bytes = Vec::with_capacity(96 + self.name.as_ref().map_or(0, |n| n.len()));
+        bytes.extend_from_slice(b"BeamCraft/A14/UpdateBoltGroup/v2\0");
         bytes.extend_from_slice(self.target_id.as_bytes());
+        match &self.name {
+            Some(name) => {
+                bytes.push(1);
+                bytes.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                bytes.extend_from_slice(name.as_bytes());
+            }
+            None => bytes.push(0),
+        }
         bytes.extend_from_slice(self.inputs.content_fingerprint()?.as_bytes());
         Sha256::digest(&bytes).map_err(|_| {
             CommandError::new(ErrorCode::LimitExceeded, "content", "content is too large")
@@ -3647,7 +3668,7 @@ impl ElementMirror {
     }
 }
 
-/// The plate half of an [`ElementPatch`] (#389): the fields only a plate owns. A member
+/// The plate half of an [`ElementPatch`]: the fields only a plate owns. A member
 /// target refuses every field of it (`UNSUPPORTED_PROPERTY`), field by field with the
 /// standing messages.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -3840,7 +3861,7 @@ impl MemberPatch {
 /// `None` is left unchanged. `material` distinguishes no change (`None`), clearing the reference
 /// (`Some(None)`) and pinning a definition (`Some(Some(digest))`). There is no raw USD setter.
 ///
-/// The patch is split by element kind (#389): the generic fields every kind shares stand on the
+/// The patch is split by element kind: the generic fields every kind shares stand on the
 /// patch, and each kind's own fields live in its [`PlatePatch`] or [`MemberPatch`] half. A half
 /// is carried whole and unnamed fields default, so a request mixes kinds only when it names
 /// fields of both halves — the engine refuses the wrong half on the target. The bytes of the
@@ -5359,7 +5380,7 @@ mod tests {
         assert_ne!(rename.content_fingerprint().unwrap(), bottom);
     }
 
-    /// Pins the `BeamCraft/P04/UpdateElement/v2` bytes field by field (#389): the digest of one
+    /// Pins the `BeamCraft/P04/UpdateElement/v2` bytes field by field: the digest of one
     /// patch per field, captured before the `ElementPatch` split moved the plate and member
     /// fields into their payload halves. Stored journal fingerprints compare against these
     /// bytes on a replayed operation, so a changed digest here is an `OP_ID_REUSE` waiting to
@@ -6077,10 +6098,29 @@ mod tests {
         assert!(
             UpdateBoltGroup {
                 target_id: id(1),
+                name: None,
                 inputs: inputs.clone(),
             }
             .validate_arguments()
             .is_ok()
+        );
+        // The label is part of the edit's content: a rename under a retried operation id is
+        // reuse, never a silent replay.
+        assert_ne!(
+            UpdateBoltGroup {
+                target_id: id(1),
+                name: Some("G9".into()),
+                inputs: inputs.clone(),
+            }
+            .content_fingerprint()
+            .unwrap(),
+            UpdateBoltGroup {
+                target_id: id(1),
+                name: None,
+                inputs: inputs.clone(),
+            }
+            .content_fingerprint()
+            .unwrap()
         );
         // Every input and the part order are part of the content; equal inputs are equal.
         let variant = |mutate: &dyn Fn(&mut BoltGroupInputs)| {

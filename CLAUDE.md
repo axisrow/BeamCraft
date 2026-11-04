@@ -59,4 +59,6 @@ fixtures and module boundaries. Release packaging is unchanged.
 - Match the surrounding code's style; keep PRs small and focused. Commit messages: imperative
   mood, explain the why.
 - Branch from the verified current `origin/master`; follow `AGENTS.md` section 6 for naming
-  (`feat/`, `bug/`, `docs/`, `chore/`, `refactor/`, `test/`). Open a PR using the template.
+  (`feat/`, `bug/`, `docs/`, `chore/`, `refactor/`, `test/`). Open a PR using the template —
+  except an upstream-sync merge, which lands as a direct push to `master` through the gate's
+  no-PR flow (`AGENTS.md` §7).

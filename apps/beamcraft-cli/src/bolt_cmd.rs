@@ -659,6 +659,8 @@ fn run(args: &[OsString]) -> Run<Json> {
     };
     let command = UpdateBoltGroup {
         target_id: target,
+        // An absent --name keeps the stored label; the given one renames the group.
+        name: given("--name").map(|v| v.to_owned()),
         inputs: BoltGroupInputs {
             parts: match given("--parts") {
                 Some(_) => parts(&options)?,

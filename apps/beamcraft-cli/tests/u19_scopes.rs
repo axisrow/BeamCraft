@@ -152,6 +152,19 @@ impl Fixture {
 
 use std::fs;
 
+/// The current head revision of one store, for rebase request pins.
+fn revision_of(path: &std::path::Path) -> String {
+    beamcraft_host::revision::RevisionStore::new(
+        beamcraft_host::storage::BlobStore::new(path).unwrap(),
+    )
+    .head()
+    .unwrap()
+    .unwrap()
+    .revision()
+    .as_str()
+    .to_owned()
+}
+
 /// The F10 rule of the first diagnostic of a rejection.
 fn rule(json: &Json) -> String {
     text(&at(json, &["diagnostics"]).array().unwrap()[0], "rule_id")
@@ -659,4 +672,301 @@ fn the_reserved_grids_section_code_cannot_merge_the_two_write_scopes() {
         "Grids",
     ]);
     assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+}
+
+#[test]
+fn a_scoped_rebase_keeps_its_receipt_scope_and_stays_usable() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
+    // One seed workspace authors the shared element and its definitions first, so the two
+    // rebase participants fork from a settled head instead of racing their own definitions.
+    let seed = f.shared.root.join("w-seed");
+    f.workspace(
+        &store,
+        seed.to_str().unwrap(),
+        "2401-DEMO",
+        "KM",
+        None,
+        false,
+    );
+    let a = "019a7bf0-0000-7000-8000-0000000000a6";
+    let b = "019a7bf0-0000-7000-8000-0000000000a7";
+    f.ok_in(
+        seed.to_str().unwrap(),
+        "create-plate",
+        &plate_args(a, "Seed plate"),
+    );
+    f.publish(&store, seed.to_str().unwrap());
+    // Workspace A renames the shared element; workspace B authors its own section element.
+    let wa = f.shared.root.join("w-ra");
+    let wb = f.shared.root.join("w-rb");
+    f.workspace(&store, wa.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    f.workspace(
+        &store,
+        wb.to_str().unwrap(),
+        "2401-DEMO",
+        "KMD",
+        Some("K1"),
+        false,
+    );
+    f.ok_in(
+        wa.to_str().unwrap(),
+        "update-element",
+        &["--id", a, "--name", "A plate"],
+    );
+    f.ok_in(
+        wb.to_str().unwrap(),
+        "create-plate",
+        &plate_args(b, "B plate"),
+    );
+    // Workspace A publishes; workspace B rebases onto the moved head.
+    let before = f.publish(&store, wa.to_str().unwrap());
+    let accepted = revision_of(std::path::Path::new(&store));
+    let draft = revision_of(&wb);
+    let reply = f.ok_in(
+        &store,
+        "rebase-workspace",
+        &[
+            "--workspace-dir",
+            wb.to_str().unwrap(),
+            "--op-id",
+            "019a7bf0-0000-7000-8000-000000000510",
+            "--expected-head",
+            accepted.as_str(),
+            "--expected-draft",
+            draft.as_str(),
+        ],
+    );
+    assert_eq!(text(&reply, "outcome"), "workspace_rebased");
+    // The receipt carries the scope: the next workspace command finalizes the pending
+    // metadata transition (a scope-losing receipt refused every later command with
+    // BASE_REVISION_MISMATCH until rebase.pending was removed by hand).
+    let published = f.publish(&store, wb.to_str().unwrap());
+    assert!(
+        String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_K1_KMD.usda"))
+            .contains("B plate")
+    );
+    assert!(
+        String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_KM.usda"))
+            .contains("A plate")
+    );
+    // The scope keeps the KMD/K1 workspace out of the KM section, byte for byte.
+    assert_eq!(
+        f.layer_of(&store, &before, "2401-DEMO_KM.usda"),
+        f.layer_of(&store, &published, "2401-DEMO_KM.usda")
+    );
+}
+
+#[test]
+fn a_scoped_workspace_edits_its_bolt_groups() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
+    let seed = f.shared.root.join("w-bseed");
+    f.workspace(
+        &store,
+        seed.to_str().unwrap(),
+        "2401-DEMO",
+        "KM",
+        None,
+        false,
+    );
+    let p1 = "019a7bf0-0000-7000-8000-0000000000b1";
+    let p2 = "019a7bf0-0000-7000-8000-0000000000b2";
+    for (id, name) in [(p1, "One plate"), (p2, "Two plate")] {
+        f.ok_in(
+            seed.to_str().unwrap(),
+            "create-plate",
+            &plate_args(id, name),
+        );
+    }
+    f.publish(&store, seed.to_str().unwrap());
+
+    // The scoped workspace authors the group through its authorized section...
+    let wb = f.shared.root.join("w-bolt");
+    f.workspace(&store, wb.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    let group = "019a7bf0-0000-7000-8000-000000710001";
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/libraries/synthetic-fasteners.usda"
+    );
+    let parts = format!("{p1},{p2}");
+    f.ok_in(
+        wb.to_str().unwrap(),
+        "create-bolt-group",
+        &[
+            "--name",
+            "G1",
+            "--new-id",
+            group,
+            "--parts",
+            parts.as_str(),
+            "--fastener-library",
+            library,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,250,0",
+            "--point2",
+            "600,250,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "100",
+            "--spacings",
+            "150",
+        ],
+    );
+    // ...and amends it: the amendment was the one write path still bound to the classic
+    // authored/derived targets, refusing on a sectioned store with FOREIGN_READ_ONLY. The
+    // amended name is label state of the section layer like every other authored field.
+    let moved = f.ok_in(
+        wb.to_str().unwrap(),
+        "update-bolt-group",
+        &[
+            "--target",
+            group,
+            "--name",
+            "G1 moved",
+            "--point2",
+            "700,250,0",
+        ],
+    );
+    assert_eq!(text(&moved, "outcome"), "bolt_group_committed");
+    let published = f.publish(&store, wb.to_str().unwrap());
+    let groups = f.ok_in(&store, "bolts", &[]);
+    let listed = at(&groups, &["bolt_groups"]).array().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        at(listed.first().unwrap(), &["name"]).string().unwrap(),
+        "G1 moved",
+        "the scoped rename rides the committed store through the scope"
+    );
+    assert_eq!(
+        at(listed.first().unwrap(), &["point2_mm"])
+            .array()
+            .unwrap()
+            .iter()
+            .map(|v| v.string().unwrap().to_owned())
+            .collect::<Vec<_>>(),
+        ["700", "250", "0"],
+        "the amendment rides the committed store through the scope"
+    );
+    let _ = published;
+}
+
+#[test]
+fn orphan_scope_flags_are_refused_not_ignored() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
+    let dir = f.shared.root.join("w-orphan");
+    let refused = f.raw_rejected(&[
+        "create-workspace",
+        "--store",
+        &store,
+        "--workspace-dir",
+        dir.to_str().unwrap(),
+        "--scope-zone",
+        "K1",
+    ]);
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    let refused = f.raw_rejected(&[
+        "create-workspace",
+        "--store",
+        &store,
+        "--workspace-dir",
+        dir.to_str().unwrap(),
+        "--scope-shared",
+        "true",
+    ]);
+    assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+    // The paired case still creates the scoped workspace.
+    f.workspace(
+        &store,
+        dir.to_str().unwrap(),
+        "2401-DEMO",
+        "KMD",
+        Some("K1"),
+        true,
+    );
+}
+
+#[test]
+fn a_rebase_carries_the_u12_levels_of_a_holed_plate() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
+    let seed = f.shared.root.join("w-12seed");
+    f.workspace(
+        &store,
+        seed.to_str().unwrap(),
+        "2401-DEMO",
+        "KM",
+        None,
+        false,
+    );
+    let a = "019a7bf0-0000-7000-8000-0000000000c1";
+    let b = "019a7bf0-0000-7000-8000-0000000000c2";
+    f.ok_in(
+        seed.to_str().unwrap(),
+        "create-plate",
+        &plate_args(a, "Seed plate"),
+    );
+    f.publish(&store, seed.to_str().unwrap());
+
+    // Workspace A renames the shared plate; workspace B authors a holed plate of its own
+    // section: the hole gives the element U12 level prims (`<part>/Reduced`) in its draft.
+    let wa = f.shared.root.join("w-12a");
+    let wb = f.shared.root.join("w-12b");
+    f.workspace(&store, wa.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    f.workspace(
+        &store,
+        wb.to_str().unwrap(),
+        "2401-DEMO",
+        "KMD",
+        Some("K1"),
+        false,
+    );
+    f.ok_in(
+        wa.to_str().unwrap(),
+        "update-element",
+        &["--id", a, "--name", "A plate"],
+    );
+    f.ok_in(
+        wb.to_str().unwrap(),
+        "create-plate",
+        &plate_args(b, "B plate"),
+    );
+    f.ok_in(
+        wb.to_str().unwrap(),
+        "add-hole",
+        &["--id", b, "--hole-round", "250,150,20"],
+    );
+    let before = f.publish(&store, wa.to_str().unwrap());
+    let accepted = revision_of(std::path::Path::new(&store));
+    let draft = revision_of(&wb);
+    let reply = f.ok_in(
+        &store,
+        "rebase-workspace",
+        &[
+            "--workspace-dir",
+            wb.to_str().unwrap(),
+            "--op-id",
+            "019a7bf0-0000-7000-8000-000000000610",
+            "--expected-head",
+            accepted.as_str(),
+            "--expected-draft",
+            draft.as_str(),
+        ],
+    );
+    assert_eq!(text(&reply, "outcome"), "workspace_rebased");
+    // The scope classifier reads the level prims as derived element state (a /Reduced delta
+    // used to refuse the whole rebase as outside the closed schema).
+    let published = f.publish(&store, wb.to_str().unwrap());
+    assert!(
+        String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_K1_KMD.usda"))
+            .contains("B plate")
+    );
+    assert_eq!(
+        f.layer_of(&store, &before, "2401-DEMO_KM.usda"),
+        f.layer_of(&store, &published, "2401-DEMO_KM.usda")
+    );
 }

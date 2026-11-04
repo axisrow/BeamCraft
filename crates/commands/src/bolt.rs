@@ -32,8 +32,8 @@ use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
-    Author, Change, EditTargets, Element, Placement as LayerPlacement, Prepare, Resource,
-    schema_identity, validate_layers,
+    Change, Element, Placement as LayerPlacement, Prepare, Resource, schema_identity,
+    validate_layers,
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::CommandError;
@@ -1020,7 +1020,12 @@ pub fn update_bolt_group(
     let same = accepted.is_some_and(|(existed_before, group)| {
         existed_before
             && expected().is_some_and(|expected| {
-                group.parts == command.inputs.parts && group.spec == expected
+                group.parts == command.inputs.parts
+                    && group.spec == expected
+                    && command
+                        .name
+                        .as_deref()
+                        .is_none_or(|name| group.name == name)
             })
     });
     match prior {
@@ -1077,20 +1082,22 @@ pub fn update_bolt_group(
     if !model.definitions.contains_key(&resource.digest) {
         resources.push(resource);
     }
-    let (mut author, opened) = Author::open(
-        base_request,
-        EditTargets {
-            authored: session::pipeline::AUTHORED_LAYER.into(),
-            derived: session::pipeline::DERIVED_LAYER.into(),
-        },
-        None,
-        schema,
-        &control,
-    )?;
+    // The scoped author routes this write through the workspace's authorized section/zone
+    // layers (U19), the same way creation does; the classic targets are the unscoped shape.
+    let (mut author, opened) =
+        crate::scope::open_author(store, base_request, false, schema, &control)?;
     let mut changes = vec![steel_layer::replace_bolt_group(
         command.target_id.to_string(),
         layer_group(&command.inputs, &placed),
     )];
+    // A rename is label state of the same element (the `bim:name` attribute and the prim's
+    // display name), authored in the same transaction as the replaced record.
+    if let Some(name) = &command.name {
+        changes.push(Change::Label {
+            id: command.target_id.to_string(),
+            name: name.clone(),
+        });
+    }
     changes.extend(hole_writes);
     let prepared = author.prepare(
         Prepare {

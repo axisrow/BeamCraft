@@ -253,6 +253,12 @@ pub struct ModelView {
     pub color: Option<[f64; 3]>,
     /// Display opacity in `0..=1`.
     pub opacity: f64,
+    /// Representation level (U12) the view loads for every shown part. View display state: it
+    /// changes no snapshot token and no engineering read, which stay on the full body.
+    pub representation: crate::Representation,
+    /// The saved colour set (V17) the view colours by, by name; `None` colours by the model.
+    /// The name resolves against the user's colour sets at display time.
+    pub colour_set: Option<String>,
     /// The saved view's provenance (W01), when it was saved through a provenance-bearing
     /// capture; the free view and temporary views carry none.
     pub provenance: Option<ViewProvenance>,
@@ -280,6 +286,8 @@ impl ModelView {
             rotation_rad: [0.0; 2],
             color: None,
             opacity: 1.0,
+            representation: crate::Representation::Full,
+            colour_set: None,
             provenance: None,
         }
     }
@@ -315,6 +323,8 @@ impl ModelView {
         self.rotation_rad = source.rotation_rad;
         self.color = source.color;
         self.opacity = source.opacity;
+        self.representation = source.representation;
+        self.colour_set = source.colour_set.clone();
     }
 
     /// Admits the view: name, span, depth, rotation, colour, opacity, folder and work area.
@@ -357,6 +367,16 @@ impl ModelView {
             ));
         }
         validate_folder(&self.folder)?;
+        if let Some(set) = &self.colour_set
+            && (set.is_empty()
+                || set.len() > crate::presets::MAX_NAME_BYTES
+                || set.chars().any(char::is_control))
+        {
+            return Err(invalid(
+                "views.colour_set",
+                "a colour set name is 1 to 64 bytes without controls",
+            ));
+        }
         if let Some(area) = self.work_area {
             WorkArea::new(area.min, area.max)?;
         }

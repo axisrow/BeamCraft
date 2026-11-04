@@ -282,7 +282,7 @@ fn more_detailed_members_fit_one_revision_than_the_first_slice_allowed() {
 
 #[test]
 fn a_chs_member_hole_has_a_gross_that_ignores_it_and_certifies_the_drop() {
-    // The #447 constant: the holed net used to be the faceted mesh volume while the gross
+    // The tube-hole constant: the holed net used to be the faceted mesh volume while the gross
     // stayed the analytic `area x length`, so every CHS 114x5 hole overstated the drop by the
     // arc approximation times the length (~10 980 mm3), far past the engine's `2 * A * t`
     // bound. The measured rule pins the d = 6/10/20 triplet end to end through the binary.
