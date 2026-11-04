@@ -7,7 +7,8 @@
 //! the accessors here read and write its display state.
 
 use super::{
-    App, View, annotation_panel, draw_selection, navigation, target_size, viewport_sense, workbench,
+    App, View, annotation_panel, contour_grips, draw_selection, navigation, target_size,
+    viewport_sense, workbench,
 };
 use crate::edit::{ndc_of, ray_through};
 use crate::panes::{self, Edge};
@@ -575,6 +576,13 @@ impl App {
             zoom_out,
             self.invert_zoom,
         );
+        // A contour grip holding the pointer takes the primary drag from the camera (V18): a
+        // trackpad's primary drag would otherwise orbit while the grip is being dragged.
+        let (orbit, pan) = if self.contour.holds_pointer() {
+            ([0.0; 2], [0.0; 2])
+        } else {
+            (orbit, pan)
+        };
         let aspect = pane.target.aspect();
         // Zoom toward the cursor: keep the point under the pointer still while zooming. A
         // hostile cursor or an extreme distance falls back to the view centre.
@@ -755,6 +763,24 @@ impl App {
                     l.summary.origin_mm,
                     &self.selection_edges.1,
                 );
+                // The selected plate's contour grips (V18): dormant while a creation tool or a
+                // view pick owns the pointer, and on any bench other than Select, whose click
+                // pickers (weld pairs, annotations) would lose their clicks to a grip.
+                if let Some(contour) = selected.contour.as_ref()
+                    && !self.beam_mode
+                    && !self.plate_mode
+                    && self.views.picking.is_none()
+                    && self.bench == workbench::Bench::Select
+                {
+                    contour_grips::paint(
+                        &painter,
+                        response.rect,
+                        &view,
+                        l.summary.origin_mm,
+                        contour,
+                        &self.contour,
+                    );
+                }
             } else {
                 self.selection_edges = Default::default();
             }
@@ -779,9 +805,13 @@ impl App {
         let view = &draw.view;
         let mut picked = None;
         let mut picked_grid = None;
-        let finished_creation = !swallow && self.finish_creation_gesture(response, view);
+        // The contour grips (V18) see the pointer before any click: a grip drag is not a
+        // selection or a camera move, and its release commits one contour edit.
+        let grip_hold = !swallow && self.contour_input(ui, response, view);
+        let finished_creation = !grip_hold && self.finish_creation_gesture(response, view);
         // A closure gesture consumes the click before it can append another point.
         if !swallow
+            && !grip_hold
             && !finished_creation
             && response.clicked_by(egui::PointerButton::Primary)
             && let Some(pos) = response.interact_pointer_pos()

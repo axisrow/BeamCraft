@@ -8,6 +8,7 @@
 //! the cursor, F fits and R reloads.
 
 mod annotation_panel;
+mod contour_grips;
 mod creation_panel;
 mod grid_panel;
 mod switches;
@@ -182,6 +183,8 @@ pub struct App {
     weld: weld_panel::Panel,
     /// The bottom bar's selection switches and snap panel (V11): picking-only state.
     selection: crate::selection::Selection,
+    /// The selected plate's contour grips (V18): the drag in progress and the commit in flight.
+    contour: contour_grips::Grips,
     /// The page the application menu shows.
     menu_section: workbench::MenuSection,
     /// What the last menu action reported, shown under the page heading.
@@ -911,6 +914,7 @@ impl App {
             grid_edit: None,
             grid_refresh_edit: false,
             selection: crate::selection::Selection::default(),
+            contour: contour_grips::Grips::default(),
             details: false,
             pending_fit: false,
             logo: None,
@@ -2128,6 +2132,7 @@ impl App {
             || self.edit_job.is_some()
             || self.job.is_some()
             || self.grid_job.is_some()
+            || self.contour.running()
     }
 
     /// Clears the overlay and colours nothing again.
@@ -2848,6 +2853,7 @@ impl eframe::App for App {
         self.poll_grid();
         self.poll_annotations();
         self.poll_weld();
+        self.poll_contour();
         self.poll_edit();
         self.poll_props();
         self.poll_publish();

@@ -93,6 +93,9 @@ pub struct Details {
     pub material_name: Option<String>,
     /// Absolute placement translation in millimetres.
     pub translation_mm: [f64; 3],
+    /// The authored contour, when the element is a flat plate: the same plate record the light
+    /// selection report reads, so both paths agree on what the contour grips use (V18).
+    pub contour: Option<crate::edit::PlateContour>,
     /// A plate's thickness in millimetres (`None` for a member).
     pub thickness_mm: Option<f64>,
     /// A plate's width and length in millimetres.
@@ -275,6 +278,7 @@ pub fn parse_details(
             material,
             material_name: text(element, "material_name"),
             translation_mm,
+            contour: crate::edit::plate_contour(element, translation_mm)?,
             thickness_mm,
             plate_size_mm,
             section_mm,
@@ -314,6 +318,7 @@ impl Details {
             kind: self.kind.clone(),
             name: self.name.clone(),
             translation_mm: self.translation_mm,
+            contour: self.contour.clone(),
         }
     }
 

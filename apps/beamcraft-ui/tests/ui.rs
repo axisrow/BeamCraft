@@ -11,6 +11,7 @@
 mod support;
 
 mod appearance;
+mod contour_grips;
 mod create_tools;
 mod edit_tools;
 mod grids;

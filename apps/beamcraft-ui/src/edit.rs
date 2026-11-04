@@ -19,6 +19,7 @@ use crate::tools::{FormError, ToolError, decode, rejection, text};
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::query::feature::FeatureKind;
 use beamcraft_engine::query::pick::{PickQuery, RayPick, SelectionFilter, pick};
+use beamcraft_engine::solid::rotate_vector;
 use beamcraft_json::Json;
 use beamcraft_model::limits::COORDINATE_CAP_MM;
 use std::path::Path;
@@ -170,6 +171,51 @@ pub fn ground_point(ray: &Ray) -> Option<[f64; 3]> {
     .then_some(point)
 }
 
+/// The authored contour of a plate and the placement that puts it in the world (V18): what the
+/// contour grips draw, drag and commit through the A12.3 commands. The points stay exactly as
+/// `inspect-elements` reported them; the window adds no engineering arithmetic of its own, only
+/// the placement composition a drag needs to name a vertex and its in-plane point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlateContour {
+    /// The authored contour points, plate-local millimetres.
+    pub points: Vec<[f64; 3]>,
+    /// The placement translation in millimetres.
+    pub translation_mm: [f64; 3],
+    /// The placement orientation, `xyzw`.
+    pub orientation_xyzw: [f64; 4],
+}
+
+impl PlateContour {
+    /// The contour vertices in world millimetres: the placement applied to every authored point.
+    pub fn placed_points(&self) -> Vec<[f64; 3]> {
+        self.points
+            .iter()
+            .map(|p| {
+                let placed = rotate_vector(*p, self.orientation_xyzw);
+                std::array::from_fn(|i| {
+                    placed.get(i).copied().unwrap_or(0.0)
+                        + self.translation_mm.get(i).copied().unwrap_or(0.0)
+                })
+            })
+            .collect()
+    }
+
+    /// The plate-local point of a world point: the inverse placement, so a drag that is mapped
+    /// through this stays on the plate plane however the camera looks at it. `None` when the
+    /// local result is not finite or a coordinate exceeds the cap, because such a point would
+    /// pass no contour edit at Commit.
+    pub fn local_point(&self, world: [f64; 3]) -> Option<[f64; 2]> {
+        let q = self.orientation_xyzw;
+        let delta = std::array::from_fn(|i| {
+            world.get(i).copied().unwrap_or(0.0)
+                - self.translation_mm.get(i).copied().unwrap_or(0.0)
+        });
+        let local = rotate_vector(delta, [-q[0], -q[1], -q[2], q[3]]);
+        (local.iter().all(|v| v.is_finite()) && local.iter().all(|v| v.abs() <= COORDINATE_CAP_MM))
+            .then_some([local[0], local[1]])
+    }
+}
+
 /// What the panel shows about the selected element, as `inspect-elements` reports it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ElementInfo {
@@ -181,6 +227,9 @@ pub struct ElementInfo {
     pub name: String,
     /// Its placement translation in millimetres.
     pub translation_mm: [f64; 3],
+    /// The authored contour, when the element is a plate without bends: what the contour grips
+    /// need. `None` for members and for bent plates, whose grips are a later slice.
+    pub contour: Option<PlateContour>,
 }
 
 /// The arguments of the CLI command that reports one element of the accepted revision with its
@@ -228,11 +277,13 @@ pub fn parse_element_info(
                 return Err(unreadable());
             };
             let value = |v: &Json| v.float().map_err(|_| unreadable());
+            let translation_mm = [value(x)?, value(y)?, value(z)?];
             return Ok(ElementInfo {
                 id: id.to_owned(),
                 kind: text(element, "kind").unwrap_or_else(|| "plate".into()),
                 name: text(element, "name").unwrap_or_default(),
-                translation_mm: [value(x)?, value(y)?, value(z)?],
+                translation_mm,
+                contour: plate_contour(element, translation_mm)?,
             });
         }
     }
@@ -240,6 +291,58 @@ pub fn parse_element_info(
         code: "NOT_FOUND".into(),
         message: "the element is not in the accepted revision".into(),
     })
+}
+
+/// The authored contour of the plate an `inspect-elements` reply reports, when it is one a
+/// contour edit can name: `None` for members and for bent plates. A reply without the fields is
+/// an unreadable reply, not "no grips": the CLI always reports the contour of a flat plate.
+/// Shared by the selection's light report and the properties panel's details, which read the
+/// same one-element reply and must agree.
+pub(crate) fn plate_contour(
+    element: &Json,
+    translation_mm: [f64; 3],
+) -> Result<Option<PlateContour>, ToolError> {
+    let unreadable = || ToolError {
+        code: "UNREADABLE_REPLY".into(),
+        message: "the CLI reply lacks a field".into(),
+    };
+    let value = |v: &Json| v.float().map_err(|_| unreadable());
+    // A member (or any other element without a contour) gets no grips; that is not an unreadable
+    // reply.
+    let Ok(points) = element.get("contour_points_mm").and_then(Json::array) else {
+        return Ok(None);
+    };
+    let mut contour = Vec::new();
+    for point in points {
+        let triple = point.array().map_err(|_| unreadable())?;
+        let [x, y, z] = triple else {
+            return Err(unreadable());
+        };
+        contour.push([value(x)?, value(y)?, value(z)?]);
+    }
+    // A plate always reports its bend list; a bent plate's grips are a later slice, and a
+    // contour that no edit can name (fewer than three points) gets none either.
+    let bends_empty = element
+        .get("bends")
+        .and_then(Json::array)
+        .map_err(|_| unreadable())?
+        .is_empty();
+    if !bends_empty || contour.len() < 3 {
+        return Ok(None);
+    }
+    let orientation = element
+        .get("placement")
+        .and_then(|p| p.get("orientation_xyzw"))
+        .and_then(Json::array)
+        .map_err(|_| unreadable())?;
+    let [qx, qy, qz, qw] = orientation else {
+        return Err(unreadable());
+    };
+    Ok(Some(PlateContour {
+        points: contour,
+        translation_mm,
+        orientation_xyzw: [value(qx)?, value(qy)?, value(qz)?, value(qw)?],
+    }))
 }
 
 /// The edit actions of this slice.
@@ -433,6 +536,7 @@ impl Editor {
             kind: "element".into(),
             name: "(details unavailable)".into(),
             translation_mm: [0.0; 3],
+            contour: None,
         });
     }
 
@@ -666,6 +770,141 @@ pub fn parse_edited(
     })
 }
 
+/// One contour edit the grips commit (V18): the A12.3 command, the vertex or edge it names by
+/// position and the in-plane point, in plate-local millimetres, that the drag ended at.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContourEdit {
+    /// `move-plate-vertex`: vertex `vertex` moves to `to`.
+    MoveVertex {
+        /// The position of the vertex in the authored contour.
+        vertex: usize,
+        /// The in-plane point it moves to.
+        to: [f64; 2],
+    },
+    /// `insert-plate-vertex`: a sharp vertex is inserted on edge `edge` at `at`.
+    InsertVertex {
+        /// The position of the edge in the authored contour (`edge i` joins vertices `i` and
+        /// `i + 1`).
+        edge: usize,
+        /// The in-plane point of the new vertex.
+        at: [f64; 2],
+    },
+    /// `delete-plate-vertex`: vertex `vertex` goes, with its treatment; the CLI refuses when
+    /// the contour has only three vertices left.
+    DeleteVertex {
+        /// The position of the vertex in the authored contour.
+        vertex: usize,
+    },
+}
+
+impl ContourEdit {
+    /// The past-tense note the status line shows after the reply.
+    pub fn done(&self) -> &'static str {
+        match self {
+            Self::MoveVertex { .. } => "Moved the contour vertex",
+            Self::InsertVertex { .. } => "Inserted a contour vertex",
+            Self::DeleteVertex { .. } => "Deleted the contour vertex",
+        }
+    }
+
+    /// The argument list of the A12.3 command, exactly as a user types it: the same command, the
+    /// same store and the same in-plane numbers, so what the drag commits is what the CLI saves.
+    pub fn args(&self, store: &Path, id: &str) -> Vec<String> {
+        let point = |p: &[f64; 2]| format!("{:?},{:?}", p[0], p[1]);
+        let (command, position) = match self {
+            Self::MoveVertex { vertex, to } => (
+                "move-plate-vertex",
+                vec![
+                    "--vertex".to_owned(),
+                    vertex.to_string(),
+                    "--to".to_owned(),
+                    point(to),
+                ],
+            ),
+            Self::InsertVertex { edge, at } => (
+                "insert-plate-vertex",
+                vec![
+                    "--edge".to_owned(),
+                    edge.to_string(),
+                    "--point".to_owned(),
+                    point(at),
+                ],
+            ),
+            Self::DeleteVertex { vertex } => (
+                "delete-plate-vertex",
+                vec!["--vertex".to_owned(), vertex.to_string()],
+            ),
+        };
+        let mut args = vec![
+            command.to_owned(),
+            "--store".into(),
+            store.to_string_lossy().into_owned(),
+            "--id".into(),
+            id.to_owned(),
+        ];
+        args.extend(position);
+        args
+    }
+}
+
+/// What a contour edit command reported: the accepted revision, which the view snapshot pins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContourEdited {
+    /// The accepted revision's manifest digest.
+    pub manifest_digest: String,
+    /// The revision's sequence number.
+    pub sequence: u64,
+}
+
+/// Reads the reply of a contour edit command: the accepted revision or the CLI's refusal. An
+/// identical retry reports `_replayed` and is accepted like the original (the `UpdateElement`
+/// contract).
+pub fn parse_contour_edited(
+    edit: &ContourEdit,
+    exit_code: Option<i32>,
+    stdout: &[u8],
+) -> Result<ContourEdited, ToolError> {
+    let outcome_of = |edit: &ContourEdit| match edit {
+        ContourEdit::MoveVertex { .. } => "plate_vertex_moved",
+        ContourEdit::InsertVertex { .. } => "plate_vertex_inserted",
+        ContourEdit::DeleteVertex { .. } => "plate_vertex_deleted",
+    };
+    let reply = match decode(stdout) {
+        Ok(reply) => reply,
+        Err(unreadable) => {
+            return Err(match exit_code {
+                Some(0) => unreadable,
+                _ => ToolError {
+                    code: "CLI_FAILED".into(),
+                    message: "the CLI failed without a JSON reply".into(),
+                },
+            });
+        }
+    };
+    if let Some(error) = rejection(&reply, exit_code) {
+        return Err(error);
+    }
+    let outcome = text(&reply, "outcome").unwrap_or_default();
+    if outcome != outcome_of(edit) && !outcome.ends_with("_replayed") {
+        return Err(ToolError {
+            code: "UNREADABLE_REPLY".into(),
+            message: format!(
+                "unexpected outcome \"{}\"",
+                outcome.chars().take(40).collect::<String>()
+            ),
+        });
+    }
+    let unreadable = || ToolError {
+        code: "UNREADABLE_REPLY".into(),
+        message: "the CLI reply lacks a field".into(),
+    };
+    let revision = reply.get("revision").map_err(|_| unreadable())?;
+    Ok(ContourEdited {
+        manifest_digest: text(revision, "manifest_digest").ok_or_else(unreadable)?,
+        sequence: sequence_of(revision).ok_or_else(unreadable)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,6 +930,7 @@ mod tests {
             kind: "plate".into(),
             name: "P1".into(),
             translation_mm: [100.0, -20.5, 0.0],
+            contour: None,
         }
     }
 
@@ -773,7 +1013,9 @@ mod tests {
                 id: "A".into(),
                 kind: "plate".into(),
                 name: "P1".into(),
-                translation_mm: [100.0, -20.5, 0.0]
+                translation_mm: [100.0, -20.5, 0.0],
+                // The reply named no contour: no grips, and no unreadable-reply error.
+                contour: None
             }
         );
         let beam = parse_element_info("B", Some(0), reply).unwrap();
@@ -781,9 +1023,35 @@ mod tests {
             (beam.kind.as_str(), beam.translation_mm),
             ("beam", [0.0, 0.0, 3000.0])
         );
+        assert!(beam.contour.is_none(), "a beam carries no contour");
         assert_eq!(
             parse_element_info("C", Some(0), reply).unwrap_err().code,
             "NOT_FOUND"
+        );
+    }
+
+    #[test]
+    fn a_plate_reply_carries_the_authored_contour_and_placement() {
+        let reply = br#"{"plates":[{"element_id":"P","kind":"plate","name":"G","bends":[],"placement":{"orientation_xyzw":[0,0,0,1],"translation_mm":[5,6,7]},"contour_points_mm":[[0,0,0],[400,0,0],[0,300,0]],"corners":[]}],"members":[],"outcome":"inspected"}"#;
+        let contour = parse_element_info("P", Some(0), reply)
+            .unwrap()
+            .contour
+            .expect("a flat plate carries its contour");
+        assert_eq!(
+            contour.points,
+            vec![[0.0, 0.0, 0.0], [400.0, 0.0, 0.0], [0.0, 300.0, 0.0]]
+        );
+        assert_eq!(contour.translation_mm, [5.0, 6.0, 7.0]);
+        assert_eq!(contour.orientation_xyzw, [0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn a_bent_plate_reply_carries_no_contour() {
+        let reply = br#"{"plates":[{"element_id":"P","kind":"plate","name":"G","bends":[{"angle":90}],"placement":{"orientation_xyzw":[0,0,0,1],"translation_mm":[0,0,0]},"contour_points_mm":[[0,0,0],[400,0,0],[0,300,0]],"corners":[]}],"members":[],"outcome":"inspected"}"#;
+        let bent = parse_element_info("P", Some(0), reply).unwrap();
+        assert!(
+            bent.contour.is_none(),
+            "bent plates get grips in a later slice"
         );
     }
 
