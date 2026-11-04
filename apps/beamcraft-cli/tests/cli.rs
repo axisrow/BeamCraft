@@ -105,6 +105,7 @@ mod validation_layer;
 mod version;
 mod view_clipping;
 mod view_export;
+mod view_presets;
 mod view_snapshot;
 mod views;
 mod welds;

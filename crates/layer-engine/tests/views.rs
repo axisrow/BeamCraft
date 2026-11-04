@@ -112,6 +112,8 @@ fn full_view(id_text: &str, name: &str) -> SavedView {
     view.rotation_rad = [0.25, -0.5];
     view.color_rgb = Some([0.1, 0.2, 0.3]);
     view.opacity = 0.75;
+    view.representation = "simplified".to_owned();
+    view.colour_set = Some("Part classes".to_owned());
     view.stamp = Some(
         ViewStamp::new(
             "  author  ",
@@ -163,6 +165,35 @@ fn canonical_bytes_round_trip_through_the_reader() {
         .collect::<Vec<_>>();
     assert_eq!(cameras.len(), 2);
     assert!(cameras.iter().all(|p| p.starts_with(VIEWS_FOLDER)));
+}
+
+#[test]
+fn representation_and_colour_set_round_trip_and_default_when_absent() {
+    // The full view carries both attributes; the plain view carries neither, and the prim
+    // reads with the display defaults, so layer files written before V07 still read.
+    let saved = [full_view(ID_A, "Front"), view(ID_B, "Top")];
+    let bytes = views::bytes(&layer_of(&saved)).unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    assert!(
+        text.contains("bim:view:representation"),
+        "the view authors its representation"
+    );
+    assert!(
+        text.contains("bim:view:colourSet"),
+        "the view authors its colour set name"
+    );
+    let read = views::read_layer(&prims_of(&bytes)).unwrap();
+    assert_eq!(read.views, saved.to_vec());
+    let plain = &read.views[1];
+    assert_eq!(plain.representation, "full");
+    assert_eq!(plain.colour_set, None);
+    // A present attribute of another USD type refuses the prim, never silently absent.
+    let mut wrong = full_view(ID_A, "Front");
+    wrong.representation = String::new();
+    assert!(views::bytes(&layer_of(&[wrong])).is_err());
+    let mut bad_set = full_view(ID_A, "Front");
+    bad_set.colour_set = Some("a\tb".to_owned());
+    assert!(views::bytes(&layer_of(&[bad_set])).is_err());
 }
 
 #[test]

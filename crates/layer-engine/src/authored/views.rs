@@ -27,10 +27,11 @@ pub const VIEWS_SCHEMA_DESCRIPTOR: &str = concat!(
     "root:metersPerUnit=0.001;upAxis=Z;defaultPrim=World;customLayerData:bimViewsSchemaDigest=sha256\n",
     "camera=/World/Views/VIE_<uuid7-32>:Camera;displayName=saved view name;no bim:id,kind,relationships or Geometry;\n",
     "xformOp:translate=double3;xformOp:orient=quatd;xformOpOrder=token[](translate,orient);projection=token(orthographic|perspective)\n",
-    "bim:view:id=string(uuid7);bim:view:spanMm=double(0,2e7];bim:view:depthMm=double[](exactly 2,(0,2e7] each);\n",
+    "bim:view:id=string(uuid7);bim:view:spanMm=double(0,2e7];bim:view:depthMm=double[](exactly 2,[0,2e7] each,positive thickness);\n",
     "bim:view:renderMode=token(<=64 bytes);bim:view:grids=bool;bim:view:hiddenKinds=token[](<=16);bim:view:folder=string(<=512 bytes);\n",
     "bim:view:favorite=bool;bim:view:default=bool;bim:view:workAreaMm=double3[](exactly 2 entries,min then max,optional,finite,abs<=1e9);\n",
     "bim:view:rotationRad=double[](exactly 2,finite);bim:view:colorRgb=double3(optional,0..=1 each);bim:view:opacity=double(0..=1)\n",
+    "bim:view:representation=token(full|simplified,optional,default full);bim:view:colourSet=string(1..=64 bytes,no controls,optional);\n",
     "bim:view:folders=string[](on the views scope,exactly the folders no view uses,sorted unique,each at most 512 bytes,\n",
     "at most 8 nonempty segments without controls,outer spaces or dot names,at most 512 entries,optional)\n",
     "provenance(W01)=bim:view:author=string(1..=128,no controls,trimmed);bim:view:savedAtMs=uint64(unix milliseconds);\n",
@@ -154,8 +155,9 @@ pub struct SavedView {
     pub projection: CameraProjection,
     /// Visible height at the view plane, in `(0, 2e7]` millimetres.
     pub span_mm: f64,
-    /// Visible distance `[above, below]` the plane in millimetres, each in `(0, 2e7]`; `None`
-    /// shows everything in front of and behind the plane.
+    /// Visible distance `[above, below]` the plane in millimetres, each in `[0, 2e7]` with a
+    /// positive total thickness (the engine's admission rule); `None` shows everything in
+    /// front of and behind the plane.
     pub depth_mm: Option<[f64; 2]>,
     /// Display mode token, at most 64 bytes; an unknown token stays a token, never a refusal.
     pub render_mode: String,
@@ -178,6 +180,11 @@ pub struct SavedView {
     pub color_rgb: Option<[f64; 3]>,
     /// Display opacity in `0..=1`.
     pub opacity: f64,
+    /// Display representation token of the view (V07), at most 64 bytes; `full` is the
+    /// default. An unknown token stays a token, never a refusal, like the display mode.
+    pub representation: String,
+    /// The saved colour set (V17) the view colours by, by name; `None` colours by the model.
+    pub colour_set: Option<String>,
     /// The saved view's provenance (W01), present exactly for a provenance-bearing capture.
     pub stamp: Option<ViewStamp>,
 }
@@ -208,6 +215,8 @@ impl SavedView {
             rotation_rad: [0.0; 2],
             color_rgb: None,
             opacity: 1.0,
+            representation: "full".to_owned(),
+            colour_set: None,
             stamp: None,
         };
         out.validate()?;
@@ -252,7 +261,9 @@ impl SavedView {
             return Err(invalid());
         }
         if let Some([above, below]) = self.depth_mm
-            && !(above > 0.0 && above <= MAX_SPAN_MM && below > 0.0 && below <= MAX_SPAN_MM)
+            && (!(0.0..=MAX_SPAN_MM).contains(&above)
+                || !(0.0..=MAX_SPAN_MM).contains(&below)
+                || above + below <= 0.0)
         {
             return Err(invalid());
         }
@@ -292,6 +303,14 @@ impl SavedView {
         if !(0.0..=1.0).contains(&self.opacity) {
             return Err(invalid());
         }
+        if self.representation.is_empty() || self.representation.len() > 64 {
+            return Err(invalid());
+        }
+        if let Some(set) = &self.colour_set
+            && (set.is_empty() || set.len() > 64 || set.chars().any(char::is_control))
+        {
+            return Err(invalid());
+        }
         if let Some(stamp) = &self.stamp {
             stamp.validate()?;
         }
@@ -315,6 +334,8 @@ pub const FIELDS: &[(&str, &str)] = &[
     ("bim:view:rotationRad", "double[]"),
     ("bim:view:colorRgb", "double3"),
     ("bim:view:opacity", "double"),
+    ("bim:view:representation", "token"),
+    ("bim:view:colourSet", "string"),
     ("bim:view:author", "string"),
     ("bim:view:savedAtMs", "uint64"),
     ("bim:view:comment", "string"),
@@ -483,6 +504,22 @@ fn author(data: &mut sdf::Data, view: &SavedView) -> Result<(), Diagnostic> {
         "double",
         sdf::Value::Double(view.opacity),
     )?;
+    edit::attr(
+        data,
+        &p,
+        "bim:view:representation",
+        "token",
+        sdf::Value::token(view.representation.clone()),
+    )?;
+    if let Some(set) = &view.colour_set {
+        edit::attr(
+            data,
+            &p,
+            "bim:view:colourSet",
+            "string",
+            sdf::Value::String(set.clone()),
+        )?;
+    }
     if let Some(stamp) = &view.stamp {
         edit::attr(
             data,
@@ -710,6 +747,26 @@ pub fn read(p: &Prim) -> Result<SavedView, Diagnostic> {
         rotation_rad: numbers(p, "bim:view:rotationRad")?,
         color_rgb: optional(p, "bim:view:colorRgb", |p| triple(p, "bim:view:colorRgb"))?,
         opacity: double(p, "bim:view:opacity")?,
+        // The representation and the colour set postdate the first layer form, so their
+        // absence is the display default, while a present property of another USD type still
+        // refuses the prim (the same rule the optional record attributes follow).
+        representation: {
+            if p.properties
+                .iter()
+                .any(|v| v.name == "bim:view:representation")
+            {
+                text(p, "bim:view:representation", "token")?.to_owned()
+            } else {
+                "full".to_owned()
+            }
+        },
+        colour_set: {
+            if p.properties.iter().any(|v| v.name == "bim:view:colourSet") {
+                Some(text(p, "bim:view:colourSet", "string")?.to_owned())
+            } else {
+                None
+            }
+        },
         stamp: {
             let present = |name: &str| p.properties.iter().any(|v| v.name == name);
             match (

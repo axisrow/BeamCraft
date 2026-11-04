@@ -8,12 +8,14 @@
 use beamcraft_commands::assembly::{AssemblyView, assemblies};
 use beamcraft_commands::plate::{Inspection, inspect};
 use beamcraft_commands::source_file::read_file;
+use beamcraft_engine::presets::{PresetBook, ViewPreset};
 use beamcraft_engine::views::{
     self, AxisPick, LevelChoice, ModelView, PartSide, Projection, ViewBook, WorkArea,
 };
 use beamcraft_engine::work_plane::WorkPlane;
-use beamcraft_engine::{KindFilter, RenderMode};
+use beamcraft_engine::{KindFilter, RenderMode, Representation};
 use beamcraft_host::ids::IdSource;
+use beamcraft_host::presets as presets_json;
 use beamcraft_host::revision::RevisionStore;
 use beamcraft_host::storage::BlobStore;
 use beamcraft_host::views as views_json;
@@ -177,11 +179,98 @@ const PROPERTY_OPTIONS: &[&str] = &[
     "--work-area",
     "--color",
     "--opacity",
+    "--representation",
+    "--colour-set",
     "--folder",
     "--favorite",
     "--default",
     "--copy-from",
 ];
+
+/// The options that build a preset; `define-preset` takes them.
+const PRESET_OPTIONS: &[&str] = &[
+    "--hidden-kinds",
+    "--depth",
+    "--representation",
+    "--colour-set",
+    "--grids",
+];
+
+/// Reads the preset file; a missing or empty file is an empty book when `allow_missing`. The
+/// file is personal configuration (V07), a bounded versioned JSON document.
+fn load_presets(path: &str, allow_missing: bool) -> Run<PresetBook> {
+    let bytes = match read_file(path, presets_json::MAX_BYTES) {
+        Ok(bytes) => bytes,
+        Err(ErrorCode::NotFound) if allow_missing => return Ok(PresetBook::new()),
+        Err(code) => return Err(refusal(code, "the preset file could not be read")),
+    };
+    if bytes.is_empty() {
+        return Ok(PresetBook::new());
+    }
+    let json = beamcraft_json::decode(&bytes, &Limits::DEFAULT)
+        .map_err(|_| invalid("the preset file is not valid JSON"))?;
+    presets_json::book_from_json(&json).map_err(from_engine)
+}
+
+/// Writes the preset file through a sibling temporary file, so a failed write keeps the old
+/// content readable.
+fn store_presets(path: &str, book: &PresetBook) -> Run<()> {
+    let json = presets_json::book_to_json(book).map_err(from_engine)?;
+    let bytes = json
+        .encode(&Limits::DEFAULT)
+        .map_err(|_| invalid("the preset file could not be encoded"))?;
+    if bytes.len() > presets_json::MAX_BYTES {
+        return Err(refusal(
+            ErrorCode::LimitExceeded,
+            "the preset file would exceed 64 KiB",
+        ));
+    }
+    let backend = |m| refusal(ErrorCode::BackendUnavailable, m);
+    let temp = format!("{path}.tmp");
+    std::fs::write(&temp, &bytes).map_err(|_| backend("the preset file could not be written"))?;
+    std::fs::rename(&temp, path).map_err(|_| backend("the preset file could not be replaced"))
+}
+
+/// Builds a preset from the `define-preset` options; a preset without a colour set colours by
+/// the model, and every component keeps its engine default.
+fn preset_from_options(options: &BTreeMap<&str, &str>) -> Run<ViewPreset> {
+    let name = options
+        .get("--name")
+        .ok_or_else(|| invalid("--name is required"))?;
+    let mut preset = ViewPreset::new(name);
+    let get = |key: &str| options.get(key).copied();
+    if let Some(text) = get("--hidden-kinds") {
+        preset.hidden_kinds = match text {
+            "none" => KindFilter::SHOW_ALL,
+            _ => KindFilter::parse_list(text).map_err(|_| invalid("unknown element kind"))?,
+        };
+    }
+    if let Some(text) = get("--depth") {
+        preset.depth = match text {
+            "none" => None,
+            _ => Some(fixed::<2>(text)?),
+        };
+    }
+    if let Some(text) = get("--representation") {
+        preset.representation =
+            Representation::parse(text).ok_or_else(|| invalid("unknown representation"))?;
+    }
+    if let Some(text) = get("--colour-set") {
+        preset.colour_set = match text {
+            "none" => None,
+            _ => Some(text.to_owned()),
+        };
+    }
+    if let Some(text) = get("--grids") {
+        preset.grids_visible = flag(text)?;
+    }
+    Ok(preset)
+}
+
+/// The preset JSON element of the reply.
+fn preset_json(preset: &ViewPreset) -> Run<Json> {
+    presets_json::preset_to_json(preset).map_err(from_engine)
+}
 
 /// Runs one named-view command through the common JSON result protocol.
 pub fn execute(args: &[OsString]) -> (Json, u8) {
@@ -205,9 +294,13 @@ fn run(args: &[OsString]) -> Run<Json> {
         "save-view" => &["--file", "--name", "--new-id", "--author", "--comment"],
         "update-view" => &["--file", "--view", "--name"],
         "remove-view" | "apply-view" => &["--file", "--store", "--view"],
+        "define-preset" | "remove-preset" => &["--file", "--name", "--store"],
+        "list-presets" => &["--file", "--store"],
+        "apply-preset" => &["--file", "--views-file", "--preset", "--view", "--store"],
         _ => return Err(invalid("unknown named-view command")),
     };
     let changes = matches!(*command, "save-view" | "update-view");
+    let preset_define = matches!(*command, "define-preset");
     if !tail.len().is_multiple_of(2) || tail.len() > 96 {
         return Err(invalid("options come in name-value pairs"));
     }
@@ -215,7 +308,8 @@ fn run(args: &[OsString]) -> Run<Json> {
     for pair in tail.as_chunks::<2>().0 {
         let [key, value] = pair;
         let known = own.contains(key)
-            || (changes && (PLANE_OPTIONS.contains(key) || PROPERTY_OPTIONS.contains(key)));
+            || (changes && (PLANE_OPTIONS.contains(key) || PROPERTY_OPTIONS.contains(key)))
+            || (preset_define && PRESET_OPTIONS.contains(key));
         if !known || options.insert(*key, *value).is_some() {
             return Err(invalid("unknown or repeated option"));
         }
@@ -270,6 +364,73 @@ fn run(args: &[OsString]) -> Run<Json> {
                 ("id", Json::text(view.id.to_string())),
                 ("name", Json::text(view.name)),
                 ("view_count", Json::uint(book.len() as u64)),
+            ]))
+        }
+        "define-preset" => {
+            let mut book = load_presets(file, true)?;
+            let preset = preset_from_options(&options)?;
+            book.insert(preset).map_err(from_engine)?;
+            store_presets(file, &book)?;
+            let stored = book
+                .find(options.get("--name").copied().unwrap_or_default())
+                .ok_or_else(|| refusal(ErrorCode::NotFound, "PRESET_UNKNOWN"))?;
+            Ok(Json::object([
+                ("outcome", Json::text("preset_defined")),
+                ("preset_count", Json::uint(book.len() as u64)),
+                ("preset", preset_json(stored)?),
+            ]))
+        }
+        "list-presets" => {
+            let book = load_presets(file, true)?;
+            let presets = book
+                .presets()
+                .iter()
+                .map(preset_json)
+                .collect::<Run<Vec<_>>>()?;
+            Ok(Json::object([
+                ("outcome", Json::text("presets")),
+                ("preset_count", Json::uint(book.len() as u64)),
+                ("presets", Json::Array(presets)),
+            ]))
+        }
+        "remove-preset" => {
+            let mut book = load_presets(file, false)?;
+            let name = options
+                .get("--name")
+                .ok_or_else(|| invalid("--name is required"))?;
+            let preset = book.remove(name).map_err(from_engine)?;
+            store_presets(file, &book)?;
+            Ok(Json::object([
+                ("outcome", Json::text("preset_removed")),
+                ("name", Json::text(preset.name)),
+                ("preset_count", Json::uint(book.len() as u64)),
+            ]))
+        }
+        "apply-preset" => {
+            let presets = load_presets(file, false)?;
+            let name = options
+                .get("--preset")
+                .ok_or_else(|| invalid("--preset is required"))?;
+            let preset = presets
+                .find(name)
+                .ok_or_else(|| refusal(ErrorCode::NotFound, "PRESET_UNKNOWN"))?;
+            let views_file = options
+                .get("--views-file")
+                .ok_or_else(|| invalid("--views-file is required"))?;
+            let mut book = load(views_file, false)?;
+            let id = selected(&book)?;
+            let mut view = book.get(&id).cloned().ok_or_else(unknown)?;
+            preset.apply_to(&mut view).map_err(from_engine)?;
+            book.update(view).map_err(from_engine)?;
+            store(views_file, &book)?;
+            let stored = book.get(&id).ok_or_else(unknown)?;
+            Ok(Json::object([
+                ("outcome", Json::text("preset_applied")),
+                ("preset", Json::text(preset.name.clone())),
+                (
+                    "view",
+                    views_json::view_to_json(stored).map_err(from_engine)?,
+                ),
             ]))
         }
         _ => {
@@ -717,6 +878,16 @@ fn apply_properties(
     }
     if let Some(text) = get("--opacity") {
         view.opacity = number(text)?;
+    }
+    if let Some(text) = get("--representation") {
+        view.representation =
+            Representation::parse(text).ok_or_else(|| invalid("unknown representation"))?;
+    }
+    if let Some(text) = get("--colour-set") {
+        view.colour_set = match text {
+            "none" => None,
+            _ => Some(text.to_owned()),
+        };
     }
     if let Some(text) = get("--folder") {
         text.trim().clone_into(&mut view.folder);

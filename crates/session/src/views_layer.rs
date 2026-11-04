@@ -120,6 +120,8 @@ fn to_saved(view: &ModelView) -> Result<SavedView, CommandError> {
     saved.rotation_rad = view.rotation_rad;
     saved.color_rgb = view.color;
     saved.opacity = view.opacity;
+    saved.representation = view.representation.as_token().to_owned();
+    saved.colour_set = view.colour_set.clone();
     if let Some(provenance) = &view.provenance {
         saved.stamp = Some(
             ViewStamp::new(
@@ -173,6 +175,14 @@ fn to_view(saved: SavedView) -> Result<ModelView, CommandError> {
     view.rotation_rad = saved.rotation_rad;
     view.color = saved.color_rgb;
     view.opacity = saved.opacity;
+    view.representation = beamcraft_engine::Representation::parse(&saved.representation)
+        .ok_or_else(|| {
+            refused(
+                ErrorCode::UnsupportedVersion,
+                "the stored representation is not one of the engine's levels",
+            )
+        })?;
+    view.colour_set = saved.colour_set;
     if let Some(stamp) = saved.stamp {
         view.provenance = Some(
             ViewProvenance::new(

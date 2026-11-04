@@ -8,7 +8,9 @@
 use beamcraft_engine::query::pick::SelectionFilter;
 use beamcraft_engine::views::{self, ModelView, PartSide};
 use beamcraft_engine::work_plane::WorkPlane;
-use beamcraft_engine::{ElementKind, KindFilter, Limits, ViewPin, ViewSnapshot};
+use beamcraft_engine::{
+    ElementKind, KindFilter, Limits, Representation, ViewPin, ViewSettings, ViewSnapshot,
+};
 
 fn snapshot() -> ViewSnapshot {
     let pin = ViewPin::new(
@@ -108,4 +110,33 @@ fn a_surface_view_lies_on_the_face_and_a_part_view_frames_the_part() {
     let (group, _) = views::group_plane(&snapshot, &[part], PartSide::Top).unwrap();
     assert!((group.normal()[2].abs() - 1.0).abs() < 1e-9);
     assert!(views::group_plane(&snapshot, &[], PartSide::Top).is_err());
+}
+
+#[test]
+fn a_views_representation_and_kinds_feed_view_settings_without_touching_the_token() {
+    let snapshot = snapshot();
+    let token = snapshot.token();
+    let mut plan = plan();
+    plan.representation = Representation::Simplified;
+    plan.hidden_kinds = KindFilter::SHOW_ALL.hiding(ElementKind::Reference);
+    plan.colour_set = Some("Part classes".into());
+    plan.validate().unwrap();
+    let settings = ViewSettings {
+        hidden_kinds: plan.hidden_kinds,
+        representation: plan.representation,
+    };
+    let projection = snapshot.project(&settings).unwrap();
+    assert_eq!(
+        projection.token(),
+        token,
+        "display state never moves the token"
+    );
+    assert_eq!(projection.settings(), settings);
+    assert!(
+        projection
+            .items()
+            .iter()
+            .all(|p| p.representation == Representation::Simplified)
+    );
+    assert_eq!(snapshot.token(), token);
 }
