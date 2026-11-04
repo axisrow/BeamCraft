@@ -9,6 +9,14 @@ better one. This document records the chosen form, the reasoning, and the upstre
 follow-up it implies. The evidence policy ([test-gate.md](test-gate.md)) is unchanged:
 this changes the workflow file's shape, not what a green run proves.
 
+Amended 2026-11-05 (CI wall time, [Apibim-com#239](https://github.com/Apibim-com/BeamCraft/issues/239),
+together with the [test-gate.md](test-gate.md) amendment): complete-workspace test execution
+left the canonical `ci.yml` wall for the separate `ci-platform.yml` beside it, so the
+canonical form below no longer carries per-OS archives and shards. Until the upstream
+follow-up catches up, syncs keep resolving this path to the fork form, exactly as this
+document already provides; the platform-track shape ships upstream in the same wave as the
+canonical file.
+
 ## Why neither current file is the canonical form
 
 - Upstream's `ci.yml` drives its pipeline with Python tools (`tools/ci-changes.py`,
@@ -21,9 +29,10 @@ this changes the workflow file's shape, not what a green run proves.
 
 ## The canonical form
 
-The upstream job structure — plan → quality → per-OS archives and shards →
-build-timings → wasm → deny → aggregate verdict — carrying the fork's strictly better
-machinery:
+The upstream job structure — plan → quality → build-timings → wasm → deny →
+aggregate verdict, with complete-workspace test execution in the separate
+`ci-platform.yml` beside the canonical file (amended 2026-11-05) — carrying the fork's
+strictly better machinery:
 
 | Piece | Canonical choice | Why |
 | --- | --- | --- |
@@ -34,8 +43,9 @@ machinery:
 | Repository-specific policy | separate workflow files | fork policy never lives inline in the canonical path |
 
 Fork-only workflows beside the canonical file: `attribution.yml` (this change),
-`no-python.yml`, `fork-sync.yml`, `fork-sync-test.yml`, `macos-icon-acceptance.yml`,
-`upstream-mirror.yml`. None of them exists upstream, so no sync ever touches them.
+`ci-platform.yml` (amended 2026-11-05), `no-python.yml`, `fork-sync.yml`,
+`fork-sync-test.yml`, `macos-icon-acceptance.yml`, `upstream-mirror.yml`. None of them
+exists upstream, so no sync ever touches them.
 `ci-queue-alert.yml`, `label-to-status.yml`, `platform-icon-screenshots.yml`,
 `release.yml` and `ubuntu-benchmark.yml` exist on both sides; converging those paths is
 outside #385.
@@ -45,7 +55,8 @@ outside #385.
 Shipping the canonical form upstream is one upstream PR that:
 
 1. adds `tools/test-gate` to the workspace and deletes the Python CI tools;
-2. replaces `.github/workflows/ci.yml` with this repository's file verbatim;
+2. replaces `.github/workflows/ci.yml` with this repository's file verbatim and adds
+   `ci-platform.yml` beside it (amended 2026-11-05);
 3. switches the required branch-protection check from `ci-ok` to `CI verdict`;
 4. decides the receipt policy for upstream contributors: either upstream adopts the
    recorded local gate, or `ci-plan` grows a lenient default (no receipt → the full
