@@ -111,6 +111,14 @@ fn close(actual: f64, expected: f64) {
     );
 }
 
+fn numbers(json: &Json) -> Vec<f64> {
+    json.array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect()
+}
+
 /// (element_id, volume mm3, mesh_digest) of every part, sorted by id.
 fn parts(inspection: &Json) -> Vec<(String, f64, String)> {
     let mut all = Vec::new();
@@ -595,6 +603,130 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         1
     );
 
+    // Named views (V12): the storey plan, a grid-axis elevation and a free orbit become
+    // named views in the W01 camera prim layer beside the store. A view is display state:
+    // the draft head and the layer bytes stay identical across every read and every
+    // refusal, and each provenance-bearing save captures the draft revision it was taken
+    // against.
+    let views_file = s.path("story-views.usda");
+    let draft_head = s.head("draft");
+    let save_named = |args: &[&str]| -> Json {
+        let mut all = vec!["--file", views_file.as_str()];
+        all.extend_from_slice(args);
+        s.ok("draft", "save-view", &all)
+    };
+    let plan = save_named(&[
+        "--name",
+        "Q01 plan",
+        "--parallel",
+        "xy",
+        "--offset",
+        "1000",
+        "--author",
+        "Q01 story",
+        "--comment",
+        "the storey plan",
+    ]);
+    assert_eq!(text(&plan, "outcome"), "view_saved");
+    let plan_view = &at(&plan, &["views"]).array().unwrap()[0];
+    assert_eq!(text(plan_view, "name"), "Q01 plan");
+    assert_eq!(
+        numbers(at(plan_view, &["plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0]
+    );
+    let stamp = at(plan_view, &["provenance"]);
+    assert_eq!(text(stamp, "author"), "Q01 story");
+    assert_eq!(text(stamp, "comment"), "the storey plan");
+    assert_eq!(text(stamp, "model_revision"), draft_head);
+    assert!(at(stamp, &["created_at_ms"]).unsigned().unwrap() > 1_700_000_000_000);
+    let axis = save_named(&[
+        "--name",
+        "Q01 axis 2",
+        "--grid",
+        "Q01 grid",
+        "--axis",
+        "2",
+        "--author",
+        "Q01 story",
+    ]);
+    let axis_view = &at(&axis, &["views"]).array().unwrap()[0];
+    assert_eq!(text(axis_view, "name"), "Q01 axis 2");
+    assert_eq!(
+        numbers(at(axis_view, &["plane", "origin_mm"])),
+        [1000.0, -2000.0, 0.0],
+        "the elevation stands on the second U axis: its plane origin sits on the x = 1000 line"
+    );
+    let level_plan = save_named(&["--name", "Q01 level plan", "--level", "Q01 level"]);
+    let level_view = &at(&level_plan, &["views"]).array().unwrap()[0];
+    assert_eq!(text(level_view, "name"), "Q01 level plan");
+    assert_eq!(
+        numbers(at(level_view, &["plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0],
+        "the level plan is the model XY plane at the level elevation"
+    );
+    assert!(matches!(at(level_view, &["provenance"]), Json::Null));
+    let orbit = save_named(&["--name", "Q01 3d", "--yaw", "0.7", "--pitch", "0.85"]);
+    let orbit_view = &at(&orbit, &["views"]).array().unwrap()[0];
+    assert_eq!(text(orbit_view, "name"), "Q01 3d");
+    assert_eq!(text(orbit_view, "projection"), "perspective");
+    let listed = s.ok("draft", "list-views", &["--file", &views_file]);
+    assert_eq!(at(&listed, &["view_count"]).unsigned().unwrap(), 4);
+    let mut names: Vec<String> = at(&listed, &["views"])
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| text(v, "name"))
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["Q01 3d", "Q01 axis 2", "Q01 level plan", "Q01 plan"]
+    );
+    assert_eq!(at(&listed, &["folders"]).array().unwrap().len(), 0);
+    let layer_bytes = fs::read(&views_file).unwrap();
+    let applied = s.ok(
+        "draft",
+        "apply-view",
+        &["--file", &views_file, "--view", "q01 axis 2"],
+    );
+    assert_eq!(text(&applied, "outcome"), "view_applied");
+    assert_eq!(
+        numbers(at(&applied, &["camera_plane", "origin_mm"])),
+        [1000.0, -2000.0, 0.0]
+    );
+    assert_eq!(text(at(&applied, &["provenance"]), "author"), "Q01 story");
+    assert_eq!(
+        text(at(&applied, &["provenance"]), "model_revision"),
+        draft_head
+    );
+    let duplicate = s.run(
+        "draft",
+        "save-view",
+        &[
+            "--file",
+            &views_file,
+            "--name",
+            "Q01 PLAN",
+            "--parallel",
+            "xy",
+        ],
+        2,
+    );
+    assert_eq!(text(&duplicate, "outcome"), "rejected");
+    let missing = s.run(
+        "draft",
+        "apply-view",
+        &["--file", &views_file, "--view", "no such view"],
+        2,
+    );
+    assert_eq!(text(&missing, "outcome"), "rejected");
+    assert_eq!(
+        fs::read(&views_file).unwrap(),
+        layer_bytes,
+        "reads and refusals never rewrite the layer"
+    );
+    assert_eq!(s.head("draft"), draft_head, "views never write the model");
+
     // Assembly, bolts and welds complete the frame (the original scenario keeps the details).
     let assembly = text(
         &s.ok(
@@ -659,6 +791,58 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
         close(found.1, *volume);
         assert_eq!(found.2, *digest, "{id} mesh must survive the round trip");
     }
+
+    // The named views survive the publication round trip: the camera prim layer is
+    // store-independent display state, so the published head lists the same four views,
+    // restores the exact camera, and the captured provenance still names the draft
+    // revision the view was taken against.
+    assert_eq!(
+        s.ok("published", "list-views", &["--file", &views_file])
+            .get("view_count")
+            .unwrap()
+            .unsigned()
+            .unwrap(),
+        4
+    );
+    let restored = s.ok(
+        "published",
+        "apply-view",
+        &["--file", &views_file, "--view", "Q01 plan"],
+    );
+    assert_eq!(text(&restored, "outcome"), "view_applied");
+    assert_eq!(
+        numbers(at(&restored, &["camera_plane", "origin_mm"])),
+        [0.0, 0.0, 1000.0]
+    );
+    assert_eq!(
+        text(at(&restored, &["provenance"]), "model_revision"),
+        draft_head
+    );
+    assert_eq!(
+        fs::read(&views_file).unwrap(),
+        layer_bytes,
+        "publication and reads never rewrite the layer"
+    );
+    let removed = s.ok(
+        "published",
+        "remove-view",
+        &["--file", &views_file, "--view", "Q01 3d"],
+    );
+    assert_eq!(text(&removed, "outcome"), "view_removed");
+    assert_eq!(text(&removed, "name"), "Q01 3d");
+    assert_eq!(at(&removed, &["view_count"]).unsigned().unwrap(), 3);
+    let gone = s.run(
+        "published",
+        "apply-view",
+        &["--file", &views_file, "--view", "Q01 3d"],
+        2,
+    );
+    assert_eq!(text(&gone, "outcome"), "rejected");
+    assert_eq!(
+        s.head("published"),
+        accepted_head,
+        "views never write the model"
+    );
 
     // Views: the kind filter over the real frame is exercised through query-elements above;
     // snapshot-view still runs on its synthetic kernel plate scene because P01 does not
