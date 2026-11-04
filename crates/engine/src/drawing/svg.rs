@@ -264,7 +264,7 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[2.0, 3.5], [0.0, 0.0]],
             [[0.0, 0.0], [2.0, 0.0]],
         ]),
-        ':' => Some(&[[[1.0, 2.4], [1.0, 2.0]]]),
+        ':' => Some(&[[[1.0, 2.4], [1.0, 2.0]], [[1.0, 1.5], [1.0, 1.1]]]),
         '-' => Some(&[[[0.3, 1.75], [1.7, 1.75]]]),
         _ => None,
     }
@@ -1113,6 +1113,32 @@ mod tests {
             .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
             .fold(f64::NEG_INFINITY, f64::max);
         assert!(right_edge <= 1.4, "B's right side at {right_edge}");
+    }
+
+    #[test]
+    fn the_colon_draws_two_dots_not_one() {
+        // Finding 9: the colon was one short stroke, so every scale read "1·20". A colon
+        // is two dots: two strokes whose vertical bands are disjoint and straddle the
+        // glyph box's midline, inside the box the digits use.
+        let strokes = glyph(':').unwrap_or(&[]);
+        assert_eq!(strokes.len(), 2, "a colon is two dots, got {strokes:?}");
+        let mut bands: Vec<[f64; 2]> = strokes
+            .iter()
+            .map(
+                |[[_, ay], [_, by]]| {
+                    if ay <= by { [*ay, *by] } else { [*by, *ay] }
+                },
+            )
+            .collect();
+        bands.sort_by(|a, b| a[0].total_cmp(&b[0]));
+        assert!(
+            bands[1][0] > bands[0][1],
+            "the dots must not touch: {bands:?}"
+        );
+        assert!(
+            bands[0][0] > 0.0 && bands[1][1] < 3.5,
+            "both dots stay inside the glyph box: {bands:?}"
+        );
     }
 
     #[test]

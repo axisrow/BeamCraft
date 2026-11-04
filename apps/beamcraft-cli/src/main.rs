@@ -114,6 +114,23 @@ fn main() -> std::process::ExitCode {
         }
         _ => {}
     }
+    // `command --help` answers with that command's own help instead of a JSON refusal
+    // (visual audit finding 11); a `-h` in a value position stays a value. Help needs no
+    // store and holds no coordinator lease.
+    if let Some(word) = args.first().and_then(|w| w.to_str())
+        && let Some(command) = registry::COMMANDS.iter().find(|entry| entry.name == word)
+        && args
+            .get(1..)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .any(|(position, arg)| {
+                position % 2 == 0 && arg.to_str().is_some_and(|s| s == "--help" || s == "-h")
+            })
+    {
+        println!("{}", help::for_family(command.family));
+        return std::process::ExitCode::SUCCESS;
+    }
     // A serving coordinator holds its store for as long as it runs, so a compaction cannot start
     // under it (U14).
     let _serving = match history_cmd::coordinator_lease(&args) {
