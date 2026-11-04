@@ -73,6 +73,8 @@ impl Discipline for Steel {
             | "steel:hole:vertexCounts"
             | "steel:hole:operationIds"
             | "steel:hole:ordinals"
+            | "steel:hole:kinds"
+            | "steel:hole:generatedBy"
             | "steel:member:pathType"
             | "bim:axisPointsMm"
             | "steel:member:rollRad"

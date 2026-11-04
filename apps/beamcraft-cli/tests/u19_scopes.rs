@@ -876,3 +876,84 @@ fn orphan_scope_flags_are_refused_not_ignored() {
         true,
     );
 }
+
+#[test]
+fn a_rebase_carries_the_u12_levels_of_a_holed_plate() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
+    let seed = f.shared.root.join("w-12seed");
+    f.workspace(
+        &store,
+        seed.to_str().unwrap(),
+        "2401-DEMO",
+        "KM",
+        None,
+        false,
+    );
+    let a = "019a7bf0-0000-7000-8000-0000000000c1";
+    let b = "019a7bf0-0000-7000-8000-0000000000c2";
+    f.ok_in(
+        seed.to_str().unwrap(),
+        "create-plate",
+        &plate_args(a, "Seed plate"),
+    );
+    f.publish(&store, seed.to_str().unwrap());
+
+    // Workspace A renames the shared plate; workspace B authors a holed plate of its own
+    // section: the hole gives the element U12 level prims (`<part>/Reduced`) in its draft.
+    let wa = f.shared.root.join("w-12a");
+    let wb = f.shared.root.join("w-12b");
+    f.workspace(&store, wa.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    f.workspace(
+        &store,
+        wb.to_str().unwrap(),
+        "2401-DEMO",
+        "KMD",
+        Some("K1"),
+        false,
+    );
+    f.ok_in(
+        wa.to_str().unwrap(),
+        "update-element",
+        &["--id", a, "--name", "A plate"],
+    );
+    f.ok_in(
+        wb.to_str().unwrap(),
+        "create-plate",
+        &plate_args(b, "B plate"),
+    );
+    f.ok_in(
+        wb.to_str().unwrap(),
+        "add-hole",
+        &["--id", b, "--hole-round", "250,150,20"],
+    );
+    let before = f.publish(&store, wa.to_str().unwrap());
+    let accepted = revision_of(std::path::Path::new(&store));
+    let draft = revision_of(&wb);
+    let reply = f.ok_in(
+        &store,
+        "rebase-workspace",
+        &[
+            "--workspace-dir",
+            wb.to_str().unwrap(),
+            "--op-id",
+            "019a7bf0-0000-7000-8000-000000000610",
+            "--expected-head",
+            accepted.as_str(),
+            "--expected-draft",
+            draft.as_str(),
+        ],
+    );
+    assert_eq!(text(&reply, "outcome"), "workspace_rebased");
+    // The scope classifier reads the level prims as derived element state (a /Reduced delta
+    // used to refuse the whole rebase as outside the closed schema).
+    let published = f.publish(&store, wb.to_str().unwrap());
+    assert!(
+        String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_K1_KMD.usda"))
+            .contains("B plate")
+    );
+    assert_eq!(
+        f.layer_of(&store, &before, "2401-DEMO_KM.usda"),
+        f.layer_of(&store, &published, "2401-DEMO_KM.usda")
+    );
+}
