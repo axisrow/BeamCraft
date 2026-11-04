@@ -198,6 +198,9 @@ pub fn verdict(needs: &Value, oses: &[String], event: &str) -> Result<()> {
     }
     // Repository-specific policy checks (an attribution guard, for example) run as
     // separate workflow files beside this pipeline, so they are not required lanes.
+    // Complete-workspace test execution is the platform track (ci-platform.yml,
+    // owner decision 2026-11-05): it verifies every integration push and the
+    // nightly cadence beside this pipeline instead of waiting inside its wall.
     require(
         "build-timings",
         if event == "pull_request" {
@@ -206,19 +209,6 @@ pub fn verdict(needs: &Value, oses: &[String], event: &str) -> Result<()> {
             "success"
         },
     )?;
-    for (os, suffix) in [
-        ("ubuntu-latest", "ubuntu"),
-        ("macos-latest", "macos"),
-        ("windows-latest", "windows"),
-    ] {
-        let expected = if oses.iter().any(|s| s == os) {
-            "success"
-        } else {
-            "skipped"
-        };
-        require(&format!("test-archive-{suffix}"), expected)?;
-        require(&format!("test-{suffix}"), expected)?;
-    }
     Ok(())
 }
 

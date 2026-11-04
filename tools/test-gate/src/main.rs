@@ -139,7 +139,7 @@ fn run() -> Result<()> {
                 github::refresh_pr(&root, &payload, &std::env::var("GITHUB_REPOSITORY")?, &oses)?;
             }
             github::verdict(&needs, &oses, &std::env::var("GITHUB_EVENT_NAME")?)?;
-            println!("CI verdict: required checks passed on both selected operating systems");
+            println!("CI verdict: required checks passed on the selected quality lanes");
         }
         "ci-archive" => local::ci_archive(&root, &output.ok_or("--output is required")?)?,
         "ci-test" => local::ci_test(
