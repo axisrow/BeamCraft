@@ -444,8 +444,35 @@ fn merge_layer(
         control.check()?;
         // The pseudo-root of an edit layer carries engine bookkeeping (units, schema pin, and
         // since U15 the element-file stack): the candidate keeps the accepted side of it, and
-        // only prim content merges.
+        // only the root prim children merge — a workspace may author its first element, and
+        // the writer lists prims from that children field, so a skipped root drops them.
         if path.to_string() == "/" {
+            let before = names(
+                accepted
+                    .try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+            )?;
+            merge_names(
+                &path,
+                "primChildren",
+                old.try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+                source
+                    .try_field(&path, "primChildren")
+                    .map_err(|_| corrupt())?
+                    .as_deref(),
+                accepted,
+                writes,
+            )?;
+            changed |= before
+                != names(
+                    accepted
+                        .try_field(&path, "primChildren")
+                        .map_err(|_| corrupt())?
+                        .as_deref(),
+                )?;
             continue;
         }
         let before = fields(old, &path)?;

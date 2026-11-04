@@ -152,6 +152,19 @@ impl Fixture {
 
 use std::fs;
 
+/// The current head revision of one store, for rebase request pins.
+fn revision_of(path: &std::path::Path) -> String {
+    beamcraft_host::revision::RevisionStore::new(
+        beamcraft_host::storage::BlobStore::new(path).unwrap(),
+    )
+    .head()
+    .unwrap()
+    .unwrap()
+    .revision()
+    .as_str()
+    .to_owned()
+}
+
 /// The F10 rule of the first diagnostic of a rejection.
 fn rule(json: &Json) -> String {
     text(&at(json, &["diagnostics"]).array().unwrap()[0], "rule_id")
@@ -659,4 +672,78 @@ fn the_reserved_grids_section_code_cannot_merge_the_two_write_scopes() {
         "Grids",
     ]);
     assert_eq!(text(&refused, "code"), "INVALID_ARGUMENT");
+}
+
+#[test]
+fn a_scoped_rebase_keeps_its_receipt_scope_and_stays_usable() {
+    let f = Fixture::new();
+    let store = f.project("Shared", "2401-DEMO", "KM,K1:KMD");
+    // One seed workspace authors the shared element and its definitions first, so the two
+    // rebase participants fork from a settled head instead of racing their own definitions.
+    let seed = f.shared.root.join("w-seed");
+    f.workspace(&store, seed.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    let a = "019a7bf0-0000-7000-8000-0000000000a6";
+    let b = "019a7bf0-0000-7000-8000-0000000000a7";
+    f.ok_in(
+        seed.to_str().unwrap(),
+        "create-plate",
+        &plate_args(a, "Seed plate"),
+    );
+    f.publish(&store, seed.to_str().unwrap());
+    // Workspace A renames the shared element; workspace B authors its own section element.
+    let wa = f.shared.root.join("w-ra");
+    let wb = f.shared.root.join("w-rb");
+    f.workspace(&store, wa.to_str().unwrap(), "2401-DEMO", "KM", None, false);
+    f.workspace(
+        &store,
+        wb.to_str().unwrap(),
+        "2401-DEMO",
+        "KMD",
+        Some("K1"),
+        false,
+    );
+    f.ok_in(
+        wa.to_str().unwrap(),
+        "update-element",
+        &["--id", a, "--name", "A plate"],
+    );
+    f.ok_in(
+        wb.to_str().unwrap(),
+        "create-plate",
+        &plate_args(b, "B plate"),
+    );
+    // Workspace A publishes; workspace B rebases onto the moved head.
+    let before = f.publish(&store, wa.to_str().unwrap());
+    let accepted = revision_of(std::path::Path::new(&store));
+    let draft = revision_of(&wb);
+    let reply = f.ok_in(
+        &store,
+        "rebase-workspace",
+        &[
+            "--workspace-dir",
+            wb.to_str().unwrap(),
+            "--op-id",
+            "019a7bf0-0000-7000-8000-000000000510",
+            "--expected-head",
+            accepted.as_str(),
+            "--expected-draft",
+            draft.as_str(),
+        ],
+    );
+    assert_eq!(text(&reply, "outcome"), "workspace_rebased");
+    // The receipt carries the scope: the next workspace command finalizes the pending
+    // metadata transition (a scope-losing receipt refused every later command with
+    // BASE_REVISION_MISMATCH until rebase.pending was removed by hand).
+    let published = f.publish(&store, wb.to_str().unwrap());
+    assert!(
+        String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_K1_KMD.usda"))
+            .contains("B plate")
+    );
+    assert!(String::from_utf8_lossy(&f.layer_of(&store, &published, "2401-DEMO_KM.usda"))
+        .contains("A plate"));
+    // The scope keeps the KMD/K1 workspace out of the KM section, byte for byte.
+    assert_eq!(
+        f.layer_of(&store, &before, "2401-DEMO_KM.usda"),
+        f.layer_of(&store, &published, "2401-DEMO_KM.usda")
+    );
 }
