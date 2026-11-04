@@ -96,10 +96,12 @@ never fall back to silently skipping another OS or accepting an old green result
 
 On master pushes, locate the merged PR and require its tested tree to equal the actual commit
 tree, supporting merge, squash and rebase integration. Manual runs need the same applicable
-report. Direct pushes without one fail. For the existing no-PR upstream sync, a full local
-gate may check the staged merge tree: require no unstaged/untracked source changes, verify the
-tree again after the gate, and bind the report into the merge commit message. Accept it only
-when the created commit has that tree and the expected merge ancestry. No PR is auto-merged.
+report. Direct pushes without one fail. The one sanctioned direct push is an upstream-sync
+merge (owner decision 2026-11-04: it lands on the fork's `master` without a pull request): a
+full local gate may check the staged merge tree — require no unstaged/untracked source changes,
+verify the tree again after the gate, and bind the report into the merge commit message. Accept
+it only when the created commit has that tree and the expected merge ancestry. No PR is
+auto-merged.
 
 Release builds/installers retain their existing full platform coverage. Open PRs need fresh
 reports when the implementation is enabled.

@@ -81,10 +81,11 @@ checks. An intentionally omitted OS cannot satisfy an obsolete per-platform requ
 Preserve the repository's existing authorized sync push access when configuring that rule.
 
 On integration, a merged PR's report is reusable only for an identical source tree. The no-PR
-upstream sync uses `check --scope full --staged-merge`, `sync-trailer` before commit and
-`verify-sync` before push. The one-line commit receipt binds the staged tree and both actual
-merge parents. Do not hand-edit receipts. Release packaging and cold release coverage remain
-unchanged.
+sync — an upstream-sync merge pushed straight to the fork's `master` (owner decision
+2026-11-04), and the same flow toward upstream — uses `check --scope full --staged-merge`,
+`sync-trailer` before commit and `verify-sync` before push. The one-line commit receipt binds
+the staged tree and both actual merge parents. Do not hand-edit receipts. Release packaging and
+cold release coverage remain unchanged.
 
 The artifact builder uses `ci-archive --output DIR`; it supervises doctests and ships the
 matching native gate executable beside the archive. `ci-test --archive PATH --partition I/N

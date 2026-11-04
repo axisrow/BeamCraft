@@ -175,3 +175,8 @@ New outbound network access is the owner's decision, not an agent's.
   example `Fixes #1, fixes #2`) so merging into `master` closes it. Use `Refs #N` when the PR only
   relates to an issue.
 - Creating a PR does not authorize merging it. Merge and integration follow the owner's instructions.
+- An upstream-sync merge commit is the one exception to the pull-request flow: it lands on
+  `master` as a direct push through the recorded gate's no-PR flow (`check --scope full
+  --staged-merge`, `sync-trailer` before commit, `verify-sync` before push; owner decision of
+  2026-11-04). The upstream repository receives the accumulated fork delta as one batch PR per
+  sync wave. Every other change keeps the pull-request flow above.
