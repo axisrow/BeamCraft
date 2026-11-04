@@ -263,9 +263,23 @@ fn copy_and_verify(store: &Path, destination: &Path) -> Result<(), CompactionErr
 /// compaction cannot start under it. `Ok(None)` for every other command, and when the `--store`
 /// value is missing or unusable (the command then reports its own error).
 pub fn hold_coordinator_lease(args: &[std::ffi::OsString]) -> Result<Option<StoreLease>, Refusal> {
+    hold_serving_lease(args, "serve-coordinator")
+}
+
+/// The same store lease for a serving `session`: the interactive process holds the store for
+/// as long as it runs, so a compaction cannot start under an open session (U14).
+pub fn hold_session_lease(args: &[std::ffi::OsString]) -> Result<Option<StoreLease>, Refusal> {
+    hold_serving_lease(args, "session")
+}
+
+/// The shared store lease one long-serving command holds while it serves.
+fn hold_serving_lease(
+    args: &[std::ffi::OsString],
+    command_word: &str,
+) -> Result<Option<StoreLease>, Refusal> {
     if args
         .first()
-        .is_none_or(|command| command != "serve-coordinator")
+        .is_none_or(|command| command != command_word)
     {
         return Ok(None);
     }

@@ -16,6 +16,7 @@
 //! id from a later process.
 
 use beamcraft_json::{Json, Limits, decode};
+use crate::support::{at, text};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -322,4 +323,46 @@ fn a_definition_the_head_already_holds_answers_inside_a_batch() {
         Session::outcome(&session.ask("batch-abort")),
         "batch_abandoned"
     );
+}
+
+#[test]
+fn an_open_session_holds_the_compaction_lease() {
+    let (_root, store) = fresh();
+    let root = store.arg();
+    // The first revision belongs outside a batch: one plate sets it.
+    let first = format!(
+        "create-plate --store {root} --new-id 019a7bf0-0000-7000-8000-000000000001 --op-id 019a7bf0-0000-7000-8000-000000000002 --width 200 --length 200 --thickness 8 --name first"
+    );
+    let created = store.run(first.split_whitespace().collect::<Vec<_>>().as_slice());
+    assert_eq!(Session::outcome(&created), "plate_created");
+
+    let mut session = Session::start(&store);
+    // The open session holds the shared store lease, so compaction refuses while it serves
+    // (U14): a compaction used to be able to start under a live session, including the
+    // middle of a batch.
+    let compact = store.run(&[
+        "compact-history",
+        "--store",
+        &root,
+        "--keep-head",
+        "--dry-run",
+    ]);
+    assert_eq!(Session::outcome(&compact), "compaction_dry_run");
+    assert_eq!(compact.get("would_proceed").unwrap().boolean().unwrap(), false);
+    assert_eq!(
+        text(&at(&compact, &["blockers"]).array().unwrap()[0], "kind"),
+        "store_in_use"
+    );
+
+    // Ending the session releases the lease and compaction runs again.
+    drop(session);
+    let after = store.run(&[
+        "compact-history",
+        "--store",
+        &root,
+        "--keep-head",
+        "--dry-run",
+    ]);
+    assert_eq!(Session::outcome(&after), "compaction_dry_run");
+    assert_eq!(after.get("would_proceed").unwrap().boolean().unwrap(), true);
 }

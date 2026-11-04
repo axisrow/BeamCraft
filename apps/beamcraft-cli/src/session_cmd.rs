@@ -46,8 +46,8 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
         Err(refusal) => return print_refusal(&refusal),
     };
     // A serving session holds its store for as long as it runs, so a compaction cannot start
-    // under it (U14) — the same lease every one-process command holds while it runs.
-    let lease = match crate::history_cmd::coordinator_lease(args) {
+    // under it (U14) — the shared lease a compaction respects, like the coordinator's.
+    let lease = match crate::history_cmd::session_lease(args) {
         Ok(lease) => lease,
         Err((json, _)) => {
             let _ = print_json(&json);
@@ -61,7 +61,8 @@ pub fn execute(args: &[OsString]) -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
     };
-    let _ = lease;
+    // Bound by name: `let _` would drop the lease (and the lock) right here.
+    let _lease = lease;
     if print_json(&Json::object([("outcome", Json::text("session_ready"))])).is_err() {
         return std::process::ExitCode::from(3);
     }

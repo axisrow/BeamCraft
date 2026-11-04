@@ -22,7 +22,7 @@
 //! revisions whose undo points would be lost.
 
 use beamcraft_commands::history_compact::{
-    backup_store, collect_pins, hold_coordinator_lease, is_workspace_store,
+    backup_store, collect_pins, hold_coordinator_lease, hold_session_lease, is_workspace_store,
 };
 use beamcraft_host::compaction::{
     Blocker, Compacted, CompactionError, Keep, NoFault, Pin, PinStatus, Plan, Request, Safeguard,
@@ -104,6 +104,12 @@ pub fn lease_refusal(error: Refusal) -> (Json, u8) {
 /// [`beamcraft_commands::history_compact::hold_coordinator_lease`].
 pub fn coordinator_lease(args: &[OsString]) -> Result<Option<StoreLease>, (Json, u8)> {
     hold_coordinator_lease(args).map_err(lease_refusal)
+}
+
+/// Holds the store lease of a starting `session`; see
+/// [`beamcraft_commands::history_compact::hold_session_lease`].
+pub fn session_lease(args: &[OsString]) -> Result<Option<StoreLease>, (Json, u8)> {
+    hold_session_lease(args).map_err(lease_refusal)
 }
 
 const VALUE_OPTIONS: [&str; 7] = [
