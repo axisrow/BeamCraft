@@ -817,17 +817,30 @@ fn a_scoped_workspace_edits_its_bolt_groups() {
         ],
     );
     // ...and amends it: the amendment was the one write path still bound to the classic
-    // authored/derived targets, refusing on a sectioned store with FOREIGN_READ_ONLY.
+    // authored/derived targets, refusing on a sectioned store with FOREIGN_READ_ONLY. The
+    // amended name is label state of the section layer like every other authored field.
     let moved = f.ok_in(
         wb.to_str().unwrap(),
         "update-bolt-group",
-        &["--target", group, "--point2", "700,250,0"],
+        &[
+            "--target",
+            group,
+            "--name",
+            "G1 moved",
+            "--point2",
+            "700,250,0",
+        ],
     );
     assert_eq!(text(&moved, "outcome"), "bolt_group_committed");
     let published = f.publish(&store, wb.to_str().unwrap());
     let groups = f.ok_in(&store, "bolts", &[]);
     let listed = at(&groups, &["bolt_groups"]).array().unwrap();
     assert_eq!(listed.len(), 1);
+    assert_eq!(
+        at(listed.first().unwrap(), &["name"]).string().unwrap(),
+        "G1 moved",
+        "the scoped rename rides the committed store through the scope"
+    );
     assert_eq!(
         at(listed.first().unwrap(), &["point2_mm"])
             .array()

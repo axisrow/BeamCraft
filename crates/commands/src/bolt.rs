@@ -1020,7 +1020,12 @@ pub fn update_bolt_group(
     let same = accepted.is_some_and(|(existed_before, group)| {
         existed_before
             && expected().is_some_and(|expected| {
-                group.parts == command.inputs.parts && group.spec == expected
+                group.parts == command.inputs.parts
+                    && group.spec == expected
+                    && command
+                        .name
+                        .as_deref()
+                        .is_none_or(|name| group.name == name)
             })
     });
     match prior {
@@ -1085,6 +1090,14 @@ pub fn update_bolt_group(
         command.target_id.to_string(),
         layer_group(&command.inputs, &placed),
     )];
+    // A rename is label state of the same element (the `bim:name` attribute and the prim's
+    // display name), authored in the same transaction as the replaced record.
+    if let Some(name) = &command.name {
+        changes.push(Change::Label {
+            id: command.target_id.to_string(),
+            name: name.clone(),
+        });
+    }
     changes.extend(hole_writes);
     let prepared = author.prepare(
         Prepare {

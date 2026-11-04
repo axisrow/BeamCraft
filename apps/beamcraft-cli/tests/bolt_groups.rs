@@ -369,6 +369,42 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     assert_eq!(f.rejected(&other), "OP_ID_REUSE");
 }
 
+#[test]
+fn a_rename_reaches_the_authored_layer_and_survives_a_reopen() {
+    let mut f = Fixture::new();
+    let parts = f.parts();
+
+    f.group(GROUP, &parts);
+    // The amendment's optional `--name` renames the group: the label is authored layer state,
+    // so the rename declares its write, lands in the committed bytes and survives a reopen.
+    let op = "019a7bf0-0000-7000-8000-0000007100c9";
+    let renamed = f.ok(&f_args_edit(GROUP, &["--name", "G2"], &[("--op-id", op)]));
+    assert_eq!(text(&renamed, "outcome"), "bolt_group_committed");
+    let writes = entries(&renamed, "writes");
+    assert!(
+        writes.contains(&(GROUP.to_owned(), "label".to_owned())),
+        "{writes:?}"
+    );
+    let group = &f.groups()[0];
+    assert_eq!(text(group, "name"), "G2");
+
+    // A retry of the same operation replays; a different name under the same id is reuse:
+    // the label is part of the operation's content.
+    let again = f.ok(&f_args_edit(GROUP, &["--name", "G2"], &[("--op-id", op)]));
+    assert_eq!(text(&again, "outcome"), "bolt_group_replayed");
+    let other = f_args_edit(GROUP, &["--name", "G3"], &[("--op-id", op)]);
+    assert_eq!(f.rejected(&other), "OP_ID_REUSE");
+
+    // An edit that sends no `--name` keeps the stored label.
+    let moved = f.ok(&f_args_edit(GROUP, &["--point2", "700,250,0"], &[]));
+    assert_eq!(text(&moved, "outcome"), "bolt_group_committed");
+    assert_eq!(text(&f.groups()[0], "name"), "G2");
+
+    // A malformed label is refused without a revision.
+    let bad = f_args_edit(GROUP, &["--name", ""], &[]);
+    assert_eq!(f.rejected(&bad), "INVALID_ARGUMENT");
+}
+
 /// An `update-bolt-group` line for `id` with the given values.
 fn f_args_edit(id: &str, values: &[&str], op: &[(&str, &str)]) -> Vec<String> {
     let mut args = vec!["update-bolt-group", "--target", id];
