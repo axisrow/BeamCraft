@@ -34,6 +34,7 @@ steps ran and passed on this machine.
 | Numbering | `preview-numbering` + `approve-numbering`, 8 marks (7 parts + assembly) | Passed |
 | Schedules (I05) | `schedule-export` over the numbered head: CSV, group totals that keep unknown cells counted, and HTML reproduce byte for byte; an unknown attribute column stays visible and is reported; a kind filter narrows to one row | Passed |
 | Views/filters (real store) | `export-view` twice for one head: byte-identical bundles; a repeat export into an existing file is refused without overwriting | Passed |
+| Named views (V12) | `save-view` stores the storey plan (`xy` at the level offset), a grid-axis elevation, a level plan and an orbit view in the W01 camera prim layer beside the store, stamped with author, comment and the captured draft revision; `list-views`/`apply-view` leave the layer bytes byte-identical, a duplicate name and an unknown view refuse with the layer and the head intact, `apply-view` restores the exact camera across the publication round trip (the captured provenance still names the draft revision), and `remove-view` drops one view | Passed |
 | Filters (V14, real store) | `query-elements` typed rules over the frame, including an `all`/`any` combination and the `type` (kind) rule; a query never writes; a missing attribute value never satisfies `ne`; an unknown attribute refuses instead of matching silently | Passed |
 | Exact stored outputs, reopen | After `publish-workspace`: every part's volume and `mesh_digest` equal the draft-side values; `export-bom` + `--summary` reproduce byte for byte | Passed |
 | Published drawings (D03 fresh path) | `create-drawing` (primary view titled `COLUMN A` at 1:20), `publish-drawing`, `inspect-drawing` freshness `current` over the published head | Passed |
@@ -75,7 +76,7 @@ recorded open and stay open until they execute on real hardware.
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
 | Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, grids/levels, attributes, assembly/bolt/weld, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
-| View it (CLI) | `export-view` bundle rows above | Executed locally (macOS, Apple silicon) |
+| View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |
 | Take a schedule (CLI) | `schedule-export` row above: CSV, HTML, group totals, unknown column, kind filter | Executed locally (macOS, Apple silicon) |
