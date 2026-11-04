@@ -13,7 +13,7 @@
 //! happens once, on release. A drag that never leaves the grip (a confirming click) commits
 //! nothing. Corner treatments are not drawn or edited here; the corner editor is a later slice.
 
-use super::{App, workbench};
+use super::{App, field, workbench};
 use crate::command;
 use crate::edit::{ContourEdit, PlateContour, Ray, ndc_of, ray_through};
 use crate::theme::{BRAND, BRAND_LIGHT, TEAL};
@@ -24,6 +24,7 @@ use egui::Color32;
 use egui::{Pos2, Rect, Response, Stroke, Vec2};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use steel::model::command::CornerTreatment;
 
 /// A grip the pointer grabbed: the vertex or edge it belongs to and the in-plane point the
 /// drag currently names. The point is what the release commits.
@@ -53,6 +54,115 @@ enum Grip {
     Edge(usize),
 }
 
+/// What the corner editor authors on one vertex.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CornerMode {
+    /// No treatment: the corner is sharp again.
+    Sharp,
+    /// `chamfer:D1[,D2]`: the corner is replaced by a straight cut.
+    Chamfer,
+    /// `round:R`: the corner is replaced by a tangent arc.
+    Round,
+}
+
+/// The corner editor open on one vertex (V18 slice 2): the element it was opened on, the
+/// vertex, the chosen kind, the typed parameters and the reason Apply is currently refused.
+/// Prefilled from the corner's present treatment. The element id is part of the state: the
+/// commit always targets the current selection, so an editor that outlived its selection or an
+/// accepted edit that shifted the vertex indices would author on the wrong plate or vertex.
+#[derive(Debug, Clone, PartialEq)]
+struct CornerEditor {
+    /// The id of the selection the editor was opened on.
+    element: String,
+    /// The position of the vertex in the authored contour.
+    vertex: usize,
+    /// The kind the form edits.
+    mode: CornerMode,
+    /// The chamfer cut along the previous edge, as typed.
+    d1: String,
+    /// The chamfer cut along the next edge, as typed; empty means "same as the first".
+    d2: String,
+    /// The arc radius, as typed.
+    radius: String,
+    /// Why Apply is refused, shown under the fields.
+    error: Option<String>,
+}
+
+/// Opens the corner editor on `vertex` of the plate `element`, prefilled with the treatment
+/// the contour already authors there, if any.
+fn corner_editor(element: &str, contour: &PlateContour, vertex: usize) -> CornerEditor {
+    let (mode, d1, d2, radius) = match contour.corner_of(vertex) {
+        Some(CornerTreatment::Chamfer { d1_mm, d2_mm }) => (
+            CornerMode::Chamfer,
+            format!("{d1_mm:?}"),
+            if d1_mm != d2_mm {
+                format!("{d2_mm:?}")
+            } else {
+                String::new()
+            },
+            String::new(),
+        ),
+        Some(CornerTreatment::Round { radius_mm }) => (
+            CornerMode::Round,
+            String::new(),
+            String::new(),
+            format!("{radius_mm:?}"),
+        ),
+        None => (
+            CornerMode::Sharp,
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
+    };
+    CornerEditor {
+        element: element.to_owned(),
+        vertex,
+        mode,
+        d1,
+        d2,
+        radius,
+        error: None,
+    }
+}
+
+/// The treatment the editor's fields name, checked the way the CLI will check them: numbers
+/// first (`enter a number`), then positive and inside the coordinate cap. `None` is a sharp
+/// corner, which has nothing to check.
+fn editor_treatment(editor: &CornerEditor) -> Result<Option<CornerTreatment>, String> {
+    let number = |field: &str, text: &str| -> Result<f64, String> {
+        let value = text
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| format!("{field} is not a number"))?;
+        if !value.is_finite() || value <= 0.0 {
+            return Err(format!("{field} must be positive"));
+        }
+        if value > COORDINATE_CAP_MM {
+            return Err(format!("{field} exceeds the coordinate cap"));
+        }
+        Ok(value)
+    };
+    match editor.mode {
+        CornerMode::Sharp => Ok(None),
+        CornerMode::Chamfer => {
+            let d1 = number("D1", &editor.d1)?;
+            let d2 = if editor.d2.trim().is_empty() {
+                d1
+            } else {
+                number("D2", &editor.d2)?
+            };
+            Ok(Some(CornerTreatment::Chamfer {
+                d1_mm: d1,
+                d2_mm: d2,
+            }))
+        }
+        CornerMode::Round => Ok(Some(CornerTreatment::Round {
+            radius_mm: number("Radius", &editor.radius)?,
+        })),
+    }
+}
+
 /// A screen hit radius in points: a press within this distance of a grip takes the grip.
 const GRIP_RADIUS: f32 = 8.0;
 
@@ -60,13 +170,16 @@ const GRIP_RADIUS: f32 = 8.0;
 /// command.
 const PROMOTE_DISTANCE: f32 = 4.0;
 
-/// The state of the contour grips: the drag in progress and the commit in flight.
+/// The state of the contour grips: the drag in progress, the corner editor and the commit in
+/// flight.
 #[derive(Default)]
 pub(crate) struct Grips {
     /// The active grip drag, if any.
     drag: Option<Drag>,
     /// A press over a grip that has not yet been promoted to a drag.
     pending: Option<Pending>,
+    /// The corner editor open on one vertex, if any.
+    corner: Option<CornerEditor>,
     /// The contour edit running on a worker thread.
     job: Option<
         Receiver<(
@@ -262,11 +375,19 @@ pub(crate) fn paint(
         } else {
             4.0
         };
-        painter.rect_filled(
-            Rect::from_center_size(*pos, Vec2::splat(half * 2.0)),
-            1.0,
-            BRAND,
-        );
+        let rect = Rect::from_center_size(*pos, Vec2::splat(half * 2.0));
+        if contour.corner_of(*i).is_some() {
+            // A treated corner draws hollow: the authored vertex is editor-only, the evaluated
+            // body shows the chamfer or the arc itself.
+            painter.rect_stroke(
+                rect,
+                1.0,
+                Stroke::new(2.0, BRAND_LIGHT),
+                egui::StrokeKind::Outside,
+            );
+        } else {
+            painter.rect_filled(rect, 1.0, BRAND);
+        }
     }
 }
 
@@ -301,6 +422,7 @@ impl App {
         else {
             self.contour.drag = None;
             self.contour.pending = None;
+            self.contour.corner = None;
             return false;
         };
         let origin = self
@@ -311,6 +433,11 @@ impl App {
         let (esc, alt) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.modifiers.alt));
         let pointer = response.interact_pointer_pos();
         let (vertices, edges) = grips_screen(&contour, view, rect, origin);
+
+        // Esc also closes the corner editor; the pane keeps its click.
+        if esc {
+            self.contour.corner = None;
+        }
 
         // A live drag: steer it, finish it, or drop it on Esc.
         if let Some(drag) = self.contour.drag.clone() {
@@ -343,7 +470,8 @@ impl App {
             return true;
         }
 
-        // A press waiting to become a drag: promote on movement, drop on release or Esc.
+        // A press waiting to become a drag: promote on movement, and a confirming click on a
+        // vertex grip opens the corner editor, while one on an edge falls through.
         if let Some(pending) = self.contour.pending {
             if esc {
                 self.contour.pending = None;
@@ -365,6 +493,11 @@ impl App {
             }
             if !response.dragged_by(egui::PointerButton::Primary) {
                 self.contour.pending = None;
+                if let Grip::Vertex(i) = pending.grip
+                    && let Some(selected) = self.editor.selected()
+                {
+                    self.contour.corner = Some(corner_editor(&selected.id, &contour, i));
+                }
             }
             return false;
         }
@@ -419,6 +552,69 @@ impl App {
         }
     }
 
+    /// Draws the corner editor's window for the vertex whose grip was clicked (V18 slice 2).
+    /// The form shows the present treatment prefilled; Apply commits the same
+    /// `set-plate-corner` a user types, `sharp` included, and the window closes itself. The
+    /// fields are checked here first (numbers, positive, inside the cap); the CLI's own refusal
+    /// still reaches the status line if the kernel disagrees. The editor is bound to the
+    /// selection it was opened on: the commit targets the current selection, so a different
+    /// selection closes the editor instead of authoring on the wrong plate.
+    pub(crate) fn contour_editor_ui(&mut self, ctx: &egui::Context) {
+        let Some(mut editor) = self.contour.corner.clone() else {
+            return;
+        };
+        if self.editor.selected().map(|s| s.id.as_str()) != Some(editor.element.as_str()) {
+            self.contour.corner = None;
+            return;
+        }
+        let mut open = true;
+        let mut apply: Option<Option<CornerTreatment>> = None;
+        egui::Window::new(format!("Corner {}", editor.vertex))
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.radio_value(&mut editor.mode, CornerMode::Sharp, "sharp");
+                    ui.radio_value(&mut editor.mode, CornerMode::Chamfer, "chamfer");
+                    ui.radio_value(&mut editor.mode, CornerMode::Round, "round");
+                });
+                match editor.mode {
+                    CornerMode::Sharp => {
+                        ui.label("No treatment: the corner keeps its authored point.");
+                    }
+                    CornerMode::Chamfer => {
+                        field(ui, "D1", &mut editor.d1, 64.0);
+                        field(ui, "D2", &mut editor.d2, 64.0);
+                        ui.label("D2 empty cuts the same distance on both edges.");
+                    }
+                    CornerMode::Round => {
+                        field(ui, "R", &mut editor.radius, 64.0);
+                    }
+                }
+                editor.error = editor_treatment(&editor).err();
+                if let Some(message) = &editor.error {
+                    ui.colored_label(egui::Color32::RED, message);
+                }
+                if ui
+                    .add_enabled(editor.error.is_none(), egui::Button::new("Apply"))
+                    .clicked()
+                {
+                    apply = editor_treatment(&editor).ok();
+                }
+            });
+        if !open {
+            self.contour.corner = None;
+            return;
+        }
+        if let Some(treatment) = apply {
+            let vertex = editor.vertex;
+            self.contour.corner = None;
+            self.start_contour_commit(ContourEdit::SetCorner { vertex, treatment });
+            return;
+        }
+        self.contour.corner = Some(editor);
+    }
+
     /// Reads a finished contour edit: the accepted revision reloads the scene and the selection;
     /// a refusal reaches the status line with the engine's code, and an unknown outcome still
     /// reloads, because the command may have committed before it was stopped.
@@ -447,6 +643,9 @@ impl App {
             output.and_then(|o| crate::edit::parse_contour_edited(&edit, o.code, &o.stdout));
         match parsed {
             Ok(_) => {
+                // An accepted edit may have shifted the vertex indices (an insert or a
+                // delete): an open corner editor would name the wrong vertex after this.
+                self.contour.corner = None;
                 self.invalidate_select();
                 self.reload();
                 self.edit_note = Some(Ok(format!("{}.", edit.done())));
@@ -455,6 +654,9 @@ impl App {
             }
             Err(e) => {
                 if e.code == "OUTCOME_UNKNOWN" {
+                    // The command may have committed before it was stopped: the same index
+                    // hazard as an accepted edit.
+                    self.contour.corner = None;
                     self.invalidate_select();
                     self.reload();
                     self.refresh_selection();
@@ -481,6 +683,7 @@ mod tests {
                 [100.0, 100.0, 0.0],
                 [0.0, 100.0, 0.0],
             ],
+            corners: Vec::new(),
             translation_mm: [10.0, 20.0, 30.0],
             orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
         }
@@ -626,6 +829,129 @@ mod tests {
         assert_eq!(
             delete.args(store, "id-1")[..2],
             ["delete-plate-vertex", "--store"]
+        );
+        let sharp = ContourEdit::SetCorner {
+            vertex: 3,
+            treatment: None,
+        };
+        let args = sharp.args(store, "id-1");
+        assert_eq!(args.first(), Some(&"set-plate-corner".to_owned()));
+        assert_eq!(args.last(), Some(&"sharp".to_owned()));
+        let round = ContourEdit::SetCorner {
+            vertex: 0,
+            treatment: Some(CornerTreatment::Round { radius_mm: 25.0 }),
+        };
+        assert_eq!(
+            round.args(store, "id-1").last(),
+            Some(&"round:25.0".to_owned())
+        );
+        let chamfer = ContourEdit::SetCorner {
+            vertex: 0,
+            treatment: Some(CornerTreatment::Chamfer {
+                d1_mm: 100.0,
+                d2_mm: 50.0,
+            }),
+        };
+        assert_eq!(
+            chamfer.args(store, "id-1").last(),
+            Some(&"chamfer:100.0,50.0".to_owned())
+        );
+        let symmetric = ContourEdit::SetCorner {
+            vertex: 0,
+            treatment: Some(CornerTreatment::Chamfer {
+                d1_mm: 100.0,
+                d2_mm: 100.0,
+            }),
+        };
+        assert_eq!(
+            symmetric.args(store, "id-1").last(),
+            Some(&"chamfer:100.0".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_editor_opens_prefilled_from_the_present_treatment() {
+        let mut contour = square();
+        contour.corners = vec![steel::model::command::PlateCorner {
+            vertex: 1,
+            treatment: CornerTreatment::Chamfer {
+                d1_mm: 100.0,
+                d2_mm: 100.0,
+            },
+        }];
+        let sharp = corner_editor("plate-a", &contour, 0);
+        assert_eq!(sharp.mode, CornerMode::Sharp);
+        assert_eq!(
+            sharp.element, "plate-a",
+            "the editor is bound to the selection"
+        );
+        let chamfer = corner_editor("plate-a", &contour, 1);
+        assert_eq!(chamfer.mode, CornerMode::Chamfer);
+        assert_eq!(chamfer.d1, "100.0");
+        assert_eq!(chamfer.d2, "", "a symmetric chamfer leaves D2 empty");
+        // A vertex the contour does not name is sharp, not an error.
+        assert_eq!(contour.corner_of(2), None);
+    }
+
+    #[test]
+    fn apply_maps_the_fields_to_the_treatment_or_refuses() {
+        let chamfer = CornerEditor {
+            element: "plate-a".into(),
+            vertex: 0,
+            mode: CornerMode::Chamfer,
+            d1: "80".into(),
+            d2: String::new(),
+            radius: String::new(),
+            error: None,
+        };
+        assert_eq!(
+            editor_treatment(&chamfer).unwrap(),
+            Some(CornerTreatment::Chamfer {
+                d1_mm: 80.0,
+                d2_mm: 80.0
+            }),
+            "an empty D2 cuts the same distance on both edges"
+        );
+        let round = CornerEditor {
+            element: "plate-a".into(),
+            vertex: 0,
+            mode: CornerMode::Round,
+            d1: String::new(),
+            d2: String::new(),
+            radius: "25.5".into(),
+            error: None,
+        };
+        assert_eq!(
+            editor_treatment(&round).unwrap(),
+            Some(CornerTreatment::Round { radius_mm: 25.5 })
+        );
+        let sharp = CornerEditor {
+            element: "plate-a".into(),
+            vertex: 0,
+            mode: CornerMode::Sharp,
+            d1: String::new(),
+            d2: String::new(),
+            radius: String::new(),
+            error: None,
+        };
+        assert_eq!(editor_treatment(&sharp).unwrap(), None);
+        let bad_number = CornerEditor {
+            d1: "wide".into(),
+            ..chamfer.clone()
+        };
+        assert!(
+            editor_treatment(&bad_number)
+                .unwrap_err()
+                .contains("not a number")
+        );
+        let bad_value = CornerEditor {
+            d1: "0".into(),
+            ..chamfer.clone()
+        };
+        assert!(
+            editor_treatment(&bad_value)
+                .unwrap_err()
+                .contains("positive")
         );
     }
 }

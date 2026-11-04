@@ -806,8 +806,10 @@ impl App {
         let mut picked = None;
         let mut picked_grid = None;
         // The contour grips (V18) see the pointer before any click: a grip drag is not a
-        // selection or a camera move, and its release commits one contour edit.
+        // selection or a camera move, and its release commits one contour edit. The corner
+        // editor's window belongs to the active pane too.
         let grip_hold = !swallow && self.contour_input(ui, response, view);
+        self.contour_editor_ui(ui.ctx());
         let finished_creation = !grip_hold && self.finish_creation_gesture(response, view);
         // A closure gesture consumes the click before it can append another point.
         if !swallow

@@ -23,6 +23,7 @@ use beamcraft_engine::solid::rotate_vector;
 use beamcraft_json::Json;
 use beamcraft_model::limits::COORDINATE_CAP_MM;
 use std::path::Path;
+use steel::model::command::{CornerTreatment, PlateCorner};
 
 /// A world-space ray in millimetres.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -179,10 +180,23 @@ pub fn ground_point(ray: &Ray) -> Option<[f64; 3]> {
 pub struct PlateContour {
     /// The authored contour points, plate-local millimetres.
     pub points: Vec<[f64; 3]>,
+    /// The sparse corner treatments of the contour (A12.2), by vertex position: what the corner
+    /// editor shows and what a move, insert or delete carries over.
+    pub corners: Vec<PlateCorner>,
     /// The placement translation in millimetres.
     pub translation_mm: [f64; 3],
     /// The placement orientation, `xyzw`.
     pub orientation_xyzw: [f64; 4],
+}
+
+impl PlateContour {
+    /// The treatment authored on `vertex`, if any.
+    pub fn corner_of(&self, vertex: usize) -> Option<CornerTreatment> {
+        self.corners
+            .iter()
+            .find(|corner| corner.vertex == vertex)
+            .map(|corner| corner.treatment)
+    }
 }
 
 impl PlateContour {
@@ -338,8 +352,42 @@ pub(crate) fn plate_contour(
     let [qx, qy, qz, qw] = orientation else {
         return Err(unreadable());
     };
+    let Ok(replies) = element.get("corners").and_then(Json::array) else {
+        return Err(unreadable());
+    };
+    let mut corners = Vec::new();
+    for record in replies {
+        let vertex = record
+            .get("vertex")
+            .and_then(Json::unsigned)
+            .map_err(|_| unreadable())?;
+        let vertex = usize::try_from(vertex).map_err(|_| unreadable())?;
+        let kind = text(record, "corner").ok_or_else(unreadable)?;
+        let values = record
+            .get("values_mm")
+            .and_then(Json::array)
+            .map_err(|_| unreadable())?;
+        let numbers = values
+            .iter()
+            .map(&value)
+            .collect::<Result<Vec<_>, ToolError>>()?;
+        let treatment = match (kind.as_str(), numbers.as_slice()) {
+            ("chamfer", [d1]) => CornerTreatment::Chamfer {
+                d1_mm: *d1,
+                d2_mm: *d1,
+            },
+            ("chamfer", [d1, d2]) => CornerTreatment::Chamfer {
+                d1_mm: *d1,
+                d2_mm: *d2,
+            },
+            ("round", [radius]) => CornerTreatment::Round { radius_mm: *radius },
+            _ => return Err(unreadable()),
+        };
+        corners.push(PlateCorner { vertex, treatment });
+    }
     Ok(Some(PlateContour {
         points: contour,
+        corners,
         translation_mm,
         orientation_xyzw: [value(qx)?, value(qy)?, value(qz)?, value(qw)?],
     }))
@@ -795,6 +843,13 @@ pub enum ContourEdit {
         /// The position of the vertex in the authored contour.
         vertex: usize,
     },
+    /// `set-plate-corner`: vertex `vertex` gets `treatment`; `None` makes it sharp again.
+    SetCorner {
+        /// The position of the vertex in the authored contour.
+        vertex: usize,
+        /// The treatment to author, or `None` for a sharp corner.
+        treatment: Option<CornerTreatment>,
+    },
 }
 
 impl ContourEdit {
@@ -804,6 +859,23 @@ impl ContourEdit {
             Self::MoveVertex { .. } => "Moved the contour vertex",
             Self::InsertVertex { .. } => "Inserted a contour vertex",
             Self::DeleteVertex { .. } => "Deleted the contour vertex",
+            Self::SetCorner { .. } => "Set the corner treatment",
+        }
+    }
+
+    /// The `--corner` text of a treatment, exactly as a user types it: `sharp` for `None`, then
+    /// the CLI's `chamfer:D1[,D2]` and `round:R`.
+    pub fn corner_text(treatment: Option<&CornerTreatment>) -> String {
+        match treatment {
+            None => "sharp".to_owned(),
+            Some(CornerTreatment::Chamfer { d1_mm, d2_mm }) => {
+                if d1_mm == d2_mm {
+                    format!("chamfer:{d1_mm:?}")
+                } else {
+                    format!("chamfer:{d1_mm:?},{d2_mm:?}")
+                }
+            }
+            Some(CornerTreatment::Round { radius_mm }) => format!("round:{radius_mm:?}"),
         }
     }
 
@@ -833,6 +905,15 @@ impl ContourEdit {
             Self::DeleteVertex { vertex } => (
                 "delete-plate-vertex",
                 vec!["--vertex".to_owned(), vertex.to_string()],
+            ),
+            Self::SetCorner { vertex, treatment } => (
+                "set-plate-corner",
+                vec![
+                    "--vertex".to_owned(),
+                    vertex.to_string(),
+                    "--corner".to_owned(),
+                    Self::corner_text(treatment.as_ref()),
+                ],
             ),
         };
         let mut args = vec![
@@ -868,6 +949,7 @@ pub fn parse_contour_edited(
         ContourEdit::MoveVertex { .. } => "plate_vertex_moved",
         ContourEdit::InsertVertex { .. } => "plate_vertex_inserted",
         ContourEdit::DeleteVertex { .. } => "plate_vertex_deleted",
+        ContourEdit::SetCorner { .. } => "plate_corner_set",
     };
     let reply = match decode(stdout) {
         Ok(reply) => reply,

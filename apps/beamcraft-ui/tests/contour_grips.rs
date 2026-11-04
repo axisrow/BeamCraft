@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 // Contributor-original synthetic plates, MPL-2.0.
 
-//! V18 slice 1 end to end: the contour grips' commit path — the argument list the window builds
-//! for a released drag and its reply parsing, against the real `beamcraft` binary — saves
-//! exactly what the same command typed by hand saves (same contour, same corners, same mesh
-//! digest, same world bounds), one revision per drag; a refusal (the three-vertex delete)
-//! reaches the window with the engine's code and publishes nothing; the selection of a plate
-//! carries its authored contour and the placement a drag maps through; a member carries none.
-//! The CLI binary must exist next to this package's binary; missing prerequisites fail
-//! acceptance.
+//! V18 slices 1 and 2 end to end: the contour grips' commit path — the argument list the window
+//! builds for a released drag or an applied corner form and its reply parsing, against the real
+//! `beamcraft` binary — saves exactly what the same command typed by hand saves (same contour,
+//! same corners, same mesh digest, same world bounds), one revision per action; a refusal (the
+//! three-vertex delete, a non-positive treatment) reaches the window with the engine's code and
+//! publishes nothing; the selection of a plate carries its authored contour, its corner
+//! treatments and the placement a drag maps through; a member carries no contour. The CLI
+//! binary must exist next to this package's binary; missing prerequisites fail acceptance.
 
 #![allow(
     clippy::unwrap_used,
@@ -25,6 +25,7 @@ use beamcraft_ui::stats::Stats;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use steel::model::command::CornerTreatment;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -429,4 +430,112 @@ fn a_rotated_plate_still_maps_its_drag_onto_its_own_plane() {
             "the drag of the rotated plate stays in its own plane"
         );
     }
+}
+
+#[test]
+fn an_applied_corner_matches_the_hand_typed_command_and_the_selection_sees_it() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    twin_plates(&cli, &stores);
+    let edit = ContourEdit::SetCorner {
+        vertex: 0,
+        treatment: Some(CornerTreatment::Chamfer {
+            d1_mm: 100.0,
+            d2_mm: 50.0,
+        }),
+    };
+    commit_as_window(&cli, &stores.ui(), &edit).expect("the applied treatment commits");
+    let (code, _) = by_hand(
+        &cli,
+        &[
+            "set-plate-corner",
+            "--store",
+            s(&stores.hand()),
+            "--id",
+            ID,
+            "--vertex",
+            "0",
+            "--corner",
+            "chamfer:100,50",
+        ],
+    );
+    assert_eq!(code, 0);
+    let (_, corners, _, _) = plate_state(&cli, &stores.ui());
+    assert!(
+        corners.contains("chamfer"),
+        "the applied treatment is in the saved corners: {corners}"
+    );
+    assert_eq!(
+        plate_state(&cli, &stores.ui()),
+        plate_state(&cli, &stores.hand()),
+        "the applied form and the hand-typed command save the same result"
+    );
+    // The selection carries the treatment, prefilled for the next edit of that corner.
+    let contour = command::element_info(&cli, &stores.ui(), ID, &Stats::default())
+        .unwrap()
+        .contour
+        .expect("the plate still carries its contour");
+    assert_eq!(
+        contour.corner_of(0),
+        Some(CornerTreatment::Chamfer {
+            d1_mm: 100.0,
+            d2_mm: 50.0
+        }),
+        "the reply's corners round-trip into the editor's prefill"
+    );
+
+    // Sharp clears the treatment again, the same way by both paths.
+    let sharp = ContourEdit::SetCorner {
+        vertex: 0,
+        treatment: None,
+    };
+    commit_as_window(&cli, &stores.ui(), &sharp).expect("the sharp commit clears");
+    let (code, _) = by_hand(
+        &cli,
+        &[
+            "set-plate-corner",
+            "--store",
+            s(&stores.hand()),
+            "--id",
+            ID,
+            "--vertex",
+            "0",
+            "--corner",
+            "sharp",
+        ],
+    );
+    assert_eq!(code, 0);
+    let (_, corners, _, _) = plate_state(&cli, &stores.ui());
+    assert!(
+        corners.contains("[]"),
+        "the corner is sharp again: {corners}"
+    );
+    assert_eq!(
+        plate_state(&cli, &stores.ui()),
+        plate_state(&cli, &stores.hand()),
+        "the clear keeps the twins equal"
+    );
+}
+
+#[test]
+fn a_non_positive_treatment_refuses_and_publishes_nothing() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    twin_plates(&cli, &stores);
+    let before = head(&cli, &stores.ui());
+    let edit = ContourEdit::SetCorner {
+        vertex: 1,
+        treatment: Some(CornerTreatment::Round { radius_mm: 0.0 }),
+    };
+    let error = commit_as_window(&cli, &stores.ui(), &edit)
+        .expect_err("the CLI refuses a non-positive treatment");
+    assert!(
+        !error.message.is_empty(),
+        "the refusal carries the engine's message"
+    );
+    assert_eq!(
+        head(&cli, &stores.ui()),
+        before,
+        "a refused form publishes no revision"
+    );
 }
