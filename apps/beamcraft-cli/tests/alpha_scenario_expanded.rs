@@ -57,6 +57,7 @@ impl Story {
         fs::create_dir(&root).unwrap();
         fs::create_dir(root.join("published")).unwrap();
         fs::create_dir(root.join("curved-published")).unwrap();
+        fs::create_dir(root.join("plates-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -2281,4 +2282,211 @@ fn curved_and_poly_members_run_their_own_published_store() {
         close(found.1, volume);
         assert_eq!(found.2, digest, "{label} mesh must survive the round trip");
     }
+}
+
+/// The bent and lofted plate story (A10/A11): its own published store, so the numbered
+/// frame keeps the counts the manual runbook records, and its own test for the per-test
+/// budget. The lofted plate is the certified ruled loft with the exact analytic volume;
+/// the fold keeps the blank's `t x area` volume within the certified bound and the
+/// unfold stays the authored contour.
+#[test]
+fn bent_and_lofted_plates_run_their_own_published_store() {
+    let s = Story::new();
+    // The project's steel seeds the store head; the workspace forks from it.
+    s.ok(
+        "plates-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "plates-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("plates-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+
+    // The lofted plate between two translated contours: the oblique prism of the square,
+    // with the exact analytic volume in the reply and in the stored quantities.
+    let lofted = s.ok(
+        "plates-draft",
+        "create-lofted-plate",
+        &[
+            "--name",
+            "Q01 lofted transition",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000aa90",
+            "--start",
+            "0,0,0;200,0,0;200,100,0;0,100,0",
+            "--end",
+            "0,0,50;200,0,50;200,100,50;0,100,50",
+        ],
+    );
+    assert_eq!(text(&lofted, "outcome"), "lofted_plate_created");
+    let lofted_id = text(at(&lofted, &["plate"]), "id");
+    assert!(
+        (at(&lofted, &["geometry", "volume_mm3"]).float().unwrap() - 1_000_000.0).abs() < 1e-6,
+        "the lofted oblique prism volume"
+    );
+    let stored_lofts = s.ok("plates-draft", "inspect-lofted-plates", &[]);
+    assert_eq!(text(&stored_lofts, "outcome"), "lofted_plates");
+    let lofts = at(&stored_lofts, &["plates"]).array().unwrap();
+    assert_eq!(lofts.len(), 1);
+    assert_eq!(text(&lofts[0], "id"), lofted_id);
+    assert_eq!(text(&lofts[0], "volume_status"), "current");
+    assert!(
+        (at(&lofts[0], &["volume_mm3"]).float().unwrap() - 1_000_000.0).abs() < 1e-6,
+        "the stored lofted quantity"
+    );
+
+    // The folded plate: one right-angle fold on radius 8 keeps the volume at the blank's
+    // t x area within the certified bound, the outline becomes the unfold contour, and
+    // the bend record carries its parameters.
+    let flat = s.ok(
+        "plates-draft",
+        "create-plate",
+        &[
+            "--width",
+            "1000",
+            "--length",
+            "2000",
+            "--thickness",
+            "2",
+            "--name",
+            "Q01 folded bracket",
+        ],
+    );
+    let flat_id = text(at(&flat, &["plate"]), "element_id");
+    let fold_args = [
+        "--id",
+        flat_id.as_str(),
+        "--operation-id",
+        "019a7bf0-0000-7000-8000-00000000aa91",
+        "--op-id",
+        "019a7bf0-0000-7000-8000-00000000aa92",
+        "--kind",
+        "fold",
+        "--point-a",
+        "0,1000,0",
+        "--point-b",
+        "1000,1000,0",
+        "--radius",
+        "8",
+        "--angle-rad",
+        "1.5707963267948966",
+    ];
+    let bent = s.ok("plates-draft", "bend-plate", &fold_args);
+    assert_eq!(text(&bent, "outcome"), "bend_applied");
+    let inspection = s.ok("plates-draft", "inspect-elements", &[]);
+    let bent_parts = parts(&inspection);
+    assert_eq!(
+        bent_parts.len(),
+        1,
+        "the loft lists separately from the plates"
+    );
+    let bent_found = bent_parts
+        .iter()
+        .find(|(element, _, _)| element == flat_id.as_str())
+        .expect("the folded plate is present");
+    let bent_volume = bent_found.1;
+    assert!(
+        (bent_volume - 4_000_000.0).abs() <= 8_000.0,
+        "bent volume {bent_volume} past the fold bound"
+    );
+    let bent_digest = bent_found.2.clone();
+    let folded_entry = at(&inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|p| text(p, "element_id") == flat_id)
+        .expect("the folded plate entry is present");
+    assert_eq!(text(folded_entry, "outline"), "contour");
+    let bends = at(folded_entry, &["bends"]).array().unwrap();
+    assert_eq!(bends.len(), 1);
+    assert_eq!(text(&bends[0], "bend"), "fold");
+
+    let plates_head = s.head("plates-draft");
+    let replay = s.ok("plates-draft", "bend-plate", &fold_args);
+    assert_eq!(text(&replay, "outcome"), "bend_replayed");
+    assert_eq!(
+        s.head("plates-draft"),
+        plates_head,
+        "the replay writes nothing"
+    );
+    let overlapping = s.run(
+        "plates-draft",
+        "bend-plate",
+        &[
+            "--id",
+            flat_id.as_str(),
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000aa93",
+            "--kind",
+            "fold",
+            "--point-a",
+            "0,1001,0",
+            "--point-b",
+            "1000,1001,0",
+            "--radius",
+            "8",
+            "--angle-rad",
+            "1.5707963267948966",
+        ],
+        2,
+    );
+    assert_eq!(text(&overlapping, "outcome"), "rejected");
+    assert_eq!(s.head("plates-draft"), plates_head);
+
+    // The bend is one undo unit: the fold rolls back to the exact flat blank and the
+    // redo restores the bent volume.
+    let undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("plates-draft")]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    let unfolded = parts(&s.ok("plates-draft", "inspect-elements", &[]));
+    close(volume_of(&unfolded, flat_id.as_str()), 4_000_000.0);
+    let redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("plates-draft")]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+
+    let plates_published = s.ok(
+        "plates-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("plates-draft")],
+    );
+    assert_eq!(text(&plates_published, "outcome"), "workspace_published");
+    let reopened_plates = parts(&s.ok("plates-published", "inspect-elements", &[]));
+    assert_eq!(reopened_plates.len(), 1);
+    let folded_back = reopened_plates
+        .iter()
+        .find(|(other, _, _)| other == flat_id.as_str())
+        .expect("the folded plate is present");
+    close(folded_back.1, bent_volume);
+    assert_eq!(
+        folded_back.2, bent_digest,
+        "folded mesh must survive the round trip"
+    );
+    let reopened_lofts = s.ok("plates-published", "inspect-lofted-plates", &[]);
+    assert_eq!(text(&reopened_lofts, "outcome"), "lofted_plates");
+    let reopened_loft_entries = at(&reopened_lofts, &["plates"]).array().unwrap();
+    assert_eq!(reopened_loft_entries.len(), 1);
+    assert_eq!(text(&reopened_loft_entries[0], "id"), lofted_id);
+    assert_eq!(text(&reopened_loft_entries[0], "volume_status"), "current");
+    assert!(
+        (at(&reopened_loft_entries[0], &["volume_mm3"])
+            .float()
+            .unwrap()
+            - 1_000_000.0)
+            .abs()
+            < 1e-6,
+        "the lofted quantity must survive the round trip"
+    );
+    assert!(
+        at(&reopened_loft_entries[0], &["triangles"])
+            .unsigned()
+            .unwrap()
+            > 0
+    );
 }
