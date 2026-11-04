@@ -4,7 +4,7 @@ Date: 2026-10-16. Status: **planned acceptance requirements; no wrapper implemen
 The owner selected variant C (pure-Rust `openusd` behind the BeamCraft wrapper, `docs/plan/decisions.md`).
 These duties close gaps found by the N01 spike (its report is removed).
 They do not amend F04/F06 or admit dependencies. The engine runs in the calling process (owner
-decision of 2026-10-20, U17). U01-U04 implement the duties; N03 supplies platform and available-oracle evidence.
+decision of 2026-10-20, U17). U01-U04 implement the duties; N03 supplies platform and available-oracle evidence (delivered 2026-11-05: [the differential report](usd-sdk-differential.md), acceptance pending owner review).
 
 ## Boundary and evidence rule
 

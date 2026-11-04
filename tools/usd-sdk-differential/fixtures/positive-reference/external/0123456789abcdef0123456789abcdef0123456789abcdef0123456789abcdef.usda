@@ -1,0 +1,21 @@
+#usda 1.0
+(
+    defaultPrim = "Site"
+    metersPerUnit = 1
+    upAxis = "Y"
+)
+
+def Xform "Site"
+{
+    def Xform "Block"
+    {
+        custom string note = "declared by the source"
+
+        def Mesh "Body"
+        {
+            point3f[] points = [(0, 0, 0), (2, 0, 0), (2, 1, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [4]
+            int[] faceVertexIndices = [0, 1, 2, 3]
+        }
+    }
+}

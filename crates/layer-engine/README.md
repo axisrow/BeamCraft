@@ -38,7 +38,10 @@ aggregate heap/work proof. The engine runs in the calling process (owner decisio
 by SHA-256 before they are parsed, and foreign files are read under these budgets. See [the U01 placement/containment review](../../docs/design/u01-placement-containment.md).
 
 Tests use contributor-original synthetic USDA and binary output of those fixtures.
-Same-crate binary generation is not independent-reader evidence; U04 and N03 remain open.
+Same-crate binary generation is not independent-reader evidence; U04 remains open, and the N03
+platform/SDK-oracle evidence is the differential report
+([docs/design/usd-sdk-differential.md](../../docs/design/usd-sdk-differential.md)); its acceptance
+stays with the issue.
 
 ## Codeless authored and derived layers
 
@@ -117,7 +120,8 @@ wrapper bounds, not a proof of aggregate upstream allocation or preemptive cance
 U01 admission; schema markers/known types; UUID/path/required inputs; pinned definition
 links; scalar caps, scaled length minima and rigid pose; and standard mesh buffer structure.
 Newer element schemas/kinds/modes remain inert and cannot be edited. This checker is separate
-from external `usdchecker` (**not run**, no offline executable found), the F10 module-rule
+from external `usdchecker` (the official-SDK differential, first run 2026-11-05:
+[docs/design/usd-sdk-differential.md](../../docs/design/usd-sdk-differential.md)), the F10 module-rule
 catalogue and the F06 engineering validator. It does not certify contour topology,
 planarity, support, mesh solidness, exact quantities, F06 result freshness or signatures.
 Those remain engine prerequisites. See [the U02 validation report](../../docs/design/u02-validation.md).

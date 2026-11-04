@@ -1,0 +1,18 @@
+[
+  {
+    "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+    "name": "Synthetic Plate",
+    "thickness": 10,
+    "contour": [[0, 0, 0], [100, 0, 0], [100, 200, 0], [0, 200, 0]],
+    "translation": [10, 20, 30],
+    "bounds_min": [10, 20, 30],
+    "bounds_max": [110, 220, 40],
+    "expected_volume_mm3": 200000,
+    "cli_volume_mm3": 200000,
+    "material": {
+      "digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      "density": 7850
+    },
+    "cli_mass_kg": 1.57
+  }
+]
