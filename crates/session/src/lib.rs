@@ -14,6 +14,8 @@
 //!   `batch-commit` accumulate prepared layers here and commit nothing until the batch commits.
 //! - [`foreign`]: one read-only, self-contained USD layer from outside the project, opened under
 //!   fixed budgets (a library or an environment file).
+//! - [`views_layer`]: the saved views of one store as the W01 camera-prim views layer — the
+//!   session file on disk the CLI and the window both read and write.
 //!
 //! The crate is discipline-agnostic: nothing here knows about steel, concrete or pipes. It sits
 //! one layer above `beamcraft-host`, which stays disk-only, and both applications call it
@@ -27,5 +29,6 @@ pub mod project;
 pub mod recent;
 mod refusal;
 pub mod settings;
+pub mod views_layer;
 
 pub use refusal::Refusal;

@@ -6,27 +6,25 @@
 //! Mapping and format only — every admission rule lives in the engine's view book and in the
 //! layer profile (`beamcraft_layer_engine::authored::views`).
 
+use crate::Refusal;
+use crate::pipeline::{control, digest_of, open_request};
 use beamcraft_engine::solid::rotate_vector;
 use beamcraft_engine::views::{ModelView, Projection, ViewBook, ViewProvenance, WorkArea};
 use beamcraft_engine::work_plane::WorkPlane;
 use beamcraft_engine::{ElementKind, KindFilter, RenderMode};
 use beamcraft_layer_engine::authored::views as layer;
 use beamcraft_layer_engine::authored::views::{CameraProjection, SavedView, ViewStamp, ViewsLayer};
-use beamcraft_layer_engine::{
-    Asset, Budgets, Cancellation, Control, Identity, OpenRequest, Prim, Profile, Reader,
-};
+use beamcraft_layer_engine::{Asset, Prim, Reader};
 use beamcraft_model::command::CommandError;
-use beamcraft_model::digest::{ContentDigest, Sha256};
 use beamcraft_model::error::ErrorCode;
 use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
 
 /// The bytes a views layer starts with; anything else is the legacy JSON sidecar.
 const LAYER_MAGIC: &[u8] = b"#usda";
 
-/// The virtual single-layer manifest the reader sees; a sidecar is host-owned content, so the
-/// host builds and verifies the commitment itself. The identities are fixed sentinels: the
-/// layer is standalone, so no store identity enters it.
+/// The virtual single-layer manifest the reader sees; a sidecar is the session's own content,
+/// so the session builds and verifies the commitment itself. The identities are fixed
+/// sentinels: the layer is standalone, so no store identity enters it.
 const LAYER_NAME: &str = "views.usda";
 const SIDE_CAR_PROJECT: &str = "0199e7a0-0000-7000-8000-0000000000fe";
 const SIDE_CAR_WORKSPACE: &str = "0199e7a0-0000-7000-8000-0000000000ff";
@@ -39,16 +37,8 @@ fn from_layer(field: &'static str) -> impl Fn(beamcraft_layer_engine::Diagnostic
     move |error| CommandError::new(error.code, field, error.message)
 }
 
-fn digest(bytes: &[u8]) -> Result<ContentDigest, CommandError> {
-    Sha256::digest(bytes)
-        .map_err(|_| refused(ErrorCode::LimitExceeded, "the views layer is too large"))
-}
-
-fn control() -> Control {
-    Control {
-        cancellation: Cancellation::default(),
-        deadline: Instant::now() + Duration::from_secs(90),
-    }
+fn from_pipeline(field: &'static str) -> impl Fn(Refusal) -> CommandError {
+    move |error| CommandError::new(error.code, field, error.message)
 }
 
 /// Whether the bytes are a views layer (`true`) or a legacy JSON sidecar (`false`).
@@ -59,26 +49,23 @@ pub fn looks_like_layer(bytes: &[u8]) -> bool {
 /// The composed prims of one views layer, read under the reader's budgets and manifest
 /// commitment.
 fn prims(bytes: &[u8]) -> Result<Vec<Prim>, CommandError> {
-    let layer_digest = digest(bytes)?;
-    let mut request = OpenRequest {
-        identity: Identity {
-            project: SIDE_CAR_PROJECT.into(),
-            workspace: SIDE_CAR_WORKSPACE.into(),
-            revision: layer_digest,
-            generation: 0,
-        },
-        root: LAYER_NAME.into(),
-        owned_layers: [LAYER_NAME.to_owned()].into(),
-        assets: vec![Asset {
-            name: LAYER_NAME.into(),
-            digest: layer_digest,
-            bytes: bytes.to_vec(),
-        }],
-        manifest: ContentDigest::from_bytes([0u8; 32]),
-        backend: beamcraft_layer_engine::BACKEND,
-        profile: Profile::StaticLocal,
-        budgets: Budgets::default(),
+    let layer_digest = digest_of(bytes).map_err(from_pipeline("views.layer"))?;
+    let asset = Asset {
+        name: LAYER_NAME.into(),
+        digest: layer_digest,
+        bytes: bytes.to_vec(),
     };
+    // The sidecar is the session's own content: the single layer is owned, so its prims compose.
+    let mut request = open_request(
+        LAYER_NAME,
+        SIDE_CAR_PROJECT,
+        SIDE_CAR_WORKSPACE,
+        layer_digest,
+        0,
+        vec![asset],
+        &BTreeSet::new(),
+    )
+    .map_err(from_pipeline("views.layer"))?;
     request.manifest = request
         .manifest_digest()
         .map_err(from_layer("views.layer"))?;

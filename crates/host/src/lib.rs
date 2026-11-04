@@ -14,6 +14,3 @@ pub mod output;
 pub mod revision;
 pub mod storage;
 pub mod views;
-/// The W01 views layer on disk: the camera-prim form of the view book the CLI and the window
-/// persist beside a store.
-pub mod views_layer;

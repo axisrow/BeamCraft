@@ -48,7 +48,7 @@ can move. The W01 provenance rides on the prim as `bim:view:author`, `bim:view:s
 the record above.
 
 The restore path: the session file of a store is now the views layer itself
-(`beamcraft_host::views_layer` maps the book to the layer and back, through the reader's
+(`beamcraft_session::views_layer` maps the book to the layer and back, through the reader's
 manifest commitment). The V12 commands keep their surface: `--file` stays the caller-chosen
 path, a save writes the layer form, and a legacy JSON sidecar (versions 1 and 2) still
 loads until the next save rewrites it in the layer form. The window's sidecar is the

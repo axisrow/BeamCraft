@@ -19,7 +19,6 @@ path = "tests/host.rs"
 beamcraft-model.workspace = true
 beamcraft-json.workspace = true
 beamcraft-engine = { path = "../engine", version = "0.0.1" }
-beamcraft-layer-engine = { path = "../layer-engine", version = "0.0.1" }
 
 [lints]
 workspace = true

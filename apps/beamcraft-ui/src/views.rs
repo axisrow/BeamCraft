@@ -56,8 +56,8 @@ fn load_bytes(bytes: &[u8]) -> Result<ViewBook, String> {
     if bytes.len() > 1024 * 1024 {
         return Err("the saved views file exceeds 1 MiB".to_owned());
     }
-    if beamcraft_host::views_layer::looks_like_layer(bytes) {
-        return beamcraft_host::views_layer::book_from_layer(bytes)
+    if session::views_layer::looks_like_layer(bytes) {
+        return session::views_layer::book_from_layer(bytes)
             .map_err(|e| format!("the saved views were refused: {}", e.message));
     }
     let json = beamcraft_json::decode(bytes, &Limits::DEFAULT)
@@ -74,7 +74,7 @@ pub fn persist(store: &Path, book: &ViewBook) -> Result<(), String> {
         return Ok(());
     }
     let path = session_path(store);
-    let bytes = beamcraft_host::views_layer::layer_bytes(book)
+    let bytes = session::views_layer::layer_bytes(book)
         .map_err(|e| format!("the saved views were refused: {}", e.message))?;
     if bytes.len() > 1024 * 1024 {
         return Err("the saved views exceed the file limit".to_owned());
@@ -839,7 +839,7 @@ mod tests {
         persist(&store, &book).unwrap();
         // The sidecar is the views layer: a camera-prim USD document, not JSON.
         let written = std::fs::read(session_path(&store)).unwrap();
-        assert!(beamcraft_host::views_layer::looks_like_layer(&written));
+        assert!(session::views_layer::looks_like_layer(&written));
         let back = load(&store).unwrap();
         assert_eq!(back.len(), 1, "temporary views are not written");
         assert_eq!(back.get(&id(1)), book.get(&id(1)));
