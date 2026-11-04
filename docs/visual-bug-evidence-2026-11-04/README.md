@@ -17,10 +17,15 @@ desktop application was out of scope. This directory changes no application code
 
 ## Status after the audit
 
-The images record the audited build above. #464 (`f3e74cf`) later fixed findings 1–3 on
-`master`: running `reproduce.sh` against `master` at `81d0f80` gives an upright SVG (the
-column reads 2500), a sheet PDF that matches the sheet SVG, and the drafted text, line,
-circle and rectangle on both. Findings 4–9 still reproduce there.
+The images record the audited build above. Every finding has since been fixed on `master`:
+#464 (`f3e74cf`) fixed findings 1–3, #468 (`326d878`) findings 4–8 and #475 (`5d8d58c`)
+findings 9–11. Running `reproduce.sh` against `master` at `cad811a` gives an upright SVG
+(the column reads 2500) and a sheet PDF that matches the sheet SVG, with the drafted text,
+line, circle and rectangle on both; the dimension label beside its line; view titles clear
+of their geometry; a closed title block whose divider follows the label column; B, O and S
+drawn with shapes of their own; a two-dot colon; and report values rounded to their display
+precision (10020.01 mm², 0.79 kg). `COMMANDS.md` documents `--decimals 0..3`, and
+`beamcraft create-plate --help` prints help. No finding reproduces there.
 
 ## Reproduce
 
