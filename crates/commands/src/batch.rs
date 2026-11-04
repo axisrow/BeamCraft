@@ -19,7 +19,7 @@ use beamcraft_host::revision::{
 use beamcraft_layer_engine::authored::SchemaIdentity;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
-use beamcraft_model::id::RevisionId;
+use beamcraft_model::id::{OpId, RevisionId};
 
 /// The digest that identifies one batch attempt's request: a digest over the carried
 /// commands' operation ids and request fingerprints, in batch order. An identical command
@@ -33,6 +33,27 @@ pub fn batch_fingerprint(commands: &[DraftCommand]) -> Result<ContentDigest, Ref
         text.extend_from_slice(command.fingerprint.as_bytes());
     }
     digest_of(&text)
+}
+
+/// The batch evidence bindings in the codec's canonical strictly ascending operation-id
+/// order: the draft executes commands in batch order, so the store-side list is canonized
+/// here. One command per operation id stays the draft's own invariant.
+fn evidence_bindings(commands: &[DraftCommand]) -> Result<Vec<(OpId, ContentDigest)>, Refusal> {
+    let mut bindings = commands
+        .iter()
+        .map(|command| (command.op, command.fingerprint))
+        .collect::<Vec<_>>();
+    bindings.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    if bindings
+        .windows(2)
+        .any(|pair| matches!(pair, [a, b] if a.0 == b.0))
+    {
+        return Err(Refusal::new(
+            ErrorCode::InvalidArgument,
+            "a batch admits one command per operation id",
+        ));
+    }
+    Ok(bindings)
 }
 
 /// What the session passes to [`commit_batch`].
@@ -95,11 +116,7 @@ fn publish_state(
     hook: &mut dyn CommitHook,
 ) -> Result<Committed, Refusal> {
     let fingerprint = batch_fingerprint(&state.commands)?;
-    let bindings = state
-        .commands
-        .iter()
-        .map(|command| (command.op, command.fingerprint))
-        .collect::<Vec<_>>();
+    let bindings = evidence_bindings(&state.commands)?;
     let pin = crate::command_evidence::store(
         batch.store,
         &batch.op,
@@ -125,7 +142,7 @@ fn publish_state(
             let role = if state.base.external.contains(&layer.name) {
                 LayerRole::External
             } else {
-                role_of(&layer.name)
+                crate::publication::role_of(&layer.name)
             };
             LayerEntry::from_bytes(&layer.name, role, &layer.bytes)
         })
@@ -146,14 +163,6 @@ fn publish_state(
     };
     let expected = state.base.expected.clone();
     commit_verified_with_evidence(batch.store, &draft, &expected, Some(pin), hook)
-}
-
-fn role_of(name: &str) -> LayerRole {
-    if name == session::pipeline::DERIVED_LAYER {
-        LayerRole::Derived
-    } else {
-        LayerRole::Authored
-    }
 }
 
 /// Whether a command route may run inside an open draft batch: the modelling, definition and
@@ -267,6 +276,40 @@ mod tests {
         )])
         .unwrap();
         assert_ne!(empty, one);
+    }
+
+    #[test]
+    fn the_evidence_bindings_are_canonized_in_ascending_order() {
+        let batch = [
+            command(
+                "01900000-0000-7000-8000-00000000000b",
+                "0100000000000000000000000000000000000000000000000000000000000000",
+            ),
+            command(
+                "01900000-0000-7000-8000-00000000000a",
+                "0200000000000000000000000000000000000000000000000000000000000000",
+            ),
+        ];
+        let bindings = evidence_bindings(&batch).unwrap();
+        assert_eq!(bindings.len(), 2);
+        assert!(
+            bindings[0].0 < bindings[1].0,
+            "descending batch order canonizes into ascending bindings"
+        );
+        let duplicated = [
+            command(
+                "01900000-0000-7000-8000-00000000000a",
+                "0100000000000000000000000000000000000000000000000000000000000000",
+            ),
+            command(
+                "01900000-0000-7000-8000-00000000000a",
+                "0200000000000000000000000000000000000000000000000000000000000000",
+            ),
+        ];
+        assert_eq!(
+            evidence_bindings(&duplicated).unwrap_err().code,
+            ErrorCode::InvalidArgument
+        );
     }
 
     fn fresh() -> (PathBuf, Store) {
