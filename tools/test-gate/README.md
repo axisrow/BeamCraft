@@ -25,7 +25,9 @@ file paths alone cannot prove that a changed command is not used by the UI.
 The gate runs format validation, Clippy, a compiled nextest inventory, all selected ordinary
 tests with `--no-fail-fast`, mandatory doctests, and documentation with warnings denied. CLI-only
 selects the complete CLI package, including its real-binary integration targets, not one test
-name. Doctests still run after ordinary test failures when preparation succeeded. Earlier
+name. A selection without a library target (the CLI package ships none) has no doctests to run:
+the doctest step passes vacuously and cargo's refusal stays in the stage's stderr log. Doctests
+still run after ordinary test failures when preparation succeeded. Earlier
 failures are retained even when a later command passes. Final runs never use the `fast` profile.
 
 One crash-safe OS file lock is shared by worktrees through the user's cache directory (XDG

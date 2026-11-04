@@ -237,6 +237,26 @@ fn a_broken_real_doctest_returns_a_failed_stage() {
             .unwrap()
             .contains("FAILED")
     );
+    let stderr = std::fs::read_to_string(temp.0.join("doctests.stderr.log")).unwrap();
+    // A real doctest failure is never the vacuous no-library-targets refusal.
+    assert!(!local::no_library_targets(&stderr));
+}
+
+#[test]
+fn a_bin_only_selection_has_no_doctests_to_run() {
+    let temp = Temp::new();
+    std::fs::create_dir(temp.0.join("src")).unwrap();
+    std::fs::write(temp.0.join("Cargo.toml"), "[package]\nname=\"bin-only-gate-doctest\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[workspace]\n").unwrap();
+    std::fs::write(temp.0.join("src/main.rs"), "fn main() {}\n").unwrap();
+    let mut cmd = Command::new("cargo");
+    cmd.current_dir(&temp.0)
+        .args(["test", "--doc", "--offline", "--no-fail-fast"])
+        .env("CARGO_TARGET_DIR", temp.0.join("target"));
+    let result = process::run("doctests", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
+    assert_ne!(result.exit_code, 0);
+    assert!(!result.timed_out);
+    let stderr = std::fs::read_to_string(temp.0.join("doctests.stderr.log")).unwrap();
+    assert!(local::no_library_targets(&stderr));
 }
 
 #[test]
@@ -463,4 +483,85 @@ fn cli_gate_runs_real_tests_and_doctests_without_building_the_ui() {
     .unwrap();
     assert!(!changed.source_unchanged);
     assert!(changed.validate().is_err());
+}
+
+#[test]
+fn a_cli_gate_passes_vacuously_when_the_package_has_no_library_target() {
+    let temp = Temp::new();
+    let root = temp.0.join("repo");
+    std::fs::create_dir(&root).unwrap();
+    write(
+        &root,
+        "Cargo.toml",
+        "[workspace]\nresolver=\"3\"\nmembers=[\"apps/beamcraft-cli\"]\n",
+    );
+    write(&root, ".gitignore", "/target\n");
+    write(&root, "README.md", "source snapshot fixture\n");
+    write(
+        &root,
+        "apps/beamcraft-cli/Cargo.toml",
+        "[package]\nname=\"beamcraft-cli\"\nversion=\"0.1.0\"\nedition=\"2024\"\n[[bin]]\nname=\"fixture-cli\"\npath=\"src/main.rs\"\n",
+    );
+    write(&root, "apps/beamcraft-cli/src/main.rs", "fn main() {}\n");
+    write(
+        &root,
+        "apps/beamcraft-cli/tests/behaviour.rs",
+        "#[test]\nfn doubles() {\n    assert_eq!(2 + 2, 4);\n}\n",
+    );
+    let config = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.config/nextest.toml"),
+    )
+    .unwrap();
+    write(
+        &root,
+        ".config/nextest.toml",
+        config.split("[profile.fast]").next().unwrap(),
+    );
+    capture(
+        Command::new("cargo")
+            .current_dir(&root)
+            .args(["generate-lockfile", "--offline"]),
+    )
+    .unwrap();
+    git(&root, &["init", "-b", "master"]);
+    git(&root, &["config", "user.name", "Gate test"]);
+    git(&root, &["config", "user.email", "gate@example.invalid"]);
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-m", "initial fixture"]);
+    let base = git(&root, &["rev-parse", "HEAD"]);
+    write(
+        &root,
+        "apps/beamcraft-cli/tests/additional.rs",
+        "#[test]\nfn another_cli_case() {\n    assert_eq!(3 * 3, 9);\n}\n",
+    );
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-m", "CLI-only fixture change"]);
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_beamcraft-test-gate"));
+    cmd.current_dir(&root)
+        .args([
+            "check",
+            "--scope",
+            "cli",
+            "--base",
+            &base,
+            "--ui-independent-reason",
+            "Only a CLI case was added; the UI contract is unchanged.",
+            "--report",
+            "target/run/report.json",
+        ])
+        .env("CARGO_TARGET_DIR", root.join("target"))
+        .env("XDG_CACHE_HOME", temp.0.join("cache"));
+    let result = process::run("cli-gate", &mut cmd, &temp.0, Duration::from_secs(180)).unwrap();
+    let stderr = std::fs::read_to_string(temp.0.join("cli-gate.stderr.log")).unwrap();
+    assert_eq!(result.exit_code, 0, "{stderr}");
+    assert!(stderr.contains("no doctests to run"), "{stderr}");
+    let report: Report = serde_json::from_str(
+        &std::fs::read_to_string(root.join("target/run/report.json")).unwrap(),
+    )
+    .unwrap();
+    report.validate().unwrap();
+    assert!(!report.ui_tested);
+    assert_eq!(report.executed_tests, 2);
+    let refusal = std::fs::read_to_string(root.join("target/run/doctests.stderr.log")).unwrap();
+    assert!(local::no_library_targets(&refusal), "{refusal}");
 }
