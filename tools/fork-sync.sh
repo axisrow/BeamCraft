@@ -39,7 +39,8 @@ Exit codes: 0 ok or nothing to sync, 1 environment, 2 a conflict could not
 be cleared, 3 gate failure, 4 push or other git failure.
 
 The native full gate records a merge-tree receipt. CI validates that receipt
-and tests the complete workspace on the two other operating systems.
+and runs the quality lanes on the two other operating systems; the complete
+workspace runs in the separate platform track.
 EOF
 }
 
