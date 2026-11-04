@@ -34,6 +34,7 @@ mod fastener_cmd;
 mod filters_cmd;
 mod grid_cmd;
 mod history_cmd;
+mod ifc_cmd;
 mod level_cmd;
 mod library_cmd;
 mod numbering_cmd;
@@ -153,6 +154,7 @@ fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
         Some(Route::Annotation) => annotation_cmd::execute(args),
         Some(Route::History) => history_cmd::execute(args),
         Some(Route::Reference) => reference_cmd::execute(args),
+        Some(Route::Ifc) => ifc_cmd::execute(args),
         Some(Route::Assembly) => assembly_cmd::execute(args),
         Some(Route::Rebase) => rebase_cmd::execute(args),
         Some(Route::Resolve) => resolve_cmd::execute(args),

@@ -26,6 +26,7 @@ mod export;
 mod filters;
 mod grid;
 mod history;
+mod ifc;
 mod level;
 mod library;
 mod member;
@@ -77,6 +78,7 @@ const SECTIONS: &[&str] = &[
     grid::UPDATE,
     grid::QUERIES,
     export::HELP,
+    ifc::HELP,
     numbering::PREVIEW,
     numbering::APPROVAL,
     workspace::HELP,
@@ -125,6 +127,7 @@ pub(crate) fn for_family(family: &str) -> String {
         "filters" => &[filters::HELP],
         "grid" => &[grid::LINES, grid::UPDATE, grid::QUERIES],
         "history" => &[history::HELP],
+        "ifc" => &[ifc::HELP],
         "level" => &[level::HELP],
         "library" => &[library::HELP],
         "member" => &[member::HELP],

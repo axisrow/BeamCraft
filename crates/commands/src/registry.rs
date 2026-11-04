@@ -26,6 +26,8 @@ pub enum Route {
     ExportView,
     /// The IFC export commands, whose output is rendered by the command itself.
     Export,
+    /// The IFC input study commands, which read a received file and change nothing.
+    Ifc,
     /// The view snapshot commands.
     View,
     /// The named-view session commands.
@@ -1779,6 +1781,14 @@ pub const COMMANDS: &[Command] = &[
         Access::Read,
         Ids::None,
         &[one(1, "--id", "UUID"), one(1, "--decode", "GLOBALID")],
+    ),
+    entry(
+        Route::Ifc,
+        "ifc",
+        "ifc-inspect",
+        Access::Read,
+        Ids::None,
+        &[req("--source", "FILE")],
     ),
     entry(
         Route::Numbering,

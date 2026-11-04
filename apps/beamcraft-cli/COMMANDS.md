@@ -1050,6 +1050,16 @@ read.
 ifc-guid (--id UUID | --decode GLOBALID)
 ```
 
+## ifc
+
+### ifc-inspect
+
+read.
+
+```text
+ifc-inspect --source FILE
+```
+
 ## numbering
 
 ### preview-numbering
