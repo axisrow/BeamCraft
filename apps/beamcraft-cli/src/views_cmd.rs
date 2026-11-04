@@ -242,7 +242,8 @@ fn preset_from_options(options: &BTreeMap<&str, &str>) -> Run<ViewPreset> {
     if let Some(text) = get("--hidden-kinds") {
         preset.hidden_kinds = match text {
             "none" => KindFilter::SHOW_ALL,
-            _ => KindFilter::parse_list(text).map_err(|_| invalid("unknown element kind"))?,
+            _ => KindFilter::parse_list(text)
+                .map_err(|_| invalid("element kinds are comma-separated registry tokens"))?,
         };
     }
     if let Some(text) = get("--depth") {
@@ -252,8 +253,8 @@ fn preset_from_options(options: &BTreeMap<&str, &str>) -> Run<ViewPreset> {
         };
     }
     if let Some(text) = get("--representation") {
-        preset.representation =
-            Representation::parse(text).ok_or_else(|| invalid("unknown representation"))?;
+        preset.representation = Representation::parse(text)
+            .ok_or_else(|| invalid("representation is full or simplified"))?;
     }
     if let Some(text) = get("--colour-set") {
         preset.colour_set = match text {
