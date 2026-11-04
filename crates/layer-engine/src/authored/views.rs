@@ -758,24 +758,24 @@ pub fn read_layer(prims: &[Prim]) -> Result<ViewsLayer, Diagnostic> {
                 }
                 layer.views.push(read(p)?);
             }
-            _ if p.path == VIEWS_FOLDER => {
-                // Presence is by name alone: a `bim:view:folders` of another USD type, or one
-                // whose parsed value is not an array, refuses the prim, never silently absent
-                // (the same rule the optional record attributes follow).
-                if p.properties.iter().any(|v| v.name == "bim:view:folders") {
-                    let Value::Array(entries) = property(p, "bim:view:folders", "string[]")? else {
+            // Presence is by name alone: a `bim:view:folders` of another USD type, or one
+            // whose parsed value is not an array, refuses the prim, never silently absent
+            // (the same rule the optional record attributes follow).
+            _ if p.path == VIEWS_FOLDER
+                && p.properties.iter().any(|v| v.name == "bim:view:folders") =>
+            {
+                let Value::Array(entries) = property(p, "bim:view:folders", "string[]")? else {
+                    return Err(invalid());
+                };
+                if entries.len() > 512 {
+                    return Err(limit());
+                }
+                for entry in entries {
+                    let Value::Text(folder) = entry else {
                         return Err(invalid());
                     };
-                    if entries.len() > 512 {
-                        return Err(limit());
-                    }
-                    for entry in entries {
-                        let Value::Text(folder) = entry else {
-                            return Err(invalid());
-                        };
-                        validate_folder(folder)?;
-                        layer.empty_folders.push(folder.clone());
-                    }
+                    validate_folder(folder)?;
+                    layer.empty_folders.push(folder.clone());
                 }
             }
             _ => (),
