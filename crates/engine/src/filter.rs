@@ -472,4 +472,272 @@ mod tests {
                 .is_empty()
         );
     }
+
+    #[test]
+    fn a_missing_value_refuses_every_comparison_on_every_field() {
+        let schema = || {
+            let mut schema = Schema::default();
+            schema.insert(AttrDef {
+                name: "Score".into(),
+                ty: AttrType::Number,
+                unit: None,
+                options: Vec::new(),
+                set: None,
+            });
+            schema
+        };
+        // Only the incomplete record: no name, no class, no attribute values.
+        let data = Dataset::new(
+            schema(),
+            vec![Record {
+                id: id(2),
+                kind: "plate".into(),
+                name: None,
+                class: None,
+                attributes: BTreeMap::new(),
+            }],
+        )
+        .unwrap();
+        let q = |field: Field, op: Operator, value: AttrValue| {
+            data.query(&Rule::Compare { field, op, value }).unwrap()
+        };
+        for op in [
+            Operator::Eq,
+            Operator::Ne,
+            Operator::Lt,
+            Operator::Le,
+            Operator::Gt,
+            Operator::Ge,
+        ] {
+            assert!(
+                q(Field::Class, op, AttrValue::Integer(7)).is_empty(),
+                "missing class matched with {op:?}"
+            );
+            assert!(
+                q(Field::Attribute("Score".into()), op, AttrValue::Number(1.)).is_empty(),
+                "missing attribute matched with {op:?}"
+            );
+        }
+        for op in [
+            Operator::Eq,
+            Operator::Ne,
+            Operator::Contains,
+            Operator::StartsWith,
+        ] {
+            assert!(
+                q(Field::Name, op, AttrValue::Text("X".into())).is_empty(),
+                "missing name matched with {op:?}"
+            );
+        }
+        // An absent target never matches either, not even with `ne`.
+        assert!(
+            !data
+                .predicate(&Rule::Compare {
+                    field: Field::Name,
+                    op: Operator::Ne,
+                    value: AttrValue::Text("Y".into()),
+                })
+                .unwrap()
+                .matches(id(3))
+        );
+        // The same rules must still match a record whose values are present, so the empty
+        // results above come from the missing value, not from a broken comparison.
+        let full = Dataset::new(
+            schema(),
+            vec![Record {
+                id: id(1),
+                kind: "plate".into(),
+                name: Some("X".into()),
+                class: Some(7),
+                attributes: BTreeMap::from([("Score".into(), AttrValue::Number(1.))]),
+            }],
+        )
+        .unwrap();
+        let f = |field: Field, op: Operator, value: AttrValue| {
+            full.query(&Rule::Compare { field, op, value }).unwrap()
+        };
+        assert_eq!(
+            f(Field::Class, Operator::Eq, AttrValue::Integer(7)),
+            vec![id(1)]
+        );
+        assert_eq!(
+            f(Field::Class, Operator::Ne, AttrValue::Integer(8)),
+            vec![id(1)]
+        );
+        assert!(f(Field::Class, Operator::Ne, AttrValue::Integer(7)).is_empty());
+        assert_eq!(
+            f(
+                Field::Attribute("Score".into()),
+                Operator::Ne,
+                AttrValue::Number(2.)
+            ),
+            vec![id(1)]
+        );
+        assert_eq!(
+            f(Field::Name, Operator::Contains, AttrValue::Text("X".into())),
+            vec![id(1)]
+        );
+        assert_eq!(
+            f(Field::Name, Operator::Ne, AttrValue::Text("Y".into())),
+            vec![id(1)]
+        );
+    }
+
+    #[test]
+    fn incompatible_literal_types_and_field_operators_refuse_admission() {
+        let data = dataset();
+        let refuse = |field: Field, op: Operator, value: AttrValue| {
+            let noted = format!("{op:?} on {field:?} with {value:?}");
+            assert!(
+                data.query(&Rule::Compare { field, op, value }).is_err(),
+                "{noted} was admitted"
+            );
+        };
+        // A literal of the wrong scalar type refuses on every field class.
+        refuse(Field::Name, Operator::Eq, AttrValue::Number(1.));
+        refuse(Field::Kind, Operator::Eq, AttrValue::Boolean(true));
+        refuse(Field::Class, Operator::Eq, AttrValue::Text("2".into()));
+        refuse(
+            Field::Attribute("Score".into()),
+            Operator::Eq,
+            AttrValue::Integer(1),
+        );
+        refuse(
+            Field::Attribute("Status".into()),
+            Operator::Eq,
+            AttrValue::Number(1.),
+        );
+        // Operators outside a field type's closed set refuse too.
+        refuse(Field::Name, Operator::Lt, AttrValue::Text("P".into()));
+        refuse(Field::Class, Operator::Contains, AttrValue::Integer(2));
+        refuse(
+            Field::Attribute("Status".into()),
+            Operator::Ge,
+            AttrValue::Choice("New".into()),
+        );
+        // The admitted combinations still compile: numeric ordering, a text prefix and a
+        // choice substring.
+        assert!(
+            data.query(&Rule::Compare {
+                field: Field::Attribute("Score".into()),
+                op: Operator::Ge,
+                value: AttrValue::Number(0.),
+            })
+            .unwrap()
+            .is_empty()
+        );
+        assert!(
+            data.query(&Rule::Compare {
+                field: Field::Name,
+                op: Operator::StartsWith,
+                value: AttrValue::Text("P".into()),
+            })
+            .is_ok()
+        );
+        assert!(
+            data.query(&Rule::Compare {
+                field: Field::Attribute("Status".into()),
+                op: Operator::Contains,
+                value: AttrValue::Choice("Ne".into()),
+            })
+            .is_ok()
+        );
+        // Boolean attributes allow equality only.
+        let mut schema = Schema::default();
+        schema.insert(AttrDef {
+            name: "Flag".into(),
+            ty: AttrType::Boolean,
+            unit: None,
+            options: Vec::new(),
+            set: None,
+        });
+        let flags = Dataset::new(
+            schema,
+            vec![Record {
+                id: id(1),
+                kind: "plate".into(),
+                name: None,
+                class: None,
+                attributes: BTreeMap::new(),
+            }],
+        )
+        .unwrap();
+        assert!(
+            flags
+                .query(&Rule::Compare {
+                    field: Field::Attribute("Flag".into()),
+                    op: Operator::Lt,
+                    value: AttrValue::Boolean(true),
+                })
+                .is_err()
+        );
+        assert!(
+            flags
+                .query(&Rule::Compare {
+                    field: Field::Attribute("Flag".into()),
+                    op: Operator::Eq,
+                    value: AttrValue::Boolean(true),
+                })
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn a_target_value_incompatible_with_its_definition_refuses_the_dataset() {
+        let schema = || {
+            let mut schema = Schema::default();
+            schema.insert(AttrDef {
+                name: "Score".into(),
+                ty: AttrType::Number,
+                unit: None,
+                options: Vec::new(),
+                set: None,
+            });
+            schema.insert(AttrDef {
+                name: "Status".into(),
+                ty: AttrType::Choice,
+                unit: None,
+                options: vec!["New".into(), "Done".into()],
+                set: None,
+            });
+            schema
+        };
+        let target = |attributes: BTreeMap<String, AttrValue>| {
+            Dataset::new(
+                schema(),
+                vec![Record {
+                    id: id(1),
+                    kind: "plate".into(),
+                    name: None,
+                    class: None,
+                    attributes,
+                }],
+            )
+        };
+        // A value whose scalar type disagrees with its definition is not a filter target.
+        assert!(target(BTreeMap::from([("Score".into(), AttrValue::Integer(1))])).is_err());
+        // A choice value outside the definition's options refuses the same way.
+        assert!(
+            target(BTreeMap::from([(
+                "Status".into(),
+                AttrValue::Choice("Nope".into())
+            )]))
+            .is_err()
+        );
+        // Compatible values admit and stay queryable.
+        let data = target(BTreeMap::from([
+            ("Score".into(), AttrValue::Number(1.)),
+            ("Status".into(), AttrValue::Choice("New".into())),
+        ]))
+        .unwrap();
+        assert_eq!(
+            data.query(&Rule::Compare {
+                field: Field::Attribute("Status".into()),
+                op: Operator::Eq,
+                value: AttrValue::Choice("New".into()),
+            })
+            .unwrap(),
+            vec![id(1)]
+        );
+    }
 }
