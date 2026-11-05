@@ -946,6 +946,8 @@ impl App {
                 self.annotation_click(ray);
             } else if self.bench == workbench::Bench::Weld {
                 self.weld_click(ray);
+            } else if self.bench == workbench::Bench::Bolt {
+                self.bolt_click(ray);
             } else if !self.other_command_running() {
                 self.start_select(ray);
             }
