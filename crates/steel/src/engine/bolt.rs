@@ -26,7 +26,8 @@
 //! union length of the shank axis inside the boxes. A14.4 adds the hole decision
 //! ([`generate_holes`]): with `hole_mode = generate` every connected plate takes one ordinary
 //! A04 hole record per crossing fastener, owned by the group; a member part refuses until the
-//! G14 contract lands, and `hole_mode = none` writes no part.
+//! G14 contract lands, a plate with a rotated placement refuses with it, and `hole_mode = none`
+//! writes no part.
 
 use crate::model::command::{
     BoltGroupInputs, BoltLength, BoltSpacing, CreateBolt, CreateBoltGroup, UpdateBoltGroup,
@@ -36,6 +37,7 @@ use beamcraft_engine::footprint::Footprint;
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
 use beamcraft_geom::tolerance::DIMENSION_CAP_MM;
 use beamcraft_model::command::CommandError;
+use beamcraft_model::command::Placement;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -433,13 +435,14 @@ pub struct GeneratedHole {
 /// plate, of diameter `nominal + clearance` (the group's own clearance, or the definition's),
 /// centred where the shank axis crosses the plate's mid-plane and cut along the plate normal,
 /// like any A04 record. A beam or a column is refused with `UNSUPPORTED_GEOMETRY`:
-/// generated member holes need the kernel slice G14.1. `hole_mode = none` writes no part.
-/// The decision is pure: the same inputs give the same holes.
+/// generated member holes need the kernel slice G14.1; a plate with a rotated placement is
+/// refused with it too, because the world box gives no plate-local frame for the record.
+/// `hole_mode = none` writes no part. The decision is pure: the same inputs give the same holes.
 pub fn generate_holes(
     inputs: &BoltGroupInputs,
     placed: &BoltGroupPlaced,
     bounds: &BTreeMap<ElementId, Bounds>,
-    translations: &BTreeMap<ElementId, [f64; 3]>,
+    placements: &BTreeMap<ElementId, Placement>,
     members: &BTreeSet<ElementId>,
 ) -> Result<Vec<GeneratedHole>, CommandError> {
     if inputs.resolved_hole_mode() == HoleMode::None {
@@ -462,20 +465,29 @@ pub fn generate_holes(
                 "a listed part is unreachable",
             )
         })?;
-        let translation = translations.get(part).ok_or_else(|| {
+        let placement = placements.get(part).ok_or_else(|| {
             CommandError::new(
                 ErrorCode::UnsupportedGeometry,
                 "hole_mode",
                 "the part has no placement this slice can read",
             )
         })?;
+        let orientation = placement.orientation_xyzw;
+        if orientation[0] != 0.0 || orientation[1] != 0.0 || orientation[2] != 0.0 {
+            return Err(CommandError::new(
+                ErrorCode::UnsupportedGeometry,
+                "hole_mode",
+                "a generated hole in a rotated plate is not supported in this slice",
+            ));
+        }
+        let translation = placement.translation_mm;
         for bearing in &placed.bearings_mm {
             let Some((start, exit)) = axis_interval(bearing, &placed.z, slab) else {
                 continue;
             };
             // The plate-local XY centre: where the shank axis crosses the slab's mid-plane
-            // (a plate's placement rotation is identity in this slice, so world minus
-            // translation is the plate-local frame).
+            // (only identity plates reach here, so world minus translation is the plate-local
+            // frame).
             let mid = (start + exit) / 2.0;
             let centre = [
                 bearing[0] + placed.z[0] * mid - translation[0],
@@ -1019,13 +1031,13 @@ mod tests {
         );
     }
 
-    /// The translations of the standard two-plate test: identity placements.
-    fn hole_args(inputs: &BoltGroupInputs) -> BTreeMap<ElementId, [f64; 3]> {
-        let mut translations = BTreeMap::new();
+    /// The placements of the standard two-plate test: identity placements.
+    fn hole_args(inputs: &BoltGroupInputs) -> BTreeMap<ElementId, Placement> {
+        let mut placements = BTreeMap::new();
         for part in &inputs.parts {
-            translations.insert(*part, [0.0, 0.0, 0.0]);
+            placements.insert(*part, Placement::IDENTITY);
         }
-        translations
+        placements
     }
 
     #[test]
@@ -1056,7 +1068,13 @@ mod tests {
         // The stored records live in the plates' local frames: a translated plate's holes are
         // translated back (the polygon centroid sits on the mapped axis point).
         let mut moved = translations.clone();
-        moved.insert(id(1), [10.0, 20.0, 0.0]);
+        moved.insert(
+            id(1),
+            Placement {
+                translation_mm: [10.0, 20.0, 0.0],
+                ..Placement::IDENTITY
+            },
+        );
         let local = generate_holes(&inputs, &placed, &bounds, &moved, &BTreeSet::new()).unwrap();
         let polygon = &local.first().unwrap().polygon_mm;
         let n = polygon.len() as f64;
@@ -1103,6 +1121,22 @@ mod tests {
         let members = BTreeSet::from([id(2)]);
         assert_eq!(
             generate_holes(&inputs, &placed, &bounds, &translations, &members)
+                .unwrap_err()
+                .code,
+            ErrorCode::UnsupportedGeometry
+        );
+        // A rotated plate is refused wholesale too: the world box gives no plate-local frame
+        // for the record.
+        let mut turned = translations.clone();
+        turned.insert(
+            id(1),
+            Placement {
+                orientation_xyzw: [0.0, 0.0, 1.0, 1.0],
+                ..Placement::IDENTITY
+            },
+        );
+        assert_eq!(
+            generate_holes(&inputs, &placed, &bounds, &turned, &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry

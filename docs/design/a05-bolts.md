@@ -53,8 +53,10 @@ beamcraft bolts --store ROOT
   reachable). The adapter derives the bounds from the authored inputs without the kernel: a plate
   contributes the exact box of its contour extruded by its thickness; a member contributes its
   two world axis points expanded by half the section's bounding-box diagonal in every axis, which
-  contains the member under any roll. A part with a non-identity placement rotation is refused as
-  unsupported in this slice rather than bounded wrongly. The check accepts boxes that overlap in
+  contains the member under any roll. The placement rotation is part of the bounds: the plate box
+  is turned by the quaternion and the member axis points rotate with it, so a rotated part is
+  bounded, never refused. Generated holes stay refused on a rotated plate, whose plate-local
+  frame the world box alone does not give. The check accepts boxes that overlap in
   mid-air and never proves a real face intersection; a face-exact test needs the kernel in the
   decision path and stays open.
 - **Explicit properties, no defaults.** Diameter, count, pitch, origin and direction are all

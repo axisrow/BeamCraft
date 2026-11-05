@@ -30,6 +30,7 @@ use crate::plate::{
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
+use beamcraft_engine::solid::rotate_vector;
 use beamcraft_host::revision::{CommitHook, CommitOutcome, RevisionError, RevisionStore, Uuid7};
 use beamcraft_layer_engine::authored::{
     Change, Element, Placement as LayerPlacement, Prepare, Resource, schema_identity,
@@ -37,6 +38,7 @@ use beamcraft_layer_engine::authored::{
 };
 use beamcraft_layer_engine::{Control, OpenRequest, Reader, Value};
 use beamcraft_model::command::CommandError;
+use beamcraft_model::command::Placement;
 use beamcraft_model::digest::ContentDigest;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{ElementId, OpId, ProjectId, RevisionId, WorkspaceId};
@@ -110,9 +112,9 @@ struct Model {
     groups: Vec<BoltGroupView>,
     definitions: BTreeMap<ContentDigest, crate::definition::DefinitionRecord>,
     bounds: BTreeMap<ElementId, Bounds>,
-    /// World translation of every part (identity rotation enforced): the frame a generated
-    /// hole's polygon is mapped into (A14.4).
-    translations: BTreeMap<ElementId, [f64; 3]>,
+    /// The world placement of every part: the frame a generated hole's polygon is mapped into
+    /// (A14.4); generation refuses a plate whose placement is rotated.
+    placements: BTreeMap<ElementId, Placement>,
     /// Identities of the decoded beams and columns: a generating group refuses them until G14.
     members: std::collections::BTreeSet<ElementId>,
 }
@@ -300,37 +302,26 @@ fn bolt_group_of(
 }
 
 /// The geometry the placement and hole decisions read: conservative world bounds of every
-/// decoded part, its world translation (identity rotation enforced) and the member identities.
+/// decoded part, its world placement and the member identities.
 type Geometry = (
     BTreeMap<ElementId, Bounds>,
-    BTreeMap<ElementId, [f64; 3]>,
+    BTreeMap<ElementId, Placement>,
     std::collections::BTreeSet<ElementId>,
 );
 
 /// Conservative world bounds of every decoded part: a plate contributes the exact box of its
-/// contour extruded by its thickness, a member its two world axis points expanded by half the
-/// section's bounding-box diagonal in every axis (which contains it under any roll). A part with
-/// a non-identity placement rotation is refused as unsupported rather than bounded wrongly.
-/// Alongside the bounds it collects every part's world translation and the member identities
-/// the hole decision (A14.4) needs.
+/// contour extruded by its thickness, turned by its placement; a member its two world axis
+/// points expanded by half the section's bounding-box diagonal in every axis (which contains it
+/// under any roll and any placement rotation). Alongside the bounds it collects every part's
+/// placement and the member identities the hole decision (A14.4) needs.
 fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
-    let unsupported = || {
-        Refusal::from(CommandError::new(
-            ErrorCode::UnsupportedGeometry,
-            "placement.orientation_xyzw",
-            "rotated part placement is not supported for bolts in this slice",
-        ))
-    };
-    let identity = |q: [f64; 4]| q[0] == 0.0 && q[1] == 0.0 && q[2] == 0.0;
     let mut bounds = BTreeMap::new();
-    let mut translations = BTreeMap::new();
+    let mut placements = BTreeMap::new();
     let mut members = std::collections::BTreeSet::new();
     let profiles = profile_lookup(&decoded.definitions);
     for (authored, _) in &decoded.plates {
-        let translation = authored.placement.translation_mm;
-        if !identity(authored.placement.orientation_xyzw) {
-            return Err(unsupported());
-        }
+        let placement = authored.placement;
+        let translation = placement.translation_mm;
         let Some(first) = authored.contour_points_mm.first() else {
             return Err(integrity("a committed plate has no contour points"));
         };
@@ -345,57 +336,65 @@ fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
             max[2] = max[2].max(p[2]);
         }
         max[2] += authored.thickness_mm;
-        let world =
-            |[x, y, z]: [f64; 3]| [x + translation[0], y + translation[1], z + translation[2]];
-        bounds.insert(authored.id, [world(min), world(max)]);
-        translations.insert(authored.id, translation);
+        // The placement turns the local box: its world bounds contain every turned corner.
+        let mut world_min = [f64::INFINITY; 3];
+        let mut world_max = [f64::NEG_INFINITY; 3];
+        for corner_z in [min[2], max[2]] {
+            for corner_y in [min[1], max[1]] {
+                for corner_x in [min[0], max[0]] {
+                    let turned =
+                        rotate_vector([corner_x, corner_y, corner_z], placement.orientation_xyzw);
+                    world_min[0] = world_min[0].min(turned[0] + translation[0]);
+                    world_min[1] = world_min[1].min(turned[1] + translation[1]);
+                    world_min[2] = world_min[2].min(turned[2] + translation[2]);
+                    world_max[0] = world_max[0].max(turned[0] + translation[0]);
+                    world_max[1] = world_max[1].max(turned[1] + translation[1]);
+                    world_max[2] = world_max[2].max(turned[2] + translation[2]);
+                }
+            }
+        }
+        bounds.insert(authored.id, [world_min, world_max]);
+        placements.insert(authored.id, placement);
     }
     for (authored, _) in &decoded.members {
-        let translation = authored.placement.translation_mm;
-        if !identity(authored.placement.orientation_xyzw) {
-            return Err(unsupported());
-        }
+        let placement = authored.placement;
+        let translation = placement.translation_mm;
         members.insert(authored.id);
         let (width, height) = profiles(&authored.profile)?.extent_mm();
         // Half the diagonal of the section's bounding box contains every rolled cross-section.
         // The box spans the whole path (one chord for a straight member, the polyline for a
-        // polybeam) plus that reach.
+        // polybeam) plus that reach, which any placement rotation keeps exact.
         let reach = 0.5 * (width * width + height * height).sqrt();
         let Some(first) = authored.axis_points_mm.first() else {
             return Err(integrity("a committed member has no path points"));
         };
-        let mut corner = *first;
-        let mut opposite = *first;
+        let world = |[x, y, z]: [f64; 3]| {
+            let turned = rotate_vector([x, y, z], placement.orientation_xyzw);
+            [
+                turned[0] + translation[0],
+                turned[1] + translation[1],
+                turned[2] + translation[2],
+            ]
+        };
+        let mut corner = world(*first);
+        let mut opposite = corner;
         for p in &authored.axis_points_mm {
-            corner[0] = corner[0].min(p[0]);
-            corner[1] = corner[1].min(p[1]);
-            corner[2] = corner[2].min(p[2]);
-            opposite[0] = opposite[0].max(p[0]);
-            opposite[1] = opposite[1].max(p[1]);
-            opposite[2] = opposite[2].max(p[2]);
+            let w = world(*p);
+            corner[0] = corner[0].min(w[0]);
+            corner[1] = corner[1].min(w[1]);
+            corner[2] = corner[2].min(w[2]);
+            opposite[0] = opposite[0].max(w[0]);
+            opposite[1] = opposite[1].max(w[1]);
+            opposite[2] = opposite[2].max(w[2]);
         }
         let expand =
             |[x, y, z]: [f64; 3], sign: f64| [x + sign * reach, y + sign * reach, z + sign * reach];
-        let min = expand(
-            [
-                corner[0] + translation[0],
-                corner[1] + translation[1],
-                corner[2] + translation[2],
-            ],
-            -1.0,
-        );
-        let max = expand(
-            [
-                opposite[0] + translation[0],
-                opposite[1] + translation[1],
-                opposite[2] + translation[2],
-            ],
-            1.0,
-        );
+        let min = expand(corner, -1.0);
+        let max = expand(opposite, 1.0);
         bounds.insert(authored.id, [min, max]);
-        translations.insert(authored.id, translation);
+        placements.insert(authored.id, placement);
     }
-    Ok((bounds, translations, members))
+    Ok((bounds, placements, members))
 }
 
 fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> {
@@ -418,7 +417,7 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
         groups: Vec::new(),
         definitions: BTreeMap::new(),
         bounds: BTreeMap::new(),
-        translations: BTreeMap::new(),
+        placements: BTreeMap::new(),
         members: std::collections::BTreeSet::new(),
     };
     for prim in &prims {
@@ -459,9 +458,9 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
     model.bolts.sort_by_key(|b| b.id);
     model.groups.sort_by_key(|g| g.id);
     let decoded = decode(&reader, &opened, control)?;
-    let (bounds, translations, members) = world_bounds(&decoded)?;
+    let (bounds, placements, members) = world_bounds(&decoded)?;
     model.bounds = bounds;
-    model.translations = translations;
+    model.placements = placements;
     model.members = members;
     model.definitions = decoded.definitions;
     Ok(model)
@@ -891,7 +890,7 @@ pub fn create_bolt_group(
         &command.inputs,
         &placed,
         &model.bounds,
-        &model.translations,
+        &model.placements,
         &model.members,
     )?;
     let (hole_writes, footprint) = if holes.is_empty() {
@@ -1056,7 +1055,7 @@ pub fn update_bolt_group(
         &command.inputs,
         &placed,
         &model.bounds,
-        &model.translations,
+        &model.placements,
         &model.members,
     )?;
     let generated_before = model

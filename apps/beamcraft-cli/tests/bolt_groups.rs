@@ -29,6 +29,9 @@ const SYNTHETIC: &str = concat!(
 );
 const GROUP: &str = "019a7bf0-0000-7000-8000-000000710001";
 const GROUP2: &str = "019a7bf0-0000-7000-8000-000000710002";
+const GROUP3: &str = "019a7bf0-0000-7000-8000-000000710003";
+const BRACE: &str = "019a7bf0-0000-7000-8000-0000007100b1";
+const GUSSET: &str = "019a7bf0-0000-7000-8000-0000007100b2";
 const USER: &str = "019a7bf0-0000-7000-8000-000000719001";
 
 /// SYN-BOLT-12x50 of the shipped synthetic library: washered, lengths [30, 40, 50, 60, 80],
@@ -917,4 +920,123 @@ fn holes_are_removed_with_the_group_and_refuse_separate_edits() {
     for hole in &holes {
         assert!(matches!(hole.get("generated_by"), Ok(Json::Null)));
     }
+}
+
+/// The knee brace of #505: a beam whose placement turns it 40 degrees off the vertical and a
+/// gusset plate whose placement stands it up out of its local XY plane take a bolt group with
+/// `hole_mode = none`. The group commits and lists back with exit 0 and no
+/// `UNSUPPORTED_GEOMETRY`: a rotated part is bounded by its placement, never refused.
+#[test]
+fn a_knee_brace_group_attaches_to_rotated_parts() {
+    let f = Fixture::new();
+    let profile = text(
+        f.ok(&owned(
+            "define-profile",
+            &["--width", "60", "--height", "60"],
+        ))
+        .get("definition")
+        .unwrap(),
+        "digest",
+    );
+    // The brace's local axis runs along +Z; the placement turns it 40 degrees about +Y and
+    // stands it at (100, 0, 1100), so its world axis runs from (100, 0, 1100) to about
+    // (614, 0, 1713) and ends near the gusset.
+    let brace = text(
+        at(
+            &f.ok(&owned(
+                "create-member",
+                &[
+                    "--kind",
+                    "beam",
+                    "--name",
+                    "B1",
+                    "--new-id",
+                    BRACE,
+                    "--start",
+                    "0,0,0",
+                    "--end",
+                    "0,0,800",
+                    "--orientation-xyzw",
+                    "0,0.3420201433256687,0,0.9396926207859084",
+                    "--translation",
+                    "100,0,1100",
+                    "--profile-digest",
+                    &profile,
+                ],
+            )),
+            &["member"],
+        ),
+        "element_id",
+    );
+    // The plate is authored in its local XY; the 90-degree placement about +X stands it up in
+    // the world XZ plane with its 12 mm thickness running toward -Y, so the plate occupies
+    // x in [450, 850], y in [-12, 0], z in [1400, 1800].
+    let gusset = text(
+        at(
+            &f.ok(&owned(
+                "create-plate",
+                &[
+                    "--name",
+                    "PL1",
+                    "--new-id",
+                    GUSSET,
+                    "--width",
+                    "400",
+                    "--length",
+                    "400",
+                    "--thickness",
+                    "12",
+                    "--orientation-xyzw",
+                    "0.7071067811865476,0,0,0.7071067811865476",
+                    "--translation",
+                    "450,0,1400",
+                ],
+            )),
+            &["plate"],
+        ),
+        "element_id",
+    );
+
+    // A row of two fasteners along +X at y = -6 (inside the gusset's thickness), crossing
+    // both rotated parts.
+    let created = f.ok(&owned(
+        "create-bolt-group",
+        &[
+            "--name",
+            "BG1",
+            "--new-id",
+            GROUP3,
+            "--parts",
+            &format!("{brace},{gusset}"),
+            "--fastener-library",
+            SYNTHETIC,
+            "--designation",
+            WASHERED,
+            "--point1",
+            "500,-6,1600",
+            "--point2",
+            "650,-6,1600",
+            "--plane-normal",
+            "0,1,0",
+            "--offset-start",
+            "25",
+            "--pitch",
+            "100",
+            "--count",
+            "2",
+            "--hole-mode",
+            "none",
+        ],
+    ));
+    assert_eq!(text(&created, "outcome"), "bolt_group_committed");
+    assert_eq!(text(&created, "element_id"), GROUP3);
+
+    // The same head reads back through the listing: exit 0, the group with its parts.
+    let listed = f.groups();
+    let group = listed
+        .iter()
+        .find(|g| text(g, "id") == GROUP3)
+        .expect("the created group lists back");
+    assert_eq!(strings(group, "parts"), [brace.clone(), gusset.clone()]);
+    assert_eq!(text(group, "hole_mode"), "none");
 }
