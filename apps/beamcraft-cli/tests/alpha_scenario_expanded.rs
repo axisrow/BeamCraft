@@ -79,6 +79,7 @@ impl Story {
         fs::create_dir(root.join("holes-published")).unwrap();
         fs::create_dir(root.join("storeys-published")).unwrap();
         fs::create_dir(root.join("numbering-published")).unwrap();
+        fs::create_dir(root.join("instances-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -4512,4 +4513,176 @@ fn renumbering_goes_stale_exactly_when_the_numbering_changes() {
         at(&still_fresh, &["counts", "parts"]).unsigned().unwrap(),
         4
     );
+}
+
+/// The instance story (U11): an instance shares its definition's body — a cut and a
+/// hole applied to the definition ride the whole group with identical local meshes,
+/// records and quantities, while every member keeps its own placement and label. Its own
+/// published store keeps the numbered frame's counts the manual runbook records, and its
+/// own test keeps the per-test budget honest.
+#[test]
+fn instances_share_their_body_across_publication() {
+    let s = Story::new();
+    s.ok(
+        "instances-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "instances-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("inst-draft"), "--user-id", USER],
+    );
+    let definition = {
+        let created = s.ok(
+            "inst-draft",
+            "create-plate",
+            &[
+                "--name",
+                "Q01 gusset definition",
+                "--new-id",
+                "019a7bf0-0000-7000-8000-00000000a171",
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--translation",
+                "10,20,30",
+            ],
+        );
+        text(at(&created, &["plate"]), "element_id")
+    };
+    let copied = s.ok(
+        "inst-draft",
+        "copy-instance",
+        &[
+            "--id",
+            &definition,
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a172",
+            "--name",
+            "Q01 gusset instance",
+            "--offset",
+            "1100,0,0",
+        ],
+    );
+    assert_eq!(text(&copied, "outcome"), "element_copied");
+    let instance = text(at(&copied, &["element"]), "element_id");
+
+    // One shared hole and one shared cut on the definition: the group is updated
+    // atomically.
+    s.ok(
+        "inst-draft",
+        "add-hole",
+        &[
+            "--id",
+            &definition,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a174",
+            "--hole-rect",
+            "100,100,100,100",
+        ],
+    );
+    let cut = s.ok(
+        "inst-draft",
+        "cut-by-plane",
+        &[
+            "--id",
+            &definition,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a175",
+            "--point",
+            "250,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    assert_eq!(text(&cut, "outcome"), "cut_applied");
+
+    let inspection = s.ok("inst-draft", "inspect-elements", &[]);
+    let plates = at(&inspection, &["plates"]).array().unwrap();
+    assert_eq!(plates.len(), 2);
+    let defined = plates
+        .iter()
+        .find(|p| text(p, "element_id") == definition)
+        .expect("the definition is present");
+    let instanced = plates
+        .iter()
+        .find(|p| text(p, "element_id") == instance)
+        .expect("the instance is present");
+    // The shared shape: identical local mesh, records and quantities everywhere; the
+    // exact kept half-space minus the hole.
+    close(
+        at(defined, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        1_150_000.0,
+    );
+    assert_eq!(text(instanced, "mesh_digest"), text(defined, "mesh_digest"));
+    assert_eq!(
+        at(instanced, &["cuts"]).array().unwrap().len(),
+        at(defined, &["cuts"]).array().unwrap().len()
+    );
+    assert_eq!(
+        at(instanced, &["hole_records"]).array().unwrap().len(),
+        at(defined, &["hole_records"]).array().unwrap().len()
+    );
+    close(
+        at(instanced, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        1_150_000.0,
+    );
+    // Each member keeps its own identity facts.
+    assert_eq!(text(defined, "name"), "Q01 gusset definition");
+    assert_eq!(text(instanced, "name"), "Q01 gusset instance");
+    assert_eq!(
+        numbers(at(defined, &["placement", "translation_mm"])),
+        [10.0, 20.0, 30.0]
+    );
+    assert_eq!(
+        numbers(at(instanced, &["placement", "translation_mm"])),
+        [1110.0, 20.0, 30.0]
+    );
+    let inst_digest = text(instanced, "mesh_digest");
+
+    let instances_published = s.ok(
+        "instances-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("inst-draft")],
+    );
+    assert_eq!(text(&instances_published, "outcome"), "workspace_published");
+    let reopened = s.ok("instances-published", "inspect-elements", &[]);
+    let reopened_plates = at(&reopened, &["plates"]).array().unwrap();
+    assert_eq!(reopened_plates.len(), 2);
+    let reopened_defined = reopened_plates
+        .iter()
+        .find(|p| text(p, "element_id") == definition)
+        .expect("the definition is present");
+    let reopened_instanced = reopened_plates
+        .iter()
+        .find(|p| text(p, "element_id") == instance)
+        .expect("the instance is present");
+    close(
+        at(reopened_defined, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        1_150_000.0,
+    );
+    close(
+        at(reopened_instanced, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        1_150_000.0,
+    );
+    assert_eq!(
+        text(reopened_instanced, "mesh_digest"),
+        text(reopened_defined, "mesh_digest")
+    );
+    assert_eq!(text(reopened_instanced, "mesh_digest"), inst_digest);
+    assert_eq!(text(reopened_instanced, "name"), "Q01 gusset instance");
 }

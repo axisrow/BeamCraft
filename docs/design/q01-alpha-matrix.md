@@ -16,12 +16,12 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, thirteen tests: the
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, fourteen tests: the
 expanded story and — each in its own published store so the numbered frame keeps its recorded
 counts — the curved and poly member story, the bent and lofted plate story, the model-tool
 transform story, the bolt-group story, the model-data tool story, the contour plate story, the
 part class story, the cut lifecycle story, the fits-and-combine story, the hole-record story,
-the storey assignment story and the renumbering story). Every step is
+the storey assignment story, the renumbering story and the instance story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
@@ -49,6 +49,7 @@ steps ran and passed on this machine.
 | Bolt groups with generated holes (A14.3/A14.4) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a two-fastener group over two stacked plates commits one atomic edit, resolves the auto length over the grip and its hardware (40 mm), and generates one group-owned hole record per crossing fastener on every connected plate (`hole_mode generate`, `generated_by` the group); each plate's quantity drops by the measured two-hole amount (2,838.81 mm3, within 1 mm3), the undo returns the blank plates and the redo regenerates, and publication preserves the drops, the hole ownership and the group record | Passed |
 | Numbering | `preview-numbering` + `approve-numbering`, 8 marks (7 parts + assembly) | Passed |
 | Numbering staleness and re-approval (A08) | in its own published store, so the numbered frame keeps the counts the manual runbook records: a preview never writes the store and a fresh preview is not stale; a rename leaves the numbering fresh while a thickness edit that splits the group goes stale with a new token; the fresh token approves exactly the new marks (3), a copy stales the preview again and the second approval adds the mark (4); the published head is exactly the approved numbering — the reopened preview is fresh and counts 4 parts | Passed |
+| Instances (U11) | in their own published store, so the numbered frame keeps the counts the manual runbook records: `copy-instance` places an instance that shares its definition's body — a hole and a plane cut applied to the definition ride the whole group with identical local meshes, cuts, hole records and quantities (the exact kept half-space minus the hole, 1,150,000 mm3), while every member keeps its own name and placement; publication preserves the shared body state and both identities | Passed |
 | Schedules (I05) | `schedule-export` over the numbered head: CSV, group totals that keep unknown cells counted, and HTML reproduce byte for byte; an unknown attribute column stays visible and is reported; a kind filter narrows to one row | Passed |
 | Views/filters (real store) | `export-view` twice for one head: byte-identical bundles; a repeat export into an existing file is refused without overwriting | Passed |
 | Named views (V12) | `save-view` stores the storey plan (`xy` at the level offset), a grid-axis elevation, a level plan and an orbit view in the W01 camera prim layer beside the store, stamped with author, comment and the captured draft revision; `list-views`/`apply-view` leave the layer bytes byte-identical, a duplicate name and an unknown view refuse with the layer and the head intact, `apply-view` restores the exact camera across the publication round trip (the captured provenance still names the draft revision), and `remove-view` drops one view | Passed |
@@ -92,7 +93,7 @@ recorded open and stay open until they execute on real hardware.
 
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
-| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes and hole records, cut lifecycle, poly and curved members, bent and lofted plates, contour plate edits, fits and combine, grids/levels and storey assignment, construction objects and grid line tools, part classes, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes and hole records, cut lifecycle, poly and curved members, bent and lofted plates, contour plate edits, fits and combine, grids/levels and storey assignment, construction objects and grid line tools, part classes, instances, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
 | View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | The numbering and staleness rows above: one approval of 8 marks, then the exact staleness and re-approval cycle on its own store | Executed locally (macOS, Apple silicon) |
