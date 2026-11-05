@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! Per-user application settings: the author profile, the environment chosen at start, whether the
-//! start window is skipped, the folder of models and the recently opened projects.
+//! Per-user application settings: the appearance, the viewport navigation preset chosen in the
+//! side panel, the author profile, the environment chosen at start, whether the start window is
+//! skipped, the folder of models and the recently opened projects.
 //!
 //! The settings are one bounded JSON file, `settings.json`, in the user's configuration directory
 //! ([`default_dir`]). They are application state of one person on one computer, never project
@@ -130,11 +131,44 @@ impl ThemePreference {
     }
 }
 
+/// The viewport navigation preset the user chose in the side panel. A setting of [`None`]
+/// means nothing was chosen yet: the window then starts on its platform default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraPreference {
+    /// The mouse bindings.
+    Mouse,
+    /// The trackpad bindings.
+    Trackpad,
+}
+
+impl CameraPreference {
+    /// The stable settings spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mouse => "mouse",
+            Self::Trackpad => "trackpad",
+        }
+    }
+
+    /// Parses an explicit choice; unknown values are refused.
+    pub fn parse(value: &str) -> Result<Self, SettingsError> {
+        match value {
+            "mouse" => Ok(Self::Mouse),
+            "trackpad" => Ok(Self::Trackpad),
+            _ => Err(invalid("the camera preset must be mouse or trackpad")),
+        }
+    }
+}
+
 /// The settings of one user.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Settings {
     /// Appearance; older settings files without this field follow the system.
     pub theme: ThemePreference,
+    /// The viewport navigation preset chosen in the side panel; older settings files without
+    /// this field and a `null` both mean nothing was chosen: the window follows its platform
+    /// default.
+    pub camera: Option<CameraPreference>,
     /// The author profile, once entered.
     pub profile: Option<Profile>,
     /// The identifier of the environment chosen at start.
@@ -303,6 +337,10 @@ impl Settings {
         Ok(Json::object([
             ("version", Json::uint(VERSION)),
             ("theme", Json::text(self.theme.as_str())),
+            (
+                "camera",
+                self.camera.map_or(Json::Null, |c| Json::text(c.as_str())),
+            ),
             ("profile", profile),
             ("environment", text_or_null(self.environment.as_deref())),
             ("skip_launcher", Json::Bool(self.skip_launcher)),
@@ -333,6 +371,9 @@ impl Settings {
         ];
         if json.get("theme").is_ok() {
             keys.push("theme");
+        }
+        if json.get("camera").is_ok() {
+            keys.push("camera");
         }
         json.closed(&keys).map_err(shape)?;
         if json
@@ -378,6 +419,14 @@ impl Settings {
                 Ok(value) => ThemePreference::parse(value.string().map_err(shape)?)
                     .map_err(|_| damaged("the settings theme is not valid"))?,
                 Err(_) => ThemePreference::System,
+            },
+            camera: match json.get("camera") {
+                // Nothing chosen: the window follows its platform default.
+                Err(_) | Ok(Json::Null) => None,
+                Ok(value) => Some(
+                    CameraPreference::parse(value.string().map_err(shape)?)
+                        .map_err(|_| damaged("the settings camera preset is not valid"))?,
+                ),
             },
             profile,
             environment: optional_text("environment")?,
@@ -514,6 +563,7 @@ mod tests {
         s.environment = Some("blank".into());
         s.skip_launcher = true;
         s.models_dir = Some(PathBuf::from("/models"));
+        s.camera = Some(CameraPreference::Trackpad);
         s.touch_recent(PathBuf::from("/models/a"), 10).unwrap();
         s
     }
@@ -555,6 +605,40 @@ mod tests {
             ErrorCode::IntegrityError
         );
         let wrong_type = unknown.replace("\"automatic\"", "null");
+        assert!(Settings::decode(wrong_type.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn the_camera_choice_is_optional_and_strict_when_present() {
+        let legacy = br#"{"version":1,"profile":null,"environment":null,"skip_launcher":false,"models_dir":null,"recent":[]}"#;
+        // A file from before the field, and an explicit null, both mean "nothing chosen".
+        assert_eq!(Settings::decode(legacy).unwrap().camera, None);
+        assert_eq!(Settings::default().camera, None);
+        for choice in [CameraPreference::Mouse, CameraPreference::Trackpad] {
+            let settings = Settings {
+                camera: Some(choice),
+                ..Settings::default()
+            };
+            assert_eq!(
+                Settings::decode(&settings.encode().unwrap()).unwrap(),
+                settings
+            );
+        }
+        let explicit_null = String::from_utf8(legacy.to_vec())
+            .unwrap()
+            .replace("\"recent\":[]", "\"recent\":[],\"camera\":null");
+        assert_eq!(
+            Settings::decode(explicit_null.as_bytes()).unwrap().camera,
+            None
+        );
+        let unknown = String::from_utf8(legacy.to_vec())
+            .unwrap()
+            .replace("\"recent\":[]", "\"recent\":[],\"camera\":\"automatic\"");
+        assert_eq!(
+            Settings::decode(unknown.as_bytes()).unwrap_err().code,
+            ErrorCode::IntegrityError
+        );
+        let wrong_type = unknown.replace("\"automatic\"", "1");
         assert!(Settings::decode(wrong_type.as_bytes()).is_err());
     }
 

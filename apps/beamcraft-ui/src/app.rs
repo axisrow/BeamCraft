@@ -36,6 +36,7 @@ use crate::{Error, check_font, command, json_string, source};
 use beamcraft_engine::ViewSnapshot;
 use beamcraft_engine::element::ElementId;
 use beamcraft_model::command::Placement;
+use session::settings::{self, CameraPreference, Settings};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -70,7 +71,8 @@ pub struct Source {
     /// The author's name, shown in the header.
     pub author: Option<String>,
     /// The user's configuration directory (`--config-dir`); `None` is the platform default. The
-    /// render-mode shortcuts are read from it, nothing else.
+    /// render-mode shortcuts are read from it, and the side-panel camera choice is read from
+    /// and saved to its settings file.
     pub config_dir: Option<PathBuf>,
 }
 
@@ -142,8 +144,9 @@ pub struct App {
     edit_note: Option<Result<String, String>>,
     /// Flips the scroll zoom direction (macOS natural scrolling inverts it); pinch and keys keep theirs.
     invert_zoom: bool,
-    /// The active viewport input binding preset; the start value follows the platform
-    /// (`Trackpad` on macOS, `Mouse` elsewhere).
+    /// The active viewport input binding preset. A window starts on the side-panel choice
+    /// saved in the settings file, or on the platform default when nothing is saved
+    /// (`Trackpad` on macOS, `Mouse` elsewhere); a click in the side panel saves the choice.
     preset: Preset,
     props: Properties,
     props_job: Option<Receiver<Result<Edited, ToolError>>>,
@@ -297,7 +300,8 @@ enum Preset {
 impl Default for Preset {
     /// The bindings a fresh viewport starts on. A macOS laptop usually has no wheel button,
     /// so macOS starts on the trackpad mapping; every other platform starts on the mouse
-    /// mapping. An explicit side-panel choice keeps winning over this start value.
+    /// mapping. An explicit side-panel choice keeps winning over this start value: it is
+    /// saved in the settings file and read back at the next start.
     fn default() -> Self {
         if cfg!(target_os = "macos") {
             Self::Trackpad
@@ -305,6 +309,49 @@ impl Default for Preset {
             Self::Mouse
         }
     }
+}
+
+impl Preset {
+    /// The stored spelling of this preset in the settings file.
+    const fn stored(self) -> CameraPreference {
+        match self {
+            Self::Mouse => CameraPreference::Mouse,
+            Self::Trackpad => CameraPreference::Trackpad,
+        }
+    }
+
+    /// The preset a window starts on: the choice saved in the settings file, else the
+    /// platform default.
+    fn from_stored(choice: Option<CameraPreference>) -> Self {
+        choice.map_or_else(Self::default, |choice| match choice {
+            CameraPreference::Mouse => Self::Mouse,
+            CameraPreference::Trackpad => Self::Trackpad,
+        })
+    }
+}
+
+/// The camera preset saved in the user's settings; `None` is nothing saved. A settings file
+/// that cannot be read reads as nothing saved too: the viewport then follows the platform
+/// default, and a damaged file is the start page's complaint, not this window's.
+fn stored_camera(config_dir: Option<&Path>) -> Option<CameraPreference> {
+    let dir = config_dir
+        .map(Path::to_path_buf)
+        .or_else(settings::default_dir)?;
+    Settings::load(&dir).ok()?.camera
+}
+
+/// Saves `preset` as the user's side-panel choice, keeping every other stored setting.
+fn remember_camera(config_dir: Option<&Path>, preset: Preset) -> Result<(), String> {
+    let dir = config_dir
+        .map(Path::to_path_buf)
+        .or_else(settings::default_dir)
+        .ok_or("no configuration directory is known")?;
+    Settings::update(&dir, |settings| {
+        settings.camera = Some(preset.stored());
+        Ok(true)
+    })
+    .map(|_| ())
+    .map_err(|e| format!("the camera preset could not be saved: {}", e.message))
 }
 
 /// One frame of viewport navigation in `Camera::navigate` argument space: orbit radians, a
@@ -817,6 +864,9 @@ impl App {
             .first()
             .map(|set| set.name.clone())
             .unwrap_or_default();
+        // The side-panel camera choice comes back across restarts; nothing saved means the
+        // platform default.
+        let preset = Preset::from_stored(stored_camera(source.config_dir.as_deref()));
         let perf = perf.map(|(phases, report)| {
             let header = format!(
                 "\"adapter\":{},\"device_type\":{},\"backend\":{},\"samples\":{},\"text\":{}",
@@ -912,7 +962,7 @@ impl App {
             select_epoch: Epoch::default(),
             edit_note: None,
             invert_zoom: false,
-            preset: Preset::default(),
+            preset,
             props: Properties::default(),
             sheet_editor: crate::sheet::SheetEditor::default(),
             props_job: None,
@@ -2820,13 +2870,13 @@ impl App {
         ui.horizontal(|ui| {
             ui.label("Navigation:");
             if ui.radio(self.preset == Preset::Mouse, "Mouse").clicked() {
-                self.preset = Preset::Mouse;
+                self.choose_preset(Preset::Mouse);
             }
             if ui
                 .radio(self.preset == Preset::Trackpad, "Trackpad (macOS)")
                 .clicked()
             {
-                self.preset = Preset::Trackpad;
+                self.choose_preset(Preset::Trackpad);
             }
         });
         ui.label(match self.preset {
@@ -2843,6 +2893,16 @@ impl App {
         );
         if let Some(error) = &self.error {
             ui.colored_label(egui::Color32::from_rgb(230, 80, 60), error);
+        }
+    }
+
+    /// Chooses a navigation preset in the side panel and remembers it in the settings file, so
+    /// the choice comes back after a restart. The choice applies to this window even when the
+    /// save fails; the failure is reported where the choice was made.
+    fn choose_preset(&mut self, preset: Preset) {
+        self.preset = preset;
+        if let Err(why) = remember_camera(self.source.config_dir.as_deref(), preset) {
+            self.error = Some(why);
         }
     }
 }
@@ -2960,7 +3020,7 @@ impl eframe::App for App {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{
-        App, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
+        App, Preset, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
         target_size,
     };
 
@@ -7714,6 +7774,156 @@ pub(crate) mod tests {
         // Closing the view's pane gives the free pane its work plane back.
         app.close_pane(plan_pane);
         assert_eq!(app.tools.plane, Some(free));
+    }
+
+    /// A window on `config_dir`, opened the way a restart opens one: a fresh window on the
+    /// render state of an existing one, on a store with no CLI behind it.
+    fn reopened(state: &eframe::egui_wgpu::RenderState, config_dir: std::path::PathBuf) -> App {
+        let missing = std::env::temp_dir().join("beamcraft-window-test-no-cli");
+        App::open(
+            &egui::Context::default(),
+            Some(state),
+            Source {
+                store: missing.clone(),
+                cli: missing,
+                workspace: None,
+                published: None,
+                samples: None,
+                actor: None,
+                environment: None,
+                author: None,
+                config_dir: Some(config_dir),
+            },
+            None,
+            Arc::new(crate::stats::Stats::default()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_window_on_a_fresh_profile_starts_on_the_platform_default() {
+        let Some(app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("bc-camera-fresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let restarted = reopened(&app.state, dir.clone());
+        // No settings file yet: the window starts where its platform starts.
+        assert_eq!(restarted.preset, Preset::default());
+        assert!(
+            session::settings::Settings::load(&dir)
+                .unwrap()
+                .camera
+                .is_none()
+        );
+        assert!(!dir.join("settings.json").exists(), "a start saves nothing");
+        drop(restarted);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_side_panel_camera_choice_survives_a_restart() {
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("bc-camera-choice-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        app.source.config_dir = Some(dir.clone());
+        app.details = true;
+        // The radio that differs from the platform default is the interesting one: only a
+        // saved choice can beat the platform default after a restart.
+        let chosen = if Preset::default() == Preset::Mouse {
+            Preset::Trackpad
+        } else {
+            Preset::Mouse
+        };
+        let target = match chosen {
+            Preset::Mouse => "Mouse",
+            Preset::Trackpad => "Trackpad (macOS)",
+        };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        let mut frame = |events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    app.project_browser(ui);
+                    app.details_window(&ctx);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        // The window places itself on the first frame and paints on the next.
+        let _ = frame(vec![]);
+        let labels = frame(vec![]);
+        let radio = labels
+            .iter()
+            .find(|(text, _)| text == target)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the {target} radio is not on screen; saw {:?}",
+                    labels
+                        .iter()
+                        .map(|(text, _)| text.as_str())
+                        .collect::<Vec<_>>()
+                )
+            })
+            .1;
+        frame(click(radio));
+        frame(vec![]);
+        assert_eq!(app.preset, chosen, "the click chose the preset");
+        assert_eq!(
+            session::settings::Settings::load(&dir).unwrap().camera,
+            Some(chosen.stored()),
+            "the click was saved"
+        );
+        // The restart reads the same settings file: a new window comes back on the choice,
+        // which beats the platform default it would otherwise start on.
+        let restarted = reopened(&app.state, dir.clone());
+        assert_eq!(restarted.preset, chosen);
+        drop(restarted);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
