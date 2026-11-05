@@ -3015,7 +3015,7 @@ impl eframe::App for App {
             self.drawing_manager.window(
                 &ctx,
                 &self.source.cli,
-                self.source.workspace.as_deref(),
+                Some(self.source.store.as_path()),
                 self.source.actor.as_deref(),
                 &self.stats,
             );
