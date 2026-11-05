@@ -76,6 +76,7 @@ impl Story {
         fs::create_dir(root.join("classes-published")).unwrap();
         fs::create_dir(root.join("cuts-published")).unwrap();
         fs::create_dir(root.join("fits-published")).unwrap();
+        fs::create_dir(root.join("holes-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -3922,5 +3923,207 @@ fn a_fit_trims_flush_and_a_combine_joins_touching_members() {
     assert_eq!(
         reopened_web.2, web_digest,
         "the fitted mesh must survive the round trip"
+    );
+}
+
+/// The hole record story (A04): authored plate holes update and remove through their
+/// owned records, in their own published store so the numbered frame keeps the counts
+/// the manual runbook records, and in its own test for the per-test budget. The update
+/// replaces one record's geometry, the identical retry replays, and the removal frees
+/// the record while the survivors keep their exact quantities.
+#[test]
+fn hole_records_update_remove_and_survive_publication() {
+    let s = Story::new();
+    s.ok(
+        "holes-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "holes-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("holes-draft"), "--user-id", USER],
+    );
+
+    // The authored creation hole rides on the plate; the exact quantity carries it.
+    let holed = s.ok(
+        "holes-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 holed gusset",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a141",
+            "--width",
+            "1000",
+            "--length",
+            "1000",
+            "--thickness",
+            "20",
+            "--hole-rect",
+            "500,500,200,100",
+        ],
+    );
+    let gusset = text(at(&holed, &["plate"]), "element_id");
+    close(
+        at(at(&holed, &["plate"]), &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        19_600_000.0,
+    );
+
+    // A second record joins, then the update replaces its geometry in place.
+    s.ok(
+        "holes-draft",
+        "add-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a142",
+            "--hole-rect",
+            "100,100,100,100",
+        ],
+    );
+    let updated = s.ok(
+        "holes-draft",
+        "update-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a142",
+            "--hole-rect",
+            "100,100,300,300",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000a144",
+        ],
+    );
+    assert_eq!(text(&updated, "outcome"), "hole_updated");
+    close(
+        at(at(&updated, &["element"]), &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        17_800_000.0,
+    );
+    let holes_head = s.head("holes-draft");
+    let replay = s.ok(
+        "holes-draft",
+        "update-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a142",
+            "--hole-rect",
+            "100,100,300,300",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000a144",
+        ],
+    );
+    assert_eq!(text(&replay, "outcome"), "hole_update_replayed");
+    assert_eq!(at(&replay, &["revision"]), at(&updated, &["revision"]));
+    assert_eq!(s.head("holes-draft"), holes_head);
+
+    // A third record joins and its removal restores its exact share; the two survivors
+    // keep their records.
+    s.ok(
+        "holes-draft",
+        "add-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a143",
+            "--hole-rect",
+            "700,100,100,100",
+        ],
+    );
+    let removed = s.ok(
+        "holes-draft",
+        "remove-hole",
+        &[
+            "--id",
+            &gusset,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a143",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000a145",
+        ],
+    );
+    assert_eq!(text(&removed, "outcome"), "hole_removed");
+    close(
+        at(at(&removed, &["element"]), &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        17_800_000.0,
+    );
+    let removed_inspection = s.ok("holes-draft", "inspect-elements", &[]);
+    let records = at(
+        at(&removed_inspection, &["plates"])
+            .array()
+            .unwrap()
+            .iter()
+            .find(|p| text(p, "element_id") == gusset)
+            .expect("the gusset entry is present"),
+        &["hole_records"],
+    )
+    .array()
+    .unwrap();
+    assert_eq!(
+        records.len(),
+        1,
+        "the authored contour hole is geometry, not a record; one record survives"
+    );
+
+    // The removal is one undo unit: the record returns, and the redo removes it again.
+    let holes_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("holes-draft")]);
+    assert_eq!(holes_undo.0, 0);
+    let undone = parts(&s.ok("holes-draft", "inspect-elements", &[]));
+    close(volume_of(&undone, &gusset), 17_600_000.0);
+    let holes_redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("holes-draft")]);
+    assert_eq!(holes_redo.0, 0);
+    assert_eq!(text(&holes_redo.1, "outcome"), "workspace_redone");
+    let final_parts = parts(&s.ok("holes-draft", "inspect-elements", &[]));
+    close(volume_of(&final_parts, &gusset), 17_800_000.0);
+    let gusset_digest = final_parts
+        .iter()
+        .find(|(element, _, _)| element == gusset.as_str())
+        .expect("the gusset is present")
+        .2
+        .clone();
+
+    let holes_published = s.ok(
+        "holes-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("holes-draft")],
+    );
+    assert_eq!(text(&holes_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("holes-published", "inspect-elements", &[]));
+    close(volume_of(&reopened, &gusset), 17_800_000.0);
+    let reopened_gusset = reopened
+        .iter()
+        .find(|(element, _, _)| element == gusset.as_str())
+        .expect("the gusset is present");
+    assert_eq!(
+        reopened_gusset.2, gusset_digest,
+        "the holed mesh must survive the round trip"
+    );
+    let reopened_inspection = s.ok("holes-published", "inspect-elements", &[]);
+    let reopened_records = at(
+        at(&reopened_inspection, &["plates"])
+            .array()
+            .unwrap()
+            .iter()
+            .find(|p| text(p, "element_id") == gusset)
+            .expect("the gusset entry is present"),
+        &["hole_records"],
+    )
+    .array()
+    .unwrap();
+    assert_eq!(
+        reopened_records.len(),
+        1,
+        "the record survives the round trip"
     );
 }
