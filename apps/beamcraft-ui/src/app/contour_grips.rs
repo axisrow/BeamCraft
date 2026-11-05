@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
 
-//! V18 slice 1: contour grips on the selected flat plate. The selected plate's authored
+//! V18: the contour edit handles of the selected flat plate. The selected plate's authored
 //! contour ([`PlateContour`], read from the same `inspect-elements` reply as the rest of the
-//! panel) draws a vertex grip on every vertex and a grip on the middle of every edge; dragging
-//! a vertex grip moves that vertex, dragging an edge grip inserts a sharp vertex there, and an
-//! Alt-click on a vertex grip deletes it. Every grip commits the same A12.3 command a user
-//! types ([`ContourEdit`]), so the drag is one CLI command, one revision and one undo unit, and
-//! the saved result is the CLI's by construction.
+//! panel) draws a vertex grip on every vertex — hollow once a corner treatment is authored
+//! there — a grip on the middle of every edge, and the edges themselves take a drag. The
+//! gestures: dragging a vertex grip moves that vertex, dragging an edge's middle grip inserts
+//! a sharp vertex there, an Alt-click on a vertex grip deletes it, a confirming click on a
+//! vertex grip opens the corner treatment editor, and dragging the edge line translates the
+//! whole edge. Every gesture commits the same A12.3 command a user types ([`ContourEdit`]), so
+//! one gesture is one CLI command, one revision and one undo unit, and the saved result is the
+//! CLI's by construction.
 //!
 //! The preview during a drag is the same point arithmetic the CLI edit performs; the commit
 //! happens once, on release. A drag that never leaves the grip (a confirming click) commits
-//! nothing. Corner treatments are not drawn or edited here; the corner editor is a later slice.
+//! nothing; a confirming click on a vertex opens the corner editor instead. The grips and the
+//! corner editor are dormant outside the Select bench and while a creation tool or a view pick
+//! owns the pointer, so no other picker loses its clicks.
 
 use super::{App, field, workbench};
 use crate::command;
@@ -363,7 +368,8 @@ fn drag_point(
 }
 
 /// The contour a drag preview shows: the authored points with the drag's edit applied, the same
-/// arithmetic the CLI edit runs. The corner list is not part of this slice and stays untouched.
+/// arithmetic the CLI edit runs. The corner list stays untouched by the preview: the evaluated
+/// body shows the treatments after the commit's reload.
 fn preview_points(contour: &PlateContour, drag: &Drag) -> PlateContour {
     let mut preview = contour.clone();
     let count = preview.points.len();
