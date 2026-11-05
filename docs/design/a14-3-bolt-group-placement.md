@@ -62,8 +62,9 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
 
 ## Limits
 
-- No holes (A14.4), no quantities stored on the group, no derived mesh or instancing (U11);
-  the prototype placements are decided and reported, not drawn.
+- No holes (A14.4), no quantities stored on the group, and no derived mesh or instancing in
+  the layer (U11): the placements are decided and reported, and — since issue 512 — drawn, as
+  one read-only scene mesh of the placed A14.2 prototypes merged per group.
 - The reachability and the grip stay box-approximate for members (the A05 limit).
 - The UI (V19) is not started; the CLI is the only surface.
 - One group is one straight row (O-B1); no environments (O-B2).
