@@ -74,6 +74,7 @@ impl Story {
         fs::create_dir(root.join("data-published")).unwrap();
         fs::create_dir(root.join("contour-published")).unwrap();
         fs::create_dir(root.join("classes-published")).unwrap();
+        fs::create_dir(root.join("cuts-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -3504,5 +3505,206 @@ fn part_classes_carry_metadata_that_publication_preserves() {
             .float()
             .unwrap(),
         600_000.0
+    );
+}
+
+/// The cut lifecycle story (A03): a plane cut moves, replays and removes through the
+/// owned record, in its own published store so the numbered frame keeps the counts the
+/// manual runbook records, and in its own test for the per-test budget. The update keeps
+/// the record identity, the identical retry replays the original revision, and the
+/// removal frees the ordinal without reusing it.
+#[test]
+fn cut_updates_and_removal_keep_identity_and_survive_publication() {
+    let s = Story::new();
+    s.ok(
+        "cuts-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "cuts-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("cuts-draft"), "--user-id", USER],
+    );
+    let cut_plate = s.ok(
+        "cuts-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 cut web",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000fff1",
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+        ],
+    );
+    let web = text(at(&cut_plate, &["plate"]), "element_id");
+    close(
+        volume_of(&parts(&s.ok("cuts-draft", "inspect-elements", &[])), &web),
+        5_000_000.0,
+    );
+
+    // The owned cut trims the plate to its kept half-space, exactly.
+    let applied = s.ok(
+        "cuts-draft",
+        "cut-by-plane",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff3",
+            "--point",
+            "250,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    assert_eq!(text(&applied, "outcome"), "cut_applied");
+    assert_eq!(
+        at(at(&applied, &["record"]), &["ordinal"])
+            .unsigned()
+            .unwrap(),
+        0
+    );
+    let cut_parts = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&cut_parts, &web), 1_250_000.0);
+
+    // The update moves the same record: the identity stays, the volume follows the point.
+    let edited = s.ok(
+        "cuts-draft",
+        "update-cut",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff3",
+            "--point",
+            "500,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000fff4",
+        ],
+    );
+    let cut_parts = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&cut_parts, &web), 2_500_000.0);
+    let cuts_head = s.head("cuts-draft");
+    let replay = s.ok(
+        "cuts-draft",
+        "update-cut",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff3",
+            "--point",
+            "500,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000fff4",
+        ],
+    );
+    assert_eq!(text(&replay, "outcome"), "cut_replayed");
+    assert_eq!(at(&replay, &["revision"]), at(&edited, &["revision"]));
+    assert_eq!(s.head("cuts-draft"), cuts_head);
+
+    // The removal restores the blank; one undo returns the moved cut and the redo
+    // removes it again.
+    s.ok(
+        "cuts-draft",
+        "remove-cut",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff3",
+            "--op-id",
+            "019a7bf0-0000-7000-8000-00000000fff5",
+        ],
+    );
+    let removed_parts = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&removed_parts, &web), 5_000_000.0);
+    let cuts_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("cuts-draft")]);
+    assert_eq!(cuts_undo.0, 0);
+    let undone = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&undone, &web), 2_500_000.0);
+    let cuts_redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("cuts-draft")]);
+    assert_eq!(cuts_redo.0, 0);
+    assert_eq!(text(&cuts_redo.1, "outcome"), "workspace_redone");
+
+    // A fresh cut after the removal takes the next ordinal, and publication preserves
+    // the record.
+    let fresh = s.ok(
+        "cuts-draft",
+        "cut-by-plane",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000fff6",
+            "--point",
+            "750,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    assert_eq!(
+        at(at(&fresh, &["record"]), &["ordinal"])
+            .unsigned()
+            .unwrap(),
+        1,
+        "the removed ordinal is never reused"
+    );
+    let final_parts = parts(&s.ok("cuts-draft", "inspect-elements", &[]));
+    close(volume_of(&final_parts, &web), 3_750_000.0);
+    let web_digest = final_parts
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the cut web is present")
+        .2
+        .clone();
+
+    let cuts_published = s.ok(
+        "cuts-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("cuts-draft")],
+    );
+    assert_eq!(text(&cuts_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("cuts-published", "inspect-elements", &[]));
+    close(volume_of(&reopened, &web), 3_750_000.0);
+    let reopened_web = reopened
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the cut web is present");
+    assert_eq!(
+        reopened_web.2, web_digest,
+        "the mesh must survive the round trip"
+    );
+    let reopened_inspection = s.ok("cuts-published", "inspect-elements", &[]);
+    let reopened_entry = at(&reopened_inspection, &["plates"])
+        .array()
+        .unwrap()
+        .iter()
+        .find(|p| text(p, "element_id") == web)
+        .expect("the cut web entry is present");
+    let records = at(reopened_entry, &["cuts"]).array().unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        text(&records[0], "operation_id"),
+        "019a7bf0-0000-7000-8000-00000000fff6",
+        "the owned cut record survives the round trip"
     );
 }

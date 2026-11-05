@@ -16,17 +16,18 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, eight tests: the
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, nine tests: the
 expanded story and — each in its own published store so the numbered frame keeps its recorded
 counts — the curved and poly member story, the bent and lofted plate story, the model-tool
-transform story, the bolt-group story, the model-data tool story, the contour plate story and
-the part class story). Every step is
+transform story, the bolt-group story, the model-data tool story, the contour plate story, the
+part class story and the cut lifecycle story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
 | Expanded-scope requirement | Executable check | Result |
 |---|---|---|
 | Modelling: frame with plates | `create-member` x3, `cut-by-plane`, `create-plate` x2 with `--hole-rect`; closed-form volumes 5,000,000 / 5,000,000 / 4,750,000 / 396,000 / 396,000 mm3 | Passed |
+| Cut lifecycle (A03) | in their own published store, so the numbered frame keeps the counts the manual runbook records: the owned cut trims to its exact kept half-space (1,250,000 mm3), `update-cut` moves the same record to a new exact volume (2,500,000 mm3) with the identity preserved, the identical retry replays the original revision and writes nothing, `remove-cut` restores the blank (5,000,000 mm3), one undo returns the moved cut and the redo removes it, a fresh cut takes the next ordinal (1, never reused), and publication preserves the exact volume, mesh and owned record | Passed |
 | Model tools | `split-part` (column at mid height, halves sum to the closed-form volume), `copy-element` (copy equals source volume), `chamfer-part` (volume strictly decreases, every other part unchanged) | Passed |
 | Model tools: rotate, mirror and arrays (T03) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a linear array lands three independent copies in one revision at the stepped placements with the source volume each, and one undo removes them all; a mirror reflects the member path across the plane keeping the length and the volume; a mirrored polybeam path refuses `UNSUPPORTED_GEOMETRY` with nothing written; the quarter-turn rotation composes the orientation and keeps the authored path, so the member turns in place, undoing and redoing as one step; all six members survive publication with their exact volumes, meshes and the transformed orientation | Passed |
 | Member holes (A04.2, G14.1 slice) | `add-hole` on a member (`--axis-point`, `--axis-direction`, `--diameter`): a through d = 20 hole removes the regular 32-gon area times the 100 mm section width; a transverse coordinate outside the section refuses with the head unchanged | Passed |
@@ -86,7 +87,7 @@ recorded open and stay open until they execute on real hardware.
 
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
-| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, poly and curved members, bent and lofted plates, contour plate edits, grids/levels, construction objects and grid line tools, part classes, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, cut lifecycle, poly and curved members, bent and lofted plates, contour plate edits, grids/levels, construction objects and grid line tools, part classes, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
 | View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |
