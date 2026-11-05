@@ -122,7 +122,6 @@ mod tests {
     use super::*;
     use crate::engine::bolt::StoredPlacement;
     use crate::model::fastener::{HeadKind, HoleMode, WasherSpec};
-    use beamcraft_model::digest::Sha256;
 
     /// The washered M16 bolt of the kernel fastener suite.
     fn bolt() -> FastenerSpec {
