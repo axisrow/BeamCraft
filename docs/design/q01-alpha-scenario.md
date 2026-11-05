@@ -11,7 +11,7 @@ The `alpha_scenario` substring filter selects both stories of the package's `cli
 target: `alpha_scenario.rs` (the original) and `alpha_scenario_expanded.rs` (the expanded one,
 which includes the original frame as its opening and runs the curved/poly members, the
 bent/lofted plates, the rotate/mirror/array tool story, the bolt-group story, the model-data
-tool story and the contour plate story each in their
+tool story, the contour plate story and the part class story each in their
 own published store as its further tests). The
 expected exit is 0. On success the
 stories themselves are silent; the runner prints one result line per test. A failing step

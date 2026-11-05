@@ -73,6 +73,7 @@ impl Story {
         fs::create_dir(root.join("bolts-published")).unwrap();
         fs::create_dir(root.join("data-published")).unwrap();
         fs::create_dir(root.join("contour-published")).unwrap();
+        fs::create_dir(root.join("classes-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -3304,5 +3305,204 @@ fn contour_plate_edits_shape_exactly_and_survive_publication() {
             .expect("the chamfered flange is present")
             .2,
         "the flange mesh must survive the round trip"
+    );
+}
+
+/// The part class story (P15): classes are authored metadata that rides on any element,
+/// preserved by copies, independent of the engineering quantities, and refused outside
+/// the integer bound. Its own published store keeps the numbered frame's counts the
+/// manual runbook records, and its own test keeps the per-test budget honest.
+#[test]
+fn part_classes_carry_metadata_that_publication_preserves() {
+    let s = Story::new();
+    s.ok(
+        "classes-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "classes-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("classes-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let classed = s.ok(
+        "classes-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 classed plate",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000eee1",
+            "--width",
+            "200",
+            "--length",
+            "300",
+            "--thickness",
+            "10",
+            "--class",
+            "-7",
+        ],
+    );
+    let plate = at(&classed, &["plate"]);
+    assert_eq!(at(plate, &["class"]).float().unwrap(), -7.0);
+    let plate_id = text(plate, "element_id");
+    close(
+        at(plate, &["quantities", "volume", "mm3"]).float().unwrap(),
+        600_000.0,
+    );
+    // The copy inherits the class; the edit retargets it without touching the mesh or
+    // the quantities.
+    let copied = s.ok(
+        "classes-draft",
+        "copy-element",
+        &["--id", &plate_id, "--offset", "1000,0,0"],
+    );
+    assert_eq!(
+        at(at(&copied, &["element"]), &["class"]).float().unwrap(),
+        -7.0
+    );
+    let edited = s.ok(
+        "classes-draft",
+        "update-element",
+        &["--id", &plate_id, "--class", "2147483647"],
+    );
+    let edited_element = at(&edited, &["element"]);
+    assert_eq!(
+        at(edited_element, &["class"]).float().unwrap(),
+        2_147_483_647.0
+    );
+    assert_eq!(
+        text(edited_element, "mesh_digest"),
+        text(plate, "mesh_digest"),
+        "the class is metadata: the mesh is untouched"
+    );
+    assert_eq!(
+        at(edited_element, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        600_000.0
+    );
+
+    // A member defaults to class zero, and a nonzero class is authored.
+    s.ok(
+        "classes-draft",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-CLASS-BAR",
+            "--width",
+            "20",
+            "--height",
+            "30",
+        ],
+    );
+    let plain = s.ok(
+        "classes-draft",
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "1000,0,0",
+            "--profile",
+            "Q01-CLASS-BAR",
+        ],
+    );
+    assert_eq!(
+        at(at(&plain, &["member"]), &["class"]).float().unwrap(),
+        0.0
+    );
+    let classed_member = s.ok(
+        "classes-draft",
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "2000,0,0",
+            "--end",
+            "3000,0,0",
+            "--profile",
+            "Q01-CLASS-BAR",
+            "--class",
+            "12",
+        ],
+    );
+    assert_eq!(
+        at(at(&classed_member, &["member"]), &["class"])
+            .float()
+            .unwrap(),
+        12.0
+    );
+
+    // The integer bound holds: every out-of-range class refuses and writes nothing.
+    let classed_head = s.head("classes-draft");
+    let inspected = s.ok("classes-draft", "inspect-elements", &[]);
+    for bad in ["1.5", "NaN", "2147483648", "-2147483649"] {
+        let refused = s.run(
+            "classes-draft",
+            "update-element",
+            &["--id", &plate_id, "--class", bad],
+            2,
+        );
+        assert_eq!(text(&refused, "outcome"), "rejected");
+    }
+    assert_eq!(s.head("classes-draft"), classed_head);
+    assert_eq!(
+        text(
+            &at(&inspected, &["plates"]).array().unwrap()[0],
+            "element_id"
+        ),
+        plate_id
+    );
+
+    let classes_published = s.ok(
+        "classes-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("classes-draft")],
+    );
+    assert_eq!(text(&classes_published, "outcome"), "workspace_published");
+    let reopened_inspection = s.ok("classes-published", "inspect-elements", &[]);
+    let reopened_plates = at(&reopened_inspection, &["plates"]).array().unwrap();
+    let reopened_plate = reopened_plates
+        .iter()
+        .find(|p| text(p, "element_id") == plate_id)
+        .expect("the classed plate is present");
+    assert_eq!(
+        at(reopened_plate, &["class"]).float().unwrap(),
+        2_147_483_647.0,
+        "the edited class survives the round trip"
+    );
+    let reopened_copies = reopened_plates
+        .iter()
+        .filter(|p| text(p, "element_id") != plate_id)
+        .collect::<Vec<_>>();
+    assert_eq!(reopened_copies.len(), 1);
+    assert_eq!(at(reopened_copies[0], &["class"]).float().unwrap(), -7.0);
+    let reopened_members = at(&reopened_inspection, &["members"]).array().unwrap();
+    let reopened_classed_member = reopened_members
+        .iter()
+        .find(|m| at(m, &["class"]).float().unwrap() == 12.0)
+        .expect("the classed member is present");
+    assert_eq!(
+        at(reopened_classed_member, &["class"]).float().unwrap(),
+        12.0
+    );
+    let reopened_plain = reopened_members
+        .iter()
+        .find(|m| at(m, &["class"]).float().unwrap() == 0.0)
+        .expect("the plain member is present");
+    assert_eq!(
+        at(reopened_plain, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        600_000.0
     );
 }

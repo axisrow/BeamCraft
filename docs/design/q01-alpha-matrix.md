@@ -16,11 +16,11 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, seven tests: the
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, eight tests: the
 expanded story and — each in its own published store so the numbered frame keeps its recorded
 counts — the curved and poly member story, the bent and lofted plate story, the model-tool
-transform story, the bolt-group story, the model-data tool story and the contour plate story).
-Every step is
+transform story, the bolt-group story, the model-data tool story, the contour plate story and
+the part class story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
@@ -39,6 +39,7 @@ steps ran and passed on this machine.
 | Model data: construction objects and grid line tools (T01/T02) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a drawn V axis joins a one-axis grid and survives reshape (exact start/end), relabel and remove with its identity; one undo returns the removed axis with its label and geometry; the four construction kinds (point, line, circle with its exact radius, plane) store as helpers, list exactly, and survive the publication round trip with the drawn grid | Passed |
 | Contour plates: vertex and edge edits (A12.3) | in their own published store, so the numbered frame keeps the counts the manual runbook records: the amendment case 6 chain — a vertex delete gives the half square (5,000,000 mm3), a collinear insert keeps the body, an outward move adds the 1000 x 500 / 2 triangle (7,500,000 mm3); the edge move grows a chamfered blank by exactly 2,000,000 mm3 while the treatment rides along on its vertex; one undo rolls the last shape revision back and the redo restores it; both plates survive publication with their exact volumes and meshes | Passed |
 | User attributes (I04) | `attribute-define` (choice with options, number with a unit), `attribute-set`, `attribute-get`, `attributes`; an undefined name (`NOT_FOUND`) and an off-choice value (`INVALID_ARGUMENT`) refuse | Passed |
+| Part classes (P15) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a plate carries `class -7` at creation and the copy inherits it; the edit to `2147483647` retargets the metadata with the mesh digest and the quantities untouched; a member defaults to class zero and a nonzero class is authored; every out-of-range class (`1.5`, `NaN`, beyond the integer bound) refuses and writes nothing; the classes survive the publication round trip exactly (the CLI basis of the runbook's colour-by-class cell) | Passed |
 | Connections and assembly | `create-assembly`, `attach-to-assembly` x7, `create-bolt`, `create-weld` | Passed |
 | Bolt groups with generated holes (A14.3/A14.4) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a two-fastener group over two stacked plates commits one atomic edit, resolves the auto length over the grip and its hardware (40 mm), and generates one group-owned hole record per crossing fastener on every connected plate (`hole_mode generate`, `generated_by` the group); each plate's quantity drops by the measured two-hole amount (2,838.81 mm3, within 1 mm3), the undo returns the blank plates and the redo regenerates, and publication preserves the drops, the hole ownership and the group record | Passed |
 | Numbering | `preview-numbering` + `approve-numbering`, 8 marks (7 parts + assembly) | Passed |
@@ -85,7 +86,7 @@ recorded open and stay open until they execute on real hardware.
 
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
-| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, poly and curved members, bent and lofted plates, contour plate edits, grids/levels, construction objects and grid line tools, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, poly and curved members, bent and lofted plates, contour plate edits, grids/levels, construction objects and grid line tools, part classes, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
 | View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |
