@@ -7388,6 +7388,156 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[test]
+    fn a_section_by_two_picked_points_looks_across_the_line_and_restores() {
+        use crate::views::Construction;
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!("beamcraft-v09-picks-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.source.store = dir.clone();
+        deliver(&mut app, refreshed(2));
+        let token = app.loaded.as_ref().unwrap().snapshot.token().clone();
+        let spatial = app
+            .views
+            .active_pane()
+            .unwrap()
+            .camera
+            .frame(app.view_origin())
+            .unwrap();
+        // The section line lies on the XY work plane 50 m below the model, so the picks land
+        // on that plane and no snap takes them.
+        let input = beamcraft_engine::work_plane::WorkPlane::parallel("xy", -50_000.0).unwrap();
+        app.install_plane(Some(input));
+        let down = |x: f64, y: f64| crate::edit::Ray {
+            origin: [x, y, 0.0],
+            direction: [0.0, 0.0, -1.0],
+        };
+        app.begin_view(Construction::TwoPoints);
+        app.views.form.name = "Section A-B".into();
+        app.view_click(down(500_000.0, 500_000.0));
+        app.view_click(down(501_000.0, 500_500.0));
+        // Two picks fill the plane; nothing is created before Apply.
+        assert!(app.views.picking.is_none());
+        assert!(app.views.form.picked);
+        assert!(app.views.book.find("Section A-B").is_none());
+        app.submit_view();
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        let view = app.views.book.find("Section A-B").unwrap().clone();
+        let ab = [1000.0, 500.0, 0.0];
+        assert_eq!(view.plane.origin(), [500_000.0, 500_000.0, -50_000.0]);
+        let n = view.plane.normal();
+        assert!(n[2].abs() < 1e-9, "the section stands vertically: {n:?}");
+        assert!(
+            (n[0] * ab[0] + n[1] * ab[1]).abs() < 1e-9,
+            "the view looks across the line, not along it: {n:?}"
+        );
+        assert_eq!(
+            crate::views::view_kind(&view),
+            crate::views::ViewKind::Elevation
+        );
+        let camera = app.views.active_pane().unwrap().camera;
+        assert!(camera.is_aligned() && camera.is_orthographic());
+        let (frame, _) = camera.frame(app.view_origin()).unwrap();
+        let looked = frame.normal();
+        assert!(
+            looked.iter().zip(n).all(|(a, b)| (a - b).abs() < 1e-6),
+            "the camera looks along the section plane's normal: {looked:?} vs {n:?}"
+        );
+        assert_eq!(
+            app.tools.plane,
+            Some(view.plane),
+            "the view plane is the input frame"
+        );
+        let first = app.views.active_pane().unwrap().camera;
+
+        // Leaving for the free view and coming back restores the camera as the user left it,
+        // not the view's own construction.
+        let mut wandered = app.views.active_pane().unwrap().camera;
+        wandered
+            .navigate([0.5, 0.3], [800.0, -300.0], -1.0)
+            .unwrap();
+        app.views.active_pane_mut().unwrap().camera = wandered;
+        let left = wandered.frame(app.view_origin()).unwrap();
+        app.activate_view(None);
+        assert_eq!(
+            app.views
+                .active_pane()
+                .unwrap()
+                .camera
+                .frame(app.view_origin())
+                .unwrap(),
+            spatial
+        );
+        // The free view comes back with the work plane it had, not the section's.
+        assert_eq!(app.tools.plane, Some(input));
+        app.activate_view(Some(view.id));
+        assert_eq!(
+            app.views
+                .active_pane()
+                .unwrap()
+                .camera
+                .frame(app.view_origin())
+                .unwrap(),
+            left
+        );
+        assert_eq!(app.tools.plane, Some(view.plane));
+
+        // A depth slab clips the display and never the model.
+        app.edit_view(view.id);
+        app.views.form.depth_on = true;
+        app.views.form.depth = ["1200".into(), "800".into()];
+        app.submit_view();
+        assert!(
+            matches!(app.views.note, Some(Ok(_))),
+            "{:?}",
+            app.views.note
+        );
+        let stored = app.views.book.get(&view.id).unwrap().clone();
+        assert_eq!(stored.depth, Some([1200.0, 800.0]));
+        assert_eq!(
+            crate::views::display_clip(None, Some(&stored))
+                .unwrap()
+                .planes
+                .len(),
+            2
+        );
+        let towards = [
+            stored.plane.origin()[0] + n[0] * 1000.0,
+            stored.plane.origin()[1] + n[1] * 1000.0,
+            stored.plane.origin()[2],
+        ];
+        let beyond = [
+            stored.plane.origin()[0] + n[0] * 2000.0,
+            stored.plane.origin()[1] + n[1] * 2000.0,
+            stored.plane.origin()[2],
+        ];
+        assert!(stored.contains(towards));
+        assert!(!stored.contains(beyond));
+
+        // A restart reads the sidecar and rebuilds the same camera deterministically: the
+        // wander is forgotten and the view looks across its line again.
+        app.views.cameras.clear();
+        app.views.book = crate::views::load(&dir).unwrap();
+        app.activate_view(Some(view.id));
+        let restarted = app.views.active_pane().unwrap().camera;
+        assert_eq!(
+            restarted.frame(app.view_origin()).unwrap(),
+            first.frame(app.view_origin()).unwrap(),
+            "the restored camera is the view's own construction"
+        );
+        assert_eq!(
+            crate::views::load(&dir).unwrap().len(),
+            2,
+            "the sidecar keeps the default view and the section"
+        );
+        assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A press and, in a later frame, the release of the primary button at `pos`.
     fn press(pos: egui::Pos2) -> Vec<egui::Event> {
         vec![
