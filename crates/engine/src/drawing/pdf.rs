@@ -57,9 +57,11 @@ fn pt(value: f64) -> String {
     format!("{value:.4}")
 }
 
-/// Paints every path as absolute move/line subpaths translated by `origin_mm`, the
-/// paper point mapped onto the page's lower-left corner; each path sets and clears its
-/// own dash pattern.
+/// Paints every path as move/line operators translated by `origin_mm`, the paper point
+/// mapped onto the page's lower-left corner; each path sets and clears its own dash pattern.
+/// A stroke whose start continues the previous stroke's end joins it into one polyline, so
+/// a dash pattern runs along a tessellated circle or arc instead of restarting at every
+/// chord and painting the circle solid (#490 finding 1).
 fn content_stream(paths: &[PagePath], origin_mm: [f64; 2]) -> String {
     let mut path = String::new();
     for group in paths {
@@ -71,16 +73,23 @@ fn content_stream(paths: &[PagePath], origin_mm: [f64; 2]) -> String {
                 .join(" ");
             path.push_str(&format!("[{pattern}] 0 d\n"));
         }
+        let mut pen: Option<(String, String)> = None;
         for [start, end] in &group.strokes {
             let [sx, sy] = *start;
             let [ex, ey] = *end;
-            path.push_str(&format!(
-                "{} {} m {} {} l\n",
-                pt(sx - origin_mm[0]),
-                pt(sy - origin_mm[1]),
-                pt(ex - origin_mm[0]),
-                pt(ey - origin_mm[1]),
-            ));
+            let from = (pt(sx - origin_mm[0]), pt(sy - origin_mm[1]));
+            let to = (pt(ex - origin_mm[0]), pt(ey - origin_mm[1]));
+            // A closing stroke that only repeats the point the run already reached prints a
+            // duplicated point and advances nothing.
+            if pen.as_ref() == Some(&from) && from == to {
+                continue;
+            }
+            if pen.as_ref() == Some(&from) {
+                path.push_str(&format!("{} {} l\n", to.0, to.1));
+            } else {
+                path.push_str(&format!("{} {} m {} {} l\n", from.0, from.1, to.0, to.1));
+            }
+            pen = Some(to);
         }
         path.push_str("S\n");
         if group.dash_mm.is_some() {
@@ -200,12 +209,13 @@ mod tests {
         BodyProjection, DimensionGeometry, DimensionProjection, ProjectedEdge, UnresolvedReason,
     };
     use crate::drawing::{
-        DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DrawingSpec, Plane, SourceModelPin, ViewSpec,
+        DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DraftingGeometry, DraftingSpec, DrawingSpec,
+        LayerSpec, LineType, Plane, SourceModelPin, ViewSpec,
     };
     use crate::query::feature::FeatureId;
     use beamcraft_model::digest::ContentDigest;
     use beamcraft_model::id::{
-        DimensionId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
+        DimensionId, DraftingEntityId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
     };
 
     const A: &str = "01900000-0000-7000-8000-000000000001";
@@ -214,6 +224,22 @@ mod tests {
     const MEMBER: &str = "01900000-0000-7000-8000-000000000004";
 
     fn drawing(name: &str) -> Drawing {
+        drawing_with_strokes(name, None)
+    }
+
+    fn drawing_with_strokes(name: &str, drafting: Option<DraftingSpec>) -> Drawing {
+        let (drafting, layers) = drafting
+            .map(|spec| {
+                (
+                    vec![spec.clone()],
+                    vec![LayerSpec {
+                        id: spec.layer,
+                        name: "Notes".to_owned(),
+                        visible: true,
+                    }],
+                )
+            })
+            .unwrap_or_default();
         Drawing::admit(DrawingSpec {
             id: DrawingId::parse(A).unwrap(),
             name: name.to_owned(),
@@ -239,8 +265,8 @@ mod tests {
                 paper_offset_mm: 10.0,
                 decimal_places: 0,
             },
-            drafting: Vec::new(),
-            layers: Vec::new(),
+            drafting,
+            layers,
             views: Vec::new(),
             sections: Vec::new(),
             details: Vec::new(),
@@ -306,6 +332,46 @@ mod tests {
             export(&drawing, version, &projection("995")).unwrap(),
             first
         );
+    }
+
+    #[test]
+    fn a_dashed_circle_sets_its_dash_once_and_draws_one_run() {
+        // #490 finding 1 in the PDF surface: the tessellated ring's ~1 mm chords each
+        // opened their own subpath, and PDF restarts the dash pattern at every `m`, so
+        // dashed circles exported solid. The chords now chain one polyline: the dashed
+        // group's segment between its dash setting and the stroke carries one `m`.
+        let drawing = drawing_with_strokes(
+            "Ring",
+            Some(DraftingSpec {
+                id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000006").unwrap(),
+                geometry: DraftingGeometry::Circle {
+                    center: [45.0, 160.0],
+                    radius: 12.0,
+                },
+                layer: DraftingEntityId::parse("01900000-0000-7000-8000-000000000005").unwrap(),
+                line_type: LineType::Dashed,
+            }),
+        );
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bytes = export(&drawing, version, &projection("1000")).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        let dashed = text
+            .split("[8.5039 8.5039] 0 d\n")
+            .nth(1)
+            .unwrap_or_default();
+        let dashed = dashed.split("\nS\n").next().unwrap_or_default();
+        assert!(
+            !dashed.is_empty(),
+            "the dashed drafting group is in the content stream"
+        );
+        assert_eq!(
+            dashed.matches(" m ").count(),
+            1,
+            "the ring is one polyline: {dashed}"
+        );
+        assert!(dashed.matches(" l\n").count() >= 16, "{dashed}");
+        // The pattern is cleared after the dashed group, so later groups stay continuous.
+        assert!(text.contains("[] 0 d\n"));
     }
 
     #[test]

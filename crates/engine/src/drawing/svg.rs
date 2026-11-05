@@ -418,17 +418,31 @@ pub(super) fn normalized(strokes: Vec<[[f64; 2]; 2]>) -> Result<Vec<[[f64; 2]; 2
         .collect()
 }
 
-/// Renders one stroke list as absolute-move/line subpath data at fixed four-decimal precision.
+/// Renders one stroke list as path data at fixed four-decimal precision. A stroke whose
+/// start continues the previous stroke's end joins it into one polyline subpath, so a dash
+/// pattern runs along a tessellated circle or arc instead of restarting at every chord and
+/// painting the circle solid (#490 finding 1); a break in the chain starts a new `M`.
 pub(super) fn path(strokes: &[[[f64; 2]; 2]]) -> String {
     let mut text = String::new();
+    let mut pen: Option<String> = None;
     for [[sx, sy], [ex, ey]] in strokes {
-        text.push_str(&format!(
-            "M {sx:.4} {sy:.4} L {ex:.4} {ey:.4} ",
-            sx = sx,
-            sy = sy,
-            ex = ex,
-            ey = ey
-        ));
+        let start = format!("{sx:.4} {sy:.4}");
+        let end = format!("{ex:.4} {ey:.4}");
+        // A closing stroke that only repeats the point the run already reached (a ring's
+        // last chord ends at its first point again) adds nothing to the picture and would
+        // print a duplicated point.
+        if pen.as_deref() == Some(start.as_str()) && start == end {
+            continue;
+        }
+        if pen.as_deref() == Some(start.as_str()) {
+            text.push_str(&format!(" L {end}"));
+        } else {
+            if !text.is_empty() {
+                text.push(' ');
+            }
+            text.push_str(&format!("M {start} L {end}"));
+        }
+        pen = Some(end);
     }
     text
 }
@@ -981,6 +995,21 @@ mod tests {
     }
 
     fn drawing_with_drafting(name: &str) -> Drawing {
+        drawing_with_strokes(
+            name,
+            DraftingGeometry::Line {
+                a: [10.0, 500.0],
+                b: [20.0, 510.0],
+            },
+            LineType::Continuous,
+        )
+    }
+
+    fn drawing_with_strokes(
+        name: &str,
+        geometry: DraftingGeometry,
+        line_type: LineType,
+    ) -> Drawing {
         let layer = DraftingEntityId::parse("01900000-0000-7000-8000-000000000005").unwrap();
         Drawing::admit(DrawingSpec {
             id: DrawingId::parse(A).unwrap(),
@@ -1009,12 +1038,9 @@ mod tests {
             },
             drafting: vec![DraftingSpec {
                 id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000006").unwrap(),
-                geometry: DraftingGeometry::Line {
-                    a: [10.0, 500.0],
-                    b: [20.0, 510.0],
-                },
+                geometry,
                 layer,
-                line_type: LineType::Continuous,
+                line_type,
             }],
             layers: vec![LayerSpec {
                 id: layer,
@@ -1027,6 +1053,21 @@ mod tests {
             sheet: None,
         })
         .unwrap()
+    }
+
+    /// The drawn object's path data from an export: the segment after its `data-drafting`
+    /// key up to the element's close.
+    fn drafting_path_data(text: &str) -> String {
+        text.split("data-drafting=\"01900000-0000-7000-8000-000000000006\"")
+            .nth(1)
+            .unwrap_or_default()
+            .split(" d=\"")
+            .nth(1)
+            .unwrap_or_default()
+            .split("\"/>")
+            .next()
+            .unwrap_or_default()
+            .to_owned()
     }
 
     #[test]
@@ -1186,12 +1227,100 @@ mod tests {
         assert!(text.contains("a&lt;b&gt;&amp;&quot;c&#39;"));
         assert!(!text.contains("a<b>"));
         // "10.5" draws digit, point and digit glyphs as 2+6+1+5 original stroke subpaths,
-        // never font text.
+        // never font text; the digit segments touch but never follow each other, so none
+        // of them chain.
         let label = text
             .split("<path class=\"label\" d=\"")
             .nth(1)
             .unwrap_or_default();
         assert_eq!(label.matches("M ").count(), 14);
+    }
+
+    #[test]
+    fn connected_strokes_chain_into_one_polyline_subpath() {
+        // The rectangle's four sides run into each other, so they draw as one `M` with
+        // three continuing `L`, while a disconnected pair keeps its own `M` each.
+        let chained = path(&[
+            [[1.0, 1.0], [5.0, 1.0]],
+            [[5.0, 1.0], [5.0, 4.0]],
+            [[5.0, 4.0], [1.0, 4.0]],
+            [[1.0, 4.0], [1.0, 1.0]],
+        ]);
+        assert_eq!(chained.matches("M ").count(), 1, "{chained}");
+        assert_eq!(chained.matches(" L ").count(), 4, "{chained}");
+        let broken = path(&[[[1.0, 1.0], [5.0, 1.0]], [[2.0, 2.0], [6.0, 2.0]]]);
+        assert_eq!(broken.matches("M ").count(), 2, "{broken}");
+    }
+
+    #[test]
+    fn a_dashed_circle_draws_one_subpath_so_its_pattern_runs() {
+        // #490 finding 1: every ~1 mm chord of the tessellated ring started its own
+        // subpath, and SVG restarts the dash pattern per subpath, so dashed and dash-dot
+        // circles exported solid and a dotted circle showed fine dashes. The chords now
+        // join one polyline, and the whole dashed circle carries a single `M`.
+        let drawing = drawing_with_strokes(
+            "Ring",
+            DraftingGeometry::Circle {
+                center: [45.0, 160.0],
+                radius: 12.0,
+            },
+            LineType::Dashed,
+        );
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bytes = export(&drawing, version, &projection("2500")).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(text.contains("stroke-dasharray=\"3 3\""), "{text}");
+        let data = drafting_path_data(text);
+        assert_eq!(
+            data.matches("M ").count(),
+            1,
+            "the ring is one polyline subpath: {data}"
+        );
+        // The tessellation stays: a 12 mm radius keeps at least its 16-chord floor, and
+        // the closing stroke chains into the run.
+        assert!(data.matches(" L ").count() >= 16, "{data}");
+    }
+
+    #[test]
+    fn an_arc_chains_its_chords_and_a_rect_keeps_one_run() {
+        let drawing = drawing_with_strokes(
+            "Arc",
+            DraftingGeometry::Arc {
+                center: [30.0, 160.0],
+                radius: 12.0,
+                start: 0.0,
+                end: 1.5,
+            },
+            LineType::DashDot,
+        );
+        let version = DocumentVersionId::parse(C).unwrap();
+        let bytes = export(&drawing, version, &projection("2500")).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        assert!(
+            text.contains("stroke-dasharray=\"3 1.5 0.5 1.5\""),
+            "{text}"
+        );
+        let data = drafting_path_data(text);
+        assert_eq!(
+            data.matches("M ").count(),
+            1,
+            "the arc's chords are one run: {data}"
+        );
+        let drawing = drawing_with_strokes(
+            "Rectangle",
+            DraftingGeometry::Rectangle {
+                a: [30.0, 95.0],
+                b: [60.0, 125.0],
+            },
+            LineType::Dashed,
+        );
+        let bytes = export(&drawing, version, &projection("2500")).unwrap();
+        let data = drafting_path_data(std::str::from_utf8(&bytes).unwrap());
+        assert_eq!(
+            data.matches("M ").count(),
+            1,
+            "the four sides run into each other: {data}"
+        );
     }
 
     #[test]

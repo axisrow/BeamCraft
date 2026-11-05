@@ -588,7 +588,9 @@ fn the_whole_sheet_reaches_the_svg_and_the_pdf_alike() {
         svg.contains("M 10.0000 410.0000 L 287.0000 410.0000"),
         "{svg}"
     );
-    assert!(svg.contains("M 287.0000 10.0000 L 10.0000 10.0000"));
+    // The frame's sides run into each other, so the second edge continues the first
+    // polyline instead of opening its own subpath (#490 finding 1).
+    assert!(svg.contains("L 287.0000 10.0000 L 10.0000 10.0000"));
     // The drafted note's first glyph stroke starts at its anchor (30, 80); the 5 mm
     // glyphs rise to paper y 85, flipped to svg y 335.
     assert!(

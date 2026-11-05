@@ -675,8 +675,10 @@ mod tests {
             frame.contains("M 10.0000 287.0000 L 200.0000 287.0000"),
             "{frame}"
         );
+        // The frame's sides run into each other, so they continue one polyline instead of
+        // restarting a subpath at every corner.
         assert!(
-            frame.contains("M 200.0000 10.0000 L 10.0000 10.0000"),
+            frame.contains("L 200.0000 10.0000 L 10.0000 10.0000"),
             "{frame}"
         );
     }
