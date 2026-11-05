@@ -29,7 +29,8 @@ use beamcraft_ui::{Error, command, source};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn gpu() -> Option<Gpu> {
+/// The required native/software adapter: a missing one fails the test, it never skips.
+fn gpu() -> Gpu {
     match pollster::block_on(Gpu::headless()) {
         Ok(gpu) => {
             let info = gpu.adapter.get_info();
@@ -37,7 +38,7 @@ fn gpu() -> Option<Gpu> {
                 "render test adapter: {} / {:?} / {:?}",
                 info.name, info.device_type, info.backend
             );
-            Some(gpu)
+            gpu
         }
         Err(Error::NoAdapter) => {
             panic!("required native/software GPU adapter is missing")
@@ -98,7 +99,7 @@ fn an_engine_snapshot_renders_lit_geometry_on_a_background() {
     let snapshot =
         ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (corner, centre, _) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
     assert!(is_lit(centre), "lit plate {centre:?}");
@@ -111,7 +112,7 @@ fn an_orthographic_camera_renders_lit_geometry_on_a_background() {
     let snapshot =
         ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (target, extent) = scene.framing();
     let mut camera = Camera::new(target, extent, 1.0).unwrap();
     camera.set_projection(true);
@@ -154,7 +155,7 @@ fn the_five_render_modes_draw_five_different_pictures_of_one_scene() {
     let snapshot =
         ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (target, extent) = scene.framing();
     let view = Camera::new(target, extent, 1.0).unwrap().view(1.0).unwrap();
     let stats = Stats::default();
@@ -247,7 +248,7 @@ fn a_refresh_reuses_the_meshes_on_the_device_and_still_draws_them() {
     let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 2);
     let second =
         ViewSnapshot::build(pin, plate_scene(16, false).unwrap(), &Limits::default()).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let old = Uploaded::upload(&gpu.device, &gpu.queue, &before, None).unwrap();
     let resident = old.resident();
     let after =
@@ -374,7 +375,7 @@ fn the_accepted_revision_of_a_store_is_the_viewport_scene() {
         Err(Error::NoRevision) => (),
         other => panic!("expected the empty-store state, got {other:?}"),
     }
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (corner, _, lit) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
     // Seven plates framed in a 128 x 128 target cover a visible share of it.
@@ -455,7 +456,7 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     assert_eq!(moved.origin_mm, [9000.0, 2000.0, 3000.0]);
     assert_eq!(std::fs::read(&file).unwrap(), bytes);
     let _ = std::fs::remove_dir_all(&root);
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let (corner, centre, lit) = render(&gpu, &scene);
     eprintln!("reference render: {lit} lit pixels in the 128 x 128 target");
     assert!(is_background(corner), "background {corner:?}");
@@ -574,10 +575,7 @@ fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
         assert!((f64::from(*got) - want).abs() < 1.0, "max {got} != {want}");
     }
 
-    let Some(gpu) = gpu() else {
-        let _ = std::fs::remove_dir_all(&base);
-        return;
-    };
+    let gpu = gpu();
     let rolled = Scene::from_snapshot(
         &source::load(&cli, &rolled_store, &stats).unwrap(),
         Representation::Full,
@@ -611,7 +609,7 @@ fn a_cut_plane_hides_pixels_without_touching_the_scene() {
     let snapshot =
         ViewSnapshot::build(pin, plate_scene(12, false).unwrap(), &Limits::default()).unwrap();
     let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
-    let Some(gpu) = gpu() else { return };
+    let gpu = gpu();
     let whole = render_pixels(&gpu, &scene, &ClipGpu::none());
     let lit = |pixels: &[u8]| {
         pixels
