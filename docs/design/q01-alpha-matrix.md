@@ -16,11 +16,11 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, nine tests: the
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, ten tests: the
 expanded story and — each in its own published store so the numbered frame keeps its recorded
 counts — the curved and poly member story, the bent and lofted plate story, the model-tool
 transform story, the bolt-group story, the model-data tool story, the contour plate story, the
-part class story and the cut lifecycle story). Every step is
+part class story, the cut lifecycle story and the fits-and-combine story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
@@ -30,6 +30,7 @@ steps ran and passed on this machine.
 | Cut lifecycle (A03) | in their own published store, so the numbered frame keeps the counts the manual runbook records: the owned cut trims to its exact kept half-space (1,250,000 mm3), `update-cut` moves the same record to a new exact volume (2,500,000 mm3) with the identity preserved, the identical retry replays the original revision and writes nothing, `remove-cut` restores the blank (5,000,000 mm3), one undo returns the moved cut and the redo removes it, a fresh cut takes the next ordinal (1, never reused), and publication preserves the exact volume, mesh and owned record | Passed |
 | Model tools | `split-part` (column at mid height, halves sum to the closed-form volume), `copy-element` (copy equals source volume), `chamfer-part` (volume strictly decreases, every other part unchanged) | Passed |
 | Model tools: rotate, mirror and arrays (T03) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a linear array lands three independent copies in one revision at the stepped placements with the source volume each, and one undo removes them all; a mirror reflects the member path across the plane keeping the length and the volume; a mirrored polybeam path refuses `UNSUPPORTED_GEOMETRY` with nothing written; the quarter-turn rotation composes the orientation and keeps the authored path, so the member turns in place, undoing and redoing as one step; all six members survive publication with their exact volumes, meshes and the transformed orientation | Passed |
+| Fits and combine (A13) | in their own published store, so the numbered frame keeps the counts the manual runbook records: `fit-end-to-part` trims a plate flush with a tool plate's near face (z = 5) keeping the midpoint side, exactly half the blank (2,500,000 mm3), and an unknown tool refuses `NOT_FOUND` with nothing written; `combine-parts` joins two touching 4000 mm members of a 200 x 300 section into one exact 480,000,000 mm3 body while a gapped pair refuses and writes nothing, the consumed member disappears and one undo returns it with its own volume; the fits and the combine survive publication with their exact volumes and meshes | Passed |
 | Member holes (A04.2, G14.1 slice) | `add-hole` on a member (`--axis-point`, `--axis-direction`, `--diameter`): a through d = 20 hole removes the regular 32-gon area times the 100 mm section width; a transverse coordinate outside the section refuses with the head unchanged | Passed |
 | Member holes, oblique and sloped walls (G14.2) | dedicated members based at the world origin: an oblique non-unit `(12,5,0)` d = 20 hole through the flat walls of a square section removes `A·100·13/12` (|n·d| = 12/13); the rotated-20° square's sloped walls remove `A·100/cos(20°)`; an axial direction and a second record on one member refuse `UNSUPPORTED_GEOMETRY` with nothing written; the identical command replays the recorded revision and fresh processes read the same volumes and `mesh_digest` byte for byte | Passed |
 | Member holes, curved tube wall (G14.2 remainder) | a CHS 114x5 member takes a radial d = 20 hole: the reported drop certifies within the engine suite's own `2·A·t` bound of the smooth tube (measured 3,121.4 mm3 ≤ 3,141.6 mm3) and equals the certified removed volume; the gross stays the nominal `area x length` across the hole (the plate rule: a gross that ignores the hole, a net that does not); the hole survives the reopen with the same volume and `mesh_digest`; the d = 6/10/20 triplet is pinned by the engine test (`a_chs_member_hole_certifies_the_removed_volume_within_the_engine_bound`) and the CLI suite (`sections.rs`) | Passed |
@@ -87,7 +88,7 @@ recorded open and stay open until they execute on real hardware.
 
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
-| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, cut lifecycle, poly and curved members, bent and lofted plates, contour plate edits, grids/levels, construction objects and grid line tools, part classes, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes, cut lifecycle, poly and curved members, bent and lofted plates, contour plate edits, fits and combine, grids/levels, construction objects and grid line tools, part classes, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
 | View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |

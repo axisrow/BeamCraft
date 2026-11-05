@@ -75,6 +75,7 @@ impl Story {
         fs::create_dir(root.join("contour-published")).unwrap();
         fs::create_dir(root.join("classes-published")).unwrap();
         fs::create_dir(root.join("cuts-published")).unwrap();
+        fs::create_dir(root.join("fits-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -3706,5 +3707,220 @@ fn cut_updates_and_removal_keep_identity_and_survive_publication() {
         text(&records[0], "operation_id"),
         "019a7bf0-0000-7000-8000-00000000fff6",
         "the owned cut record survives the round trip"
+    );
+}
+
+/// The fits and combine story (A13): a member end fits flush with a tool plate's near
+/// face and two touching members combine into one, in their own published store so the
+/// numbered frame keeps the counts the manual runbook records, and in its own test for
+/// the per-test budget. A missing tool refuses not-found, a gapped combine refuses
+/// before anything is written, and the combine is one undo unit.
+#[test]
+fn a_fit_trims_flush_and_a_combine_joins_touching_members() {
+    let s = Story::new();
+    s.ok(
+        "fits-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "fits-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-COMBINE-BAR",
+            "--width",
+            "200",
+            "--height",
+            "300",
+        ],
+    );
+    s.ok(
+        "fits-published",
+        "create-workspace",
+        &["--workspace-dir", &s.path("fits-draft"), "--user-id", USER],
+    );
+
+    // The fit trims the plate flush with the tool's near face (z = 5): the kept side is
+    // the plate's midpoint side, so half the plate stays, exactly.
+    let fitted = s.ok(
+        "fits-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 fitted web",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a131",
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+        ],
+    );
+    let web = text(at(&fitted, &["plate"]), "element_id");
+    s.ok(
+        "fits-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 fit tool",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a132",
+            "--width",
+            "200",
+            "--length",
+            "200",
+            "--thickness",
+            "20",
+            "--translation",
+            "100,100,5",
+        ],
+    );
+    let fit = s.ok(
+        "fits-draft",
+        "fit-end-to-part",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a133",
+            "--tool",
+            "019a7bf0-0000-7000-8000-00000000a132",
+        ],
+    );
+    assert_eq!(text(&fit, "outcome"), "a13_applied");
+    close(
+        at(at(&fit, &["element"]), &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        2_500_000.0,
+    );
+    let fits_head = s.head("fits-draft");
+    let missing = s.run(
+        "fits-draft",
+        "fit-end-to-part",
+        &[
+            "--id",
+            &web,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a134",
+            "--tool",
+            "019a7bf0-0000-7000-8000-00000000ffff",
+        ],
+        2,
+    );
+    assert_eq!(text(&missing, "code"), "NOT_FOUND");
+    assert_eq!(s.head("fits-draft"), fits_head);
+
+    // Two touching members combine into one exact body; a gapped pair refuses before
+    // anything is written.
+    let member = |id: &str, translation: &str| -> String {
+        let created = s.ok(
+            "fits-draft",
+            "create-member",
+            &[
+                "--kind",
+                "beam",
+                "--start",
+                "0,0,0",
+                "--end",
+                "4000,0,0",
+                "--profile",
+                "Q01-COMBINE-BAR",
+                "--translation",
+                translation,
+                "--new-id",
+                id,
+            ],
+        );
+        text(at(&created, &["member"]), "element_id")
+    };
+    let survivor = member("019a7bf0-0000-7000-8000-00000000a135", "0,0,0");
+    let consumed = member("019a7bf0-0000-7000-8000-00000000a136", "4000,0,0");
+    let apart = member("019a7bf0-0000-7000-8000-00000000a137", "9000,0,0");
+    let members_head = s.head("fits-draft");
+    let gapped = s.run(
+        "fits-draft",
+        "combine-parts",
+        &[
+            "--survivor",
+            &survivor,
+            "--consumed",
+            &apart,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a138",
+        ],
+        2,
+    );
+    assert_eq!(text(&gapped, "outcome"), "rejected");
+    assert_eq!(s.head("fits-draft"), members_head);
+    let combined = s.ok(
+        "fits-draft",
+        "combine-parts",
+        &[
+            "--survivor",
+            &survivor,
+            "--consumed",
+            &consumed,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-00000000a139",
+        ],
+    );
+    assert_eq!(text(&combined, "outcome"), "a13_applied");
+    close(
+        at(
+            at(&combined, &["element"]),
+            &["quantities", "volume", "mm3"],
+        )
+        .float()
+        .unwrap(),
+        480_000_000.0,
+    );
+    assert_eq!(
+        parts(&s.ok("fits-draft", "inspect-elements", &[])).len(),
+        4,
+        "the consumed member is gone; the tool plate and the apart member stay"
+    );
+
+    // The combine is one undo unit: the consumed member returns with its own volume.
+    let fits_undo = s.execute(&["undo-workspace", "--workspace-dir", &s.path("fits-draft")]);
+    assert_eq!(fits_undo.0, 0);
+    let undone = parts(&s.ok("fits-draft", "inspect-elements", &[]));
+    assert_eq!(undone.len(), 5);
+    close(volume_of(&undone, &survivor), 240_000_000.0);
+    close(volume_of(&undone, &consumed), 240_000_000.0);
+    let fits_redo = s.execute(&["redo-workspace", "--workspace-dir", &s.path("fits-draft")]);
+    assert_eq!(fits_redo.0, 0);
+    assert_eq!(text(&fits_redo.1, "outcome"), "workspace_redone");
+    let final_parts = parts(&s.ok("fits-draft", "inspect-elements", &[]));
+    assert_eq!(final_parts.len(), 4);
+    close(volume_of(&final_parts, &survivor), 480_000_000.0);
+    close(volume_of(&final_parts, &web), 2_500_000.0);
+    let web_digest = final_parts
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the fitted web is present")
+        .2
+        .clone();
+
+    let fits_published = s.ok(
+        "fits-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("fits-draft")],
+    );
+    assert_eq!(text(&fits_published, "outcome"), "workspace_published");
+    let reopened = parts(&s.ok("fits-published", "inspect-elements", &[]));
+    assert_eq!(reopened.len(), 4);
+    close(volume_of(&reopened, &survivor), 480_000_000.0);
+    close(volume_of(&reopened, &web), 2_500_000.0);
+    let reopened_web = reopened
+        .iter()
+        .find(|(element, _, _)| element == web.as_str())
+        .expect("the fitted web is present");
+    assert_eq!(
+        reopened_web.2, web_digest,
+        "the fitted mesh must survive the round trip"
     );
 }
