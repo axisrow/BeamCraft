@@ -472,8 +472,7 @@ pub fn generate_holes(
                 "the part has no placement this slice can read",
             )
         })?;
-        let orientation = placement.orientation_xyzw;
-        if orientation[0] != 0.0 || orientation[1] != 0.0 || orientation[2] != 0.0 {
+        if !placement.is_identity_rotation() {
             return Err(CommandError::new(
                 ErrorCode::UnsupportedGeometry,
                 "hole_mode",
