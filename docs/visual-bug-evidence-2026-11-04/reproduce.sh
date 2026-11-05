@@ -6,7 +6,7 @@
 # Usage: ./reproduce.sh /path/to/beamcraft OUT_DIR
 # Every dimension, name and identity below is invented; no catalogue or client data.
 # Open the produced files side by side: col.svg/col.pdf, sheet.svg/sheet.pdf,
-# glyphs.svg and schedule.html (also schedule.csv and bom.csv).
+# glyphs.svg, linetypes.svg/linetypes.pdf and schedule.html (also schedule.csv and bom.csv).
 set -euo pipefail
 B=$1
 OUT=$(mkdir -p "$2" && cd "$2" && pwd)   # the CLI refuses a relative --store path
@@ -74,6 +74,31 @@ q create-drawing --store "$S" --document-dir "$D" --op-id "$(id 301)" --revision
 q publish-drawing --document-dir "$D" --expected-head "$(id 302)" --op-id "$(id 306)" \
   --revision-id "$(id 307)" --actor-id "$U" --version-id "$(id 308)"
 q export-drawing --document-dir "$D" --version-id "$(id 308)" --out "$OUT/glyphs.svg"
+
+# Verification, 2026-11-05: every non-continuous line type on a circle and on a rectangle.
+D=$OUT/linetypes-doc
+T=$(id 950)
+q create-drawing --store "$S" --document-dir "$D" --op-id "$(id 401)" --revision-id "$(id 402)" \
+  --actor-id "$U" --id "$BEAM" --drawing-id "$(id 403)" --view-id "$(id 404)" \
+  --dimension-id "$(id 405)" --anchor-a "fid1:$BEAM:member:v.x0.y0.z0" \
+  --anchor-b "fid1:$BEAM:member:v.x0.y0.z1" --name "LINE TYPES" --scale 20 \
+  --origin 30,240 --offset 15 --sheet-size a4 --sheet-frame 10 \
+  --sheet-project "LINE TYPE CHECK" --sheet-author "QA"
+q edit-drafting --document-dir "$D" --expected-head "$(id 402)" --op-id "$(id 406)" \
+  --revision-id "$(id 407)" --actor-id "$U" --layer "$T:Types:on" \
+  --drafting "$(id 951):circle:45,160,12:$T:dashed" \
+  --drafting "$(id 952):circle:105,160,12:$T:dotted" \
+  --drafting "$(id 953):circle:165,160,12:$T:dashdot" \
+  --drafting "$(id 954):rectangle:30,95,60,125:$T:dashed" \
+  --drafting "$(id 955):rectangle:90,95,120,125:$T:dotted" \
+  --drafting "$(id 956):rectangle:150,95,180,125:$T:dashdot" \
+  --drafting "$(id 957):text:33,180,4,0:$T:continuous:DASHED" \
+  --drafting "$(id 958):text:93,180,4,0:$T:continuous:DOTTED" \
+  --drafting "$(id 959):text:150,180,4,0:$T:continuous:DASHDOT"
+q publish-drawing --document-dir "$D" --expected-head "$(id 407)" --op-id "$(id 408)" \
+  --revision-id "$(id 409)" --actor-id "$U" --version-id "$(id 410)"
+q export-drawing --document-dir "$D" --version-id "$(id 410)" --out "$OUT/linetypes.svg"
+q export-drawing --document-dir "$D" --version-id "$(id 410)" --out "$OUT/linetypes.pdf" --format pdf
 
 # Finding 8: float noise in the human-facing reports.
 cat > "$OUT/template.json" <<'JSON'

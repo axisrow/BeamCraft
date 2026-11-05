@@ -17,15 +17,27 @@ desktop application was out of scope. This directory changes no application code
 
 ## Status after the audit
 
-The images record the audited build above. Every finding has since been fixed on `master`:
-#464 (`f3e74cf`) fixed findings 1–3, #468 (`326d878`) findings 4–8 and #475 (`5d8d58c`)
-findings 9–11. Running `reproduce.sh` against `master` at `cad811a` gives an upright SVG
-(the column reads 2500) and a sheet PDF that matches the sheet SVG, with the drafted text,
-line, circle and rectangle on both; the dimension label beside its line; view titles clear
-of their geometry; a closed title block whose divider follows the label column; B, O and S
-drawn with shapes of their own; a two-dot colon; and report values rounded to their display
-precision (10020.01 mm², 0.79 kg). `COMMANDS.md` documents `--decimals 0..3`, and
-`beamcraft create-plate --help` prints help. No finding reproduces there.
+Images 01–10 record the audited build above. #464 (`f3e74cf`) addressed findings 1–3,
+#468 (`326d878`) findings 4–8 and #475 (`5d8d58c`) findings 9–11. Images 11–15 record a
+re-run of `reproduce.sh` on `master` at `6e0e97b` (2026-11-05), built and rendered as above:
+
+- Findings 1–6 and 9–11 no longer reproduce: the column SVG reads 2500, the sheet SVG is
+  upright and its PDF matches it, the drafted text, line, circle and rectangle reach paper,
+  the dimension label sits beside its line, view titles clear their view, the title block is
+  closed with its divider after the label column, and the colon has two dots
+  ([11](11-verified-fixed-findings-1-3.png), [12](12-verified-fixed-findings-4-9.png)).
+  `COMMANDS.md` documents `--decimals 0..3`, and `beamcraft create-plate --help` prints help.
+- Finding 7 partly remains: B and O now have shapes of their own, but S is still the 5 with
+  its verticals moved 0.4 mm inwards, so "S5 55 SS" reads "55 55 55"
+  ([14](14-s-still-reads-as-5.png)).
+- Finding 8 partly remains: the noise is gone (10020.01), but `schedule-export` prints a
+  plate's mass as 0.786570785 kg where `export-bom` prints 0.79
+  ([15](15-schedule-and-bom-round-mass-differently.png)).
+- New: circles drawn as `dashed` or `dashdot` export as solid lines in SVG and PDF, and a
+  `dotted` circle as fine dashes, while rectangles show every pattern
+  ([13](13-dashed-circles-render-solid.png), `linetypes.svg` and `linetypes.pdf`).
+
+The three remaining defects are tracked in #490.
 
 ## Reproduce
 
@@ -34,11 +46,13 @@ precision (10020.01 mm², 0.79 kg). `COMMANDS.md` documents `--decimals 0..3`, a
 ```
 
 The script builds one synthetic model (a 200 x 300 mm column 2500 mm high, a beam 3000 mm
-long and two plates, one of them 100.1 x 100.1 x 10 mm), three drawing documents and one
+long and two plates, one of them 100.1 x 100.1 x 10 mm), four drawing documents and one
 schedule, and writes `col.svg`, `col.pdf`, `sheet.svg`, `sheet.pdf`, `glyphs.svg`,
-`schedule.html`, `schedule.csv` and `bom.csv`. Every dimension, name and identity is
-invented; no catalogue or client data is used. The CLI refuses a relative `--store` path,
-so the script resolves `OUT_DIR` to an absolute path.
+`linetypes.svg`, `linetypes.pdf`, `schedule.html`, `schedule.csv` and `bom.csv`. The
+`linetypes` document (an A4 sheet with a circle and a rectangle in each of the `dashed`,
+`dotted` and `dashdot` line types) was added for the 2026-11-05 verification. Every
+dimension, name and identity is invented; no catalogue or client data is used. The CLI
+refuses a relative `--store` path, so the script resolves `OUT_DIR` to an absolute path.
 
 ## How to read the images
 
@@ -48,6 +62,11 @@ about the A3 sheet height). It shows the intended layout for comparison, so the 
 that remain after the orientation is corrected (5, 6 and 7) can be seen on their own. The
 red outlines in image 05 were added afterwards at the coordinates given to
 `edit-drafting`; everything else is unretouched render output, cropped and scaled.
+
+In images 11 and 12 a red panel is the audited build and the green panel beside it is
+`master` at `6e0e97b`; only the audited build's sheet crops are flipped. The right panel of
+image 15 is not a render: it is the text of the plate rows of `bom.csv` (three of its
+columns), set in Liberation Mono 2.1.5 (`OFL-1.1`).
 
 ## Findings
 
@@ -94,4 +113,9 @@ ae682bfd2d9d35ac3da32e4dc0772e4608bb9555a41636065c35498a330010a3  07-view-title-
 006a9be3a75014fc93abc3e73a65037c1522d9408c671e2718c12ed08bcc50ab  08-title-block-layout.png
 e0d0710208eedf3664930219eba9dd28f06ae03e5951daa3cac0071576fa8704  09-letters-look-like-digits.png
 807e0fae3596f9444f30c3e9883bd0450bc48621803ca164c719c17e6ff29a64  10-report-float-noise.png
+af45b951a01a078fdb78b8aea4dcbb2193470977dcb775db18e5bfe8b463d642  11-verified-fixed-findings-1-3.png
+3383b50364f1877ce2e7e07998a6da593c3e26707c117b109c8937cf0df5640a  12-verified-fixed-findings-4-9.png
+1cb4d2851022494438557435641cf486a335a968c54a4106bf6709baa0ca0eb0  13-dashed-circles-render-solid.png
+b0910e7e2258655873a317611be9bf226b33c926946abe339114ee0773127fae  14-s-still-reads-as-5.png
+446024a39c7c9260f15b034e9646c85aaf5a821ab5d4492836040707ea2b23cf  15-schedule-and-bom-round-mass-differently.png
 ```
