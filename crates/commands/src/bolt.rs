@@ -221,7 +221,7 @@ pub struct BoltGroupView {
     pub spec: GroupSpec,
 }
 
-fn bolt_group_of(
+pub(crate) fn bolt_group_of(
     prim: &beamcraft_layer_engine::Prim,
     id: ElementId,
     by_path: &BTreeMap<&str, ElementId>,
