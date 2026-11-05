@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 // SPDX-FileCopyrightText: 2026 Apibim
-// Independent references only: expected volumes and areas are closed forms (the thickness
-// times the developed mid-surface area, the annular-sector prism and the cone band), computed
-// here from the authored bend parameters.
+// Independent references only: expected volumes, areas and fold vertex positions are closed
+// forms (the thickness times the developed mid-surface area, the annular-sector prism and the
+// cone band, and the isometric image of the developed walk), computed here from the authored
+// bend parameters.
 
 //! A10 bent-plate fixtures: folds and rolls through the G13 ruled loft. The cross-section of
 //! each fixture is built here by hand, independently of the engine's derivation, and the
@@ -14,8 +15,10 @@
 use crate::common;
 
 use beamcraft_geom::{Point3, Vec3};
-use core::f64::consts::{FRAC_PI_2, PI};
+use core::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+use steel::engine::command::{AuthoredPlate, evaluate_plate};
 use steel::kernel::ruled::{Loft, LoftResult, RuledContour, loft};
+use steel::model::command::{BendRecord, BendSpec};
 
 fn p3(x: f64, y: f64, z: f64) -> Point3 {
     Point3::new(x, y, z)
@@ -177,4 +180,82 @@ fn a_cone_roll_matches_the_band_closed_form_and_the_development() {
     let development = t * (sweep_developed / 2.0) * (s_out * s_out - s_in * s_in);
     close(band, development, 1e-9);
     close(volume(&result), band, 1e-4);
+}
+
+/// The real derivation, not the hand-built section above: `evaluate_plate` folds the authored
+/// blank, and the far edge of the 90-degree fold and the two fold-region ends sit at their
+/// closed-form positions. A wrong angle, sign or fold line moves them, while the volume
+/// invariant would still hold.
+#[test]
+fn a_fold_places_the_far_edge_and_the_fold_ends_at_their_closed_forms() {
+    let (t, r, m, along) = (2.0_f64, 8.0_f64, 50.0_f64, 100.0_f64);
+    let mid = r + t / 2.0;
+    // The developed blank: `along` on the fold line plus the arc the bend consumes.
+    let across = along + mid * FRAC_PI_2;
+    let authored = AuthoredPlate {
+        id: beamcraft_model::id::ElementId::parse("019a7bf0-0000-7000-8000-000000000001").unwrap(),
+        name: "Folded".into(),
+        class: 0,
+        contour_points_mm: vec![
+            [0.0, 0.0, 0.0],
+            [along, 0.0, 0.0],
+            [along, across, 0.0],
+            [0.0, across, 0.0],
+        ],
+        thickness_mm: t,
+        thickness_side: None,
+        corners: Vec::new(),
+        placement: beamcraft_model::command::Placement {
+            translation_mm: [0.0; 3],
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        },
+        material: None,
+        holes_mm: Vec::new(),
+        hole_records: Vec::new(),
+        cuts: Vec::new(),
+        bends: vec![BendRecord {
+            operation_id: beamcraft_model::id::OpId::parse("019a7bf0-0000-7000-8000-000000000002")
+                .unwrap(),
+            spec: BendSpec::Fold {
+                a_mm: [0.0, m, 0.0],
+                b_mm: [along, m, 0.0],
+                radius_mm: r,
+                angle_rad: FRAC_PI_2,
+            },
+        }],
+    };
+    let body = evaluate_plate(&authored).unwrap();
+    // The developed walk: a flat run to the bend region, a quarter arc of the mid radius, then
+    // the flange run to the far edge. `s` is where the bend region starts across; the flange
+    // keeps its developed length, so the tip sits `mid + flange` above the plane.
+    let s = m - mid * FRAC_PI_4;
+    let flange = across - m - mid * FRAC_PI_4;
+    let tip_z = mid + flange;
+    let (y_out, y_in) = (s + r + t, s + mid - t / 2.0);
+    let vertices = body.solid.vertices();
+    // Both loft ends carry each far-edge corner: x is 0 or `along`.
+    for (y, z) in [(y_out, tip_z), (y_in, tip_z)] {
+        let count = vertices
+            .iter()
+            .filter(|v| (v[1] - y).hypot(v[2] - z) <= 1e-6)
+            .count();
+        assert_eq!(count, 2, "the far edge ({y}, {z}) misses a loft end");
+    }
+    // The fold ends: the outer face leaves the flat at z = -t/2 and lands on the flange at the
+    // arc centre height; the inner face mirrors it at +t/2 and radius - t.
+    for (y, z) in [(s, -t / 2.0), (y_out, mid), (s, t / 2.0), (y_in, mid)] {
+        let nearest = vertices
+            .iter()
+            .map(|v| (v[1] - y).hypot(v[2] - z))
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            nearest <= 1e-6,
+            "no vertex at the closed fold end ({y}, {z}), nearest {nearest}"
+        );
+    }
+    // A positive angle folds up: the far edge must sit above the blank plane.
+    assert!(
+        tip_z > m,
+        "the 90-degree fold must lift the far edge above the plane"
+    );
 }

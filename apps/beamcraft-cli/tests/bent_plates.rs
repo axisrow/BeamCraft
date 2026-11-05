@@ -144,7 +144,13 @@ fn a_fold_records_the_bend_and_keeps_the_unfold() {
     assert_eq!(bends.len(), 1);
     assert_eq!(text(&bends[0], "bend"), "fold");
     assert_eq!(text(&bends[0], "operation_id"), FOLD_OP);
-    assert!(bends[0].get("angle_rad").is_ok());
+    // The reported angle is the authored right angle at full precision, and the reported value
+    // is the authored radius: a wrong sign, a dropped field or a re-scaled angle must fail, not
+    // only a volume change. The authored argument "1.5707963267948966" parses to FRAC_PI_2.
+    assert_eq!(num(&bends[0], &["angle_rad"]), core::f64::consts::FRAC_PI_2);
+    let values = list(&bends[0], "values_mm");
+    assert_eq!(values.len(), 1);
+    assert_eq!(values[0].float().unwrap(), 8.0);
 
     // A retry with the same operation identity replays the recorded result and writes nothing.
     let replay = bend(
