@@ -1100,4 +1100,216 @@ mod tests {
             beamcraft_engine::query::feature::FeatureGeometry::Surface { .. }
         ));
     }
+
+    #[test]
+    fn two_records_cut_in_ordinal_order_and_the_replay_repeats_byte_for_byte() {
+        let (width, height) = (200.0, 300.0);
+        let head = member();
+        let gross = evaluate(&head, width, height).volume_mm3;
+        // Two separated through holes on one member, both along Y_r: the second record
+        // replays over the already-holed body in ordinal order, so the expected net is
+        // the exact closed form `(area0 + area1) x height` removed from the gross. The
+        // positions keep the two footprints clear of each other on every wall.
+        let first = add_member_hole_after(
+            &member_hole(40.0, [0.0, 0.0, 500.0], [0.0, 1.0, 0.0]),
+            &head,
+            &|_| false,
+            0,
+        )
+        .unwrap();
+        let second_command = member_hole(30.0, [60.0, 0.0, 300.0], [0.0, 1.0, 0.0]);
+        let with_second_id = AddHole {
+            operation_id: op(2),
+            ..second_command
+        };
+        let both = add_member_hole_after(&with_second_id, &first.authored, &|_| false, 1)
+            .unwrap()
+            .authored;
+        assert_eq!(
+            both.hole_records
+                .iter()
+                .map(|r| r.ordinal)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let body = evaluate(&both, width, height);
+        let area_first = polygon_area(&both.hole_records[0].polygon_mm);
+        let area_second = polygon_area(&both.hole_records[1].polygon_mm);
+        let expected = gross - (area_first + area_second) * height;
+        assert!(
+            (body.volume_mm3 - expected).abs() <= 1.0,
+            "two holes removed {}",
+            gross - body.volume_mm3
+        );
+        // Every record names its own wall bands in the feature table, in its own ordinal.
+        let faces = body.solid.scene_mesh().face_table;
+        assert!(faces.iter().any(|f| f == "cut:f.h0.w0.s0"));
+        assert!(faces.iter().any(|f| f == "cut:f.h1.w0.s0"));
+        // The replay is byte-stable: a second evaluation returns the same body.
+        assert_eq!(body, evaluate(&both, width, height));
+    }
+
+    #[test]
+    fn a_record_meeting_another_hole_refuses_the_evaluation() {
+        let head = member();
+        // Two concentric through holes along the same direction: the second footprint
+        // contains the first's opening, and a fit condition is "clear of its edges and
+        // the other holes". Admission passes (distinct ids, fresh ordinals); the replay
+        // must refuse the second record instead of serving a merged cut, and the
+        // evaluation fails whole, so the member keeps its last valid state.
+        let first = add_member_hole_after(
+            &member_hole(40.0, [0.0, 0.0, 500.0], [0.0, 1.0, 0.0]),
+            &head,
+            &|_| false,
+            0,
+        )
+        .unwrap();
+        let overlapping = AddHole {
+            operation_id: op(2),
+            ..member_hole(100.0, [0.0, 0.0, 500.0], [0.0, 1.0, 0.0])
+        };
+        let authored = add_member_hole_after(&overlapping, &first.authored, &|_| false, 1)
+            .unwrap()
+            .authored;
+        let error = evaluate_member(&authored, rectangle(200.0, 300.0)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
+        assert!(
+            error
+                .message
+                .contains("clear of its edges and the other holes"),
+            "the overlap refused as: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn mixed_record_directions_refuse_the_replay_after_the_first_cut() {
+        let head = member();
+        // One hole along X_r and one along Y_r: the first cut's walls are not parallel
+        // to the second cutter's axis, so the kernel cannot serve the second record off
+        // the already-holed body and the replay refuses the evaluation whole. The
+        // authored records stay valid; only the mixed set has no servable replay.
+        let first = add_member_hole_after(
+            &member_hole(40.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &head,
+            &|_| false,
+            0,
+        )
+        .unwrap();
+        let transverse = AddHole {
+            operation_id: op(2),
+            ..member_hole(30.0, [0.0, 0.0, 300.0], [0.0, 1.0, 0.0])
+        };
+        let authored = add_member_hole_after(&transverse, &first.authored, &|_| false, 1)
+            .unwrap()
+            .authored;
+        let error = evaluate_member(&authored, rectangle(200.0, 300.0)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert!(
+            error
+                .message
+                .contains("the body is not a straight prism for the kernel"),
+            "the mixed set refused as: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn the_member_admission_refusals_pin_their_typed_errors() {
+        let head = member();
+        let none = |_: OpId| false;
+        // A hole command naming another element is a NotFound on the target, on every
+        // member-hole verb.
+        let elsewhere = AddHole {
+            target_id: id(8),
+            ..member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0])
+        };
+        assert_eq!(
+            add_member_hole_after(&elsewhere, &head, &none, 0)
+                .unwrap_err()
+                .code,
+            ErrorCode::NotFound
+        );
+        let removal = RemoveHole {
+            target_id: id(8),
+            operation_id: op(1),
+        };
+        assert_eq!(
+            remove_member_hole(&removal, &head).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        // An update naming a record the target does not hold is a NotFound on the id.
+        let unknown = UpdateHole {
+            hole: member_hole(40.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+        };
+        assert_eq!(
+            update_member_hole(&unknown, &head).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        // The adapter's persistent counter never regresses: a pinned ordinal below the
+        // last live record's is an InvalidArgument.
+        let mut advanced = member();
+        advanced.hole_records.push(MemberHoleRecord {
+            operation_id: op(3),
+            ordinal: 5,
+            axis_point_mm: [0.0, 0.0, 500.0],
+            axis_direction: [1.0, 0.0, 0.0],
+            extent: HoleExtent::Through,
+            polygon_mm: member_hole(20.0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+                .polygon()
+                .unwrap(),
+        });
+        assert_eq!(
+            add_member_hole_after(
+                &member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+                &advanced,
+                &none,
+                3
+            )
+            .unwrap_err()
+            .code,
+            ErrorCode::InvalidArgument
+        );
+        // The per-member capacity is 64 records: the 65th is a LimitExceeded under the
+        // shared DV-LIM-001 rule, before any replay runs.
+        let mut full = member();
+        let base = MemberHoleRecord {
+            operation_id: op(4),
+            ordinal: 0,
+            axis_point_mm: [0.0, 0.0, 500.0],
+            axis_direction: [1.0, 0.0, 0.0],
+            extent: HoleExtent::Through,
+            polygon_mm: member_hole(20.0, [0.0, 0.0, 0.0], [1.0, 0.0, 0.0])
+                .polygon()
+                .unwrap(),
+        };
+        full.hole_records = (0..MAX_HOLES)
+            .map(|i| MemberHoleRecord {
+                operation_id: op(i as u8 + 10),
+                ordinal: i,
+                ..base.clone()
+            })
+            .collect();
+        let overflow = add_member_hole_after(
+            &member_hole(20.0, [0.0, 0.0, 500.0], [1.0, 0.0, 0.0]),
+            &full,
+            &none,
+            MAX_HOLES,
+        )
+        .unwrap_err();
+        assert_eq!(overflow.code, ErrorCode::LimitExceeded);
+        assert_eq!(overflow.rule_id, Some("DV-LIM-001"));
+        // A curved member or a polybeam has no straight body to replay the records on:
+        // the refusal names the straight-member requirement (the admission passed).
+        let mut curved = advanced.clone();
+        curved.curved = true;
+        let error = evaluate_member(&curved, rectangle(200.0, 300.0)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert!(error.message.contains("straight member"));
+        let mut polybeam = advanced;
+        polybeam.axis_points_mm = vec![[0.0, 0.0, 0.0], [500.0, 0.0, 0.0], [1000.0, 0.0, 0.0]];
+        let error = evaluate_member(&polybeam, rectangle(200.0, 300.0)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::UnsupportedGeometry);
+        assert!(error.message.contains("straight member"));
+    }
 }
