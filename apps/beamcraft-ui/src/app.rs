@@ -2,9 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! The eframe window: a side panel with the revision, counts, units and adapter, and the viewport
-//! navigated through one of two input presets: `Mouse` (the default: wheel-button drag pans,
+//! navigated through one of two input presets: `Mouse` (wheel-button drag pans,
 //! Ctrl + wheel-button drag orbits, the left button stays free for selection) or `Trackpad`
-//! (primary drag orbits, Shift + primary drag pans, pinch zooms). In both the wheel zooms toward
+//! (primary drag orbits, Shift + primary drag pans, pinch zooms); the start preset follows the
+//! platform (`Trackpad` on macOS, `Mouse` elsewhere). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
 mod annotation_panel;
@@ -141,7 +142,8 @@ pub struct App {
     edit_note: Option<Result<String, String>>,
     /// Flips the scroll zoom direction (macOS natural scrolling inverts it); pinch and keys keep theirs.
     invert_zoom: bool,
-    /// The active viewport input binding preset; `Mouse` is the default.
+    /// The active viewport input binding preset; the start value follows the platform
+    /// (`Trackpad` on macOS, `Mouse` elsewhere).
     preset: Preset,
     props: Properties,
     props_job: Option<Receiver<Result<Edited, ToolError>>>,
