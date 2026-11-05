@@ -1566,18 +1566,22 @@ impl App {
                     for label in self.menu_section.commands() {
                         let enabled = matches!(
                             *label,
-                            "Profile catalog" | "Material catalog" | "About BeamCraft"
+                            "Profile catalog" | "Material catalog" | "About BeamCraft" | "IFC"
                         );
                         if menu_command(ui, label, enabled).clicked() {
                             match *label {
                                 "Profile catalog" => self.menu_section = MenuSection::Profiles,
                                 "Material catalog" => self.menu_section = MenuSection::Materials,
+                                "IFC" => self.open_menu_export(),
                                 "About BeamCraft" => {
                                     self.menu_section = MenuSection::About;
                                 }
                                 _ => {}
                             }
                         }
+                    }
+                    if self.menu_section == MenuSection::Export && self.menu_export_open() {
+                        self.menu_export_ui(ui, self.other_command_running());
                     }
                     let definitions = match self.menu_section {
                         MenuSection::Profiles => Some(&self.tools.definitions.profiles),

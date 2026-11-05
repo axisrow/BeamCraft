@@ -12,6 +12,7 @@ mod annotation_panel;
 mod bolt_panel;
 mod contour_grips;
 mod creation_panel;
+mod export_panel;
 mod grid_panel;
 mod switches;
 mod view_panel;
@@ -202,6 +203,9 @@ pub struct App {
     menu_new: crate::library::NewModelForm,
     /// The menu's Open page: the recent models and "Browse…".
     menu_models: crate::library::ModelPicker,
+    /// The menu's Export page: the IFC form, kept while the window lives so a typed path
+    /// survives leaving the page.
+    menu_export: export_panel::Form,
     /// A model the window should switch to, set by the menu's New and Open; Shell reads it
     /// after the frame.
     pub(crate) open_request: Option<PathBuf>,
@@ -919,6 +923,7 @@ impl App {
             menu_note: None,
             menu_new: crate::library::NewModelForm::new(),
             menu_models: crate::library::ModelPicker::new(),
+            menu_export: export_panel::Form::new(),
             open_request: None,
             project_job: None,
             project_facts: None,
@@ -7924,6 +7929,224 @@ pub(crate) mod tests {
         assert_eq!(restarted.preset, chosen);
         drop(restarted);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_export_ifc_menu_row_writes_the_same_file_as_the_cli_by_hand() {
+        let mut app =
+            headless().expect("a native/software adapter is required for modelling acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-export-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        // The command refuses output paths through a symlinked ancestor (macOS maps /var to
+        // /private/var), so the fixture lives under its canonical name.
+        let root = std::fs::canonicalize(&root).unwrap();
+        let store = root.join("model");
+        std::fs::create_dir_all(&store).unwrap();
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        // One plate gives the export something to carry; the store it comes from is the real
+        // store the command reads, made by hand as a user makes one.
+        let run = |store: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        run(
+            &store,
+            &[
+                "create-plate",
+                "--width",
+                "1000",
+                "--length",
+                "500",
+                "--thickness",
+                "10",
+                "--name",
+                "Plate A",
+            ],
+        );
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        // The menu page replaces the workbench while it is open, as `App::ui` draws it.
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.menu_page(ui);
+                },
+            );
+            let labels: Vec<(String, egui::Pos2)> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        app.menu_open = true;
+        // The navigation row is painted before the page heading of the same name, so the first
+        // "Export" label is the row a user clicks.
+        let export_row = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Export")
+            .map(|(_, pos)| *pos)
+            .expect("the menu shows the Export section");
+        frame(&mut app, click(export_row));
+        assert_eq!(
+            app.menu_section,
+            super::workbench::MenuSection::Export,
+            "the row opens the Export section"
+        );
+        assert!(!app.menu_export_open());
+        let ifc_row = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "IFC")
+            .map(|(_, pos)| *pos)
+            .expect("the Export section shows the IFC row");
+        frame(&mut app, click(ifc_row));
+        assert!(app.menu_export_open());
+        // The form suggests the model's own folder and name.
+        assert_eq!(
+            app.menu_export.path,
+            root.join("model.ifc").to_string_lossy().into_owned()
+        );
+        let wait = |app: &mut App| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.menu_export.job.is_some() && std::time::Instant::now() < deadline {
+                frame(app, vec![]);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.menu_export.job.is_none(), "the export timed out");
+        };
+        let export_button = |app: &mut App| {
+            frame(app, vec![])
+                .iter()
+                .find(|(text, _)| text == "Export IFC")
+                .map(|(_, pos)| *pos)
+                .expect("the form shows Export IFC")
+        };
+        // The click runs the same `export-ifc` a user types.
+        let at = export_button(&mut app);
+        frame(&mut app, click(at));
+        assert!(app.menu_export.job.is_some(), "the click starts the export");
+        wait(&mut app);
+        let note = match &app.menu_export.note {
+            Some(Ok(note)) => note.clone(),
+            other => panic!("the export must succeed, got {other:?}"),
+        };
+        assert!(note.contains("Exported 1 of 1 elements"), "{note}");
+        let ifc = root.join("model.ifc");
+        assert!(ifc.is_file(), "{note}");
+        // The same command by hand writes the same file: the export is the CLI's, and the
+        // IFC stamp is a pure function of the revision, so the bytes agree.
+        let hand = root.join("hand.ifc");
+        run(&store, &["export-ifc", "--out", hand.to_str().unwrap()]);
+        assert_eq!(
+            std::fs::read(&ifc).unwrap(),
+            std::fs::read(&hand).unwrap(),
+            "the window's file equals the CLI's"
+        );
+        // A second export to the same file is the engine's refusal, and the file survives.
+        let before = std::fs::read(&ifc).unwrap();
+        let at = export_button(&mut app);
+        frame(&mut app, click(at));
+        wait(&mut app);
+        let refused = match &app.menu_export.note {
+            Some(Err(message)) => message.clone(),
+            other => panic!("an existing file must be refused, got {other:?}"),
+        };
+        assert!(
+            refused.contains("the output file exists and overwrite was not requested"),
+            "{refused}"
+        );
+        assert_eq!(std::fs::read(&ifc).unwrap(), before);
+        // With the switch on, the export replaces the file, and the bytes still agree.
+        let overwrite = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Replace an existing file")
+            .map(|(_, pos)| *pos)
+            .expect("the form shows the overwrite switch");
+        frame(&mut app, click(overwrite));
+        let at = export_button(&mut app);
+        frame(&mut app, click(at));
+        wait(&mut app);
+        assert!(
+            matches!(&app.menu_export.note, Some(Ok(note)) if note.contains("Exported 1 of 1 elements")),
+            "{:?}",
+            app.menu_export.note
+        );
+        assert_eq!(
+            std::fs::read(&ifc).unwrap(),
+            std::fs::read(&hand).unwrap(),
+            "the replaced file is still the CLI's"
+        );
+        // An export reads the store and never writes it.
+        assert_eq!(
+            run(&store, &["inspect-elements"])
+                .get("plates")
+                .and_then(|j| j.array())
+                .map(|p| p.len()),
+            Ok(1)
+        );
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
