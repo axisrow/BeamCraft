@@ -269,8 +269,10 @@ pub(crate) fn num(value: f64) -> String {
     format!("{cleaned}")
 }
 
-/// One quantity cell at its unit's display precision, trailing zeros trimmed.
-fn quantity(value: f64, decimals: usize) -> String {
+/// One quantity cell at its unit's display precision, trailing zeros trimmed. Shared with
+/// the schedule renderer, so a mass prints the same text in every human-facing report
+/// (#490 finding 3).
+pub(crate) fn quantity(value: f64, decimals: usize) -> String {
     let text = format!("{value:.decimals$}");
     let trimmed = text.trim_end_matches('0').trim_end_matches('.');
     if trimmed == "-0" {

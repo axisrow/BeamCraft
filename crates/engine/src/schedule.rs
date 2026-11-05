@@ -242,11 +242,20 @@ fn rank(value: &CellValue) -> u8 {
     }
 }
 
-/// The rendered text of one cell; missing, blocked and stale stay empty, never zero.
-fn render(cell: Option<&CellValue>) -> String {
+/// Whether a column reads the mass: the one quantity whose display precision the human
+/// reports share — the BOM's two decimals — so `schedule-export` and `export-bom` print the
+/// same mass text (#490 finding 3). Every other number keeps the noise-stripped `num`.
+fn mass_column(field: &Field) -> bool {
+    matches!(field, Field::Standard(StandardField::MassKg))
+}
+
+/// The rendered text of one cell; missing, blocked and stale stay empty, never zero. A mass
+/// cell rounds to the shared display precision instead of the raw noise-stripped value.
+fn render(cell: Option<&CellValue>, mass: bool) -> String {
     match cell {
         None => String::new(),
         Some(CellValue::Text(s)) => s.clone(),
+        Some(CellValue::Number(v)) if mass => crate::bom::quantity(*v, 2),
         Some(CellValue::Number(v)) => crate::bom::num(*v),
         Some(CellValue::Integer(v)) => v.to_string(),
         Some(CellValue::Boolean(v)) => v.to_string(),
@@ -517,9 +526,20 @@ pub fn build(
         }
         a.id.cmp(&b.id)
     });
+    let mass_flags: Vec<bool> = template
+        .columns
+        .iter()
+        .map(|column| mass_column(&column.field))
+        .collect();
     let rendered: Vec<Vec<String>> = ordered
         .iter()
-        .map(|row| row.cells.iter().map(|c| render(c.as_ref())).collect())
+        .map(|row| {
+            row.cells
+                .iter()
+                .enumerate()
+                .map(|(i, c)| render(c.as_ref(), mass_flags.get(i).copied().unwrap_or(false)))
+                .collect()
+        })
         .collect();
     // Group keys are the rendered cells, so equal labels group together; the index map keeps
     // the first-seen order of the sorted rows.
@@ -640,14 +660,27 @@ fn group_rows(template: &Template, schedule: &Schedule) -> (Vec<String>, Vec<Vec
         labels.push(label.clone());
         labels.push(format!("{label}_unknown"));
     }
+    // A totalled mass column shares the BOM's display precision; every other total keeps
+    // the noise-stripped text.
+    let mass_flags: Vec<bool> = totalled
+        .iter()
+        .map(|i| {
+            template
+                .columns
+                .get(*i)
+                .map(|column| mass_column(&column.field))
+                .unwrap_or(false)
+        })
+        .collect();
     let rows = schedule
         .groups
         .iter()
         .map(|g| {
             let mut cells: Vec<String> = g.cells.clone();
             cells.push(g.count.to_string());
-            for total in &g.totals {
+            for (total, mass) in g.totals.iter().zip(&mass_flags) {
                 match &total.sum {
+                    Some(CellValue::Number(v)) if *mass => cells.push(crate::bom::quantity(*v, 2)),
                     Some(CellValue::Number(v)) => cells.push(crate::bom::num(*v)),
                     Some(CellValue::Integer(v)) => cells.push(v.to_string()),
                     _ => cells.push(String::new()),
@@ -815,6 +848,49 @@ mod tests {
         assert_eq!(pl12.totals[0].sum, Some(CellValue::Number(1.0)));
         assert_eq!(pl12.totals[1].sum, None);
         assert_eq!(pl12.totals[1].unknown, 1);
+    }
+
+    #[test]
+    fn a_mass_cell_prints_the_shared_bom_precision() {
+        // #490 finding 3: the schedule rendered every number noise-stripped, so the same
+        // plate mass read 0.786570785 in schedule-export and 0.79 in export-bom. A mass
+        // column — and a mass group total — now round to the BOM's two decimals; every
+        // other number keeps its noise-stripped text.
+        let mut t = template(vec![
+            column("mark", Field::Standard(StandardField::Mark)),
+            column("Area", Field::Standard(StandardField::AreaMm2)),
+            column("Mass", Field::Standard(StandardField::MassKg)),
+        ]);
+        t.columns[2].total = true;
+        t.group_by = vec![0];
+        let rows = [
+            row(1, vec![text("PL"), number(83325.0), number(7.849215)]),
+            row(2, vec![text("PL"), number(10020.01), number(0.786570785)]),
+        ];
+        let schedule = build(&t, &rows, 100).expect("admitted");
+        assert_eq!(
+            schedule.rows[0][2], "7.85",
+            "PL1's mass reads like the BOM's"
+        );
+        assert_eq!(
+            schedule.rows[1][2], "0.79",
+            "PL2's mass reads like the BOM's"
+        );
+        // A non-mass number keeps the noise-stripped text, exact values included.
+        assert_eq!(schedule.rows[0][1], "83325");
+        assert_eq!(schedule.rows[1][1], "10020.01");
+        // The group total of the same masses rounds like the BOM's group table does; only
+        // the totalled mass column contributes its cells.
+        let (_, group_rows) = group_rows(&t, &schedule);
+        assert_eq!(
+            group_rows[0],
+            vec![
+                "PL".to_owned(),
+                "2".to_owned(),
+                "8.64".to_owned(),
+                "0".to_owned()
+            ]
+        );
     }
 
     #[test]

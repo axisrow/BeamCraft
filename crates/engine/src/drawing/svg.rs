@@ -233,12 +233,15 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[1.8, 1.75], [0.0, 1.75]],
             [[1.0, 1.75], [2.0, 0.0]],
         ]),
+        // The S carries a diagonal spine and two short verticals, so it cannot read as the
+        // digit 5, whose horizontal middle bar and full-length verticals it used to share
+        // with only an offset (#490 finding 2). Straight strokes only, like every capital.
         'S' => Some(&[
-            [[2.0, 3.5], [0.4, 3.5]],
-            [[0.4, 3.5], [0.4, 1.75]],
-            [[0.4, 1.75], [1.6, 1.75]],
-            [[1.6, 1.75], [1.6, 0.0]],
-            [[1.6, 0.0], [0.0, 0.0]],
+            [[1.8, 3.5], [0.3, 3.5]],
+            [[0.3, 3.5], [0.3, 2.2]],
+            [[0.3, 2.2], [1.7, 1.3]],
+            [[1.7, 1.3], [1.7, 0.0]],
+            [[1.7, 0.0], [0.2, 0.0]],
         ]),
         'T' => Some(&[[[0.0, 3.5], [2.0, 3.5]], [[1.0, 3.5], [1.0, 0.0]]]),
         'U' => Some(&[
@@ -1113,6 +1116,21 @@ mod tests {
             .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
             .fold(f64::NEG_INFINITY, f64::max);
         assert!(right_edge <= 1.4, "B's right side at {right_edge}");
+        // The shape test above passed while S still drew the digit 5 shifted: a corner
+        // alignment cannot catch a same-shape glyph on a differently sized box. What makes
+        // an S an S is the diagonal spine (#490 finding 2): it has a stroke that is neither
+        // horizontal nor vertical, and neither 5 nor 2 — the digits it is mistaken for —
+        // carries one; and its horizontal strokes never span the full box the way 5's
+        // middle bar does.
+        let diagonal = |ch: char| -> bool {
+            glyph(ch)
+                .unwrap_or(&[])
+                .iter()
+                .any(|[[ax, ay], [bx, by]]| (ax - bx).abs() > 0.05 && (ay - by).abs() > 0.05)
+        };
+        assert!(diagonal('S'), "S carries a diagonal spine");
+        assert!(!diagonal('5'), "5 has no diagonal");
+        assert!(!diagonal('2'), "2 has no diagonal");
     }
 
     #[test]
