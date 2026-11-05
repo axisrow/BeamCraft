@@ -600,6 +600,108 @@ fn an_oriented_beam_created_through_the_ui_renders_a_rotated_silhouette() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Issue 512: a committed bolt group reaches the picture through the real viewport input —
+/// the framed `export-view` stdout — and shows its fasteners stacked through the joined
+/// plates, with nothing re-modelled and no invented size.
+#[test]
+fn a_bolt_group_shows_its_fasteners_in_the_viewport() {
+    let Some(cli) = cli() else { return };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("v03-tests")
+        .join(format!("bolt-group-{}", crate::support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    let store = root.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let store = store.to_str().unwrap().to_owned();
+    let low = "019a7bf0-0000-7000-8000-0000007100f1";
+    let high = "019a7bf0-0000-7000-8000-0000007100f2";
+    let group = "019a7bf0-0000-7000-8000-000000710001";
+    run(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            &store,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--new-id",
+            low,
+        ],
+    );
+    run(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            &store,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--translation",
+            "0,0,10",
+            "--new-id",
+            high,
+        ],
+    );
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/libraries/synthetic-fasteners.usda"
+    );
+    run(
+        &cli,
+        &[
+            "create-bolt-group",
+            "--store",
+            &store,
+            "--name",
+            "G1",
+            "--new-id",
+            group,
+            "--parts",
+            &format!("{low},{high}"),
+            "--fastener-library",
+            library,
+            "--designation",
+            "SYN-BOLT-12x50",
+            "--point1",
+            "0,250,0",
+            "--point2",
+            "600,250,0",
+            "--plane-normal",
+            "0,0,1",
+            "--offset-start",
+            "100",
+            "--spacings",
+            "150",
+        ],
+    );
+    let snapshot = source::load(&cli, &root.join("store"), &Stats::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    // Two plates share one mesh; the group adds its merged fastener mesh.
+    assert_eq!(scene.elements, 3);
+    assert_eq!(scene.counts(), (2, 3));
+    // The stack of the two 40 mm fasteners reaches z = 53 over the plates' z = 20: only the
+    // group's geometry reaches that high, at the bearing points x = 100 and 250. The scene
+    // bounds are relative to the model origin, the centre of the union.
+    assert_eq!(scene.origin_mm, [500.0, 250.0, 26.5]);
+    assert_eq!(scene.min, [-500.0, -250.0, -26.5]);
+    assert_eq!(scene.max, [500.0, 250.0, 26.5]);
+    let size = [0, 1, 2].map(|a| scene.max[a] - scene.min[a]);
+    assert!((size[2] - 53.0).abs() < 1e-6, "{size:?}");
+    let gpu = gpu();
+    let (corner, _, lit) = render(&gpu, &scene);
+    assert!(is_background(corner), "background {corner:?}");
+    assert!(lit > 200, "the joined model with its bolts is visible");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// V15: a display cut hides pixels in the image only. The masked picture keeps the bodies
 /// that straddle the plane (conservative), an empty work area hides everything, and the cut
 /// leaves the snapshot and its token untouched.

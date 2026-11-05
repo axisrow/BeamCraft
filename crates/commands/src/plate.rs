@@ -253,6 +253,10 @@ pub(crate) struct Decoded {
         steel::engine::loft_plate::AuthoredLoftedPlate,
         Option<DerivedMesh>,
     )>,
+    /// The scene elements of the committed A14.3 bolt groups (issue 512): each group's
+    /// fasteners merged into one world-space mesh at the identity pose. An A05 bolt row and a
+    /// weld carry no geometry this version draws.
+    pub(crate) bolt_scene: Vec<beamcraft_engine::scene::SceneElement>,
     other_elements: usize,
     pub(crate) definitions: BTreeMap<ContentDigest, DefinitionRecord>,
     /// The levels of the model and the level of every plate, beam and column (D2).
@@ -1161,6 +1165,24 @@ fn decode_stored(prim: &Prim) -> Option<Option<StoredRecord>> {
     Some(Some(record))
 }
 
+/// The stored placement values of a committed group, for the view snapshot's re-derivation
+/// (issue 512). The definition, holes and labels are not the view's business.
+fn bolt_placement(spec: crate::bolt::GroupSpec) -> steel::engine::bolt::StoredPlacement {
+    steel::engine::bolt::StoredPlacement {
+        point1_mm: spec.point1_mm,
+        point2_mm: spec.point2_mm,
+        plane_normal_mm: spec.plane_normal_mm,
+        rotation_rad: spec.rotation_rad,
+        on_plane_mm: spec.on_plane_mm,
+        depth_mm: spec.depth_mm,
+        offset_start_mm: spec.offset_start_mm,
+        spacings_mm: spec.spacings_mm,
+        length_mm: spec.length_mm,
+        washer_under_head: spec.washer_under_head,
+        washer_under_nut: spec.washer_under_nut,
+    }
+}
+
 /// Reads every prim of the pinned stage and decodes the plates and their derived meshes.
 pub(crate) fn decode(
     reader: &Reader,
@@ -1202,6 +1224,7 @@ pub(crate) fn decode(
     let mut plates = Vec::new();
     let mut members = Vec::new();
     let mut lofted = Vec::new();
+    let mut bolt_views = Vec::new();
     let mut other = 0usize;
     let mut elements = BTreeMap::new();
     let ids: BTreeMap<&str, ElementId> = prims
@@ -1254,10 +1277,37 @@ pub(crate) fn decode(
             }
             // The read-only reference representation is decoded separately below.
             Some("reference") => {}
+            // An A14.3 group joins the scene with its fasteners (issue 512); its stored record
+            // was validated by the layer's structural read, and the fastener definition must
+            // resolve below, so an incomplete group refuses the inspection instead of losing
+            // its bolts from the picture.
+            Some("connection")
+                if property(prim, "steel:connection:type").and_then(text) == Some("bolt_group")
+                    && property(prim, "steel:bolt:fastener").is_some() =>
+            {
+                other += 1;
+                bolt_views.push(crate::bolt::bolt_group_of(prim, id, &ids)?);
+            }
             _ => other += 1,
         }
     }
     let definitions = decode_definitions(&prims)?;
+    let bolt_scene = bolt_views
+        .into_iter()
+        .map(|view| {
+            let spec = match definitions.get(&view.spec.fastener) {
+                Some(DefinitionRecord::Fastener { spec }) => spec,
+                _ => {
+                    return Err(integrity(
+                        "a committed bolt group's fastener definition is missing",
+                    ));
+                }
+            };
+            let placed =
+                steel::engine::bolt::BoltGroupPlaced::from_stored(&bolt_placement(view.spec))?;
+            steel::engine::bolt_scene::scene_element(view.id, &placed, spec).map_err(Refusal::from)
+        })
+        .collect::<Result<Vec<_>, Refusal>>()?;
     let levels = levels_of(&prims)?;
     let derived_elements = plates
         .iter()
@@ -1342,6 +1392,7 @@ pub(crate) fn decode(
         plates,
         members,
         lofted,
+        bolt_scene,
         other_elements: other,
         definitions,
         levels,
@@ -2445,6 +2496,7 @@ pub(crate) fn inspect_manifest_assets(
         let body = steel::engine::loft_plate::evaluate_lofted_plate(authored)?;
         scene.push(steel::engine::loft_plate::scene_element(authored, &body)?);
     }
+    scene.extend(decoded.bolt_scene);
     scene.sort_by_key(beamcraft_engine::SceneElement::id);
     let reference_view_error = match decoded.reference_scene {
         Ok(references) => {
