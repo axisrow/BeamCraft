@@ -572,7 +572,8 @@ fn index_of(placement: &Placement, doc: &Doc) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-fn fresh_id() -> Option<String> {
+/// One fresh system identity, when the system source yields one.
+pub(crate) fn fresh_id() -> Option<String> {
     IdSource::system().next_id().ok().map(|id| id.to_string())
 }
 

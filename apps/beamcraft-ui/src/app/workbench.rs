@@ -944,6 +944,17 @@ impl App {
                                     self.sheet_editor.open = true;
                                 }
                             });
+                        egui::CollapsingHeader::new("Drawing document")
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    "Publish a drawing document version and export one, bound \
+                                     to its archived model source.",
+                                );
+                                if ui.button("Open drawing document").clicked() {
+                                    self.drawing_manager.open = true;
+                                }
+                            });
                     });
             });
     }

@@ -154,6 +154,8 @@ pub struct App {
     props_note: Option<Result<String, String>>,
     /// The D05 sheet editor: hand placement of a drawing document's views.
     sheet_editor: crate::sheet::SheetEditor,
+    /// The D03 drawing document window: freshness, publication and version-bound export.
+    drawing_manager: crate::drawing::Manager,
     publisher: Publisher,
     publish_job: Option<Receiver<Result<Published, ToolError>>>,
     status_job: Option<Receiver<Result<Status, ToolError>>>,
@@ -965,6 +967,7 @@ impl App {
             preset,
             props: Properties::default(),
             sheet_editor: crate::sheet::SheetEditor::default(),
+            drawing_manager: crate::drawing::Manager::default(),
             props_job: None,
             props_note: None,
             publisher,
@@ -3006,6 +3009,13 @@ impl eframe::App for App {
             self.sheet_editor.window(
                 &ctx,
                 &self.source.cli,
+                self.source.actor.as_deref(),
+                &self.stats,
+            );
+            self.drawing_manager.window(
+                &ctx,
+                &self.source.cli,
+                self.source.workspace.as_deref(),
                 self.source.actor.as_deref(),
                 &self.stats,
             );

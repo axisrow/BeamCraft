@@ -33,6 +33,7 @@ pub mod command;
 pub mod creation;
 pub mod cut_plane;
 pub mod dialog;
+pub mod drawing;
 pub mod edit;
 pub mod grid;
 pub mod library;
