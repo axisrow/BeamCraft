@@ -7519,15 +7519,31 @@ pub(crate) mod tests {
         assert!(!stored.contains(beyond));
 
         // A restart reads the sidecar and rebuilds the same camera deterministically: the
-        // wander is forgotten and the view looks across its line again.
+        // wander is forgotten and the view looks across its line again. The pane leaves the
+        // view first, so the activation below really rebuilds the camera instead of
+        // returning early on a pane that already shows it.
+        app.activate_view(None);
         app.views.cameras.clear();
         app.views.book = crate::views::load(&dir).unwrap();
         app.activate_view(Some(view.id));
         let restarted = app.views.active_pane().unwrap().camera;
-        assert_eq!(
+        // The sidecar is a float document: the round trip may bend the basis by ~1e-16, so
+        // the rebuilt frame is compared to the first one with that slack, componentwise.
+        let (rebuilt, rebuilt_span) = restarted.frame(app.view_origin()).unwrap();
+        let (held, held_span) = first.frame(app.view_origin()).unwrap();
+        let near = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).all(|(p, q)| (p - q).abs() < 1e-9);
+        assert!(
+            near(rebuilt.origin(), held.origin())
+                && near(rebuilt.x(), held.x())
+                && near(rebuilt.y(), held.y())
+                && near(rebuilt.normal(), held.normal())
+                && (rebuilt_span - held_span).abs() < 1e-6,
+            "the restored camera is the view's own construction: {rebuilt:?} vs {held:?}"
+        );
+        assert_ne!(
             restarted.frame(app.view_origin()).unwrap(),
-            first.frame(app.view_origin()).unwrap(),
-            "the restored camera is the view's own construction"
+            left,
+            "the session wander does not survive a restart"
         );
         assert_eq!(
             crate::views::load(&dir).unwrap().len(),
