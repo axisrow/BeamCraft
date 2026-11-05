@@ -6841,6 +6841,7 @@ mod tests {
             "f4b517785689ed63dfd445615fadeeeb2043d5031f053a38a703bcc4666a185c"
         );
         let material = Sha256::digest(b"material").unwrap();
+        let loft_base = loft.content_fingerprint().unwrap();
         for changed in [
             CreateLoftedPlate {
                 new_id: id(8),
@@ -6884,7 +6885,7 @@ mod tests {
                 ..loft.clone()
             },
         ] {
-            assert_ne!(changed.content_fingerprint().unwrap(), base, "loft");
+            assert_ne!(changed.content_fingerprint().unwrap(), loft_base, "loft");
         }
         assert_ne!(
             loft.content_fingerprint().unwrap(),
