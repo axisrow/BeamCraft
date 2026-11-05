@@ -55,6 +55,7 @@ expect_exit() { # expect_exit <name> <want: 0|nonzero> <actual exit>
 # ---- Tool discovery ---------------------------------------------------------------------------
 
 CARGO="${CARGO:-cargo}"
+command -v "$CARGO" > /dev/null 2>&1 || CARGO="$HOME/.cargo/bin/cargo"
 SDK_LEG=1
 USDCAT=""
 USDCHECKER=""
@@ -74,11 +75,11 @@ else
     echo "BANNER: the official-SDK legs are skipped; this run does NOT claim SDK verification"
 fi
 
-if [ ! -x "$ORACLE" ]; then
-    echo "building the independent oracle (cargo build -p beamcraft-cli --bin beamcraft-usd-oracle)"
-    "$CARGO" build --locked -p beamcraft-cli --bin beamcraft-usd-oracle >&2 || {
-        echo "FAIL oracle build"; exit 1; }
-fi
+# Always rebuild: cargo is a no-op when the binary already matches the committed sources, so
+# a leftover binary from an older commit can never be silently reused by a rerun.
+echo "building the independent oracle (cargo build --locked -p beamcraft-cli --bin beamcraft-usd-oracle)"
+"$CARGO" build --locked -p beamcraft-cli --bin beamcraft-usd-oracle >&2 || {
+    echo "FAIL oracle build"; exit 1; }
 echo "oracle: $ORACLE (repo $(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown))"
 echo "work:   $WORK"
 echo
