@@ -850,6 +850,14 @@ pub enum ContourEdit {
         /// The treatment to author, or `None` for a sharp corner.
         treatment: Option<CornerTreatment>,
     },
+    /// `move-plate-edge`: both end vertices of `edge` move by the same in-plane vector, so the
+    /// edge translates and its neighbours follow.
+    MoveEdge {
+        /// The position of the edge in the authored contour.
+        edge: usize,
+        /// The in-plane translation, plate-local millimetres.
+        delta: [f64; 2],
+    },
 }
 
 impl ContourEdit {
@@ -860,6 +868,7 @@ impl ContourEdit {
             Self::InsertVertex { .. } => "Inserted a contour vertex",
             Self::DeleteVertex { .. } => "Deleted the contour vertex",
             Self::SetCorner { .. } => "Set the corner treatment",
+            Self::MoveEdge { .. } => "Moved the contour edge",
         }
     }
 
@@ -915,6 +924,15 @@ impl ContourEdit {
                     Self::corner_text(treatment.as_ref()),
                 ],
             ),
+            Self::MoveEdge { edge, delta } => (
+                "move-plate-edge",
+                vec![
+                    "--edge".to_owned(),
+                    edge.to_string(),
+                    "--delta".to_owned(),
+                    point(delta),
+                ],
+            ),
         };
         let mut args = vec![
             command.to_owned(),
@@ -950,6 +968,7 @@ pub fn parse_contour_edited(
         ContourEdit::InsertVertex { .. } => "plate_vertex_inserted",
         ContourEdit::DeleteVertex { .. } => "plate_vertex_deleted",
         ContourEdit::SetCorner { .. } => "plate_corner_set",
+        ContourEdit::MoveEdge { .. } => "plate_edge_moved",
     };
     let reply = match decode(stdout) {
         Ok(reply) => reply,

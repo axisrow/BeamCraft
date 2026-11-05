@@ -298,6 +298,56 @@ fn an_insert_and_a_delete_run_through_the_same_path() {
 }
 
 #[test]
+fn an_edge_line_drag_matches_the_hand_typed_move() {
+    let Some(cli) = cli() else { return };
+    let stores = Stores::new();
+    twin_plates(&cli, &stores);
+    // The drag grabbed at (1000,0) — vertex 1 — and released at (1120,-30): the delta is what
+    // the line drag commits, both ends of edge 1 follow it.
+    let drag = ContourEdit::MoveEdge {
+        edge: 1,
+        delta: [120.0, -30.0],
+    };
+    commit_as_window(&cli, &stores.ui(), &drag).expect("the edge drag commits");
+    let (contour, _, _, _) = plate_state(&cli, &stores.ui());
+    assert_eq!(
+        contour.get(1),
+        Some(&[1120.0, -30.0, 0.0]),
+        "edge 1's first end moved by the delta"
+    );
+    assert_eq!(
+        contour.get(2),
+        Some(&[1320.0, 270.0, 0.0]),
+        "edge 1's second end moved by the same delta"
+    );
+    assert_eq!(
+        contour.first(),
+        Some(&[0.0, 0.0, 0.0]),
+        "the neighbouring edges' far ends stay put"
+    );
+    let (code, _) = by_hand(
+        &cli,
+        &[
+            "move-plate-edge",
+            "--store",
+            s(&stores.hand()),
+            "--id",
+            ID,
+            "--edge",
+            "1",
+            "--delta",
+            "120,-30",
+        ],
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        plate_state(&cli, &stores.ui()),
+        plate_state(&cli, &stores.hand()),
+        "the window's edge drag and the hand-typed command save the same result"
+    );
+}
+
+#[test]
 fn a_three_vertex_delete_refuses_and_publishes_nothing() {
     let Some(cli) = cli() else { return };
     let stores = Stores::new();
