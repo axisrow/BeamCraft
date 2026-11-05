@@ -12,7 +12,7 @@ target: `alpha_scenario.rs` (the original) and `alpha_scenario_expanded.rs` (the
 which includes the original frame as its opening and runs the curved/poly members, the
 bent/lofted plates, the rotate/mirror/array tool story, the bolt-group story, the model-data
 tool story, the contour plate story, the part class story, the cut lifecycle story, the
-fits-and-combine story and the hole-record story each in their
+fits-and-combine story, the hole-record story and the storey assignment story each in their
 own published store as its further tests). The
 expected exit is 0. On success the
 stories themselves are silent; the runner prints one result line per test. A failing step

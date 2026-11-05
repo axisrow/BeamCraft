@@ -16,12 +16,12 @@ Toolchain: stable aarch64-apple-darwin, `beamcraft 0.0.1`, no GPU override.
 
 ### The expanded end-to-end CLI story
 
-`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, eleven tests: the
+`apps/beamcraft-cli/tests/alpha_scenario_expanded.rs` (single entry point, twelve tests: the
 expanded story and — each in its own published store so the numbered frame keeps its recorded
 counts — the curved and poly member story, the bent and lofted plate story, the model-tool
 transform story, the bolt-group story, the model-data tool story, the contour plate story, the
-part class story, the cut lifecycle story, the fits-and-combine story and the hole-record
-story). Every step is
+part class story, the cut lifecycle story, the fits-and-combine story, the hole-record story
+and the storey assignment story). Every step is
 a fresh `beamcraft` process over a real blob store; no mock storage, renderer or geometry. All
 steps ran and passed on this machine.
 
@@ -40,6 +40,7 @@ steps ran and passed on this machine.
 | Modelling: bent and lofted plates (A10/A11) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a lofted plate between two translated contours stores the exact oblique-prism volume (1,000,000 mm3) in its reply and its stored quantities (`volume_status current`); one right-angle fold on radius 8 keeps the volume at the blank's `t x area` within the certified bound (within 8,000 mm3 of 4,000,000 mm3), the outline becomes the unfold contour and the bend record carries its parameters; the identical bend replays without writing, an overlapping second fold refuses with the head unchanged, the bend undoes and redoes as one command, and publication preserves the folded plate's exact volume and `mesh_digest` and the lofted plate's exact stored quantity and triangle count | Passed |
 | Workspace history | `undo-workspace` / `redo-workspace` around the chamfer: the undone volume returns, redo restores it | Passed |
 | Model data: grids and levels | `create-grid` (`0 1000` u-expression), `create-level` (elevation 1000), `list-grids` / `levels` | Passed |
+| Storey assignment (D2) | in its own published store, so the numbered frame keeps the counts the manual runbook records: a plate and a beam ride their levels as authored metadata (`update-element --level` by identity) with every mesh byte-identical, the `levels` listing carries exactly one element per level, a reassignment empties the old level and fills the new one, an unknown level identity refuses and writes nothing, the reassignment is one undo unit returning the beam to the ground, and publication preserves both elements on the storey with their exact quantities | Passed |
 | Model data: construction objects and grid line tools (T01/T02) | in their own published store, so the numbered frame keeps the counts the manual runbook records: a drawn V axis joins a one-axis grid and survives reshape (exact start/end), relabel and remove with its identity; one undo returns the removed axis with its label and geometry; the four construction kinds (point, line, circle with its exact radius, plane) store as helpers, list exactly, and survive the publication round trip with the drawn grid | Passed |
 | Contour plates: vertex and edge edits (A12.3) | in their own published store, so the numbered frame keeps the counts the manual runbook records: the amendment case 6 chain — a vertex delete gives the half square (5,000,000 mm3), a collinear insert keeps the body, an outward move adds the 1000 x 500 / 2 triangle (7,500,000 mm3); the edge move grows a chamfered blank by exactly 2,000,000 mm3 while the treatment rides along on its vertex; one undo rolls the last shape revision back and the redo restores it; both plates survive publication with their exact volumes and meshes | Passed |
 | User attributes (I04) | `attribute-define` (choice with options, number with a unit), `attribute-set`, `attribute-get`, `attributes`; an undefined name (`NOT_FOUND`) and an off-choice value (`INVALID_ARGUMENT`) refuse | Passed |
@@ -90,7 +91,7 @@ recorded open and stay open until they execute on real hardware.
 
 | Acceptance item | Executable check or recorded manual result | Status |
 |---|---|---|
-| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes and hole records, cut lifecycle, poly and curved members, bent and lofted plates, contour plate edits, fits and combine, grids/levels, construction objects and grid line tools, part classes, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
+| Model a frame with plates, bolts and welds (CLI) | The CLI story rows above: frame, model tools, member holes and hole records, cut lifecycle, poly and curved members, bent and lofted plates, contour plate edits, fits and combine, grids/levels and storey assignment, construction objects and grid line tools, part classes, attributes, assembly/bolt/weld, bolt-group generated holes, numbering, publication, exact reopen | Executed locally (macOS, Apple silicon) |
 | View it (CLI) | The `export-view` bundle rows and the named-views (V12) row above | Executed locally (macOS, Apple silicon) |
 | Filter it (CLI) | `query-elements` (V14, real store) row above; includes the kind rule | Executed locally (macOS, Apple silicon) |
 | Number it (CLI) | `preview-numbering` + `approve-numbering`, 8 marks | Executed locally (macOS, Apple silicon) |

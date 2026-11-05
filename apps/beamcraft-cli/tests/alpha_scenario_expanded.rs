@@ -77,6 +77,7 @@ impl Story {
         fs::create_dir(root.join("cuts-published")).unwrap();
         fs::create_dir(root.join("fits-published")).unwrap();
         fs::create_dir(root.join("holes-published")).unwrap();
+        fs::create_dir(root.join("storeys-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -4126,4 +4127,222 @@ fn hole_records_update_remove_and_survive_publication() {
         1,
         "the record survives the round trip"
     );
+}
+
+/// The storey assignment story (D2): levels are elements with their own identity and no
+/// body, and assignment is authored metadata — a level never touches a mesh. The story
+/// runs in its own published store so the numbered frame keeps the counts the manual
+/// runbook records, and in its own test for the per-test budget.
+#[test]
+fn storey_assignment_rides_levels_across_publication() {
+    let s = Story::new();
+    s.ok(
+        "storeys-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "storeys-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-STOREY-BAR",
+            "--width",
+            "100",
+            "--height",
+            "100",
+        ],
+    );
+    s.ok(
+        "storeys-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("storeys-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+    let ground_level = s.ok(
+        "storeys-draft",
+        "create-level",
+        &[
+            "--name",
+            "Q01 ground",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a151",
+            "--elevation",
+            "0",
+        ],
+    );
+    let ground_id = text(&ground_level, "element_id");
+    let storey_level = s.ok(
+        "storeys-draft",
+        "create-level",
+        &[
+            "--name",
+            "Q01 storey",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a152",
+            "--elevation",
+            "3000",
+        ],
+    );
+    let storey_id = text(&storey_level, "element_id");
+    let plated = s.ok(
+        "storeys-draft",
+        "create-plate",
+        &[
+            "--name",
+            "Q01 storey plate",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a153",
+            "--width",
+            "200",
+            "--length",
+            "300",
+            "--thickness",
+            "10",
+        ],
+    );
+    let plate = text(at(&plated, &["plate"]), "element_id");
+    let beamed = s.ok(
+        "storeys-draft",
+        "create-member",
+        &[
+            "--kind",
+            "beam",
+            "--start",
+            "0,0,0",
+            "--end",
+            "1000,0,0",
+            "--profile",
+            "Q01-STOREY-BAR",
+            "--name",
+            "Q01 storey beam",
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a154",
+        ],
+    );
+    let beam = text(at(&beamed, &["member"]), "element_id");
+    let before = parts(&s.ok("storeys-draft", "inspect-elements", &[]));
+
+    // The assignment is authored metadata: the meshes stay byte-identical while the
+    // levels carry their elements.
+    let assigned = s.ok(
+        "storeys-draft",
+        "update-element",
+        &["--id", &plate, "--level", &storey_id],
+    );
+    assert_eq!(text(&assigned, "outcome"), "element_updated");
+    s.ok(
+        "storeys-draft",
+        "update-element",
+        &["--id", &beam, "--level", &ground_id],
+    );
+    let after = parts(&s.ok("storeys-draft", "inspect-elements", &[]));
+    for (found, was) in after.iter().zip(before.iter()) {
+        assert_eq!(found.2, was.2, "{} mesh is untouched", was.0);
+        close(found.1, was.1);
+    }
+    let storeys = s.ok("storeys-draft", "levels", &[]);
+    let listed = at(&storeys, &["levels"]).array().unwrap();
+    assert_eq!(listed.len(), 2);
+    let ground = listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 ground")
+        .expect("the ground level is present");
+    let storey = listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 storey")
+        .expect("the storey level is present");
+    assert_eq!(
+        at(ground, &["elements"]).array().unwrap().len(),
+        1,
+        "the beam sits on the ground level"
+    );
+    assert_eq!(
+        at(storey, &["elements"]).array().unwrap().len(),
+        1,
+        "the plate sits on the storey level"
+    );
+
+    // Reassignment moves the element between storeys; an unknown level refuses and
+    // writes nothing.
+    s.ok(
+        "storeys-draft",
+        "update-element",
+        &["--id", &beam, "--level", &storey_id],
+    );
+    let moved = s.ok("storeys-draft", "levels", &[]);
+    let moved_listed = at(&moved, &["levels"]).array().unwrap();
+    let moved_ground = moved_listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 ground")
+        .expect("the ground level is present");
+    let moved_storey = moved_listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 storey")
+        .expect("the storey level is present");
+    assert_eq!(at(moved_ground, &["elements"]).array().unwrap().len(), 0);
+    assert_eq!(at(moved_storey, &["elements"]).array().unwrap().len(), 2);
+    let storeys_head = s.head("storeys-draft");
+    let unknown = s.run(
+        "storeys-draft",
+        "update-element",
+        &[
+            "--id",
+            &beam,
+            "--level",
+            "019a7bf0-0000-7000-8000-00000000ffff",
+        ],
+        2,
+    );
+    assert_eq!(text(&unknown, "outcome"), "rejected");
+    assert_eq!(s.head("storeys-draft"), storeys_head);
+
+    // The reassignment is one undo unit: the beam returns to the ground level.
+    let storeys_undo = s.execute(&[
+        "undo-workspace",
+        "--workspace-dir",
+        &s.path("storeys-draft"),
+    ]);
+    assert_eq!(storeys_undo.0, 0);
+    let undone = s.ok("storeys-draft", "levels", &[]);
+    let undone_listed = at(&undone, &["levels"]).array().unwrap();
+    let undone_ground = undone_listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 ground")
+        .expect("the ground level is present");
+    assert_eq!(at(undone_ground, &["elements"]).array().unwrap().len(), 1);
+    let storeys_redo = s.execute(&[
+        "redo-workspace",
+        "--workspace-dir",
+        &s.path("storeys-draft"),
+    ]);
+    assert_eq!(storeys_redo.0, 0);
+    assert_eq!(text(&storeys_redo.1, "outcome"), "workspace_redone");
+
+    let storeys_published = s.ok(
+        "storeys-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("storeys-draft")],
+    );
+    assert_eq!(text(&storeys_published, "outcome"), "workspace_published");
+    let reopened = s.ok("storeys-published", "levels", &[]);
+    let reopened_listed = at(&reopened, &["levels"]).array().unwrap();
+    assert_eq!(reopened_listed.len(), 2);
+    let reopened_storey = reopened_listed
+        .iter()
+        .find(|l| text(l, "name") == "Q01 storey")
+        .expect("the storey level is present");
+    assert_eq!(
+        at(reopened_storey, &["elements"]).array().unwrap().len(),
+        2,
+        "both elements ride the storey across publication"
+    );
+    let reopened_parts = parts(&s.ok("storeys-published", "inspect-elements", &[]));
+    assert_eq!(reopened_parts.len(), 2);
+    close(volume_of(&reopened_parts, &plate), 600_000.0);
+    close(volume_of(&reopened_parts, &beam), 10_000_000.0);
 }
