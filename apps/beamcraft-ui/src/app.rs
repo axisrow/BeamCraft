@@ -3427,6 +3427,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_ifc_row_belongs_to_the_export_page_not_the_import_page() {
+        use super::workbench::MenuSection;
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        on_the_menu(&mut app);
+        // The Import page lists IFC among its commands; its import does not exist, so the row
+        // is disabled and a click neither opens the export form nor leaves the page.
+        app.menu_section = MenuSection::Import;
+        let ifc = app_frame(&mut app, &ctx, vec![])
+            .iter()
+            .find(|(label, _)| label == "IFC")
+            .map(|(_, pos)| *pos)
+            .expect("the Import page shows the IFC row");
+        app_frame(&mut app, &ctx, click(ifc));
+        assert_eq!(app.menu_section, MenuSection::Import);
+        assert!(!app.menu_export_open());
+        // The Export page's own IFC row opens the form.
+        app.menu_section = MenuSection::Export;
+        let ifc = app_frame(&mut app, &ctx, vec![])
+            .iter()
+            .find(|(label, _)| label == "IFC")
+            .map(|(_, pos)| *pos)
+            .expect("the Export page shows the IFC row");
+        app_frame(&mut app, &ctx, click(ifc));
+        assert!(app.menu_export_open());
+    }
+
+    #[test]
     fn escape_waits_while_a_menu_create_runs() {
         use super::workbench::MenuSection;
         let Some(mut app) = headless() else { return };

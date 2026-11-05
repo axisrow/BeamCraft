@@ -1564,10 +1564,13 @@ impl App {
                     }
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for label in self.menu_section.commands() {
+                        // The IFC row belongs to the Export page only: the Import page lists the
+                        // same label and its import command does not exist yet.
                         let enabled = matches!(
                             *label,
-                            "Profile catalog" | "Material catalog" | "About BeamCraft" | "IFC"
-                        );
+                            "Profile catalog" | "Material catalog" | "About BeamCraft"
+                        ) || *label == "IFC"
+                            && self.menu_section == MenuSection::Export;
                         if menu_command(ui, label, enabled).clicked() {
                             match *label {
                                 "Profile catalog" => self.menu_section = MenuSection::Profiles,
