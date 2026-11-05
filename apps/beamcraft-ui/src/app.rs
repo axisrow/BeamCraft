@@ -1521,6 +1521,7 @@ impl App {
             || self.weld.commit_job.is_some()
             || self.bolt.commit_job.is_some()
             || self.bolt.entries_job.is_some()
+            || self.bolt.groups_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -4542,6 +4543,17 @@ pub(crate) mod tests {
             .expect("the ribbon shows the Bolts button");
         frame(&mut app, click(bolts_button));
         assert_eq!(app.bench, super::workbench::Bench::Bolt);
+        // The bench's opening groups listing runs on a worker; the picks wait for it, as any
+        // click waits for a command.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.groups_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.bolt.groups_job.is_none(),
+            "the groups listing timed out"
+        );
         // The picks resolve on the snapshot on screen. The low plate is picked through its side
         // face (the upper plate hides it from above), the high one through its top.
         let ray = |x, y| crate::edit::Ray {
@@ -4553,9 +4565,9 @@ pub(crate) mod tests {
             direction: [1.0, 0.0, 0.0],
         };
         app.bolt_click(side);
-        assert_eq!(app.bolt.main.as_deref(), Some(a.as_str()));
+        assert_eq!(app.bolt.parts.first().map(String::as_str), Some(a.as_str()));
         app.bolt_click(ray(500.0, 250.0));
-        assert_eq!(app.bolt.secondary.as_deref(), Some(b.as_str()));
+        assert_eq!(app.bolt.parts.last().map(String::as_str), Some(b.as_str()));
         // The two points lie on the active work plane, as a placement click resolves them.
         for kind in beamcraft_engine::query::pick::SnapKind::ALL {
             app.selection.set_snap(kind, false);
@@ -4578,7 +4590,7 @@ pub(crate) mod tests {
             .iter()
             .find(|(text, _)| text == "Create bolts")
             .map(|(_, pos)| *pos)
-            .expect("the Bolt bench shows Create bolts");
+            .unwrap_or_else(|| panic!("the Bolt bench shows Create bolts, got {:?}", labels));
         frame(&mut app, click(create));
         assert!(app.bolt.commit_job.is_some(), "the click starts the commit");
         let wait = |app: &mut App| {
@@ -4592,10 +4604,7 @@ pub(crate) mod tests {
         wait(&mut app);
         assert!(matches!(app.bolt.note, Some(Ok(_))), "{:?}", app.bolt.note);
         assert!(
-            app.bolt.main.is_none()
-                && app.bolt.secondary.is_none()
-                && app.bolt.point1.is_none()
-                && app.bolt.point2.is_none()
+            app.bolt.parts.is_empty() && app.bolt.point1.is_none() && app.bolt.point2.is_none()
         );
         let group = |store: &std::path::Path| {
             let reply = run(store, &["bolts"]);
@@ -4702,7 +4711,17 @@ pub(crate) mod tests {
             "each store names its own group"
         );
         // A non-positive spacing is the engine's refusal through the real command path: it
-        // reaches the panel and publishes nothing.
+        // reaches the panel and publishes nothing. The success refreshed the groups listing;
+        // the picks wait for it, as any click waits for a command.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while (app.bolt.groups_job.is_some()) && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.bolt.groups_job.is_none(),
+            "the groups listing timed out"
+        );
         app.bolt_click(side);
         app.bolt_click(ray(500.0, 250.0));
         app.bolt_click(ray(150.0, 250.0));
@@ -4744,7 +4763,7 @@ pub(crate) mod tests {
             .expect("the Bolt bench shows Cancel");
         frame(&mut app, click(cancel));
         assert_eq!(app.bench, super::workbench::Bench::Select);
-        assert!(app.bolt.main.is_none() && app.bolt.point1.is_none() && app.bolt.note.is_none());
+        assert!(app.bolt.parts.is_empty() && app.bolt.point1.is_none() && app.bolt.note.is_none());
         assert_eq!(
             run(&store, &["bolts"])
                 .get("bolt_groups")
@@ -4753,6 +4772,399 @@ pub(crate) mod tests {
                 .ok(),
             Some(1),
             "the cancel published nothing"
+        );
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_bolt_bench_loads_a_placed_group_and_updates_it_through_the_cli() {
+        let mut app =
+            headless().expect("a native/software adapter is required for modelling acceptance");
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("bc-bolt-edit-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let hand = root.join("hand");
+        for folder in [&store, &hand] {
+            std::fs::create_dir_all(folder).unwrap();
+        }
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        let run = |store: &std::path::Path, args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .args(["--store", store.to_str().unwrap()])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        let library = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/libraries/synthetic-fasteners.usda");
+        // Two stacked plates, then one placed group, in both stores by hand, so the bench's
+        // update and the CLI's must agree field by field.
+        let parts_of = |store: &std::path::Path, low: &str, high: &str| {
+            for (id, z) in [(low, "0"), (high, "10")] {
+                run(
+                    store,
+                    &[
+                        "create-plate",
+                        "--width",
+                        "1000",
+                        "--length",
+                        "500",
+                        "--thickness",
+                        "10",
+                        "--name",
+                        "P",
+                        "--new-id",
+                        id,
+                        "--translation",
+                        &format!("0,0,{z}"),
+                    ],
+                );
+            }
+            vec![low.to_owned(), high.to_owned()]
+        };
+        let group_args = |store_parts: &[String]| {
+            let joined = store_parts.join(",");
+            let args = vec![
+                "create-bolt-group".to_owned(),
+                "--name".to_owned(),
+                "G1".to_owned(),
+                "--parts".to_owned(),
+                joined,
+                "--fastener-library".to_owned(),
+                library.to_string_lossy().into_owned(),
+                "--designation".to_owned(),
+                "SYN-BOLT-12x50".to_owned(),
+                "--point1".to_owned(),
+                "100,250,0".to_owned(),
+                "--point2".to_owned(),
+                "600,250,0".to_owned(),
+                "--plane-normal".to_owned(),
+                "0,0,1".to_owned(),
+                "--rotation-deg".to_owned(),
+                "0".to_owned(),
+                "--on-plane".to_owned(),
+                "0".to_owned(),
+                "--depth".to_owned(),
+                "0".to_owned(),
+                "--offset-start".to_owned(),
+                "50".to_owned(),
+                "--spacings".to_owned(),
+                "150".to_owned(),
+                "--washer-under-head".to_owned(),
+                "true".to_owned(),
+                "--washer-under-nut".to_owned(),
+                "true".to_owned(),
+                "--hole-mode".to_owned(),
+                "generate".to_owned(),
+            ];
+            args
+        };
+        let store_parts = parts_of(
+            &store,
+            "019a7bf0-0000-7000-8000-00000071d001",
+            "019a7bf0-0000-7000-8000-00000071d002",
+        );
+        let hand_parts = parts_of(
+            &hand,
+            "019a7bf0-0000-7000-8000-00000071d101",
+            "019a7bf0-0000-7000-8000-00000071d102",
+        );
+        run(
+            &store,
+            &group_args(&store_parts)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        run(
+            &hand,
+            &group_args(&hand_parts)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        let group_id = |store: &std::path::Path| {
+            let reply = run(store, &["bolts"]);
+            let groups = reply.get("bolt_groups").and_then(|j| j.array()).unwrap();
+            assert_eq!(groups.len(), 1);
+            groups[0]
+                .get("id")
+                .ok()
+                .and_then(|j| j.string().ok())
+                .unwrap()
+                .to_owned()
+        };
+        // The bench's opening listing carries the placed group, as a reload delivers the model.
+        let snapshot =
+            Arc::new(crate::source::load(&cli, &store, &crate::stats::Stats::default()).unwrap());
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            uploaded,
+        });
+        let ctx = egui::Context::default();
+        super::inter(&ctx);
+        crate::theme::install(&ctx);
+        let frame = |app: &mut App, events| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1400.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.header(ui);
+                    app.ribbon(ui);
+                    app.status_bar(ui);
+                    app.inspector(ui);
+                    app.project_browser(ui);
+                    egui::CentralPanel::default().show(ui, |_| {});
+                },
+            );
+            let labels: Vec<(String, egui::Pos2)> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some((
+                            text.galley.text().to_owned(),
+                            text.pos + text.galley.size() / 2.0,
+                        ))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            output.drop_without_applying_deltas();
+            labels
+        };
+        let click = |pos| {
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ]
+        };
+        app.set_bench(super::workbench::Bench::Bolt);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.groups_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(
+            app.bolt.groups_job.is_none(),
+            "the groups listing timed out"
+        );
+        assert_eq!(app.bolt.groups.len(), 1);
+        // Loading the listed group fills the form with the stored spec, as the combo's click
+        // does.
+        let listed = app.bolt.groups.first().cloned().unwrap();
+        app.bolt.load_group(&listed);
+        assert_eq!(
+            app.bolt.edit_target.as_deref(),
+            Some(group_id(&store).as_str())
+        );
+        assert_eq!(app.bolt.name, "G1");
+        assert_eq!(app.bolt.parts, store_parts);
+        assert_eq!(app.bolt.point1, Some([100.0, 250.0, 0.0]));
+        assert_eq!(app.bolt.offset_start, "50");
+        assert_eq!(app.bolt.spacings, "150");
+        assert_eq!(app.bolt.normal, Some([0.0, 0.0, 1.0]));
+        assert!(frame(&mut app, vec![]).iter().any(|(text, _)| text == "G1"));
+        // The edit moves the offset start and adds a fastener; Update group runs the same
+        // `update-bolt-group` a user types.
+        app.bolt.offset_start = "70".into();
+        app.bolt.spacings = "120,130".into();
+        let edit_labels = frame(&mut app, vec![]);
+        let update = edit_labels
+            .iter()
+            .find(|(text, _)| text == "Update group")
+            .map(|(_, pos)| *pos)
+            .unwrap_or_else(|| panic!("the edit form shows Update group, got {:?}", edit_labels));
+        frame(&mut app, click(update));
+        assert!(app.bolt.commit_job.is_some(), "the click starts the update");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.commit_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.bolt.commit_job.is_none(), "the update timed out");
+        assert!(matches!(app.bolt.note, Some(Ok(_))), "{:?}", app.bolt.note);
+        let value = |json: &beamcraft_json::Json, key: &str| {
+            json.get(key)
+                .ok()
+                .and_then(|j| j.string().ok())
+                .map(str::to_owned)
+        };
+        let strings = |json: &beamcraft_json::Json, key: &str| -> Vec<String> {
+            json.get(key)
+                .ok()
+                .and_then(|j| j.array().ok())
+                .map(|list| {
+                    list.iter()
+                        .filter_map(|v| v.string().ok().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let made = run(&store, &["bolts"]);
+        let made = made.get("bolt_groups").and_then(|j| j.array()).unwrap()[0].clone();
+        assert_eq!(value(&made, "offset_start_mm").as_deref(), Some("70"));
+        assert_eq!(value(&made, "count").as_deref(), Some("3"));
+        assert_eq!(strings(&made, "spacings_mm"), ["120", "130"]);
+        // The same command by hand saves the same edit: every user-visible field agrees. The
+        // hand update carries the bench's new values and names no library entry, keeping the
+        // pinned definition as the bench's update does.
+        let hand_target = group_id(&hand);
+        run(
+            &hand,
+            &[
+                "update-bolt-group",
+                "--target",
+                &hand_target,
+                "--name",
+                "G1",
+                "--parts",
+                &hand_parts.join(","),
+                "--point1",
+                "100,250,0",
+                "--point2",
+                "600,250,0",
+                "--plane-normal",
+                "0,0,1",
+                "--rotation-deg",
+                "0",
+                "--on-plane",
+                "0",
+                "--depth",
+                "0",
+                "--offset-start",
+                "70",
+                "--spacings",
+                "120,130",
+                "--washer-under-head",
+                "true",
+                "--washer-under-nut",
+                "true",
+                "--hole-mode",
+                "generate",
+            ],
+        );
+        let by_hand = run(&hand, &["bolts"]);
+        let by_hand = by_hand.get("bolt_groups").and_then(|j| j.array()).unwrap()[0].clone();
+        for key in [
+            "name",
+            "count",
+            "rotation_rad",
+            "on_plane_mm",
+            "depth_mm",
+            "offset_start_mm",
+            "spacing_mode",
+            "spacing_value_mm",
+            "length_mode",
+            "length_mm",
+            "washer_under_head",
+            "washer_under_nut",
+            "hole_mode",
+            "hole_clearance_mm",
+        ] {
+            assert_eq!(value(&made, key), value(&by_hand, key), "{key}");
+        }
+        for key in [
+            "point1_mm",
+            "point2_mm",
+            "plane_normal_mm",
+            "spacings_mm",
+            "fastener",
+        ] {
+            assert_eq!(strings(&made, key), strings(&by_hand, key), "{key}");
+        }
+        // A repin without the library fields refuses in the form and starts no command. The
+        // update refreshed the groups listing; the buttons wait for it.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.groups_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        app.bolt.repin = true;
+        // The update cleared the picks; reload the group from the refreshed listing so the
+        // form is complete again, then ask for a repin with no library named.
+        let listed = app.bolt.groups.first().cloned().unwrap();
+        let target = listed.id.clone();
+        app.bolt.load_group(&listed);
+        assert_eq!(app.bolt.edit_target.as_deref(), Some(target.as_str()));
+        app.bolt.repin = true;
+        let update_now = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Update group")
+            .map(|(_, pos)| *pos)
+            .expect("the edit form still shows Update group");
+        frame(&mut app, click(update_now));
+        assert!(app.bolt.commit_job.is_none(), "the form refused the repin");
+        let refused = match &app.bolt.note {
+            Some(Err(message)) => message.clone(),
+            other => panic!("a repin without a library must refuse, got {other:?}"),
+        };
+        assert!(refused.contains("Library"), "{refused}");
+        // New group returns the bench to the create flow.
+        app.bolt.repin = false;
+        let new_group = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "New group")
+            .map(|(_, pos)| *pos)
+            .expect("the edit form shows New group");
+        frame(&mut app, click(new_group));
+        assert!(app.bolt.edit_target.is_none());
+        assert!(app.bolt.parts.is_empty());
+        assert_eq!(
+            run(&store, &["bolts"])
+                .get("bolt_groups")
+                .and_then(|j| j.array())
+                .map(|g| g.len())
+                .ok(),
+            Some(1),
+            "the update remained one atomic edit"
         );
         drop(app);
         std::fs::remove_dir_all(root).unwrap();

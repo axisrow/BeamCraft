@@ -443,7 +443,7 @@ impl App {
             Bench::CutPlane => {}
             Bench::Colour => {}
             Bench::Weld => {}
-            Bench::Bolt => {}
+            Bench::Bolt => self.bolt_load(),
             Bench::Annotations => {}
             Bench::View => {}
             Bench::Grid => {
