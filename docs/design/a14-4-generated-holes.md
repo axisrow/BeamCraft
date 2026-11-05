@@ -59,8 +59,9 @@ upgrades them); no new A05 group can be authored.
 - A member part refuses `generate` with `UNSUPPORTED_GEOMETRY` until the kernel slice G14.1
   (the sibling transverse-hole work) lands; `none` resolves its length over the same
   conservative member box as before, which the shipped synthetic screw lengths cannot span.
-- The group's holes are not drawn by the viewport yet; the prototype placements (A14.2) and
-  the records are the only output.
+- The records cut the connected plates' own bodies, and the placed prototypes (A14.2) are
+  drawn by the view snapshot as one merged mesh per group (issue 512); the group itself still
+  stores no derived mesh (U11).
 - One group is one straight row (O-B1); no environments (O-B2).
 
 ## Tests
