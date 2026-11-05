@@ -20,6 +20,7 @@ const OP3: &str = "01900000-0000-7000-8000-000000000111";
 const REV3: &str = "01900000-0000-7000-8000-000000000112";
 const OP4: &str = "01900000-0000-7000-8000-000000000113";
 const REV4: &str = "01900000-0000-7000-8000-000000000114";
+const SECOND_VERSION: &str = "01900000-0000-7000-8000-000000000115";
 
 fn intent() -> Vec<String> {
     [
@@ -80,14 +81,14 @@ fn publish(f: &Fixture, document_dir: &str, expected_head: &str) -> (i32, Json) 
     )
 }
 
-fn export(f: &Fixture, document_dir: &str, out: &std::path::Path) -> (i32, Json) {
+fn export(f: &Fixture, document_dir: &str, version: &str, out: &std::path::Path) -> (i32, Json) {
     f.run(
         "export-drawing",
         &argv(&[
             "--document-dir".to_owned(),
             document_dir.to_owned(),
             "--version-id".to_owned(),
-            VERSION.to_owned(),
+            version.to_owned(),
             "--out".to_owned(),
             out.to_str().unwrap_or_default().to_owned(),
         ]),
@@ -119,7 +120,7 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
     // anchored height face at world z -25 -> paper y -0.25, and the +10 mm offset line at
     // paper y 9.75.
     let out = f.shared.root.join("version.svg");
-    let (code, exported) = export(&f, &document_dir, &out);
+    let (code, exported) = export(&f, &document_dir, VERSION, &out);
     assert_eq!(code, 0, "{exported:?}");
     assert_eq!(text(&exported, "version_id"), VERSION);
     let bytes = fs::read(&out).unwrap();
@@ -146,7 +147,7 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
     // A fresh CLI process republishes the identical bytes for the identical version; each
     // successful export needs a fresh destination by the create-new rule.
     let again = f.shared.root.join("version-again.svg");
-    let (code, exported) = export(&f, &document_dir, &again);
+    let (code, exported) = export(&f, &document_dir, VERSION, &again);
     assert_eq!(code, 0, "{exported:?}");
     assert_eq!(fs::read(&again).unwrap(), bytes);
 
@@ -157,7 +158,7 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
         &["--id", MEMBER, "--translation", "500,2000,0"],
     );
     let after_edit = f.shared.root.join("version-after-edit.svg");
-    let (code, exported) = export(&f, &document_dir, &after_edit);
+    let (code, exported) = export(&f, &document_dir, VERSION, &after_edit);
     assert_eq!(code, 0, "{exported:?}");
     assert_eq!(fs::read(&after_edit).unwrap(), bytes);
     let inspected = f.ok(
@@ -189,7 +190,7 @@ fn export_of_one_published_version_is_deterministic_snapshot_bound_and_non_destr
     assert_eq!(code, 2, "{refusal:?}");
     assert_eq!(text(&refusal, "code"), "NOT_FOUND");
     assert!(!missing.exists());
-    let (code, refusal) = export(&f, &document_dir, &out);
+    let (code, refusal) = export(&f, &document_dir, VERSION, &out);
     assert_eq!(code, 2, "{refusal:?}");
     assert_eq!(text(&refusal, "code"), "INVALID_ARGUMENT");
     assert_eq!(fs::read(&out).unwrap(), bytes);
@@ -339,7 +340,7 @@ fn publication_refuses_an_unresolved_draft_and_keeps_the_document_head() {
 
     // Nothing was published, so nothing exports under that version id.
     let out = f.shared.root.join("never.svg");
-    let (code, refusal) = export(&f, &document_dir, &out);
+    let (code, refusal) = export(&f, &document_dir, VERSION, &out);
     assert_eq!(code, 2, "{refusal:?}");
     assert_eq!(text(&refusal, "code"), "NOT_FOUND");
     assert!(!out.exists());
@@ -385,4 +386,164 @@ fn publication_refuses_an_unresolved_draft_and_keeps_the_document_head() {
     let (code, published) = publish(&f, &document_dir, &text(&redraft, "revision_id"));
     assert_eq!(code, 0, "{published:?}");
     assert_eq!(text(&published, "version_id"), VERSION);
+}
+
+/// The third #333 acceptance leg through the real CLI: every published version stays bound to
+/// its own archived source forever. A newer publication, an explicitly re-pinned document head
+/// and even the removal of the whole live model store never silently rebind an older version's
+/// export, and freshness is reported (`stale`, `unavailable`) instead of being hidden.
+#[test]
+fn each_version_exports_from_its_own_archived_source_after_newer_publications_and_store_removal() {
+    let f = Fixture::new();
+    f.model();
+    let document_dir = f
+        .shared
+        .root
+        .join("drawing-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let source_one = f.head();
+    let head = create(&f, &document_dir);
+    let (code, published) = publish(&f, &document_dir, &head);
+    assert_eq!(code, 0, "{published:?}");
+
+    // V1 exports exactly the 3000 mm geometry of its own archived source revision.
+    let first_out = f.shared.root.join("v1.svg");
+    let (code, exported) = export(&f, &document_dir, VERSION, &first_out);
+    assert_eq!(code, 0, "{exported:?}");
+    assert_eq!(text(&exported, "version_id"), VERSION);
+    assert_eq!(text(&exported, "source_revision_id"), source_one);
+    let first = fs::read(&first_out).unwrap();
+    let svg = std::str::from_utf8(&first).unwrap();
+    assert!(svg.contains(&format!("version={VERSION}")));
+    assert!(svg.contains("label_mm=3000"));
+    assert!(svg.contains("L 30.0000 -9.7500"));
+
+    // The model itself moves on: the member is rebuilt 4000 mm long, so the document head is
+    // stale against the live store until an explicit refresh re-pins it to the new revision.
+    f.ok("delete-element", &["--id", MEMBER]);
+    let profile = text(
+        at(
+            &f.ok("define-profile", &["--width", "100", "--height", "50"]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    f.ok(
+        "create-member",
+        &[
+            "--profile-digest",
+            &profile,
+            "--start",
+            "0,0,0",
+            "--end",
+            "4000,0,0",
+            "--translation",
+            "0,2000,0",
+            "--new-id",
+            MEMBER,
+        ],
+    );
+    let source_two = f.head();
+    assert_ne!(source_two, source_one);
+    let inspected = f.ok(
+        "inspect-drawing",
+        &[
+            "--document-dir",
+            &document_dir,
+            "--model-store",
+            &model_store(&f),
+        ],
+    );
+    assert_eq!(text(&inspected, "freshness"), "stale");
+
+    let mut refresh = vec![
+        "--document-dir".to_owned(),
+        document_dir.clone(),
+        "--expected-head".to_owned(),
+        text(&published, "revision_id"),
+        "--op-id".to_owned(),
+        OP3.to_owned(),
+        "--revision-id".to_owned(),
+        REV3.to_owned(),
+        "--actor-id".to_owned(),
+        ACTOR.to_owned(),
+    ];
+    refresh.extend(intent());
+    let refreshed = f.ok("refresh-drawing", &argv(&refresh));
+    assert_eq!(text(&refreshed, "source_revision_id"), source_two);
+    let (code, published_two) = f.run(
+        "publish-drawing",
+        &argv(&[
+            "--document-dir".to_owned(),
+            document_dir.clone(),
+            "--expected-head".to_owned(),
+            text(&refreshed, "revision_id"),
+            "--op-id".to_owned(),
+            OP4.to_owned(),
+            "--revision-id".to_owned(),
+            REV4.to_owned(),
+            "--actor-id".to_owned(),
+            ACTOR.to_owned(),
+            "--version-id".to_owned(),
+            SECOND_VERSION.to_owned(),
+        ]),
+    );
+    assert_eq!(code, 0, "{published_two:?}");
+    assert_eq!(text(&published_two, "source_revision_id"), source_two);
+
+    // The journal lists both versions, each still carrying its own source pin.
+    let history = f.ok(
+        "inspect-drawing-versions",
+        &["--document-dir", &document_dir],
+    );
+    let versions = list(&history, "versions");
+    assert_eq!(versions.len(), 2);
+    assert_eq!(text(&versions[0], "version_id"), VERSION);
+    assert_eq!(text(&versions[0], "source_revision_id"), source_one);
+    assert_eq!(text(&versions[1], "version_id"), SECOND_VERSION);
+    assert_eq!(text(&versions[1], "source_revision_id"), source_two);
+
+    // Re-exporting V1 after the newer publication: a fresh CLI process reopens V1 from its own
+    // archived source, byte for byte; the re-pinned document head never silently rebinds it.
+    let again = f.shared.root.join("v1-again.svg");
+    let (code, exported) = export(&f, &document_dir, VERSION, &again);
+    assert_eq!(code, 0, "{exported:?}");
+    assert_eq!(text(&exported, "source_revision_id"), source_one);
+    assert_eq!(fs::read(&again).unwrap(), first);
+
+    // V2 exports the new geometry from the new source.
+    let second_out = f.shared.root.join("v2.svg");
+    let (code, exported) = export(&f, &document_dir, SECOND_VERSION, &second_out);
+    assert_eq!(code, 0, "{exported:?}");
+    assert_eq!(text(&exported, "source_revision_id"), source_two);
+    let second = fs::read(&second_out).unwrap();
+    assert_ne!(second, first);
+    let svg = std::str::from_utf8(&second).unwrap();
+    assert!(svg.contains(&format!("version={SECOND_VERSION}")));
+    assert!(svg.contains("label_mm=4000"));
+    assert!(svg.contains("L 40.0000 -9.7500"));
+
+    // The live model store is removed entirely: freshness reports `unavailable` instead of
+    // pretending, and both versions still reopen from their own archived sources unchanged.
+    fs::remove_dir_all(f.shared.root.join("store")).unwrap();
+    let inspected = f.ok(
+        "inspect-drawing",
+        &[
+            "--document-dir",
+            &document_dir,
+            "--model-store",
+            &model_store(&f),
+        ],
+    );
+    assert_eq!(text(&inspected, "freshness"), "unavailable");
+    let archived_one = f.shared.root.join("v1-archived.svg");
+    let (code, exported) = export(&f, &document_dir, VERSION, &archived_one);
+    assert_eq!(code, 0, "{exported:?}");
+    assert_eq!(fs::read(&archived_one).unwrap(), first);
+    let archived_two = f.shared.root.join("v2-archived.svg");
+    let (code, exported) = export(&f, &document_dir, SECOND_VERSION, &archived_two);
+    assert_eq!(code, 0, "{exported:?}");
+    assert_eq!(fs::read(&archived_two).unwrap(), second);
 }
