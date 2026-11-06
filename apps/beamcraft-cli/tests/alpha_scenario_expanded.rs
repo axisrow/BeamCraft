@@ -80,6 +80,7 @@ impl Story {
         fs::create_dir(root.join("storeys-published")).unwrap();
         fs::create_dir(root.join("numbering-published")).unwrap();
         fs::create_dir(root.join("instances-published")).unwrap();
+        fs::create_dir(root.join("placement-published")).unwrap();
         fs::create_dir(root.join("empty-store")).unwrap();
         Self(root)
     }
@@ -4685,4 +4686,392 @@ fn instances_share_their_body_across_publication() {
     );
     assert_eq!(text(reopened_instanced, "mesh_digest"), inst_digest);
     assert_eq!(text(reopened_instanced, "name"), "Q01 gusset instance");
+}
+
+/// The section placement story (P14): the section sits about the member axis exactly where
+/// the placement names it — a plane/depth move is a pure shift that keeps the volume and the
+/// length, the end offsets shorten the solid along the axis while the authored axis stays
+/// put, the flagless default stays centred, a placement outside the vocabulary and one that
+/// consumes the axis refuse and write nothing, and every authored placement survives the
+/// publication round trip. Its own published store keeps the numbered frame's counts the
+/// manual runbook records, and its own test keeps the per-test budget honest.
+#[test]
+fn section_placement_positions_the_section_exactly() {
+    let s = Story::new();
+    s.ok(
+        "placement-published",
+        "define-profile",
+        &[
+            "--designation",
+            "Q01-PLACE",
+            "--width",
+            "200",
+            "--height",
+            "300",
+        ],
+    );
+    s.ok(
+        "placement-published",
+        "define-material",
+        &["--grade", "Q01-steel", "--density", "7850"],
+    );
+    s.ok(
+        "placement-published",
+        "create-workspace",
+        &[
+            "--workspace-dir",
+            &s.path("placement-draft"),
+            "--user-id",
+            USER,
+        ],
+    );
+
+    // Lookups: the inspected member record and the exact world bounds of its snapshot mesh.
+    let member_of = |inspection: &Json, id: &str| -> Json {
+        at(inspection, &["members"])
+            .array()
+            .unwrap()
+            .iter()
+            .find(|m| text(m, "element_id") == id)
+            .unwrap_or_else(|| panic!("{id} is inspected"))
+            .clone()
+    };
+    let bounds_of = |inspection: &Json, id: &str| -> (Vec<f64>, Vec<f64>) {
+        let elements = at(inspection, &["snapshot", "elements"]).array().unwrap();
+        let entry = elements
+            .iter()
+            .find(|e| text(e, "id") == id)
+            .unwrap_or_else(|| panic!("{id} is in the snapshot"));
+        (
+            numbers(at(entry, &["world_min_mm"])),
+            numbers(at(entry, &["world_max_mm"])),
+        )
+    };
+
+    // Right-and-back with offsets: a pure shift of the 200 x 300 section about the axis, so
+    // the volume and the length are untouched. The near-vertical frame rule of a +Z member
+    // puts the width along world X and the height along world Y, and right and back are the
+    // positive halves: the box moves to X 50..250 (100 + 50) and Y -25..275 (150 - 25).
+    let shifted = s.ok(
+        "placement-draft",
+        "create-member",
+        &[
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a181",
+            "--kind",
+            "column",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,4000",
+            "--profile",
+            "Q01-PLACE",
+            "--material",
+            "Q01-steel",
+            "--section-plane",
+            "right",
+            "--section-plane-offset",
+            "50",
+            "--section-depth",
+            "back",
+            "--section-depth-offset",
+            "-25",
+            "--name",
+            "Q01 placed column",
+        ],
+    );
+    assert_eq!(text(&shifted, "outcome"), "member_created");
+    let placed = at(&shifted, &["member"]);
+    let placement = at(placed, &["section_placement"]);
+    assert_eq!(text(placement, "plane"), "right");
+    assert_eq!(at(placement, &["plane_offset_mm"]).float().unwrap(), 50.0);
+    assert_eq!(text(placement, "depth"), "back");
+    assert_eq!(at(placement, &["depth_offset_mm"]).float().unwrap(), -25.0);
+    assert_eq!(at(placement, &["start_offset_mm"]).float().unwrap(), 0.0);
+    assert_eq!(at(placement, &["end_offset_mm"]).float().unwrap(), 0.0);
+    close(
+        at(placed, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        240_000_000.0,
+    );
+    let shifted_id = text(placed, "element_id");
+    let shifted_digest = text(placed, "mesh_digest");
+    let draft = s.ok("placement-draft", "inspect-elements", &[]);
+    assert_eq!(
+        bounds_of(&draft, &shifted_id),
+        (vec![50.0, -25.0, 0.0], vec![250.0, 275.0, 4000.0])
+    );
+    assert_eq!(
+        at(&member_of(&draft, &shifted_id), &["section_placement"]),
+        at(placed, &["section_placement"])
+    );
+
+    // End offsets: the solid runs from 2250 to 7250 while the authored axis stays
+    // 2000..8000; the centred section keeps its symmetric box around the axis.
+    let shortened = s.ok(
+        "placement-draft",
+        "create-member",
+        &[
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a182",
+            "--kind",
+            "beam",
+            "--start",
+            "2000,0,0",
+            "--end",
+            "8000,0,0",
+            "--profile",
+            "Q01-PLACE",
+            "--material",
+            "Q01-steel",
+            "--start-offset",
+            "250",
+            "--end-offset",
+            "-750",
+            "--name",
+            "Q01 shortened girder",
+        ],
+    );
+    let girder = at(&shortened, &["member"]);
+    close(
+        at(girder, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        300_000_000.0,
+    );
+    let axis_points = at(girder, &["axis_points_mm"]).array().unwrap();
+    let start_axis: Vec<f64> = axis_points[0]
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    let end_axis: Vec<f64> = axis_points[1]
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    assert_eq!(start_axis, vec![2000.0, 0.0, 0.0]);
+    assert_eq!(end_axis, vec![8000.0, 0.0, 0.0]);
+    let girder_placement = at(girder, &["section_placement"]);
+    assert_eq!(text(girder_placement, "plane"), "centre");
+    assert_eq!(text(girder_placement, "depth"), "centre");
+    assert_eq!(
+        at(girder_placement, &["start_offset_mm"]).float().unwrap(),
+        250.0
+    );
+    assert_eq!(
+        at(girder_placement, &["end_offset_mm"]).float().unwrap(),
+        -750.0
+    );
+    let girder_id = text(girder, "element_id");
+    let girder_digest = text(girder, "mesh_digest");
+    let draft = s.ok("placement-draft", "inspect-elements", &[]);
+    assert_eq!(
+        bounds_of(&draft, &girder_id),
+        (vec![2250.0, -100.0, -150.0], vec![7250.0, 100.0, 150.0])
+    );
+
+    // No flag at all: the centred default is unchanged — the placement reads all-centre and
+    // the box straddles the axis symmetrically.
+    let centred = s.ok(
+        "placement-draft",
+        "create-member",
+        &[
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a183",
+            "--kind",
+            "column",
+            "--start",
+            "5000,5000,0",
+            "--end",
+            "5000,5000,3000",
+            "--profile",
+            "Q01-PLACE",
+            "--material",
+            "Q01-steel",
+            "--name",
+            "Q01 centred column",
+        ],
+    );
+    let default = at(&centred, &["member"]);
+    // The flagless default carries no placement record at all: `Null` is the centred
+    // default (the authored record stores a placement only when a flag names one).
+    assert_eq!(at(default, &["section_placement"]), &Json::Null);
+    close(
+        at(default, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        180_000_000.0,
+    );
+    let default_id = text(default, "element_id");
+    let draft = s.ok("placement-draft", "inspect-elements", &[]);
+    assert_eq!(
+        bounds_of(&draft, &default_id),
+        (vec![4900.0, 4850.0, 0.0], vec![5100.0, 5150.0, 3000.0])
+    );
+
+    // A placement outside the vocabulary and one that consumes the axis refuse and write
+    // nothing: the head and the member count stay where they were.
+    let head = s.head("placement-draft");
+    let refused_plane = s.run(
+        "placement-draft",
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            "Q01-PLACE",
+            "--material",
+            "Q01-steel",
+            "--section-plane",
+            "middle",
+        ],
+        2,
+    );
+    assert_eq!(text(&refused_plane, "code"), "INVALID_ARGUMENT");
+    let refused_axis = s.run(
+        "placement-draft",
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "6000,0,0",
+            "--profile",
+            "Q01-PLACE",
+            "--material",
+            "Q01-steel",
+            "--end-offset",
+            "-6000",
+        ],
+        2,
+    );
+    assert_eq!(text(&refused_axis, "code"), "INVALID_ARGUMENT");
+    assert_eq!(s.head("placement-draft"), head);
+    assert_eq!(
+        at(
+            &s.ok("placement-draft", "inspect-elements", &[]),
+            &["members"]
+        )
+        .array()
+        .unwrap()
+        .len(),
+        3
+    );
+
+    // The left-shifted column: the negative half of the width. One command, one undo unit.
+    let uncle = s.ok(
+        "placement-draft",
+        "create-member",
+        &[
+            "--new-id",
+            "019a7bf0-0000-7000-8000-00000000a184",
+            "--kind",
+            "column",
+            "--start",
+            "0,5000,0",
+            "--end",
+            "0,5000,2000",
+            "--profile",
+            "Q01-PLACE",
+            "--material",
+            "Q01-steel",
+            "--section-plane",
+            "left",
+            "--name",
+            "Q01 left uncle",
+        ],
+    );
+    let uncle_member = at(&uncle, &["member"]);
+    let uncle_id = text(uncle_member, "element_id");
+    let uncle_digest = text(uncle_member, "mesh_digest");
+    close(
+        at(uncle_member, &["quantities", "volume", "mm3"])
+            .float()
+            .unwrap(),
+        120_000_000.0,
+    );
+    let draft = s.ok("placement-draft", "inspect-elements", &[]);
+    assert_eq!(
+        bounds_of(&draft, &uncle_id),
+        (vec![-200.0, 4850.0, 0.0], vec![0.0, 5150.0, 2000.0])
+    );
+    let undo = s.execute(&[
+        "undo-workspace",
+        "--workspace-dir",
+        &s.path("placement-draft"),
+    ]);
+    assert_eq!(undo.0, 0);
+    assert_eq!(text(&undo.1, "outcome"), "workspace_undone");
+    assert_eq!(
+        at(
+            &s.ok("placement-draft", "inspect-elements", &[]),
+            &["members"]
+        )
+        .array()
+        .unwrap()
+        .len(),
+        3
+    );
+    let redo = s.execute(&[
+        "redo-workspace",
+        "--workspace-dir",
+        &s.path("placement-draft"),
+    ]);
+    assert_eq!(redo.0, 0);
+    assert_eq!(text(&redo.1, "outcome"), "workspace_redone");
+    let redone = member_of(&s.ok("placement-draft", "inspect-elements", &[]), &uncle_id);
+    assert_eq!(text(&redone, "mesh_digest"), uncle_digest);
+
+    // The publication round trip preserves every authored placement exactly: volumes,
+    // meshes, the placement records and the world bounds of the shifted members.
+    let published = s.ok(
+        "placement-published",
+        "publish-workspace",
+        &["--workspace-dir", &s.path("placement-draft")],
+    );
+    assert_eq!(text(&published, "outcome"), "workspace_published");
+    let reopened = s.ok("placement-published", "inspect-elements", &[]);
+    assert_eq!(at(&reopened, &["members"]).array().unwrap().len(), 4);
+    for (id, volume, digest, label) in [
+        (
+            shifted_id.as_str(),
+            240_000_000.0,
+            shifted_digest.as_str(),
+            "placed",
+        ),
+        (
+            girder_id.as_str(),
+            300_000_000.0,
+            girder_digest.as_str(),
+            "girder",
+        ),
+    ] {
+        let found = member_of(&reopened, id);
+        close(
+            at(&found, &["quantities", "volume", "mm3"])
+                .float()
+                .unwrap(),
+            volume,
+        );
+        assert_eq!(text(&found, "mesh_digest"), digest, "{label} mesh");
+    }
+    assert_eq!(
+        at(&member_of(&reopened, &shifted_id), &["section_placement"]),
+        at(placed, &["section_placement"]),
+        "the shifted placement survives the round trip"
+    );
+    assert_eq!(
+        bounds_of(&reopened, &shifted_id),
+        (vec![50.0, -25.0, 0.0], vec![250.0, 275.0, 4000.0])
+    );
+    assert_eq!(
+        bounds_of(&reopened, &girder_id),
+        (vec![2250.0, -100.0, -150.0], vec![7250.0, 100.0, 150.0])
+    );
 }

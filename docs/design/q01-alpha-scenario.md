@@ -10,7 +10,8 @@ cargo nextest run --locked -p beamcraft-cli --test cli alpha_scenario
 The `alpha_scenario` substring filter selects both stories of the package's `cli` integration
 target: `alpha_scenario.rs` (the original) and `alpha_scenario_expanded.rs` (the expanded one,
 which includes the original frame as its opening and runs the curved/poly members, the
-bent/lofted plates, the rotate/mirror/array tool story, the bolt-group story, the model-data
+bent/lofted plates, the section placement story, the rotate/mirror/array tool story, the
+bolt-group story, the model-data
 tool story, the contour plate story, the part class story, the cut lifecycle story, the
 fits-and-combine story, the hole-record story, the storey assignment story, the renumbering
 story and the instance story each in their
