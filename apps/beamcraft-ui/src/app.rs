@@ -1249,8 +1249,11 @@ impl App {
         // The default catalogue colours ride the delivered scene (issue 526): while the user
         // keeps no colour set of their own, the first shown model opens coloured, with no
         // setup. An explicit Show or Hide (or a set in their colour-sets file) is a choice
-        // this default never overrides, so it runs only while nothing was touched yet.
+        // this default never overrides, so it runs only while nothing was touched yet — and
+        // never inside a perf run (issue 526 review): the perf driver reloads through this
+        // hook, and its query-elements processes would race the measured phases.
         if self.loaded.is_some()
+            && self.perf.is_none()
             && !self.colour_touched
             && !self.colour_sets.has_own()
             && self.colour.is_none()
@@ -2272,7 +2275,15 @@ impl App {
             Err(TryRecvError::Disconnected) => None,
         };
         let set = job.set.clone();
+        let auto = job.auto;
         self.colour_job = None;
+        // The automatic default matching nothing stays quiet (issue 526 review): a store the
+        // three class rules do not match — only grids or construction objects, say — keeps
+        // its uniform grey without an unprompted error. `colour_touched` was set at spawn,
+        // so the default does not retry either. Real CLI errors stay visible either way.
+        if auto && matches!(&received, Some(Ok(overlay)) if overlay.is_empty()) {
+            return;
+        }
         let result = match received {
             Some(Ok(overlay)) if overlay.is_empty() => {
                 Err(format!("no element in `{set}` matches: nothing to colour"))
@@ -3278,6 +3289,53 @@ pub(crate) mod tests {
         assert!(
             app.colour_job.is_none(),
             "no second default after a finished colour run"
+        );
+    }
+
+    #[test]
+    fn an_empty_auto_overlay_stays_quiet_and_a_user_run_reports() {
+        let Some(mut app) = headless() else { return };
+        let job = |auto: bool| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            tx.send(Ok(crate::colour_sets::Overlay::default())).unwrap();
+            super::ColourJob {
+                set: crate::colour_sets::CATALOGUE_SET_NAME.into(),
+                rx,
+                cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                auto,
+            }
+        };
+        // The automatic default matching nothing is a quiet no-op (issue 526 review): a
+        // store the three class rules do not match stays uniformly grey, with no colour
+        // and no unprompted error; the touched flag from the spawn keeps it from retrying.
+        app.colour_touched = true;
+        app.colour_job = Some(job(true));
+        app.poll_colour();
+        assert!(app.colour.is_none());
+        assert!(app.colour_note.is_none(), "no unprompted error");
+        assert!(app.colour_job.is_none());
+        assert!(app.colour_touched);
+        // A user-invoked run that matches nothing still reports why.
+        app.colour_job = Some(job(false));
+        app.poll_colour();
+        assert!(app.colour.is_none());
+        assert!(matches!(app.colour_note, Some(Err(_))));
+    }
+
+    #[test]
+    fn the_catalogue_default_never_starts_inside_a_perf_run() {
+        let Some(mut app) = headless() else { return };
+        let (report_tx, _report_rx) = std::sync::mpsc::channel::<(String, bool)>();
+        app.perf = Some((
+            crate::perf::PerfRun::new(Vec::new(), "test".into()),
+            report_tx,
+        ));
+        // The perf driver reloads through the same delivery hook: query-elements processes
+        // started here would race the measured phases (issue 526 review).
+        deliver(&mut app, refreshed(2));
+        assert!(
+            app.colour_job.is_none() && app.colour.is_none(),
+            "the default must not start inside a perf run"
         );
     }
 
