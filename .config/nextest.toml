@@ -15,7 +15,7 @@ slow-timeout = { period = "30s", terminate-after = 4, grace-period = "5s", on-ti
 # the default. Custom profiles inherit default's settings, so the gate, fast and ci
 # profiles enforce this too (issue #529).
 [[profile.default.overrides]]
-filter = 'package(beamcraft-cli) and binary(reference) and test(=a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has)'
+filter = 'package(beamcraft-cli) and binary(cli) and test(=reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has)'
 slow-timeout = { period = "30s", terminate-after = 8, grace-period = "5s", on-timeout = "fail" }
 
 [profile.gate-full]
