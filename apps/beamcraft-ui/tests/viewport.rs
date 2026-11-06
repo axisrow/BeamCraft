@@ -869,7 +869,7 @@ fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport
 
 /// Issue 526: the built-in catalogue set colours the element classes in the real viewport
 /// with no user action. The set is evaluated the way the window evaluates it — paged
-/// `query-elements` per rule — each class paints its own pixels in the approved hues (the
+/// `query-elements` per rule — each class paints its own pixels in the recorded hues (the
 /// unit test pins the bytes), the three class pictures are pairwise distinct, and clearing
 /// the overlay (Hide colours) draws exactly the never-coloured picture again.
 #[test]
@@ -1012,10 +1012,10 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
     let plain = render_pixels(&gpu, &scene, &ClipGpu::none());
     // One overlay per class: a tint reaches only its element's instances, so a picture that
     // differs from the plain one is exactly that class coloured in the image, and the class
-    // pictures come out pairwise distinct — per-class pixel colours in the hues of the
-    // owner's instruction of 2026-11-06 (member #7A93A8, plate #E6C346, bolt #8E4E3C; the
-    // unit test pins the bytes). All three tints sit away from the pipeline's white, so each
-    // class paints and the three pictures differ.
+    // pictures come out pairwise distinct — per-class pixel colours in the hues recorded in
+    // issue 526 (member #7A93A8, plate #E6C346, bolt #8E4E3C; the unit test pins the bytes).
+    // All three tints sit away from the pipeline's white, so each class paints and the three
+    // pictures differ.
     let mut changed: Vec<Vec<u8>> = Vec::new();
     for (id, tint) in overlay.entries() {
         let one = beamcraft_ui::colour_sets::Overlay::from_rules(vec![(

@@ -126,11 +126,9 @@ pub fn class_set() -> Set {
 /// The built-in catalogue set (issue 526): the drawing convention colour-codes the element
 /// classes — members, plates and fittings, bolt groups — and everything else stays
 /// uncoloured. A bolt group reaches the scene as one merged mesh of one element (kind
-/// `connection`), so the whole stack paints as the bolt class. The hues follow the owner's
-/// instruction of 2026-11-06 — given directly in the delivery session while the issue 526
-/// thread records only the question, so the owner may re-confirm or adjust them before
-/// merge: member `#7A93A8`, plate `#E6C346`, bolt `#8E4E3C`. The tint multiplies the shaded
-/// base colour (V17).
+/// `connection`), so the whole stack paints as the bolt class. The hues are the owner's
+/// decision recorded in issue 526 on 2026-11-06: member `#7A93A8`, plate `#E6C346`, bolt
+/// `#8E4E3C`. The tint multiplies the shaded base colour (V17).
 pub fn catalogue_set() -> Set {
     let kind = |value: &str| {
         Json::object([
@@ -592,7 +590,7 @@ mod tests {
         assert_eq!(kinds(plate), ["plate"], "plates and fittings");
         let bolt = &set.rules[2];
         assert_eq!(kinds(bolt), ["connection"], "the merged fastener stack");
-        // The hues of the owner's instruction of 2026-11-06 (issue 526): member #7A93A8,
+        // The hues recorded in issue 526 (owner decision, 2026-11-06): member #7A93A8,
         // plate #E6C346, bolt #8E4E3C — three distinct, opaque class colours.
         assert_eq!(member.colour, [122, 147, 168]);
         assert_eq!(plate.colour, [230, 195, 70]);

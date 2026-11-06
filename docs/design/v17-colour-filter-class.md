@@ -10,8 +10,7 @@ The View tab gains a Colour tool. Its inspector offers the saved representation 
 built-in presets plus the user's own sets. **Part classes** is one opaque rule per
 `DEFAULT_CLASS_PALETTE` entry, classes 0 to 7 (P15). **Catalogue** (issue 526) is the drawing
 convention by element class: members `#7A93A8`, plates and fittings `#E6C346`, bolt groups
-`#8E4E3C` (the owner's instruction of 2026-11-06, recorded in the delivery session — the
-issue thread holds only the question, so the owner may adjust them before merge),
+`#8E4E3C` (owner decision recorded in issue 526 on 2026-11-06),
 everything else uncoloured; the fastener
 stack reaches the scene as one merged mesh of one element (kind
 `connection`), so the whole group paints as the bolt class. *Show colours* evaluates the picked set against the store
