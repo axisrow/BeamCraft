@@ -778,11 +778,21 @@ mod tests {
             assert!(evaluate(&missing, &missing, &class_set(), cancel, &stats).is_err());
         }
         let prefix = format!("beamcraft-v17-{}-", std::process::id());
-        let leftovers: Vec<_> = std::fs::read_dir(std::env::temp_dir())
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
-            .collect();
+        // Sibling tests of this process start their own evaluations — among them the window's
+        // automatic default (issue 526). Their directories vanish within milliseconds of the
+        // failed spawn, so wait briefly before holding the nothing-left-behind invariant.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let leftovers = loop {
+            let found: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+                .collect();
+            if found.is_empty() || std::time::Instant::now() > deadline {
+                break found;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
         assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 }

@@ -287,11 +287,14 @@ struct SelectJob {
 }
 
 /// A set evaluation in flight (V17): the set it colours, its receiver and the flag that gives
-/// it up when the overlay is cleared while the queries still run.
+/// it up when the overlay is cleared while the queries still run. `auto` marks the default
+/// catalogue evaluation the window started on its own (issue 526): read-only queries that
+/// must not hold the one-command-at-a-time lane the user-invoked runs share.
 struct ColourJob {
     set: String,
     rx: Receiver<Result<crate::colour_sets::Overlay, String>>,
     cancel: Arc<AtomicBool>,
+    auto: bool,
 }
 
 /// The viewport input binding preset. `Mouse` keeps the left button free for selection: the
@@ -1252,9 +1255,8 @@ impl App {
             && !self.colour_sets.has_own()
             && self.colour.is_none()
             && self.colour_job.is_none()
-            && !self.other_command_running_pre_colour()
         {
-            self.apply_colour(crate::colour_sets::CATALOGUE_SET_NAME);
+            self.start_colour(crate::colour_sets::CATALOGUE_SET_NAME, true);
         }
         // The delivered scene was built with the overlay captured at spawn (V17): when the user
         // changed or cleared the set while the refresh ran, the delivery is recoloured once, so
@@ -1606,7 +1608,9 @@ impl App {
     /// publish and edit actions never run at the same time.
     fn other_command_running(&self) -> bool {
         self.other_command_running_pre_colour()
-            || self.colour_job.is_some()
+            // The automatic default evaluation is read-only background work (issue 526): it
+            // holds no lane, so opening a store never makes the tools refuse.
+            || self.colour_job.as_ref().is_some_and(|job| !job.auto)
             || self.annotation.list_job.is_some()
             || self.annotation.commit_job.is_some()
             || self.weld.commit_job.is_some()
@@ -2186,8 +2190,17 @@ impl App {
     /// the resulting overlay when it answers. The model is never written: the queries are the
     /// CLI's own read-only command.
     fn apply_colour(&mut self, name: &str) {
-        if self.colour_job.is_some() || self.other_command_running_pre_colour() {
-            self.colour_note = Some(Err("another command is running; wait for it.".into()));
+        self.start_colour(name, false);
+    }
+
+    /// Starts a set evaluation on a worker. A user-invoked run (`auto: false`) waits for the
+    /// other commands and holds the command lane while it runs; the window's own default run
+    /// (`auto: true`) neither waits nor holds anything — it is read-only background work.
+    fn start_colour(&mut self, name: &str, auto: bool) {
+        if self.colour_job.is_some() || (self.other_command_running_pre_colour() && !auto) {
+            if !auto {
+                self.colour_note = Some(Err("another command is running; wait for it.".into()));
+            }
             return;
         }
         let Some(set) = self.colour_sets.find(name).cloned() else {
@@ -2214,6 +2227,7 @@ impl App {
                     set: name.to_owned(),
                     rx,
                     cancel,
+                    auto,
                 });
             }
             Err(error) => {
