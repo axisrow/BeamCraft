@@ -134,6 +134,25 @@ impl crate::engine::weld::Parts {
     }
 }
 
+/// The row geometry of one bolt group (A14.3): the frame, every fastener bearing point and the
+/// authoritative spacings — everything the group's inputs alone decide, before the parts decide
+/// the reachability and the length. Carried whole by [`BoltGroupPlaced`] and re-derived from the
+/// inputs alone by [`preview_row`], which is what a tool preview draws.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoltRow {
+    /// Unit axis along the row, from `point1` towards `point2`.
+    pub x: [f64; 3],
+    /// Unit plane axis at zero rotation (`y = z × x`), slid by `on_plane`.
+    pub y: [f64; 3],
+    /// Unit shank axis at zero rotation, turned by the rotation about `x`.
+    pub z: [f64; 3],
+    /// Bearing point of every fastener, in group order.
+    pub bearings_mm: Vec<[f64; 3]>,
+    /// The expanded spacings the group stores; they stay authoritative when a generator made
+    /// them (bolt amendment section 4).
+    pub spacings_mm: Vec<f64>,
+}
+
 /// The resolved placement of one bolt group (A14.3): the frame, every fastener bearing point,
 /// the authoritative spacings, the resolved length and the washer switches. The definition's
 /// prototype (A14.2) is placed with one rigid transform per fastener: the bearing face at the
@@ -490,10 +509,7 @@ pub fn place_bolt_group(
             "a washer under the nut needs a washer and a bolt",
         ));
     }
-    let chord = (inputs.point2_mm[0] - inputs.point1_mm[0]).hypot(
-        (inputs.point2_mm[1] - inputs.point1_mm[1])
-            .hypot(inputs.point2_mm[2] - inputs.point1_mm[2]),
-    );
+    let chord = chord_of(inputs.point1_mm, inputs.point2_mm);
     let spacings = expand_spacings(&inputs.spacing, chord, inputs.offset_start_mm)?;
     let ((x, y, z), bearings) = frame_and_bearings(
         inputs.point1_mm,
@@ -579,7 +595,25 @@ pub fn place_bolt_group(
     })
 }
 
+/// The distance between the row's two points, in millimetres: the shared chord of the spacing
+/// patterns that fit the row between its ends.
+fn chord_of(point1_mm: [f64; 3], point2_mm: [f64; 3]) -> f64 {
+    (point2_mm[0] - point1_mm[0])
+        .hypot((point2_mm[1] - point1_mm[1]).hypot(point2_mm[2] - point1_mm[2]))
+}
+
 impl BoltGroupPlaced {
+    /// The row this placement places: everything but the length the parts' grip decides.
+    pub fn row(&self) -> BoltRow {
+        BoltRow {
+            x: self.x,
+            y: self.y,
+            z: self.z,
+            bearings_mm: self.bearings_mm.clone(),
+            spacings_mm: self.spacings_mm.clone(),
+        }
+    }
+
     /// The placement a committed group's stored values re-derive: the same frame and bearing
     /// points [`place_bolt_group`] decided at creation, without the part reachability and
     /// length decision the creation ran (the committed record is authoritative). A row whose
@@ -609,6 +643,38 @@ impl BoltGroupPlaced {
     }
 }
 
+/// The preview row of the inputs (bolt amendment section 4): the frame, the bearing points and
+/// the expanded spacings [`place_bolt_group`] would decide, without the parts' reachability and
+/// length decision their geometry decides. A tool preview draws exactly these bearings and the
+/// holes [`generate_holes`] cuts at them; whether the parts admit the row stays the commit's
+/// decision, so what the preview draws is still the command's ask (the member ghost's rule).
+/// The decision is pure, bounded and deterministic, like every engine query.
+pub fn preview_row(inputs: &BoltGroupInputs) -> Result<BoltRow, CommandError> {
+    inputs.validate_arguments()?;
+    let spacings = expand_spacings(
+        &inputs.spacing,
+        chord_of(inputs.point1_mm, inputs.point2_mm),
+        inputs.offset_start_mm,
+    )?;
+    let ((x, y, z), bearings) = frame_and_bearings(
+        inputs.point1_mm,
+        inputs.point2_mm,
+        inputs.plane_normal_mm,
+        inputs.rotation_rad,
+        inputs.on_plane_mm,
+        inputs.depth_mm,
+        inputs.offset_start_mm,
+        &spacings,
+    )?;
+    Ok(BoltRow {
+        x,
+        y,
+        z,
+        bearings_mm: bearings,
+        spacings_mm: spacings,
+    })
+}
+
 /// One generated hole decision (bolt amendment section 5): the plate that owns the record and
 /// its authoritative clockwise polygon in the plate's local XY. The record itself is an
 /// ordinary A04 hole record; the adapter appends it with a fresh ordinal and replays the
@@ -631,7 +697,7 @@ pub struct GeneratedHole {
 /// `hole_mode = none` writes no part. The decision is pure: the same inputs give the same holes.
 pub fn generate_holes(
     inputs: &BoltGroupInputs,
-    placed: &BoltGroupPlaced,
+    row: &BoltRow,
     bounds: &BTreeMap<ElementId, Bounds>,
     placements: &BTreeMap<ElementId, Placement>,
     members: &BTreeSet<ElementId>,
@@ -671,8 +737,8 @@ pub fn generate_holes(
             ));
         }
         let translation = placement.translation_mm;
-        for bearing in &placed.bearings_mm {
-            let Some((start, exit)) = axis_interval(bearing, &placed.z, slab) else {
+        for bearing in &row.bearings_mm {
+            let Some((start, exit)) = axis_interval(bearing, &row.z, slab) else {
                 continue;
             };
             // The plate-local XY centre: where the shank axis crosses the slab's mid-plane
@@ -680,8 +746,8 @@ pub fn generate_holes(
             // frame).
             let mid = (start + exit) / 2.0;
             let centre = [
-                bearing[0] + placed.z[0] * mid - translation[0],
-                bearing[1] + placed.z[1] * mid - translation[1],
+                bearing[0] + row.z[0] * mid - translation[0],
+                bearing[1] + row.z[1] * mid - translation[1],
             ];
             holes.push(GeneratedHole {
                 part: *part,
@@ -1265,8 +1331,14 @@ mod tests {
         let bounds = group_bounds(1000.0);
         let placed = place(&inputs, &bounds).unwrap();
         let translations = hole_args(&inputs);
-        let holes =
-            generate_holes(&inputs, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let holes = generate_holes(
+            &inputs,
+            &placed.row(),
+            &bounds,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         // Three fasteners, both plates crossed by every axis: one hole each, 18 mm across,
         // centred on the bearing points' XY in the plate's local frame.
         assert_eq!(holes.len(), 6);
@@ -1294,7 +1366,8 @@ mod tests {
                 ..Placement::IDENTITY
             },
         );
-        let local = generate_holes(&inputs, &placed, &bounds, &moved, &BTreeSet::new()).unwrap();
+        let local =
+            generate_holes(&inputs, &placed.row(), &bounds, &moved, &BTreeSet::new()).unwrap();
         let polygon = &local.first().unwrap().polygon_mm;
         let n = polygon.len() as f64;
         let centroid = [
@@ -1305,8 +1378,14 @@ mod tests {
         // A group's own clearance widens the hole over the definition's.
         let mut wide = inputs.clone();
         wide.hole_clearance_mm = Some(4.0);
-        let widened =
-            generate_holes(&wide, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let widened = generate_holes(
+            &wide,
+            &placed.row(),
+            &bounds,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         let radius = widened[0]
             .polygon_mm
             .iter()
@@ -1320,13 +1399,25 @@ mod tests {
         screw.fastener.nut_height_mm = None;
         screw.fastener.washer_under_nut = false;
         screw.fastener.validate().unwrap();
-        let quiet =
-            generate_holes(&screw, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let quiet = generate_holes(
+            &screw,
+            &placed.row(),
+            &bounds,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         assert!(quiet.is_empty());
         let mut asked = screw.clone();
         asked.hole_mode = Some(HoleMode::Generate);
-        let forced =
-            generate_holes(&asked, &placed, &bounds, &translations, &BTreeSet::new()).unwrap();
+        let forced = generate_holes(
+            &asked,
+            &placed.row(),
+            &bounds,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         assert_eq!(forced.len(), 6);
     }
 
@@ -1339,7 +1430,7 @@ mod tests {
         // A member part is refused wholesale until G14.1 (nothing is written).
         let members = BTreeSet::from([id(2)]);
         assert_eq!(
-            generate_holes(&inputs, &placed, &bounds, &translations, &members)
+            generate_holes(&inputs, &placed.row(), &bounds, &translations, &members)
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1355,7 +1446,7 @@ mod tests {
             },
         );
         assert_eq!(
-            generate_holes(&inputs, &placed, &bounds, &turned, &BTreeSet::new())
+            generate_holes(&inputs, &placed.row(), &bounds, &turned, &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1363,8 +1454,14 @@ mod tests {
         // A part only partly under the row takes only the holes the axes actually cross.
         let mut short = group_bounds(1000.0);
         short.insert(id(1), [[0.0, 0.0, 0.0], [100.0, 500.0, 10.0]]);
-        let partial =
-            generate_holes(&inputs, &placed, &short, &translations, &BTreeSet::new()).unwrap();
+        let partial = generate_holes(
+            &inputs,
+            &placed.row(),
+            &short,
+            &translations,
+            &BTreeSet::new(),
+        )
+        .unwrap();
         assert_eq!(
             partial.len(),
             4,
@@ -1774,6 +1871,75 @@ mod tests {
         assert_eq!(
             BoltGroupPlaced::from_stored(&parallel).unwrap_err().field,
             "plane_normal_mm"
+        );
+    }
+
+    #[test]
+    fn the_preview_row_matches_the_placement_the_parts_admit() {
+        // The preview decides the same row the commit decides: the frame, the bearings and the
+        // spacings agree across the plain and the turned, slid and generated placements; the
+        // length and the washers stay the parts' decision.
+        let inputs = group_inputs();
+        let placed = place(&inputs, &group_bounds(1000.0)).unwrap();
+        assert_eq!(preview_row(&inputs).unwrap(), placed.row());
+        let turned = BoltGroupInputs {
+            rotation_rad: 1.0,
+            on_plane_mm: 7.0,
+            depth_mm: -3.0,
+            spacing: BoltSpacing::Pitch {
+                count: 3,
+                pitch_mm: 40.0,
+            },
+            ..inputs.clone()
+        };
+        let placed = place(&turned, &group_bounds(1000.0)).unwrap();
+        assert_eq!(preview_row(&turned).unwrap(), placed.row());
+    }
+
+    #[test]
+    fn the_preview_row_refuses_what_the_command_refuses() {
+        // The argument guard runs first, then the row: the same fields the commit names.
+        let inputs = group_inputs();
+        assert_eq!(
+            preview_row(&BoltGroupInputs {
+                spacing: BoltSpacing::Spacings(vec![0.0]),
+                ..inputs.clone()
+            })
+            .unwrap_err()
+            .field,
+            "spacings_mm"
+        );
+        assert_eq!(
+            preview_row(&BoltGroupInputs {
+                point2_mm: inputs.point1_mm,
+                ..inputs.clone()
+            })
+            .unwrap_err()
+            .field,
+            "point2_mm"
+        );
+        assert_eq!(
+            preview_row(&BoltGroupInputs {
+                plane_normal_mm: [1.0, 0.0, 0.0],
+                ..inputs.clone()
+            })
+            .unwrap_err()
+            .field,
+            "plane_normal_mm"
+        );
+        // An offset-end row that does not fit between the points is refused like the commit's.
+        assert_eq!(
+            preview_row(&BoltGroupInputs {
+                offset_start_mm: 500.0,
+                spacing: BoltSpacing::OffsetEnd {
+                    count: 3,
+                    offset_end_mm: 50.0,
+                },
+                ..inputs
+            })
+            .unwrap_err()
+            .field,
+            "offset_end_mm"
         );
     }
 }

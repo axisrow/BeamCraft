@@ -1595,6 +1595,7 @@ impl App {
             || self.bolt.commit_job.is_some()
             || self.bolt.entries_job.is_some()
             || self.bolt.groups_job.is_some()
+            || self.bolt.spec_job.is_some()
     }
 
     /// Starts the committed property edit on a worker: the same `update-element` the CLI runs.
@@ -4704,6 +4705,55 @@ pub(crate) mod tests {
         app.bolt.designation = "SYN-BOLT-12x50".into();
         app.bolt.offset_start = "50".into();
         app.bolt.spacings = "150".into();
+        // The preview: the listing loads, the form's designation fetches its definition by the
+        // read-only `show-library`, and the draft carries the row the engine decides — the
+        // same bearings the commit below stores.
+        let load = frame(&mut app, vec![])
+            .iter()
+            .find(|(text, _)| text == "Load entries")
+            .map(|(_, pos)| *pos)
+            .expect("the Bolt bench shows Load entries");
+        frame(&mut app, click(load));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while (app.bolt.entries_job.is_some() || app.bolt.spec_job.is_some())
+            && std::time::Instant::now() < deadline
+        {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.bolt.entries_job.is_none(), "the listing timed out");
+        assert!(
+            !app.bolt.entries.is_empty(),
+            "the shipped synthetic library lists entries"
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.bolt.spec.is_none() && std::time::Instant::now() < deadline {
+            app.poll_bolt();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let draft = app
+            .bolt_draft()
+            .expect("the filled form previews its row over the loaded snapshot");
+        assert_eq!(
+            draft.bearings_mm,
+            vec![[200.0, 250.0, 0.0], [350.0, 250.0, 0.0]],
+            "the preview carries the bearings the commit stores"
+        );
+        // One generated hole per bearing on every plate, at the plates' mid-planes; the
+        // polygon's centroid sits on the bearing within the round polygon's own rounding.
+        assert_eq!(draft.holes_mm.len(), 4);
+        for ring in &draft.holes_mm {
+            let centre_x = ring.iter().map(|p| p[0]).sum::<f64>() / ring.len() as f64;
+            assert!(
+                (centre_x - 200.0).abs() < 1e-6 || (centre_x - 350.0).abs() < 1e-6,
+                "on a bearing, got {centre_x}"
+            );
+            let centre_z = ring.iter().map(|p| p[2]).sum::<f64>() / ring.len() as f64;
+            assert!(
+                (centre_z - 5.0).abs() < 1e-9 || (centre_z - 15.0).abs() < 1e-9,
+                "at the plate's mid-plane, got {centre_z}"
+            );
+        }
         // The panel's Create bolts button starts the same `create-bolt-group` a user types.
         let labels = frame(&mut app, vec![]);
         let create = labels

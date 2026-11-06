@@ -969,7 +969,7 @@ pub fn create_bolt_group(
     // fastener on every plate, none writes no part (A14.4).
     let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
-        &placed,
+        &placed.row(),
         &model.bounds,
         &model.placements,
         &model.members,
@@ -1144,7 +1144,7 @@ pub fn update_bolt_group(
     // group that never generated and stays quiet touches no part.
     let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
-        &placed,
+        &placed.row(),
         &model.bounds,
         &model.placements,
         &model.members,

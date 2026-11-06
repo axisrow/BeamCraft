@@ -9,14 +9,23 @@
 //! refusal publishes nothing and is shown next to the form.
 
 use super::{App, PointText, field};
+use crate::camera::View;
 use crate::command;
 use crate::edit::{Ray, pick_in};
 use crate::tools::{MAX_TEXT, ToolError, decode, rejection, text};
+use beamcraft_engine::ViewSnapshot;
 use beamcraft_json::Json;
+use beamcraft_model::command::Placement as PartPlacement;
+use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::id::ElementId;
 use egui::RichText;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use steel::engine::bolt::Bounds;
+use steel::model::command::{BoltGroupInputs, BoltLength, BoltSpacing};
+use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 
 /// The longest library path the form accepts, as the CLI bounds one argument.
 const MAX_PATH: usize = 4096;
@@ -26,6 +35,14 @@ const MAX_ENTRIES: usize = 200;
 
 /// The most placed groups one listing may hold.
 const MAX_GROUPS: usize = 200;
+
+/// The most candidate holes the preview decides: past this many fasteners times parts the
+/// drawing is noise, and the commit's own caps still govern the real group.
+const MAX_PREVIEW_HOLES: usize = 4096;
+
+/// The definition fetch of one library-and-designation pair, as the worker returns it: the
+/// digest it pins and the specification the preview draws from.
+pub(super) type SpecFetch = Result<(ContentDigest, Arc<FastenerSpec>), ToolError>;
 
 /// Where the holes come from, as `--hole-mode` spells it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -98,6 +115,13 @@ pub(crate) struct Panel {
     /// The placed groups the last `bolts` listing reported.
     pub(crate) groups: Vec<Listing>,
     pub(super) groups_job: Option<Receiver<Result<Vec<Listing>, ToolError>>>,
+    /// The fetched definition of the form's designation, as the read-only `show-library`
+    /// reported it: the digest it pins and the specification the preview draws from.
+    pub(crate) spec: Option<(ContentDigest, Arc<FastenerSpec>)>,
+    /// The library and designation the current `spec` answers; a form that names another pair
+    /// has no preview yet.
+    pub(crate) spec_for: Option<(String, String)>,
+    pub(super) spec_job: Option<Receiver<SpecFetch>>,
     /// The group loaded for editing, as its stored identity; `None` builds a new group.
     pub(crate) edit_target: Option<String>,
     /// The plane normal of the loaded group, kept across the edit (`--plane-normal`); `None`
@@ -149,6 +173,9 @@ impl Default for Panel {
             entries_job: None,
             groups: Vec::new(),
             groups_job: None,
+            spec: None,
+            spec_for: None,
+            spec_job: None,
             edit_target: None,
             normal: None,
             repin: false,
@@ -214,6 +241,30 @@ pub(crate) struct Listing {
 impl Panel {
     pub(super) fn empty() -> Self {
         Self::default()
+    }
+
+    /// The library and designation pair whose definition the preview needs, when the form
+    /// names a complete pair of the loaded listing that the fetched spec does not answer yet.
+    /// A designation the listing does not carry fetches nothing, so typing never chases
+    /// half-entered names.
+    pub(crate) fn spec_query(&self) -> Option<(String, String)> {
+        let library = self.library.trim().to_owned();
+        let designation = self.designation.trim().to_owned();
+        if library.is_empty()
+            || designation.is_empty()
+            || !self.entries.iter().any(|listed| listed == &designation)
+        {
+            return None;
+        }
+        match &self.spec_for {
+            Some((listed_library, listed_designation))
+                if listed_library.as_str() == library
+                    && listed_designation.as_str() == designation =>
+            {
+                None
+            }
+            _ => Some((library, designation)),
+        }
     }
 
     fn busy(&self) -> bool {
@@ -427,9 +478,51 @@ fn checked_fastener(panel: &Panel) -> Result<(String, String), String> {
     Ok((library.to_owned(), designation.to_owned()))
 }
 
-/// The checked position values, spacing pattern and hole setting of the form, as the option
-/// tail from `--point1` on; `normal` is the plane normal the commit sends.
-fn checked_tail(panel: &Panel, normal: [f64; 3]) -> Result<Vec<String>, String> {
+/// The parsed spacing pattern of the form: what `checked_tail_values` returns for the tail
+/// both the commit argv and the preview inputs build from.
+#[derive(Debug, Clone, PartialEq)]
+enum SpacingValues {
+    /// An explicit list of gaps.
+    List(Vec<f64>),
+    /// One pitch over `count` fasteners.
+    Pitch {
+        /// The pitch in millimetres.
+        pitch: f64,
+        /// The fastener count.
+        count: usize,
+    },
+    /// `count` fasteners ending `end` before the row's second point.
+    OffsetEnd {
+        /// The end offset in millimetres.
+        end: f64,
+        /// The fastener count.
+        count: usize,
+    },
+}
+
+/// The typed tail of the form: the position values, spacing pattern and hole clearance parsed
+/// once, so the commit argv and the preview inputs build from the same numbers and can never
+/// disagree about what a field says.
+struct TailValues {
+    /// The first point.
+    point1: [f64; 3],
+    /// The second point.
+    point2: [f64; 3],
+    /// The rotation in degrees, as the command spells it.
+    rotation_deg: f64,
+    /// The on-plane offset in millimetres.
+    on_plane: f64,
+    /// The depth in millimetres.
+    depth: f64,
+    /// The offset start in millimetres.
+    offset_start: f64,
+    /// The parsed spacing pattern.
+    spacing: SpacingValues,
+    /// The parsed hole clearance, when the form carries one.
+    clearance: Option<f64>,
+}
+
+fn checked_tail_values(panel: &Panel) -> Result<TailValues, String> {
     let (Some(point1), Some(point2)) = (panel.point1, panel.point2) else {
         return Err(
             "Pick the two points on the work plane: the first fastener's spot, then the row's direction.".into(),
@@ -437,31 +530,57 @@ fn checked_tail(panel: &Panel, normal: [f64; 3]) -> Result<Vec<String>, String> 
     };
     let offset_start = number("Offset start", &panel.offset_start)?;
     let on_plane = number("On plane", &panel.on_plane)?;
-    let rotation = number("Rotation", &panel.rotation)?;
+    let rotation_deg = number("Rotation", &panel.rotation)?;
     let depth = number("Depth", &panel.depth)?;
     let clearance = match panel.clearance.trim() {
         "" => None,
         value => Some(number("Clearance", value)?),
     };
+    let spacing = match panel.spacing {
+        Spacing::List => SpacingValues::List(spacings(&panel.spacings)?),
+        Spacing::Pitch => SpacingValues::Pitch {
+            pitch: number("Pitch", &panel.pitch)?,
+            count: count("Count", &panel.count)?,
+        },
+        Spacing::OffsetEnd => SpacingValues::OffsetEnd {
+            end: number("Offset end", &panel.offset_end)?,
+            count: count("Count", &panel.count)?,
+        },
+    };
+    Ok(TailValues {
+        point1,
+        point2,
+        rotation_deg,
+        on_plane,
+        depth,
+        offset_start,
+        spacing,
+        clearance,
+    })
+}
+
+/// The checked position values, spacing pattern and hole setting of the form, as the option
+/// tail from `--point1` on; `normal` is the plane normal the commit sends.
+fn checked_tail(panel: &Panel, normal: [f64; 3]) -> Result<Vec<String>, String> {
+    let tail = checked_tail_values(panel)?;
     let mut args = vec![
         "--point1".into(),
-        point_text(point1),
+        point_text(tail.point1),
         "--point2".into(),
-        point_text(point2),
+        point_text(tail.point2),
         "--plane-normal".into(),
         point_text(normal),
         "--rotation-deg".into(),
-        rotation.to_string(),
+        tail.rotation_deg.to_string(),
         "--on-plane".into(),
-        on_plane.to_string(),
+        tail.on_plane.to_string(),
         "--depth".into(),
-        depth.to_string(),
+        tail.depth.to_string(),
         "--offset-start".into(),
-        offset_start.to_string(),
+        tail.offset_start.to_string(),
     ];
-    match panel.spacing {
-        Spacing::List => {
-            let gaps = spacings(&panel.spacings)?;
+    match tail.spacing {
+        SpacingValues::List(gaps) => {
             args.extend([
                 "--spacings".into(),
                 gaps.iter()
@@ -470,9 +589,7 @@ fn checked_tail(panel: &Panel, normal: [f64; 3]) -> Result<Vec<String>, String> 
                     .join(","),
             ]);
         }
-        Spacing::Pitch => {
-            let pitch = number("Pitch", &panel.pitch)?;
-            let count = count("Count", &panel.count)?;
+        SpacingValues::Pitch { pitch, count } => {
             args.extend([
                 "--pitch".into(),
                 pitch.to_string(),
@@ -480,9 +597,7 @@ fn checked_tail(panel: &Panel, normal: [f64; 3]) -> Result<Vec<String>, String> 
                 count.to_string(),
             ]);
         }
-        Spacing::OffsetEnd => {
-            let end = number("Offset end", &panel.offset_end)?;
-            let count = count("Count", &panel.count)?;
+        SpacingValues::OffsetEnd { end, count } => {
             args.extend([
                 "--offset-end".into(),
                 end.to_string(),
@@ -499,7 +614,7 @@ fn checked_tail(panel: &Panel, normal: [f64; 3]) -> Result<Vec<String>, String> 
         "--hole-mode".into(),
         panel.holes.token().into(),
     ]);
-    if let Some(clearance) = clearance {
+    if let Some(clearance) = tail.clearance {
         args.extend(["--hole-clearance".into(), clearance.to_string()]);
     }
     Ok(args)
@@ -577,6 +692,57 @@ pub(crate) fn update_args(
     Ok(args)
 }
 
+/// The engine inputs the preview draws from: the form's values over the fetched definition,
+/// through the same parsing the commit argv builds from. The length stays `Auto` — the
+/// preview's decisions never read it, and the commit's length is the parts' own decision.
+pub(crate) fn preview_inputs(
+    panel: &Panel,
+    normal: [f64; 3],
+    digest: ContentDigest,
+    spec: &FastenerSpec,
+) -> Result<BoltGroupInputs, String> {
+    let (_, parts, _, _) = checked_placement(panel)?;
+    let tail = checked_tail_values(panel)?;
+    let mut ids = Vec::with_capacity(parts.len());
+    for part in &parts {
+        ids.push(
+            ElementId::parse(part)
+                .map_err(|_| format!("Part: \"{part}\" is not an element identity"))?,
+        );
+    }
+    Ok(BoltGroupInputs {
+        parts: ids,
+        fastener_digest: digest,
+        fastener: spec.clone(),
+        point1_mm: tail.point1,
+        point2_mm: tail.point2,
+        plane_normal_mm: normal,
+        rotation_rad: tail.rotation_deg.to_radians(),
+        on_plane_mm: tail.on_plane,
+        depth_mm: tail.depth,
+        offset_start_mm: tail.offset_start,
+        spacing: match tail.spacing {
+            SpacingValues::List(list) => BoltSpacing::Spacings(list),
+            SpacingValues::Pitch { pitch, count } => BoltSpacing::Pitch {
+                count,
+                pitch_mm: pitch,
+            },
+            SpacingValues::OffsetEnd { end, count } => BoltSpacing::OffsetEnd {
+                count,
+                offset_end_mm: end,
+            },
+        },
+        washer_under_head: Some(panel.washer_head),
+        washer_under_nut: Some(panel.washer_nut),
+        length: BoltLength::Auto,
+        hole_mode: Some(match panel.holes {
+            Holes::Generate => HoleMode::Generate,
+            Holes::Quiet => HoleMode::None,
+        }),
+        hole_clearance_mm: tail.clearance,
+    })
+}
+
 /// The read-only `list-library` call of the fastener listing.
 pub(crate) fn list_args(library: &str) -> Vec<String> {
     vec![
@@ -587,6 +753,17 @@ pub(crate) fn list_args(library: &str) -> Vec<String> {
         "fastener".into(),
         "--limit".into(),
         MAX_ENTRIES.to_string(),
+    ]
+}
+
+/// The read-only `show-library` call of the definition fetch: the entry the preview draws from.
+pub(crate) fn spec_args(library: &str, designation: &str) -> Vec<String> {
+    vec![
+        "show-library".into(),
+        "--fastener-library".into(),
+        library.to_owned(),
+        "--designation".into(),
+        designation.to_owned(),
     ]
 }
 
@@ -610,6 +787,122 @@ pub(crate) fn parse_entries(
                 .collect()
         })
         .unwrap_or_default())
+}
+
+/// The definition `show-library` names, as the reply's own text and numbers: the digest it
+/// pins and the specification the preview draws from. A non-fastener entry, a reply field the
+/// entry does not carry, or a definition the model refuses is no spec — the preview draws
+/// nothing rather than a guess.
+pub(crate) fn parse_spec(
+    exit_code: Option<i32>,
+    stdout: &[u8],
+) -> Result<(ContentDigest, Arc<FastenerSpec>), ToolError> {
+    let reply = decode(stdout)?;
+    if let Some(error) = rejection(&reply, exit_code) {
+        return Err(error);
+    }
+    let unreadable = |message: &'static str| ToolError::local("LIBRARY_REPLY", message);
+    let entry = reply
+        .get("entry")
+        .map_err(|_| unreadable("the reply carries no entry"))?;
+    if text(entry, "kind").as_deref() != Some("fastener") {
+        return Err(unreadable("the designation is not a fastener"));
+    }
+    let digest = entry
+        .get("digest")
+        .ok()
+        .and_then(|d| d.string().ok())
+        .and_then(|d| d.parse::<ContentDigest>().ok())
+        .ok_or_else(|| unreadable("the entry carries no readable digest"))?;
+    let number = |name: &str| -> Result<f64, ToolError> {
+        entry
+            .get(name)
+            .ok()
+            .and_then(|v| v.float().ok())
+            .ok_or_else(|| unreadable("the entry carries no readable numbers"))
+    };
+    let optional = |name: &str| -> Result<Option<f64>, ToolError> {
+        match entry.get(name) {
+            Ok(Json::Null) | Err(_) => Ok(None),
+            Ok(value) => value
+                .float()
+                .ok()
+                .map(Some)
+                .ok_or_else(|| unreadable("the entry carries no readable numbers")),
+        }
+    };
+    let optional_text = |name: &str| -> Option<String> {
+        match entry.get(name) {
+            Ok(Json::Null) | Err(_) => None,
+            Ok(value) => value.string().ok().map(str::to_owned),
+        }
+    };
+    let flag = |name: &str| -> Result<bool, ToolError> {
+        entry
+            .get(name)
+            .ok()
+            .and_then(|v| v.boolean().ok())
+            .ok_or_else(|| unreadable("the entry carries no readable switches"))
+    };
+    // The reply carries the washer as three flat dimensions, or no washer dimensions at all
+    // (`washer: null` is the reply's only marker of a bare fastener).
+    let washer = if entry.get("washer_outer_diameter_mm").is_ok() {
+        Some(WasherSpec {
+            outer_diameter_mm: number("washer_outer_diameter_mm")?,
+            inner_diameter_mm: number("washer_inner_diameter_mm")?,
+            thickness_mm: number("washer_thickness_mm")?,
+        })
+    } else {
+        None
+    };
+    let lengths = entry
+        .get("lengths_mm")
+        .ok()
+        .and_then(|v| v.array().ok())
+        .map(|list| {
+            list.iter()
+                .filter_map(|v| v.float().ok())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let kind = match text(entry, "fastener_kind").as_deref() {
+        Some("bolt") => FastenerKind::Bolt,
+        Some("screw") => FastenerKind::Screw,
+        _ => return Err(unreadable("the entry names no fastener kind")),
+    };
+    let head_kind = match text(entry, "head_kind").as_deref() {
+        Some("hex") => HeadKind::Hex,
+        _ => return Err(unreadable("the entry names no head kind")),
+    };
+    let hole_mode = match text(entry, "hole_mode").as_deref() {
+        Some("none") => HoleMode::None,
+        Some("generate") => HoleMode::Generate,
+        _ => return Err(unreadable("the entry names no hole mode")),
+    };
+    let spec = FastenerSpec {
+        designation: optional_text("designation"),
+        standard: optional_text("standard"),
+        grade: optional_text("grade"),
+        display_name: optional_text("display_name"),
+        kind,
+        head_kind,
+        nominal_diameter_mm: number("nominal_diameter_mm")?,
+        head_across_flats_mm: number("head_across_flats_mm")?,
+        head_height_mm: number("head_height_mm")?,
+        nut_across_flats_mm: optional("nut_across_flats_mm")?,
+        nut_height_mm: optional("nut_height_mm")?,
+        washer,
+        hole_clearance_mm: number("hole_clearance_mm")?,
+        lengths_mm: lengths,
+        thread_protrusion_mm: number("thread_protrusion_mm")?,
+        washer_under_head: flag("washer_under_head")?,
+        washer_under_nut: flag("washer_under_nut")?,
+        hole_mode,
+        mass_each_kg: optional("mass_each_kg")?,
+    };
+    spec.validate()
+        .map_err(|e| ToolError::local("DEFINITION_INVALID", e.message))?;
+    Ok((digest, Arc::new(spec)))
 }
 
 /// The read-only `bolts` call of the groups listing.
@@ -702,6 +995,108 @@ pub(crate) fn parse_groups(
                 .collect()
         })
         .unwrap_or_default())
+}
+
+/// The preview the Bolt bench draws for the form as filled: the row line, a marker at every
+/// fastener bearing and the outline of every generated hole, all world millimetres. The
+/// engine decides it over the parts the snapshot shows; it is display only.
+pub(crate) struct BoltDraft {
+    /// The row's first point.
+    pub(crate) point1: [f64; 3],
+    /// The row's second point.
+    pub(crate) point2: [f64; 3],
+    /// The bearing point of every fastener the row places.
+    pub(crate) bearings_mm: Vec<[f64; 3]>,
+    /// Every generated hole as its world circle polygon at the plate's mid-plane height.
+    pub(crate) holes_mm: Vec<Vec<[f64; 3]>>,
+}
+
+/// The picked parts' geometry the preview's hole decision reads, as the snapshot on screen
+/// reports it: the world bounds, the placements and the member identities. The snapshot's
+/// bounds are the placed mesh's own box — the same decision input the commit's adapter derives
+/// from the head — and the hole decision refuses a member or a rotated plate, as the commit's
+/// does.
+fn preview_geometry(
+    snapshot: &ViewSnapshot,
+    parts: &[ElementId],
+) -> (
+    BTreeMap<ElementId, Bounds>,
+    BTreeMap<ElementId, PartPlacement>,
+    BTreeSet<ElementId>,
+) {
+    let mut bounds = BTreeMap::new();
+    let mut placements = BTreeMap::new();
+    let mut members = BTreeSet::new();
+    for part in parts {
+        let Some(entry) = snapshot.element(part) else {
+            continue;
+        };
+        bounds.insert(
+            *part,
+            [entry.full.world_bounds.min, entry.full.world_bounds.max],
+        );
+        placements.insert(
+            *part,
+            PartPlacement {
+                translation_mm: entry.placement_mm,
+                orientation_xyzw: entry.orientation_xyzw,
+            },
+        );
+        if entry.kind.is_linear_member() {
+            members.insert(*part);
+        }
+    }
+    (bounds, placements, members)
+}
+
+/// Paints the bolt preview over one pane, as the member draft paints: projection only, the
+/// scene beneath untouched. The row line is soft, the bearings are dots, the holes are
+/// outlined circles; a ring any point of which does not project is skipped whole.
+pub(crate) fn paint_bolt_draft(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    view: &View,
+    origin: [f64; 3],
+    draft: &BoltDraft,
+) {
+    let project = |point: [f64; 3]| {
+        let local = std::array::from_fn(|i| {
+            (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0)) as f32
+        });
+        let [x, y, z] = view.project(local);
+        (x.is_finite()
+            && y.is_finite()
+            && x.abs() < 1e5
+            && y.abs() < 1e5
+            && (0.0..=1.0).contains(&z))
+        .then(|| {
+            egui::pos2(
+                rect.left() + (x + 1.0) * rect.width() / 2.0,
+                rect.top() + (1.0 - y) * rect.height() / 2.0,
+            )
+        })
+    };
+    let painter = ui.painter_at(rect);
+    let color = crate::theme::Palette::current(ui).link;
+    if let (Some(a), Some(b)) = (project(draft.point1), project(draft.point2)) {
+        painter.line_segment([a, b], egui::Stroke::new(1.5, color.gamma_multiply(0.6)));
+    }
+    for bearing in &draft.bearings_mm {
+        if let Some(pos) = project(*bearing) {
+            painter.circle_filled(pos, 4.0, color);
+        }
+    }
+    let stroke = egui::Stroke::new(1.5, color);
+    for hole in &draft.holes_mm {
+        let mut ring = hole.iter().filter_map(|p| project(*p)).collect::<Vec<_>>();
+        if ring.len() == hole.len()
+            && ring.len() >= 3
+            && let Some(first) = ring.first().copied()
+        {
+            ring.push(first);
+            painter.add(egui::Shape::line(ring, stroke));
+        }
+    }
 }
 
 impl App {
@@ -826,6 +1221,41 @@ impl App {
         }
     }
 
+    /// The plane normal the bolt commit and the preview share: the loaded group's stored one
+    /// in edit mode, else the active work plane's, else world up.
+    pub(crate) fn bolt_plane_normal(&self) -> [f64; 3] {
+        self.bolt.normal.unwrap_or_else(|| {
+            self.tools
+                .plane
+                .map_or([0.0, 0.0, 1.0], |plane| plane.normal())
+        })
+    }
+
+    /// Starts the definition fetch on a worker: the read-only `show-library` a user types. The
+    /// pair is recorded before the reply arrives, so a slow or failed reply never respawns for
+    /// the same pair; a failed fetch draws no preview until the form names another pair.
+    pub(crate) fn start_spec_load(&mut self, pair: (String, String)) {
+        if self.other_command_running() {
+            return;
+        }
+        let cli = self.source.cli.clone();
+        let stats = Arc::clone(&self.stats);
+        let args = spec_args(&pair.0, &pair.1);
+        let (tx, rx) = channel();
+        let spawned = std::thread::Builder::new()
+            .name("beamcraft-bolt-spec".into())
+            .spawn(move || {
+                let result = command::run(&cli, &args, command::DEADLINE, &stats)
+                    .and_then(|out| parse_spec(out.code, &out.stdout));
+                let _ = tx.send(result);
+            });
+        match spawned {
+            Ok(_) => self.bolt.spec_job = Some(rx),
+            Err(_) => self.bolt.note = Some(Err("The definition could not be loaded.".into())),
+        }
+        self.bolt.spec_for = Some(pair);
+    }
+
     /// Starts the committed `create-bolt-group` or `update-bolt-group` on a worker: the same
     /// command a user types.
     pub(crate) fn start_bolt_commit(&mut self) {
@@ -835,11 +1265,7 @@ impl App {
             ));
             return;
         }
-        let normal = self.bolt.normal.unwrap_or_else(|| {
-            self.tools
-                .plane
-                .map_or([0.0, 0.0, 1.0], |plane| plane.normal())
-        });
+        let normal = self.bolt_plane_normal();
         let editing = self.bolt.edit_target.is_some();
         let args = match if editing {
             update_args(
@@ -883,8 +1309,34 @@ impl App {
         }
     }
 
-    /// Drains the listings and the commit; a success reloads the model the viewport shows.
+    /// Drains the listings, the definition fetch and the commit; a success reloads the model
+    /// the viewport shows.
     pub(crate) fn poll_bolt(&mut self) {
+        // The definition of the form's designation, fetched once per pair by the read-only
+        // `show-library` a user types; the preview draws from it.
+        if let Some(pair) = self.bolt.spec_query() {
+            self.start_spec_load(pair);
+        }
+        if let Some(rx) = &self.bolt.spec_job {
+            let outcome = match rx.try_recv() {
+                Ok(result) => Some(result),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some(Err(ToolError::local(
+                    "CLI_FAILED",
+                    "The definition fetch ended without a result.",
+                ))),
+            };
+            if outcome.is_some() {
+                self.bolt.spec_job = None;
+            }
+            match outcome {
+                Some(Ok(spec)) => self.bolt.spec = Some(spec),
+                // A pair the reply does not answer draws no preview; the listings' and the
+                // commit's own notes stay the panel's voice.
+                Some(Err(_)) => self.bolt.spec = None,
+                None => {}
+            }
+        }
         if let Some(rx) = &self.bolt.groups_job {
             let outcome = match rx.try_recv() {
                 Ok(result) => Some(result),
@@ -966,6 +1418,64 @@ impl App {
                 self.bolt.note = Some(Err(error.to_string()));
             }
         }
+    }
+
+    /// The preview the Bolt bench draws for the form as filled: the row and the holes the
+    /// engine decides over the parts the snapshot shows. `None` draws nothing — a command
+    /// running, an incomplete form, a definition the form has not fetched yet, a part the
+    /// snapshot does not show, or an engine refusal. Display only: the commit still asks the
+    /// engine, like the member ghost.
+    pub(crate) fn bolt_draft(&self) -> Option<BoltDraft> {
+        if self.bolt.busy() || self.other_command_running() {
+            return None;
+        }
+        let loaded = self.loaded.as_ref()?;
+        let library = self.bolt.library.trim().to_owned();
+        let designation = self.bolt.designation.trim().to_owned();
+        if !self
+            .bolt
+            .spec_for
+            .as_ref()
+            .is_some_and(|(listed_library, listed_designation)| {
+                listed_library == library.as_str() && listed_designation == designation.as_str()
+            })
+        {
+            return None;
+        }
+        let (digest, spec) = self.bolt.spec.as_ref()?;
+        let normal = self.bolt_plane_normal();
+        let inputs = preview_inputs(&self.bolt, normal, *digest, spec).ok()?;
+        let row = steel::engine::bolt::preview_row(&inputs).ok()?;
+        // The display budget: a preview past this many candidate holes is noise, and the
+        // commit's own caps still govern the real group.
+        if row.bearings_mm.len().saturating_mul(inputs.parts.len()) > MAX_PREVIEW_HOLES {
+            return None;
+        }
+        let (bounds, placements, members) = preview_geometry(&loaded.snapshot, &inputs.parts);
+        let holes =
+            steel::engine::bolt::generate_holes(&inputs, &row, &bounds, &placements, &members)
+                .ok()?;
+        // Identity plates only reach the hole decision, so each polygon is world XY already;
+        // the circle sits at the plate's mid-plane height, as the engine cuts it.
+        let holes_mm = holes
+            .iter()
+            .filter_map(|hole| {
+                let slab = bounds.get(&hole.part)?;
+                let mid = (slab[0][2] + slab[1][2]) / 2.0;
+                Some(
+                    hole.polygon_mm
+                        .iter()
+                        .map(|[x, y]| [*x, *y, mid])
+                        .collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        Some(BoltDraft {
+            point1: inputs.point1_mm,
+            point2: inputs.point2_mm,
+            bearings_mm: row.bearings_mm,
+            holes_mm,
+        })
     }
 
     /// The inspector panel of the Bolt bench.
@@ -1541,5 +2051,187 @@ mod tests {
         assert_eq!(clean(1.5), "1.5");
         assert_eq!(clean(-10.0), "-10");
         assert_eq!(clean(2.25), "2.25");
+    }
+
+    /// One `show-library` reply of a washered bolt entry, as the CLI's definition view spells
+    /// it: the washer as three flat dimensions, the switches as booleans.
+    fn spec_reply() -> Vec<u8> {
+        br#"{"outcome":"library_entry",
+            "library":{"id":"lib","digest":"aa"},"library_path":"fasteners.usda",
+            "entry":{
+              "digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+              "kind":"fastener","units":"mm","schema_version":"0.1.0","display_name":null,
+              "fastener_kind":"bolt","head_kind":"hex",
+              "nominal_diameter_mm":12,"head_across_flats_mm":18,"head_height_mm":7.5,
+              "nut_across_flats_mm":18,"nut_height_mm":9,
+              "washer_outer_diameter_mm":24,"washer_inner_diameter_mm":13,"washer_thickness_mm":2,
+              "hole_clearance_mm":1.5,"lengths_mm":[30,40,50,55],"thread_protrusion_mm":3,
+              "mass_each_kg":null,"washer_under_head":true,"washer_under_nut":true,
+              "hole_mode":"generate","designation":"SYN-BOLT-12x50","standard":null,"grade":null
+            },
+            "shadowed":null}"#
+            .to_vec()
+    }
+
+    #[test]
+    fn parse_spec_reads_the_reply_the_cli_spells() {
+        let (digest, spec) = parse_spec(Some(0), &spec_reply()).unwrap();
+        assert_eq!(
+            digest.to_string(),
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(spec.designation.as_deref(), Some("SYN-BOLT-12x50"));
+        assert_eq!(spec.nominal_diameter_mm, 12.0);
+        assert_eq!(spec.washer.as_ref().map(|w| w.thickness_mm), Some(2.0));
+        assert!(spec.washer_under_head && spec.washer_under_nut);
+        assert_eq!(spec.lengths_mm, [30.0, 40.0, 50.0, 55.0]);
+        assert_eq!(spec.hole_mode, HoleMode::Generate);
+        // Refusals: not json, a rejected command, a non-fastener entry, an unreadable digest,
+        // a definition the model refuses.
+        assert!(parse_spec(Some(0), b"not json").is_err());
+        let refused = br#"{"outcome":"rejected","code":"LIBRARY_UNREADABLE","message":"no"}"#;
+        assert!(parse_spec(Some(2), refused).is_err());
+        let profile = br#"{"outcome":"library_entry","entry":{"kind":"section_profile"}}"#;
+        assert!(parse_spec(Some(0), profile).is_err());
+        let bare = br#"{"outcome":"library_entry","entry":{"kind":"fastener","digest":"aa"}}"#;
+        assert!(parse_spec(Some(0), bare).is_err());
+        let nutless = br#"{"outcome":"library_entry","entry":{"kind":"fastener",
+            "digest":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "fastener_kind":"bolt","head_kind":"hex","nominal_diameter_mm":12,
+            "head_across_flats_mm":18,"head_height_mm":7.5,"hole_clearance_mm":1.5,
+            "lengths_mm":[30],"thread_protrusion_mm":3,"washer_under_head":false,
+            "washer_under_nut":false,"hole_mode":"generate"}}"#;
+        assert!(parse_spec(Some(0), nutless).is_err());
+    }
+
+    #[test]
+    fn the_preview_inputs_match_the_commit_argv_across_the_patterns() {
+        let (digest, spec) = parse_spec(Some(0), &spec_reply()).unwrap();
+        // List, pitch and offset-end: the argv the commit sends and the inputs the preview
+        // builds read the same numbers from the same form.
+        for spacing in [Spacing::List, Spacing::Pitch, Spacing::OffsetEnd] {
+            let mut panel = form();
+            panel.spacing = spacing;
+            panel.rotation = "45".into();
+            panel.on_plane = "2.5".into();
+            panel.depth = "-4".into();
+            panel.holes = Holes::Quiet;
+            panel.clearance = "1.5".into();
+            let normal = [0.0, 1.0, 0.0];
+            let argv = create_args(&panel, normal, Path::new("S"), None).unwrap();
+            let inputs = preview_inputs(&panel, normal, digest, &spec).unwrap();
+            let pair = |key: &str| {
+                let at = argv
+                    .iter()
+                    .position(|arg| arg == key)
+                    .unwrap_or_else(|| panic!("{key} is in the argv"));
+                argv[at + 1].clone()
+            };
+            assert_eq!(pair("--point1"), point_text(inputs.point1_mm));
+            assert_eq!(pair("--point2"), point_text(inputs.point2_mm));
+            assert_eq!(pair("--plane-normal"), point_text(inputs.plane_normal_mm));
+            let rotation = pair("--rotation-deg").parse::<f64>().unwrap();
+            assert_eq!(inputs.rotation_rad, rotation.to_radians());
+            assert_eq!(inputs.on_plane_mm.to_string(), pair("--on-plane"));
+            assert_eq!(inputs.depth_mm.to_string(), pair("--depth"));
+            assert_eq!(inputs.offset_start_mm.to_string(), pair("--offset-start"));
+            match (&inputs.spacing, spacing) {
+                (BoltSpacing::Spacings(list), Spacing::List) => {
+                    assert_eq!(
+                        pair("--spacings"),
+                        list.iter()
+                            .map(f64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
+                }
+                (
+                    BoltSpacing::Pitch {
+                        count,
+                        pitch_mm: pitch,
+                    },
+                    Spacing::Pitch,
+                ) => {
+                    assert_eq!(pitch.to_string(), pair("--pitch"));
+                    assert_eq!(count.to_string(), pair("--count"));
+                }
+                (
+                    BoltSpacing::OffsetEnd {
+                        count,
+                        offset_end_mm: end,
+                    },
+                    Spacing::OffsetEnd,
+                ) => {
+                    assert_eq!(end.to_string(), pair("--offset-end"));
+                    assert_eq!(count.to_string(), pair("--count"));
+                }
+                _ => panic!("the pattern does not round-trip"),
+            }
+            assert_eq!(inputs.washer_under_head, Some(panel.washer_head));
+            assert_eq!(inputs.washer_under_nut, Some(panel.washer_nut));
+            assert_eq!(inputs.hole_mode, Some(HoleMode::None));
+            assert_eq!(inputs.hole_clearance_mm, Some(1.5));
+            assert_eq!(inputs.length, BoltLength::Auto);
+            // A malformed field refuses both the argv and the preview inputs.
+            panel.offset_start = "wide".into();
+            assert!(create_args(&panel, normal, Path::new("S"), None).is_err());
+            assert!(preview_inputs(&panel, normal, digest, &spec).is_err());
+        }
+    }
+
+    #[test]
+    fn spec_query_fetches_only_complete_listed_pairs() {
+        let mut panel = Panel::empty();
+        assert_eq!(panel.spec_query(), None);
+        panel.library = "fasteners.usda".into();
+        panel.designation = "SYN-BOLT-12x50".into();
+        // A designation the loaded listing does not carry fetches nothing: typing never
+        // chases half-entered names.
+        assert_eq!(panel.spec_query(), None);
+        panel.entries = vec!["SYN-BOLT-12x50".into()];
+        assert_eq!(
+            panel.spec_query(),
+            Some(("fasteners.usda".to_owned(), "SYN-BOLT-12x50".to_owned()))
+        );
+        panel.spec_for = Some(("fasteners.usda".to_owned(), "SYN-BOLT-12x50".to_owned()));
+        assert_eq!(panel.spec_query(), None);
+        // The trimmed form answers.
+        panel.designation = " SYN-BOLT-12x50 ".into();
+        assert_eq!(panel.spec_query(), None);
+    }
+
+    #[test]
+    fn the_preview_paints_the_row_the_bearings_and_the_hole_rings() {
+        let draft = BoltDraft {
+            point1: [0.0, 0.0, 0.0],
+            point2: [100.0, 0.0, 0.0],
+            bearings_mm: vec![[25.0, 0.0, 0.0], [75.0, 0.0, 0.0]],
+            holes_mm: vec![vec![[20.0, 5.0, 0.0], [30.0, 5.0, 0.0], [25.0, -4.0, 0.0]]],
+        };
+        let view = crate::camera::Camera::new([50.0, 0.0, 0.0], 200.0, 268.0 / 184.0)
+            .unwrap()
+            .view(268.0 / 184.0)
+            .unwrap();
+        let context = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(268.0, 184.0));
+        let output = context.run_ui(Default::default(), |ui| {
+            paint_bolt_draft(ui, rect, &view, [0.0; 3], &draft);
+        });
+        let mut segments = 0;
+        let mut dots = 0;
+        let mut rings = 0;
+        for shape in &output.shapes {
+            match &shape.shape {
+                egui::Shape::LineSegment { .. } => segments += 1,
+                egui::Shape::Circle(circle) if circle.fill != egui::Color32::TRANSPARENT => {
+                    dots += 1
+                }
+                egui::Shape::Path(_) => rings += 1,
+                _ => {}
+            }
+        }
+        output.drop_without_applying_deltas();
+        // The soft row line, one dot per bearing, the closed hole ring.
+        assert_eq!((segments, dots, rings), (1, 2, 1));
     }
 }

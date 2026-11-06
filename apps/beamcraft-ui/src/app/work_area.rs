@@ -901,6 +901,20 @@ impl App {
                 }
             }
         }
+        // The Bolt bench previews the row and the holes the form would commit: the engine
+        // decides over the snapshot, the paint projects (V19 slice 3). Display only.
+        if self.bench == workbench::Bench::Bolt
+            && let Some(loaded) = self.loaded.as_ref()
+            && let Some(draft) = self.bolt_draft()
+        {
+            super::bolt_panel::paint_bolt_draft(
+                ui,
+                response.rect,
+                view,
+                loaded.summary.origin_mm,
+                &draft,
+            );
+        }
         if self.views.picking.is_some() {
             let hover = response.hover_pos().and_then(|pos| {
                 ndc_of(
