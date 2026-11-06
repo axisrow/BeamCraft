@@ -4,6 +4,44 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-06
+
+- **Windows coverage stays out of the pull-request route.** Owner decision on
+  [#500 item 4](https://github.com/axisrow/BeamCraft/issues/500#issuecomment-6676698300)
+  (upstream [Apibim-com#769](https://github.com/Apibim-com/BeamCraft/issues/769) item 4):
+  Windows tests are not added to pull requests. The pull-request wall keeps the recorded
+  local receipt and the quality lanes; complete-workspace tests on all three operating
+  systems stay in `ci-platform.yml` on integration pushes, the nightly and manual
+  dispatch. The owner's Windows concern was addressed at the infrastructure level
+  instead: the platform-track windows jobs are pinned to the stable `windows-2022` image
+  ([#521](https://github.com/axisrow/BeamCraft/issues/521)) after the `windows-2025-vs2026`
+  startup failure behind `windows-latest`, mirroring the `macos-15` pin (#517). A pull
+  request that touches Windows-specific code can still be checked by hand with
+  `workflow_dispatch` on its branch.
+- **Curved-plate questions 6a–6c follow the project documentation and existing code
+  precedent.** Owner decision on [#500](https://github.com/axisrow/BeamCraft/issues/500#issuecomment-6676698300)
+  (upstream [Apibim-com#769](https://github.com/Apibim-com/BeamCraft/issues/769)):
+  - **6a — features on bent plates go through the developed blank.** Holes, cuts and
+    corner treatments on bent plates are applied to the authored developed 2D contour,
+    and the bent body is then rebuilt — the A10 design path; no booleans on curved
+    bodies.
+  - **6b — the IFC export stays faceted.** Exact curved-surface export
+    (`IfcAdvancedBrep`) is not required; the faceted export remains. Fact recorded with
+    the decision: the shipped writer emits the faceted body as
+    `IfcTriangulatedFaceSet` (the `IfcFacetedBrep` wording of the upstream item does
+    not match the shipped writer).
+  - **6c — snapping and welding keep facets with the carried metadata.** They read the
+    certified facets together with the analytic metadata already carried alongside the
+    mesh (bend records, loft contours); no exact-surface machinery is built.
+- **A B-Rep kernel stays out of scope.** Owner decision on
+  [#500 item 6d](https://github.com/axisrow/BeamCraft/issues/500#issuecomment-6676698300)
+  (upstream [Apibim-com#769](https://github.com/Apibim-com/BeamCraft/issues/769) item 6d):
+  a full B-Rep dependency (OpenCascade bindings, Truck or own) is not planned; the option
+  stays visible in the backlog
+  ([#522](https://github.com/axisrow/BeamCraft/issues/522)) and revisits only when
+  arbitrary booleans on curved bodies become a requirement. This upholds the 2026-10-15
+  kernel decision and the 2026-10-21 faceted-geometry decision.
+
 ## 2026-11-05
 
 - **CI wall time: quality lanes on pull requests, complete-workspace tests in a parallel
