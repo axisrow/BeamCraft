@@ -376,7 +376,8 @@ packages and attaches them to a GitHub release:
 | macOS | `aarch64-apple-darwin` | `BeamCraft.app` in a `tar.gz`, ad-hoc signed; Gatekeeper warns on a fresh download |
 
 Every package holds `beamcraft`, `beamcraft-ui`, the Inter font with its
-OFL-1.1 licence (in the .app under `Contents/Resources/`) and the project documents.
+OFL-1.1 licence (in the .app under `Contents/Resources/`), the shipped libraries
+of `assets/libraries/` and the project documents.
 Build the package executables and package them:
 
 ```sh
