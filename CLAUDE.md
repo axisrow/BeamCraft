@@ -46,7 +46,8 @@ Publish the report explicitly with the runner's `publish --report PATH --pr NUMB
 New head/base snapshots require a new report. See `tools/test-gate/README.md` and the owner
 policy in `docs/plan/test-gate.md`; this supersedes the literal-Cargo rule from #346.
 
-Targeted Cargo/nextest commands remain iteration tools. A quick smoke after a build:
+Targeted Cargo/nextest commands remain iteration tools (nextest alone runs no doctests). A
+quick smoke after a build:
 `cargo run -p beamcraft-cli -- --version`. CI also checks WASM compatibility, dependencies,
 fixtures and module boundaries. Release packaging is unchanged.
 

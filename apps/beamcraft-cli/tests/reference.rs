@@ -1345,6 +1345,10 @@ fn references_larger_than_the_first_slice_reopen_and_reach_the_view() {
     assert_eq!(snapshot.meshes()[0].triangle_count(), 12);
 }
 
+// Load-sensitive by design: the 9,500-prim attach measures 46-90 s in isolation, so under
+// concurrent heavy local builds it can outgrow the standard 120 s per-test budget and die on
+// the deadline, which reads as a regression. `.config/nextest.toml` gives this test alone
+// 240 s (issue #529).
 #[test]
 fn a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has() {
     use std::fmt::Write;

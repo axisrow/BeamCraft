@@ -34,7 +34,9 @@ exit statuses and fresh inventory/JUnit evidence. Ordinary-test failures do not 
 doctests when preparation succeeded. A later success never erases an earlier failure.
 
 Execution budgets are 120 s per test, 180 s per CI partition, 300 s per local CLI run, 600 s per
-local workspace run and 120 s for the doctest command. Nextest timing excludes compilation,
+local workspace run and 120 s for the doctest command. The one exception is versioned in
+`.config/nextest.toml`: the load-sensitive R01 bounding test in `apps/beamcraft-cli` gets 240 s
+(see [the gate policy](plan/test-gate.md)). Nextest timing excludes compilation,
 downloads, archive extraction and runner wait. Doctests include compilation of examples after
 dependency preparation. Timeouts fail and terminate descendants; no automatic retries or
 budget increases. See [the runner guide](../tools/test-gate/README.md) for installation,
@@ -68,8 +70,11 @@ cargo nextest run --profile fast
 cargo nextest run -p beamcraft-cli -E 'test(/^numbering::/)'
 ```
 
-Use `--no-fail-fast` for whole-workspace iteration sweeps. Use the recorded runner for the
-final result, including doctests and source identity.
+Use `--no-fail-fast` for whole-workspace iteration sweeps. A sweep is not the full suite:
+nextest does not run doctests, so pair `cargo nextest run --workspace --no-fail-fast` with
+`cargo test --workspace --doc`, and read the verdict from redirected output rather than a
+pipe — `tail` and `head` hide the exit code. Use the recorded runner for the final result,
+including doctests and source identity.
 
 The `fast`
 profile (`.config/nextest.toml`) skips the IO-heavy integration suites that keep the inner
@@ -258,8 +263,10 @@ platform track (`ci-platform.yml`) runs the whole workspace on all three operati
 every integration push, nightly and manual dispatch.
 The first selected quality lane runs format/docs checks, with WASM, licences, fixtures and
 boundaries retained. New commits/base snapshots need a new local report. The commands below
-show the component checks; use the recorded runner for an eligible final result. To run the
-same checks locally:
+show the component checks; use the recorded runner for an eligible final result. nextest runs
+no doctests: the `cargo nextest run --workspace` line is a full suite only together with the
+`cargo test --workspace --doc` line after it, which the recorded gate runs as one unit. To run
+the same checks locally:
 
 ```sh
 cargo fmt --all -- --check

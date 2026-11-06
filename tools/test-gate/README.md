@@ -100,7 +100,11 @@ matching native gate executable beside the archive. `ci-test --archive PATH --pa
 ## Fixed execution budgets
 
 Nextest profiles enforce 120 seconds per test, 180 seconds per CI partition, 300 seconds per
-local CLI run and 600 seconds per local workspace run. The doctest command has a 120-second
+local CLI run and 600 seconds per local workspace run. The one exception is versioned in the
+profiles themselves: `.config/nextest.toml` gives the load-sensitive R01 bounding test
+(`reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`)
+a 240-second budget, because it deliberately attaches a 9,500-prim source; every other test
+keeps 120 seconds. The doctest command has a 120-second
 watchdog, including compilation of examples after dependencies are prepared. Compilation,
 downloads and archive extraction are outside nextest's runner-only JUnit time/global timeout;
 build commands have a separate 45-minute watchdog. No automatic retries or timeout-as-pass.

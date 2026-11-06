@@ -50,6 +50,12 @@ tests were omitted. Publishing is a separate explicit operation.
 | Local workspace nextest run | 600 seconds |
 | Doctest command after dependency preparation | 120 seconds |
 
+One documented exception: the R01 bounding test
+`reference::a_reply_lists_a_bounded_number_of_foreign_prims_however_many_the_source_has`
+deliberately attaches a 9,500-prim source and is load-sensitive, so a versioned nextest
+override in `.config/nextest.toml` gives it alone a 240-second budget. Every other test
+keeps the table's budgets.
+
 Timeouts fail, terminate the affected process tree, and retain available diagnostics. Keep the
 per-test and global nextest settings in versioned profiles. Changing budgets requires review;
 the runner must not silently relax them on slow hardware or infer a new budget from failures.
