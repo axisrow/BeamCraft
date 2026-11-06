@@ -245,7 +245,6 @@ pub fn remove_sheet_args(
 }
 
 /// The sheet editor window state.
-#[derive(Default)]
 pub struct SheetEditor {
     /// Whether the window is shown.
     pub open: bool,
@@ -257,7 +256,9 @@ pub struct SheetEditor {
     note: Option<Result<String, String>>,
     job: Option<(Job, Receiver<Result<Output, ToolError>>)>,
     drag: Option<(usize, [f64; 2], [f64; 2])>,
-    /// The sheet form's size choice (`a4` through `a0`).
+    /// The sheet form's size choice (`a4` through `a0`), starting on the command's own
+    /// print default: an empty selection would refuse at the CLI after the title-block
+    /// fields are typed.
     sheet_size: String,
     /// The sheet form's title-block fields as typed.
     sheet_project: String,
@@ -265,6 +266,24 @@ pub struct SheetEditor {
     sheet_author: String,
     /// The sheet form's frame inset as typed; empty is the command's own default.
     sheet_frame: String,
+}
+
+impl Default for SheetEditor {
+    fn default() -> Self {
+        Self {
+            open: false,
+            document_dir: String::new(),
+            doc: None,
+            pending: Vec::new(),
+            note: None,
+            job: None,
+            drag: None,
+            sheet_size: "a4".to_owned(),
+            sheet_project: String::new(),
+            sheet_author: String::new(),
+            sheet_frame: String::new(),
+        }
+    }
 }
 
 impl SheetEditor {
@@ -987,5 +1006,10 @@ mod tests {
         assert!(parse_frame("wide").is_err());
         assert!(parse_frame("nan").is_err());
         assert!(parse_frame("inf").is_err());
+    }
+
+    #[test]
+    fn the_form_starts_on_the_command_print_default_size() {
+        assert_eq!(SheetEditor::default().sheet_size, "a4");
     }
 }
