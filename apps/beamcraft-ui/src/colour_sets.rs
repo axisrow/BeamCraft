@@ -27,7 +27,7 @@ pub const FILE_NAME: &str = "colour-sets.json";
 pub const VERSION: u64 = 1;
 /// Largest colour-sets file, in bytes.
 pub const MAX_BYTES: usize = 65_536;
-/// Most sets in one file, the built-in preset included.
+/// Most sets in one file, the built-in presets included.
 pub const MAX_SETS: usize = 16;
 /// Most rules in one set.
 pub const MAX_RULES: usize = 32;
@@ -35,6 +35,8 @@ pub const MAX_RULES: usize = 32;
 pub const MAX_ELEMENTS: usize = 65_536;
 /// Name of the built-in class set, reserved so set names stay unique.
 pub const CLASS_SET_NAME: &str = "Part classes";
+/// Name of the built-in catalogue set (issue 526), reserved so set names stay unique.
+pub const CATALOGUE_SET_NAME: &str = "Catalogue";
 
 /// One rule of a set: the V14 rule JSON with the display colour and transparency to apply to
 /// everything it matches.
@@ -95,7 +97,7 @@ impl Set {
     }
 }
 
-/// The saved sets of one user: the built-in class preset first, then the file's sets.
+/// The saved sets of one user: the built-in presets first, then the file's sets.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sets(Vec<Set>);
 
@@ -121,9 +123,51 @@ pub fn class_set() -> Set {
     }
 }
 
+/// The built-in catalogue set (issue 526): the drawing convention colour-codes the element
+/// classes — members, plates and fittings, bolt groups — and everything else stays
+/// uncoloured. A bolt group reaches the scene as one merged mesh of one element (kind
+/// `connection`), so the whole stack paints as the bolt class. The colour bytes below are
+/// provisional stand-ins: the approved hues are the owner's decision (the question is
+/// recorded in issue 526) and only these three byte triples change when it lands. The tint
+/// multiplies the shaded base colour (V17).
+pub fn catalogue_set() -> Set {
+    let kind = |value: &str| {
+        Json::object([
+            ("field", Json::text("type")),
+            ("op", Json::text("eq")),
+            ("value", Json::text(value)),
+        ])
+    };
+    let mut rules = Vec::new();
+    let mut push = |rule: Json, colour: [u8; 3]| {
+        rules.push(RuleAppearance {
+            rule,
+            colour,
+            transparency: 0.0,
+        });
+    };
+    // Provisional until the owner answers issue 526: members on the pipeline's own steel,
+    // a warm plate tone, a dark bolt tone — three visibly distinct class colours.
+    push(
+        Json::object([("any", Json::Array(vec![kind("beam"), kind("column")]))]),
+        [255, 255, 255],
+    );
+    push(kind("plate"), [230, 195, 70]);
+    push(kind("connection"), [142, 78, 60]);
+    Set {
+        name: CATALOGUE_SET_NAME.into(),
+        rules,
+    }
+}
+
+/// The built-in presets in display order: the catalogue set first, the P15 class set second.
+fn presets() -> Vec<Set> {
+    vec![catalogue_set(), class_set()]
+}
+
 impl Default for Sets {
     fn default() -> Self {
-        Self(vec![class_set()])
+        Self(presets())
     }
 }
 
@@ -138,8 +182,17 @@ impl Sets {
         self.0.iter().find(|set| set.name == name)
     }
 
-    /// The sets of `config_dir` (`None` is the user's default directory): the class preset
-    /// always; a missing file is a normal first run, a damaged one keeps the preset and is
+    /// Whether the user keeps a set of their own beyond the built-in presets. While they do
+    /// not, the window applies the catalogue set on its own (issue 526); a set in
+    /// `colour-sets.json` is that choice and turns the automatic default off.
+    pub fn has_own(&self) -> bool {
+        self.0
+            .iter()
+            .any(|set| set.name != CLASS_SET_NAME && set.name != CATALOGUE_SET_NAME)
+    }
+
+    /// The sets of `config_dir` (`None` is the user's default directory): the presets
+    /// always; a missing file is a normal first run, a damaged one keeps the presets and is
     /// reported, never overwritten.
     pub fn load(config_dir: Option<&Path>) -> (Self, Option<String>) {
         let Some(dir) =
@@ -188,7 +241,7 @@ impl Sets {
         if version != VERSION {
             return Err("the colour-sets file has another version");
         }
-        let mut sets = vec![class_set()];
+        let mut sets = presets();
         for entry in json.get("sets").and_then(Json::array).map_err(invalid)? {
             if sets.len() >= MAX_SETS {
                 return Err("the colour-sets file holds too many sets");
@@ -281,6 +334,11 @@ impl Overlay {
     /// The tint of `id`: the matching rule's colour, or [`WHITE`].
     pub fn tint_of(&self, id: ElementId) -> [f32; 4] {
         self.0.get(&id).copied().unwrap_or(WHITE)
+    }
+
+    /// The coloured elements with their tints, in id order.
+    pub fn entries(&self) -> impl Iterator<Item = (ElementId, [f32; 4])> + '_ {
+        self.0.iter().map(|(id, tint)| (*id, *tint))
     }
 
     /// How many elements carry a colour.
@@ -506,6 +564,70 @@ mod tests {
         let (sets, note) = Sets::load(None);
         assert_eq!(sets, Sets::default());
         assert!(note.is_none(), "a missing file is a normal first run");
+        assert!(!sets.has_own(), "the presets alone are not the user's own");
+    }
+
+    #[test]
+    fn the_catalogue_set_colours_the_element_classes_by_kind() {
+        let set = catalogue_set();
+        assert_eq!(set.name, CATALOGUE_SET_NAME);
+        assert_eq!(
+            set.rules.len(),
+            3,
+            "member, plate/fitting and bolt, everything else uncoloured"
+        );
+        let kinds = |rule: &RuleAppearance| -> Vec<String> {
+            match rule.rule.get("any") {
+                Ok(group) => group
+                    .array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| r.get("value").unwrap().string().unwrap().to_owned())
+                    .collect(),
+                Err(_) => vec![rule.rule.get("value").unwrap().string().unwrap().to_owned()],
+            }
+        };
+        let member = &set.rules[0];
+        assert_eq!(kinds(member), ["beam", "column"], "the linear members");
+        let plate = &set.rules[1];
+        assert_eq!(kinds(plate), ["plate"], "plates and fittings");
+        let bolt = &set.rules[2];
+        assert_eq!(kinds(bolt), ["connection"], "the merged fastener stack");
+        // The hues are the owner's decision (issue 526); until then the three class colours
+        // stay defined, opaque and pairwise distinct — the machinery below is independent of
+        // the exact bytes.
+        let distinct = [member.colour, plate.colour, bolt.colour];
+        assert_eq!(distinct.len(), 3);
+        assert_ne!(distinct[0], distinct[1]);
+        assert_ne!(distinct[1], distinct[2]);
+        assert_ne!(distinct[0], distinct[2]);
+        for rule in &set.rules {
+            assert_eq!(rule.transparency, 0.0);
+        }
+        assert!(member.rule.get("any").is_ok(), "members are a kind group");
+        assert_eq!(
+            plate.rule.get("field").and_then(Json::string).unwrap(),
+            "type"
+        );
+        assert_eq!(
+            bolt.rule.get("field").and_then(Json::string).unwrap(),
+            "type"
+        );
+        // Both presets ride in every load; a file set cannot take a preset's name.
+        let (sets, note) = Sets::load(None);
+        assert!(note.is_none());
+        assert_eq!(sets.find(CATALOGUE_SET_NAME), Some(&catalogue_set()));
+        assert_eq!(sets.find(CLASS_SET_NAME), Some(&class_set()));
+        assert!(!sets.has_own());
+        let clash = Set {
+            name: CATALOGUE_SET_NAME.into(),
+            rules: vec![RuleAppearance {
+                rule: rule_json("class", 1),
+                colour: [1, 2, 3],
+                transparency: 0.0,
+            }],
+        };
+        assert!(Sets::decode(&file_bytes(&clash)).is_err());
     }
 
     #[test]
@@ -527,10 +649,11 @@ mod tests {
         };
         let bytes = file_bytes(&set);
         let sets = Sets::decode(&bytes).unwrap();
-        assert_eq!(sets.list().len(), 2, "preset plus the file's one set");
+        assert_eq!(sets.list().len(), 3, "the presets plus the file's one set");
         assert_eq!(sets.find("Bold plates"), Some(&set));
         assert_eq!(sets.find(CLASS_SET_NAME), Some(&class_set()));
-        // The preset's own name is reserved, and two file sets cannot share one name.
+        assert!(sets.has_own(), "a file set is the user's own");
+        // The presets' names are reserved, and two file sets cannot share one name.
         let clash = Set {
             name: CLASS_SET_NAME.into(),
             rules: vec![RuleAppearance {

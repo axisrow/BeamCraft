@@ -253,6 +253,10 @@ pub struct App {
     colour_job: Option<ColourJob>,
     /// The last colour outcome, shown in the colour panel.
     colour_note: Option<Result<String, String>>,
+    /// Whether colour state was chosen in this window: a Show, a Hide or the applied default.
+    /// The catalogue default (issue 526) rides the first delivered scene only while the user
+    /// keeps no colour set of their own, and never returns once they chose.
+    colour_touched: bool,
     /// The overlay the running refresh builds its scene with (V17): if the user changes or
     /// clears the set while the refresh runs, the delivered scene is recoloured once, so stale
     /// colours can never return or outlive their set.
@@ -1009,6 +1013,7 @@ impl App {
             colour: None,
             colour_job: None,
             colour_note: None,
+            colour_touched: false,
             reload_overlay: None,
         };
         app.tools.actor.clone_from(&app.source.actor);
@@ -1237,6 +1242,19 @@ impl App {
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
+        }
+        // The default catalogue colours ride the delivered scene (issue 526): while the user
+        // keeps no colour set of their own, the first shown model opens coloured, with no
+        // setup. An explicit Show or Hide (or a set in their colour-sets file) is a choice
+        // this default never overrides, so it runs only while nothing was touched yet.
+        if self.loaded.is_some()
+            && !self.colour_touched
+            && !self.colour_sets.has_own()
+            && self.colour.is_none()
+            && self.colour_job.is_none()
+            && !self.other_command_running_pre_colour()
+        {
+            self.apply_colour(crate::colour_sets::CATALOGUE_SET_NAME);
         }
         // The delivered scene was built with the overlay captured at spawn (V17): when the user
         // changed or cleared the set while the refresh ran, the delivery is recoloured once, so
@@ -2190,6 +2208,8 @@ impl App {
         match spawned {
             Ok(_) => {
                 self.colour_note = None;
+                // A started evaluation is a colour choice: the default never rides again.
+                self.colour_touched = true;
                 self.colour_job = Some(ColourJob {
                     set: name.to_owned(),
                     rx,
@@ -2215,7 +2235,8 @@ impl App {
             || self.contour.running()
     }
 
-    /// Clears the overlay and colours nothing again.
+    /// Clears the overlay and colours nothing again. The Hide is a colour choice: the
+    /// catalogue default does not return while this window shows this model.
     fn clear_colour(&mut self) {
         if let Some(job) = &self.colour_job {
             job.cancel.store(true, Ordering::Relaxed);
@@ -2223,6 +2244,7 @@ impl App {
         self.colour_job = None;
         self.colour = None;
         self.colour_note = None;
+        self.colour_touched = true;
         self.recolour();
     }
 
@@ -3216,6 +3238,111 @@ pub(crate) mod tests {
         assert!(app.colour_job.is_none(), "the missing CLI answers quickly");
         assert!(app.colour.is_none());
         assert!(matches!(app.colour_note, Some(Err(_))));
+    }
+
+    #[test]
+    fn the_default_catalogue_set_rides_the_first_shown_scene_once() {
+        let Some(mut app) = headless() else { return };
+        // No set of the user's own: the delivered scene starts the default evaluation alone.
+        assert!(!app.colour_sets.has_own());
+        deliver(&mut app, refreshed(2));
+        assert!(
+            app.colour_job.is_some(),
+            "the default applies without any user action"
+        );
+        for _ in 0..250 {
+            app.poll_colour();
+            if app.colour_job.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // The evaluation itself failed (no CLI in this window), but it was still a colour
+        // run of this window: the default never starts twice behind the user's back.
+        assert!(app.colour.is_none());
+        deliver(&mut app, refreshed(2));
+        assert!(
+            app.colour_job.is_none(),
+            "no second default after a finished colour run"
+        );
+    }
+
+    #[test]
+    fn a_colour_set_of_the_users_own_turns_the_catalogue_default_off() {
+        let Some(mut app) = headless() else { return };
+        let dir = std::env::temp_dir().join(format!(
+            "bc-catalogue-own-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // One ordinary set of the user's own, exactly the file shape the panel documents.
+        let bytes = beamcraft_json::Json::object([
+            ("version", beamcraft_json::Json::uint(1)),
+            (
+                "sets",
+                beamcraft_json::Json::Array(vec![beamcraft_json::Json::object([
+                    ("name", beamcraft_json::Json::text("Bold plates")),
+                    (
+                        "rules",
+                        beamcraft_json::Json::Array(vec![beamcraft_json::Json::object([
+                            (
+                                "rule",
+                                beamcraft_json::Json::object([
+                                    ("field", beamcraft_json::Json::text("class")),
+                                    ("op", beamcraft_json::Json::text("eq")),
+                                    ("value", beamcraft_json::Json::uint(2)),
+                                ]),
+                            ),
+                            (
+                                "colour",
+                                beamcraft_json::Json::Array(vec![
+                                    beamcraft_json::Json::uint(225),
+                                    beamcraft_json::Json::uint(157),
+                                    beamcraft_json::Json::uint(65),
+                                ]),
+                            ),
+                            ("transparency", beamcraft_json::Json::Number("0.25".into())),
+                        ])]),
+                    ),
+                ])]),
+            ),
+        ])
+        .encode(&beamcraft_json::Limits::DEFAULT)
+        .unwrap();
+        std::fs::write(dir.join(crate::colour_sets::FILE_NAME), bytes).unwrap();
+        let (sets, note) = crate::colour_sets::Sets::load(Some(&dir));
+        assert!(note.is_none(), "{note:?}");
+        assert!(sets.has_own());
+        app.colour_sets = sets;
+        deliver(&mut app, refreshed(2));
+        assert!(
+            app.colour_job.is_none() && app.colour.is_none(),
+            "the user's own set file is the choice against the default"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_hidden_catalogue_default_stays_hidden_across_refreshes() {
+        let Some(mut app) = headless() else { return };
+        // As if the default (or a set the user picked) were applied, then hidden.
+        app.colour = Some((
+            "Catalogue".into(),
+            Arc::new(crate::colour_sets::Overlay::default()),
+        ));
+        app.clear_colour();
+        assert!(app.colour.is_none());
+        assert!(app.colour_touched, "a Hide is a colour choice");
+        deliver(&mut app, refreshed(2));
+        assert!(
+            app.colour_job.is_none() && app.colour.is_none(),
+            "a cleared set returns the uniform grey: the default does not return"
+        );
     }
 
     #[test]

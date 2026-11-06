@@ -6,14 +6,23 @@ rule semantics; this slice adds the display layer over it.
 
 ## Result
 
-The View tab gains a Colour tool. Its inspector offers the saved representation sets: the
-built-in **Part classes** preset (one opaque rule per `DEFAULT_CLASS_PALETTE` entry, classes
-0 to 7, P15) plus the user's own sets. *Show colours* evaluates the picked set against the
-store head and colours every matching element; *Hide colours* clears the overlay. A legend
-lists the applied set's rules with their colour swatch, field/operator/value line and
-transparency. Colours multiply the shaded base colour (also in wireframe, which shares the
-fragment entry); a rule's transparency scales the transparent mode's opacity. Grey mode stays
-neutral by design, and the selected-only draw and the ghost preview are never tinted.
+The View tab gains a Colour tool. Its inspector offers the saved representation sets: two
+built-in presets plus the user's own sets. **Part classes** is one opaque rule per
+`DEFAULT_CLASS_PALETTE` entry, classes 0 to 7 (P15). **Catalogue** (issue 526) is the drawing
+convention by element class: members, plates and fittings, bolt groups, everything else
+uncoloured; the fastener stack reaches the scene as one merged mesh of one element (kind
+`connection`), so the whole group paints as the bolt class. The approved hues are the
+owner's decision (the question is recorded in issue 526); until it lands the preset carries
+provisional bytes. *Show colours* evaluates the picked set against the store
+head and colours every matching element; *Hide colours* clears the overlay. While the user
+keeps no set of their own in `colour-sets.json`, the window applies the Catalogue preset on
+its own when a model is first shown — no setup for a freshly opened store; an explicit Show
+or Hide in that window is a choice the default never overrides (a cleared set returns the
+uniform grey until the window opens the model again). A legend lists the applied set's rules
+with their colour swatch, field/operator/value line and transparency. Colours multiply the
+shaded base colour (also in wireframe, which shares the fragment entry); a rule's
+transparency scales the transparent mode's opacity. Grey mode stays neutral by design, and
+the selected-only draw and the ghost preview are never tinted.
 
 ## The overlay is never stored in the model
 
@@ -40,9 +49,10 @@ the drawn pixels while a white tint leaves them byte-equal in behaviour.
 A set is an ordered list of rules; the first matching rule wins. A rule is the V14 rule JSON,
 handed to the CLI unchanged; colours are RGB bytes; transparency runs 0.0 (opaque) to 1.0.
 The file is bounded (64 KiB, 16 sets, 32 rules per set, names unique and at most 64 bytes) and
-strictly versioned; a missing file is a normal first run, a damaged one keeps the preset and
+strictly versioned; a missing file is a normal first run, a damaged one keeps the presets and
 is reported, never overwritten — the file is the configuration surface, as with shortcuts.
-The name `Part classes` is reserved by the preset. V12 delivered the named-views layer (the
+The preset names `Part classes` and `Catalogue` are reserved; a file with any set of the
+user's own also turns the automatic Catalogue default off. V12 delivered the named-views layer (the
 `ViewBook` and its per-store sidecar) while this slice was in flight; the sets stay personal
 per-user display state for now, and moving them into the view book is a later schema
 migration of one small file, not a model change.

@@ -867,6 +867,201 @@ fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Issue 526: the built-in catalogue set colours the element classes in the real viewport
+/// with no user action. The set is evaluated the way the window evaluates it — paged
+/// `query-elements` per rule — each class paints its own pixels, the three class pictures
+/// are pairwise distinct, and clearing the overlay (Hide colours) draws exactly the
+/// never-coloured picture again. The approved hues are the owner's decision (question in
+/// issue 526); the assertions here stay independent of them.
+#[test]
+fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
+    let Some(cli) = cli() else { return };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("v03-tests")
+        .join(format!("catalogue-{}", crate::support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    let store = root.join("store");
+    std::fs::create_dir_all(&store).unwrap();
+    let store = store.to_str().unwrap().to_owned();
+    let brace = "019a7bf0-0000-7000-8000-000000720101";
+    let gusset = "019a7bf0-0000-7000-8000-000000720102";
+    let group = "019a7bf0-0000-7000-8000-000000720103";
+    // The knee-brace demo joint of issue 519: a brace member, a gusset plate and a DIN bolt
+    // group whose merged stack paints as one element of kind `connection`.
+    let profile = run(
+        &cli,
+        &[
+            "define-profile",
+            "--store",
+            &store,
+            "--width",
+            "60",
+            "--height",
+            "60",
+        ],
+    );
+    let digest = beamcraft_json::decode(profile.as_bytes(), &beamcraft_json::Limits::DEFAULT)
+        .unwrap()
+        .get("definition")
+        .unwrap()
+        .get("digest")
+        .unwrap()
+        .string()
+        .unwrap()
+        .to_owned();
+    run(
+        &cli,
+        &[
+            "create-member",
+            "--store",
+            &store,
+            "--kind",
+            "beam",
+            "--name",
+            "B1",
+            "--new-id",
+            brace,
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,800",
+            "--orientation-xyzw",
+            "0,0.3420201433256687,0,0.9396926207859084",
+            "--translation",
+            "100,0,1100",
+            "--profile-digest",
+            &digest,
+        ],
+    );
+    run(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            &store,
+            "--name",
+            "PL1",
+            "--new-id",
+            gusset,
+            "--width",
+            "400",
+            "--length",
+            "400",
+            "--thickness",
+            "12",
+            "--orientation-xyzw",
+            "0.7071067811865476,0,0,0.7071067811865476",
+            "--translation",
+            "450,0,1400",
+        ],
+    );
+    let library = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../assets/libraries/din-fasteners.usda"
+    );
+    run(
+        &cli,
+        &[
+            "create-bolt-group",
+            "--store",
+            &store,
+            "--name",
+            "BG1",
+            "--new-id",
+            group,
+            "--parts",
+            &format!("{brace},{gusset}"),
+            "--fastener-library",
+            library,
+            "--designation",
+            "M20",
+            "--point1",
+            "500,-12,1600",
+            "--point2",
+            "650,-12,1600",
+            "--plane-normal",
+            "0,1,0",
+            "--offset-start",
+            "25",
+            "--pitch",
+            "100",
+            "--count",
+            "2",
+            "--length-mode",
+            "fixed",
+            "--length",
+            "90",
+            "--hole-mode",
+            "none",
+        ],
+    );
+    let stats = Stats::default();
+    let snapshot = source::load(&cli, &root.join("store"), &stats).unwrap();
+    assert_eq!(snapshot.len(), 3, "the member, the plate and the group");
+    // The window's own evaluation path: the built-in catalogue set against the store head.
+    let set = beamcraft_ui::colour_sets::Sets::default()
+        .find(beamcraft_ui::colour_sets::CATALOGUE_SET_NAME)
+        .unwrap()
+        .clone();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let overlay =
+        beamcraft_ui::colour_sets::evaluate(&cli, &root.join("store"), &set, &cancel, &stats)
+            .unwrap();
+    assert_eq!(overlay.len(), 3, "every element takes its class colour");
+    let gpu = gpu();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let plain = render_pixels(&gpu, &scene, &ClipGpu::none());
+    // One overlay per class: a tint reaches only its element's instances, so a picture that
+    // differs from the plain one is exactly that class coloured in the image, and the class
+    // pictures come out pairwise distinct — per-class pixel colours, whichever hues are
+    // approved (the owner picks them; the question is recorded in issue 526). The member's
+    // provisional tint is the pipeline's own steel (white), so its picture stays the plain
+    // one; its rule still matched, as `overlay.len()` proved through the evaluator.
+    let mut changed: Vec<Vec<u8>> = Vec::new();
+    for (id, tint) in overlay.entries() {
+        let one = beamcraft_ui::colour_sets::Overlay::from_rules(vec![(
+            std::iter::once(id).collect(),
+            tint,
+        )]);
+        let class_scene = Scene::from_snapshot_reusing(
+            &snapshot,
+            Representation::Full,
+            &std::collections::BTreeSet::new(),
+            Some(&one),
+        )
+        .unwrap();
+        let pixels = render_pixels(&gpu, &class_scene, &ClipGpu::none());
+        if tint != beamcraft_ui::colour_sets::WHITE {
+            if pixels == plain {
+                panic!("the tinted class must change the picture");
+            }
+            for seen in &changed {
+                if *seen == pixels {
+                    panic!("the class pictures must come out pairwise distinct");
+                }
+            }
+            changed.push(pixels);
+        }
+    }
+    assert_eq!(
+        changed.len(),
+        2,
+        "the two non-steel classes paint and differ"
+    );
+    // Hide colours: the scene rebuilt without the overlay draws the never-coloured picture.
+    let cleared = Scene::from_snapshot_reusing(
+        &snapshot,
+        Representation::Full,
+        &std::collections::BTreeSet::new(),
+        None,
+    )
+    .unwrap();
+    if render_pixels(&gpu, &cleared, &ClipGpu::none()) != plain {
+        panic!("a cleared set returns the uniform grey picture");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// V15: a display cut hides pixels in the image only. The masked picture keeps the bodies
 /// that straddle the plane (conservative), an empty work area hides everything, and the cut
 /// leaves the snapshot and its token untouched.
