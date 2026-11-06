@@ -39,7 +39,10 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          asset="$(bash packaging/package.sh "${{ matrix.target }}" "${{ matrix.kind }}" "${{ github.ref_name }}")"
+          # A dispatch runs on a branch ref whose name may contain slashes; a tag
+          # never does. Flatten the separators so the archive name stays flat.
+          tag="${GITHUB_REF_NAME//\//-}"
+          asset="$(bash packaging/package.sh "${{ matrix.target }}" "${{ matrix.kind }}" "$tag")"
           echo "ASSET=$asset" >> "$GITHUB_ENV"
 
       # Q02 rehearsal smoke: a fresh install must run the CLI from the extracted package,
