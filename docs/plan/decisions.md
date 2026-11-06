@@ -6,7 +6,7 @@ Open questions are at the end.
 
 ## 2026-11-06
 
-- **Windows coverage stays out of the pull-request route.** Owner decision on
+- **Windows coverage stays out of the pull-request route.** Fork-owner decision on
   [#500 item 4](https://github.com/axisrow/BeamCraft/issues/500#issuecomment-6676698300)
   (upstream [Apibim-com#769](https://github.com/Apibim-com/BeamCraft/issues/769) item 4):
   Windows tests are not added to pull requests. The pull-request wall keeps the recorded
@@ -19,7 +19,7 @@ Open questions are at the end.
   request that touches Windows-specific code can still be checked by hand with
   `workflow_dispatch` on its branch.
 - **Curved-plate questions 6a–6c follow the project documentation and existing code
-  precedent.** Owner decision on [#500](https://github.com/axisrow/BeamCraft/issues/500#issuecomment-6676698300)
+  precedent.** Fork-owner decision on [#500](https://github.com/axisrow/BeamCraft/issues/500#issuecomment-6676698300)
   (upstream [Apibim-com#769](https://github.com/Apibim-com/BeamCraft/issues/769)):
   - **6a — features on bent plates go through the developed blank.** Holes, cuts and
     corner treatments on bent plates are applied to the authored developed 2D contour,
@@ -33,7 +33,7 @@ Open questions are at the end.
   - **6c — snapping and welding keep facets with the carried metadata.** They read the
     certified facets together with the analytic metadata already carried alongside the
     mesh (bend records, loft contours); no exact-surface machinery is built.
-- **A B-Rep kernel stays out of scope.** Owner decision on
+- **A B-Rep kernel stays out of scope.** Fork-owner decision on
   [#500 item 6d](https://github.com/axisrow/BeamCraft/issues/500#issuecomment-6676698300)
   (upstream [Apibim-com#769](https://github.com/Apibim-com/BeamCraft/issues/769) item 6d):
   a full B-Rep dependency (OpenCascade bindings, Truck or own) is not planned; the option
@@ -41,6 +41,11 @@ Open questions are at the end.
   ([#522](https://github.com/axisrow/BeamCraft/issues/522)) and revisits only when
   arbitrary booleans on curved bodies become a requirement. This upholds the 2026-10-15
   kernel decision and the 2026-10-21 faceted-geometry decision.
+
+  These are the fork owner's decisions, recorded for the fork. The upstream mirror
+  ([Apibim-com#769](https://github.com/Apibim-com/BeamCraft/issues/769)) stays open: for
+  upstream, items 4 and 6 close with the upstream maintainer's recorded decision, and it
+  has not been made yet.
 
 ## 2026-11-05
 
