@@ -1012,9 +1012,9 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
     let plain = render_pixels(&gpu, &scene, &ClipGpu::none());
     // One overlay per class: a tint reaches only its element's instances, so a picture that
     // differs from the plain one is exactly that class coloured in the image, and the class
-    // pictures come out pairwise distinct — per-class pixel colours in the approved hues
-    // (owner, issue 526, 2026-11-06: member #7A93A8, plate #E6C346, bolt #8E4E3C; the unit
-    // test pins the bytes). All three tints sit away from the pipeline's white, so each
+    // pictures come out pairwise distinct — per-class pixel colours in the hues of the
+    // owner's instruction of 2026-11-06 (member #7A93A8, plate #E6C346, bolt #8E4E3C; the
+    // unit test pins the bytes). All three tints sit away from the pipeline's white, so each
     // class paints and the three pictures differ.
     let mut changed: Vec<Vec<u8>> = Vec::new();
     for (id, tint) in overlay.entries() {
