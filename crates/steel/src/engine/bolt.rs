@@ -436,9 +436,10 @@ fn frame_and_bearings(
 /// conservative box decision of A05: every listed part must be crossed by the axis of at
 /// least one fastener (a box may overlap in mid-air, and a part crossed only by its box adds
 /// no grip). The grip itself is face-exact (issue 519 defect B): the union length of the
-/// shank inside the actual faces of the crossed parts ([`face_intervals`] over their world
-/// triangles, exact under any placement rotation), so a rotated part no longer inflates the
-/// requirement past every real library length. A part without an entry in `faces` grips per
+/// shank inside the actual faces of the crossed parts (the axis crossings of their world
+/// triangles, paired into material intervals — exact under any placement rotation), so a
+/// rotated part no longer inflates the requirement past every real library length. A part
+/// without an entry in `faces` grips per
 /// its conservative box, which errs long and never under. `auto` picks the smallest standard
 /// length that covers the largest grip plus the far washers, the nut and the thread
 /// protrusion, so every fastener of the group is identical. The under-head washer lies
