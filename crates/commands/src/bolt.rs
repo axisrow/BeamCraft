@@ -48,6 +48,7 @@ use session::pipeline::{
     summarize,
 };
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use steel::engine::bolt::Bounds;
 use steel::engine::bolt::Faces;
 use steel::engine::committed::PlateRecord;
@@ -116,6 +117,10 @@ struct Model {
     /// The world triangles of every part's stored scene mesh: the face-exact grip geometry
     /// (issue 519 defect B). A part without a usable mesh has no entry and grips per its box.
     faces: BTreeMap<ElementId, Faces>,
+    /// The groups whose generated hole records each part carries: a re-place over such a part
+    /// heals the group's own coaxial holes from the conservative box, so its stored length
+    /// survives the meshes it rewrote itself.
+    hole_owners: BTreeMap<ElementId, BTreeSet<ElementId>>,
     /// The world placement of every part: the frame a generated hole's polygon is mapped into
     /// (A14.4); generation refuses a plate whose placement is rotated.
     placements: BTreeMap<ElementId, Placement>,
@@ -460,6 +465,7 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
         placements: BTreeMap::new(),
         members: std::collections::BTreeSet::new(),
         faces: BTreeMap::new(),
+        hole_owners: BTreeMap::new(),
     };
     for prim in &prims {
         let Some(id) = by_path.get(prim.path.as_str()).copied() else {
@@ -505,7 +511,30 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
     model.placements = placements;
     model.members = members;
     model.definitions = decoded.definitions;
+    for (authored, _) in &decoded.plates {
+        for record in &authored.hole_records {
+            if let Some(owner) = record.owner {
+                model
+                    .hole_owners
+                    .entry(authored.id)
+                    .or_default()
+                    .insert(owner);
+            }
+        }
+    }
     Ok(model)
+}
+
+/// The parts whose meshes carry the group's own generated hole records: a re-place heals the
+/// group's own coaxial holes from the conservative box over exactly these parts, so the
+/// stored length survives the meshes the group rewrote itself (issue 519 review).
+fn own_hole_parts(model: &Model, group: ElementId) -> BTreeSet<ElementId> {
+    model
+        .hole_owners
+        .iter()
+        .filter(|(_, owners)| owners.contains(&group))
+        .map(|(part, _)| *part)
+        .collect()
 }
 
 /// The bolt group `id` as the operation committed at `sequence` created it: present in that
@@ -888,9 +917,14 @@ pub fn create_bolt_group(
     // The replay comparison needs the placement; a request that no longer places (its parts
     // moved away) is not a replay of anything, so a failure here just means "not the same".
     let expected = || {
-        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds, &model.faces)
-            .map(|placed| expected_spec(&command.inputs, &placed))
-            .ok()
+        steel::engine::bolt::place_bolt_group(
+            &command.inputs,
+            &model.bounds,
+            &model.faces,
+            &own_hole_parts(&model, command.new_id),
+        )
+        .map(|placed| expected_spec(&command.inputs, &placed))
+        .ok()
     };
     let accepted = match (&prior, &recorded) {
         (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
@@ -925,10 +959,12 @@ pub fn create_bolt_group(
         }
         PriorOp::Unseen => {}
     }
-    let (placed, footprint) =
-        model
-            .parts
-            .create_bolt_group(command, &model.bounds, &model.faces)?;
+    let (placed, footprint) = model.parts.create_bolt_group(
+        command,
+        &model.bounds,
+        &model.faces,
+        &own_hole_parts(&model, command.new_id),
+    )?;
     // The hole decision shares the transaction: generate writes one record per crossing
     // fastener on every plate, none writes no part (A14.4).
     let holes = steel::engine::bolt::generate_holes(
@@ -1051,9 +1087,14 @@ pub fn update_bolt_group(
     })?;
     // A request that no longer places is not a replay of anything (see the create).
     let expected = || {
-        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds, &model.faces)
-            .map(|placed| expected_spec(&command.inputs, &placed))
-            .ok()
+        steel::engine::bolt::place_bolt_group(
+            &command.inputs,
+            &model.bounds,
+            &model.faces,
+            &own_hole_parts(&model, command.target_id),
+        )
+        .map(|placed| expected_spec(&command.inputs, &placed))
+        .ok()
     };
     let accepted = match (&prior, &recorded) {
         (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
@@ -1092,10 +1133,12 @@ pub fn update_bolt_group(
         }
         PriorOp::Unseen => {}
     }
-    let (placed, footprint) =
-        model
-            .parts
-            .update_bolt_group(command, &model.bounds, &model.faces)?;
+    let (placed, footprint) = model.parts.update_bolt_group(
+        command,
+        &model.bounds,
+        &model.faces,
+        &own_hole_parts(&model, command.target_id),
+    )?;
     // Editing regenerates the holes (bolt amendment section 6): the new decision replaces the
     // group's old records in the same transaction, and turning generate off removes them. A
     // group that never generated and stays quiet touches no part.

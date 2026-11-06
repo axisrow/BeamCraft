@@ -49,15 +49,24 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
   bolt over a pre-drilled hole is still admitted and a mid-air box overlap changes nothing the
   A05 decision did not already accept. The grip that decides the length is the material the
   shank actually passes through: the adapter turns each part's stored scene mesh into world
-  triangles and the engine pairs the shank's crossings with them (an odd count pairs the first
-  crossing with the bearing face, so a bearing inside a part grips its remaining material; a
-  bearing over a hole grips nothing there). This is exact under any placement rotation (issue
-  519 defect B): a 40-degree brace's box claimed a 49 mm grip along the shank where its solid
-  grips 37 mm, and the rotated knee brace of the repro resolved to the 80 mm entry instead of
-  the face-sane 60. The length rule reads "plus the washers" as the washers the shank must
-  reach across: the under-nut washer lies between the grip and the nut and adds its thickness,
-  while the under-head washer lies before the shank starts and adds nothing — the A14.2 stack
-  fixes the shank at the under-head plane.
+  triangles and the engine pairs the shank's crossings with them. Hits that land on one
+  boundary within rounding distance merge into one crossing (a ray through a shared triangle
+  edge — the ear-clip diagonal of a cap under a centred bolt — hits both triangles a few ulps
+  apart, and pairing them as zero-length intervals would collapse the grip); an odd count
+  pairs the first crossing with the bearing face, so a bearing inside a part grips its
+  remaining material; a bearing over a foreign opening grips nothing there. The group's own
+  generated holes are the exception: a part carrying one of the group's own hole records grips
+  per its conservative box wherever the axis crosses no face, because the record was cut
+  coaxial with the shank and the bolt grips the slab the box bounds — so the stored length
+  survives a re-place over the meshes the group itself rewrote (a plain rename update, a
+  moved row) and a retry of the accepted create replays instead of mismatching into
+  `OP_ID_REUSE`. This is exact under any placement rotation (issue 519 defect B): a 40-degree
+  brace's box claimed a 49 mm grip along the shank where its solid grips 37 mm, and the
+  rotated knee brace of the repro resolved to the 80 mm entry instead of the face-sane 60.
+  The length rule reads "plus the washers" as the washers the shank must reach across: the
+  under-nut washer lies between the grip and the nut and adds its thickness, while the
+  under-head washer lies before the shank starts and adds nothing — the A14.2 stack fixes the
+  shank at the under-head plane.
 - **The digest is the definition identity.** The command carries the digest and the resolved
   spec; the adapter re-renders the canonical resource and refuses a mismatch, the engine
   re-admits the spec for its decisions, and the layer validator re-checks the stored record
@@ -90,9 +99,12 @@ once), the fixed and crossing refusals, the washer switches against the definiti
 identity/parts/footprint decisions. The face grip (issue 519 defect B) has its own tests: the
 rotated knee brace resolves to its face length and not the box one, with the exact grip
 boundary pinned by a fixed length that refuses and one that covers, a part without faces
-falling back to its conservative box, and the knee brace of the CLI repro carrying the
-face-sane length end to end. The existing descriptor-pin tests accept the previous
-descriptors and refuse a forged pin (the standing pattern).
+falling back to its conservative box, a centred bolt over the ear-clip diagonal resolving the
+full thickness (the merged double hit), a generate group re-placing over its own coaxial
+holes at the healed length (and collapsing without the healing), and the knee brace of the
+CLI repro carrying the face-sane length end to end, a rename and a moved row keeping it over
+the rewritten meshes, and a create retry replaying. The existing descriptor-pin tests accept
+the previous descriptors and refuse a forged pin (the standing pattern).
 `apps/beamcraft-cli/tests/bolt_groups.rs` (end to end through the binary; every read re-runs
 the loaded-content validator, so the stored-form rules — the digest discriminator, the
 mixed-set refusals, the record-versus-definition checks — are exercised on real commits): one

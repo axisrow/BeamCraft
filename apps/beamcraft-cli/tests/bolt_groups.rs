@@ -345,6 +345,9 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     let group = &f.groups()[0];
     assert_eq!(strings(group, "point2_mm"), ["700", "250", "0"]);
     assert!(strings(group, "spacings_mm") == ["150"]);
+    // The re-place runs over the meshes the group's own generated holes rewrote: the stored
+    // length survives them (issue 519 review).
+    assert_eq!(text(group, "length_mm"), "40");
     for part in &parts {
         assert_eq!(holes_of(&f, part).len(), 2, "{part}");
     }
@@ -390,6 +393,9 @@ fn a_rename_reaches_the_authored_layer_and_survives_a_reopen() {
     );
     let group = &f.groups()[0];
     assert_eq!(text(group, "name"), "G2");
+    // A plain rename re-places the group over the meshes its own generated holes rewrote: the
+    // stored length survives them instead of collapsing (issue 519 review).
+    assert_eq!(text(group, "length_mm"), "40");
 
     // A retry of the same operation replays; a different name under the same id is reuse:
     // the label is part of the operation's content.
@@ -406,6 +412,23 @@ fn a_rename_reaches_the_authored_layer_and_survives_a_reopen() {
     // A malformed label is refused without a revision.
     let bad = f_args_edit(GROUP, &["--name", ""], &[]);
     assert_eq!(f.rejected(&bad), "INVALID_ARGUMENT");
+}
+
+/// A retry of an accepted create re-places over the meshes the operation itself rewrote with
+/// its generated holes: it replays instead of mismatching the stored record into
+/// `OP_ID_REUSE` (issue 519 review).
+#[test]
+fn a_create_retry_replays_over_its_own_holes() {
+    let mut f = Fixture::new();
+    let parts = f.parts();
+    let mut args = f.group_args(GROUP, &parts, WASHERED, &["--spacings", "150"]);
+    args.extend([
+        "--op-id".to_owned(),
+        "019a7bf0-0000-7000-8000-0000007100e1".to_owned(),
+    ]);
+    f.ok(&strs("create-bolt-group", &args));
+    let again = f.ok(&strs("create-bolt-group", &args));
+    assert_eq!(text(&again, "outcome"), "bolt_group_replayed");
 }
 
 /// An `update-bolt-group` line for `id` with the given values.

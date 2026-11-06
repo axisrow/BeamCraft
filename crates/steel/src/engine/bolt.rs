@@ -345,12 +345,16 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 }
 
 /// The material intervals of one part's solid along the shank half-axis from `origin`: every
-/// triangle is intersected double-sided (Möller–Trumbore), the forward hits are sorted and
-/// paired, and an odd count — the bearing point sits inside the part — pairs its first
-/// crossing with the bearing face itself. The half-axis never grips behind the bearing. A
-/// triangle parallel to the axis within the parallel floor is never crossed, and an axis
-/// through an opening (a pre-drilled hole wider than the shank) crosses no material there:
-/// the part simply contributes nothing, like any missed face.
+/// triangle is intersected double-sided (Möller–Trumbore), the forward hits are sorted, hits
+/// that land on one boundary within rounding distance are merged (a ray through a shared
+/// triangle edge — the ear-clip diagonal of a cap under a centred bolt, for example — hits
+/// both triangles a few ulps apart, and pairing them as zero-length intervals would collapse
+/// the grip to nothing), and the rest are paired; an odd count — the bearing point sits
+/// inside the part — pairs its first crossing with the bearing face itself. The half-axis
+/// never grips behind the bearing. A triangle parallel to the axis within the parallel floor
+/// is never crossed, and an axis through an opening crosses no material there: the part
+/// simply contributes nothing, like any missed face (the group's own clearance holes are
+/// healed by [`place_bolt_group`]).
 fn face_intervals(origin: &[f64; 3], axis: &[f64; 3], faces: &Faces) -> Vec<(f64, f64)> {
     let mut hits = Vec::new();
     for [a, b, c] in faces {
@@ -377,16 +381,28 @@ fn face_intervals(origin: &[f64; 3], axis: &[f64; 3], faces: &Faces) -> Vec<(f64
         }
     }
     hits.sort_by(f64::total_cmp);
+    // One boundary, one hit: ulp-level neighbours are the same crossing seen through two
+    // triangles. A micron absorbs the rounding at every magnitude the coordinate cap allows,
+    // and no real material face stands within a micron of another.
+    let mut merged: Vec<f64> = Vec::with_capacity(hits.len());
+    for hit in hits {
+        let near = merged
+            .last()
+            .is_some_and(|last| hit - *last <= ABSOLUTE_FLOOR_MM.max(last.abs() * 1e-9));
+        if !near {
+            merged.push(hit);
+        }
+    }
     let mut intervals = Vec::new();
     let mut index = 0usize;
-    if hits.len() % 2 == 1 {
-        if let Some(first) = hits.first() {
+    if merged.len() % 2 == 1 {
+        if let Some(first) = merged.first() {
             intervals.push((0.0, *first));
         }
         index = 1;
     }
-    while index + 1 < hits.len() {
-        if let (Some(start), Some(end)) = (hits.get(index), hits.get(index + 1)) {
+    while index + 1 < merged.len() {
+        if let (Some(start), Some(end)) = (merged.get(index), merged.get(index + 1)) {
             intervals.push((*start, *end));
         }
         index += 2;
@@ -439,17 +455,22 @@ fn frame_and_bearings(
 /// shank inside the actual faces of the crossed parts (the axis crossings of their world
 /// triangles, paired into material intervals — exact under any placement rotation), so a
 /// rotated part no longer inflates the requirement past every real library length. A part
-/// without an entry in `faces` grips per
-/// its conservative box, which errs long and never under. `auto` picks the smallest standard
-/// length that covers the largest grip plus the far washers, the nut and the thread
-/// protrusion, so every fastener of the group is identical. The under-head washer lies
-/// outside the grip, before the shank starts, and adds nothing; the under-nut washer lies
-/// between the grip and the nut and adds its thickness. A fixed length shorter than that
-/// same requirement is refused.
+/// whose mesh carries one of the group's own hole records (`own_holes`) grips per its
+/// conservative box wherever the axis crosses no face: the record was cut coaxial with the
+/// shank, so the crossing falls into the group's own clearance hole and the bolt grips the
+/// slab the box bounds — the stored length survives a re-place over the meshes the group
+/// itself rewrote, and a retry replays instead of mismatching. A part without an entry in
+/// `faces` grips per its conservative box, which errs long and never under. `auto` picks the
+/// smallest standard length that covers the largest grip plus the far washers, the nut and
+/// the thread protrusion, so every fastener of the group is identical. The under-head washer
+/// lies outside the grip, before the shank starts, and adds nothing; the under-nut washer
+/// lies between the grip and the nut and adds its thickness. A fixed length shorter than
+/// that same requirement is refused.
 pub fn place_bolt_group(
     inputs: &BoltGroupInputs,
     bounds: &BTreeMap<ElementId, Bounds>,
     faces: &BTreeMap<ElementId, Faces>,
+    own_holes: &BTreeSet<ElementId>,
 ) -> Result<BoltGroupPlaced, CommandError> {
     inputs.validate_arguments()?;
     let spec = &inputs.fastener;
@@ -496,7 +517,14 @@ pub fn place_bolt_group(
                     *done = true;
                 }
                 match faces.get(part) {
-                    Some(part_faces) => intervals.extend(face_intervals(bearing, &z, part_faces)),
+                    Some(part_faces) => {
+                        let found = face_intervals(bearing, &z, part_faces);
+                        if found.is_empty() && own_holes.contains(part) {
+                            intervals.push(admitted);
+                        } else {
+                            intervals.extend(found);
+                        }
+                    }
                     None => intervals.push(admitted),
                 }
             }
@@ -712,6 +740,7 @@ impl crate::engine::weld::Parts {
         command: &CreateBoltGroup,
         bounds: &BTreeMap<ElementId, Bounds>,
         faces: &BTreeMap<ElementId, Faces>,
+        own_holes: &BTreeSet<ElementId>,
     ) -> Result<(BoltGroupPlaced, Footprint), CommandError> {
         command.validate_arguments()?;
         if self.kinds.contains_key(&command.new_id) {
@@ -722,7 +751,7 @@ impl crate::engine::weld::Parts {
             ));
         }
         check_parts(&command.inputs.parts, self)?;
-        let placed = place_bolt_group(&command.inputs, bounds, faces)?;
+        let placed = place_bolt_group(&command.inputs, bounds, faces, own_holes)?;
         let footprint = Footprint::for_bolt_group(
             command.new_id,
             &command.inputs.parts,
@@ -739,6 +768,7 @@ impl crate::engine::weld::Parts {
         command: &UpdateBoltGroup,
         bounds: &BTreeMap<ElementId, Bounds>,
         faces: &BTreeMap<ElementId, Faces>,
+        own_holes: &BTreeSet<ElementId>,
     ) -> Result<(BoltGroupPlaced, Footprint), CommandError> {
         command.validate_arguments()?;
         if !self.kinds.contains_key(&command.target_id) {
@@ -749,7 +779,7 @@ impl crate::engine::weld::Parts {
             ));
         }
         check_parts(&command.inputs.parts, self)?;
-        let placed = place_bolt_group(&command.inputs, bounds, faces)?;
+        let placed = place_bolt_group(&command.inputs, bounds, faces, own_holes)?;
         let footprint = Footprint::for_bolt_group_edit(
             command.target_id,
             &command.inputs.parts,
@@ -842,13 +872,13 @@ mod tests {
             .collect()
     }
 
-    /// [`place_bolt_group`] over the exact box faces of the given bounds: the default of the
-    /// axis-aligned tests here. The knee-brace test supplies its own faces instead.
+    /// [`place_bolt_group`] over the exact box faces of the given bounds and no own holes: the
+    /// default of the axis-aligned tests here. The knee-brace and hole tests supply their own.
     fn place(
         inputs: &BoltGroupInputs,
         bounds: &BTreeMap<ElementId, Bounds>,
     ) -> Result<BoltGroupPlaced, CommandError> {
-        place_bolt_group(inputs, bounds, &box_faces_of(bounds))
+        place_bolt_group(inputs, bounds, &box_faces_of(bounds), &BTreeSet::new())
     }
 
     #[test]
@@ -1352,7 +1382,7 @@ mod tests {
         };
         let bounds = group_bounds(1000.0);
         let (placed, footprint) = parts
-            .create_bolt_group(&command, &bounds, &box_faces_of(&bounds))
+            .create_bolt_group(&command, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
             .unwrap();
         assert_eq!(placed.length_mm, 35.0);
         // The parts' lifecycles and the definition are read; the group is written.
@@ -1374,7 +1404,7 @@ mod tests {
         };
         assert_eq!(
             parts
-                .create_bolt_group(&taken, &bounds, &box_faces_of(&bounds))
+                .create_bolt_group(&taken, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::DuplicateId
@@ -1388,7 +1418,7 @@ mod tests {
         };
         assert_eq!(
             parts
-                .create_bolt_group(&unknown, &bounds, &box_faces_of(&bounds))
+                .create_bolt_group(&unknown, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::NotFound
@@ -1402,7 +1432,7 @@ mod tests {
         };
         assert_eq!(
             parts
-                .create_bolt_group(&assembly, &bounds, &box_faces_of(&bounds))
+                .create_bolt_group(&assembly, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::UnsupportedGeometry
@@ -1416,7 +1446,7 @@ mod tests {
         };
         assert_eq!(
             parts
-                .create_bolt_group(&other, &bounds, &box_faces_of(&bounds))
+                .create_bolt_group(&other, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::InvalidArgument
@@ -1429,7 +1459,7 @@ mod tests {
         };
         assert_eq!(
             parts
-                .update_bolt_group(&edit, &bounds, &box_faces_of(&bounds))
+                .update_bolt_group(&edit, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
                 .unwrap_err()
                 .code,
             ErrorCode::NotFound
@@ -1439,7 +1469,7 @@ mod tests {
         with_group.insert(id(2), PartKind::Part);
         with_group.insert(id(9), PartKind::Other);
         let (placed, footprint) = with_group
-            .update_bolt_group(&edit, &bounds, &box_faces_of(&bounds))
+            .update_bolt_group(&edit, &bounds, &box_faces_of(&bounds), &BTreeSet::new())
             .unwrap();
         assert_eq!(placed.bearings_mm.len(), 3);
         // The group's shape inputs and record are written; a repin that pins in the same
@@ -1580,19 +1610,23 @@ mod tests {
         // still admits it, it adds no grip, and the first bearing pins the length.
         let bounds = knee_bounds();
         let faces = knee_faces();
-        let placed = place_bolt_group(&knee_inputs(), &bounds, &faces).unwrap();
+        let placed = place_bolt_group(&knee_inputs(), &bounds, &faces, &BTreeSet::new()).unwrap();
         assert_eq!(placed.length_mm, 55.0);
         // The grip boundary: a listed 50 refuses, a listed 55 covers the 50.5 requirement.
         let mut short = knee_inputs();
         short.length = BoltLength::Fixed(50.0);
         assert_eq!(
-            place_bolt_group(&short, &bounds, &faces).unwrap_err().code,
+            place_bolt_group(&short, &bounds, &faces, &BTreeSet::new())
+                .unwrap_err()
+                .code,
             ErrorCode::UnsupportedGeometry
         );
         let mut exact = knee_inputs();
         exact.length = BoltLength::Fixed(55.0);
         assert_eq!(
-            place_bolt_group(&exact, &bounds, &faces).unwrap().length_mm,
+            place_bolt_group(&exact, &bounds, &faces, &BTreeSet::new())
+                .unwrap()
+                .length_mm,
             55.0
         );
         // A part without faces grips per its conservative box, which errs long: 80, never
@@ -1600,10 +1634,82 @@ mod tests {
         let mut without = faces;
         without.remove(&id(1));
         assert_eq!(
-            place_bolt_group(&knee_inputs(), &bounds, &without)
+            place_bolt_group(&knee_inputs(), &bounds, &without, &BTreeSet::new())
                 .unwrap()
                 .length_mm,
             80.0
+        );
+    }
+
+    #[test]
+    fn the_grip_merges_the_double_hit_of_a_shared_triangle_edge() {
+        // A bolt centred on the plate: the ear-clip diagonal of each cap passes through the
+        // axis, so both cap triangles of a face hit a few ulps apart and must merge into one
+        // crossing. Pairing them as zero-length intervals would collapse the grip to nothing
+        // and resolve a far too short length (issue 519 review).
+        let mut inputs = group_inputs();
+        inputs.point1_mm = [0.0, 0.0, -5.0];
+        inputs.point2_mm = [400.0, 200.0, -5.0];
+        inputs.offset_start_mm = 400.0;
+        inputs.spacing = BoltSpacing::Spacings(vec![100.0]);
+        // The row runs along the caps' (0,0)-(1000,500) ear-clip diagonal, so both bearings
+        // land on the shared edge of each cap's two triangles, below the plate: grip 10, so
+        // the requirement is 10 + washer 3 + nut 14.8 + protrusion 5 = 32.8 and the length is
+        // 35; collapsed (t, t) pairings would pick 30.
+        let placed = place(&inputs, &group_bounds(1000.0)).unwrap();
+        assert_eq!(placed.length_mm, 35.0);
+    }
+
+    #[test]
+    fn a_generate_group_replaces_over_its_own_holes() {
+        // The meshes a generate group rewrote carry its own clearance holes coaxial with the
+        // shanks: a re-place over them crosses no face where its own hole stands, and without
+        // healing the grip collapses (10 instead of 20) and a plain update stores the shorter
+        // length (issue 519 review). Healing reads the slab the box bounds for the parts
+        // whose holes are the group's own.
+        let mut inputs = group_inputs();
+        inputs.point1_mm = [0.0, 250.0, 0.0];
+        inputs.point2_mm = [400.0, 250.0, 0.0];
+        inputs.offset_start_mm = 50.0;
+        inputs.spacing = BoltSpacing::Spacings(vec![80.0]);
+        let mut bounds = BTreeMap::new();
+        bounds.insert(id(1), [[0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]]);
+        bounds.insert(id(2), [[0.0, 0.0, 10.0], [1000.0, 500.0, 20.0]]);
+        // The first plate is solid; the second carries two rectangular voids around the
+        // bearings (50, 250) and (130, 250), as its own generated holes would.
+        let mut faces = BTreeMap::new();
+        faces.insert(id(1), box_faces([0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]));
+        faces.insert(
+            id(2),
+            box_faces([0.0, 0.0, 10.0], [40.0, 500.0, 20.0])
+                .into_iter()
+                .chain(box_faces([60.0, 0.0, 10.0], [120.0, 500.0, 20.0]))
+                .chain(box_faces([140.0, 0.0, 10.0], [1000.0, 500.0, 20.0]))
+                .chain(box_faces([40.0, 0.0, 10.0], [60.0, 220.0, 20.0]))
+                .chain(box_faces([40.0, 280.0, 10.0], [60.0, 500.0, 20.0]))
+                .chain(box_faces([120.0, 0.0, 10.0], [140.0, 220.0, 20.0]))
+                .chain(box_faces([120.0, 280.0, 10.0], [140.0, 500.0, 20.0]))
+                .collect(),
+        );
+        // Without the healing the second plate contributes nothing: the grip is 10, the
+        // requirement 30.8 and the length 35.
+        let collapsed = place_bolt_group(&inputs, &bounds, &faces, &BTreeSet::new()).unwrap();
+        assert_eq!(collapsed.length_mm, 35.0);
+        // The group's own holes are healed: the grip is 20, the requirement 40.8 and the
+        // length 45 — the record the group committed and every retry of it agrees on.
+        let mut own = BTreeSet::new();
+        own.insert(id(2));
+        let healed = place_bolt_group(&inputs, &bounds, &faces, &own).unwrap();
+        assert_eq!(healed.length_mm, 45.0);
+        // Healing names the parts whose holes are the group's own: the wrong part heals
+        // nothing.
+        let mut wrong = BTreeSet::new();
+        wrong.insert(id(1));
+        assert_eq!(
+            place_bolt_group(&inputs, &bounds, &faces, &wrong)
+                .unwrap()
+                .length_mm,
+            35.0
         );
     }
 
