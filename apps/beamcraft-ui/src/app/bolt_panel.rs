@@ -24,6 +24,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use steel::engine::bolt::Bounds;
+use steel::engine::bolt::GeneratedHole;
 use steel::model::command::{BoltGroupInputs, BoltLength, BoltSpacing};
 use steel::model::fastener::{FastenerKind, FastenerSpec, HeadKind, HoleMode, WasherSpec};
 
@@ -1049,6 +1050,32 @@ fn preview_geometry(
     (bounds, placements, members)
 }
 
+/// Lifts the generated holes into world space for the preview: only identity-rotation plates
+/// reach the hole decision, so each polygon is the plate's local XY without rotation, and the
+/// world lift is the part's own translation; the circle sits at the plate's mid-plane height,
+/// as the engine cuts it (the world bounds are already placed). A hole whose part the
+/// decision geometry does not carry is skipped whole.
+fn hole_world_rings(
+    holes: &[GeneratedHole],
+    placements: &BTreeMap<ElementId, PartPlacement>,
+    bounds: &BTreeMap<ElementId, Bounds>,
+) -> Vec<Vec<[f64; 3]>> {
+    holes
+        .iter()
+        .filter_map(|hole| {
+            let translation = placements.get(&hole.part)?.translation_mm;
+            let slab = bounds.get(&hole.part)?;
+            let mid = (slab[0][2] + slab[1][2]) / 2.0;
+            Some(
+                hole.polygon_mm
+                    .iter()
+                    .map(|[x, y]| [x + translation[0], y + translation[1], mid])
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect()
+}
+
 /// Paints the bolt preview over one pane, as the member draft paints: projection only, the
 /// scene beneath untouched. The row line is soft, the bearings are dots, the holes are
 /// outlined circles; a ring any point of which does not project is skipped whole.
@@ -1455,21 +1482,7 @@ impl App {
         let holes =
             steel::engine::bolt::generate_holes(&inputs, &row, &bounds, &placements, &members)
                 .ok()?;
-        // Identity plates only reach the hole decision, so each polygon is world XY already;
-        // the circle sits at the plate's mid-plane height, as the engine cuts it.
-        let holes_mm = holes
-            .iter()
-            .filter_map(|hole| {
-                let slab = bounds.get(&hole.part)?;
-                let mid = (slab[0][2] + slab[1][2]) / 2.0;
-                Some(
-                    hole.polygon_mm
-                        .iter()
-                        .map(|[x, y]| [*x, *y, mid])
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect();
+        let holes_mm = hole_world_rings(&holes, &placements, &bounds);
         Some(BoltDraft {
             point1: inputs.point1_mm,
             point2: inputs.point2_mm,
@@ -2198,6 +2211,46 @@ mod tests {
         // The trimmed form answers.
         panel.designation = " SYN-BOLT-12x50 ".into();
         assert_eq!(panel.spec_query(), None);
+    }
+
+    #[test]
+    fn hole_rings_lift_the_plate_local_polygon_by_the_part_translation() {
+        // A translated plate reaches the hole decision with identity rotation only, so the
+        // polygon is local XY and the world lift is the part's own translation: a ring centred
+        // on local (0,0) on a plate set down at (40, 30) draws at (40, 30), at the world
+        // mid-plane of its placed bounds (10..20 -> 15).
+        let part = ElementId::parse("019a7bf0-0000-7000-8000-000000510001").unwrap();
+        let mut placements = BTreeMap::new();
+        placements.insert(
+            part,
+            PartPlacement {
+                translation_mm: [40.0, 30.0, 12.0],
+                orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            },
+        );
+        let mut bounds = BTreeMap::new();
+        bounds.insert(part, [[-10.0, -5.0, 10.0], [10.0, 5.0, 20.0]]);
+        let hole = GeneratedHole {
+            part,
+            polygon_mm: vec![[0.0, 0.0], [4.0, 0.0], [0.0, 4.0]],
+        };
+        let rings = hole_world_rings(&[hole], &placements, &bounds);
+        assert_eq!(rings.len(), 1);
+        assert_eq!(
+            rings[0],
+            vec![[40.0, 30.0, 15.0], [44.0, 30.0, 15.0], [40.0, 34.0, 15.0]]
+        );
+        // A hole on a part the decision geometry does not carry is skipped whole.
+        let stranger = ElementId::parse("019a7bf0-0000-7000-8000-000000510002").unwrap();
+        let rings = hole_world_rings(
+            &[GeneratedHole {
+                part: stranger,
+                polygon_mm: vec![[0.0, 0.0]],
+            }],
+            &placements,
+            &bounds,
+        );
+        assert!(rings.is_empty());
     }
 
     #[test]
