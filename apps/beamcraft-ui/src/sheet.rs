@@ -26,6 +26,8 @@ use std::sync::mpsc::Receiver;
 const ALIGN_TOLERANCE_MM: f64 = 0.5;
 /// Marker hit radius on screen.
 const HIT_PX: f32 = 12.0;
+/// The sheet sizes the command admits, in menu order.
+const SIZES: [&str; 5] = ["a4", "a3", "a2", "a1", "a0"];
 
 /// One placed or primary view as the document inspect reports it.
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +151,97 @@ enum Job {
     Load,
     /// `edit-views`: placements were applied; reload afterwards.
     Apply,
+    /// `edit-sheet`: the sheet was laid on or taken off; reload afterwards.
+    EditSheet {
+        /// Whether the edit took the sheet off.
+        remove: bool,
+    },
+}
+
+/// The typed sheet form: a size with its title-block fields and the frame inset; an
+/// empty inset is the command's own default.
+pub struct LaySheet<'a> {
+    /// The sheet size token (`a4` through `a0`).
+    pub size: &'a str,
+    /// The title-block project field.
+    pub project: &'a str,
+    /// The title-block author field.
+    pub author: &'a str,
+    /// The frame inset in millimetres; `None` lets the command default it.
+    pub frame_inset_mm: Option<f64>,
+}
+
+/// The typed frame inset: empty is the command's own default, a finite number passes
+/// through, anything else is a local refusal whose message the window shows.
+pub fn parse_frame(field: &str) -> Result<Option<f64>, String> {
+    let text = field.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    match text.parse::<f64>() {
+        Ok(value) if value.is_finite() => Ok(Some(value)),
+        _ => Err("invalid sheet frame inset".to_owned()),
+    }
+}
+
+/// The `edit-sheet` arguments that lay the typed sheet on the document. Engine admission
+/// still owns every bound; this only builds the command.
+pub fn sheet_args(
+    document_dir: &str,
+    expected_head: &str,
+    op_id: &str,
+    revision_id: &str,
+    actor_id: &str,
+    sheet: &LaySheet<'_>,
+) -> Vec<String> {
+    let mut args = vec![
+        "edit-sheet".to_owned(),
+        "--document-dir".to_owned(),
+        document_dir.to_owned(),
+        "--expected-head".to_owned(),
+        expected_head.to_owned(),
+        "--op-id".to_owned(),
+        op_id.to_owned(),
+        "--revision-id".to_owned(),
+        revision_id.to_owned(),
+        "--actor-id".to_owned(),
+        actor_id.to_owned(),
+        "--sheet-size".to_owned(),
+        sheet.size.to_owned(),
+        "--sheet-project".to_owned(),
+        sheet.project.to_owned(),
+        "--sheet-author".to_owned(),
+        sheet.author.to_owned(),
+    ];
+    if let Some(frame) = sheet.frame_inset_mm {
+        args.extend(["--sheet-frame".to_owned(), format!("{frame}")]);
+    }
+    args
+}
+
+/// The `edit-sheet` arguments that take the sheet off the document.
+pub fn remove_sheet_args(
+    document_dir: &str,
+    expected_head: &str,
+    op_id: &str,
+    revision_id: &str,
+    actor_id: &str,
+) -> Vec<String> {
+    vec![
+        "edit-sheet".to_owned(),
+        "--document-dir".to_owned(),
+        document_dir.to_owned(),
+        "--expected-head".to_owned(),
+        expected_head.to_owned(),
+        "--op-id".to_owned(),
+        op_id.to_owned(),
+        "--revision-id".to_owned(),
+        revision_id.to_owned(),
+        "--actor-id".to_owned(),
+        actor_id.to_owned(),
+        "--sheet-remove".to_owned(),
+        "true".to_owned(),
+    ]
 }
 
 /// The sheet editor window state.
@@ -164,6 +257,14 @@ pub struct SheetEditor {
     note: Option<Result<String, String>>,
     job: Option<(Job, Receiver<Result<Output, ToolError>>)>,
     drag: Option<(usize, [f64; 2], [f64; 2])>,
+    /// The sheet form's size choice (`a4` through `a0`).
+    sheet_size: String,
+    /// The sheet form's title-block fields as typed.
+    sheet_project: String,
+    /// The sheet form's author field as typed.
+    sheet_author: String,
+    /// The sheet form's frame inset as typed; empty is the command's own default.
+    sheet_frame: String,
 }
 
 impl SheetEditor {
@@ -221,9 +322,8 @@ impl SheetEditor {
             return;
         };
         let Some(furniture) = &doc.furniture else {
-            ui.label(
-                "This document carries no sheet. Lay one on with the CLI's edit-sheet command.",
-            );
+            ui.label("This document carries no sheet. Lay one on to see it here.");
+            self.sheet_form(ui, cli, actor, stats, &doc);
             self.note_view(ui);
             return;
         };
@@ -257,7 +357,123 @@ impl SheetEditor {
             "{} placed views; the primary view is placed by the document, not here.",
             doc.placed.len()
         ));
+        egui::CollapsingHeader::new("Sheet")
+            .default_open(false)
+            .show(ui, |ui| self.sheet_form(ui, cli, actor, stats, &doc));
         self.note_view(ui);
+    }
+
+    /// The `edit-sheet` form: a size with its title-block fields and the frame inset,
+    /// laid on or taken off through the same command a user types.
+    fn sheet_form(
+        &mut self,
+        ui: &mut egui::Ui,
+        cli: &Path,
+        actor: Option<&str>,
+        stats: &Arc<Stats>,
+        doc: &Doc,
+    ) {
+        ui.horizontal(|ui| {
+            ui.label("Size");
+            egui::ComboBox::from_id_salt("sheet-size")
+                .selected_text(self.sheet_size.clone())
+                .show_ui(ui, |ui| {
+                    for size in SIZES {
+                        ui.selectable_value(&mut self.sheet_size, size.to_owned(), size);
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label("Project");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.sheet_project)
+                    .desired_width(200.0)
+                    .hint_text("title-block project"),
+            );
+            ui.label("Author");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.sheet_author)
+                    .desired_width(160.0)
+                    .hint_text("title-block author"),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Frame inset mm");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.sheet_frame)
+                    .desired_width(60.0)
+                    .hint_text("10"),
+            );
+            let ready =
+                !self.sheet_project.trim().is_empty() && !self.sheet_author.trim().is_empty();
+            if ui
+                .add_enabled(
+                    ready && self.job.is_none(),
+                    egui::Button::new("Apply sheet"),
+                )
+                .clicked()
+            {
+                self.note = None;
+                self.apply_sheet(cli, actor, stats, doc, false);
+            }
+            if ui
+                .add_enabled(self.job.is_none(), egui::Button::new("Remove sheet"))
+                .clicked()
+            {
+                self.note = None;
+                self.apply_sheet(cli, actor, stats, doc, true);
+            }
+        });
+    }
+
+    /// Lays the typed sheet on the document or takes the sheet off, through `edit-sheet`
+    /// with fresh identities; the reload afterwards re-earns the document head.
+    fn apply_sheet(
+        &mut self,
+        cli: &Path,
+        actor: Option<&str>,
+        stats: &Arc<Stats>,
+        doc: &Doc,
+        remove: bool,
+    ) {
+        let missing = || "no identity could be generated".to_owned();
+        let Some(op) = fresh_id() else {
+            self.note = Some(Err(missing()));
+            return;
+        };
+        let Some(revision) = fresh_id() else {
+            self.note = Some(Err(missing()));
+            return;
+        };
+        let actor = actor
+            .map(str::to_owned)
+            .or_else(fresh_id)
+            .unwrap_or_default();
+        let args = if remove {
+            remove_sheet_args(&self.document_dir, &doc.revision_id, &op, &revision, &actor)
+        } else {
+            let frame = match parse_frame(&self.sheet_frame) {
+                Ok(frame) => frame,
+                Err(message) => {
+                    self.note = Some(Err(message));
+                    return;
+                }
+            };
+            sheet_args(
+                &self.document_dir,
+                &doc.revision_id,
+                &op,
+                &revision,
+                &actor,
+                &LaySheet {
+                    size: &self.sheet_size,
+                    project: &self.sheet_project,
+                    author: &self.sheet_author,
+                    frame_inset_mm: frame,
+                },
+            )
+        };
+        self.start(cli, stats, Job::EditSheet { remove }, args);
     }
 
     fn note_view(&mut self, ui: &mut egui::Ui) {
@@ -533,6 +749,12 @@ impl SheetEditor {
                         .iter()
                         .map(|placement| placement.origin)
                         .collect();
+                    if let Some(furniture) = doc.furniture.clone() {
+                        self.sheet_size = furniture.size;
+                        self.sheet_project = furniture.project;
+                        self.sheet_author = furniture.author;
+                        self.sheet_frame = fmt_number(furniture.frame_inset_mm);
+                    }
                     self.doc = Some(doc);
                     self.note = None;
                 }
@@ -545,6 +767,27 @@ impl SheetEditor {
             (Job::Apply, Ok(_)) => {
                 self.note = Some(Ok("Placements applied.".to_owned()));
                 // The document moved: read it again so the next edit names the new head.
+                if !self.document_dir.is_empty() {
+                    self.start(
+                        cli,
+                        stats,
+                        Job::Load,
+                        vec![
+                            "inspect-drawing".to_owned(),
+                            "--document-dir".to_owned(),
+                            self.document_dir.clone(),
+                        ],
+                    );
+                }
+            }
+            (Job::EditSheet { remove }, Ok(_)) => {
+                self.note = Some(Ok(if remove {
+                    "Sheet removed.".to_owned()
+                } else {
+                    "Sheet applied.".to_owned()
+                }));
+                // The document moved: read it again so the next edit names the new head
+                // and the form mirrors the sheet the document now carries.
                 if !self.document_dir.is_empty() {
                     self.start(
                         cli,
@@ -656,5 +899,93 @@ mod tests {
             snap([240.4, 60.4], &[[240.0, 60.0], [200.0, 60.0]]),
             [240.0, 60.0]
         );
+    }
+
+    #[test]
+    fn the_sheet_commands_are_the_ones_a_user_types() {
+        assert_eq!(
+            sheet_args(
+                "/d",
+                "h",
+                "op",
+                "rev",
+                "act",
+                &LaySheet {
+                    size: "a4",
+                    project: "Bridge",
+                    author: "Drafter",
+                    frame_inset_mm: None
+                }
+            ),
+            [
+                "edit-sheet",
+                "--document-dir",
+                "/d",
+                "--expected-head",
+                "h",
+                "--op-id",
+                "op",
+                "--revision-id",
+                "rev",
+                "--actor-id",
+                "act",
+                "--sheet-size",
+                "a4",
+                "--sheet-project",
+                "Bridge",
+                "--sheet-author",
+                "Drafter"
+            ]
+        );
+        // A typed inset names the frame explicitly; empty lets the command default it.
+        assert_eq!(
+            sheet_args(
+                "/d",
+                "h",
+                "op",
+                "rev",
+                "act",
+                &LaySheet {
+                    size: "a3",
+                    project: "P",
+                    author: "A",
+                    frame_inset_mm: Some(12.5)
+                }
+            )
+            .iter()
+            .skip_while(|part| part.as_str() != "--sheet-frame")
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+            ["--sheet-frame", "12.5"]
+        );
+        assert_eq!(
+            remove_sheet_args("/d", "h", "op", "rev", "act"),
+            [
+                "edit-sheet",
+                "--document-dir",
+                "/d",
+                "--expected-head",
+                "h",
+                "--op-id",
+                "op",
+                "--revision-id",
+                "rev",
+                "--actor-id",
+                "act",
+                "--sheet-remove",
+                "true"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_frame_field_reads_empty_as_the_default_and_refuses_junk() {
+        assert_eq!(parse_frame(""), Ok(None));
+        assert_eq!(parse_frame("   "), Ok(None));
+        assert_eq!(parse_frame("10"), Ok(Some(10.0)));
+        assert_eq!(parse_frame(" 12.5 "), Ok(Some(12.5)));
+        assert!(parse_frame("wide").is_err());
+        assert!(parse_frame("nan").is_err());
+        assert!(parse_frame("inf").is_err());
     }
 }
