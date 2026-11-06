@@ -99,8 +99,8 @@ jobs:
           if-no-files-found: error
 
   test-archive-windows:
-    name: build test archive (windows-latest)
-    runs-on: windows-latest
+    name: build test archive (windows-2022)
+    runs-on: windows-2022
     env:
       CARGO_PROFILE_TEST_DEBUG: 0
     timeout-minutes: 45
@@ -126,9 +126,9 @@ jobs:
           if-no-files-found: error
 
   test-windows:
-    name: test (windows-latest, shard ${{ matrix.shard }}/12)
+    name: test (windows-2022, shard ${{ matrix.shard }}/12)
     needs: test-archive-windows
-    runs-on: windows-latest
+    runs-on: windows-2022
     strategy:
       fail-fast: false
       matrix:
