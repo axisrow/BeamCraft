@@ -78,7 +78,7 @@ def Scope "Library"
             double steel:fastener:washerInnerDiameterMm = 21
             double steel:fastener:washerThicknessMm = 3
             double steel:fastener:holeClearanceMm = 2
-            double[] steel:fastener:lengthsMm = [55, 60, 65, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160]
+            double[] steel:fastener:lengthsMm = [55, 60, 65, 70, 80, 90, 100, 110, 120, 130, 140, 150]
             double steel:fastener:threadProtrusionMm = 6
             bool steel:fastener:washerUnderHead = true
             bool steel:fastener:washerUnderNut = true
