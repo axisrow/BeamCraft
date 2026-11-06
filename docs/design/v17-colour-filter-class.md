@@ -9,11 +9,10 @@ rule semantics; this slice adds the display layer over it.
 The View tab gains a Colour tool. Its inspector offers the saved representation sets: two
 built-in presets plus the user's own sets. **Part classes** is one opaque rule per
 `DEFAULT_CLASS_PALETTE` entry, classes 0 to 7 (P15). **Catalogue** (issue 526) is the drawing
-convention by element class: members, plates and fittings, bolt groups, everything else
-uncoloured; the fastener stack reaches the scene as one merged mesh of one element (kind
-`connection`), so the whole group paints as the bolt class. The approved hues are the
-owner's decision (the question is recorded in issue 526); until it lands the preset carries
-provisional bytes. *Show colours* evaluates the picked set against the store
+convention by element class: members `#7A93A8`, plates and fittings `#E6C346`, bolt groups
+`#8E4E3C` (owner-approved 2026-11-06), everything else uncoloured; the fastener
+stack reaches the scene as one merged mesh of one element (kind
+`connection`), so the whole group paints as the bolt class. *Show colours* evaluates the picked set against the store
 head and colours every matching element; *Hide colours* clears the overlay. While the user
 keeps no set of their own in `colour-sets.json`, the window applies the Catalogue preset on
 its own when a model is first shown — no setup for a freshly opened store; an explicit Show

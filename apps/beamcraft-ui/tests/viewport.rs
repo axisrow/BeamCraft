@@ -869,10 +869,9 @@ fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport
 
 /// Issue 526: the built-in catalogue set colours the element classes in the real viewport
 /// with no user action. The set is evaluated the way the window evaluates it — paged
-/// `query-elements` per rule — each class paints its own pixels, the three class pictures
-/// are pairwise distinct, and clearing the overlay (Hide colours) draws exactly the
-/// never-coloured picture again. The approved hues are the owner's decision (question in
-/// issue 526); the assertions here stay independent of them.
+/// `query-elements` per rule — each class paints its own pixels in the approved hues (the
+/// unit test pins the bytes), the three class pictures are pairwise distinct, and clearing
+/// the overlay (Hide colours) draws exactly the never-coloured picture again.
 #[test]
 fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
     let Some(cli) = cli() else { return };
@@ -1013,10 +1012,10 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
     let plain = render_pixels(&gpu, &scene, &ClipGpu::none());
     // One overlay per class: a tint reaches only its element's instances, so a picture that
     // differs from the plain one is exactly that class coloured in the image, and the class
-    // pictures come out pairwise distinct — per-class pixel colours, whichever hues are
-    // approved (the owner picks them; the question is recorded in issue 526). The member's
-    // provisional tint is the pipeline's own steel (white), so its picture stays the plain
-    // one; its rule still matched, as `overlay.len()` proved through the evaluator.
+    // pictures come out pairwise distinct — per-class pixel colours in the approved hues
+    // (owner, issue 526, 2026-11-06: member #7A93A8, plate #E6C346, bolt #8E4E3C; the unit
+    // test pins the bytes). All three tints sit away from the pipeline's white, so each
+    // class paints and the three pictures differ.
     let mut changed: Vec<Vec<u8>> = Vec::new();
     for (id, tint) in overlay.entries() {
         let one = beamcraft_ui::colour_sets::Overlay::from_rules(vec![(
@@ -1031,23 +1030,17 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
         )
         .unwrap();
         let pixels = render_pixels(&gpu, &class_scene, &ClipGpu::none());
-        if tint != beamcraft_ui::colour_sets::WHITE {
-            if pixels == plain {
-                panic!("the tinted class must change the picture");
-            }
-            for seen in &changed {
-                if *seen == pixels {
-                    panic!("the class pictures must come out pairwise distinct");
-                }
-            }
-            changed.push(pixels);
+        if pixels == plain {
+            panic!("the tinted class must change the picture");
         }
+        for seen in &changed {
+            if *seen == pixels {
+                panic!("the class pictures must come out pairwise distinct");
+            }
+        }
+        changed.push(pixels);
     }
-    assert_eq!(
-        changed.len(),
-        2,
-        "the two non-steel classes paint and differ"
-    );
+    assert_eq!(changed.len(), 3, "member, plate and bolt paint and differ");
     // Hide colours: the scene rebuilt without the overlay draws the never-coloured picture.
     let cleared = Scene::from_snapshot_reusing(
         &snapshot,
