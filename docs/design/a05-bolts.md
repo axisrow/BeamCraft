@@ -58,7 +58,11 @@ beamcraft bolts --store ROOT
   bounded, never refused. Generated holes stay refused on a rotated plate, whose plate-local
   frame the world box alone does not give. The check accepts boxes that overlap in
   mid-air and never proves a real face intersection; a face-exact test needs the kernel in the
-  decision path and stays open.
+  decision path and stays open. The reachability itself stays this box proxy — but the placed
+  bolt group's grip is not bound by it: since issue 519 (defect B) the length follows the
+  material the shank actually passes through, the world triangles of the parts' stored scene
+  meshes, exact under any rotation (see the A14.3 note), so a rotated part no longer inflates
+  the requirement past every real library length.
 - **Explicit properties, no defaults.** Diameter, count, pitch, origin and direction are all
   required; omitting one is `INVALID_ARGUMENT`. Tokens are stored exactly (`steel:bolt:diameterMm`
   and `steel:bolt:pitchMm` as `double`, `steel:bolt:count` as `int`, `steel:bolt:originMm` and

@@ -781,9 +781,11 @@ fn none_writes_no_part_and_a_member_part_refuses_generate() {
         Ok(Json::String(_))
     ));
 
-    // A member part refuses generate wholesale (G14.1); none avoids the hole refusal but still
-    // resolves its length over the member's conservative box, so the shipped synthetic screw's
-    // 40 mm maximum cannot span a member: the same UNSUPPORTED_GEOMETRY, from the length rule.
+    // A member part refuses generate wholesale (G14.1). With hole_mode none the length is
+    // face-exact (issue 519 defect B): the beam's solid grips 30 mm along the shank (from the
+    // bearing on its surface to its far face, the plates inside that span), so the screw's
+    // requirement is 30 + protrusion 2 = 32 and the 40 mm standard covers it. Its conservative
+    // box claimed over 60 mm of grip, which refused every listed length before the fix.
     let profile = text(
         at(
             &f.ok(&owned(
@@ -835,11 +837,13 @@ fn none_writes_no_part_and_a_member_part_refuses_generate() {
         "--op-id".to_owned(),
         "019a7bf0-0000-7000-8000-0000007100d1".to_owned(),
     ]);
-    assert_eq!(
-        f.rejected(&strs("create-bolt-group", &args)),
-        "UNSUPPORTED_GEOMETRY",
-        "the conservative member grip exceeds every standard length"
-    );
+    f.ok(&strs("create-bolt-group", &args));
+    let group = f
+        .groups()
+        .into_iter()
+        .find(|g| text(g, "id") == "019a7bf0-0000-7000-8000-000000710003")
+        .expect("the screw group over the beam lists back");
+    assert_eq!(text(&group, "length_mm"), "40");
 }
 
 #[test]
@@ -997,7 +1001,7 @@ fn a_knee_brace_group_attaches_to_rotated_parts() {
         "element_id",
     );
 
-    // A row of two fasteners along +X at y = -6 (inside the gusset's thickness), crossing
+    // A row of two fasteners along +X at y = -6.5 (inside the gusset's thickness), crossing
     // both rotated parts.
     let created = f.ok(&owned(
         "create-bolt-group",
@@ -1013,9 +1017,9 @@ fn a_knee_brace_group_attaches_to_rotated_parts() {
             "--designation",
             WASHERED,
             "--point1",
-            "500,-6,1600",
+            "500,-6.5,1600",
             "--point2",
-            "650,-6,1600",
+            "650,-6.5,1600",
             "--plane-normal",
             "0,1,0",
             "--offset-start",
@@ -1039,4 +1043,10 @@ fn a_knee_brace_group_attaches_to_rotated_parts() {
         .expect("the created group lists back");
     assert_eq!(strings(group, "parts"), [brace.clone(), gusset.clone()]);
     assert_eq!(text(group, "hole_mode"), "none");
+    // The length is face-exact (issue 519 defect B): the first shank grips 36.5 mm of real
+    // material (from its bearing inside the brace to the far face; the gusset lies inside that
+    // span), so the requirement is 36.5 + washer 2 + nut 9 + protrusion 3 = 50.5 and the
+    // smallest covering standard length is 60. The brace's conservative box reaches 48.9 mm
+    // along the shank, whose requirement of 62.9 would demand the 80 mm entry.
+    assert_eq!(text(group, "length_mm"), "60");
 }

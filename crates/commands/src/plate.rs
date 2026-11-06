@@ -127,7 +127,7 @@ pub struct PublishedMesh {
     pub triangles: Vec<[u32; 3]>,
 }
 
-fn published_mesh(mesh: &DerivedMesh) -> Option<PublishedMesh> {
+pub(crate) fn published_mesh(mesh: &DerivedMesh) -> Option<PublishedMesh> {
     if mesh.points.is_empty()
         || mesh.counts.is_empty()
         || mesh.counts.iter().any(|c| *c != 3)

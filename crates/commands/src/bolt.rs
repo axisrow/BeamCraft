@@ -26,7 +26,7 @@ use crate::assembly::read_prims;
 use crate::definition::{material_lookup, profile_lookup};
 use crate::plate::{
     check_footprint, decode, evaluate_decoded, number, part_mesh_change, prior_op_with, property,
-    replay_summary, text,
+    published_mesh, replay_summary, text,
 };
 use crate::publication::{PublishRequest, changed_layers, publish_revision};
 use beamcraft_engine::footprint::Footprint;
@@ -49,6 +49,7 @@ use session::pipeline::{
 };
 use std::collections::BTreeMap;
 use steel::engine::bolt::Bounds;
+use steel::engine::bolt::Faces;
 use steel::engine::committed::PlateRecord;
 use steel::engine::transaction::PriorOp;
 use steel::engine::weld::{PartKind, Parts};
@@ -112,6 +113,9 @@ struct Model {
     groups: Vec<BoltGroupView>,
     definitions: BTreeMap<ContentDigest, crate::definition::DefinitionRecord>,
     bounds: BTreeMap<ElementId, Bounds>,
+    /// The world triangles of every part's stored scene mesh: the face-exact grip geometry
+    /// (issue 519 defect B). A part without a usable mesh has no entry and grips per its box.
+    faces: BTreeMap<ElementId, Faces>,
     /// The world placement of every part: the frame a generated hole's polygon is mapped into
     /// (A14.4); generation refuses a plate whose placement is rotated.
     placements: BTreeMap<ElementId, Placement>,
@@ -302,24 +306,54 @@ pub(crate) fn bolt_group_of(
 }
 
 /// The geometry the placement and hole decisions read: conservative world bounds of every
-/// decoded part, its world placement and the member identities.
+/// decoded part, the world triangles of its stored scene mesh (the face-exact grip geometry,
+/// issue 519 defect B), its world placement and the member identities.
 type Geometry = (
     BTreeMap<ElementId, Bounds>,
+    BTreeMap<ElementId, Faces>,
     BTreeMap<ElementId, Placement>,
     std::collections::BTreeSet<ElementId>,
 );
+
+/// The world-space triangles of a part's stored scene mesh, turned by its placement. A mesh
+/// that is not a usable triangle list is no faces at all: the part then grips per its
+/// conservative box, which errs long and never under.
+fn part_faces(mesh: &Option<crate::plate::DerivedMesh>, placement: &Placement) -> Option<Faces> {
+    let published = published_mesh(mesh.as_ref()?)?;
+    let [tx, ty, tz] = placement.translation_mm;
+    let world = |v: [f32; 3]| {
+        let turned = rotate_vector(
+            [f64::from(v[0]), f64::from(v[1]), f64::from(v[2])],
+            placement.orientation_xyzw,
+        );
+        [turned[0] + tx, turned[1] + ty, turned[2] + tz]
+    };
+    let mut faces = Vec::with_capacity(published.triangles.len());
+    for triangle in &published.triangles {
+        let point = |i: u32| published.points.get(i as usize).copied();
+        let (a, b, c) = (
+            point(triangle[0])?,
+            point(triangle[1])?,
+            point(triangle[2])?,
+        );
+        faces.push([world(a), world(b), world(c)]);
+    }
+    Some(faces)
+}
 
 /// Conservative world bounds of every decoded part: a plate contributes the exact box of its
 /// contour extruded by its thickness, turned by its placement; a member its two world axis
 /// points expanded by half the section's bounding-box diagonal in every axis (which contains it
 /// under any roll and any placement rotation). Alongside the bounds it collects every part's
-/// placement and the member identities the hole decision (A14.4) needs.
-fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
+/// world faces (issue 519 defect B), placement and the member identities the hole decision
+/// (A14.4) needs.
+fn world_geometry(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
     let mut bounds = BTreeMap::new();
+    let mut faces = BTreeMap::new();
     let mut placements = BTreeMap::new();
     let mut members = std::collections::BTreeSet::new();
     let profiles = profile_lookup(&decoded.definitions);
-    for (authored, _) in &decoded.plates {
+    for (authored, mesh) in &decoded.plates {
         let placement = authored.placement;
         let translation = placement.translation_mm;
         let Some(first) = authored.contour_points_mm.first() else {
@@ -354,9 +388,12 @@ fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
             }
         }
         bounds.insert(authored.id, [world_min, world_max]);
+        if let Some(part_faces) = part_faces(mesh, &placement) {
+            faces.insert(authored.id, part_faces);
+        }
         placements.insert(authored.id, placement);
     }
-    for (authored, _) in &decoded.members {
+    for (authored, mesh) in &decoded.members {
         let placement = authored.placement;
         let translation = placement.translation_mm;
         members.insert(authored.id);
@@ -392,9 +429,12 @@ fn world_bounds(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> {
         let min = expand(corner, -1.0);
         let max = expand(opposite, 1.0);
         bounds.insert(authored.id, [min, max]);
+        if let Some(part_faces) = part_faces(mesh, &placement) {
+            faces.insert(authored.id, part_faces);
+        }
         placements.insert(authored.id, placement);
     }
-    Ok((bounds, placements, members))
+    Ok((bounds, faces, placements, members))
 }
 
 fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> {
@@ -419,6 +459,7 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
         bounds: BTreeMap::new(),
         placements: BTreeMap::new(),
         members: std::collections::BTreeSet::new(),
+        faces: BTreeMap::new(),
     };
     for prim in &prims {
         let Some(id) = by_path.get(prim.path.as_str()).copied() else {
@@ -458,8 +499,9 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
     model.bolts.sort_by_key(|b| b.id);
     model.groups.sort_by_key(|g| g.id);
     let decoded = decode(&reader, &opened, control)?;
-    let (bounds, placements, members) = world_bounds(&decoded)?;
+    let (bounds, faces, placements, members) = world_geometry(&decoded)?;
     model.bounds = bounds;
+    model.faces = faces;
     model.placements = placements;
     model.members = members;
     model.definitions = decoded.definitions;
@@ -846,7 +888,7 @@ pub fn create_bolt_group(
     // The replay comparison needs the placement; a request that no longer places (its parts
     // moved away) is not a replay of anything, so a failure here just means "not the same".
     let expected = || {
-        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
+        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds, &model.faces)
             .map(|placed| expected_spec(&command.inputs, &placed))
             .ok()
     };
@@ -883,7 +925,10 @@ pub fn create_bolt_group(
         }
         PriorOp::Unseen => {}
     }
-    let (placed, footprint) = model.parts.create_bolt_group(command, &model.bounds)?;
+    let (placed, footprint) =
+        model
+            .parts
+            .create_bolt_group(command, &model.bounds, &model.faces)?;
     // The hole decision shares the transaction: generate writes one record per crossing
     // fastener on every plate, none writes no part (A14.4).
     let holes = steel::engine::bolt::generate_holes(
@@ -1006,7 +1051,7 @@ pub fn update_bolt_group(
     })?;
     // A request that no longer places is not a replay of anything (see the create).
     let expected = || {
-        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds)
+        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds, &model.faces)
             .map(|placed| expected_spec(&command.inputs, &placed))
             .ok()
     };
@@ -1047,7 +1092,10 @@ pub fn update_bolt_group(
         }
         PriorOp::Unseen => {}
     }
-    let (placed, footprint) = model.parts.update_bolt_group(command, &model.bounds)?;
+    let (placed, footprint) =
+        model
+            .parts
+            .update_bolt_group(command, &model.bounds, &model.faces)?;
     // Editing regenerates the holes (bolt amendment section 6): the new decision replaces the
     // group's old records in the same transaction, and turning generate off removes them. A
     // group that never generated and stays quiet touches no part.
