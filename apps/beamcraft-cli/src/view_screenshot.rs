@@ -96,7 +96,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 18 {
+    if !args.len().is_multiple_of(2) || args.len() > 20 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();

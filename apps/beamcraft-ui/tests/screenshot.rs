@@ -206,6 +206,40 @@ fn screenshot_view_renders_the_head_through_the_ui_binary() {
     );
     let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
     assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
+    // Every documented option in one invocation: ten options make twenty argv entries, the
+    // exact bound the CLI's KEY VALUE-pairs admission has to cover for a fully specified
+    // call, with neutral zoom and pan so the fitted ortho frame still holds the scene.
+    let full = root.join("full.png");
+    let stdout = run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            full.to_str().unwrap(),
+            "--width",
+            "640",
+            "--height",
+            "480",
+            "--samples",
+            "1",
+            "--yaw",
+            "-0.35",
+            "--pitch",
+            "0.25",
+            "--projection",
+            "ortho",
+            "--zoom",
+            "0",
+            "--pan",
+            "0,0",
+        ],
+    );
+    let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert_eq!(reply.get("width").unwrap().unsigned().unwrap(), 640);
+    assert_eq!(reply.get("height").unwrap().unsigned().unwrap(), 480);
+    assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
     // An unknown projection value is refused by the ui and relayed as an input refusal.
     run_expect_rejection(
         &cli,
