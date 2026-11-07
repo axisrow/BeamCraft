@@ -128,6 +128,38 @@ fn screenshot_view_renders_the_head_through_the_ui_binary() {
             .dimensions(),
         (320, 240)
     );
+    // An explicit orbit direction is honoured and still frames the whole scene.
+    let side = root.join("side.png");
+    let stdout = run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            side.to_str().unwrap(),
+            "--yaw",
+            "-0.35",
+            "--pitch",
+            "0.25",
+        ],
+    );
+    let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
+    // An out-of-range pitch is refused by the ui and relayed as an input refusal.
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            root.join("bad.png").to_str().unwrap(),
+            "--pitch",
+            "2.0",
+        ],
+        "INVALID_ARGUMENT",
+    );
     // An existing output file is refused before the render runs.
     run_expect_rejection(
         &cli,

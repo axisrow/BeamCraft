@@ -36,11 +36,15 @@ pub struct Screenshot {
 
 /// Renders `scene` once at `size`, fits the camera over the whole scene, and writes the PNG
 /// to `out`, which must not exist. `samples` is 1 or 4; `None` is the adapter's default.
+/// `angles` is `Some((yaw, pitch))` in radians for an orbit camera pointed at the fitted
+/// target from the given direction (`pitch` above the horizon); `None` keeps the fitted
+/// default direction exactly as the `Fit model` action shows it.
 pub fn capture(
     scene: &Scene,
     out: &Path,
     size: [u32; 2],
     samples: Option<u32>,
+    angles: Option<(f32, f32)>,
     stats: &Stats,
 ) -> Result<Screenshot, Error> {
     let gpu = pollster::block_on(Gpu::headless())?;
@@ -49,7 +53,12 @@ pub fn capture(
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, stats)?;
     let (target, extent) = scene.framing();
     let aspect = size[0] as f32 / size[1] as f32;
-    let camera = Camera::new(target, extent, aspect)?;
+    let mut camera = Camera::new(target, extent, aspect)?;
+    if let Some((yaw, pitch)) = angles {
+        // Camera::new starts at yaw -0.8, pitch 0.85; navigate takes deltas. `navigate`
+        // clamps the pitch to its own bounds and rejects non-finite input.
+        camera.navigate([yaw - -0.8, pitch - 0.85], [0.0; 2], 0.0)?;
+    }
     let view = camera.view(aspect)?;
     let index = renderer.draw(
         &gpu.device,

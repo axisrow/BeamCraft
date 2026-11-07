@@ -15,9 +15,10 @@ pub(super) const HELP: &str = concat!(
 );
 pub(super) const SCREENSHOT_HELP: &str = concat!(
     "View screenshot: screenshot-view --store ROOT --out FILE [--width U32] [--height U32] ",
-    "[--samples 1|4] (one viewport render of the verified head through the native renderer in ",
-    "the beamcraft-ui binary, which this command finds next to its own executable; the camera ",
-    "is fitted over the whole scene; FILE is created new, never overwritten, and one JSON ",
-    "summary is printed; default size is 1280x800; needs a native graphics adapter, so exit ",
-    "code 3 reports that the render backend is unavailable)",
+    "[--samples 1|4] [--yaw RAD] [--pitch RAD] (one viewport render of the verified head through ",
+    "the native renderer in the beamcraft-ui binary, which this command finds next to its own ",
+    "executable; the camera is fitted over the whole scene, and --yaw and --pitch, radians, ",
+    "point it from another direction, pitch above the horizon; FILE is created new, never ",
+    "overwritten, and one JSON summary is printed; default size is 1280x800; needs a native ",
+    "graphics adapter, so exit code 3 reports that the render backend is unavailable)",
 );

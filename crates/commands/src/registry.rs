@@ -2331,6 +2331,8 @@ pub const COMMANDS: &[Command] = &[
             opt("--width", "U32"),
             opt("--height", "U32"),
             opt("--samples", "1|4"),
+            opt("--yaw", "RAD"),
+            opt("--pitch", "RAD"),
         ],
     ),
     entry(

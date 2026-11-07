@@ -14,9 +14,12 @@
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
-//! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--cli PATH]` renders the
+//! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--yaw RAD]
+//! [--pitch RAD] [--cli PATH]` renders the
 //! store's published head once offscreen with the camera fitted over the whole scene and writes
-//! `FILE` as a PNG (created new, never overwritten), printing one JSON summary.
+//! `FILE` as a PNG (created new, never overwritten), printing one JSON summary; `--yaw` and
+//! `--pitch` (radians, `pitch` above the horizon) point the fitted camera from another
+//! direction.
 //! `--samples 1|4` overrides the viewport's MSAA default (4x on a hardware adapter that supports
 //! it, 1x on a software one) in the window, in `--metrics` and in `--screenshot`.
 //! `... --perf-run PLAN` opens the window as above, runs the scripted measurement `PLAN` in it
@@ -38,7 +41,7 @@ use std::sync::Arc;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -69,6 +72,8 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--perf-run"
                 | "--samples"
                 | "--screenshot"
+                | "--yaw"
+                | "--pitch"
                 | "--config-dir"
                 | "--actor-id"
         );
@@ -157,6 +162,8 @@ fn run() -> Result<Option<(String, u8)>, Error> {
     if map.contains_key("--metrics") {
         if map.contains_key("--perf-run")
             || map.contains_key("--screenshot")
+            || map.contains_key("--yaw")
+            || map.contains_key("--pitch")
             || config_dir.is_some()
         {
             return Err(usage());
@@ -186,9 +193,33 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             number(&map, "--width", 1280)?,
             number(&map, "--height", 800)?,
         ];
+        let angles = match (map.get("--yaw"), map.get("--pitch")) {
+            (None, None) => None,
+            (yaw, pitch) => {
+                let yaw: f32 = yaw
+                    .map(|v| v.parse())
+                    .transpose()
+                    .map_err(|_| usage())?
+                    .unwrap_or(0.0);
+                let pitch: f32 = pitch
+                    .map(|v| v.parse())
+                    .transpose()
+                    .map_err(|_| usage())?
+                    .unwrap_or(0.0);
+                if !yaw.is_finite()
+                    || !pitch.is_finite()
+                    || !(0.0..=1.52).contains(&pitch)
+                    || yaw.abs() > 1e6
+                {
+                    return Err(usage());
+                }
+                Some((yaw, pitch))
+            }
+        };
         let snapshot = source::load(&cli, &store, &stats)?;
         let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        let saved = screenshot::capture(&scene, Path::new(out), size, samples, &stats)?.to_json();
+        let saved =
+            screenshot::capture(&scene, Path::new(out), size, samples, angles, &stats)?.to_json();
         return Ok(Some((saved, 0)));
     }
     let plan = map.get("--perf-run").map(|p| perf::parse(p)).transpose()?;

@@ -1396,7 +1396,8 @@ export-view --store ROOT --out FILE [--with-definitions true|false] [--with-elem
 write.
 
 ```text
-screenshot-view --store ROOT --out FILE [--width U32] [--height U32] [--samples 1|4]
+screenshot-view --store ROOT --out FILE [--width U32] [--height U32] [--samples 1|4] [--yaw RAD]
+    [--pitch RAD]
 ```
 
 ## bom
