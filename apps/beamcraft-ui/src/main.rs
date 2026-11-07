@@ -34,11 +34,13 @@ use beamcraft_ui::app::{App, Source, load_icon};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::shell::Shell;
 use beamcraft_ui::stats::Stats;
-use beamcraft_ui::{Error, json_string, metrics, perf, screenshot, source};
+use beamcraft_ui::{Error, colour_sets, json_string, metrics, perf, screenshot, source};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
@@ -253,7 +255,24 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             return Err(usage());
         }
         let snapshot = source::load(&cli, &store, &stats)?;
-        let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
+        // The default catalogue colours ride the screenshot (issue 535): the same tints the
+        // window gives a freshly opened model, evaluated by the window's own path. Only the
+        // built-in set: a headless screenshot reads no colour-sets file of its own.
+        let overlay = colour_sets::evaluate(
+            &cli,
+            &store,
+            &colour_sets::catalogue_set(),
+            &AtomicBool::new(false),
+            &stats,
+        )
+        .map_err(Error::Cli)?;
+        let scene = Scene::from_snapshot_showing(
+            &snapshot,
+            Representation::Full,
+            &BTreeSet::new(),
+            Some(&overlay),
+            beamcraft_engine::KindFilter::SHOW_ALL,
+        )?;
         let saved = screenshot::capture(
             &scene,
             Path::new(out),

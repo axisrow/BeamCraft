@@ -78,6 +78,35 @@ fn screenshot_view_renders_the_head_through_the_ui_binary() {
             "10",
         ],
     );
+    // A member on the plate, so the render shows both catalogue hues (issue 535).
+    run_expect_success(
+        &cli,
+        &[
+            "define-profile",
+            "--store",
+            store,
+            "--width",
+            "200",
+            "--height",
+            "80",
+            "--name",
+            "RECT 200x80",
+        ],
+    );
+    run_expect_success(
+        &cli,
+        &[
+            "create-member",
+            "--store",
+            store,
+            "--profile",
+            "RECT 200x80",
+            "--start",
+            "100,250,10",
+            "--end",
+            "300,250,10",
+        ],
+    );
     let out = root.join("shot.png");
     let out_str = out.to_str().unwrap();
     let stdout = run_expect_success(
@@ -92,17 +121,28 @@ fn screenshot_view_renders_the_head_through_the_ui_binary() {
     assert_eq!(reply.get("width").unwrap().unsigned().unwrap(), 1280);
     assert_eq!(reply.get("height").unwrap().unsigned().unwrap(), 800);
     assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
-    // The file is a real PNG of the reported size with a visible share of lit pixels.
+    // The file is a real PNG of the reported size with a visible share of lit pixels, and the
+    // default catalogue colours ride the screenshot (issue 535): the plate reads yellow and the
+    // member reads blue-grey, as the window's freshly opened model does. The tint multiplies the
+    // shaded base colour, so the test separates the hues by channel dominance (measured bands:
+    // plate 160,146,55 and 64,73,30; member 85,110,132 and 34,55,73; background 5,8,13).
     let bytes = std::fs::read(&out).unwrap();
     assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "PNG signature");
     let image = image::load_from_memory(&bytes).unwrap();
     assert_eq!((image.width(), image.height()), (1280, 800));
-    let lit = image
-        .to_rgba8()
-        .pixels()
-        .filter(|p| !is_background(p.0))
-        .count();
+    let rgba = image.to_rgba8();
+    let lit = rgba.pixels().filter(|p| !is_background(p.0)).count();
     assert!(lit > 200, "lit pixels {lit}");
+    let yellow = rgba
+        .pixels()
+        .filter(|p| p.0[0] > 50 && p.0[0] > p.0[2] + 30)
+        .count();
+    assert!(yellow > 10_000, "yellow plate pixels {yellow}");
+    let member = rgba
+        .pixels()
+        .filter(|p| p.0[2] > 50 && p.0[2] > p.0[0] + 30)
+        .count();
+    assert!(member > 2_000, "member pixels {member}");
     // An explicit size is honoured.
     let small = root.join("small.png");
     let stdout = run_expect_success(
