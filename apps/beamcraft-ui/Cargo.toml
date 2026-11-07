@@ -26,10 +26,6 @@ path = "tests/ui.rs"
 name = "cancel"
 path = "tests/cancel.rs"
 
-[[test]]
-name = "screenshot"
-path = "tests/screenshot.rs"
-
 # Exact pins. Default features off, so egui's `default_fonts` (Ubuntu/Bitstream licences) is
 # never enabled; the UI font is the admitted Inter read at run time from assets/fonts/inter.
 # `accesskit` is off: on Linux it pulls zbus 5 crates (zbus_names, zvariant, zvariant_derive)

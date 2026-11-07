@@ -16,6 +16,7 @@ mod create_tools;
 mod edit_tools;
 mod grids;
 mod properties;
+mod screenshot;
 mod selection;
 mod viewport;
 

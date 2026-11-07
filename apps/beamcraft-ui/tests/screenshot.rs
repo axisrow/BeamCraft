@@ -14,8 +14,7 @@
     clippy::panic
 )]
 
-mod support;
-
+use crate::support;
 use image::GenericImageView;
 use std::path::Path;
 use std::process::Command;
