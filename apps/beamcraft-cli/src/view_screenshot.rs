@@ -96,7 +96,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 14 {
+    if !args.len().is_multiple_of(2) || args.len() > 20 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
@@ -104,7 +104,16 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
         let [key, value] = pair;
         if !matches!(
             *key,
-            "--store" | "--out" | "--width" | "--height" | "--samples" | "--yaw" | "--pitch"
+            "--store"
+                | "--out"
+                | "--width"
+                | "--height"
+                | "--samples"
+                | "--yaw"
+                | "--pitch"
+                | "--projection"
+                | "--zoom"
+                | "--pan"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated option"));
@@ -149,6 +158,15 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
     }
     if let Some(pitch) = options.get("--pitch") {
         spawn.arg("--pitch").arg(pitch);
+    }
+    if let Some(projection) = options.get("--projection") {
+        spawn.arg("--projection").arg(projection);
+    }
+    if let Some(zoom) = options.get("--zoom") {
+        spawn.arg("--zoom").arg(zoom);
+    }
+    if let Some(pan) = options.get("--pan") {
+        spawn.arg("--pan").arg(pan);
     }
     let output = spawn.output().map_err(|e| backend(e.to_string()))?;
     let stdout = bounded_stdout(&output.stdout)?;

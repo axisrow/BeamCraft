@@ -15,11 +15,12 @@
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
 //! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--yaw RAD]
-//! [--pitch RAD] [--cli PATH]` renders the
+//! [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--cli PATH]` renders the
 //! store's published head once offscreen with the camera fitted over the whole scene and writes
 //! `FILE` as a PNG (created new, never overwritten), printing one JSON summary; `--yaw` and
 //! `--pitch` (radians, `pitch` above the horizon) point the fitted camera from another
-//! direction.
+//! direction, `--projection ortho` switches to the orthographic projection, `--zoom` is the
+//! logarithmic zoom and `--pan X,Y` shifts the fitted target in screen-plane millimetres.
 //! `--samples 1|4` overrides the viewport's MSAA default (4x on a hardware adapter that supports
 //! it, 1x on a software one) in the window, in `--metrics` and in `--screenshot`.
 //! `... --perf-run PLAN` opens the window as above, runs the scripted measurement `PLAN` in it
@@ -33,25 +34,27 @@ use beamcraft_ui::app::{App, Source, load_icon};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::shell::Shell;
 use beamcraft_ui::stats::Stats;
-use beamcraft_ui::{Error, json_string, metrics, perf, screenshot, source};
+use beamcraft_ui::{Error, colour_sets, json_string, metrics, perf, screenshot, source};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
 fn options() -> Result<BTreeMap<String, String>, Error> {
     let args: Vec<String> = std::env::args_os()
         .skip(1)
-        .take(17)
+        .take(25)
         .map(|a| a.into_string().map_err(|_| usage()))
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 16 {
+    if !args.len().is_multiple_of(2) || args.len() > 24 {
         return Err(usage());
     }
     let mut map = BTreeMap::new();
@@ -74,6 +77,9 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--screenshot"
                 | "--yaw"
                 | "--pitch"
+                | "--projection"
+                | "--zoom"
+                | "--pan"
                 | "--config-dir"
                 | "--actor-id"
         );
@@ -216,10 +222,71 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 Some((yaw, pitch))
             }
         };
+        let ortho = match map.get("--projection").map(String::as_str) {
+            None => false,
+            Some("perspective") => false,
+            Some("ortho") => true,
+            Some(_) => return Err(usage()),
+        };
+        let zoom: f32 = map
+            .get("--zoom")
+            .map(|v| v.parse())
+            .transpose()
+            .map_err(|_| usage())?
+            .unwrap_or(0.0);
+        let pan = match map.get("--pan") {
+            None => [0.0; 2],
+            Some(text) => {
+                let parts: Vec<f32> = text
+                    .split(',')
+                    .map(|v| v.parse())
+                    .collect::<Result<_, _>>()
+                    .map_err(|_| usage())?;
+                let [x, y] = parts.as_slice() else {
+                    return Err(usage());
+                };
+                if !x.is_finite() || !y.is_finite() {
+                    return Err(usage());
+                }
+                [*x, *y]
+            }
+        };
+        if !zoom.is_finite() || zoom.abs() > 10.0 {
+            return Err(usage());
+        }
         let snapshot = source::load(&cli, &store, &stats)?;
-        let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
-        let saved =
-            screenshot::capture(&scene, Path::new(out), size, samples, angles, &stats)?.to_json();
+        // The default catalogue colours ride the screenshot (issue 535): the same tints the
+        // window gives a freshly opened model, evaluated by the window's own path. Only the
+        // built-in set: a headless screenshot reads no colour-sets file of its own.
+        let overlay = colour_sets::evaluate(
+            &cli,
+            &store,
+            &colour_sets::catalogue_set(),
+            &AtomicBool::new(false),
+            &stats,
+        )
+        .map_err(Error::Cli)?;
+        let scene = Scene::from_snapshot_showing(
+            &snapshot,
+            Representation::Full,
+            &BTreeSet::new(),
+            Some(&overlay),
+            beamcraft_engine::KindFilter::SHOW_ALL,
+        )?;
+        let saved = screenshot::capture(
+            &scene,
+            Path::new(out),
+            size,
+            samples,
+            &screenshot::CameraPose {
+                angles,
+                ortho,
+                zoom,
+                pan,
+            },
+            &stats,
+        )?
+        .to_json();
         return Ok(Some((saved, 0)));
     }
     let plan = map.get("--perf-run").map(|p| perf::parse(p)).transpose()?;

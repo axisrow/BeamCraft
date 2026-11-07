@@ -2333,6 +2333,9 @@ pub const COMMANDS: &[Command] = &[
             opt("--samples", "1|4"),
             opt("--yaw", "RAD"),
             opt("--pitch", "RAD"),
+            opt("--projection", "perspective|ortho"),
+            opt("--zoom", "F32"),
+            opt("--pan", "X,Y"),
         ],
     ),
     entry(
