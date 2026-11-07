@@ -146,6 +146,40 @@ fn screenshot_view_renders_the_head_through_the_ui_binary() {
     );
     let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
     assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
+    // The orthographic projection with zoom and pan renders a close-up of the same scene.
+    let ortho = root.join("ortho.png");
+    let stdout = run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            ortho.to_str().unwrap(),
+            "--projection",
+            "ortho",
+            "--zoom",
+            "1.27",
+            "--pan",
+            "7,-241",
+        ],
+    );
+    let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
+    // An unknown projection value is refused by the ui and relayed as an input refusal.
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            root.join("badproj.png").to_str().unwrap(),
+            "--projection",
+            "isometric",
+        ],
+        "INVALID_ARGUMENT",
+    );
     // An out-of-range pitch is refused by the ui and relayed as an input refusal.
     run_expect_rejection(
         &cli,
