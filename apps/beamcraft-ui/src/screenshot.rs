@@ -48,19 +48,44 @@ pub struct CameraPose {
     pub pan: [f32; 2],
 }
 
+/// The clear colour behind the render (issue 537): the renderer's own dark theme, or a
+/// light paper tone so a frame matches a drawing-style reference picture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Background {
+    /// The renderer's dark clear colour, today's default.
+    #[default]
+    Dark,
+    /// A light clear colour near the drawing paper value `rgb(245, 246, 248)`.
+    Light,
+}
+
+/// The light clear colour, picked once: `srgb(0.961, 0.965, 0.973)` quantizes to
+/// `rgb(245, 246, 248)`, the reference paper value measured on the demo frame.
+const LIGHT_BACKGROUND: wgpu::Color = wgpu::Color {
+    r: 0.961,
+    g: 0.965,
+    b: 0.973,
+    a: 1.0,
+};
+
 /// Renders `scene` once at `size`, fits the camera over the whole scene, and writes the PNG
 /// to `out`, which must not exist. `samples` is 1 or 4; `None` is the adapter's default.
+/// `background` picks the clear colour the renderer starts its frame from.
 pub fn capture(
     scene: &Scene,
     out: &Path,
     size: [u32; 2],
     samples: Option<u32>,
     pose: &CameraPose,
+    background: Background,
     stats: &Stats,
 ) -> Result<Screenshot, Error> {
     let gpu = pollster::block_on(Gpu::headless())?;
-    let renderer =
+    let mut renderer =
         Renderer::with_samples(&gpu.adapter, &gpu.device, size[0], size[1], samples, stats)?;
+    if background == Background::Light {
+        renderer.background = LIGHT_BACKGROUND;
+    }
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, stats)?;
     let (target, extent) = scene.framing();
     let aspect = size[0] as f32 / size[1] as f32;

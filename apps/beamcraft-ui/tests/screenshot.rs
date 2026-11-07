@@ -53,6 +53,50 @@ fn run_expect_rejection(cli: &Path, args: &[&str], code: &str) -> i32 {
     output.status.code().unwrap()
 }
 
+/// A colour-sets file body holding the sets given: each one rule, `type eq plate`, in the
+/// set's colour, the same shape `colour_sets::Sets::decode` reads.
+fn sets_file(sets: &[(&str, [u8; 3])]) -> Vec<u8> {
+    use beamcraft_json::Json;
+    let plate_rule = Json::object([
+        ("field", Json::text("type")),
+        ("op", Json::text("eq")),
+        ("value", Json::text("plate")),
+    ]);
+    Json::object([
+        ("version", Json::uint(1)),
+        (
+            "sets",
+            Json::Array(
+                sets.iter()
+                    .map(|(name, colour)| {
+                        Json::object([
+                            ("name", Json::text(*name)),
+                            (
+                                "rules",
+                                Json::Array(vec![Json::object([
+                                    ("rule", plate_rule.clone()),
+                                    (
+                                        "colour",
+                                        Json::Array(
+                                            colour
+                                                .iter()
+                                                .map(|c| Json::uint(u64::from(*c)))
+                                                .collect(),
+                                        ),
+                                    ),
+                                    ("transparency", Json::Number("0.0".into())),
+                                ])]),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
+    .encode(&beamcraft_json::Limits::DEFAULT)
+    .unwrap()
+}
+
 #[test]
 fn screenshot_view_renders_the_head_through_the_ui_binary() {
     let Some(cli) = support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))) else {
@@ -272,6 +316,179 @@ fn screenshot_view_renders_the_head_through_the_ui_binary() {
     run_expect_rejection(
         &cli,
         &["screenshot-view", "--store", store, "--out", out_str],
+        "INVALID_ARGUMENT",
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn screenshot_view_takes_a_colour_set_and_a_light_background() {
+    let Some(cli) = support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))) else {
+        panic!("the beamcraft CLI is required next to the beamcraft-ui binary");
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("screenshot-tests")
+        .join(format!("appearance-{}", support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let store = root.to_str().unwrap();
+    // The same store shape as the catalogue test: a plate and a member on it.
+    run_expect_success(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--width",
+            "1000",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+        ],
+    );
+    run_expect_success(
+        &cli,
+        &[
+            "define-profile",
+            "--store",
+            store,
+            "--width",
+            "200",
+            "--height",
+            "80",
+            "--name",
+            "RECT 200x80",
+        ],
+    );
+    run_expect_success(
+        &cli,
+        &[
+            "create-member",
+            "--store",
+            store,
+            "--profile",
+            "RECT 200x80",
+            "--start",
+            "100,250,10",
+            "--end",
+            "300,250,10",
+        ],
+    );
+    let one = root.join("one-set.json");
+    std::fs::write(&one, sets_file(&[("Ink plates", [200, 60, 40])])).unwrap();
+    let two = root.join("two-sets.json");
+    std::fs::write(
+        &two,
+        sets_file(&[("First", [200, 60, 40]), ("Second", [10, 20, 30])]),
+    )
+    .unwrap();
+
+    // A file set plus the light background (issue 537): the plate reads the set's red, the
+    // catalogue tints are gone, and the clear colour is the paper value rgb(245,246,248)
+    // within the quantization band the pixel tests use.
+    let styled = root.join("styled.png");
+    let stdout = run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            styled.to_str().unwrap(),
+            "--colour-set",
+            one.to_str().unwrap(),
+            "--background",
+            "light",
+        ],
+    );
+    let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert_eq!(
+        reply.get("outcome").unwrap().string().unwrap(),
+        "screenshot_saved"
+    );
+    assert!(reply.get("lit_pixels").unwrap().unsigned().unwrap() > 200);
+    let image = image::load_from_memory(&std::fs::read(&styled).unwrap()).unwrap();
+    let rgba = image.to_rgba8();
+    let paper = rgba
+        .pixels()
+        .filter(|p| {
+            (244..=246).contains(&p.0[0])
+                && (245..=247).contains(&p.0[1])
+                && (247..=249).contains(&p.0[2])
+                && p.0[3] == 255
+        })
+        .count();
+    assert!(paper > 1280 * 800 / 2, "paper background pixels {paper}");
+    // The set's red tint reaches the plate: channel dominance over the whole plate area,
+    // separated like the catalogue test's yellow (shaded faces included).
+    let ink = rgba
+        .pixels()
+        .filter(|p| {
+            u16::from(p.0[0]) > 60
+                && u16::from(p.0[0]) > u16::from(p.0[1]) + 40
+                && u16::from(p.0[0]) > u16::from(p.0[2]) + 40
+        })
+        .count();
+    assert!(ink > 10_000, "set-coloured plate pixels {ink}");
+    // Neither catalogue hue survives: the file set replaced the default overlay.
+    let yellow = rgba
+        .pixels()
+        .filter(|p| u16::from(p.0[1]) > 100 && u16::from(p.0[1]) > u16::from(p.0[2]) + 50)
+        .count();
+    assert!(yellow < 100, "catalogue yellow pixels left {yellow}");
+    // A built-in preset name picks the preset and renders normally.
+    let preset = root.join("preset.png");
+    run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            preset.to_str().unwrap(),
+            "--colour-set",
+            "Part classes",
+        ],
+    );
+    // Refusals: an unreadable path, a file with two sets of its own, a bad background value.
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            root.join("missing.png").to_str().unwrap(),
+            "--colour-set",
+            root.join("missing.json").to_str().unwrap(),
+        ],
+        "INVALID_ARGUMENT",
+    );
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            root.join("twosets.png").to_str().unwrap(),
+            "--colour-set",
+            two.to_str().unwrap(),
+        ],
+        "INVALID_ARGUMENT",
+    );
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            root.join("medium.png").to_str().unwrap(),
+            "--background",
+            "medium",
+        ],
         "INVALID_ARGUMENT",
     );
     let _ = std::fs::remove_dir_all(&root);

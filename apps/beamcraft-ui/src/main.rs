@@ -15,12 +15,16 @@
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
 //! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--yaw RAD]
-//! [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--cli PATH]` renders the
+//! [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y]
+//! [--colour-set TEXT] [--background light|dark] [--cli PATH]` renders the
 //! store's published head once offscreen with the camera fitted over the whole scene and writes
 //! `FILE` as a PNG (created new, never overwritten), printing one JSON summary; `--yaw` and
 //! `--pitch` (radians, `pitch` above the horizon) point the fitted camera from another
 //! direction, `--projection ortho` switches to the orthographic projection, `--zoom` is the
-//! logarithmic zoom and `--pan X,Y` shifts the fitted target in screen-plane millimetres.
+//! logarithmic zoom and `--pan X,Y` shifts the fitted target in screen-plane millimetres;
+//! `--colour-set` names a built-in set (`Catalogue`, the default, or `Part classes`) or a
+//! colour-sets file holding exactly one set of its own, and `--background light` renders over
+//! a light paper tone instead of the dark clear colour (issue 537).
 //! `--samples 1|4` overrides the viewport's MSAA default (4x on a hardware adapter that supports
 //! it, 1x on a software one) in the window, in `--metrics` and in `--screenshot`.
 //! `... --perf-run PLAN` opens the window as above, runs the scripted measurement `PLAN` in it
@@ -44,17 +48,17 @@ use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] | --perf-run PLAN] | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
 fn options() -> Result<BTreeMap<String, String>, Error> {
     let args: Vec<String> = std::env::args_os()
         .skip(1)
-        .take(25)
+        .take(29)
         .map(|a| a.into_string().map_err(|_| usage()))
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 24 {
+    if !args.len().is_multiple_of(2) || args.len() > 28 {
         return Err(usage());
     }
     let mut map = BTreeMap::new();
@@ -80,6 +84,8 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--projection"
                 | "--zoom"
                 | "--pan"
+                | "--colour-set"
+                | "--background"
                 | "--config-dir"
                 | "--actor-id"
         );
@@ -254,18 +260,43 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         if !zoom.is_finite() || zoom.abs() > 10.0 {
             return Err(usage());
         }
+        let background = match map.get("--background").map(String::as_str) {
+            None | Some("dark") => screenshot::Background::Dark,
+            Some("light") => screenshot::Background::Light,
+            Some(_) => return Err(usage()),
+        };
         let snapshot = source::load(&cli, &store, &stats)?;
         // The default catalogue colours ride the screenshot (issue 535): the same tints the
-        // window gives a freshly opened model, evaluated by the window's own path. Only the
-        // built-in set: a headless screenshot reads no colour-sets file of its own.
-        let overlay = colour_sets::evaluate(
-            &cli,
-            &store,
-            &colour_sets::catalogue_set(),
-            &AtomicBool::new(false),
-            &stats,
-        )
-        .map_err(Error::Cli)?;
+        // window gives a freshly opened model, evaluated by the window's own path. A
+        // `--colour-set` names a built-in preset or a colour-sets file holding exactly one
+        // set of its own (issue 537); the set is evaluated by the same path the window uses,
+        // and a headless screenshot reads no colour-sets file on its own.
+        let set = match map.get("--colour-set").map(String::as_str) {
+            None | Some(colour_sets::CATALOGUE_SET_NAME) => colour_sets::catalogue_set(),
+            Some(colour_sets::CLASS_SET_NAME) => colour_sets::class_set(),
+            Some(path) => {
+                let bytes = std::fs::read(path)
+                    .map_err(|_| Error::Input("the colour-sets file could not be read"))?;
+                let sets = colour_sets::Sets::decode(&bytes).map_err(Error::Input)?;
+                let mut own = sets.list().iter().filter(|set| {
+                    set.name != colour_sets::CATALOGUE_SET_NAME
+                        && set.name != colour_sets::CLASS_SET_NAME
+                });
+                let Some(set) = own.next().cloned() else {
+                    return Err(Error::Input(
+                        "a colour-sets file must hold exactly one set of its own",
+                    ));
+                };
+                if own.next().is_some() {
+                    return Err(Error::Input(
+                        "a colour-sets file must hold exactly one set of its own",
+                    ));
+                }
+                set
+            }
+        };
+        let overlay = colour_sets::evaluate(&cli, &store, &set, &AtomicBool::new(false), &stats)
+            .map_err(Error::Cli)?;
         let scene = Scene::from_snapshot_showing(
             &snapshot,
             Representation::Full,
@@ -284,6 +315,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 zoom,
                 pan,
             },
+            background,
             &stats,
         )?
         .to_json();

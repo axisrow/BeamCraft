@@ -96,7 +96,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 20 {
+    if !args.len().is_multiple_of(2) || args.len() > 24 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
@@ -114,6 +114,8 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
                 | "--projection"
                 | "--zoom"
                 | "--pan"
+                | "--colour-set"
+                | "--background"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated option"));
@@ -167,6 +169,15 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
     }
     if let Some(pan) = options.get("--pan") {
         spawn.arg("--pan").arg(pan);
+    }
+    // The colour set and the background are relayed verbatim too; the ui validates the set
+    // name or file and the light|dark value, so a bad value is refused there with its own
+    // message instead of being re-implemented here.
+    if let Some(colour_set) = options.get("--colour-set") {
+        spawn.arg("--colour-set").arg(colour_set);
+    }
+    if let Some(background) = options.get("--background") {
+        spawn.arg("--background").arg(background);
     }
     let output = spawn.output().map_err(|e| backend(e.to_string()))?;
     let stdout = bounded_stdout(&output.stdout)?;

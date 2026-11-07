@@ -2336,6 +2336,8 @@ pub const COMMANDS: &[Command] = &[
             opt("--projection", "perspective|ortho"),
             opt("--zoom", "F32"),
             opt("--pan", "X,Y"),
+            opt("--colour-set", "TEXT"),
+            opt("--background", "light|dark"),
         ],
     ),
     entry(
