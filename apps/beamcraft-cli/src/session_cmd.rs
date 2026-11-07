@@ -193,6 +193,7 @@ impl<'a> Session<'a> {
                     | Route::Batch
                     | Route::Export
                     | Route::ExportView
+                    | Route::ScreenshotView
                     | Route::Coordinator
             )
         }) {

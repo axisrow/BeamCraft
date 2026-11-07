@@ -366,3 +366,35 @@ fn an_open_session_holds_the_compaction_lease() {
     assert_eq!(Session::outcome(&after), "compaction_dry_run");
     assert!(after.get("would_proceed").unwrap().boolean().unwrap());
 }
+
+#[test]
+fn a_session_refuses_screenshot_view_with_the_typed_word() {
+    let (_root, store) = fresh();
+    // The first revision belongs outside a batch; one one-shot create sets it, so the
+    // aliveness probe at the end can open a real batch.
+    let root = store.arg();
+    let first = format!(
+        "create-plate --store {root} --new-id 019a7bf0-0000-7000-8000-0000000000b1 --op-id 019a7bf0-0000-7000-8000-0000000000b2 --width 200 --length 200 --thickness 8 --name first"
+    );
+    assert_eq!(
+        Session::outcome(&store.run(first.split_whitespace().collect::<Vec<_>>().as_slice())),
+        "plate_created"
+    );
+    let mut session = Session::start(&store);
+    // The route refusal fires before any argument parsing, so the bare word carries no
+    // options on purpose: the answer must be the typed cannot-run-inside-a-session refusal,
+    // not a generic one over an unknown `--out`.
+    let refused = session.ask("screenshot-view");
+    assert_eq!(Session::outcome(&refused), "rejected");
+    assert_eq!(
+        refused.get("message").unwrap().string().unwrap(),
+        "this command cannot run inside a session",
+        "the typed session refusal: {refused:?}"
+    );
+    // The refusal leaves the session alive and ready for new lines.
+    assert_eq!(Session::outcome(&session.ask("batch-open")), "batch_opened");
+    assert_eq!(
+        Session::outcome(&session.ask("batch-abort")),
+        "batch_abandoned"
+    );
+}
