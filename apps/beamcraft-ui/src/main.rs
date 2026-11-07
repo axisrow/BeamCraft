@@ -14,8 +14,11 @@
 //! `beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H]` measures the engine
 //! snapshot of COUNT synthetic kernel plates instead of a store (labelled `synthetic` in the
 //! output); it exists for scale baselines a store cannot reach yet.
+//! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--cli PATH]` renders the
+//! store's published head once offscreen with the camera fitted over the whole scene and writes
+//! `FILE` as a PNG (created new, never overwritten), printing one JSON summary.
 //! `--samples 1|4` overrides the viewport's MSAA default (4x on a hardware adapter that supports
-//! it, 1x on a software one) in the window and in `--metrics`.
+//! it, 1x on a software one) in the window, in `--metrics` and in `--screenshot`.
 //! `... --perf-run PLAN` opens the window as above, runs the scripted measurement `PLAN` in it
 //! (see `beamcraft_ui::perf`), prints its report as one JSON object and closes; the exit status
 //! is 1 when a phase failed.
@@ -27,9 +30,9 @@ use beamcraft_ui::app::{App, Source, load_icon};
 use beamcraft_ui::scene::Scene;
 use beamcraft_ui::shell::Shell;
 use beamcraft_ui::stats::Stats;
-use beamcraft_ui::{Error, json_string, metrics, perf, source};
+use beamcraft_ui::{Error, json_string, metrics, perf, screenshot, source};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
@@ -65,6 +68,7 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--synthetic"
                 | "--perf-run"
                 | "--samples"
+                | "--screenshot"
                 | "--config-dir"
                 | "--actor-id"
         );
@@ -138,6 +142,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         (None, None)
             if !map.contains_key("--metrics")
                 && !map.contains_key("--perf-run")
+                && !map.contains_key("--screenshot")
                 && !map.contains_key("--actor-id") =>
         {
             return start_page(
@@ -150,7 +155,10 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         _ => return Err(usage()),
     };
     if map.contains_key("--metrics") {
-        if map.contains_key("--perf-run") || config_dir.is_some() {
+        if map.contains_key("--perf-run")
+            || map.contains_key("--screenshot")
+            || config_dir.is_some()
+        {
             return Err(usage());
         }
         let frames = number(&map, "--metrics", 300)?;
@@ -164,6 +172,24 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             metrics::measure(&scene, frames, size, samples, &stats)?.to_json(),
             0,
         )));
+    }
+    if let Some(out) = map.get("--screenshot") {
+        if map.contains_key("--perf-run")
+            || map.contains_key("--actor-id")
+            || config_dir.is_some()
+            || workspace.is_some()
+            || published.is_some()
+        {
+            return Err(usage());
+        }
+        let size = [
+            number(&map, "--width", 1280)?,
+            number(&map, "--height", 800)?,
+        ];
+        let snapshot = source::load(&cli, &store, &stats)?;
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full)?;
+        let saved = screenshot::capture(&scene, Path::new(out), size, samples, &stats)?.to_json();
+        return Ok(Some((saved, 0)));
     }
     let plan = map.get("--perf-run").map(|p| perf::parse(p)).transpose()?;
     let (report, reports) = std::sync::mpsc::channel();

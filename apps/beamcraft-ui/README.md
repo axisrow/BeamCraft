@@ -5,6 +5,7 @@ V03: the native window and viewport. It shows the accepted (published) revision 
 ```text
 beamcraft-ui --store ROOT [--cli PATH]
 beamcraft-ui --store ROOT --metrics FRAMES [--width W] [--height H] [--samples 1|4] [--cli PATH]
+beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--samples 1|4] [--cli PATH]
 beamcraft-ui --synthetic COUNT --metrics FRAMES [--width W] [--height H] [--samples 1|4]
 beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
 ```
@@ -143,6 +144,9 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   adapters remain internal. See [the design note](../../docs/design/v06-properties-interactive-creation.md).
 - `--metrics` renders offscreen without a window and prints one JSON object (adapter, scene size,
   upload, per-frame median and p95). `--synthetic` measures synthetic kernel plates for scale.
+  `--screenshot FILE` renders one fitted frame the same way and writes `FILE` as a PNG (created
+  new, never overwritten), printing one JSON summary; `beamcraft screenshot-view --store ROOT
+  --out FILE` drives this from the CLI, finding the UI binary next to its own executable.
 - `--perf-run PLAN` opens the window, runs a scripted measurement in it and prints one JSON report:
   `PLAN` is a comma-separated list of `load`, `idle:S`, `ui:K` (frames without a viewport change),
   `orbit:K`, `reload:K`, `select:K` (clicks onto box elements), `cancel:K` (a click, Esc while its

@@ -47,6 +47,7 @@ mod resolve_cmd;
 mod schedule_cmd;
 mod view;
 mod view_export;
+mod view_screenshot;
 mod views_cmd;
 mod weld_cmd;
 mod work_plane_cmd;
@@ -108,6 +109,10 @@ fn main() -> std::process::ExitCode {
             return print_json(&json, error.exit_code());
         }
         Some(Route::ExportView) => return export_view(&args),
+        Some(Route::ScreenshotView) => {
+            let (json, exit) = view_screenshot::execute(&args);
+            return print_json(&json, exit);
+        }
         Some(Route::Export) => {
             // The report lists every element, so it can exceed the control-message bounds that
             // `print_json` enforces; it is rendered by the command itself.
@@ -184,6 +189,7 @@ fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
             Route::Generic
             | Route::Commands
             | Route::ExportView
+            | Route::ScreenshotView
             | Route::Export
             | Route::Session
             | Route::Batch,

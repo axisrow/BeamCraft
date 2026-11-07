@@ -24,6 +24,8 @@ pub enum Route {
     Commands,
     /// `export-view`, which writes a framed or raw byte stream.
     ExportView,
+    /// `screenshot-view`, which renders the viewport offscreen and writes a PNG file.
+    ScreenshotView,
     /// The IFC export commands, whose output is rendered by the command itself.
     Export,
     /// The IFC input study commands, which read a received file and change nothing.
@@ -2315,6 +2317,20 @@ pub const COMMANDS: &[Command] = &[
             opt("--with-definitions", "true|false"),
             opt("--with-element", "UUID"),
             opt("--with-grids", "true|false"),
+        ],
+    ),
+    entry(
+        Route::ScreenshotView,
+        "view_export",
+        "screenshot-view",
+        Access::Write,
+        Ids::None,
+        &[
+            req("--store", "ROOT"),
+            req("--out", "FILE"),
+            opt("--width", "U32"),
+            opt("--height", "U32"),
+            opt("--samples", "1|4"),
         ],
     ),
     entry(
