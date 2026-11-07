@@ -421,6 +421,22 @@ pub fn update_grid(
         hook,
     )
 }
+/// The grid's axes count as referenced — every axis removal and grid update refuses with
+/// `GRID_IN_USE` — exactly when another element's relationship targets the grid through the
+/// element index (the seam a discipline hook writes its relationships with, T01 GR-N14).
+/// A store where nothing targets the grid references nothing.
+fn referenced_axes(
+    index: &beamcraft_layer_engine::index::ElementIndex,
+    id: &beamcraft_layer_engine::index::ElementId,
+    source: &Grid,
+) -> Result<BTreeSet<ElementId>, Refusal> {
+    if index.delete_blockers(id)?.is_empty() {
+        Ok(BTreeSet::new())
+    } else {
+        Ok(source.axis_ids().collect())
+    }
+}
+
 fn mutate_grid(
     store: &RevisionStore,
     context: &GridContext,
@@ -473,11 +489,7 @@ fn mutate_grid(
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|_| integrity("invalid element identity"))?;
     used.extend(model.iter().flat_map(|g| g.axis_ids()));
-    let referenced = if index.delete_blockers(&id)?.is_empty() {
-        BTreeSet::new()
-    } else {
-        source.axis_ids().collect()
-    };
+    let referenced = referenced_axes(&index, &id, source)?;
     let edited = decide(source, &used, &referenced)?;
     let mut attributes = edited.grid.clone();
     attributes.name = source.name.clone();
@@ -645,4 +657,137 @@ pub fn resolve_placement(
         );
     }
     Ok([x, y, z])
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+
+    use super::*;
+    use beamcraft_layer_engine::{Asset, Budgets, Cancellation, Identity, Profile};
+    use beamcraft_model::digest::{ContentDigest, Sha256};
+    use beamcraft_model::grid::{DrawnGridLine, GridFamily};
+    use std::time::{Duration, Instant};
+
+    const GRID: &str = "0199e7a0-0000-7000-8000-000000000011";
+    const OTHER: &str = "0199e7a0-0000-7000-8000-000000000012";
+
+    const HEADER: &str = "#usda 1.0\n(metersPerUnit = 0.001\nupAxis = \"Z\")\n";
+
+    fn control() -> Control {
+        Control {
+            cancellation: Cancellation::default(),
+            deadline: Instant::now() + Duration::from_secs(90),
+        }
+    }
+
+    fn digest(bytes: &[u8]) -> ContentDigest {
+        Sha256::digest(bytes).unwrap()
+    }
+
+    fn prim(id: &str, extra: &str) -> String {
+        format!(
+            " def Xform \"PRT_{}\" {{ custom string bim:id = \"{}\"\n{} }}\n",
+            id.replace('-', ""),
+            id,
+            extra
+        )
+    }
+
+    fn scene(other_extra: &str) -> String {
+        let world = format!(
+            "def Xform \"World\" {{ def Scope \"Steel\" {{ def Scope \"Parts\" {{\n{}{}\n}} }} }}",
+            prim(GRID, ""),
+            prim(OTHER, other_extra)
+        );
+        format!("{HEADER}{world}\n")
+    }
+
+    fn index_of(body: &str) -> beamcraft_layer_engine::index::ElementIndex {
+        let bytes = body.as_bytes().to_vec();
+        let mut request = OpenRequest {
+            identity: Identity {
+                project: GRID.into(),
+                workspace: "0199e7a0-0000-7000-8000-000000000002".into(),
+                revision: digest(b"gr-n14"),
+                generation: 1,
+            },
+            root: "root.usda".into(),
+            owned_layers: ["root.usda".to_owned()].into(),
+            assets: vec![Asset {
+                name: "root.usda".into(),
+                digest: digest(&bytes),
+                bytes,
+            }],
+            manifest: digest(b"pending"),
+            backend: beamcraft_layer_engine::BACKEND,
+            profile: Profile::StaticLocal,
+            budgets: Budgets::FIRST_SLICE,
+        };
+        request.manifest = request.manifest_digest().unwrap();
+        let mut reader = Reader::default();
+        let opened = reader.open(request, &control()).unwrap();
+        reader.element_index(&opened.context, &control()).unwrap()
+    }
+
+    fn grid_record() -> Grid {
+        let axis = |text: &str| ElementId::parse(text).unwrap();
+        let line = |axis_id: ElementId, label: &str| DrawnGridLine {
+            axis_id,
+            label: label.into(),
+            start_mm: [0.0, 0.0],
+            end_mm: [6000.0, 0.0],
+        };
+        Grid {
+            id: axis(GRID),
+            name: "Grid 1".into(),
+            translation_mm: [0.0, 0.0],
+            orientation_zw: [0.0, 1.0],
+            u: GridFamily::Drawn(vec![
+                line(axis("0199e7a0-0000-7000-8000-000000000013"), "A"),
+                line(axis("0199e7a0-0000-7000-8000-000000000014"), "B"),
+            ]),
+            v: GridFamily::Drawn(vec![line(
+                axis("0199e7a0-0000-7000-8000-000000000015"),
+                "C",
+            )]),
+        }
+    }
+
+    fn grid_element_id() -> beamcraft_layer_engine::index::ElementId {
+        beamcraft_layer_engine::index::ElementId::parse(GRID).unwrap()
+    }
+
+    /// GR-N14 over the real bounded reader: an element relationship that targets the grid
+    /// prim references every axis of the model record, and the engine guard refuses a
+    /// removal with `GRID_IN_USE`; nothing targeting the grid references nothing.
+    #[test]
+    fn a_relationship_targeting_the_grid_references_every_axis_and_blocks_removal() {
+        let grid = grid_record();
+        let link = format!(
+            "custom rel bim:test:to = </World/Steel/Parts/PRT_{}>",
+            GRID.replace('-', "")
+        );
+        let targeted = index_of(&scene(&link));
+        let referenced = referenced_axes(&targeted, &grid_element_id(), &grid).unwrap();
+        assert_eq!(referenced, grid.axis_ids().collect::<BTreeSet<_>>());
+
+        let untouched = index_of(&scene(""));
+        assert!(
+            referenced_axes(&untouched, &grid_element_id(), &grid)
+                .unwrap()
+                .is_empty()
+        );
+
+        let request = beamcraft_model::grid_edit::GridLineEditRequest {
+            target_id: grid.id,
+            edit: beamcraft_model::grid_edit::GridLineEdit::Remove {
+                axis_id: ElementId::parse("0199e7a0-0000-7000-8000-000000000013").unwrap(),
+            },
+        };
+        let used = BTreeSet::new();
+        let error =
+            beamcraft_engine::grid_edit::edit(&request, &grid, &used, &referenced).unwrap_err();
+        assert_eq!(error.code, ErrorCode::DependencyConflict);
+    }
 }

@@ -466,7 +466,7 @@ Negative:
 | GR-N11 | A shape `arc`; a placement rotated about X, or `z != 0` | `UNSUPPORTED_GEOMETRY` |
 | GR-N12 | Duplicate GridId; an AxisId repeated in the command or used by another grid | `DUPLICATE_ID` |
 | GR-N13 | The same `op_id` with other content | `OP_ID_REUSE` |
-| GR-N14 | Remove a line, or delete a grid, named by a saved view (after W01) | `DEPENDENCY_CONFLICT`, `GRID_IN_USE`; the view stays |
+| GR-N14 | Remove a line of a grid whose prim an element relationship targets (the discipline-hook seam); a grid nothing targets | `DEPENDENCY_CONFLICT`, `GRID_IN_USE` for the targeted grid; nothing targeting it, no refusal |
 | GR-N15 | A stored grid whose arrays differ in length, whose AxisId repeats, whose regular lines differ from their expression, or whose array exceeds the limit | `INVALID_ARGUMENT` or `LIMIT_EXCEEDED`; no panic, no allocation sized by the file |
 | GR-N16 | A write to a grid of a foreign reference or a pinned project | `FOREIGN_READ_ONLY` |
 | GR-N17 | `--start-at-grid` with neither `--z` nor `--level` | `INVALID_ARGUMENT` |
@@ -474,6 +474,16 @@ Negative:
 | GR-N19 | Drag a regular line past its neighbour or to less than 1 mm spacing | `INVALID_ARGUMENT`, `GRID_SPACING_INVALID`; the head, expression and AxisIds are unchanged |
 
 Viewer geometry is covered by GR-P16. Magnetic-mode cases are added only after O-G5 is resolved for T01.8.
+
+Delivered limits behind GR-N14 (2026-11-08): saved views (W01/V12) carry no grid references — the
+views book is display-only (`grids_visible` is a flag, not a reference) and lives outside the
+element store — so a saved view can neither block a grid edit nor be touched by one, and the
+row's original "named by a saved view" cannot arise. The `GRID_IN_USE` guard answers to element
+relationships in the index (`referenced_axes` in `crates/commands/src/grid.rs`); today no producer
+targets a grid prim, so the guard is armed for the discipline-hook seam and covered by the
+commands-level test. Deleting a whole grid answers to the shared grids scope only (T01 §9), with
+no reference check — a symmetric delete guard is a separate decision if a producer ever targets
+a grid.
 
 ## 14. Slices and dependencies
 
