@@ -5,7 +5,7 @@
 //! member's axis in its grid's local frame and `unbind-grid` materializes the world axis back,
 //! so a shared-grid edit never rewrites the member (contract §7.5, decisions 2026-11-08).
 
-use crate::grid::{GridContext, pinned_selector, snapshot};
+use crate::grid::{GridContext, snapshot};
 use crate::plate::{decode, evaluate_decoded, part_mesh_change, prior_op_with, replay_summary};
 use crate::publication::{PublishRequest, publish_revision};
 use beamcraft_engine::footprint::{Entry, Footprint, Group, Target};
@@ -184,7 +184,7 @@ pub fn bind_grid(
     if let Some(replayed) = replay(store, context, fingerprint)? {
         return Ok(replayed);
     }
-    if pinned_selector(&command.grid.to_string())?.is_some() {
+    if crate::coordination::pinned_owns_element(store, &command.grid)? {
         return Err(Refusal {
             rule_id: Some("PC-OWN-002"),
             code: ErrorCode::ForeignReadOnly,

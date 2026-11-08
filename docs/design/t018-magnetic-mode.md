@@ -18,10 +18,12 @@ world. The world geometry of a bound member is **derived at read time**: the dec
 quantities, snapshots, exports — sees the moved member while the grid edit itself writes only
 the grid.
 
-A release (`unbind-grid`, or a rebind naming another grid) erases the local points attr,
-authors the explicit empty target list (the PartOf detach pattern), restores the current world
-axis and refreshes the derived mesh and quantities from the re-evaluated record, so the stored
-picture stops lagging the frame the moment the member stops following it.
+A release (`unbind-grid`) erases the local points attr, authors the explicit empty target list
+(the PartOf detach pattern), restores the current world axis and refreshes the derived mesh and
+quantities from the re-evaluated record, so the stored picture stops lagging the frame the
+moment the member stops following it. A rebind naming another grid replaces the record and
+recomputes the local axis against the new frame, but the member stays bound: its stored mesh
+and quantities keep lagging the frame, and only a release re-materializes them.
 
 ## Guards
 
@@ -48,9 +50,11 @@ picture stops lagging the frame the moment the member stops following it.
 + rotate) → derived world verified through `inspect-elements`; the stored truth stays local;
 unbind materializes the world and re-arms the strict derived checks; a grid with a follower
 refuses deletion until the release; rebinding recomputes the local axis against the new frame
-and unblocks the old grid's deletion. The frame-follows commands-level regression for the
-blocker-kind distinction lives in `crates/commands/src/grid.rs` (`a_frame_following_binding_
-never_pins_a_line`), next to the GR-N14 chain test from #539.
+and unblocks the old grid's deletion; a shape rewrite of the bound member refuses
+`GRID_IN_USE` with the geometry unchanged until the release, and the same edit passes after it
+(GR-N22). The frame-follows commands-level regression for the blocker-kind distinction lives in
+`crates/commands/src/grid.rs` (`a_frame_following_binding_never_pins_a_line`), next to the
+GR-N14 chain test from #539.
 
 ## Limits
 

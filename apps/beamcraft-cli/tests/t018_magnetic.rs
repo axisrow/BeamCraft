@@ -336,6 +336,66 @@ fn rebinding_names_a_new_frame_and_recomputes_the_local_axis() {
     assert_eq!(code, 0);
 }
 
+/// GR-N22: a shape rewrite of a bound member refuses with `DEPENDENCY_CONFLICT` and leaves
+/// the geometry unchanged; the same edit passes once the binding is released.
+#[test]
+fn a_shape_rewrite_of_a_bound_member_refuses_until_the_binding_is_released() {
+    let f = fixture();
+    ok(
+        &f,
+        "bind-grid",
+        &[
+            "--id",
+            MEMBER,
+            "--grid",
+            GRID,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000203",
+        ],
+    );
+    rejected(
+        &f,
+        "update-element",
+        &[
+            "--id",
+            MEMBER,
+            "--axis-point",
+            "1500,1000,0;2500,1000,0",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000213",
+        ],
+        "DEPENDENCY_CONFLICT",
+    );
+    let j = ok(&f, "inspect-elements", &["--element", MEMBER]);
+    assert_eq!(axis_points(&j)[0], [1000.0, 1000.0, 0.0]);
+    assert_eq!(axis_points(&j)[1], [2000.0, 1000.0, 0.0]);
+    ok(
+        &f,
+        "unbind-grid",
+        &[
+            "--id",
+            MEMBER,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000205",
+        ],
+    );
+    let (code, _) = f.run(
+        "update-element",
+        &[
+            "--id",
+            MEMBER,
+            "--axis-point",
+            "1500,1000,0;2500,1000,0",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000214",
+        ],
+    );
+    assert_eq!(code, 0);
+    let j = ok(&f, "inspect-elements", &["--element", MEMBER]);
+    assert_eq!(axis_points(&j)[0], [1500.0, 1000.0, 0.0]);
+    assert_eq!(axis_points(&j)[1], [2500.0, 1000.0, 0.0]);
+}
+
 /// The store reopen path keeps the binding: a fresh process derives the same world geometry.
 #[test]
 fn the_binding_survives_a_reopen_and_the_delete_guard_stays_armed() {

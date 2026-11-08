@@ -464,7 +464,8 @@ pub struct FollowRecord {
 /// the element carries from now on.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FollowBinding {
-    /// Bind to the grid: the stored world axis points are erased and the record is authored.
+    /// Bind to the grid: the record is authored and the stored world axis points stay as the
+    /// frozen snapshot of the binding event, untouched until the release overwrites them.
     Bind(FollowRecord),
     /// Release: the record is erased and the given world axis points are restored.
     Release(Vec<[f64; 3]>),
@@ -560,10 +561,11 @@ pub enum Change {
         /// Full UUIDv7 of the level, or `None` for an explicit empty record (an unassignment).
         level: Option<String>,
     },
-    /// Bind a placed element to a grid or release the binding (T01.8). Binding erases the
-    /// element's stored world axis points and authors the follow record; releasing erases the
-    /// record and restores the given world axis points. The world geometry of a bound element
-    /// is derived at read time, so a shared-grid edit never rewrites the follower.
+    /// Bind a placed element to a grid or release the binding (T01.8). Binding authors the
+    /// follow record and keeps the stored world axis points as the frozen snapshot of the
+    /// binding event; releasing erases the record and restores the given world axis points.
+    /// The world geometry of a bound element is derived at read time, so a shared-grid edit
+    /// never rewrites the follower.
     Follow {
         /// Full source UUIDv7: the bound element.
         id: String,
