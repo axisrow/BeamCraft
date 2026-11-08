@@ -22,6 +22,7 @@ pub mod id;
 pub mod limits;
 pub mod prim;
 pub mod reference;
+pub mod schedule;
 pub mod sheet;
 
 pub use error::ErrorCode;

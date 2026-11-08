@@ -32,6 +32,20 @@ pub(super) fn input_bounds(input: &Prepare, b: Budgets) -> Result<(), Diagnostic
                 preflight::charge(&mut bytes, name.len(), 1024 * 1024)?;
                 continue;
             }
+            // A stored schedule template is bounded by its document, exactly the file form's bound.
+            Change::ScheduleDefine { name, template } => {
+                schema_path_name(name)?;
+                if template.is_empty() || template.len() > 65_536 {
+                    return Err(limit());
+                }
+                preflight::charge(&mut bytes, name.len() + template.len(), 1024 * 1024)?;
+                continue;
+            }
+            Change::ScheduleUndefine { name } => {
+                schema_path_name(name)?;
+                preflight::charge(&mut bytes, name.len(), 1024 * 1024)?;
+                continue;
+            }
             _ => {}
         }
         if !uuid7(change.key().0) {
@@ -1198,6 +1212,20 @@ pub(super) fn in_scope(
             .with_rule("DV-SCOPE-004"))
         };
     }
+    if matches!(
+        change,
+        Change::ScheduleDefine { .. } | Change::ScheduleUndefine { .. }
+    ) {
+        return if scope.shared_authorized {
+            Ok(())
+        } else {
+            Err(fail(
+                ErrorCode::PermissionDenied,
+                "stored schedule templates are shared data",
+            )
+            .with_rule("DV-SCOPE-004"))
+        };
+    }
     if matches!(change, Change::Create(_) | Change::AttachReference(_)) {
         return Ok(());
     }
@@ -1248,11 +1276,15 @@ pub(super) fn changes(
     let mut writes = BTreeSet::new();
     for change in &input.changes {
         // A schema change targets no element: it reads and writes the schema as a whole, so two
-        // schema edits conflict and neither conflicts with an element edit (I04). The candidate
-        // snapshot re-validates the whole scope.
+        // schema edits conflict and neither conflicts with an element edit (I04, and stored
+        // schedule templates share the same definition scope). The candidate snapshot
+        // re-validates the whole scope.
         if matches!(
             change,
-            Change::AttrDefine { .. } | Change::AttrUndefine { .. }
+            Change::AttrDefine { .. }
+                | Change::AttrUndefine { .. }
+                | Change::ScheduleDefine { .. }
+                | Change::ScheduleUndefine { .. }
         ) {
             if let Some(scope) = scope {
                 in_scope(change, None, scope)?;

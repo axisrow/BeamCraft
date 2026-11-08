@@ -6,7 +6,9 @@ A schedule is a declarative template over the same verified read that `export-bo
 from standard report fields and typed user attributes (I04), one optional element filter,
 grouping and totals, rendered as CSV and HTML. The acceptance — unknown and stale shown,
 reproducible — means an element never disappears because an attribute is missing, blocked or
-stale, and the same store head plus the same template file render byte-identical output.
+stale, and the same store head plus the same template render byte-identical output. The
+template travels as a version-1 JSON document, given as a file or stored in the model as a
+named definition.
 
 ## Layers
 
@@ -26,7 +28,7 @@ are unit-tested headlessly; the adapter fills the cells; the command writes file
 
 ## Template
 
-A template is a JSON file, so a schedule is reproducible from two plain inputs:
+A template is a JSON document, so a schedule is reproducible from two plain inputs:
 
 ```json
 {
@@ -112,21 +114,45 @@ on any path leaves nothing on disk.
 ## Command
 
 ```text
-beamcraft schedule-export --store ROOT --template FILE.json --out SCHEDULE.csv
-                          [--summary GROUPS.csv] [--html SCHEDULE.html]
+beamcraft schedule-export --store ROOT (--template FILE.json | --schedule NAME)
+                          --out SCHEDULE.csv [--summary GROUPS.csv] [--html SCHEDULE.html]
 ```
 
 It reads and verifies the head exactly like `export-bom` (a store without a revision refuses;
 rows cap at `MAX_ELEMENTS`). The attribute state is pinned first and the inspection must name
 the same revision, so quantities and attribute values are one head. The JSON result names the
-revision, row and group counts, `unknown_columns` and the written files.
+revision, row and group counts, `unknown_columns` and the written files. Exactly one of
+`--template` and `--schedule` is accepted; a stored template renders through the same decode
+as its file, so the two forms are byte-identical over one head.
+
+## Stored templates
+
+A template is also a shared, owned model entity, as the M5 delivery decision requires:
+`schedule-define --store ROOT --name NAME --template FILE.json` saves the admitted document
+under `/World/Definitions/Schedules/<name>` as one `steel:schedule:template` string property
+(version 1 JSON, the same 64 KiB bound as the file form, stored byte-for-byte as submitted).
+The name is a USD identifier like an attribute name. Define-time admission is the file
+form's admission against the pinned attribute state; a duplicate name refuses, a malformed
+or oversized document refuses, and nothing is stored on a refusal. `schedules --store ROOT`
+lists the stored templates in name order, `schedule-undefine` removes one (nothing
+references a template structurally, so the removal has no blockers and an export naming it
+refuses afterwards).
+
+Definitions share the attribute schema's conflict domain: one definition-scope edit at a
+time, never a conflict with an element edit, and the same `shared_authorized` rule (the
+schemas are shared data). The definitions are ordinary USD prims of ordinary revisions, so
+they carry footprints, commit and undo with every store command. Like the attribute schema,
+a stored template is not rebaseable yet: the rebase property mapping refuses definition
+deltas as unsupported. When the attribute state moves under a stored template, the store
+form keeps the file form's honesty: the column stays, renders empty and is named in
+`unknown_columns`; the stored document itself is never rewritten.
 
 ## Not done
 
-Named templates saved in the personal store, grand-total rows, bolts/welds/assembly-level
-schedules, more renderers, any unit conversion (I04 has none) and full V14 filter parity
-(named saved rules, view bindings, selectors beyond the template's own columns) are
-follow-ups. The property editor and native UI face are separate tasks.
+Grand-total rows, bolts/welds/assembly-level schedules, more renderers, any unit conversion
+(I04 has none) and full V14 filter parity (named saved rules, view bindings, selectors
+beyond the template's own columns) are follow-ups. The property editor and native UI face
+are separate tasks.
 
 ## Evidence
 
@@ -137,4 +163,10 @@ binary: a store with members, plates, definitions and values; a filter narrows r
 and totals match the element table; an unknown attribute column stays and is named; a stale
 value after redefinition is an empty counted cell next to a fresh value; two runs render
 byte-identical files; refusals: no revision, unknown standard token, total on text, filter
-naming an unknown column or carrying a wrong literal, existing output file, unknown option).
+naming an unknown column or carrying a wrong literal, existing output file, unknown option),
+`cargo test -p beamcraft-cli --test cli schedules_store::` (real binary: a defined template
+is a model definition whose document the prim carries verbatim; the stored and file forms
+render byte-identically; the same operation replays; duplicate define, missing or repeated
+undefine, bad name, unknown or both-sources export and malformed document refuse honestly;
+an attribute undefined after the define leaves the stored template intact with its column
+named in `unknown_columns`).

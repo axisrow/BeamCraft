@@ -334,6 +334,28 @@ fn publish(
     change: impl FnOnce(&AttrModel) -> Result<(Footprint, Change), Refusal>,
     hook: &mut dyn CommitHook,
 ) -> Result<AttrChange, Refusal> {
+    publish_model(
+        store,
+        context,
+        command_fingerprint,
+        attr_model_of,
+        same_state,
+        change,
+        hook,
+    )
+}
+
+/// The same pipeline over any pinned head model: stored schedule templates (I05) reuse it
+/// with their own reader, so both definition families commit, replay and verify identically.
+pub(crate) fn publish_model<M>(
+    store: &RevisionStore,
+    context: &AttrContext,
+    command_fingerprint: ContentDigest,
+    read_model: impl Fn(&OpenRequest, &Control) -> Result<M, Refusal>,
+    same_state: impl Fn(&M) -> bool,
+    change: impl FnOnce(&M) -> Result<(Footprint, Change), Refusal>,
+    hook: &mut dyn CommitHook,
+) -> Result<AttrChange, Refusal> {
     let control = control();
     let (head, base) = load_base(store, &context.project, &context.workspace)?;
     let before: BTreeMap<String, _> = base
@@ -342,7 +364,7 @@ fn publish(
         .map(|a| (a.name.clone(), a.digest))
         .collect();
     let base_request = open_base(&base)?;
-    let model = attr_model_of(&base_request, &control)?;
+    let model = read_model(&base_request, &control)?;
     let Base {
         project,
         workspace,

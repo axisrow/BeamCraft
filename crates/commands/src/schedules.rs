@@ -7,18 +7,27 @@
 //! the filter rule decodes into the engine's own [`beamcraft_engine::schedule::Rule`], per
 //! [the design note](../../../docs/design/i05-schedules.md).
 
-use crate::attribute::{AttrModel, attr_model_of};
+use crate::attribute::{AttrChange, AttrContext, AttrModel, attr_model_of, publish_model};
 use crate::bom;
-use crate::plate::Inspection;
+use crate::plate::{Inspection, property, text};
 use beamcraft_engine::bom::BomRow;
+use beamcraft_engine::footprint::Footprint;
 use beamcraft_engine::schedule::{
     CellKind, CellValue, Column, Field, InputRow, MAX_COLUMNS, Rule, StandardField, Template,
 };
-use beamcraft_host::revision::RevisionStore;
+use beamcraft_host::revision::{CommitHook, RevisionStore};
 use beamcraft_json::{Json, Limits};
+use beamcraft_layer_engine::authored::{
+    Change, SCHEDULE_SCHEMA_PATH, schema_identity, validate_layers,
+};
+use beamcraft_layer_engine::{Control, OpenRequest, Reader};
 use beamcraft_model::attribute::{AttrType, AttrValue};
+use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
+use beamcraft_model::id::{ProjectId, WorkspaceId};
+use beamcraft_model::schedule::{DefineSchedule, UndefineSchedule};
 use session::Refusal;
+use session::pipeline::{control, integrity, load_base, open_base};
 use std::collections::BTreeMap;
 
 fn invalid(message: &'static str) -> Refusal {
@@ -379,4 +388,165 @@ pub fn prepare(
     let source = bom::rows(inspection, marks)?;
     let input_rows = rows(&source, model, filter.as_ref(), &specs)?;
     Ok((template, input_rows, unknown_columns))
+}
+
+/// One stored schedule template: its name and the document as submitted at define time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredSchedule {
+    /// The template name.
+    pub name: String,
+    /// The version-1 template JSON, byte-for-byte the define-time document.
+    pub template: String,
+}
+
+/// The pinned head state of the stored templates plus the attribute state their admission
+/// reads; the model the definition pipeline decides over.
+struct ScheduleModel {
+    templates: BTreeMap<String, String>,
+    attributes: AttrModel,
+}
+
+/// The stored templates of one pinned snapshot: the definition prims under the schedules
+/// scope, owned opinions only. A foreign or damaged definition is inert, as the attribute
+/// reader treats foreign content.
+fn schedules_of(
+    request: &OpenRequest,
+    control: &Control,
+) -> Result<BTreeMap<String, String>, Refusal> {
+    validate_layers(request.clone(), schema_identity()?, control)?;
+    let mut reader = Reader::default();
+    let opened = reader.open(request.clone(), control)?;
+    let prims = crate::assembly::read_prims(&reader, &opened.context, control)?;
+    let scope = format!("{SCHEDULE_SCHEMA_PATH}/");
+    let mut out = BTreeMap::new();
+    for prim in &prims {
+        if !prim.path.starts_with(&scope) || prim.sources.iter().any(|s| !s.owned) {
+            continue;
+        }
+        let name = prim
+            .path
+            .strip_prefix(&scope)
+            .ok_or_else(|| integrity("schedule definition is not one segment below the scope"))?;
+        let template = property(prim, "steel:schedule:template")
+            .and_then(text)
+            .map(str::to_owned)
+            .ok_or_else(|| integrity("schedule definition has no template"))?;
+        out.insert(name.to_owned(), template);
+    }
+    Ok(out)
+}
+
+fn schedule_model_of(request: &OpenRequest, control: &Control) -> Result<ScheduleModel, Refusal> {
+    let attributes = attr_model_of(request, control)?;
+    let templates = schedules_of(request, control)?;
+    Ok(ScheduleModel {
+        templates,
+        attributes,
+    })
+}
+
+/// The stored templates of the verified head, in name order. An empty store has none.
+pub fn stored(store: &RevisionStore) -> Result<Vec<StoredSchedule>, Refusal> {
+    let control = control();
+    let revision = match store.open() {
+        Ok(revision) => revision,
+        Err(beamcraft_host::revision::RevisionError::NoRevision) => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let content = revision.manifest().content();
+    let damaged = |_| integrity("head manifest identity is not a UUIDv7");
+    let project = ProjectId::parse(content.project().as_str()).map_err(damaged)?;
+    let workspace = WorkspaceId::parse(content.workspace().as_str()).map_err(damaged)?;
+    let (_, base) = load_base(store, &project, &workspace)?;
+    let model = schedule_model_of(&open_base(&base)?, &control)?;
+    Ok(model
+        .templates
+        .into_iter()
+        .map(|(name, template)| StoredSchedule { name, template })
+        .collect())
+}
+
+/// One stored template by name; a missing name refuses, and an export naming it refuses too.
+pub fn stored_named(store: &RevisionStore, name: &str) -> Result<StoredSchedule, Refusal> {
+    stored(store)?
+        .into_iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| Refusal::new(ErrorCode::NotFound, "the schedule template is not defined"))
+}
+
+/// Saves one schedule template into the model and publishes the next revision, or replays
+/// the operation. The document is admitted against the pinned attribute state exactly as the
+/// file form is admitted at export time; a duplicate name refuses.
+pub fn define_schedule(
+    store: &RevisionStore,
+    context: &AttrContext,
+    command: &DefineSchedule,
+    hook: &mut dyn CommitHook,
+) -> Result<AttrChange, Refusal> {
+    let fingerprint = command.content_fingerprint()?;
+    publish_model(
+        store,
+        context,
+        fingerprint,
+        schedule_model_of,
+        |model| {
+            model.templates.get(&command.name).map(|t| t.as_str())
+                == Some(command.template.as_str())
+        },
+        |model| {
+            if model.templates.contains_key(&command.name) {
+                return Err(CommandError::new(
+                    ErrorCode::InvalidArgument,
+                    "name",
+                    "the schedule template is already defined",
+                )
+                .into());
+            }
+            let json = decode(command.template.as_bytes())?;
+            template(&json, &model.attributes)?;
+            Ok((
+                Footprint::for_attr_schema()?,
+                Change::ScheduleDefine {
+                    name: command.name.clone(),
+                    template: command.template.clone(),
+                },
+            ))
+        },
+        hook,
+    )
+}
+
+/// Removes one stored schedule template and publishes the next revision, or replays the
+/// operation. A missing name refuses; exports naming it refuse afterwards.
+pub fn undefine_schedule(
+    store: &RevisionStore,
+    context: &AttrContext,
+    command: &UndefineSchedule,
+    hook: &mut dyn CommitHook,
+) -> Result<AttrChange, Refusal> {
+    let fingerprint = command.content_fingerprint()?;
+    publish_model(
+        store,
+        context,
+        fingerprint,
+        schedule_model_of,
+        |model| !model.templates.contains_key(&command.name),
+        |model| {
+            if !model.templates.contains_key(&command.name) {
+                return Err(CommandError::new(
+                    ErrorCode::NotFound,
+                    "name",
+                    "the schedule template is not defined",
+                )
+                .into());
+            }
+            Ok((
+                Footprint::for_attr_schema()?,
+                Change::ScheduleUndefine {
+                    name: command.name.clone(),
+                },
+            ))
+        },
+        hook,
+    )
 }

@@ -162,6 +162,8 @@ pub const SCHEMA_DESCRIPTOR: &str = concat!(
     "definitions are mutable schema metadata with no element identity\n",
     "element values=bim:attr:<name>=string|double|int|bool on any element;a value may outlive its",
     "definition and is then an unknown attribute: shown, never dropped\n",
+    "schedules=/World/Definitions/Schedules/<name>;steel:schedule:template=string(the version-1",
+    "template JSON as admitted at define time);a shared owned definition with no element identity\n",
     "definition displayName=prim metadata string(optional,any definition kind;part of the definition content)\n",
     "geometry asset=/World/Definitions/Geometry/GEO_<sha256-64 of the canonical buffers>:Mesh;no bim:id,",
     "no model kind, no quantities;points=point3f[];faceVertexCounts=int[];faceVertexIndices=int[];",
@@ -234,6 +236,9 @@ pub const ATTR_SCHEMA_IDENTITY: &str = "bim:attr-schema";
 
 /// The authored-layer scope holding the user-attribute definitions (I04).
 pub const ATTR_SCHEMA_PATH: &str = "/World/Definitions/Attributes";
+
+/// The authored-layer scope holding the stored schedule templates (I05).
+pub const SCHEDULE_SCHEMA_PATH: &str = "/World/Definitions/Schedules";
 
 /// The ProjectId recorded in the metadata of the root layer (D1), or `None` for a store that has
 /// none. A record that is not a text holding a full UUIDv7 is `INVALID_ID`: it is never read as
@@ -604,6 +609,21 @@ pub enum Change {
         /// The value, or `None` to remove the property.
         value: Option<beamcraft_model::attribute::AttrValue>,
     },
+    /// Save one schedule template (I05): the complete definition prim
+    /// `/World/Definitions/Schedules/<name>` whose one property carries the admitted
+    /// version-1 template JSON. The engine has refused a duplicate name.
+    ScheduleDefine {
+        /// The template name.
+        name: String,
+        /// The template document, admitted against the pinned attribute state.
+        template: String,
+    },
+    /// Remove one stored schedule template (I05). Nothing references a template
+    /// structurally, so the removal never touches elements or attribute values.
+    ScheduleUndefine {
+        /// The template name.
+        name: String,
+    },
 }
 impl Change {
     pub(super) fn key(&self) -> (&str, &'static str) {
@@ -625,6 +645,11 @@ impl Change {
             Self::Follow { id, .. } => (id, "steel:grid:follows"),
             Self::Mark { id, .. } => (id, "steel:numbering"),
             Self::AttrDefine { .. } | Self::AttrUndefine { .. } => {
+                (ATTR_SCHEMA_IDENTITY, "bim:attr:schema")
+            }
+            // Schedule templates share the definition-scope conflict domain (I05): one schema
+            // edit at a time, never a conflict with an element edit.
+            Self::ScheduleDefine { .. } | Self::ScheduleUndefine { .. } => {
                 (ATTR_SCHEMA_IDENTITY, "bim:attr:schema")
             }
             Self::AttrSet { id, .. } => (id, "bim:attr"),

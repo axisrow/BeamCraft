@@ -1069,6 +1069,31 @@ fn author_attr_define(
     )?;
     Ok(())
 }
+
+/// Authors the complete prim of one stored schedule template (I05): one Scope prim whose
+/// single property carries the admitted version-1 template JSON. The document is stored as
+/// submitted, so the same template renders byte-identically through the file and the store
+/// forms.
+fn author_schedule_define(
+    data: &mut sdf::Data,
+    name: &str,
+    template: &str,
+) -> Result<(), Diagnostic> {
+    let name = validate::schema_path_name(name)?;
+    container(data, "/World", "Xform", Some("assembly"))?;
+    container(data, "/World/Definitions", "Scope", None)?;
+    container(data, super::SCHEDULE_SCHEMA_PATH, "Scope", None)?;
+    let p = format!("{}/{name}", super::SCHEDULE_SCHEMA_PATH);
+    prim(data, &p, Some("Scope"), true)?;
+    attr(
+        data,
+        &p,
+        "steel:schedule:template",
+        "string",
+        sdf::Value::String(template.to_owned()),
+    )?;
+    Ok(())
+}
 fn erase_element(data: &mut sdf::Data, parent: &str) -> Result<(), Diagnostic> {
     let name = parent.rsplit_once('/').map_or(parent, |(_, n)| n);
     for path in data.spec_paths() {
@@ -1298,6 +1323,17 @@ pub(super) fn apply(
                 erase_element(
                     &mut authored,
                     &format!("{}/{name}", super::ATTR_SCHEMA_PATH),
+                )?;
+                continue;
+            }
+            Change::ScheduleDefine { name, template } => {
+                author_schedule_define(&mut authored, name, template)?;
+                continue;
+            }
+            Change::ScheduleUndefine { name } => {
+                erase_element(
+                    &mut authored,
+                    &format!("{}/{name}", super::SCHEDULE_SCHEMA_PATH),
                 )?;
                 continue;
             }
@@ -1927,6 +1963,9 @@ fn capture(
             // mapping: they contribute no opinion inventory yet, while their footprint writes
             // and the candidate bytes carry them as usual.
             Change::AttrDefine { .. } | Change::AttrUndefine { .. } | Change::AttrSet { .. } => {}
+            // Stored schedule templates (I05) share the same shape: one dynamic-named
+            // definition prim outside the element mapping.
+            Change::ScheduleDefine { .. } | Change::ScheduleUndefine { .. } => {}
         }
         if fields.len() > b.values {
             return Err(limit());

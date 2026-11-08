@@ -1479,7 +1479,32 @@ export-bom --store ROOT --out FILE [--summary FILE]
 write.
 
 ```text
-schedule-export --store ROOT --template FILE --out FILE [--summary FILE] [--html FILE]
+schedule-export --store ROOT --out FILE [--template FILE] [--schedule NAME] [--summary FILE]
+    [--html FILE]
+```
+
+### schedule-define
+
+write.
+
+```text
+schedule-define --store ROOT --name NAME --template FILE
+```
+
+### schedule-undefine
+
+write.
+
+```text
+schedule-undefine --store ROOT --name NAME
+```
+
+### schedules
+
+read.
+
+```text
+schedules --store ROOT
 ```
 
 ## drawing
