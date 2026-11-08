@@ -557,6 +557,7 @@ mod tests {
             class: 0,
             curved: false,
             axis_points_mm: vec![[0.0, 0.0, 0.0], [1000.0, 0.0, 0.0]],
+            follow: None,
             profile: digest(b"profile"),
             roll_rad: None,
             section_placement: None,

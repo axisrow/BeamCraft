@@ -1378,6 +1378,48 @@ pub(super) fn apply(
                 };
                 relationship_targets(&mut authored, &p, "bim:level", Some(targets))?;
             }
+            Change::Follow { binding, .. } => match binding {
+                FollowBinding::Bind(record) => {
+                    // While bound the derived world geometry (local points + current frame)
+                    // is authoritative; the stored world axis stays as the bind-time frozen
+                    // snapshot the member storage schema requires, and the release overwrites
+                    // it with the current world.
+                    let targets = vec![path(&target_path(
+                        &record.grid,
+                        ElementCategory::Grid,
+                        input,
+                        prims,
+                    )?)?];
+                    relationship_targets(&mut authored, &p, "bim:followsGrid", Some(targets))?;
+                    attr(
+                        &mut authored,
+                        &p,
+                        "steel:grid:localAxisMm",
+                        "double3[]",
+                        points(&record.local_axis_mm),
+                    )?;
+                }
+                FollowBinding::Release(world) => {
+                    // An explicit empty target list masks a weaker layer's record, as a
+                    // part-of detach does; the world axis points are restored as a whole.
+                    relationship_targets(&mut authored, &p, "bim:followsGrid", Some(Vec::new()))?;
+                    attribute(
+                        &mut authored,
+                        &p,
+                        "steel:grid:localAxisMm",
+                        "double3[]",
+                        Opinion::Remove,
+                        true,
+                    )?;
+                    attr(
+                        &mut authored,
+                        &p,
+                        "bim:axisPointsMm",
+                        "double3[]",
+                        points(world),
+                    )?;
+                }
+            },
             Change::Mark { mark, .. } => {
                 let number = i32::try_from(mark.number).map_err(|_| invalid())?;
                 for (name, ty, value) in [
@@ -1828,6 +1870,11 @@ fn capture(
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::MainPart { .. } => add("bim:mainPart", "rel", 0),
             Change::Level { .. } => add("bim:level", "rel", 0),
+            Change::Follow { .. } => {
+                add("bim:axisPointsMm", "double3[]", 0);
+                add("bim:followsGrid", "rel", 0);
+                add("steel:grid:localAxisMm", "double3[]", 0);
+            }
             Change::Mark { .. } => {
                 add(MARK_SERIES, "string", 0);
                 add(MARK_NUMBER, "int", 0);

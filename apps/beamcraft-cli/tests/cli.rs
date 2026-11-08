@@ -99,6 +99,7 @@ mod sections;
 mod session;
 mod start;
 mod t015_grid_rights;
+mod t018_magnetic;
 mod transform;
 mod u19_scopes;
 mod undo;

@@ -2837,6 +2837,7 @@ impl App {
             name: "ghost".into(),
             class: 0,
             axis_points_mm: vec![start, end],
+            follow: None,
             profile: self.tools.member.profile.as_deref()?.parse().ok()?,
             roll_rad: self.tools.member.roll.trim().parse::<f64>().ok(),
             section_placement: None,

@@ -566,6 +566,7 @@ mod tests {
             name: "Beam".into(),
             class: 0,
             axis_points_mm: vec![[0.0; 3], [6000.0, 0.0, 0.0]],
+            follow: None,
             profile: Sha256::digest(b"profile").unwrap(),
             roll_rad: None,
             section_placement: None,

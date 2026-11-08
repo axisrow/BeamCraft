@@ -294,6 +294,7 @@ mod tests {
             name: "Beam".into(),
             class: 0,
             axis_points_mm: vec![[0.; 3], [2000., 0., 0.]],
+            follow: None,
             profile: ContentDigest::from_bytes([7; 32]),
             roll_rad: None,
             section_placement: None,

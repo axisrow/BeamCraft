@@ -13,9 +13,11 @@ Open questions are at the end.
   "magnetic on" means bound. A bound element stores its geometry in the grid's local frame and
   its world geometry is derived at read time, so a shared-grid edit writes only the grid and
   never rewrites a section element outside its scope. Deleting a grid with followers refuses
-  with `GRID_IN_USE`; editing a bound element's geometry by hand detaches the binding in the
-  same atomic change and materializes the current world geometry; a pinned foreign grid is
-  never followed (`FOREIGN_READ_ONLY`). Following is on the grid frame — origin and rotation —
+  with `GRID_IN_USE`; a shape rewrite of a bound element refuses `GRID_IN_USE` until the
+  binding is released, and the release materializes the current world geometry — no implicit
+  detach, so the local record and the world snapshot never diverge silently; a pinned foreign
+  grid is never followed (`FOREIGN_READ_ONLY`). Following is on the grid frame — origin and
+  rotation —
   not on individual lines; line-level following and automatic session-wide modes stay post-MVP.
   The T01 contract section 7.5 and the acceptance cases GR-P17 and GR-N20 to GR-N23 carry the
   delivered semantics.

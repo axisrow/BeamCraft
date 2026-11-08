@@ -816,6 +816,72 @@ impl CreateGrid {
     }
 }
 
+/// Binds one placed member to one local grid (T01.8): the member's axis becomes grid-local and
+/// its world geometry is derived at read time, so a shared-grid edit never rewrites it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BindGrid {
+    /// The member to bind.
+    pub target_id: ElementId,
+    /// The grid to follow.
+    pub grid: ElementId,
+}
+
+impl BindGrid {
+    /// Admit all model arguments before consulting project state.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        if self.target_id == self.grid {
+            return Err(CommandError::new(
+                ErrorCode::InvalidArgument,
+                "grid",
+                "a member cannot follow itself",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Versioned fingerprint of the binding request.
+    pub fn content_fingerprint(&self) -> Result<crate::digest::ContentDigest, CommandError> {
+        self.validate_arguments()?;
+        let mut out = b"BeamCraft/T01/BindGrid/v1\0".to_vec();
+        out.extend_from_slice(self.target_id.as_bytes());
+        out.extend_from_slice(self.grid.as_bytes());
+        crate::digest::Sha256::digest(&out).map_err(|_| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "grid",
+                "grid request exceeds the encoding cap",
+            )
+        })
+    }
+}
+
+/// Releases one member's grid binding (T01.8) and materializes the current world axis.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnbindGrid {
+    /// The bound member.
+    pub target_id: ElementId,
+}
+
+impl UnbindGrid {
+    /// Admit all model arguments before consulting project state.
+    pub fn validate_arguments(&self) -> Result<(), CommandError> {
+        Ok(())
+    }
+
+    /// Versioned fingerprint of the release request.
+    pub fn content_fingerprint(&self) -> Result<crate::digest::ContentDigest, CommandError> {
+        let mut out = b"BeamCraft/T01/UnbindGrid/v1\0".to_vec();
+        out.extend_from_slice(self.target_id.as_bytes());
+        crate::digest::Sha256::digest(&out).map_err(|_| {
+            CommandError::new(
+                ErrorCode::LimitExceeded,
+                "grid",
+                "grid request exceeds the encoding cap",
+            )
+        })
+    }
+}
+
 /// Independent grid copy. Axis identities are replaced in U then V order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CopyGrid {

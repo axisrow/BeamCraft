@@ -39,6 +39,16 @@ pub fn world_to_local(grid: &Grid, p: [f64; 2]) -> [f64; 2] {
     let s = 2.0 * z * w / n;
     [c * (x - tx) + s * (y - ty), -s * (x - tx) + c * (y - ty)]
 }
+/// The exact inverse of [`world_to_local`]: a grid-local XY point back to world.
+pub fn local_to_world(grid: &Grid, p: [f64; 2]) -> [f64; 2] {
+    let [x, y] = p;
+    let [tx, ty] = grid.translation_mm;
+    let [z, w] = grid.orientation_zw;
+    let n = z * z + w * w;
+    let c = (w * w - z * z) / n;
+    let s = 2.0 * z * w / n;
+    [tx + c * x - s * y, ty + s * x + c * y]
+}
 /// Apply one line operation without changing the input. New identities are checked against the
 /// complete project's live identity set; referenced AxisIds cannot be removed.
 pub fn edit(

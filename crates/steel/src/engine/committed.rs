@@ -318,6 +318,9 @@ fn member_key(member: &AuthoredMember, profile: &ProfileInfo) -> Vec<u8> {
         name: _,
         class: _,
         axis_points_mm,
+        // A grid binding changes no body beyond the derived world points already keyed
+        // above (T01.8): the frame is not part of the element-local body.
+        follow: _,
         curved,
         profile: _,
         roll_rad,
@@ -664,6 +667,7 @@ mod tests {
             name: format!("Member {n}"),
             class: 0,
             axis_points_mm: vec![[0.0; 3], [0.0, 0.0, 3000.0]],
+            follow: None,
             profile,
             roll_rad: None,
             section_placement: None,
@@ -722,6 +726,7 @@ mod tests {
             name: "F06 POS-12".into(),
             class: 0,
             axis_points_mm: vec![[0.0; 3], [4000.0, 0.0, 0.0]],
+            follow: None,
             profile,
             roll_rad: None,
             section_placement: None,
@@ -972,6 +977,7 @@ mod tests {
             name: format!("Member {n}"),
             class: 0,
             axis_points_mm: vec![[0.0; 3], [3000.0, 0.0, 0.0]],
+            follow: None,
             profile: Sha256::digest(&[n]).unwrap(),
             roll_rad: None,
             section_placement: None,

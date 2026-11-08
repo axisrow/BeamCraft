@@ -1291,6 +1291,22 @@ pub(crate) fn decode(
             _ => other += 1,
         }
     }
+    // T01.8: a bound member's world axis points are derived from its grid's frame and the
+    // stored local points at read time, so the grid edit that moved it never wrote the member.
+    // A binding without its grid is an integrity error, not a silent unbound member.
+    if members.iter().any(|(m, _)| m.follow.is_some()) {
+        let grids = beamcraft_layer_engine::authored::grid::read_grids(&prims)?;
+        for (member, _) in members.iter_mut() {
+            if let Some(follow) = &member.follow {
+                let frame = grids
+                    .iter()
+                    .find(|g| g.id == follow.grid)
+                    .ok_or_else(|| integrity("a bound member's grid is missing"))?;
+                member.axis_points_mm =
+                    steel::engine::member::grid_world_axis(frame, &follow.local_axis_mm);
+            }
+        }
+    }
     let definitions = decode_definitions(&prims)?;
     let bolt_scene = bolt_views
         .into_iter()
@@ -1411,17 +1427,69 @@ pub(crate) fn decode(
 fn decode_member(prim: &Prim, id: ElementId, kind: MemberKind) -> Result<AuthoredMember, Refusal> {
     let bad = || integrity("committed member lacks a required authored input");
     let name = property(prim, "bim:name").and_then(text).ok_or_else(bad)?;
-    let Some(Value::Array(points)) = property(prim, "bim:axisPointsMm") else {
-        return Err(bad());
-    };
-    let axis: Vec<[f64; 3]> = points
+    // T01.8: a bound member stores its grid-local axis points and no world axis points; the
+    // caller derives the world geometry from the grid frame. An unbound member stores the
+    // world points. Either storage admits exactly one truth.
+    let follow = match prim
+        .relationships
         .iter()
-        .map(numbers::<3>)
-        .collect::<Option<_>>()
-        .ok_or_else(bad)?;
-    if axis.len() < 2 {
-        return Err(bad());
-    }
+        .find(|r| r.name == "bim:followsGrid")
+    {
+        None => None,
+        Some(r) => match r.targets.as_slice() {
+            [] => None,
+            [target] => {
+                // The target prim path ends `GRD_<32 hex digits>`; the digits are the GridId.
+                let hex = || -> Option<&str> {
+                    let name = target.rsplit('/').next()?;
+                    let (_, hex) = name.split_once('_')?;
+                    (hex.len() == 32).then_some(hex)
+                }()
+                .ok_or_else(|| integrity("a binding target is not a grid element"))?;
+                let mut bytes = [0u8; 16];
+                for (slot, index) in bytes.iter_mut().zip(0usize..) {
+                    *slot =
+                        u8::from_str_radix(hex.get(index * 2..index * 2 + 2).ok_or_else(bad)?, 16)
+                            .map_err(|_| integrity("a binding target is not a grid element"))?;
+                }
+                let uuid = beamcraft_model::id::Uuid7::from_bytes(bytes)
+                    .map_err(|_| integrity("a binding target is not a grid element"))?;
+                let grid = ElementId::from_uuid(uuid);
+                let Some(Value::Array(local)) = property(prim, "steel:grid:localAxisMm") else {
+                    return Err(bad());
+                };
+                let local_axis_mm: Vec<[f64; 3]> = local
+                    .iter()
+                    .map(numbers::<3>)
+                    .collect::<Option<_>>()
+                    .ok_or_else(bad)?;
+                if local_axis_mm.len() < 2 {
+                    return Err(bad());
+                }
+                Some(steel::engine::member::GridFollow {
+                    grid,
+                    local_axis_mm,
+                })
+            }
+            _ => return Err(bad()),
+        },
+    };
+    let axis: Vec<[f64; 3]> = if let Some(follow) = &follow {
+        follow.local_axis_mm.clone()
+    } else {
+        let Some(Value::Array(points)) = property(prim, "bim:axisPointsMm") else {
+            return Err(bad());
+        };
+        let points: Vec<[f64; 3]> = points
+            .iter()
+            .map(numbers::<3>)
+            .collect::<Option<_>>()
+            .ok_or_else(bad)?;
+        if points.len() < 2 {
+            return Err(bad());
+        }
+        points
+    };
     let roll_rad = property(prim, "steel:member:rollRad")
         .map(|v| number(v).ok_or_else(bad))
         .transpose()?;
@@ -1453,6 +1521,7 @@ fn decode_member(prim: &Prim, id: ElementId, kind: MemberKind) -> Result<Authore
         name: name.to_owned(),
         class: decode_class(prim)?,
         axis_points_mm: axis,
+        follow,
         profile,
         roll_rad,
         section_placement,
@@ -1671,6 +1740,16 @@ pub(crate) fn verify_derived(
         .map(|(a, m)| (a.id, m))
         .chain(decoded.members.iter().map(|(a, m)| (a.id, m)))
         .collect();
+    // T01.8: a bound member's stored mesh is the world snapshot of its last binding event.
+    // Its live world geometry is derived at read time from the grid frame, and a shared-grid
+    // edit never rewrites the member, so the snapshot is allowed to lag until the release
+    // re-materializes both the world axis and the mesh.
+    let bound: BTreeSet<_> = decoded
+        .members
+        .iter()
+        .filter(|(a, _)| a.follow.is_some())
+        .map(|(a, _)| a.id)
+        .collect();
     let expected = records
         .iter()
         .map(|r| (r.authored.id, &r.body.solid, plate_record(r), false))
@@ -1685,7 +1764,7 @@ pub(crate) fn verify_derived(
         let Some(Some(actual)) = found.get(&id) else {
             return Err(integrity("element has no derived mesh"));
         };
-        if !actual.same_geometry(&mesh) {
+        if !bound.contains(&id) && !actual.same_geometry(&mesh) {
             return Err(integrity("derived mesh differs from the kernel result"));
         }
         let assessment = assess(actual.stored.as_ref(), &record);
@@ -1697,9 +1776,12 @@ pub(crate) fn verify_derived(
                 .stored
                 .as_ref()
                 .is_some_and(|s| is_superseded_algorithm(&s.algorithm));
+        // A bound member's stored quantities are the snapshot of its last binding event and
+        // re-materialize with the mesh at the release (T01.8), like the world snapshot above.
         if strict
             && actual.stored.is_some()
             && !superseded
+            && !bound.contains(&id)
             && (assessment.volume != Freshness::Current || assessment.mass != Freshness::Current)
         {
             return Err(integrity("stored quantities differ from the kernel's"));

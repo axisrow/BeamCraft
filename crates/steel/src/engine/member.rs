@@ -167,9 +167,12 @@ pub struct AuthoredMember {
     pub name: String,
     /// Authored integer part class (P15); zero is the default.
     pub class: i32,
-    /// Element-local path points in order: exactly two for a straight member, more for a
-    /// polybeam.
+    /// World path points in order: exactly two for a straight member, more for a polybeam.
+    /// While the member is bound to a grid these are **derived** from the grid frame and the
+    /// stored local points at read time, never stored.
     pub axis_points_mm: Vec<[f64; 3]>,
+    /// The explicit grid binding (T01.8): `Some` while the member follows a grid frame.
+    pub follow: Option<GridFollow>,
     /// Pinned profile definition.
     pub profile: ContentDigest,
     /// Explicit roll; `None` is zero. A polybeam has no authored roll: the G12 sweep carries the
@@ -190,6 +193,39 @@ pub struct AuthoredMember {
     pub hole_records: Vec<MemberHoleRecord>,
 }
 
+/// One explicit grid binding of a member (T01.8): the member follows the grid's frame, its
+/// world axis points are derived from these grid-local points at read time, and a shared-grid
+/// edit never rewrites the member.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GridFollow {
+    /// The followed grid's identity.
+    pub grid: ElementId,
+    /// The member's axis points in the grid's local frame; `z` is kept as authored.
+    pub local_axis_mm: Vec<[f64; 3]>,
+}
+
+/// Maps world member axis points into the grid's local frame (T01.8); `z` is kept as authored.
+pub fn grid_local_axis(grid: &beamcraft_model::grid::Grid, world: &[[f64; 3]]) -> Vec<[f64; 3]> {
+    world
+        .iter()
+        .map(|[x, y, z]| {
+            let [lx, ly] = beamcraft_engine::grid_edit::world_to_local(grid, [*x, *y]);
+            [lx, ly, *z]
+        })
+        .collect()
+}
+
+/// Maps grid-local member axis points back to world with the grid's current frame (T01.8).
+pub fn grid_world_axis(grid: &beamcraft_model::grid::Grid, local: &[[f64; 3]]) -> Vec<[f64; 3]> {
+    local
+        .iter()
+        .map(|[x, y, z]| {
+            let [wx, wy] = beamcraft_engine::grid_edit::local_to_world(grid, [*x, *y]);
+            [wx, wy, *z]
+        })
+        .collect()
+}
+
 impl AuthoredMember {
     /// The authored fields of an accepted straight-member command.
     pub fn from_command(command: &CreateStraightMember) -> Self {
@@ -200,6 +236,7 @@ impl AuthoredMember {
             class: command.class,
             curved: false,
             axis_points_mm: vec![command.axis_points_mm[0], command.axis_points_mm[1]],
+            follow: None,
             profile: command.profile_digest,
             roll_rad: command.roll_rad,
             section_placement: command.section_placement,
@@ -219,6 +256,7 @@ impl AuthoredMember {
             class: command.class,
             curved: false,
             axis_points_mm: command.path_points_mm.clone(),
+            follow: None,
             profile: command.profile_digest,
             roll_rad: None,
             section_placement: None,
@@ -1384,6 +1422,7 @@ mod tests {
             kind: MemberKind::Beam,
             name: "Cut beam".into(),
             axis_points_mm: vec![[0.0; 3], [6000.0, 0.0, 0.0]],
+            follow: None,
             profile: digest(b"profile"),
             roll_rad: None,
             section_placement: None,

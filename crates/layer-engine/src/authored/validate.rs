@@ -1283,6 +1283,10 @@ pub(super) fn changes(
                 "a delete cannot be combined with other changes of the element",
             ));
         }
+        // T01.8 (GR-N22): set below when the changed element is grid-bound. Any shape rewrite
+        // of a bound element refuses until the binding is released; the binding changes
+        // themselves are exempt, and the release re-materializes the world axis.
+        let mut grid_bound = false;
         match change {
             Change::Create(_) | Change::AttachReference(_) if existing.is_some() => {
                 return Err(
@@ -1353,6 +1357,8 @@ pub(super) fn changes(
                     // The main-part record lives on the assembly; only it is a source.
                     Change::MainPart { .. } => kind == "assembly",
                     Change::Level { .. } => is_part_kind(kind),
+                    // A grid binding lives on the placed part; plates join in a later slice.
+                    Change::Follow { .. } => is_part_kind(kind),
                     Change::Mark { .. } => is_part_kind(kind) || matches!(kind, "assembly"),
                     // A user attribute is carried by any element kind, including a wrapper.
                     Change::AttrSet { .. } => true,
@@ -1361,6 +1367,10 @@ pub(super) fn changes(
                 if !valid {
                     return Err(unsupported());
                 }
+                grid_bound = p
+                    .relationships
+                    .iter()
+                    .any(|rel| rel.name == "bim:followsGrid" && !rel.targets.is_empty());
             }
         }
         let (r, w): (&[Group], &[Group]) = match change {
@@ -1416,6 +1426,12 @@ pub(super) fn changes(
                 &[Group::Lifecycle, Group::Relationship],
                 &[Group::Relationship],
             ),
+            // A binding rewrites the stored axis group (erase or restore of the world points)
+            // and the follow relationship; the grid's existence is read, never its content.
+            Change::Follow { .. } => (
+                &[Group::Lifecycle, Group::ShapeInputs, Group::Relationship],
+                &[Group::ShapeInputs, Group::Relationship],
+            ),
             Change::Delete { .. } => (
                 &[Group::Lifecycle, Group::Relationship],
                 &[
@@ -1444,6 +1460,13 @@ pub(super) fn changes(
                 identity: id.into(),
                 group,
             });
+        }
+        if w.contains(&Group::ShapeInputs) && !matches!(change, Change::Follow { .. }) && grid_bound
+        {
+            return Err(fail(
+                ErrorCode::DependencyConflict,
+                "the element follows a grid; release the binding before editing its geometry",
+            ));
         }
         if let Change::PartOf {
             assembly: Some(target),
@@ -1479,6 +1502,49 @@ pub(super) fn changes(
                 identity: target.clone(),
                 group: Group::Lifecycle,
             });
+        }
+        if let Change::Follow {
+            binding: FollowBinding::Bind(record),
+            ..
+        } = change
+        {
+            if !uuid7(&record.grid) {
+                return Err(fail(ErrorCode::InvalidId, "invalid full element identity")
+                    .with_rule("DV-BASE-001"));
+            }
+            // The record replaces the member's axis storage: the same bounds apply, and the
+            // grid's existence decides acceptance. Its frame is the caller's derivation input
+            // and is never written here.
+            if record.local_axis_mm.len() < 2
+                || record.local_axis_mm.len() > beamcraft_model::limits::MAX_MEMBER_PATH_POINTS
+                || record
+                    .local_axis_mm
+                    .iter()
+                    .flatten()
+                    .any(|v| !v.is_finite() || v.abs() > 1e9)
+            {
+                return Err(invalid());
+            }
+            reads.insert(Footprint {
+                identity: record.grid.clone(),
+                group: Group::Lifecycle,
+            });
+        }
+        if let Change::Follow {
+            binding: FollowBinding::Release(world),
+            ..
+        } = change
+        {
+            // The restored axis replaces the record's storage: the same member bounds apply.
+            if world.len() < 2
+                || world.len() > beamcraft_model::limits::MAX_MEMBER_PATH_POINTS
+                || world
+                    .iter()
+                    .flatten()
+                    .any(|v| !v.is_finite() || v.abs() > 1e9)
+            {
+                return Err(invalid());
+            }
         }
         if let Change::MainPart { part, .. } = change {
             if !uuid7(part) {

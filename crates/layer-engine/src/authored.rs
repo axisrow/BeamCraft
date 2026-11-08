@@ -449,6 +449,27 @@ pub struct Mesh {
     pub axis: Option<Vec<[f64; 3]>>,
 }
 
+/// One explicit grid binding of a placed element (T01.8): the element follows the named
+/// grid's frame and stores its geometry in the grid's local frame, so the world geometry is
+/// derived at read time and a shared-grid edit never rewrites the follower.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FollowRecord {
+    /// Full UUIDv7 of the followed grid.
+    pub grid: String,
+    /// The element's axis points in the grid's local frame; `z` is kept as authored.
+    pub local_axis_mm: Vec<[f64; 3]>,
+}
+
+/// The payload of [`Change::Follow`]: bind to a grid, or release with the world axis points
+/// the element carries from now on.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FollowBinding {
+    /// Bind to the grid: the stored world axis points are erased and the record is authored.
+    Bind(FollowRecord),
+    /// Release: the record is erased and the given world axis points are restored.
+    Release(Vec<[f64; 3]>),
+}
+
 /// Closed batch items, produced by a trusted engine, never raw USD setters.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
@@ -539,6 +560,16 @@ pub enum Change {
         /// Full UUIDv7 of the level, or `None` for an explicit empty record (an unassignment).
         level: Option<String>,
     },
+    /// Bind a placed element to a grid or release the binding (T01.8). Binding erases the
+    /// element's stored world axis points and authors the follow record; releasing erases the
+    /// record and restores the given world axis points. The world geometry of a bound element
+    /// is derived at read time, so a shared-grid edit never rewrites the follower.
+    Follow {
+        /// Full source UUIDv7: the bound element.
+        id: String,
+        /// The binding to store, or the release with the current world axis points.
+        binding: FollowBinding,
+    },
     /// Write the approved mark of a plate, beam, column or assembly (A09): three optional
     /// properties of the element in the authored layer, replaced as a whole. Nothing derived
     /// depends on a mark, so no result is invalidated.
@@ -589,6 +620,7 @@ impl Change {
             Self::PartOf { id, .. } => (id, "bim:partOf"),
             Self::MainPart { id, .. } => (id, "bim:mainPart"),
             Self::Level { id, .. } => (id, "bim:level"),
+            Self::Follow { id, .. } => (id, "steel:grid:follows"),
             Self::Mark { id, .. } => (id, "steel:numbering"),
             Self::AttrDefine { .. } | Self::AttrUndefine { .. } => {
                 (ATTR_SCHEMA_IDENTITY, "bim:attr:schema")

@@ -55,7 +55,7 @@ fn guide_change(grid: &Grid) -> Result<Change, Refusal> {
         axis: None,
     }))
 }
-fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, Refusal> {
+pub(crate) fn snapshot(request: OpenRequest, c: &Control) -> Result<Vec<Prim>, Refusal> {
     validate_layers(request.clone(), schema_identity()?, c)?;
     let mut reader = Reader::default();
     let opened = reader.open(request, c)?;
@@ -424,16 +424,22 @@ pub fn update_grid(
 /// The grid's axes count as referenced — every axis removal and grid update refuses with
 /// `GRID_IN_USE` — exactly when another element's relationship targets the grid through the
 /// element index (the seam a discipline hook writes its relationships with, T01 GR-N14).
-/// A store where nothing targets the grid references nothing.
+/// A frame-following binding (`bim:followsGrid`, T01.8) references the grid's frame, never a
+/// line, so it never pins an axis; the delete guard answers to every relationship, bindings
+/// included. A store where nothing pins the grid references nothing.
 fn referenced_axes(
     index: &beamcraft_layer_engine::index::ElementIndex,
     id: &beamcraft_layer_engine::index::ElementId,
     source: &Grid,
 ) -> Result<BTreeSet<ElementId>, Refusal> {
-    if index.delete_blockers(id)?.is_empty() {
-        Ok(BTreeSet::new())
-    } else {
+    let pins_lines = index
+        .delete_blockers(id)?
+        .iter()
+        .any(|link| link.name != "bim:followsGrid");
+    if pins_lines {
         Ok(source.axis_ids().collect())
+    } else {
+        Ok(BTreeSet::new())
     }
 }
 
@@ -789,5 +795,28 @@ mod tests {
         let error =
             beamcraft_engine::grid_edit::edit(&request, &grid, &used, &referenced).unwrap_err();
         assert_eq!(error.code, ErrorCode::DependencyConflict);
+    }
+
+    /// T01.8 over the real bounded reader: a frame-following binding references the grid's
+    /// frame, not a line, so it never pins an axis; any other relationship still does.
+    #[test]
+    fn a_frame_following_binding_never_pins_a_line() {
+        let grid = grid_record();
+        let id = grid_element_id();
+        let binding = format!(
+            "custom rel bim:followsGrid = </World/Steel/Parts/PRT_{}>",
+            GRID.replace('-', "")
+        );
+        let bound = index_of(&scene(&binding));
+        assert!(referenced_axes(&bound, &id, &grid).unwrap().is_empty());
+        let other = format!(
+            "custom rel bim:test:to = </World/Steel/Parts/PRT_{}>",
+            GRID.replace('-', "")
+        );
+        let pinned = index_of(&scene(&other));
+        assert_eq!(
+            referenced_axes(&pinned, &id, &grid).unwrap(),
+            grid.axis_ids().collect::<BTreeSet<_>>()
+        );
     }
 }

@@ -211,6 +211,23 @@ pub fn delete_element(
     // Grids and levels are shared data (T01 §9): their delete answers to the shared grids/
     // levels scope, exactly like create and edit, not to the element scope.
     let shared = matches!(kind, DeletedKind::Grid | DeletedKind::Level);
+    // T01.8 (§7.5): a grid with followers refuses deletion; a binding is a real element
+    // relationship and this guard answers to every relationship, bindings included. A line
+    // removal never reaches here and is unaffected by bindings.
+    if matches!(kind, DeletedKind::Grid) {
+        let mut reader = Reader::default();
+        let opened = reader.open(base_request.clone(), &control)?;
+        let index = reader.element_index(&opened.context, &control)?;
+        let id = beamcraft_layer_engine::index::ElementId::parse(&command.target_id.to_string())?;
+        if !index.delete_blockers(&id)?.is_empty() {
+            return Err(CommandError::new(
+                ErrorCode::DependencyConflict,
+                "target_id",
+                "GRID_IN_USE; the grid has followers, unbind them first",
+            )
+            .into());
+        }
+    }
     // A16.1: a main part cannot leave its assembly through a delete, exactly as a detach of it
     // is refused; another main part is named first.
     if crate::assembly::is_main_part(&base_request, &command.target_id, &control)? {

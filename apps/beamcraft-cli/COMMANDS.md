@@ -1011,6 +1011,24 @@ relabel-grid-line --store ROOT --id UUID [--axis-id UUID] [--label TEXT] [--fami
     [--workspace-id UUID]
 ```
 
+### bind-grid
+
+write.
+
+```text
+bind-grid --store ROOT --id UUID --grid UUID [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+    [--project-id UUID] [--workspace-id UUID]
+```
+
+### unbind-grid
+
+write.
+
+```text
+unbind-grid --store ROOT --id UUID [--op-id UUID] [--revision-id UUID] [--actor-id UUID]
+    [--project-id UUID] [--workspace-id UUID]
+```
+
 ## construction
 
 ### create-construction

@@ -1735,6 +1735,26 @@ pub const COMMANDS: &[Command] = &[
         ],
     ),
     entry(
+        Route::Grid,
+        "grid",
+        "bind-grid",
+        Access::Write,
+        Ids::Common,
+        &[
+            req("--store", "ROOT"),
+            req("--id", "UUID"),
+            req("--grid", "UUID"),
+        ],
+    ),
+    entry(
+        Route::Grid,
+        "grid",
+        "unbind-grid",
+        Access::Write,
+        Ids::Common,
+        &[req("--store", "ROOT"), req("--id", "UUID")],
+    ),
+    entry(
         Route::Construction,
         "construction",
         "create-construction",

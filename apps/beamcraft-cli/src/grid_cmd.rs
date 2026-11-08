@@ -319,6 +319,8 @@ fn run(args: &[OsString]) -> Run<Json> {
             "--family",
             "--labels",
         ],
+        "bind-grid" => &["--store", "--id", "--grid"],
+        "unbind-grid" => &["--store", "--id"],
         _ => return Err(invalid("unknown grid command")),
     };
     let mut options = BTreeMap::new();
@@ -441,6 +443,9 @@ fn run(args: &[OsString]) -> Run<Json> {
     };
     if *command == "update-grid" {
         return update_command(&store, &options, &context, &mut fresh);
+    }
+    if matches!(*command, "bind-grid" | "unbind-grid") {
+        return magnetic_command(&store, &options, command, &context);
     }
     if *command != "create-grid" {
         return line_command(&store, &options, command, &context, &mut fresh);
@@ -711,6 +716,53 @@ pub(crate) fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>
         ("revision", revision_json(&change.revision)),
         ("footprint", footprint_json(change.footprint.as_ref())),
         ("grids", views_json(&change.grids)?),
+    ]))
+}
+
+/// Dispatches the T01.8 magnetic binding commands against the real command pipeline.
+fn magnetic_command(
+    store: &RevisionStore,
+    options: &BTreeMap<&str, &str>,
+    command: &str,
+    context: &GridContext,
+) -> Run<Json> {
+    let parse_id = |key: &'static str| -> Run<ElementId> {
+        let text = options.get(key).ok_or_else(|| invalid("missing option"))?;
+        ElementId::parse(text).map_err(id_error)
+    };
+    let member = parse_id("--id")?;
+    let change = match command {
+        "bind-grid" => {
+            let grid = parse_id("--grid")?;
+            beamcraft_commands::magnetic::bind_grid(
+                store,
+                context,
+                &beamcraft_model::grid::BindGrid {
+                    target_id: member,
+                    grid,
+                },
+                &mut NoFault,
+            )?
+        }
+        _ => beamcraft_commands::magnetic::unbind_grid(
+            store,
+            context,
+            &beamcraft_model::grid::UnbindGrid { target_id: member },
+            &mut NoFault,
+        )?,
+    };
+    let outcome = match (command, change.replayed) {
+        ("bind-grid", false) => "member_bound",
+        ("bind-grid", true) => "member_bound_replayed",
+        (_, false) => "member_unbound",
+        (_, true) => "member_unbound_replayed",
+    };
+    Ok(Json::object([
+        ("outcome", Json::text(outcome)),
+        ("op_id", Json::text(context.op_id.to_string())),
+        ("element_id", Json::text(member.to_string())),
+        ("revision", revision_json(&change.revision)),
+        ("footprint", footprint_json(change.footprint.as_ref())),
     ]))
 }
 
