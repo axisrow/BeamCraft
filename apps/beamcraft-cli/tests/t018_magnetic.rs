@@ -441,3 +441,153 @@ fn the_binding_survives_a_reopen_and_the_delete_guard_stays_armed() {
         "DEPENDENCY_CONFLICT",
     );
 }
+
+const PLACED: &str = "01990000-0000-7000-8000-000000000110";
+
+/// The world axis of the first member of an inspection: the element-local axis moved by the
+/// member's placement translation (the placed members here carry no rotation).
+fn placed_world(j: &Json) -> Vec<[f64; 3]> {
+    let member = j.get("members").unwrap().array().unwrap()[0].clone();
+    let placement = member.get("placement").unwrap();
+    let q: Vec<f64> = placement
+        .get("orientation_xyzw")
+        .unwrap()
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    assert_eq!(q, vec![0.0, 0.0, 0.0, 1.0]);
+    let t: Vec<f64> = placement
+        .get("translation_mm")
+        .unwrap()
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    axis_points(j)
+        .into_iter()
+        .map(|p| [p[0] + t[0], p[1] + t[1], p[2] + t[2]])
+        .collect()
+}
+
+/// Issue 549: a member with a placement offset follows a grid rotation onto exactly the
+/// position of an unbound twin transformed by hand; the inspected axis plus the placement
+/// is that position, the release keeps it, and a placement edit of a bound member refuses
+/// like a shape edit (GR-N22).
+#[test]
+fn a_placed_bound_member_follows_the_frame_with_its_placement_applied_once() {
+    let f = fixture();
+    let profile = text(
+        ok(&f, "define-profile", &["--width", "200", "--height", "300"])
+            .get("definition")
+            .unwrap(),
+        "digest",
+    );
+    let steel = text(
+        ok(&f, "define-material", &["--density", "7850"])
+            .get("definition")
+            .unwrap(),
+        "digest",
+    );
+    ok(
+        &f,
+        "create-member",
+        &[
+            "--start",
+            "0,0,0",
+            "--end",
+            "8000,0,0",
+            "--translation",
+            "3000,2000,0",
+            "--profile-digest",
+            &profile,
+            "--material-digest",
+            &steel,
+            "--name",
+            "Moved",
+            "--new-id",
+            PLACED,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000220",
+        ],
+    );
+    let before = ok(&f, "inspect-elements", &["--element", PLACED]);
+    let world_before = placed_world(&before);
+    near(world_before[0], [3000.0, 2000.0, 0.0]);
+    ok(
+        &f,
+        "bind-grid",
+        &[
+            "--id",
+            PLACED,
+            "--grid",
+            GRID,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000221",
+        ],
+    );
+    // Binding alone must not move the member.
+    let bound = ok(&f, "inspect-elements", &["--element", PLACED]);
+    near(placed_world(&bound)[0], [3000.0, 2000.0, 0.0]);
+    near(placed_world(&bound)[1], [11000.0, 2000.0, 0.0]);
+    ok(
+        &f,
+        "update-grid",
+        &[
+            "--id",
+            GRID,
+            "--origin",
+            "2000,1000",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000222",
+        ],
+    );
+    ok(
+        &f,
+        "update-grid",
+        &[
+            "--id",
+            GRID,
+            "--rotation",
+            "90",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000223",
+        ],
+    );
+    // The unbound twin moved by (2000,1000) and turned 90 degrees about (2000,1000) lands at
+    // (0,4000) -> (0,12000).
+    let turned = ok(&f, "inspect-elements", &["--element", PLACED]);
+    let world = placed_world(&turned);
+    near(world[0], [0.0, 4000.0, 0.0]);
+    near(world[1], [0.0, 12000.0, 0.0]);
+    // A placement edit of a bound member is a hand edit: it refuses with nothing written.
+    rejected(
+        &f,
+        "update-element",
+        &[
+            "--id",
+            PLACED,
+            "--translation",
+            "0,0,0",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000224",
+        ],
+        "DEPENDENCY_CONFLICT",
+    );
+    ok(
+        &f,
+        "unbind-grid",
+        &[
+            "--id",
+            PLACED,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000225",
+        ],
+    );
+    let released = ok(&f, "inspect-elements", &["--element", PLACED]);
+    let world = placed_world(&released);
+    near(world[0], [0.0, 4000.0, 0.0]);
+    near(world[1], [0.0, 12000.0, 0.0]);
+}

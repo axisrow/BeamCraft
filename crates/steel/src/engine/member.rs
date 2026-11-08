@@ -204,24 +204,37 @@ pub struct GridFollow {
     pub local_axis_mm: Vec<[f64; 3]>,
 }
 
-/// Maps world member axis points into the grid's local frame (T01.8); `z` is kept as authored.
-pub fn grid_local_axis(grid: &beamcraft_model::grid::Grid, world: &[[f64; 3]]) -> Vec<[f64; 3]> {
-    world
+/// Maps a member's element-local axis points into the grid's local frame (T01.8): the
+/// member's placement is applied first, so the grid-local record holds the member's true
+/// world axis (issue 549). `z` is kept as placed.
+pub fn grid_local_axis(
+    grid: &beamcraft_model::grid::Grid,
+    placement: &Placement,
+    element_local: &[[f64; 3]],
+) -> Vec<[f64; 3]> {
+    element_local
         .iter()
-        .map(|[x, y, z]| {
-            let [lx, ly] = beamcraft_engine::grid_edit::world_to_local(grid, [*x, *y]);
-            [lx, ly, *z]
+        .map(|point| {
+            let [x, y, z] = crate::engine::transform::placement_to_world(placement, *point);
+            let [lx, ly] = beamcraft_engine::grid_edit::world_to_local(grid, [x, y]);
+            [lx, ly, z]
         })
         .collect()
 }
 
-/// Maps grid-local member axis points back to world with the grid's current frame (T01.8).
-pub fn grid_world_axis(grid: &beamcraft_model::grid::Grid, local: &[[f64; 3]]) -> Vec<[f64; 3]> {
+/// Maps grid-local member axis points back through the grid's current frame and then into
+/// the member's element-local frame (T01.8), the inverse of [`grid_local_axis`]: every
+/// consumer applies the member's placement on top, so the derived axis must be local.
+pub fn grid_world_axis(
+    grid: &beamcraft_model::grid::Grid,
+    placement: &Placement,
+    local: &[[f64; 3]],
+) -> Vec<[f64; 3]> {
     local
         .iter()
         .map(|[x, y, z]| {
             let [wx, wy] = beamcraft_engine::grid_edit::local_to_world(grid, [*x, *y]);
-            [wx, wy, *z]
+            crate::engine::transform::placement_to_local(placement, [wx, wy, *z])
         })
         .collect()
 }

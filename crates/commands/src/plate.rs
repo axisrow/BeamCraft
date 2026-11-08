@@ -1302,8 +1302,11 @@ pub(crate) fn decode(
                     .iter()
                     .find(|g| g.id == follow.grid)
                     .ok_or_else(|| integrity("a bound member's grid is missing"))?;
-                member.axis_points_mm =
-                    steel::engine::member::grid_world_axis(frame, &follow.local_axis_mm);
+                member.axis_points_mm = steel::engine::member::grid_world_axis(
+                    frame,
+                    &member.placement,
+                    &follow.local_axis_mm,
+                );
             }
         }
     }

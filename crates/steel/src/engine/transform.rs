@@ -182,6 +182,32 @@ fn degenerate(field: &'static str, message: &'static str) -> CommandError {
     CommandError::new(ErrorCode::InvalidArgument, field, message)
 }
 
+/// Maps an element-local point to world through the placement: rotate, then translate.
+pub fn placement_to_world(placement: &Placement, local: [f64; 3]) -> [f64; 3] {
+    let rotated = apply(&quat_to_matrix(placement.orientation_xyzw), local);
+    [
+        rotated[0] + placement.translation_mm[0],
+        rotated[1] + placement.translation_mm[1],
+        rotated[2] + placement.translation_mm[2],
+    ]
+}
+
+/// Maps a world point into the placement's element-local frame, the exact inverse of
+/// [`placement_to_world`]: subtract the translation, then rotate by the transpose.
+pub fn placement_to_local(placement: &Placement, world: [f64; 3]) -> [f64; 3] {
+    let m = quat_to_matrix(placement.orientation_xyzw);
+    let d = [
+        world[0] - placement.translation_mm[0],
+        world[1] - placement.translation_mm[1],
+        world[2] - placement.translation_mm[2],
+    ];
+    [
+        m[0][0] * d[0] + m[1][0] * d[1] + m[2][0] * d[2],
+        m[0][1] * d[0] + m[1][1] * d[1] + m[2][1] * d[2],
+        m[0][2] * d[0] + m[1][2] * d[1] + m[2][2] * d[2],
+    ]
+}
+
 /// The placement rotated by `angle_rad` about the world axis through `pivot_mm` along `axis`.
 /// The rotation composes on the world side: `R' = Q·R` and `t' = pivot + Q·(t - pivot)`.
 pub fn rotate_placement(
@@ -493,6 +519,25 @@ mod tests {
     use super::*;
     use crate::model::command::{BendRecord, BendSpec, KeepSide};
     use beamcraft_model::id::{ElementId, OpId};
+
+    #[test]
+    fn placement_point_maps_are_exact_inverses_under_rotation() {
+        // A quarter turn about Z, then a translation: (1,0,0) lands on (10,21,30).
+        let h = core::f64::consts::FRAC_1_SQRT_2;
+        let placement = Placement {
+            translation_mm: [10.0, 20.0, 30.0],
+            orientation_xyzw: [0.0, 0.0, h, h],
+        };
+        let world = placement_to_world(&placement, [1.0, 0.0, 0.0]);
+        for (a, e) in world.iter().zip([10.0, 21.0, 30.0]) {
+            assert!((a - e).abs() < 1e-12, "{world:?}");
+        }
+        let local = [123.0, -45.0, 6.0];
+        let back = placement_to_local(&placement, placement_to_world(&placement, local));
+        for (a, e) in back.iter().zip(local) {
+            assert!((a - e).abs() < 1e-9, "{back:?}");
+        }
+    }
 
     fn id(n: u8) -> ElementId {
         ElementId::parse(&format!("019a7bf0-0000-7000-8000-0000000000{n:02x}")).unwrap()

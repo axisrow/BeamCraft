@@ -18,8 +18,17 @@ world. The world geometry of a bound member is **derived at read time**: the dec
 quantities, snapshots, exports — sees the moved member while the grid edit itself writes only
 the grid.
 
+The local points are the member's **placed** axis: `bind-grid` applies the member's placement
+to its element-local `bim:axisPointsMm` before mapping into the grid frame, and the decode pass
+maps the grid's world result back through the inverse placement
+(`steel::engine::transform::placement_to_world` / `placement_to_local`), so the derived axis
+stays element-local like every stored member axis and each consumer applies the placement on
+top exactly once. A member with a placement offset therefore follows a frame move onto the
+same position as an unbound twin moved by hand (issue 549); before this, the placement was
+dropped at bind time and applied again at read time.
+
 A release (`unbind-grid`) erases the local points attr, authors the explicit empty target list
-(the PartOf detach pattern), restores the current world axis and refreshes the derived mesh and
+(the PartOf detach pattern), restores the current axis (element-local, through the inverse placement) and refreshes the derived mesh and
 quantities from the re-evaluated record, so the stored picture stops lagging the frame the
 moment the member stops following it. A rebind naming another grid replaces the record and
 recomputes the local axis against the new frame, but the member stays bound: its stored mesh
@@ -36,8 +45,9 @@ and quantities keep lagging the frame, and only a release re-materializes them.
   refuses `DEPENDENCY_CONFLICT`, `GRID_IN_USE` (the delete-side check in
   `crates/commands/src/delete.rs`); this is the symmetric delete guard the GR-N14 note
   deferred until a real producer existed.
-- **Hand edits (GR-N22)**: any shape-input rewrite of a bound element refuses
-  `DEPENDENCY_CONFLICT`, `GRID_IN_USE` until the binding is released (the layer validation in
+- **Hand edits (GR-N22)**: any shape-input or placement rewrite of a bound element refuses
+  `DEPENDENCY_CONFLICT`, `GRID_IN_USE` until the binding is released (a placement move would
+  otherwise split the placed local record from the member, issue 549; the layer validation in
   `crates/layer-engine/src/authored/validate.rs`); the binding changes themselves are exempt.
   Nothing detaches implicitly, so the local record and the world snapshot can never diverge
   silently.
@@ -52,7 +62,9 @@ unbind materializes the world and re-arms the strict derived checks; a grid with
 refuses deletion until the release; rebinding recomputes the local axis against the new frame
 and unblocks the old grid's deletion; a shape rewrite of the bound member refuses
 `GRID_IN_USE` with the geometry unchanged until the release, and the same edit passes after it
-(GR-N22). The frame-follows commands-level regression for the blocker-kind distinction lives in
+(GR-N22); a member with a placement offset follows a bind → translate → rotate chain onto the
+position of an unbound twin transformed by hand, its placement edit refuses while bound, and the
+release keeps the position (issue 549). The frame-follows commands-level regression for the blocker-kind distinction lives in
 `crates/commands/src/grid.rs` (`a_frame_following_binding_never_pins_a_line`), next to the
 GR-N14 chain test from #539.
 

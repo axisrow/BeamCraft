@@ -1283,8 +1283,8 @@ pub(super) fn changes(
                 "a delete cannot be combined with other changes of the element",
             ));
         }
-        // T01.8 (GR-N22): set below when the changed element is grid-bound. Any shape rewrite
-        // of a bound element refuses until the binding is released; the binding changes
+        // T01.8 (GR-N22): set below when the changed element is grid-bound. Any shape or
+        // placement rewrite of a bound element refuses until the binding is released; the binding changes
         // themselves are exempt, and the release re-materializes the world axis.
         let mut grid_bound = false;
         match change {
@@ -1461,11 +1461,15 @@ pub(super) fn changes(
                 group,
             });
         }
-        if w.contains(&Group::ShapeInputs) && !matches!(change, Change::Follow { .. }) && grid_bound
+        // A placement rewrite is a hand edit too (issue 549): the grid-local record holds the
+        // placed world axis, so moving the member would silently split the two.
+        if (w.contains(&Group::ShapeInputs) || w.contains(&Group::Placement))
+            && !matches!(change, Change::Follow { .. })
+            && grid_bound
         {
             return Err(fail(
                 ErrorCode::DependencyConflict,
-                "the element follows a grid; release the binding before editing its geometry",
+                "the element follows a grid; release the binding before editing its geometry or placement",
             ));
         }
         if let Change::PartOf {

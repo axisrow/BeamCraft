@@ -193,11 +193,21 @@ pub fn bind_grid(
     }
     let member = head_member(store, context, &command.target_id)?;
     let grid = head_grid(store, context, &command.grid)?;
-    let local_axis_mm =
-        steel::engine::member::grid_local_axis(&grid, &member.authored.axis_points_mm);
+    // The member's placement is applied before the grid frame (issue 549): the record holds
+    // the true world axis, so a placed member follows the frame like an unplaced one.
+    let local_axis_mm = steel::engine::member::grid_local_axis(
+        &grid,
+        &member.authored.placement,
+        &member.authored.axis_points_mm,
+    );
     let reads = member_entries(
         &command.target_id,
-        [Group::Lifecycle, Group::ShapeInputs, Group::Relationship],
+        [
+            Group::Lifecycle,
+            Group::ShapeInputs,
+            Group::Relationship,
+            Group::Placement,
+        ],
     )
     .chain([
         Entry {
@@ -256,7 +266,13 @@ pub fn unbind_grid(
         )
     })?;
     let grid = head_grid(store, context, &follow.grid)?;
-    let world = steel::engine::member::grid_world_axis(&grid, &follow.local_axis_mm);
+    // The released axis is element-local, like every stored member axis: the placement stays
+    // on the member and is applied on top by every consumer (issue 549).
+    let released = steel::engine::member::grid_world_axis(
+        &grid,
+        &member.authored.placement,
+        &follow.local_axis_mm,
+    );
     // The release re-materializes the world axis and refreshes the derived mesh with it:
     // the stored mesh stops lagging the frame the moment the member stops following it.
     // The record's body is evaluated from the current derived world, identical to the
@@ -298,7 +314,7 @@ pub fn unbind_grid(
         vec![
             Change::Follow {
                 id: command.target_id.to_string(),
-                binding: FollowBinding::Release(world),
+                binding: FollowBinding::Release(released),
             },
             mesh,
         ],
