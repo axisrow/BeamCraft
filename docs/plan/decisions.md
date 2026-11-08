@@ -574,7 +574,7 @@ See [M5 CLI delivery](m5-cli-delivery.md) for dependencies and acceptance.
 | 2 | macOS runtime verification without project hardware; Developer ID signing/notarization is deferred after the MVP by the 2026-10-27 decision | Q02 runtime acceptance |
 | 3 | IFC reference conversion and editable steel import: supported subsets, mapping, kernel admission, budgets and provenance (both input workflows in the MVP from 2026-10-27) | E04 reference-loading slice and native steel IFC import |
 | 4 | Live channel and permission model (C07, C08) | C07, C08 |
-| 5 | Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16 ([contract](../contracts/t01-project-grids-draft-v0.1.md) section 12) | T01.3, T01.4, T01.7, T01.8 |
+| 5 | ~~Grid contract draft: owner answers to O-G5, O-G7 and O-G11 to O-G16~~ Answered: O-G7 and O-G11 to O-G16 by the 2026-10-26 defaults, O-G5 (magnetic mode) on 2026-11-08 — both recorded in the [contract](../contracts/t01-project-grids-draft-v0.1.md) sections 12 and 7.5 | — |
 | 5 | Where saved views and review notes live: workspace only or a shared review layer | W01, W02 |
 | 6 | Variant sets in our own layers (N07) | N07 |
 | 7 | Local use of the third-party USD sample under its licence | N08 |
