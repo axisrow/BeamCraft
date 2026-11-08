@@ -1073,3 +1073,107 @@ fn a_knee_brace_group_attaches_to_rotated_parts() {
     // along the shank, whose requirement of 62.9 would demand the 80 mm entry.
     assert_eq!(text(group, "length_mm"), "60");
 }
+
+/// Issue 544: a bolt group belongs to its main part. Moving the main part carries the row
+/// with it and regenerates the other parts' holes; moving another part keeps the fasteners
+/// and regenerates that part's holes; parts moved apart, and a mirror, refuse with nothing
+/// written; each follow is one undo unit, and moving back restores every mesh exactly.
+#[test]
+fn a_group_follows_its_main_part_and_never_comes_apart() {
+    let mut f = Fixture::new();
+    let parts = f.parts();
+    let (low, high) = (parts[0].clone(), parts[1].clone());
+    // The upper plate is the main part.
+    let group = "019a7bf0-0000-7000-8000-0000007105a1";
+    f.group(group, &[high.clone(), low.clone()]);
+    let (low_mesh, high_mesh) = (mesh_of(&f, &low), mesh_of(&f, &high));
+    let points = |f: &Fixture| {
+        let g = f.groups()[0].clone();
+        (strings(&g, "point1_mm"), strings(&g, "point2_mm"))
+    };
+
+    // The main part moves +50 along x: the row follows exactly, the fasteners stay in their
+    // holes, and the lower plate's holes are regenerated under them.
+    f.ok(&owned(
+        "update-element",
+        &["--id", &high, "--move-from", "0,0,0", "--move-to", "50,0,0"],
+    ));
+    assert_eq!(
+        points(&f),
+        (
+            vec!["50".to_owned(), "250".to_owned(), "0".to_owned()],
+            vec!["650".to_owned(), "250".to_owned(), "0".to_owned()]
+        )
+    );
+    for part in [&low, &high] {
+        let holes = holes_of(&f, part);
+        assert_eq!(holes.len(), 2, "{part}");
+        assert!(holes.iter().all(|h| text(h, "generated_by") == group));
+    }
+    assert_ne!(mesh_of(&f, &low), low_mesh, "the lower plate's holes moved");
+    // The follow is one undo unit with the move.
+    f.undo();
+    assert_eq!(
+        points(&f),
+        (
+            vec!["0".to_owned(), "250".to_owned(), "0".to_owned()],
+            vec!["600".to_owned(), "250".to_owned(), "0".to_owned()]
+        )
+    );
+    assert_eq!(mesh_of(&f, &low), low_mesh);
+
+    // Another part moves: the fasteners stay, and that part's holes are regenerated in its
+    // own frame; moving it back by an absolute placement restores its mesh exactly.
+    f.ok(&owned(
+        "update-element",
+        &["--id", &low, "--move-from", "0,0,0", "--move-to", "0,40,0"],
+    ));
+    assert_eq!(
+        points(&f),
+        (
+            vec!["0".to_owned(), "250".to_owned(), "0".to_owned()],
+            vec!["600".to_owned(), "250".to_owned(), "0".to_owned()]
+        )
+    );
+    assert_ne!(mesh_of(&f, &low), low_mesh);
+    assert_eq!(
+        mesh_of(&f, &high),
+        high_mesh,
+        "the main part's holes did not move"
+    );
+    f.ok(&owned(
+        "update-element",
+        &["--id", &low, "--translation", "0,0,0"],
+    ));
+    assert_eq!(mesh_of(&f, &low), low_mesh);
+    assert_eq!(mesh_of(&f, &high), high_mesh);
+
+    // Moved apart, the lower plate would no longer be crossed: the whole edit refuses and
+    // the head keeps the node together.
+    f.rejected(&owned(
+        "update-element",
+        &[
+            "--id",
+            &high,
+            "--move-from",
+            "0,0,0",
+            "--move-to",
+            "2000,0,0",
+        ],
+    ));
+    // A mirror is not rigid: it refuses on a bolted part.
+    assert_eq!(
+        f.rejected(&owned(
+            "update-element",
+            &[
+                "--id",
+                &low,
+                "--mirror-point",
+                "500,0,0",
+                "--mirror-normal",
+                "1,0,0",
+            ],
+        )),
+        "DEPENDENCY_CONFLICT"
+    );
+}

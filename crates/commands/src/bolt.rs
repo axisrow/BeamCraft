@@ -696,15 +696,42 @@ fn hole_changes(
     control: &Control,
     footprint: Footprint,
 ) -> Result<(Vec<Change>, Footprint), Refusal> {
+    let owned: Vec<_> = holes.iter().map(|hole| (group, hole)).collect();
+    regenerated_holes(
+        op_id,
+        &owned,
+        &BTreeSet::from([group]),
+        keep,
+        base_request,
+        control,
+        footprint,
+        None,
+    )
+}
+
+/// [`hole_changes`] over several groups at once, each new hole tagged with its owning group,
+/// so groups sharing a plate rewrite its record set once (issue 544). `moved` replaces the
+/// head's authored record of that plate (a part the same command moves).
+#[allow(clippy::too_many_arguments)]
+fn regenerated_holes(
+    op_id: OpId,
+    owned: &[(ElementId, &steel::engine::bolt::GeneratedHole)],
+    regenerating: &BTreeSet<ElementId>,
+    keep: &dyn Fn(&HoleRecord) -> bool,
+    base_request: &OpenRequest,
+    control: &Control,
+    footprint: Footprint,
+    moved: Option<&steel::engine::command::AuthoredPlate>,
+) -> Result<(Vec<Change>, Footprint), Refusal> {
     let mut reader = Reader::default();
     let opened = reader.open(base_request.clone(), control)?;
     let decoded = decode(&reader, &opened, control)?;
     let (plates, _) = evaluate_decoded(&decoded)?;
     let materials = material_lookup(&decoded.definitions);
-    let mut by_part: BTreeMap<ElementId, Vec<&steel::engine::bolt::GeneratedHole>> =
+    let mut by_part: BTreeMap<ElementId, Vec<(ElementId, &steel::engine::bolt::GeneratedHole)>> =
         BTreeMap::new();
-    for hole in holes {
-        by_part.entry(hole.part).or_default().push(hole);
+    for (group, hole) in owned {
+        by_part.entry(hole.part).or_default().push((*group, *hole));
     }
     // A group that turns generate off still drops its records: every plate carrying them is
     // rewritten even when no new hole is decided.
@@ -713,7 +740,7 @@ fn hole_changes(
             .authored
             .hole_records
             .iter()
-            .any(|r| r.owner == Some(group))
+            .any(|r| r.owner.is_some_and(|owner| regenerating.contains(&owner)))
         {
             by_part.entry(plate.authored.id).or_default();
         }
@@ -726,13 +753,16 @@ fn hole_changes(
             .iter()
             .find(|p| p.authored.id == part)
             .ok_or_else(|| integrity("a generating group named a plate the head does not hold"))?;
-        let mut next = head.authored.clone();
+        let mut next = match moved {
+            Some(plate) if plate.id == part => plate.clone(),
+            _ => head.authored.clone(),
+        };
         next.hole_records.retain(keep);
         let next_ordinal = decoded
             .hole_history
             .get(&part)
             .map_or(0usize, |h| usize::from(h.next_ordinal));
-        for (index, hole) in part_holes.into_iter().enumerate() {
+        for (index, (group, hole)) in part_holes.into_iter().enumerate() {
             let ordinal = next_ordinal + index;
             if next.hole_records.len() >= MAX_HOLES {
                 return Err(CommandError::new(
@@ -1353,4 +1383,188 @@ pub fn create_bolt(
         changed_layers,
         bolts: bolts(store)?,
     })
+}
+
+/// The bolt groups that follow a part one `update-element` moves (issue 544), as extra
+/// changes and footprint of the same edit: the fasteners belong to the group's main part.
+///
+/// The moved part's world geometry is carried by the rigid delta `new · old⁻¹`. A group whose
+/// main part (`parts[0]`) moves follows it rigidly, its row points and plane normal carried by
+/// the delta; a group whose other part moves keeps its fasteners where they are. Either way
+/// every group over the part is re-placed against the moved geometry and its generated holes
+/// are regenerated in the same transaction, so the stored node never comes apart: a part that
+/// no longer crosses the row, or a generated hole the engine cannot place (a rotated plate),
+/// refuses the whole edit with nothing written. A mirror is not rigid and refuses on a bolted
+/// part. `moved_plate` is the moved part's patched authored record when it is a plate.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn follow_moved_part(
+    base_request: &OpenRequest,
+    control: &Control,
+    op_id: OpId,
+    moved: ElementId,
+    old: &Placement,
+    new: &Placement,
+    mirrored: bool,
+    reshaped: bool,
+    moved_plate: Option<&steel::engine::command::AuthoredPlate>,
+) -> Result<(Vec<Change>, Footprint), Refusal> {
+    use steel::engine::transform::{placement_to_local, placement_to_world};
+    let mut model = model_of(base_request, control)?;
+    let groups: Vec<BoltGroupView> = model
+        .groups
+        .iter()
+        .filter(|g| g.parts.contains(&moved))
+        .cloned()
+        .collect();
+    if groups.is_empty() {
+        return Ok((Vec::new(), Footprint::from_entries(&[], &[])?));
+    }
+    if mirrored {
+        return Err(CommandError::new(
+            ErrorCode::DependencyConflict,
+            "target_id",
+            "a bolted part cannot be mirrored; edit or delete its bolt group first",
+        )
+        .into());
+    }
+    if reshaped {
+        return Err(CommandError::new(
+            ErrorCode::DependencyConflict,
+            "target_id",
+            "move a bolted part and change its shape or material in separate edits",
+        )
+        .into());
+    }
+    let carry = |p: [f64; 3]| placement_to_world(new, placement_to_local(old, p));
+    let carry_vector = |v: [f64; 3]| {
+        let (a, b) = (carry([0.0; 3]), carry(v));
+        [b[0] - a[0], b[1] - a[1], b[2] - a[2]]
+    };
+    // The moved part's world geometry: every face vertex and every corner of its box carried
+    // by the delta (the carried box's bounds stay conservative under a rotation).
+    if let Some(faces) = model.faces.get_mut(&moved) {
+        for triangle in faces.iter_mut() {
+            for vertex in triangle.iter_mut() {
+                *vertex = carry(*vertex);
+            }
+        }
+    }
+    if let Some([min, max]) = model.bounds.get(&moved).copied() {
+        let mut low = [f64::INFINITY; 3];
+        let mut high = [f64::NEG_INFINITY; 3];
+        for x in [min[0], max[0]] {
+            for y in [min[1], max[1]] {
+                for z in [min[2], max[2]] {
+                    let c = carry([x, y, z]);
+                    for ((lo, hi), value) in low.iter_mut().zip(high.iter_mut()).zip(c) {
+                        *lo = lo.min(value);
+                        *hi = hi.max(value);
+                    }
+                }
+            }
+        }
+        model.bounds.insert(moved, [low, high]);
+    }
+    model.placements.insert(moved, *new);
+    let mut changes = Vec::new();
+    let mut footprint = Footprint::from_entries(&[], &[])?;
+    let mut owned_holes = Vec::new();
+    let mut regenerating = BTreeSet::new();
+    for group in &groups {
+        let spec = &group.spec;
+        let fastener = match model.definitions.get(&spec.fastener) {
+            Some(crate::definition::DefinitionRecord::Fastener { spec }) => spec.clone(),
+            _ => {
+                return Err(integrity(
+                    "a committed bolt group's fastener definition is missing",
+                ));
+            }
+        };
+        let follows = group.parts.first() == Some(&moved);
+        let (point1_mm, point2_mm, plane_normal_mm) = if follows {
+            (
+                carry(spec.point1_mm),
+                carry(spec.point2_mm),
+                carry_vector(spec.plane_normal_mm),
+            )
+        } else {
+            (spec.point1_mm, spec.point2_mm, spec.plane_normal_mm)
+        };
+        let count = spec.spacings_mm.len() + 1;
+        let inputs = BoltGroupInputs {
+            parts: group.parts.clone(),
+            fastener_digest: spec.fastener,
+            fastener,
+            point1_mm,
+            point2_mm,
+            plane_normal_mm,
+            rotation_rad: spec.rotation_rad,
+            on_plane_mm: spec.on_plane_mm,
+            depth_mm: spec.depth_mm,
+            offset_start_mm: spec.offset_start_mm,
+            spacing: match spec.spacing_mode.as_str() {
+                "pitch" => BoltSpacing::Pitch {
+                    count,
+                    pitch_mm: spec.spacing_value_mm,
+                },
+                "offset_end" => BoltSpacing::OffsetEnd {
+                    count,
+                    offset_end_mm: spec.spacing_value_mm,
+                },
+                _ => BoltSpacing::Spacings(spec.spacings_mm.clone()),
+            },
+            washer_under_head: Some(spec.washer_under_head),
+            washer_under_nut: Some(spec.washer_under_nut),
+            length: if spec.length_mode == "fixed" {
+                BoltLength::Fixed(spec.length_mm)
+            } else {
+                BoltLength::Auto
+            },
+            hole_mode: steel::model::fastener::HoleMode::from_token(&spec.hole_mode),
+            hole_clearance_mm: spec.hole_clearance_mm,
+        };
+        let command = UpdateBoltGroup {
+            target_id: group.id,
+            name: None,
+            inputs,
+        };
+        let (placed, group_footprint) = model.parts.update_bolt_group(
+            &command,
+            &model.bounds,
+            &model.faces,
+            &own_hole_parts(&model, group.id),
+        )?;
+        footprint = footprint.union(group_footprint)?;
+        let holes = steel::engine::bolt::generate_holes(
+            &command.inputs,
+            &placed.row(),
+            &model.bounds,
+            &model.placements,
+            &model.members,
+        )?;
+        if !holes.is_empty() || spec.hole_mode == "generate" {
+            regenerating.insert(group.id);
+            owned_holes.extend(holes.into_iter().map(|hole| (group.id, hole)));
+        }
+        changes.push(steel_layer::replace_bolt_group(
+            group.id.to_string(),
+            layer_group(&command.inputs, &placed),
+        ));
+    }
+    if !regenerating.is_empty() {
+        let owned: Vec<_> = owned_holes.iter().map(|(g, h)| (*g, h)).collect();
+        let (hole_writes, next) = regenerated_holes(
+            op_id,
+            &owned,
+            &regenerating,
+            &|record: &HoleRecord| !record.owner.is_some_and(|o| regenerating.contains(&o)),
+            base_request,
+            control,
+            footprint,
+            moved_plate,
+        )?;
+        footprint = next;
+        changes.extend(hole_writes);
+    }
+    Ok((changes, footprint))
 }

@@ -500,6 +500,29 @@ pub fn update_element(
     if let Some(level) = command.patch.level {
         footprint = footprint.union(levels.assign(command.target_id, level)?.footprint)?;
     }
+    // A bolt group over a moved part follows it in the same transaction (issue 544): the
+    // group of a moved main part travels with it, every group over the part is re-placed and
+    // its generated holes regenerated, or the whole edit refuses.
+    let mut bolt_changes = Vec::new();
+    if patch_effect.placement || patch_effect.orientation || patch_effect.mirror {
+        let moved_plate = match &next {
+            PartRecord::Plate(plate) => Some(&plate.authored),
+            PartRecord::Member(_) => None,
+        };
+        let (changes, bolt_footprint) = crate::bolt::follow_moved_part(
+            &base_request,
+            &control,
+            request.op_id,
+            command.target_id,
+            &head_element.placement(),
+            &next.placement(),
+            patch_effect.mirror,
+            patch_effect.material || patch_effect.shape,
+            moved_plate,
+        )?;
+        bolt_changes = changes;
+        footprint = footprint.union(bolt_footprint)?;
+    }
     let schema = schema_identity()?;
     let (mut author, opened) =
         crate::scope::open_author(store, base_request, false, schema, &control)?;
@@ -555,6 +578,7 @@ pub fn update_element(
     for record in &shared_records {
         changes.push(part_mesh_change(record)?);
     }
+    changes.extend(bolt_changes);
     let (committed, changed_layers) = prepare_and_publish(
         &mut author,
         &opened,

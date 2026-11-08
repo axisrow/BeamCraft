@@ -76,6 +76,17 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
   nothing until a person asks. A stored A05 group is upgraded by naming the placement inputs
   and a library entry (its `--repin`-guard does not apply: the annotation has no definition to
   protect).
+- **A group belongs to its main part (issue 544).** `update-element` that moves, rotates or
+  re-orients a connected part carries the groups over it in the same transaction
+  (`bolt::follow_moved_part`, called from `edit::update_element`): the moved part's world
+  boxes and faces are carried by the rigid delta `new · old⁻¹`; a group whose main part
+  (`parts[0]`) moved has its row points and plane normal carried by the same delta, a group
+  whose other part moved keeps its fasteners; every such group is re-placed against the moved
+  geometry and its generated holes regenerated (A14.4), all in one undo unit. A part that no
+  longer crosses the row, or a hole the engine cannot generate, refuses the whole edit with
+  nothing written, so the stored node never comes apart silently. A mirror is not rigid and
+  refuses `DEPENDENCY_CONFLICT` on a bolted part, as does a move combined with a shape or
+  material change of that part in one edit.
 
 ## Limits
 

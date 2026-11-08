@@ -50,6 +50,11 @@ upgrades them); no new A05 group can be authored.
 - **The group footprint writes the parts**: `for_update(part, shape)` per affected plate
   unions into the group's footprint, so a concurrent edit of a drilled part conflicts as for
   any operation, as the amendment says.
+- **A moved part regenerates the holes (issue 544).** Moving a connected part re-places its
+  groups (A14.3 decision "a group belongs to its main part") and rewrites every group's
+  records in one pass over the plates, the moved plate evaluated at its new placement; groups
+  sharing a plate rewrite its record set once, with one serial for the derived record ids.
+  Moving the part back restores the original meshes exactly.
 - **Retire, do not migrate.** The descriptor gains the two `steel:bolt` attributes and the
   sixth hole attribute; pre-alpha stores are not migrated (the standing rule), and an A05
   annotation group stays readable exactly as before.
