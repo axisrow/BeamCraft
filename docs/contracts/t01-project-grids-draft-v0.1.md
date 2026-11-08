@@ -3,7 +3,7 @@
 Status: **proposed additive amendment to the F04 0.1.0 model and F10 0.2.0 kind registry; revised 2026-10-26 after the user delegated remaining MVP defaults to project best practices and conventions.**
 [F04](f04-model-and-commands-v0.1.md) and the current [F10](f10-domain-vocabulary-v0.2.md) baseline remain unchanged. On acceptance, this versioned T01 contract adds the shared `grid` kind, its stored attributes, commands, limits and diagnostic reasons without changing existing element rules. Dated pointers to this extension are then added to F04 and F10. It extends the draft delivered for [issue #192](https://github.com/Apibim-com/BeamCraft/issues/192), and governs T01.1 to T01.7 in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474). Development starts with grids ([decisions](../plan/decisions.md)).
 
-The MVP defaults below settle O-G7 and O-G11 to O-G16. Magnetic mode (O-G5/T01.8) remains deferred behind its scope and ownership dependencies. Nothing here is implemented.
+The MVP defaults below settle O-G7 and O-G11 to O-G16. Magnetic mode (O-G5/T01.8) is answered and specified in section 7.5 (2026-11-08); its delivery is T01.8. Nothing here is implemented.
 
 Today the repository only says that the `Grids` layer holds "axes and levels"
 ([architecture](../architecture.md)), that levels are elements ([D2](../design/d1-d2-project-level.md))
@@ -21,7 +21,7 @@ F12 `PC-OWN-002`). This document says what a grid is, how it is stored, built, e
 | D5 | A family keeps its **source expression** (`0 5*6000`) as well as the lines, so a step can be edited fast | 4 |
 | D6 | Per-line extents of regular grids and partial arcs come **after the MVP** | 2 |
 | D7 | A section project may **use a grid of a pinned coordination project**, read-only, so a grid is not created again for each section | 9 |
-| D8 | There is a **magnetic mode**: elements placed on a grid may follow it. Details are open | 7.5, O-G5 |
+| D8 | There is a **magnetic mode**: elements placed on a grid may follow it. Details in 7.5 (O-G5 answered 2026-11-08) | 7.5, O-G5 |
 | D9 | The height of a placed element is taken **from a level plus an offset**, as is usual in BIM tools; there is no stored link between a grid and a level | 6, 7.2 |
 | D10 | Grids are **visible in 3D to other USD viewers** as 50 mm diameter tubes at `z = 0`, in derived USD geometry with `purpose = guide`; labels remain native UI text | 11 |
 | D11 | Limits of 64 grids and 200 lines per family are accepted | 10 |
@@ -39,7 +39,7 @@ F12 `PC-OWN-002`). This document says what a grid is, how it is stored, built, e
 | M4 | Orientation and span | `u` lines are parallel to local Y, `v` lines to local X, and the grid's Z rotation applies to the complete frame. A default span extends 2000 mm beyond the other family in the span direction; section 2 defines the projection rule for drawn lines. |
 | M5 | Intersections and placement height | The one-parameter syntax is `GRID:LABEL,LABEL`, with comma as the separator. Placement height is level elevation plus `--offset` (default zero), or explicit `--z`; a grid has no elevation. |
 | M6 | Viewer geometry | T01.7 uses 50 mm diameter tubes at `z = 0` in derived USD geometry with `purpose = guide`. Labels stay in BeamCraft's native UI; USD text labels are not authored. |
-| M7 | Later features | Radial grids remain post-MVP with curved lines (T01.9). Magnetic placement remains T01.8 and waits for its existing ownership/scope dependencies (O-G5). |
+| M7 | Later features | Radial grids remain post-MVP with curved lines (T01.9). Magnetic placement is T01.8; O-G5 is answered (2026-11-08, section 7.5). |
 
 ## 2. What a grid is
 
@@ -303,13 +303,30 @@ Showing or hiding grids, labels and ends is view state (section 3). Selecting a 
 switch `grids`, which changes picking only. Hiding a grid never changes the model, the revision, the
 snapshot token or any export (`GR-USE-005`).
 
-### 7.5 Magnetic mode (open)
+### 7.5 Magnetic mode (O-G5 answered 2026-11-08)
 
-The owner wants a **magnetic** mode in which elements placed on a grid follow it (D8). Where the
-switch lives, what follows, what happens when a line is deleted, and how a section element is kept
-authoritative when a shared grid changes are not decided; they are the questions of O-G5. This
-document specifies the non-magnetic placement of section 7.2 only; the magnetic mode is slice T01.8
-and is not scheduled until O-G5 is answered. The non-magnetic mode never becomes magnetic by itself.
+The owner wants a **magnetic** mode in which elements placed on a grid follow it (D8). The
+answers, recorded in `docs/plan/decisions.md` (2026-11-08) and delivered by T01.8:
+
+- **Where the switch lives.** In the element itself, explicit: `bind-grid` binds a placed member
+  (plates follow in a later slice) to a local grid, `unbind-grid` releases it. There is no global
+  or session mode; "magnetic on" means bound. Automatic session-wide magnetism stays post-MVP.
+- **What follows.** The bound element follows the grid **frame** — its origin translation and Z
+  rotation — so a frame edit moves every follower rigidly. Individual lines are not followed;
+  line-level following stays post-MVP.
+- **Scope.** A bound element stores its geometry in the grid's local frame. Its world geometry is
+  **derived at read time**, so a shared-grid edit writes only the grid and never rewrites a
+  section element outside its scope; the non-magnetic placement of section 7.2 is unchanged and a
+  non-magnetic element never becomes magnetic by itself.
+- **Deletion.** A grid with followers refuses deletion with `DEPENDENCY_CONFLICT`, `GRID_IN_USE`
+  (the binding is a real element relationship, so the GR-N14 guard is live); line edits stay free
+  because followers reference the frame, not lines.
+- **Hand edits.** Any write command that reshapes a bound element detaches the binding in the
+  same atomic change and materializes the current world geometry as its plain placement.
+- **Foreign grids.** A pinned coordination grid is never followed: `bind-grid` refuses with
+  `FOREIGN_READ_ONLY`.
+
+The commands are specified in section 8; the acceptance cases are GR-P17 and GR-N20 to GR-N23.
 
 ## 8. Commands (engine API first, then CLI)
 
@@ -328,6 +345,8 @@ any refusal, changes nothing. The CLI command and option names in this contract 
 | `GridRelabel` (`relabel-grid-line`) | `target_id`, `axis_id` + `label`, or `family` + the full `labels` list | Changes labels only; ids and geometry untouched |
 | `DeleteElement` | `target_id` | Deletes the grid with its lines; refused while a stored reference exists |
 | `CopyElement` | `source_id`, `new_id`, `name`, `new_axis_ids` | An independent copy (section 5.4) |
+| `BindGrid` (`bind-grid`) | `target_id` (a placed member; plates in a later slice), `grid` | Binds the element to the grid (section 7.5): its geometry becomes local to the grid's frame, replacing any previous binding; a pinned coordination grid is refused `FOREIGN_READ_ONLY` |
+| `UnbindGrid` (`unbind-grid`) | `target_id` | Releases the binding and materializes the current world geometry as the plain placement; an unbound element is refused `INVALID_ARGUMENT` |
 
 **Queries** (read-only, no revision): `list-grids` (every grid with its frame and each line: id, label,
 and world end points, and each family's expression), `resolve-grid-point` (section 7.2),
@@ -338,7 +357,8 @@ levels.
 and the complete authored fields. Any other grid command: read the lifecycle and the complete
 `shape_inputs` group of the grid, write that group (and `label` for a rename, `placement` for a
 move). A grid command reads and writes no other element. AxisIds are checked against an index of all
-AxisIds of the project, which a stored-graph validator also rebuilds.
+AxisIds of the project, which a stored-graph validator also rebuilds. `bind-grid`/`unbind-grid`
+read the target element and the grid frame and write only the element.
 
 ## 9. Rights
 
@@ -351,6 +371,7 @@ Grids and levels are **shared data** with their own shared scope (F12 `PC-OWN-00
 | Create, update, copy or delete a grid; draw, reshape, remove or relabel a line | `PERMISSION_DENIED` | allowed |
 | Create or change a level (D2) | `PERMISSION_DENIED` | allowed |
 | Ordinary `UpdateElement`, create or copy of a part | cannot touch a grid or a level: a part holds coordinates and a `bim:level` link | n/a |
+| `bind-grid` or `unbind-grid` (T01.8) | allowed: an ordinary element edit in the element's own scope that reads the shared grid | n/a: no grid content changes |
 
 * An ordinary section edit therefore **never changes a grid or a level**; a KMD edit preserves the
   grids exactly (`PC-OWN-001`).
@@ -418,7 +439,7 @@ magnetic placement, which is explicitly outside T01.1 to T01.7 and waits for T01
 
 | # | Question | Blocks |
 |---|----------|--------|
-| O-G5 | **Magnetic mode.** Decide where the switch lives, which placed parts follow a line, how shared-grid changes affect followers owned by a section, whether a line with followers may be deleted, whether hand edits detach a follower, and whether a pinned foreign grid may be followed. A shared-grid edit must never rewrite section elements outside their scope. | T01.8 |
+| O-G5 | **Answered 2026-11-08** (section 7.5, `docs/plan/decisions.md`): the switch is the element's explicit grid binding; bound elements follow the grid frame; a shared-grid edit writes only the grid; a grid with followers refuses deletion (`GRID_IN_USE`); hand edits detach in the same atomic change; a pinned foreign grid is never followed. Line-level following and session-wide modes stay post-MVP. | T01.8 |
 
 `T01.7` has exact tube geometry and purpose rules in section 11 and acceptance case GR-P16.
 Questions O-G7 and O-G11 to O-G16 from the original #192 draft are resolved by the defaults in
@@ -448,6 +469,7 @@ Positive:
 | GR-P14 | Grid A has regular `u` at 0 and drawn `v` endpoints `(1000, 8000)` and `(5000, 12000)`; Grid B has regular `v` at 0 and drawn `u` endpoints `(1000, 3000)` and `(5000, 4000)` | Grid A's `u` segment runs `(0, 6000)` to `(0, 14000)`; Grid B's `v` segment runs `(-1000, 0)` to `(7000, 0)` |
 | GR-P15 | Drag regular line `2` of positions `[0, 6000, 12000]` to `6500` | Expression becomes `0 6500 5500`; all three labels and AxisIds remain; one undo restores the previous expression and positions |
 | GR-P16 | Open a derived USD grid in another viewer | One 50 mm diameter tube per line at `z = 0`, `purpose = guide`; no USD text labels and no grid geometry in the authored layer |
+| GR-P17 | Bind a member to a grid, move and rotate the grid (`update-grid`), reopen; undo the grid edit | The member's world geometry follows the frame exactly (its local geometry unchanged); the grid edit's changed layers list only the grids layer; the undo restores the previous world geometry |
 
 Negative:
 
@@ -472,8 +494,13 @@ Negative:
 | GR-N17 | `--start-at-grid` with neither `--z` nor `--level` | `INVALID_ARGUMENT` |
 | GR-N18 | A grid name carried by two grids used as a grid reference | `INVALID_ARGUMENT`, `GRID_NAME_AMBIGUOUS` |
 | GR-N19 | Drag a regular line past its neighbour or to less than 1 mm spacing | `INVALID_ARGUMENT`, `GRID_SPACING_INVALID`; the head, expression and AxisIds are unchanged |
+| GR-N20 | `bind-grid` names a pinned coordination grid | `FOREIGN_READ_ONLY`; the element stays unbound |
+| GR-N21 | Delete a grid with followers | `DEPENDENCY_CONFLICT`, `GRID_IN_USE`; every follower keeps its derived geometry; the view stays |
+| GR-N22 | Move a bound member by hand (its ordinary edit command) | The binding detaches in the same atomic change and the world geometry is unchanged; a later grid move no longer moves the member |
+| GR-N23 | `unbind-grid` | The current world geometry materializes as the plain placement; the element identity, profile and level links are unchanged; a later grid move no longer moves it |
 
-Viewer geometry is covered by GR-P16. Magnetic-mode cases are added only after O-G5 is resolved for T01.8.
+Viewer geometry is covered by GR-P16. Magnetic-mode cases are GR-P17 and GR-N20 to GR-N23 (O-G5
+answered 2026-11-08; delivered by T01.8).
 
 Delivered limits behind GR-N14 (2026-11-08): saved views (W01/V12) carry no grid references — the
 views book is display-only (`grids_visible` is a flag, not a reference) and lives outside the
@@ -490,7 +517,8 @@ a grid.
 Recorded in the [GitHub task catalogue](https://github.com/Apibim-com/BeamCraft/issues/474): T01.1 grid model with regular families, labels and
 expressions (model, layer engine, engine, CLI); T01.2 drawn lines; T01.3 editing a regular family;
 T01.4 queries, snaps and placement; T01.5 shared-scope rights, pinned grids and the move to the
-`Grids` layer with U19; T01.6 the UI; T01.7 viewer geometry; T01.8 magnetic mode (after O-G5);
+`Grids` layer with U19; T01.6 the UI; T01.7 viewer geometry; T01.8 magnetic mode (O-G5 answered
+2026-11-08);
 T01.9 curved lines and radial grids (after the MVP). Every slice has its own end-to-end test
 (`AGENTS.md` section 3).
 

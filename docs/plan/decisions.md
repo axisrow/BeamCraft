@@ -4,6 +4,22 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-08
+
+- **O-G5, the magnetic grid mode (T01.8), is answered.** The owner delegated the resolution
+  ("делай O-G5", 2026-11-08); the answers below go with the T01.8 delivery. The magnetic switch
+  is the element's own explicit grid binding, not a session flag: `bind-grid` binds a placed
+  member (plates follow in a later slice) to a local grid, `unbind-grid` releases it, and
+  "magnetic on" means bound. A bound element stores its geometry in the grid's local frame and
+  its world geometry is derived at read time, so a shared-grid edit writes only the grid and
+  never rewrites a section element outside its scope. Deleting a grid with followers refuses
+  with `GRID_IN_USE`; editing a bound element's geometry by hand detaches the binding in the
+  same atomic change and materializes the current world geometry; a pinned foreign grid is
+  never followed (`FOREIGN_READ_ONLY`). Following is on the grid frame — origin and rotation —
+  not on individual lines; line-level following and automatic session-wide modes stay post-MVP.
+  The T01 contract section 7.5 and the acceptance cases GR-P17 and GR-N20 to GR-N23 carry the
+  delivered semantics.
+
 ## 2026-11-07
 
 - **Every delivered issue closes through a closing reference.** Owner decision: an issue is
