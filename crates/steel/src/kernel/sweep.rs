@@ -549,12 +549,14 @@ fn chord_arc(
     if radius > DIMENSION_CAP_MM {
         return Err(SweepFailure::Path(PathCode::AboveLimit));
     }
-    // Angles in the (e1, e2) basis about the centre; travel passes through `on`. An end
-    // equal to the start never reaches this point: its chord is the zero vector, so the
-    // plane check above has already refused the call as coincident points.
-    let a0 = (-length / 2.0).atan2(-across);
-    let delta_on = ((length / 2.0).atan2(-across) - a0).rem_euclid(TAU);
-    let delta_end = (((q2x - length / 2.0).atan2(q2y - across)) - a0).rem_euclid(TAU);
+    // Angles in the (e1, e2) basis about the centre, measured the way the points below are
+    // rebuilt (`cos` along `e1`, `sin` along `e2`, so `atan2(e2 part, e1 part)`); travel
+    // passes through `on`. An end equal to the start never reaches this point: its chord
+    // is the zero vector, so the plane check above has already refused the call as
+    // coincident points.
+    let a0 = (-across).atan2(-length / 2.0);
+    let delta_on = ((-across).atan2(length / 2.0) - a0).rem_euclid(TAU);
+    let delta_end = ((q2y - across).atan2(q2x - length / 2.0) - a0).rem_euclid(TAU);
     let (sign, sweep) = if delta_on <= delta_end {
         (1.0, delta_end)
     } else {

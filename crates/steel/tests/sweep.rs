@@ -284,3 +284,64 @@ fn a_closing_arc_point_is_refused_as_coincident() {
     .unwrap_err();
     assert_eq!(failure, SweepFailure::Path(PathCode::CollinearArc));
 }
+
+/// The circumcentre of three in-plane (z = 0) points, solved independently of the kernel.
+fn circumcentre(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> ([f64; 2], f64) {
+    let d = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    let sq = |p: [f64; 2]| p[0] * p[0] + p[1] * p[1];
+    let ux = (sq(a) * (b[1] - c[1]) + sq(b) * (c[1] - a[1]) + sq(c) * (a[1] - b[1])) / d;
+    let uy = (sq(a) * (c[0] - b[0]) + sq(b) * (a[0] - c[0]) + sq(c) * (b[0] - a[0])) / d;
+    let r = ((a[0] - ux).powi(2) + (a[1] - uy).powi(2)).sqrt();
+    ([ux, uy], r)
+}
+
+/// Issue 542: the faceted arc must lie on the authored circle and run from the authored
+/// start through the authored on-point to the authored end, not on a mirror image of it.
+/// A volume check alone is blind to a reflected arc, so every vertex is checked here.
+#[test]
+fn an_arc_mesh_lies_on_its_authored_circle_between_its_authored_ends() {
+    let half = 50.0_f64;
+    let band = half * 2.0_f64.sqrt() + 0.2;
+    let cases: [[[f64; 2]; 3]; 4] = [
+        // The shallow arc of the issue, far from the origin.
+        [[0.0, 40000.0], [1500.0, 40300.0], [3000.0, 40000.0]],
+        // The same arc bulging the other way.
+        [[0.0, 40000.0], [1500.0, 39700.0], [3000.0, 40000.0]],
+        // An asymmetric on-point.
+        [[0.0, 0.0], [400.0, 600.0], [2000.0, 300.0]],
+        // A three-quarter arc: the travel passes through `on` the long way round.
+        [[1000.0, 0.0], [0.0, 1000.0], [0.0, -1000.0]],
+    ];
+    for [a, b, c] in cases {
+        let r = run(
+            SweepPath::Arc {
+                start: p(a[0], a[1], 0.0),
+                on: p(b[0], b[1], 0.0),
+                end: p(c[0], c[1], 0.0),
+            },
+            square(2.0 * half),
+            0.1,
+        );
+        let blob = common::parse_blob(r.blob());
+        let (centre, radius) = circumcentre(a, b, c);
+        for v in &blob.vertices {
+            let d = ((v[0] - centre[0]).powi(2) + (v[1] - centre[1]).powi(2)).sqrt();
+            assert!(
+                (d - radius).abs() <= band,
+                "{a:?}/{b:?}/{c:?}: vertex {v:?} is {d} from the centre, radius {radius}"
+            );
+        }
+        // The authored ends and the on-point each lie within a section of the mesh.
+        for q in [a, b, c] {
+            let nearest = blob
+                .vertices
+                .iter()
+                .map(|v| ((v[0] - q[0]).powi(2) + (v[1] - q[1]).powi(2)).sqrt())
+                .fold(f64::INFINITY, f64::min);
+            assert!(
+                nearest <= band,
+                "{a:?}/{b:?}/{c:?}: {q:?} is {nearest} off the mesh"
+            );
+        }
+    }
+}
