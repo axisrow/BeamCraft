@@ -158,7 +158,17 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
         message: "store root is not usable",
     })?;
     let inspection = inspect(&RevisionStore::new(blobs))?;
-    inspection.require_evaluated_geometry()?;
+    // A plate kept without geometry (D-7 degenerate drafts, K1 unsupported planes) has no
+    // body to draw: the snapshot leaves it out and the reply names it, so one bad contour
+    // never makes the whole revision unviewable (issue 545). Numbering, BOM and IFC still
+    // refuse such a revision.
+    let skipped_plates = Json::Array(
+        inspection
+            .unsupported_plates
+            .iter()
+            .map(|plate| Json::text(plate.authored.id.to_string()))
+            .collect(),
+    );
     if let Some(error) = inspection.reference_view_error {
         return Err(error);
     }
@@ -248,6 +258,7 @@ fn run(args: &[OsString]) -> Result<Output, Refusal> {
             ("elements", Json::text(snapshot.len().to_string())),
             ("meshes", Json::text(snapshot.meshes().len().to_string())),
             ("bytes", Json::text(bundle.len().to_string())),
+            ("skipped_plates", skipped_plates),
         ]),
         0,
     ))

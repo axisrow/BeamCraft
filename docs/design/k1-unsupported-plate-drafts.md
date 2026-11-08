@@ -39,10 +39,13 @@ signatures. The inspection snapshot lists the identity with no render instance o
 geometry snapshot contains only supported meshes. No bounding-box estimate or zero replaces a
 missing engineering value.
 
-Deletion is supported. Copying, hole drilling, numbering, BOM/IFC export and binary viewport
-bundle export currently require supported geometry and return `DEPENDENCY_UNAVAILABLE` rather
-than misreporting a missing element or silently excluding it. Existing supported plates can
-coexist with unsupported plates and retain their meshes and quantities.
+Deletion is supported. Copying, hole drilling, numbering and BOM/IFC export currently require
+supported geometry and return `DEPENDENCY_UNAVAILABLE` rather than misreporting a missing
+element or silently excluding it. The binary viewport bundle (`export-view`, and through it
+`screenshot-view` and the window) leaves a plate without geometry out and names it instead:
+the JSON summary lists its id in `skipped_plates`, so one unsupported or degenerate plate no
+longer makes the whole revision unviewable (issue 545). Existing supported plates can coexist
+with unsupported plates and retain their meshes and quantities.
 
 ## P-Degenerate: the degenerate class and repair (A-2 D-7)
 
@@ -57,6 +60,13 @@ refuses, so it keeps refusing with its precise message. The stable reason tokens
 message vocabulary in `kernel::plate_contour::degenerate_reason`; the frozen F04 fixture cases
 that predicted a refusal (NEG-28, NEG-29, NEG-30, NEG-38) are declared deviations in the K1
 admission driver, superseded by the amendment, not edited.
+
+Retention is unconditional: the F04 §4 `on_invalid_shape` option with its `reject` default is
+not implemented, and `create-plate` saves a wrongly built contour instead of refusing it. The
+create reply carries a `warning` that the plate is saved without geometry, and the
+`create-plate` help says so (issue 545). Restating the default, or recording this as a
+deviation from F04 §4 and the P-Degenerate acceptance item (e), is an owner decision for
+`docs/plan/decisions.md`.
 
 Editing is implemented for retained plates: `update-element` patches the authored record,
 reclassifies the result once, and either repairs the element (the kernel evaluates the body,

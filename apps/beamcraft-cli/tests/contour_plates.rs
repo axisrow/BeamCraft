@@ -115,11 +115,15 @@ fn a_valid_near_planar_plate_is_saved_without_partial_geometry_and_replays() {
     let replay = f.ok("create-plate", &args);
     assert_eq!(text(&replay, "outcome"), "plate_replayed");
     assert_eq!(f.ok("open-revision", &[]), before);
+    // The view bundle leaves the bodiless plate out and names it instead of refusing the
+    // whole revision (issue 545); totals and numbering still refuse below.
+    let exported = f.ok("export-view", &["--out", &f.path("unsupported.bundle")]);
+    assert_eq!(text(&exported, "elements"), "0");
     assert_eq!(
-        f.rejected("export-view", &["--out", &f.path("unsupported.bundle")]),
-        "DEPENDENCY_UNAVAILABLE"
+        at(&exported, &["skipped_plates"]).array().unwrap(),
+        &vec![Json::text(text(plate, "element_id"))]
     );
-    assert!(!Path::new(&f.path("unsupported.bundle")).exists());
+    assert!(Path::new(&f.path("unsupported.bundle")).exists());
     assert_eq!(
         f.rejected("preview-numbering", &[]),
         "DEPENDENCY_UNAVAILABLE"

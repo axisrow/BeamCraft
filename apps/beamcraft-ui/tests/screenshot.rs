@@ -493,3 +493,83 @@ fn screenshot_view_takes_a_colour_set_and_a_light_background() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Issue 545: a plate kept degenerate (a self-crossing contour, saved under D-7) no longer
+/// makes the whole revision unviewable; the screenshot leaves it out and draws the rest.
+#[test]
+fn screenshot_view_draws_the_rest_of_a_revision_with_a_degenerate_plate() {
+    let Some(cli) = support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))) else {
+        panic!("the beamcraft CLI is required next to the beamcraft-ui binary");
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("screenshot-tests")
+        .join(format!("degenerate-{}", support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let store = root.to_str().unwrap();
+    run_expect_success(
+        &cli,
+        &[
+            "create-plate",
+            "--store",
+            store,
+            "--contour",
+            "0,0;200,200;200,0;0,200",
+            "--thickness",
+            "12",
+            "--name",
+            "BOWTIE",
+        ],
+    );
+    run_expect_success(
+        &cli,
+        &[
+            "define-profile",
+            "--store",
+            store,
+            "--width",
+            "200",
+            "--height",
+            "80",
+            "--name",
+            "RECT 200x80",
+        ],
+    );
+    run_expect_success(
+        &cli,
+        &[
+            "create-member",
+            "--store",
+            store,
+            "--profile",
+            "RECT 200x80",
+            "--start",
+            "0,0,0",
+            "--end",
+            "2000,0,0",
+        ],
+    );
+    let out = root.join("degenerate.png");
+    let stdout = run_expect_success(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    );
+    let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+    assert_eq!(
+        reply.get("outcome").unwrap().string().unwrap(),
+        "screenshot_saved"
+    );
+    assert_eq!(reply.get("elements").unwrap().unsigned().unwrap(), 1);
+    let rgba = image::open(&out).unwrap().to_rgba8();
+    let member = rgba
+        .pixels()
+        .filter(|p| p.0[2] > 50 && p.0[2] > p.0[0] + 30)
+        .count();
+    assert!(member > 2_000, "member pixels {member}");
+}

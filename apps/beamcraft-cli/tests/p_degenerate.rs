@@ -74,6 +74,8 @@ impl Fixture {
         assert_eq!(text(plate, "geometry_status"), "degenerate");
         assert_eq!(text(plate, "geometry_code"), "INVALID_ARGUMENT");
         assert_eq!(text(plate, "geometry_reason"), "contour_winding_clockwise");
+        // The create reply says the plate is saved without geometry (issue 545).
+        assert!(text(&created, "warning").contains("degenerate without geometry"));
         assert!(matches!(plate.get("mesh_digest"), Ok(Json::Null)));
         assert!(matches!(plate.get("world_bounds_mm"), Ok(Json::Null)));
         let volume = at(plate, &["quantities", "volume"]);
@@ -119,6 +121,21 @@ fn a_wrongly_built_plate_is_kept_degenerate_and_repairs_once_fixed() {
     let listed = plate_of(&inspection, &id);
     assert_eq!(text(listed, "geometry_status"), "degenerate");
     assert!(matches!(listed.get("mesh_digest"), Ok(Json::Null)));
+    // One degenerate plate does not make the revision unviewable: the view bundle leaves it
+    // out and lists it (issue 545).
+    let bundle = f
+        .shared
+        .root
+        .join("degenerate.bundle")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let exported = f.ok("export-view", &["--out", &bundle]);
+    assert_eq!(
+        at(&exported, &["skipped_plates"]).array().unwrap(),
+        &vec![Json::text(id.clone())]
+    );
+    assert!(std::path::Path::new(&bundle).exists());
 
     // A non-shape edit rewrites the authored layer alone and keeps the element degenerate.
     // The retry is the same request only under the same operation id.

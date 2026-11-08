@@ -16,7 +16,7 @@ pub(super) const HELP: &str = concat!(
     "rectangle; --contour (A02.1) takes ordered X,Y or X,Y,Z points separated by semicolons: ",
     "simple counter-clockwise polygons in z = 0 and exact rectangles in other planes are ",
     "evaluated, extruded along their ordered normal; holes on framed rectangles are ",
-    "unsupported. --normalize-winding true accepts either XY traversal by reversing clockwise order while keeping the first vertex (without corner treatments). By default winding is preserved and clockwise outlines are INVALID_ARGUMENT. Self-crossing or touching outlines remain INVALID_ARGUMENT; the origin rectangle written as a contour is the same box; ",
+    "unsupported. --normalize-winding true accepts either XY traversal by reversing clockwise order while keeping the first vertex (without corner treatments). By default winding is preserved; a clockwise, self-crossing or touching outline is still saved (D-7), as a plate with validity degenerate, geometry_code INVALID_ARGUMENT, no mesh and a warning in the reply: views leave it out, numbering, totals and exports refuse until update-element or the plate vertex edits fix the contour; the origin rectangle written as a contour is the same box; ",
     "--thickness-side (A12.1) lays the thickness off from the contour plane, top is the ",
     "default and what older plates read as, middle is half on each side, bottom is laid off ",
     "in -Z; --corners (A12.2) treats contour vertices: V is the vertex position, chamfer ",

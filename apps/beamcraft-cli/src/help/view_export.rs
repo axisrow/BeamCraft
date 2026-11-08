@@ -11,7 +11,9 @@ pub(super) const HELP: &str = concat!(
     "with --out -, frame replies of the same inspection before the bundle: BCVXFRM1, then for ",
     "the definitions and then the inspect-elements --element reply a little-endian u32 length ",
     "and the reply as that command prints it, 0 for one not asked, then the bundle; ",
-    "--with-grids true uses BCVXFRM2 and adds a third section with pinned grid display data)",
+    "--with-grids true uses BCVXFRM2 and adds a third section with pinned grid display data; ",
+    "a plate kept without geometry, such as a degenerate contour, is left out of the bundle and ",
+    "the JSON summary lists it in skipped_plates)",
 );
 pub(super) const SCREENSHOT_HELP: &str = concat!(
     "View screenshot: screenshot-view --store ROOT --out FILE [--width U32] [--height U32] ",

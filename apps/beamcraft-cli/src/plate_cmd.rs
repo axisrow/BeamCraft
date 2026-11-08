@@ -1210,7 +1210,28 @@ fn create(
             ("plate", unsupported_plate_json(&created.plate)?),
             ("revision", revision_json(&created.revision)),
             ("footprint", footprint_json(created.footprint.as_ref())),
+            // Kept, but without a body (D-7, K1): say so at create time instead of leaving it
+            // to be discovered from a view, total or export later (issue 545).
+            ("warning", Json::text(kept_without_geometry(&created.plate))),
         ])),
+    }
+}
+
+/// The create-time notice of a plate saved without geometry.
+fn kept_without_geometry(plate: &UnsupportedPlate) -> String {
+    if plate.degenerate {
+        format!(
+            "the plate is saved as degenerate without geometry ({}); views leave it out and \
+             numbering, totals and exports refuse until the contour is fixed with update-element \
+             or the plate vertex edits",
+            plate.reason
+        )
+    } else {
+        format!(
+            "the plate is saved without geometry ({}); views leave it out and numbering, totals \
+             and exports refuse until its inputs are supported",
+            plate.reason
+        )
     }
 }
 
