@@ -1590,10 +1590,10 @@ fn expanded_alpha_runs_tools_views_regressions_and_exact_outputs() {
     // One edit places the titled family: a placed view whose title is the whole remainder
     // of its spec (colons and spaces included), an unannotated placed view, and a titled
     // section and detail; the exact repeat replays byte for byte.
-    let plan_spec = format!("{plan_view}:top:10:140,70:PLAN: east");
-    let bare_spec = format!("{bare_view}:top:25:140,110");
-    let section_spec = format!("{titled_section}:right:50:positive:5:200,70:SECTION A-A");
-    let detail_spec = format!("{titled_detail}:{plan_view}:145,72:5:2:260,70:DETAIL 1");
+    let plan_spec = format!("{plan_view}:top:10:140,110:PLAN: east");
+    let bare_spec = format!("{bare_view}:top:25:140,150");
+    let section_spec = format!("{titled_section}:right:50:positive:5:200,110:SECTION A-A");
+    let detail_spec = format!("{titled_detail}:{plan_view}:145,112:5:2:260,110:DETAIL 1");
     let views_args = [
         "--document-dir",
         &titled_dir,

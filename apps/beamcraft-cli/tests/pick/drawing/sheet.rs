@@ -629,3 +629,119 @@ fn the_whole_sheet_reaches_the_svg_and_the_pdf_alike() {
         "dashed circle dash pattern"
     );
 }
+
+/// Issue 546: a placed detail whose annotation lands inside the A4 title block refuses both
+/// surfaces with `LIMIT_EXCEEDED` and writes nothing; placed clear of the block, the same
+/// detail exports.
+#[test]
+fn a_detail_over_the_title_block_refuses_both_surfaces() {
+    let f = Fixture::new();
+    f.model();
+    let dir = f
+        .shared
+        .root
+        .join("sheet-block-doc")
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut args = create_args(&dir);
+    let origin_at = args.iter().position(|value| value == "--origin").unwrap() + 1;
+    args[origin_at] = "50,230".to_owned();
+    args.extend(
+        [
+            "--scale",
+            "40",
+            "--plane",
+            "front",
+            "--sheet-size",
+            "a4",
+            "--sheet-project",
+            "Validate 271",
+            "--sheet-author",
+            "Worker 271",
+        ]
+        .iter()
+        .map(|value| (*value).to_owned()),
+    );
+    let created = f.ok(
+        &args[0],
+        &args[1..].iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    let low = format!("{DETAIL}:{VIEW}:120,230:5:5:110,60:DET-1");
+    let (code, placed) = edit(
+        &f,
+        "edit-views",
+        &dir,
+        &text(&created, "revision_id"),
+        "01900000-0000-7000-8000-000000000361",
+        "01900000-0000-7000-8000-000000000362",
+        &["--placed-detail", &low],
+    );
+    assert_eq!(code, 0, "{placed:?}");
+    let (code, published) = edit(
+        &f,
+        "publish-drawing",
+        &dir,
+        &text(&placed, "revision_id"),
+        "01900000-0000-7000-8000-000000000363",
+        "01900000-0000-7000-8000-000000000364",
+        &["--version-id", "01900000-0000-7000-8000-000000000365"],
+    );
+    assert_eq!(code, 0, "{published:?}");
+    for format in ["svg", "pdf"] {
+        let out = f.shared.root.join(format!("block.{format}"));
+        let (code, refusal) = f.run(
+            "export-drawing",
+            &[
+                "--document-dir",
+                &dir,
+                "--version-id",
+                "01900000-0000-7000-8000-000000000365",
+                "--format",
+                format,
+                "--out",
+                out.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(code, 2, "{format}: {refusal:?}");
+        assert_eq!(text(&refusal, "code"), "LIMIT_EXCEEDED");
+        assert!(!out.exists(), "a refused export writes no file");
+    }
+    let clear = format!("{DETAIL}:{VIEW}:120,230:5:5:110,150:DET-1");
+    let (code, moved) = edit(
+        &f,
+        "edit-views",
+        &dir,
+        &text(&published, "revision_id"),
+        "01900000-0000-7000-8000-000000000366",
+        "01900000-0000-7000-8000-000000000367",
+        &["--placed-detail", &clear],
+    );
+    assert_eq!(code, 0, "{moved:?}");
+    let (code, republished) = edit(
+        &f,
+        "publish-drawing",
+        &dir,
+        &text(&moved, "revision_id"),
+        "01900000-0000-7000-8000-000000000368",
+        "01900000-0000-7000-8000-000000000369",
+        &["--version-id", "01900000-0000-7000-8000-000000000370"],
+    );
+    assert_eq!(code, 0, "{republished:?}");
+    let out = f.shared.root.join("clear.pdf");
+    let (code, saved) = f.run(
+        "export-drawing",
+        &[
+            "--document-dir",
+            &dir,
+            "--version-id",
+            "01900000-0000-7000-8000-000000000370",
+            "--format",
+            "pdf",
+            "--out",
+            out.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, 0, "{saved:?}");
+    assert!(out.exists());
+}

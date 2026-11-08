@@ -379,6 +379,24 @@ fn layout(
             ));
         }
     }
+    // Nor may any content stroke cross the title block's interior: a view, its annotation or
+    // a drafting object drawn over the block refuses like content beyond the frame (issue
+    // 546). Segments are clipped against the block, since a stroke can cross it with both
+    // ends outside; touching the block's border is allowed.
+    let block_box = [[block_x, inset], [inner_x, inset + TITLE_BLOCK_HEIGHT_MM]];
+    if layers
+        .iter()
+        .filter(|layer| !matches!(layer.class, "frame" | "titleblock"))
+        .flat_map(|layer| layer.strokes.iter())
+        .chain(groups.iter().flatten())
+        .any(|stroke| crosses_interior(*stroke, block_box))
+    {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "drawing_sheet",
+            "drawing content overlaps the title block",
+        ));
+    }
 
     let metadata = format!(
         "{SHEET_EXPORT_CONTRACT} drawing={} version={} sheet={} source_revision={} \
@@ -507,6 +525,42 @@ pub fn export_pdf(
     )
 }
 
+/// Whether the segment passes through the open interior of the axis-aligned box `[min, max]`
+/// (Liang–Barsky clipping): a segment that only touches the border does not count.
+fn crosses_interior(segment: [[f64; 2]; 2], [min, max]: [[f64; 2]; 2]) -> bool {
+    let [[x0, y0], [x1, y1]] = segment;
+    let (dx, dy) = (x1 - x0, y1 - y0);
+    let (mut t0, mut t1) = (0.0_f64, 1.0_f64);
+    for (p, q) in [
+        (-dx, x0 - min[0]),
+        (dx, max[0] - x0),
+        (-dy, y0 - min[1]),
+        (dy, max[1] - y0),
+    ] {
+        if p == 0.0 {
+            // Parallel to this edge: outside or on its line means no interior crossing.
+            if q <= 0.0 {
+                return false;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                t0 = t0.max(r);
+            } else {
+                t1 = t1.min(r);
+            }
+        }
+    }
+    if t0 >= t1 {
+        return false;
+    }
+    // The clipped piece lies inside the closed box; it crosses the interior unless it runs
+    // along the border, which its midpoint decides.
+    let t = 0.5 * (t0 + t1);
+    let (mx, my) = (x0 + t * dx, y0 + t * dy);
+    mx > min[0] && mx < max[0] && my > min[1] && my < max[1]
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -559,7 +613,7 @@ mod tests {
                 id: DrawingViewId::parse(B).unwrap(),
                 plane: Plane::Front,
                 scale_denominator: DEFAULT_SCALE_DENOMINATOR,
-                paper_origin_mm: [30.0, 40.0],
+                paper_origin_mm: [30.0, 140.0],
                 title: None,
             },
             dimension: DimensionSpec {
@@ -576,7 +630,7 @@ mod tests {
                     id: DrawingViewId::parse(id).unwrap(),
                     plane: Plane::Top,
                     scale_denominator: DEFAULT_SCALE_DENOMINATOR,
-                    paper_origin_mm: [60.0, 40.0],
+                    paper_origin_mm: [60.0, 140.0],
                     title: None,
                 })
                 .collect(),
@@ -592,11 +646,11 @@ mod tests {
         Projection {
             body: BodyProjection::Resolved(vec![ProjectedEdge {
                 feature: FeatureId::parse(&format!("fid1:{MEMBER}:member:e.x0.y0")).unwrap(),
-                paper_mm: [[35.0, 45.0], [45.0, 45.0]],
+                paper_mm: [[35.0, 145.0], [45.0, 145.0]],
             }]),
             dimension: DimensionProjection::Resolved(DimensionGeometry {
-                anchors_paper_mm: [[35.0, 45.0], [45.0, 45.0]],
-                line_paper_mm: [[35.0, 55.0], [45.0, 55.0]],
+                anchors_paper_mm: [[35.0, 145.0], [45.0, 145.0]],
+                line_paper_mm: [[35.0, 155.0], [45.0, 155.0]],
                 projected_length_mm: 1000.0,
                 label_mm: "1000".to_owned(),
             }),
@@ -614,7 +668,7 @@ mod tests {
     fn the_same_sheet_reproduces_the_same_output() {
         let drawing = sheet_drawing(Sheet::A4, &[D]);
         let version = DocumentVersionId::parse(C).unwrap();
-        let bodies = vec![placed_body([65.0, 45.0])];
+        let bodies = vec![placed_body([65.0, 145.0])];
         let first = export_svg(&drawing, version, &projection(), &bodies, &[], &[]).unwrap();
         let second = export_svg(&drawing, version, &projection(), &bodies, &[], &[]).unwrap();
         assert_eq!(first, second);
@@ -663,7 +717,7 @@ mod tests {
         // smallest: A4 is 210 x 297 mm with a 10 mm inset.
         let drawing = sheet_drawing(Sheet::A4, &[D]);
         let version = DocumentVersionId::parse(C).unwrap();
-        let bodies = vec![placed_body([65.0, 45.0])];
+        let bodies = vec![placed_body([65.0, 145.0])];
         let bytes = export_svg(&drawing, version, &projection(), &bodies, &[], &[]).unwrap();
         let text = std::str::from_utf8(&bytes).unwrap();
         let frame = text
@@ -694,7 +748,7 @@ mod tests {
         spec.view.title = Some("ELEVATION".to_owned());
         let drawing = Drawing::admit(spec).unwrap();
         let version = DocumentVersionId::parse(C).unwrap();
-        let bodies = vec![placed_body([65.0, 45.0])];
+        let bodies = vec![placed_body([65.0, 145.0])];
         let bytes = export_svg(&drawing, version, &projection(), &bodies, &[], &[]).unwrap();
         let text = std::str::from_utf8(&bytes).unwrap();
         let title = text
@@ -724,7 +778,7 @@ mod tests {
         // block closes at the top.
         let drawing = sheet_drawing(Sheet::A4, &[D]);
         let version = DocumentVersionId::parse(C).unwrap();
-        let bodies = vec![placed_body([65.0, 45.0])];
+        let bodies = vec![placed_body([65.0, 145.0])];
         let bytes = export_svg(&drawing, version, &projection(), &bodies, &[], &[]).unwrap();
         let text = std::str::from_utf8(&bytes).unwrap();
         let block = text
@@ -749,7 +803,7 @@ mod tests {
     #[test]
     fn a_sheet_refuses_unsupported_inputs_instead_of_approximating() {
         let version = DocumentVersionId::parse(C).unwrap();
-        let bodies = vec![placed_body([65.0, 45.0])];
+        let bodies = vec![placed_body([65.0, 145.0])];
         // A document without a sheet keeps the loose-paper export and refuses here.
         let loose = sheet_drawing(Sheet::A4, &[]).without_sheet();
         assert_eq!(
@@ -762,7 +816,7 @@ mod tests {
         let unresolved = Projection {
             body: BodyProjection::Resolved(vec![ProjectedEdge {
                 feature: FeatureId::parse(&format!("fid1:{MEMBER}:member:e.x0.y0")).unwrap(),
-                paper_mm: [[35.0, 45.0], [45.0, 45.0]],
+                paper_mm: [[35.0, 145.0], [45.0, 145.0]],
             }]),
             dimension: DimensionProjection::Unresolved(
                 crate::drawing::projection::UnresolvedReason::MissingOwner,
@@ -841,7 +895,7 @@ mod tests {
     fn detail_body(edges: Vec<ProjectedEdge>) -> DetailProjection {
         DetailProjection::Resolved(DetailGeometry {
             edges,
-            region_center_mm: [70.0, 45.0],
+            region_center_mm: [70.0, 145.0],
             region_radius_mm: 5.0,
         })
     }
@@ -853,7 +907,7 @@ mod tests {
             cut_mm: 1500.0,
             side: CutSide::Positive,
             scale_denominator: 20.0,
-            paper_origin_mm: [90.0, 40.0],
+            paper_origin_mm: [90.0, 140.0],
             title: title.map(str::to_owned),
         }
     }
@@ -865,7 +919,7 @@ mod tests {
             center_paper_mm: [15.0, 20.0],
             radius_mm: 5.0,
             scale_denominator: 20.0,
-            paper_origin_mm: [120.0, 40.0],
+            paper_origin_mm: [120.0, 140.0],
             title: title.map(str::to_owned),
         }
     }
@@ -889,12 +943,12 @@ mod tests {
         s.sections = vec![section_spec(SECTION, Some("SECTION A-A"))];
         s.details = vec![detail_spec(DETAIL, B, None)];
         let drawing = Drawing::admit(s).unwrap();
-        let bodies = vec![placed_body([65.0, 45.0])];
+        let bodies = vec![placed_body([65.0, 145.0])];
         let sections = vec![section_body(
-            vec![section_edge(95.0, 45.0)],
-            vec![[95.0, 42.0], [105.0, 42.0], [105.0, 48.0]],
+            vec![section_edge(95.0, 145.0)],
+            vec![[95.0, 142.0], [105.0, 142.0], [105.0, 148.0]],
         )];
-        let details = vec![detail_body(vec![section_edge(125.0, 45.0)])];
+        let details = vec![detail_body(vec![section_edge(125.0, 145.0)])];
         let bytes = export_svg(
             &drawing,
             version,
@@ -1005,5 +1059,49 @@ mod tests {
                 .code,
             ErrorCode::LimitExceeded
         );
+    }
+
+    /// Issue 546: a detail whose body clears the A4 title block (x 40..200, y 10..54) but
+    /// whose annotation, 5 mm under its lowest stroke, lands inside the block refuses like
+    /// content beyond the frame; lifted clear, the same detail exports.
+    #[test]
+    fn an_annotation_inside_the_title_block_refuses_instead_of_overlapping() {
+        let version = DocumentVersionId::parse(C).unwrap();
+        const DETAIL: &str = "01900000-0000-7000-8000-000000000343";
+        let base = sheet_drawing(Sheet::A4, &[D]);
+        let mut s = base.spec().clone();
+        s.details = vec![detail_spec(DETAIL, B, Some("DET-1"))];
+        let drawing = Drawing::admit(s).unwrap();
+        let bodies = vec![placed_body([65.0, 145.0])];
+        let low = vec![detail_body(vec![section_edge(125.0, 58.0)])];
+        assert_eq!(
+            export_svg(&drawing, version, &projection(), &bodies, &[], &low)
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded
+        );
+        assert_eq!(
+            export_pdf(&drawing, version, &projection(), &bodies, &[], &low)
+                .unwrap_err()
+                .code,
+            ErrorCode::LimitExceeded
+        );
+        let clear = vec![detail_body(vec![section_edge(125.0, 70.0)])];
+        assert!(export_svg(&drawing, version, &projection(), &bodies, &[], &clear).is_ok());
+    }
+
+    #[test]
+    fn only_a_crossing_of_the_open_box_counts_as_an_overlap() {
+        let b = [[40.0, 10.0], [200.0, 54.0]];
+        // Both ends outside, crossing the interior.
+        assert!(crosses_interior([[30.0, 30.0], [210.0, 30.0]], b));
+        // Entirely inside.
+        assert!(crosses_interior([[50.0, 20.0], [60.0, 20.0]], b));
+        // Along the top border, touching a corner, and fully outside.
+        assert!(!crosses_interior([[40.0, 54.0], [200.0, 54.0]], b));
+        assert!(!crosses_interior([[30.0, 64.0], [50.0, 54.0]], b));
+        assert!(!crosses_interior([[30.0, 60.0], [210.0, 60.0]], b));
+        // A diagonal clipping the corner region.
+        assert!(crosses_interior([[30.0, 40.0], [50.0, 60.0]], b));
     }
 }

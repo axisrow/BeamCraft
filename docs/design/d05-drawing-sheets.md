@@ -32,7 +32,11 @@ glyphs of D03 extended with angular capitals on the same 2.0 × 3.5 box, with AS
 lowercase folded onto its capitals and a drawn dot, so admissible title text keeps every
 mark — and no font, image or `<text>` element is embedded. The same sheet reproduces
 byte-identical output across runs and processes; anything unresolved, beyond the frame, or
-over the byte cap refuses instead of being rescaled or clipped. A document without a sheet
+over the byte cap refuses instead of being rescaled or clipped. Content may not cover the
+title block either: every view, annotation, dimension and drawn-object stroke is clipped
+against the block rectangle, and one that crosses its interior refuses `LIMIT_EXCEEDED`
+(`drawing content overlaps the title block`) on both surfaces, since a stroke can cross the
+block with both ends outside it; touching the block's border is allowed (issue 546). A document without a sheet
 keeps the D03 loose-paper export, and the pdf print defaults its sheet to the document's
 sheet size.
 

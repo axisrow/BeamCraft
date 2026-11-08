@@ -594,9 +594,9 @@ fn view_titles_travel_the_wire_and_annotate_the_sheet_export() {
     let head = text(&created, "revision_id");
 
     // One edit places a titled placed view, section and detail; titles may hold spaces.
-    let placed_view_spec = format!("{VIEW2}:top:100:200,60:PLAN");
-    let section_spec = format!("{SECTION}:right:1500:positive:20:60,40:SECTION A-A");
-    let detail_spec = format!("{DETAIL}:{VIEW}:45,40:10:20:100,40:DETAIL 1");
+    let placed_view_spec = format!("{VIEW2}:top:100:200,100:PLAN");
+    let section_spec = format!("{SECTION}:right:1500:positive:20:60,100:SECTION A-A");
+    let detail_spec = format!("{DETAIL}:{VIEW}:45,40:10:20:100,160:DETAIL 1");
     let placement = [
         ("--placed-view", placed_view_spec.as_str()),
         ("--placed-section", section_spec.as_str()),
