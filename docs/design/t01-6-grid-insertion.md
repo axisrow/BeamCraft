@@ -80,7 +80,9 @@ The UI bounds and validates guides before displaying them, frames the camera to 
 the engineering bounds, and paints guides/labels as a construction overlay. It does not create
 engineering meshes, quantities or materials. A failed scene/frame update keeps the previously
 displayed scene and its guides together. Guide visibility and label appearance are not authored
-model properties.
+model properties. The headless `screenshot-view` reads the same `BCVXFRM2` frame, fits the same
+union and paints the guides with the same painter over its offscreen render, so the PNG and the
+live viewport show one scene (issue 543); `--grids false` keeps the model-only picture.
 
 ## Verification and limits
 

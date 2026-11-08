@@ -96,7 +96,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
                 .ok_or_else(|| invalid("argument is not bounded UTF-8"))
         })
         .collect::<Result<_, _>>()?;
-    if !args.len().is_multiple_of(2) || args.len() > 24 {
+    if !args.len().is_multiple_of(2) || args.len() > 26 {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();
@@ -116,6 +116,7 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
                 | "--pan"
                 | "--colour-set"
                 | "--background"
+                | "--grids"
         ) || options.insert(*key, *value).is_some()
         {
             return Err(invalid("unknown or repeated option"));
@@ -133,6 +134,11 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
         None => None,
         Some(&value @ ("1" | "4")) => Some(value),
         Some(_) => return Err(invalid("--samples is 1 or 4")),
+    };
+    let grids = match options.get("--grids") {
+        None => None,
+        Some(&value @ ("true" | "false")) => Some(value),
+        Some(_) => return Err(invalid("--grids is true or false")),
     };
     // The camera angles are relayed verbatim; the ui validates them again, so a bad value is
     // refused there with its own message instead of being re-implemented here.
@@ -178,6 +184,9 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
     }
     if let Some(background) = options.get("--background") {
         spawn.arg("--background").arg(background);
+    }
+    if let Some(grids) = grids {
+        spawn.arg("--grids").arg(grids);
     }
     let output = spawn.output().map_err(|e| backend(e.to_string()))?;
     let stdout = bounded_stdout(&output.stdout)?;

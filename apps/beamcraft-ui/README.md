@@ -163,8 +163,14 @@ beamcraft-ui --store ROOT --perf-run PLAN [--samples 1|4] [--cli PATH]
   file holding exactly one set of its own, evaluated by the same path the window uses;
   `--background light|dark` (default `dark`) renders over a light paper tone instead of the
   dark clear colour, so a frame can match a drawing-style reference picture (issue 537).
+  The project grids ride the screenshot like the window's: they are read from the same framed
+  `export-view --with-grids true`, the camera fits the union of model and grids, and the
+  window's own grid painter draws the lines and labels over the render through one headless
+  egui pass (`grid_lines` in the reply counts them); `--grids false` leaves them out of both
+  the picture and the fit (issue 543).
   `beamcraft screenshot-view --store ROOT --out FILE [--yaw RAD] [--pitch RAD] [--projection
-  ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark]` drives this
+  ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark]
+  [--grids true|false]` drives this
   from the CLI, finding the UI binary next to its own executable.
 - `--perf-run PLAN` opens the window, runs a scripted measurement in it and prints one JSON report:
   `PLAN` is a comma-separated list of `load`, `idle:S`, `ui:K` (frames without a viewport change),

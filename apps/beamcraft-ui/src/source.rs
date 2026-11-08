@@ -146,6 +146,22 @@ pub fn load_within(
     Ok(ViewSnapshot::from_bundle(&output.stdout, &limits)?)
 }
 
+/// The pinned view snapshot of the published head and the project grids of the same pinned
+/// inspection (issue 543): the framed `export-view --with-grids true` the window refreshes
+/// with, so a headless screenshot draws and fits the same grids the window shows.
+pub fn load_with_grids(
+    cli: &Path,
+    store: &Path,
+    stats: &Stats,
+) -> Result<(ViewSnapshot, crate::grid::GridScene), Error> {
+    let bytes = export_framed(cli, store, None, command::DEADLINE, stats)?;
+    let frame = split_frame(&bytes)?;
+    let snapshot = ViewSnapshot::from_bundle(frame.bundle, &Limits::default())?;
+    let grids = crate::grid::GridScene::from_reply(frame.grids)
+        .map_err(|e| Error::Cli(format!("export-view grids are unreadable: {}", e.code)))?;
+    Ok((snapshot, grids))
+}
+
 /// A rejection is one JSON object; report its stable code only.
 fn rejected(stdout: &[u8]) -> Error {
     let text = String::from_utf8_lossy(stdout);

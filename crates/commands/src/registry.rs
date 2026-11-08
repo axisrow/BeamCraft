@@ -2428,6 +2428,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--pan", "X,Y"),
             opt("--colour-set", "TEXT"),
             opt("--background", "light|dark"),
+            opt("--grids", "true|false"),
         ],
     ),
     entry(

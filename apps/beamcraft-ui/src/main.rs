@@ -16,8 +16,10 @@
 //! output); it exists for scale baselines a store cannot reach yet.
 //! `beamcraft-ui --store ROOT --screenshot FILE [--width W] [--height H] [--yaw RAD]
 //! [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y]
-//! [--colour-set TEXT] [--background light|dark] [--cli PATH]` renders the
-//! store's published head once offscreen with the camera fitted over the whole scene and writes
+//! [--colour-set TEXT] [--background light|dark] [--grids true|false] [--cli PATH]` renders the
+//! store's published head once offscreen with the camera fitted over the whole scene and its
+//! project grids, paints the grid lines and labels like the window (issue 543; `--grids false`
+//! leaves them out), and writes
 //! `FILE` as a PNG (created new, never overwritten), printing one JSON summary; `--yaw` and
 //! `--pitch` (radians, `pitch` above the horizon) point the fitted camera from another
 //! direction, `--projection ortho` switches to the orthographic projection, `--zoom` is the
@@ -48,7 +50,7 @@ use std::sync::atomic::AtomicBool;
 
 fn usage() -> Error {
     Error::Input(
-        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
+        "usage: beamcraft-ui [--cli PATH] [--config-dir DIR] [--samples 1|4] (start page) | beamcraft-ui (--store ROOT | --workspace DIR [--published ROOT]) [--actor-id UUID] [--cli PATH] [--config-dir DIR] [--samples 1|4] [--metrics FRAMES [--width W] [--height H] | --screenshot FILE [--width W] [--height H] [--yaw RAD] [--pitch RAD] [--projection perspective|ortho] [--zoom F32] [--pan X,Y] [--colour-set TEXT] [--background light|dark] [--grids true|false] | --window-shot FILE.png | --perf-run PLAN] | --self-test FILE.json | --synthetic COUNT --metrics FRAMES [--samples 1|4]",
     )
 }
 
@@ -86,6 +88,7 @@ fn options() -> Result<BTreeMap<String, String>, Error> {
                 | "--pan"
                 | "--colour-set"
                 | "--background"
+                | "--grids"
                 | "--config-dir"
                 | "--actor-id"
                 | "--window-shot"
@@ -213,6 +216,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             || map.contains_key("--screenshot")
             || map.contains_key("--yaw")
             || map.contains_key("--pitch")
+            || map.contains_key("--grids")
             || config_dir.is_some()
         {
             return Err(usage());
@@ -302,7 +306,16 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             Some("light") => screenshot::Background::Light,
             Some(_) => return Err(usage()),
         };
-        let snapshot = source::load(&cli, &store, &stats)?;
+        // The project grids ride the screenshot like the window's (issue 543); `--grids false`
+        // leaves them out of both the picture and the fit.
+        let (snapshot, grids) = match map.get("--grids").map(String::as_str) {
+            None | Some("true") => source::load_with_grids(&cli, &store, &stats)?,
+            Some("false") => (
+                source::load(&cli, &store, &stats)?,
+                beamcraft_ui::grid::GridScene::default(),
+            ),
+            Some(_) => return Err(usage()),
+        };
         // The default catalogue colours ride the screenshot (issue 535): the same tints the
         // window gives a freshly opened model, evaluated by the window's own path. A
         // `--colour-set` names a built-in preset or a colour-sets file holding exactly one
@@ -343,6 +356,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
         )?;
         let saved = screenshot::capture(
             &scene,
+            &grids,
             Path::new(out),
             size,
             samples,

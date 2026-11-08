@@ -2,13 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Apibim
 
 //! One offscreen viewport screenshot of a scene as a PNG file: the same renderer the window
-//! draws with, headless, with the camera fitted over the whole scene like `--metrics` and
-//! like the `Fit model` action. The pixels come back through the renderer's own readback
-//! and are encoded by the `image` crate; the file is created new, never overwritten.
+//! draws with, headless, with the camera fitted over the whole scene and its project grids
+//! like the `Fit model` action. The grid lines and labels are painted over the render by the
+//! window's own grid painter through a headless egui pass (issue 543). The pixels come back
+//! through the renderer's own readback and are encoded by the `image` crate; the file is
+//! created new, never overwritten.
 
 use crate::Error;
 use crate::camera::Camera;
+use crate::camera::View;
 use crate::cut_plane::ClipGpu;
+use crate::grid::GridScene;
 use crate::render::{Gpu, Renderer, Uploaded, wait};
 use crate::scene::Scene;
 use crate::stats::Stats;
@@ -30,6 +34,8 @@ pub struct Screenshot {
     pub samples: u32,
     /// Elements drawn.
     pub elements: usize,
+    /// Project grid lines painted over the render.
+    pub grid_lines: usize,
     /// Pixels that differ from the background colour.
     pub lit_pixels: u64,
 }
@@ -68,11 +74,14 @@ const LIGHT_BACKGROUND: wgpu::Color = wgpu::Color {
     a: 1.0,
 };
 
-/// Renders `scene` once at `size`, fits the camera over the whole scene, and writes the PNG
-/// to `out`, which must not exist. `samples` is 1 or 4; `None` is the adapter's default.
-/// `background` picks the clear colour the renderer starts its frame from.
+/// Renders `scene` once at `size`, fits the camera over the scene and the `grids`, paints the
+/// grid lines and labels over it, and writes the PNG to `out`, which must not exist. `samples`
+/// is 1 or 4; `None` is the adapter's default. `background` picks the clear colour the
+/// renderer starts its frame from and the theme the grid labels are painted in.
+#[allow(clippy::too_many_arguments)]
 pub fn capture(
     scene: &Scene,
+    grids: &GridScene,
     out: &Path,
     size: [u32; 2],
     samples: Option<u32>,
@@ -87,7 +96,7 @@ pub fn capture(
         renderer.background = LIGHT_BACKGROUND;
     }
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, scene, stats)?;
-    let (target, extent) = scene.framing();
+    let (target, extent) = grids.framing(&scene.summary());
     let aspect = size[0] as f32 / size[1] as f32;
     let mut camera = Camera::new(target, extent, aspect)?;
     // Camera::new starts at yaw -0.8, pitch 0.85; navigate takes deltas and clamps the
@@ -110,6 +119,9 @@ pub fn capture(
         &ClipGpu::none(),
     );
     wait(&gpu.device, index)?;
+    if !grids.lines.is_empty() {
+        paint_grids(&gpu, &renderer, grids, scene, &view, size, background)?;
+    }
     let (data, row) = renderer.readback(&gpu.device, &gpu.queue)?;
     let height = usize::try_from(size[1]).map_err(|_| Error::Allocation)?;
     let wide = usize::try_from(size[0])
@@ -159,8 +171,109 @@ pub fn capture(
         height: size[1],
         samples: renderer.samples,
         elements: scene.elements,
+        grid_lines: grids.lines.len(),
         lit_pixels,
     })
+}
+
+/// Paints the grids over the resolved render with the window's [`GridScene::paint`]: one
+/// headless egui frame at one pixel per point, tessellated and drawn by `egui_wgpu` into the
+/// renderer's own target with the render kept (`LoadOp::Load`).
+fn paint_grids(
+    gpu: &Gpu,
+    renderer: &Renderer,
+    grids: &GridScene,
+    scene: &Scene,
+    view: &View,
+    size: [u32; 2],
+    background: Background,
+) -> Result<(), Error> {
+    use eframe::egui_wgpu;
+    let ctx = egui::Context::default();
+    // Inter is the window's face; without it egui's built-in default face still draws the
+    // labels, so a missing asset degrades the font instead of failing the screenshot.
+    let _ = crate::app::inter(&ctx);
+    crate::theme::install(&ctx);
+    ctx.set_theme(match background {
+        Background::Dark => egui::Theme::Dark,
+        Background::Light => egui::Theme::Light,
+    });
+    let rect =
+        egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0] as f32, size[1] as f32));
+    let input = egui::RawInput {
+        screen_rect: Some(rect),
+        ..Default::default()
+    };
+    // The first frame lays the fonts out; the second paints with them. Texture deltas of both
+    // frames are applied in order, since the font atlas is created by the first.
+    let mut deltas = Vec::new();
+    let mut output = None;
+    for _ in 0..2 {
+        let mut frame = ctx.run_ui(input.clone(), |ui| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| grids.paint(ui, rect, view, scene.origin_mm, None));
+        });
+        deltas.extend(
+            frame
+                .textures_delta
+                .set
+                .iter()
+                .map(|(id, steps)| (*id, steps.clone())),
+        );
+        // The deltas are applied below; the frame's own record is cleared as egui requires.
+        frame.textures_delta.clear();
+        output = Some(frame);
+    }
+    let output = output.ok_or(Error::Allocation)?;
+    let primitives = ctx.tessellate(output.shapes, 1.0);
+    let descriptor = egui_wgpu::ScreenDescriptor {
+        size_in_pixels: size,
+        pixels_per_point: 1.0,
+    };
+    let mut painter = egui_wgpu::Renderer::new(
+        &gpu.device,
+        wgpu::TextureFormat::Rgba8Unorm,
+        egui_wgpu::RendererOptions::default(),
+    );
+    for (id, steps) in &deltas {
+        for delta in steps {
+            painter.update_texture(&gpu.device, &gpu.queue, *id, delta);
+        }
+    }
+    let mut encoder = gpu
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("screenshot grids"),
+        });
+    let mut buffers = painter.update_buffers(
+        &gpu.device,
+        &gpu.queue,
+        &mut encoder,
+        &primitives,
+        &descriptor,
+    );
+    {
+        let mut pass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("screenshot grids"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &renderer.view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            })
+            .forget_lifetime();
+        painter.render(&mut pass, &primitives, &descriptor);
+    }
+    buffers.push(encoder.finish());
+    let index = gpu.queue.submit(buffers);
+    wait(&gpu.device, index)
 }
 
 impl Screenshot {
@@ -169,9 +282,15 @@ impl Screenshot {
         format!(
             concat!(
                 "{{\"outcome\":\"screenshot_saved\",\"bytes\":{},\"width\":{},\"height\":{},",
-                "\"samples\":{},\"elements\":{},\"lit_pixels\":{}}}"
+                "\"samples\":{},\"elements\":{},\"grid_lines\":{},\"lit_pixels\":{}}}"
             ),
-            self.bytes, self.width, self.height, self.samples, self.elements, self.lit_pixels,
+            self.bytes,
+            self.width,
+            self.height,
+            self.samples,
+            self.elements,
+            self.grid_lines,
+            self.lit_pixels,
         )
     }
 }

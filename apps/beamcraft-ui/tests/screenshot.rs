@@ -573,3 +573,128 @@ fn screenshot_view_draws_the_rest_of_a_revision_with_a_degenerate_plate() {
         .count();
     assert!(member > 2_000, "member pixels {member}");
 }
+
+/// The horizontal and vertical extent, in pixels, of everything that is not the light paper.
+fn ink_extent(path: &Path) -> (u32, u32) {
+    let rgba = image::open(path).unwrap().to_rgba8();
+    let paper = |p: &image::Rgba<u8>| p.0[0] >= 240 && p.0[1] >= 240 && p.0[2] >= 240;
+    let (mut x0, mut x1, mut y0, mut y1) = (u32::MAX, 0, u32::MAX, 0);
+    for (x, y, p) in rgba.enumerate_pixels() {
+        if !paper(p) {
+            x0 = x0.min(x);
+            x1 = x1.max(x);
+            y0 = y0.min(y);
+            y1 = y1.max(y);
+        }
+    }
+    (x1.saturating_sub(x0), y1.saturating_sub(y0))
+}
+
+/// Issue 543: the headless screenshot draws the project grids the window draws, with their
+/// labels, and fits the camera over model and grids together; `--grids false` keeps the
+/// model-only picture.
+#[test]
+fn screenshot_view_draws_and_fits_the_project_grids() {
+    let Some(cli) = support::cli(Path::new(env!("CARGO_BIN_EXE_beamcraft-ui"))) else {
+        panic!("the beamcraft CLI is required next to the beamcraft-ui binary");
+    };
+    let root = Path::new(env!("CARGO_TARGET_TMPDIR"))
+        .join("screenshot-tests")
+        .join(format!("grids-{}", support::boot_nonce()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let store = root.to_str().unwrap();
+    run_expect_success(
+        &cli,
+        &[
+            "create-grid",
+            "--store",
+            store,
+            "--name",
+            "G1",
+            "--u-expression",
+            "0 3*4000",
+            "--v-expression",
+            "0 2*6000",
+        ],
+    );
+    run_expect_success(
+        &cli,
+        &[
+            "define-profile",
+            "--store",
+            store,
+            "--width",
+            "200",
+            "--height",
+            "300",
+            "--name",
+            "R200x300",
+        ],
+    );
+    run_expect_success(
+        &cli,
+        &[
+            "create-member",
+            "--store",
+            store,
+            "--profile",
+            "R200x300",
+            "--start",
+            "0,0,0",
+            "--end",
+            "8000,0,0",
+        ],
+    );
+    let shot = |name: &str, grids: &str| {
+        let out = root.join(name);
+        let stdout = run_expect_success(
+            &cli,
+            &[
+                "screenshot-view",
+                "--store",
+                store,
+                "--out",
+                out.to_str().unwrap(),
+                "--yaw",
+                "0",
+                "--pitch",
+                "1.52",
+                "--projection",
+                "ortho",
+                "--background",
+                "light",
+                "--grids",
+                grids,
+            ],
+        );
+        let reply = beamcraft_json::decode(&stdout, &beamcraft_json::Limits::DEFAULT).unwrap();
+        (out, reply.get("grid_lines").unwrap().unsigned().unwrap())
+    };
+    let (with, lines) = shot("grids.png", "true");
+    assert_eq!(lines, 7);
+    let (without, none) = shot("no-grids.png", "false");
+    assert_eq!(none, 0);
+    let (gw, gh) = ink_extent(&with);
+    let (mw, mh) = ink_extent(&without);
+    // With grids the frame holds the whole 16 m x 16 m guide square: ink spans a near-square
+    // region on both axes, where the model-only frame is one bar.
+    assert!(gw > 300 && gh > 300, "grid ink extent {gw}x{gh}");
+    assert!(mw.min(mh) < 100, "model-only ink extent {mw}x{mh}");
+    // An unknown value is refused before any render.
+    let bad = root.join("bad.png");
+    run_expect_rejection(
+        &cli,
+        &[
+            "screenshot-view",
+            "--store",
+            store,
+            "--out",
+            bad.to_str().unwrap(),
+            "--grids",
+            "maybe",
+        ],
+        "INVALID_ARGUMENT",
+    );
+    assert!(!bad.exists());
+}
