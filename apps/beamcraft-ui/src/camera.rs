@@ -243,6 +243,13 @@ impl Camera {
     pub fn distance(&self) -> f32 {
         self.distance
     }
+    /// Screen millimetres per pointer point at `distance`: the visible height at the target
+    /// plane (`2 tan(half FOV) * distance`) over the `viewport_height` in points. Dragging one
+    /// point then moves the model exactly one point on screen (issue 562 item 21); the height
+    /// is floored at 1.0 so a degenerate pane cannot scale the pan up without bound.
+    pub fn pan_per_pixel(distance: f32, viewport_height: f32) -> f32 {
+        2.0 * HALF_FOV.tan() * distance / viewport_height.max(1.0)
+    }
     /// The pan (millimetres) that keeps the point under the cursor fixed while zooming: `ndc` is
     /// the cursor in normalized device coordinates (`edit::ndc_of`, y up, inside `[-1, 1]`) and
     /// `zoom` the same logarithmic input `navigate` takes. On the target plane the view scales

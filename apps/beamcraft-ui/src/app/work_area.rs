@@ -674,6 +674,7 @@ impl App {
             ctrl,
             shift,
             pane.camera.distance(),
+            body.height(),
             hovered,
             scroll_y,
             pinch,
@@ -720,14 +721,15 @@ impl App {
             }
         };
         view.tint = tint;
-        let rgb = if dark {
-            [0x17, 0x21, 0x2B]
+        // The same clear colours `screenshot-view` answers with (issue 562 item 36): the dark
+        // theme sits on the renderer's dark background, the light one on the paper tone.
+        let background = if dark {
+            crate::render::DARK_BACKGROUND
         } else {
-            [0xED, 0xF1, 0xF4]
+            crate::render::LIGHT_BACKGROUND
         };
-        let [r, g, b] = rgb.map(|c: u8| f64::from(c) / 255.0);
         if let Some(renderer) = pane.target.renderer_mut() {
-            renderer.background = wgpu::Color { r, g, b, a: 1.0 };
+            renderer.background = background;
         }
         if let Some(l) = &self.loaded {
             if own_scene {

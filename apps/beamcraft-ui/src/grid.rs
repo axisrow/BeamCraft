@@ -933,6 +933,12 @@ impl GridScene {
     }
 
     /// Paints construction guides and labels using engine endpoints, without authoring geometry.
+    /// A bubble hangs outward off each line end, past the corner its line shares with the
+    /// crossing family, and a bubble that would cover one already placed is dropped: at a low
+    /// pitch or in an elevation the ends pile up, and stacked labels read as one long chain
+    /// (issue 562 items 35 and 38). A line seen nearly end-on owns no labels at all, so an
+    /// elevation does not draw a plan grid's labels on one horizontal line. The selected grid's
+    /// bubbles claim their places first.
     pub fn paint(
         &self,
         ui: &egui::Ui,
@@ -955,39 +961,85 @@ impl GridScene {
             } else {
                 palette.link.gamma_multiply(0.6)
             };
+            if let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) {
+                // A line seen end-on projects to a dot; drawing it adds nothing (a plan grid
+                // in an elevation, issue 562 item 38).
+                if (b - a).length_sq() >= 4.0 {
+                    painter.line_segment(
+                        [a, b],
+                        egui::Stroke::new(if active { 2.5 } else { 1.0 }, color),
+                    );
+                }
+            }
+        }
+        // Labels in a second pass, the selected grid first, so its bubbles claim their places;
+        // the stable sort keeps the model order within each group.
+        let mut order: Vec<usize> = (0..self.lines.len()).collect();
+        order.sort_by_key(|index| {
+            usize::from(
+                !selected_lines
+                    .as_ref()
+                    .is_some_and(|range| range.contains(index)),
+            )
+        });
+        let mut placed: Vec<egui::Rect> = Vec::new();
+        for index in order {
+            let Some(line) = self.lines.get(index) else {
+                continue;
+            };
+            let active = selected_lines
+                .as_ref()
+                .is_some_and(|range| range.contains(&index));
             let [Some(a), Some(b)] = line.points.map(|p| project(p, rect, view, origin)) else {
                 continue;
             };
-            painter.line_segment(
-                [a, b],
-                egui::Stroke::new(if active { 2.5 } else { 1.0 }, color),
+            let toward = b - a;
+            let length = toward.length();
+            // A line seen nearly end-on keeps no labels: a plan grid's U lines in an elevation
+            // would stamp their bubbles onto one horizontal line.
+            if length < 24.0 {
+                continue;
+            }
+            let outward = toward / length;
+            let galley = painter.layout_no_wrap(
+                line.label.clone(),
+                egui::FontId::proportional(12.0),
+                palette.text,
             );
-            for end in [a, b] {
-                if rect.shrink(14.0).contains(end) {
-                    let galley = painter.layout_no_wrap(
-                        line.label.clone(),
-                        egui::FontId::proportional(12.0),
-                        palette.text,
-                    );
-                    let size = (galley.size() + egui::vec2(10.0, 6.0)).max(egui::vec2(24.0, 24.0));
-                    let label_rect = egui::Rect::from_center_size(end, size);
-                    painter.rect_filled(
-                        label_rect,
-                        12,
-                        if active {
-                            palette.select
-                        } else {
-                            palette.surface
-                        },
-                    );
-                    painter.rect_stroke(
-                        label_rect,
-                        12,
-                        egui::Stroke::new(1.0, palette.link),
-                        egui::StrokeKind::Inside,
-                    );
-                    painter.galley(end - galley.size() / 2.0, galley, palette.text);
+            let size = (galley.size() + egui::vec2(10.0, 6.0)).max(egui::vec2(24.0, 24.0));
+            let inner = rect.shrink2(size * 0.5);
+            for (end, ahead) in [(a, -1.0f32), (b, 1.0)] {
+                if !rect.shrink(14.0).contains(end) {
+                    continue;
                 }
+                // Outward off the end and clamped into the pane, so the bubble hangs past the
+                // line end yet stays visible. The hang clears a bubble's full 24-point width
+                // on one axis, so the crossing family's bubble at the same corner (offset
+                // along its own line) cannot touch it.
+                let centre = (end + outward * (26.0 * ahead)).clamp(inner.min, inner.max);
+                let label_rect = egui::Rect::from_center_size(centre, size);
+                // A shared corner or a dense family: the first label on the spot wins, so
+                // nothing stacks into a chain.
+                if placed.iter().any(|other| other.intersects(label_rect)) {
+                    continue;
+                }
+                placed.push(label_rect);
+                painter.rect_filled(
+                    label_rect,
+                    12,
+                    if active {
+                        palette.select
+                    } else {
+                        palette.surface
+                    },
+                );
+                painter.rect_stroke(
+                    label_rect,
+                    12,
+                    egui::Stroke::new(1.0, palette.link),
+                    egui::StrokeKind::Inside,
+                );
+                painter.galley(centre - galley.size() / 2.0, galley.clone(), palette.text);
             }
         }
     }
@@ -1018,6 +1070,119 @@ mod form_tests {
         assert_eq!(display_rotation(45.00000000000001_f64.to_radians()), "45");
         assert_eq!(display_rotation(12.3456789_f64.to_radians()), "12.346");
         assert_eq!(display_rotation(-0.00001_f64.to_radians()), "0");
+    }
+
+    /// A 3 x 3 grid: U lines 1..3 along Y, V lines A..C along X, one square 4 m x 5 m.
+    fn demo_scene() -> GridScene {
+        GridScene {
+            lines: vec![
+                GridLine {
+                    label: "1".into(),
+                    points: [[0.0, 0.0, 0.0], [0.0, 10000.0, 0.0]],
+                },
+                GridLine {
+                    label: "2".into(),
+                    points: [[4000.0, 0.0, 0.0], [4000.0, 10000.0, 0.0]],
+                },
+                GridLine {
+                    label: "3".into(),
+                    points: [[8000.0, 0.0, 0.0], [8000.0, 10000.0, 0.0]],
+                },
+                GridLine {
+                    label: "A".into(),
+                    points: [[0.0, 0.0, 0.0], [8000.0, 0.0, 0.0]],
+                },
+                GridLine {
+                    label: "B".into(),
+                    points: [[0.0, 5000.0, 0.0], [8000.0, 5000.0, 0.0]],
+                },
+                GridLine {
+                    label: "C".into(),
+                    points: [[0.0, 10000.0, 0.0], [8000.0, 10000.0, 0.0]],
+                },
+            ],
+            ..GridScene::default()
+        }
+    }
+
+    /// The bubble rectangles one paint pass places, in `rect`-relative points.
+    fn painted_bubbles(
+        scene: &GridScene,
+        plane: beamcraft_engine::work_plane::WorkPlane,
+    ) -> Vec<egui::Rect> {
+        let ctx = egui::Context::default();
+        crate::app::inter(&ctx);
+        crate::theme::install(&ctx);
+        let view = crate::camera::Camera::aligned_to(plane, [0.0; 3], 20_000.0, 100.0)
+            .unwrap()
+            .view(800.0 / 600.0)
+            .unwrap();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            },
+            |ui| scene.paint(ui, rect, &view, [0.0; 3], None),
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                // The bubbles are the filled rects; their strokes share the same rect.
+                egui::Shape::Rect(rect_shape)
+                    if rect_shape.fill != egui::Color32::TRANSPARENT
+                        && rect_shape.rect.width() >= 20.0 =>
+                {
+                    Some(rect_shape.rect)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn plan_bubbles_never_cover_each_other_and_an_elevation_keeps_one_pair() {
+        let scene = demo_scene();
+        // Plan: looking straight down. Every crossing is a shared corner; the bubbles hang
+        // outward and none covers another (issue 562 item 35). The ends that fall on the pane
+        // edge keep none (the bubble would sit outside), the rest all do.
+        let plan = beamcraft_engine::work_plane::WorkPlane::new(
+            [0.0; 3],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        )
+        .unwrap();
+        let bubbles = painted_bubbles(&scene, plan);
+        assert!(
+            bubbles.len() >= 6,
+            "the off-edge ends keep a bubble: {bubbles:?}"
+        );
+        for (i, a) in bubbles.iter().enumerate() {
+            for b in bubbles.iter().skip(i + 1) {
+                assert!(!a.intersects(*b), "bubbles {a:?} and {b:?} overlap");
+            }
+        }
+        // Elevation: looking along -Y. The U lines are end-on (no labels) and the V lines all
+        // project onto one segment, so only the first pair of labels is kept (item 38).
+        let elevation = beamcraft_engine::work_plane::WorkPlane::new(
+            [0.0; 3],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        )
+        .unwrap();
+        let bubbles = painted_bubbles(&scene, elevation);
+        assert_eq!(
+            bubbles.len(),
+            2,
+            "one pair of labels on the horizontal line: {bubbles:?}"
+        );
+        for (i, a) in bubbles.iter().enumerate() {
+            for b in bubbles.iter().skip(i + 1) {
+                assert!(!a.intersects(*b), "bubbles {a:?} and {b:?} overlap");
+            }
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::camera::Camera;
 use crate::camera::View;
 use crate::cut_plane::ClipGpu;
 use crate::grid::GridScene;
-use crate::render::{Gpu, Renderer, Uploaded, wait};
+use crate::render::{Gpu, LIGHT_BACKGROUND, Renderer, Uploaded, wait};
 use crate::scene::Scene;
 use crate::stats::Stats;
 use beamcraft_engine::RenderMode;
@@ -64,15 +64,6 @@ pub enum Background {
     /// A light clear colour near the drawing paper value `rgb(245, 246, 248)`.
     Light,
 }
-
-/// The light clear colour, picked once: `srgb(0.961, 0.965, 0.973)` quantizes to
-/// `rgb(245, 246, 248)`, the reference paper value measured on the demo frame.
-const LIGHT_BACKGROUND: wgpu::Color = wgpu::Color {
-    r: 0.961,
-    g: 0.965,
-    b: 0.973,
-    a: 1.0,
-};
 
 /// Renders `scene` once at `size`, fits the camera over the scene and the `grids`, paints the
 /// grid lines and labels over it, and writes the PNG to `out`, which must not exist. `samples`
