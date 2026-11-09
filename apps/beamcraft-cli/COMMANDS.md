@@ -286,13 +286,13 @@ write.
 update-element --store ROOT --id UUID [--name TEXT] [--class INT32] [--profile-digest SHA256]
     [--profile TEXT] [--material-digest SHA256|none] [--thickness MM]
     [--thickness-side top|middle|bottom] [--corners V=chamfer:D1[,D2];V=round:R|none]
-    [--axis-point X,Y,Z;X,Y,Z;...] [--roll RAD] [--section-plane left|centre|right]
-    [--section-plane-offset MM] [--section-depth front|centre|back] [--section-depth-offset MM]
-    [--start-offset MM] [--end-offset MM] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W|none]
-    [--level UUID|none] [--rotate-about X,Y,Z] [--rotate-axis X,Y,Z] [--rotate-angle RAD]
-    [--mirror-point X,Y,Z] [--mirror-normal X,Y,Z] [--move-from X,Y,Z] [--move-to X,Y,Z]
-    [--op-id UUID] [--revision-id UUID] [--actor-id UUID] [--project-id UUID]
-    [--workspace-id UUID]
+    [--contour X,Y[,Z];X,Y[,Z];...] [--axis-point X,Y,Z;X,Y,Z;...] [--roll RAD]
+    [--section-plane left|centre|right] [--section-plane-offset MM]
+    [--section-depth front|centre|back] [--section-depth-offset MM] [--start-offset MM]
+    [--end-offset MM] [--translation X,Y,Z] [--orientation-xyzw X,Y,Z,W|none] [--level UUID|none]
+    [--rotate-about X,Y,Z] [--rotate-axis X,Y,Z] [--rotate-angle RAD] [--mirror-point X,Y,Z]
+    [--mirror-normal X,Y,Z] [--move-from X,Y,Z] [--move-to X,Y,Z] [--op-id UUID]
+    [--revision-id UUID] [--actor-id UUID] [--project-id UUID] [--workspace-id UUID]
 ```
 
 ### move-plate-vertex

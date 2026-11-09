@@ -357,7 +357,7 @@ fn run(args: &[OsString]) -> Run<Json> {
     };
     let changes = matches!(*command, "save-view" | "update-view");
     let preset_define = matches!(*command, "define-preset");
-    if !tail.len().is_multiple_of(2) || tail.len() > 96 {
+    if !tail.len().is_multiple_of(2) {
         return Err(invalid("options come in name-value pairs"));
     }
     let mut options = BTreeMap::new();

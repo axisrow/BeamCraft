@@ -59,7 +59,7 @@ fn main() -> std::process::ExitCode {
     // The steel discipline joins the platform registry first, so every command below reads and
     // authors steel parts; a repeated install is kept, never duplicated.
     steel::layer::install();
-    let args = std::env::args_os().skip(1).take(50).collect::<Vec<_>>();
+    let args = std::env::args_os().skip(1).collect::<Vec<_>>();
     if args.len() == 1 && (args.first().is_some_and(|s| s == "--version" || s == "-V")) {
         println!("beamcraft {}", env!("CARGO_PKG_VERSION"));
         return std::process::ExitCode::SUCCESS;
@@ -77,6 +77,24 @@ fn main() -> std::process::ExitCode {
         .is_some_and(|a| a == "--screenshot" || a == "--self-test")
     {
         return screenshot(&args);
+    }
+    // `command --help` answers with that command's own help instead of a JSON refusal
+    // (visual audit finding 11); a `-h` in a value position stays a value. Help needs no
+    // store and holds no coordinator lease. It sits above the early-return routes, so the
+    // words they own (commands, session, batch words, view export, export) get help too.
+    if let Some(word) = args.first().and_then(|w| w.to_str())
+        && let Some(command) = registry::COMMANDS.iter().find(|entry| entry.name == word)
+        && args
+            .get(1..)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+            .any(|(position, arg)| {
+                position % 2 == 0 && arg.to_str().is_some_and(|s| s == "--help" || s == "-h")
+            })
+    {
+        println!("{}", help::for_family(command.family));
+        return std::process::ExitCode::SUCCESS;
     }
     let route = args.first().and_then(|c| registry::route(c));
     match route {
@@ -127,23 +145,6 @@ fn main() -> std::process::ExitCode {
             return export_cmd::run_and_print(&args);
         }
         _ => {}
-    }
-    // `command --help` answers with that command's own help instead of a JSON refusal
-    // (visual audit finding 11); a `-h` in a value position stays a value. Help needs no
-    // store and holds no coordinator lease.
-    if let Some(word) = args.first().and_then(|w| w.to_str())
-        && let Some(command) = registry::COMMANDS.iter().find(|entry| entry.name == word)
-        && args
-            .get(1..)
-            .unwrap_or_default()
-            .iter()
-            .enumerate()
-            .any(|(position, arg)| {
-                position % 2 == 0 && arg.to_str().is_some_and(|s| s == "--help" || s == "-h")
-            })
-    {
-        println!("{}", help::for_family(command.family));
-        return std::process::ExitCode::SUCCESS;
     }
     // A serving coordinator holds its store for as long as it runs, so a compaction cannot start
     // under it (U14).
