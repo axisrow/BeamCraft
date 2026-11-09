@@ -371,16 +371,21 @@ pub const BEARING_RAYS: usize = 8;
 /// The offsets from a bearing point of the grip rays: the axis itself first, then
 /// [`BEARING_RAYS`] points on the bearing ring in the group's `x`/`y` plane. The ring radius
 /// lies midway between the clearance hole (nominal plus the resolved clearance) and the outer
-/// edge of what bears on the part — the washer, or the head without one — and never inside the
-/// hole: a face too small to reach past the hole falls back to a fifth of the hole's radius
-/// beyond it.
-fn bearing_ray_offsets(inputs: &BoltGroupInputs, x: [f64; 3], y: [f64; 3]) -> Vec<[f64; 3]> {
+/// edge of what bears on the part — the washer when one is resolved under the head, the head
+/// itself otherwise, mirroring `near_washer` — and never inside the hole: a face too small to
+/// reach past the hole falls back to a fifth of the hole's radius beyond it.
+fn bearing_ray_offsets(
+    inputs: &BoltGroupInputs,
+    washer_under_head: bool,
+    x: [f64; 3],
+    y: [f64; 3],
+) -> Vec<[f64; 3]> {
     let spec = &inputs.fastener;
     let hole = (spec.nominal_diameter_mm + inputs.resolved_hole_clearance_mm()) / 2.0;
-    let bearing = spec
-        .washer
-        .map_or(spec.head_across_flats_mm, |w| w.outer_diameter_mm)
-        / 2.0;
+    let bearing = match (washer_under_head, &spec.washer) {
+        (true, Some(washer)) => washer.outer_diameter_mm,
+        _ => spec.head_across_flats_mm,
+    } / 2.0;
     let radius = 0.5 * (hole + bearing.max(hole * 1.2));
     let mut offsets = Vec::with_capacity(BEARING_RAYS + 1);
     offsets.push([0.0; 3]);
@@ -585,7 +590,7 @@ pub fn place_bolt_group(
     )?;
     // The grip decides the one length of the group; the crossing stays the box admission, the
     // length itself follows the faces on the bearing ring.
-    let rays = bearing_ray_offsets(inputs, x, y);
+    let rays = bearing_ray_offsets(inputs, washer_under_head, x, y);
     let mut crossed = vec![false; inputs.parts.len()];
     let mut clamped = vec![false; inputs.parts.len()];
     let mut max_grip = 0.0_f64;
@@ -2055,6 +2060,66 @@ mod tests {
                 .collect(),
         );
         let refused = place_bolt_group(&inputs, &bounds, &faces).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::InvalidArgument);
+        assert_eq!(refused.field, "parts");
+    }
+
+    #[test]
+    fn the_bearing_ring_follows_the_washer_actually_placed_under_the_head() {
+        // The head-side plate carries, around each bearing, only a square ring of material
+        // between half-sizes 10 and 10.8 (z 0..10): the axis falls into the inner void, the
+        // rays at the head ring radius 10.5 hit the ring, the rays at the washer radius 12
+        // find nothing. With a washer resolved under the head the part honestly refuses;
+        // with `washer_under_head: false` the ring must shrink to the head across flats —
+        // probing to a washer OD that is not there gave a false "never clamped" (review on
+        // issue 555).
+        let mut inputs = group_inputs();
+        inputs.point1_mm = [0.0, 250.0, 0.0];
+        inputs.point2_mm = [400.0, 250.0, 0.0];
+        inputs.offset_start_mm = 50.0;
+        inputs.spacing = BoltSpacing::Spacings(vec![80.0]);
+        inputs.washer_under_head = Some(false);
+        let mut bounds = BTreeMap::new();
+        bounds.insert(id(1), [[0.0, 0.0, 0.0], [1000.0, 500.0, 10.0]]);
+        bounds.insert(id(2), [[0.0, 0.0, 10.0], [1000.0, 500.0, 20.0]]);
+        let mut faces = BTreeMap::new();
+        let mut rings = Faces::new();
+        for bearing_x in [50.0, 130.0] {
+            // The square ring between half-sizes 10 and 10.8 around the bearing: four strips.
+            let inner = [bearing_x - 10.0, 240.0, 0.0];
+            let inner_max = [bearing_x + 10.0, 260.0, 10.0];
+            let outer = [bearing_x - 10.8, 239.2, 0.0];
+            let outer_max = [bearing_x + 10.8, 260.8, 10.0];
+            rings = rings
+                .into_iter()
+                .chain(box_faces(
+                    [outer[0], outer[1], 0.0],
+                    [outer_max[0], inner[1], 10.0],
+                ))
+                .chain(box_faces(
+                    [outer[0], inner_max[1], 0.0],
+                    [outer_max[0], outer_max[1], 10.0],
+                ))
+                .chain(box_faces(
+                    [outer[0], inner[1], 0.0],
+                    [inner[0], inner_max[1], 10.0],
+                ))
+                .chain(box_faces(
+                    [inner_max[0], inner[1], 0.0],
+                    [outer_max[0], inner_max[1], 10.0],
+                ))
+                .collect();
+        }
+        faces.insert(id(1), rings);
+        faces.insert(id(2), box_faces([0.0, 0.0, 10.0], [1000.0, 500.0, 20.0]));
+        // Grip 20: 20 + nut washer 3 + nut 14.8 + protrusion 5 = 42.8, so the length is 45.
+        let placed = place_bolt_group(&inputs, &bounds, &faces).unwrap();
+        assert_eq!(placed.length_mm, 45.0);
+        // The same geometry with the washer really under the head probes to its OD and
+        // refuses: no ray of the ring finds the part.
+        let mut washer = inputs;
+        washer.washer_under_head = Some(true);
+        let refused = place_bolt_group(&washer, &bounds, &faces).unwrap_err();
         assert_eq!(refused.code, ErrorCode::InvalidArgument);
         assert_eq!(refused.field, "parts");
     }
