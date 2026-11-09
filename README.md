@@ -80,7 +80,7 @@ app. There is no MCP server and no background process: the skills drive the CLI 
 and `/beamcraft:open` only launches the viewport app on the store.
 
 ```sh
-claude plugin install beamcraft --marketplace axisrow/BeamCraft
+claude plugin install beamcraft --marketplace Apibim-com/BeamCraft
 ```
 
 or from a local checkout instead of GitHub:
