@@ -211,10 +211,16 @@ fn run(args: &[OsString]) -> Result<(Json, u8), Fail> {
             &stdout,
             "the viewport render failed",
         ))),
-        Some(_) => Err(Fail {
-            code: ErrorCode::InvalidArgument,
-            message: reply_message(&stdout, "beamcraft-ui refused the screenshot"),
-        }),
+        // A rejection the ui relayed from the CLI carries the CLI's own code, message and
+        // diagnostics: re-issue them unchanged (issue 555 finding 6). Anything else the ui
+        // refused is its own input refusal.
+        Some(_) => match relayed_rejection(&stdout) {
+            Some(rejection) => Ok(rejection),
+            None => Err(Fail {
+                code: ErrorCode::InvalidArgument,
+                message: reply_message(&stdout, "beamcraft-ui refused the screenshot"),
+            }),
+        },
         None => Err(backend("beamcraft-ui was terminated by a signal".into())),
     }
 }
@@ -235,6 +241,37 @@ fn decode_reply(line: &str) -> Result<Json, Fail> {
         .map_err(|_| backend("beamcraft-ui reply is not valid JSON".into()))
 }
 
+/// The ui's reply as this command's own rejection when it names a stable F04 code: the code,
+/// the message and the diagnostics are kept, and the exit code follows the code.
+fn relayed_rejection(line: &str) -> Option<(Json, u8)> {
+    let reply = decode_reply(line).ok()?;
+    let code = reply
+        .get("code")
+        .ok()
+        .and_then(|v| v.string().ok())
+        .and_then(ErrorCode::parse)?;
+    let message = reply
+        .get("message")
+        .ok()
+        .and_then(|v| v.string().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let diagnostics = match reply.get("diagnostics").ok() {
+        Some(Json::Array(items)) => Json::Array(items.clone()),
+        _ => Json::Array(vec![]),
+    };
+    Some((
+        Json::object([
+            ("outcome", Json::text("rejected")),
+            ("code", Json::text(code.as_str())),
+            ("message", Json::text(message)),
+            ("observed_context", Json::Null),
+            ("diagnostics", diagnostics),
+        ]),
+        beamcraft_host::control::HostError::logical(code).exit_code(),
+    ))
+}
+
 /// The reply's `message` field, or a fallback when the reply carries none.
 fn reply_message(line: &str, fallback: &str) -> String {
     let owned = decode_reply(line).ok().and_then(|reply| {
@@ -245,4 +282,31 @@ fn reply_message(line: &str, fallback: &str) -> String {
             .map(str::to_owned)
     });
     owned.unwrap_or_else(|| fallback.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+
+    #[test]
+    fn a_relayed_cli_rejection_keeps_its_code_message_and_diagnostics() {
+        // Issue 555 finding 6: the ui relays the CLI's refusal; this command re-issues it with
+        // the same code (and the code's exit), message and diagnostics, not INVALID_ARGUMENT.
+        let line = r#"{"outcome":"rejected","code":"UNSUPPORTED_VERSION","message":"layer schema digest mismatch","diagnostics":[{"schema":null}]}"#;
+        let (json, exit) = relayed_rejection(line).unwrap();
+        assert_eq!(exit, 2);
+        assert_eq!(
+            json.get("code").unwrap().string().unwrap(),
+            "UNSUPPORTED_VERSION"
+        );
+        assert_eq!(
+            json.get("message").unwrap().string().unwrap(),
+            "layer schema digest mismatch"
+        );
+        assert_eq!(json.get("diagnostics").unwrap().array().unwrap().len(), 1);
+        // The ui's own refusal names no code: it stays this command's input refusal.
+        assert!(relayed_rejection(r#"{"outcome":"rejected","message":"bad width"}"#).is_none());
+        assert!(relayed_rejection(r#"{"code":"NOT_A_CODE","message":"m"}"#).is_none());
+    }
 }

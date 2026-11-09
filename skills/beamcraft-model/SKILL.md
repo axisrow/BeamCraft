@@ -30,7 +30,9 @@ cargo build --offline -p beamcraft-cli --bins
 - **Never crashes.** The CLI does not panic on input. Every refusal is one JSON object with a
   stable `code` and `message` and exit code 2; treat it as the normal error channel and read it.
 - **`--op-id` on every write.** Repeat the same id on a retry: the same id with the same
-  arguments replays; the same id with different arguments is refused (`OP_ID_REUSE`).
+  arguments replays; the same id with different arguments is refused (`OP_ID_REUSE`). A
+  `create-*` without `--new-id` derives the new id from `--op-id`, so the verbatim retry of an
+  exit 4 or 124 replays without knowing the id it never saw.
 - **Exit codes.** 0 success, 2 input or validation refusal, 3 backend unavailable,
   4 outcome unknown, 124 deadline, 130 cancelled.
 

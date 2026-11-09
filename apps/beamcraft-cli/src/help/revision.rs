@@ -12,7 +12,11 @@ pub(super) const HELP: &str = concat!(
     "Revision: commit-revision --store ROOT --project-id UUID --workspace-id UUID ",
     "--revision-id UUID --op-id UUID --generation U64 --base none|REVISION_UUID --schema ",
     "SHA256 --root-layer NAME --layers ROLE:NAME:SHA256,... (ROLE authored|derived|external; ",
-    "blobs must be stored first); open-revision --store ROOT",
+    "blobs must be stored first); open-revision --store ROOT (verifies the manifest and every ",
+    "blob and reports schema: the store's layer-schema pins, this build's digest and ",
+    "compatible; a project store pinned to another layer mapping is UNSUPPORTED_VERSION with ",
+    "both digests as its diagnostic, never revision_verified: pre-alpha stores are not ",
+    "migrated)",
 );
 
 pub(super) const RECOVERY: &str = concat!(

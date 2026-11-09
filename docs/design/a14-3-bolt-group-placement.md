@@ -44,29 +44,38 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
   generator value next to the authoritative (expanded) spacings, so a moved `point2`
   re-expands an `offset_end` row at the CLI without a second input; an explicit list stays
   authoritative. A partial edit that names a spacing form replaces the stored pattern.
-- **The grip is face-exact; the crossing stays box-conservative.** The crossing admission keeps
-  the A05 rule (every listed part crossed by a fastener axis, by its conservative box), so a
-  bolt over a pre-drilled hole is still admitted and a mid-air box overlap changes nothing the
-  A05 decision did not already accept. The grip that decides the length is the material the
-  shank actually passes through: the adapter turns each part's stored scene mesh into world
-  triangles and the engine pairs the shank's crossings with them. Hits that land on one
-  boundary within rounding distance merge into one crossing (a ray through a shared triangle
-  edge — the ear-clip diagonal of a cap under a centred bolt — hits both triangles a few ulps
-  apart, and pairing them as zero-length intervals would collapse the grip); an odd count
-  pairs the first crossing with the bearing face, so a bearing inside a part grips its
-  remaining material; a bearing over a foreign opening grips nothing there. The group's own
-  generated holes are the exception: a part carrying one of the group's own hole records grips
-  per its conservative box wherever the axis crosses no face, because the record was cut
-  coaxial with the shank and the bolt grips the slab the box bounds — so the stored length
-  survives a re-place over the meshes the group itself rewrote (a plain rename update, a
-  moved row) and a retry of the accepted create replays instead of mismatching into
-  `OP_ID_REUSE`. This is exact under any placement rotation (issue 519 defect B): a 40-degree
-  brace's box claimed a 49 mm grip along the shank where its solid grips 37 mm, and the
-  rotated knee brace of the repro resolved to the 80 mm entry instead of the face-sane 60.
-  The length rule reads "plus the washers" as the washers the shank must reach across: the
-  under-nut washer lies between the grip and the nut and adds its thickness, while the
-  under-head washer lies before the shank starts and adds nothing — the A14.2 stack fixes the
-  shank at the under-head plane.
+- **The grip is the clamped pack on the bearing ring; the crossing stays box-conservative.**
+  The crossing admission keeps the A05 rule (every listed part crossed by a fastener axis, by
+  its conservative box). The box is the plate's contour extruded on its authored
+  `thickness_side` (`AuthoredPlate::local_box_mm`: top `[0, t]`, middle `[-t/2, t/2]`, bottom
+  `[-t, 0]`), turned by the placement — never `+ t` upwards by assumption (issue 555 finding 3).
+  The grip that decides the length is the pack the fastener clamps between its bearing faces
+  (issue 555 finding 1). A fastener always stands in a hole and the head and the nut bear on the
+  ring of material around it, not on the axis line, so the engine measures each part along the
+  axis and along eight rays parallel to it on the bearing ring — midway between the clearance
+  hole's radius (nominal plus the resolved clearance) and the washer's outer radius (the
+  head's, without a washer) — and the part contributes the ray with the most material. Each ray
+  is face-exact: the adapter turns the part's stored scene mesh into world triangles and the
+  engine pairs the ray's crossings with them, exact under any placement rotation (issue 519
+  defect B: a 40-degree brace's box claimed a 49 mm grip where its solid grips 37 mm). Hits
+  that land on one boundary within rounding distance merge into one crossing (a ray through a
+  shared triangle edge hits both triangles a few ulps apart); an odd count pairs the first
+  crossing with the bearing face, so a bearing inside a part grips its remaining material.
+  Consequences: a coaxial clearance hole grips its slab whoever cut it — the group's own
+  generated record, another group's, `add-hole`, `create-plate --hole-round` — so the length
+  no longer depends on the order of the operations and a plain rename or a retry re-places to
+  the stored length (the earlier "own holes heal from the box" special case is gone). A listed
+  part whose box the axes cross but whose bearing ring no fastener ever finds material in (an
+  opening wider than the washer, or a box overlap past the part's outline) is refused with
+  `INVALID_ARGUMENT`, field `parts`: the group would not clamp it, and it is never silently
+  dropped from the grip.
+  The length rule reads "plus the washers" as every washer the shank passes through: the bolt
+  length runs from under the head, so a washer under the head lies on the shank exactly as the
+  washer under the nut does (EN 15048-1 / EN 1993-1-8 3.6 clamp length). `auto` is the smallest
+  listed length covering grip + head washer + nut washer (each when placed) + nut + protrusion
+  (issue 555 audit item 9; the earlier rule left the head washer out and could resolve one
+  step short). The A14.2 prototype stack draws the head washer, the head and the shank from the
+  bearing face as before: it is the schematic prototype, not the assembled position.
 - **The digest is the definition identity.** The command carries the digest and the resolved
   spec; the adapter re-renders the canonical resource and refuses a mismatch, the engine
   re-admits the spec for its decisions, and the layer validator re-checks the stored record

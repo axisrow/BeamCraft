@@ -162,21 +162,51 @@ pub fn load_with_grids(
     Ok((snapshot, grids))
 }
 
-/// A rejection is one JSON object; report its stable code only.
+/// Longest message a relayed rejection keeps.
+const MAX_REJECTION_MESSAGE: usize = 1024;
+
+/// A rejection is one JSON object: keep its stable code, its message and its diagnostics, so
+/// the reason survives the process boundary (issue 555 finding 6). A reply that does not decode
+/// or carries no well-formed code is reported as unreadable.
 fn rejected(stdout: &[u8]) -> Error {
-    let text = String::from_utf8_lossy(stdout);
-    let code = text
-        .split("\"code\":\"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
+    let reply = beamcraft_json::decode(stdout.trim_ascii(), &beamcraft_json::Limits::DEFAULT).ok();
+    let field = |key: &str| {
+        reply
+            .as_ref()
+            .and_then(|r| r.get(key).ok())
+            .and_then(|v| v.string().ok())
+            .map(str::to_owned)
+    };
+    let Some(code) = field("code")
         .filter(|c| c.len() <= 32 && c.bytes().all(|b| b.is_ascii_uppercase() || b == b'_'))
-        .unwrap_or("UNKNOWN");
+    else {
+        return Error::Cli("export-view rejected: UNKNOWN".into());
+    };
     if code == "NOT_FOUND" {
         // A store with no published revision yet: typed, so the empty state cannot drift apart
         // from the matcher that treats it as normal.
         return Error::NoRevision;
     }
-    Error::Cli(format!("export-view rejected: {code}"))
+    let mut message = field("message").unwrap_or_default();
+    if message.len() > MAX_REJECTION_MESSAGE {
+        let mut cut = MAX_REJECTION_MESSAGE;
+        while !message.is_char_boundary(cut) {
+            cut = cut.saturating_sub(1);
+        }
+        message.truncate(cut);
+    }
+    let diagnostics = reply
+        .as_ref()
+        .and_then(|r| r.get("diagnostics").ok())
+        .filter(|d| matches!(d, beamcraft_json::Json::Array(_)))
+        .and_then(|d| d.encode(&beamcraft_json::Limits::DEFAULT).ok())
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .unwrap_or_else(|| "[]".to_owned());
+    Error::Rejected(crate::Rejection {
+        code,
+        message,
+        diagnostics,
+    })
 }
 
 /// The first bytes of a framed `export-view` reply (the CLI defines the frame).
@@ -447,6 +477,30 @@ mod tests {
         }
         out.extend_from_slice(bundle);
         out
+    }
+
+    #[test]
+    fn a_cli_rejection_keeps_its_code_message_and_diagnostics() {
+        // Issue 555 finding 6: the reason crosses the process boundary unchanged.
+        let reply = br#"{"code":"UNSUPPORTED_VERSION","diagnostics":[{"schema":{"compatible":false}}],"message":"layer schema digest mismatch","observed_context":null,"outcome":"rejected"}"#;
+        match rejected(reply) {
+            Error::Rejected(r) => {
+                assert_eq!(r.code, "UNSUPPORTED_VERSION");
+                assert_eq!(r.message, "layer schema digest mismatch");
+                assert_eq!(r.diagnostics, r#"[{"schema":{"compatible":false}}]"#);
+            }
+            other => panic!("{other:?}"),
+        }
+        // No revision stays the typed empty state; an unreadable reply stays a CLI failure.
+        assert!(matches!(
+            rejected(br#"{"code":"NOT_FOUND","message":"no revision","outcome":"rejected"}"#),
+            Error::NoRevision
+        ));
+        assert!(matches!(rejected(b"not json"), Error::Cli(_)));
+        assert!(matches!(
+            rejected(br#"{"code":"drop <b>","message":"m","outcome":"rejected"}"#),
+            Error::Cli(_)
+        ));
     }
 
     #[test]

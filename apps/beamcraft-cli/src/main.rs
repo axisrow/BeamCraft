@@ -210,25 +210,39 @@ fn dispatch(route: Option<Route>, args: &[std::ffi::OsString]) -> (Json, u8) {
 fn run_store_command(args: Vec<std::ffi::OsString>) -> (Json, u8) {
     match run(args) {
         Ok(j) => (j, 0),
-        Err((e, observed)) => (
-            Json::object([
+        Err((e, observed)) => {
+            // `open-revision`'s schema refusal: the digests are its diagnostic, not a context.
+            let schema = matches!(&observed, Json::Object(map) if map.contains_key("schema"));
+            let (message, observed, diagnostics) = if schema {
                 (
-                    "outcome",
-                    Json::text(if e.code == ErrorCode::OutcomeUnknown {
-                        "outcome_unknown"
-                    } else if e.code == ErrorCode::Cancelled {
-                        "cancelled"
-                    } else {
-                        "rejected"
-                    }),
-                ),
-                ("code", Json::text(e.code.as_str())),
-                ("message", Json::text(e.message())),
-                ("observed_context", observed),
-                ("diagnostics", Json::Array(vec![])),
-            ]),
-            e.exit_code(),
-        ),
+                    "the store's layer schema digest does not match this build's; pre-alpha \
+                     stores are not migrated, so recreate the model with this build",
+                    Json::Null,
+                    vec![observed],
+                )
+            } else {
+                (e.message(), observed, vec![])
+            };
+            (
+                Json::object([
+                    (
+                        "outcome",
+                        Json::text(if e.code == ErrorCode::OutcomeUnknown {
+                            "outcome_unknown"
+                        } else if e.code == ErrorCode::Cancelled {
+                            "cancelled"
+                        } else {
+                            "rejected"
+                        }),
+                    ),
+                    ("code", Json::text(e.code.as_str())),
+                    ("message", Json::text(message)),
+                    ("observed_context", observed),
+                    ("diagnostics", Json::Array(diagnostics)),
+                ]),
+                e.exit_code(),
+            )
+        }
     }
 }
 /// Runs `export-view`, which writes raw or framed bytes instead of a JSON document.
@@ -272,6 +286,8 @@ fn print_json(json: &Json, exit: u8) -> std::process::ExitCode {
     std::process::ExitCode::from(exit)
 }
 fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
+    // `open-revision`'s schema refusal carries the store and build digests as its diagnostic.
+    let mut schema_refusal: Option<Json> = None;
     let result = (|| -> Result<Json, HostError> {
         if args.len() > 49 {
             return Err(invalid());
@@ -367,7 +383,14 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
             return revision::commit(&store, &options, &control);
         }
         if command == "open-revision" {
-            let result = revision::open(&store)?;
+            let result = match revision::open(&store) {
+                Ok(result) => result,
+                Err(Ok(error)) => return Err(error),
+                Err(Err((error, diagnostic))) => {
+                    schema_refusal = Some(diagnostic);
+                    return Err(error);
+                }
+            };
             control.remaining()?;
             return Ok(result);
         }
@@ -381,8 +404,9 @@ fn run(args: Vec<std::ffi::OsString>) -> Result<Json, (HostError, Json)> {
         }
         Err(HostError::logical(ErrorCode::UnsupportedCommand))
     })();
-    // These commands carry no workspace context to report.
-    result.map_err(|e| (e, Json::Null))
+    // These commands carry no workspace context to report; a schema refusal carries its
+    // diagnostic in the same slot, which `run_store_command` moves to `diagnostics`.
+    result.map_err(|e| (e, schema_refusal.unwrap_or(Json::Null)))
 }
 fn read_file(path: &str, cap: usize) -> Result<Vec<u8>, HostError> {
     beamcraft_commands::source_file::read_file(path, cap).map_err(HostError::logical)

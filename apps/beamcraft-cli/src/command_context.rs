@@ -54,9 +54,75 @@ pub(crate) fn parse(
     })
 }
 
+/// The default identity of a created object when the caller names no explicit one (issue 555
+/// finding 4). With an explicit `--op-id` (`op_id`) the identity is derived from it: the op's own 48-bit
+/// timestamp and a tail from SHA-256 over a domain tag, the op id and `slot` (which created
+/// object of the request: `new_id/0`, `new_id/1`, `section_id/0`, ...), stamped as a UUIDv7.
+/// So a verbatim retry of an accepted `create-*` — the exit 4 or 124 case, where the caller
+/// never saw the generated id — names the same object and replays instead of colliding with
+/// `OP_ID_REUSE`. Without `--op-id` (or with an unparsable one, which the context parse refuses
+/// anyway) there is nothing to retry against and the identity is fresh.
+pub(crate) fn default_id(
+    op_id: Option<&str>,
+    slot: &str,
+    fresh: &mut dyn FnMut() -> Result<beamcraft_model::id::Uuid7, Refusal>,
+) -> Result<beamcraft_model::id::Uuid7, Refusal> {
+    let Some(op) = op_id.and_then(|text| OpId::parse(text).ok()) else {
+        return fresh();
+    };
+    derived_id(&op, slot).map_or_else(fresh, Ok)
+}
+
+/// The UUIDv7 [`default_id`] derives from an op id and a slot; `None` only if hashing refused
+/// the (bounded) message, which a slot name cannot cause.
+fn derived_id(op: &OpId, slot: &str) -> Option<beamcraft_model::id::Uuid7> {
+    let mut message = Vec::with_capacity(64 + slot.len());
+    message.extend_from_slice(b"beamcraft:default-id:v1\0");
+    message.extend_from_slice(op.as_bytes());
+    message.extend_from_slice(slot.as_bytes());
+    let digest = beamcraft_model::digest::Sha256::digest(&message).ok()?;
+    let mut bytes = [0u8; 16];
+    for (out, (index, byte)) in bytes.iter_mut().zip(digest.as_bytes().iter().enumerate()) {
+        *out = if index < 6 {
+            op.as_bytes().get(index).copied().unwrap_or(0)
+        } else {
+            *byte
+        };
+    }
+    if let Some(version) = bytes.get_mut(6) {
+        *version = 0x70 | (*version & 0x0f);
+    }
+    if let Some(variant) = bytes.get_mut(8) {
+        *variant = 0x80 | (*variant & 0x3f);
+    }
+    beamcraft_model::id::Uuid7::from_bytes(bytes).ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_default_identity_is_derived_from_an_explicit_op_id() {
+        let op = "019a7bf0-0000-7000-8000-000000000001";
+        let mut fresh = || -> Result<beamcraft_model::id::Uuid7, Refusal> {
+            Err(Refusal {
+                rule_id: None,
+                code: beamcraft_model::error::ErrorCode::BackendUnavailable,
+                message: "no fresh identity in this test",
+            })
+        };
+        let first = default_id(Some(op), "new_id/0", &mut fresh).unwrap();
+        // Deterministic per op and slot, distinct between slots and from the op itself.
+        assert_eq!(first, default_id(Some(op), "new_id/0", &mut fresh).unwrap());
+        assert_ne!(first, default_id(Some(op), "new_id/1", &mut fresh).unwrap());
+        assert_ne!(first.to_string(), op);
+        // A valid UUIDv7 that keeps the op's timestamp.
+        assert!(beamcraft_model::id::Uuid7::parse(&first.to_string()).is_ok());
+        assert_eq!(first.to_string().get(..13), op.get(..13));
+        // Without an op id the source is asked.
+        assert!(default_id(None, "new_id/0", &mut fresh).is_err());
+    }
 
     const ID: &str = "019a7bf0-0000-7000-8000-000000200001";
 

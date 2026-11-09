@@ -142,6 +142,32 @@ pub struct AuthoredPlate {
 }
 
 impl AuthoredPlate {
+    /// The element-local band of `z` that carries the material (A12.1): `[0, t]` for `top`
+    /// (and an absent side), `[-t/2, t/2]` for `middle`, `[-t, 0]` for `bottom`. This is the one
+    /// definition every consumer of a plate's slab reads (bolt admission and grip, generated
+    /// holes), so no consumer lays the thickness off upwards by assumption (issue 555 finding 3).
+    pub fn local_z_band_mm(&self) -> [f64; 2] {
+        let low = side_offset(self);
+        [low, low + self.thickness_mm]
+    }
+
+    /// The element-local box of the flat plate: the contour's XY extents and its `z` extent
+    /// widened by the material band [`Self::local_z_band_mm`]. `None` for a contour without
+    /// points. The box bounds the authored outline, not the developed shape of a bent plate.
+    pub fn local_box_mm(&self) -> Option<[[f64; 3]; 2]> {
+        let first = self.contour_points_mm.first()?;
+        let mut min = *first;
+        let mut max = *first;
+        for p in &self.contour_points_mm {
+            min = [min[0].min(p[0]), min[1].min(p[1]), min[2].min(p[2])];
+            max = [max[0].max(p[0]), max[1].max(p[1]), max[2].max(p[2])];
+        }
+        let [low, high] = self.local_z_band_mm();
+        min[2] += low;
+        max[2] += high;
+        Some([min, max])
+    }
+
     /// The authored fields of an accepted command (the command's arguments, unchanged).
     pub fn from_command(command: &CreatePlate) -> Self {
         Self {

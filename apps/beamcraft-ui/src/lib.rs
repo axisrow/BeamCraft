@@ -63,6 +63,18 @@ pub mod view_overlay;
 pub mod views;
 pub mod work_plane;
 
+/// A CLI rejection as the CLI reported it: the stable F04 code, its message and its
+/// diagnostics array (encoded JSON), each bounded by the reply cap of the caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    /// The stable F04 code (`UNSUPPORTED_VERSION`, ...).
+    pub code: String,
+    /// The CLI's message.
+    pub message: String,
+    /// The encoded `diagnostics` array; `[]` when the reply carried none.
+    pub diagnostics: String,
+}
+
 /// A bounded viewport failure; adapter absence is reported, never replaced by a fake result.
 #[derive(Debug)]
 pub enum Error {
@@ -70,8 +82,12 @@ pub enum Error {
     Input(&'static str),
     /// The engine refused the snapshot or one of its meshes.
     View(beamcraft_engine::ViewError),
-    /// The CLI process failed or answered with a rejection.
+    /// The CLI process failed or answered without a readable rejection.
     Cli(String),
+    /// The CLI answered with a rejection: its stable code, message and diagnostics, kept as
+    /// they were so a caller of the window (`screenshot-view`) can relay them unchanged
+    /// (issue 555 finding 6).
+    Rejected(Rejection),
     /// The store has no published revision yet: a normal empty state, not a failure.
     NoRevision,
     /// No native graphics adapter exists.
@@ -90,6 +106,7 @@ impl std::fmt::Display for Error {
             Self::Input(what) => write!(f, "invalid input: {what}"),
             Self::View(e) => write!(f, "view snapshot refused: {}", e.code().as_str()),
             Self::Cli(message) => write!(f, "beamcraft CLI: {message}"),
+            Self::Rejected(r) => write!(f, "beamcraft CLI: {}: {}", r.code, r.message),
             Self::NoRevision => f.write_str("the store has no revision yet"),
             Self::NoAdapter => f.write_str("no native graphics adapter"),
             Self::Graphics(message) => write!(f, "graphics: {message}"),

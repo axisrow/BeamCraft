@@ -173,7 +173,11 @@ fn run(args: &[OsString]) -> Run<Json> {
             let label = given("--label").unwrap_or(code);
             let id = match given("--section-id") {
                 Some(text) => SectionId::parse(text).map_err(id_error)?,
-                None => SectionId::from_uuid(fresh()?),
+                None => SectionId::from_uuid(crate::command_context::default_id(
+                    options.get("--op-id").copied(),
+                    "section_id/0",
+                    &mut fresh,
+                )?),
             };
             let applied = coordination::define_section(
                 &store,
@@ -193,7 +197,11 @@ fn run(args: &[OsString]) -> Run<Json> {
             let label = given("--label").unwrap_or(code);
             let id = match given("--zone-id") {
                 Some(text) => ZoneId::parse(text).map_err(id_error)?,
-                None => ZoneId::from_uuid(fresh()?),
+                None => ZoneId::from_uuid(crate::command_context::default_id(
+                    options.get("--op-id").copied(),
+                    "zone_id/0",
+                    &mut fresh,
+                )?),
             };
             let applied = coordination::define_zone(
                 &store,
@@ -214,7 +222,11 @@ fn run(args: &[OsString]) -> Run<Json> {
         "connect-project" => {
             let connection = match given("--connection-id") {
                 Some(text) => ConnectionId::parse(text).map_err(id_error)?,
-                None => ConnectionId::from_uuid(fresh()?),
+                None => ConnectionId::from_uuid(crate::command_context::default_id(
+                    options.get("--op-id").copied(),
+                    "connection_id/0",
+                    &mut fresh,
+                )?),
             };
             let request = pin_request(&options)?;
             let applied = coordination::connect_project(

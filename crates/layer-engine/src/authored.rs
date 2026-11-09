@@ -29,7 +29,7 @@ mod validate;
 pub mod views;
 
 pub use disciplines::{Discipline, is_part_kind};
-pub use edit::{GEOMETRY_ASSETS, mesh_asset_digest};
+pub use edit::{GEOMETRY_ASSETS, mesh_asset_digest, stored_schema_pins};
 pub use guard::WriteGrant;
 pub use hook::{
     AuthorCx, ChangeAuthorCx, ChangeHook, ChangeValidateCx, DefinitionHook, HookedChange,

@@ -25,7 +25,7 @@ upgrades them); no new A05 group can be authored.
 | Area | What exists |
 |---|---|
 | `steel::model::command` | `BoltGroupInputs.hole_mode` (`Option<HoleMode>`, the definition's preference as the default: a bolt generates, a screw does not) and `BoltGroupInputs.hole_clearance_mm` (`Option<f64>`, the definition's clearance as the default) with admission and fingerprint input (`BoltGroupInputs/v2`), and `HoleRecord.owner` (`Option<ElementId>`). |
-| `steel::engine::bolt` | `generate_holes`: with `generate`, one round through hole per crossing fastener on every connected plate, of diameter `nominal + clearance`, centred where the shank axis crosses the plate's mid-plane; a beam or a column is `UNSUPPORTED_GEOMETRY` (G14.1); `none` writes no part. `update_hole`/`remove_hole` refuse a group-owned record with `DEPENDENCY_CONFLICT` (`DV-REL-009`). |
+| `steel::engine::bolt` | `generate_holes`: with `generate`, one round through hole per crossing fastener on every connected plate, of diameter `nominal + clearance`, centred where the shank axis crosses the plate's mid-plane, decided in the plate's own frame (any placement rotation, any `thickness_side`; issue 555); a shank axis more than 60 degrees off the plate normal and a beam or a column are `UNSUPPORTED_GEOMETRY` (G14.1); `none` writes no part. `update_hole`/`remove_hole` refuse a group-owned record with `DEPENDENCY_CONFLICT` (`DV-REL-009`). |
 | `beamcraft_layer_engine::authored` | `steel:bolt:holeMode` (required token) and `steel:bolt:holeClearanceMm` (present exactly when `generate`) on the group record; `steel:hole:generatedBy` (the sixth record attribute, equal length, a full UUIDv7 or the empty string per record); the instance projection carries the new attribute, so a drilled definition's instances read the records whole. |
 | `beamcraft_commands::bolt_cmd` | `create_bolt_group`/`update_bolt_group` write the hole records of every affected plate in the same transaction: the record identities are derived from the operation id (SHA-256 over the pair, version and variant bits forced), so a retry authors the same identities; the plate is replayed before anything is written, so a hole that does not fit refuses the whole command. `update` regenerates the holes and turning `generate` off removes exactly the group's records. `delete-element` of a group removes its records from the plates in the same revision. |
 
@@ -35,8 +35,17 @@ upgrades them); no new A05 group can be authored.
   ordinal order with the hand-placed ones, enter the fabrication state and the equivalence of
   A08, and their `owner` field (`steel:hole:generatedBy`) is the only thing that separates
   them. Nothing else about a hole changes: no new element kind, no new numbering rule.
+- **The decision runs in the plate's frame (issue 555 finding 2).** The bearing point and the
+  shank direction are carried into element-local coordinates by the inverse of the plate's
+  placement (the conjugate quaternion, normalized like every placement rotation); the crossing
+  is decided against the plate-local box (contour extents and the material band of the
+  `thickness_side`), and the centre is the local point of the axis on the band's mid-plane. So
+  a gusset or a knife plate made with `--plane` or `--orientation-xyzw` takes generated holes
+  like an unrotated plate, and the window's preview decides over the local box of each part's
+  own mesh and lifts the rings by the whole placement.
 - **The cut runs along the plate normal**, like any A04 record; the centre is the axis's
-  mid-plane crossing. For a shank perpendicular to the plate the record is exact; a tilted
+  mid-plane crossing. A shank axis more than 60 degrees off the plate normal
+  (`MIN_HOLE_AXIS_COSINE`) is refused with `UNSUPPORTED_GEOMETRY`. For a shank perpendicular to the plate the record is exact; a tilted
   shank produces a normal-direction hole centred on the axis — the known ceiling of the A04
   through-hole vocabulary, shared with every hand-placed hole.
 - **Record identities are pure functions of the operation**: `SHA-256(op_id || index)` into the
@@ -60,6 +69,10 @@ upgrades them); no new A05 group can be authored.
   annotation group stays readable exactly as before.
 
 ## Limits
+
+- A shank axis more than 60 degrees off a plate's normal refuses `generate` with
+  `UNSUPPORTED_GEOMETRY`; between 0 and 60 degrees the record is a normal-direction hole
+  centred on the axis at the plate's mid-plane (the A04 ceiling above).
 
 - A member part refuses `generate` with `UNSUPPORTED_GEOMETRY` until the kernel slice G14.1
   (the sibling transverse-hole work) lands; `none` resolves its length over the same

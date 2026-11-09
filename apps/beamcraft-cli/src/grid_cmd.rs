@@ -127,7 +127,11 @@ fn family(
                 .to_owned();
             let axis_id = match get("axis-id") {
                 Some(s) => ElementId::parse(s).map_err(id_error)?,
-                None => ElementId::from_uuid(fresh()?),
+                None => ElementId::from_uuid(crate::command_context::default_id(
+                    options.get("--op-id").copied(),
+                    &format!("{prefix}-axis_id/0"),
+                    &mut *fresh,
+                )?),
             };
             return Ok(GridFamily::Drawn(vec![
                 beamcraft_model::grid::DrawnGridLine {
@@ -204,7 +208,14 @@ fn family(
             .map(|s| ElementId::parse(s).map_err(id_error))
             .collect::<Run<Vec<_>>>()?,
         None => (0..count)
-            .map(|_| fresh().map(ElementId::from_uuid))
+            .map(|index| {
+                crate::command_context::default_id(
+                    options.get("--op-id").copied(),
+                    &format!("{prefix}-axis_id/{index}"),
+                    &mut *fresh,
+                )
+                .map(ElementId::from_uuid)
+            })
             .collect::<Run<Vec<_>>>()?,
     };
     if axis_ids.len() != count {
@@ -452,7 +463,11 @@ fn run(args: &[OsString]) -> Run<Json> {
     }
     let id = match options.get("--new-id") {
         Some(s) => ElementId::parse(s).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let rotation_rad = options
         .get("--rotation")
@@ -656,7 +671,11 @@ pub(crate) fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>
     .map_err(id_error)?;
     let new_id = match options.get("--new-id") {
         Some(s) => ElementId::parse(s).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let new_axis_ids = match options.get("--new-axis-ids") {
         Some(s) => s
@@ -670,7 +689,14 @@ pub(crate) fn copy_command(store: &RevisionStore, options: &BTreeMap<&str, &str>
                 .find(|g| g.id == source_id)
                 .ok_or_else(|| error(ErrorCode::NotFound, "source grid not found"))?;
             (0..source.axis_ids().count())
-                .map(|_| fresh().map(ElementId::from_uuid))
+                .map(|index| {
+                    crate::command_context::default_id(
+                        options.get("--op-id").copied(),
+                        &format!("axis_id/{index}"),
+                        &mut fresh,
+                    )
+                    .map(ElementId::from_uuid)
+                })
                 .collect::<Run<Vec<_>>>()?
         }
     };
@@ -790,7 +816,11 @@ fn line_command(
             family: family()?,
             new_axis_id: match options.get("--new-axis-id") {
                 Some(s) => ElementId::parse(s).map_err(id_error)?,
-                None => ElementId::from_uuid(fresh()?),
+                None => ElementId::from_uuid(crate::command_context::default_id(
+                    options.get("--op-id").copied(),
+                    "new_axis_id/0",
+                    &mut *fresh,
+                )?),
             },
             label: required("--label")?.to_owned(),
             from_mm: pair(required("--from")?)?,
@@ -936,7 +966,15 @@ fn regular_patch(
                 labels
                     .iter()
                     .filter(|label| !f.labels.contains(label))
-                    .map(|_| fresh().map(ElementId::from_uuid))
+                    .enumerate()
+                    .map(|(index, _)| {
+                        crate::command_context::default_id(
+                            options.get("--op-id").copied(),
+                            &format!("{}-new_axis_id/{index}", if u { "u" } else { "v" }),
+                            &mut *fresh,
+                        )
+                        .map(ElementId::from_uuid)
+                    })
                     .collect::<Run<Vec<_>>>()?
             } else {
                 Vec::new()

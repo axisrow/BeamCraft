@@ -90,6 +90,31 @@ impl MeshEntry {
         &self.bytes
     }
 
+    /// The element-local axis-aligned box of the vertices: the mesh's own frame (space 0),
+    /// before any placement. `None` only if the validated blob were unreadable, which the
+    /// structural check excludes. The UI's bolt preview decides generated holes in a plate's own
+    /// frame from it (issue 555).
+    pub fn local_bounds(&self) -> Option<[[f64; 3]; 2]> {
+        let count = usize::try_from(self.vertex_count).ok()?;
+        let mut min = [f64::INFINITY; 3];
+        let mut max = [f64::NEG_INFINITY; 3];
+        for vertex in 0..count {
+            for axis in 0..3usize {
+                let offset = vertex
+                    .checked_mul(3)?
+                    .checked_add(axis)?
+                    .checked_mul(8)?
+                    .checked_add(32)?;
+                let value = f64::from_bits(read_u64(&self.bytes, offset)?);
+                if let (Some(lo), Some(hi)) = (min.get_mut(axis), max.get_mut(axis)) {
+                    *lo = lo.min(value);
+                    *hi = hi.max(value);
+                }
+            }
+        }
+        (count > 0).then_some([min, max])
+    }
+
     /// Vertex count from the validated header.
     pub const fn vertex_count(&self) -> u32 {
         self.vertex_count
@@ -254,6 +279,11 @@ mod tests {
         assert_eq!(entry.digest(), digest);
         assert_eq!(entry.bytes(), blob.as_slice());
         assert_eq!((entry.vertex_count(), entry.triangle_count()), (8, 12));
+        // The local box is the plate's own: width x length x thickness from the origin.
+        let [min, max] = entry.local_bounds().unwrap();
+        let mut extents = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+        extents.sort_by(f64::total_cmp);
+        assert_eq!(extents, [10.0, 80.0, 100.0]);
         let mut wrong = *digest.as_bytes();
         wrong[0] ^= 1;
         assert_eq!(

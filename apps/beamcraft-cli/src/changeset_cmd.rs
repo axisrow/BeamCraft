@@ -123,7 +123,11 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         };
         let changeset_id = match given("--changeset-id") {
             Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
-            None => OpId::from_uuid(fresh()?),
+            None => OpId::from_uuid(crate::command_context::default_id(
+                options.get("--op-id").copied(),
+                "changeset_id/0",
+                &mut fresh,
+            )?),
         };
         let revision_id = match given("--revision-id") {
             Some(text) => RevisionId::parse(text).map_err(crate::plate_cmd::context_id_error)?,

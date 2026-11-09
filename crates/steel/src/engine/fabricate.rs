@@ -377,14 +377,16 @@ fn tool_cavity(
     if !flipped {
         polygon.reverse();
     }
+    // Both material bands follow the authored thickness sides (issue 555 audit item 2): the
+    // tool's band, carried along the shared normal into the target frame, must reach past both
+    // faces of the target's own band.
     let offset = world_to_local(tool.placement.translation_mm, &target.placement);
-    let far = offset[2] + tool.thickness_mm * if flipped { -1.0 } else { 1.0 };
-    let (from, to) = if offset[2] <= far {
-        (offset[2], far)
-    } else {
-        (far, offset[2])
-    };
-    let crosses = from < -TOOL_REACH_MM && to > target.thickness_mm + TOOL_REACH_MM;
+    let sign = if flipped { -1.0 } else { 1.0 };
+    let [tool_low, tool_high] = tool.local_z_band_mm();
+    let (a, b) = (offset[2] + sign * tool_low, offset[2] + sign * tool_high);
+    let (from, to) = if a <= b { (a, b) } else { (b, a) };
+    let [target_low, target_high] = target.local_z_band_mm();
+    let crosses = from < target_low - TOOL_REACH_MM && to > target_high + TOOL_REACH_MM;
     Ok((polygon, crosses))
 }
 
@@ -1108,6 +1110,32 @@ mod tests {
             cuts: Vec::new(),
             bends: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_part_cut_tool_band_follows_both_thickness_sides() {
+        // Issue 555 audit item 2: a 30 mm tool from z = -10 reaches past both faces of the
+        // 10 mm target only when its band is read from its side: `top` [-10, 20] crosses the
+        // target's own [0, 10], while the same placement read as `bottom` [-40, -10] misses
+        // it; a `bottom` target [-10, 0] is crossed by a tool band [-20, 10].
+        let at = |z: f64| Placement {
+            translation_mm: [100.0, 100.0, z],
+            ..Placement::IDENTITY
+        };
+        let target = plate();
+        let cutter = tool(9, 50.0, 50.0, 30.0, at(-10.0));
+        assert!(tool_cavity(&target, &cutter).unwrap().1);
+        let mut below = cutter.clone();
+        below.thickness_side = Some(crate::model::command::PlateSide::Bottom);
+        assert!(!tool_cavity(&target, &below).unwrap().1);
+        let mut sunk = plate();
+        sunk.thickness_side = Some(crate::model::command::PlateSide::Bottom);
+        assert!(!tool_cavity(&sunk, &cutter).unwrap().1);
+        assert!(
+            tool_cavity(&sunk, &tool(9, 50.0, 50.0, 30.0, at(-20.0)))
+                .unwrap()
+                .1
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
