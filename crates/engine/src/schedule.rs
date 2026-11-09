@@ -216,14 +216,16 @@ fn admits(field: &Field, cell: &CellValue) -> bool {
     )
 }
 
-/// The total order of one column's cells: missing first, then by value.
+/// The total order of one column's cells: missing first, then by value. Text compares in
+/// the natural order of the report labels, so a `profile` column sorts `PL8` before `PL20`
+/// exactly like the BOM table (visual audit #562 item 39).
 fn cell_cmp(a: Option<&CellValue>, b: Option<&CellValue>) -> Ordering {
     match (a, b) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => Ordering::Less,
         (Some(_), None) => Ordering::Greater,
         (Some(x), Some(y)) => match (x, y) {
-            (CellValue::Text(u), CellValue::Text(v)) => u.cmp(v),
+            (CellValue::Text(u), CellValue::Text(v)) => crate::bom::natural(u, v),
             (CellValue::Number(u), CellValue::Number(v)) => u.total_cmp(v),
             (CellValue::Integer(u), CellValue::Integer(v)) => u.cmp(v),
             (CellValue::Boolean(u), CellValue::Boolean(v)) => u.cmp(v),
@@ -242,21 +244,35 @@ fn rank(value: &CellValue) -> u8 {
     }
 }
 
-/// Whether a column reads the mass: the one quantity whose display precision the human
-/// reports share — the BOM's two decimals — so `schedule-export` and `export-bom` print the
-/// same mass text (#490 finding 3). Every other number keeps the noise-stripped `num`.
-fn mass_column(field: &Field) -> bool {
-    matches!(field, Field::Standard(StandardField::MassKg))
+/// The display precision a standard quantity column shares with the BOM's CSV cells: the
+/// human reports print the same quantity with the same text, so a length, an area, a volume
+/// or a mass reads identically in `schedule-export` and `export-bom` (#490 finding 3
+/// extended to every report quantity, visual audit #562 item 40). `None` keeps the
+/// noise-stripped `num`: attribute columns render the definition's own values, and text
+/// never rounds.
+fn bom_decimals(field: &Field) -> Option<usize> {
+    match field {
+        Field::Standard(
+            StandardField::LengthMm
+            | StandardField::AreaMm2
+            | StandardField::VolumeMm3
+            | StandardField::MassKg,
+        ) => Some(2),
+        Field::Standard(StandardField::VolumeM3) => Some(9),
+        _ => None,
+    }
 }
 
-/// The rendered text of one cell; missing, blocked and stale stay empty, never zero. A mass
-/// cell rounds to the shared display precision instead of the raw noise-stripped value.
-fn render(cell: Option<&CellValue>, mass: bool) -> String {
+/// The rendered text of one cell; missing, blocked and stale stay empty, never zero. A
+/// standard quantity cell rounds to the display precision shared with the BOM instead of
+/// the raw noise-stripped value.
+fn render(cell: Option<&CellValue>, decimals: Option<usize>) -> String {
     match cell {
         None => String::new(),
         Some(CellValue::Text(s)) => s.clone(),
-        Some(CellValue::Number(v)) if mass => crate::bom::quantity(*v, 2),
-        Some(CellValue::Number(v)) => crate::bom::num(*v),
+        Some(CellValue::Number(v)) => {
+            decimals.map_or_else(|| crate::bom::num(*v), |d| crate::bom::quantity(*v, d))
+        }
         Some(CellValue::Integer(v)) => v.to_string(),
         Some(CellValue::Boolean(v)) => v.to_string(),
     }
@@ -526,10 +542,10 @@ pub fn build(
         }
         a.id.cmp(&b.id)
     });
-    let mass_flags: Vec<bool> = template
+    let decimals: Vec<Option<usize>> = template
         .columns
         .iter()
-        .map(|column| mass_column(&column.field))
+        .map(|column| bom_decimals(&column.field))
         .collect();
     let rendered: Vec<Vec<String>> = ordered
         .iter()
@@ -537,7 +553,7 @@ pub fn build(
             row.cells
                 .iter()
                 .enumerate()
-                .map(|(i, c)| render(c.as_ref(), mass_flags.get(i).copied().unwrap_or(false)))
+                .map(|(i, c)| render(c.as_ref(), decimals.get(i).copied().flatten()))
                 .collect()
         })
         .collect();
@@ -660,16 +676,15 @@ fn group_rows(template: &Template, schedule: &Schedule) -> (Vec<String>, Vec<Vec
         labels.push(label.clone());
         labels.push(format!("{label}_unknown"));
     }
-    // A totalled mass column shares the BOM's display precision; every other total keeps
-    // the noise-stripped text.
-    let mass_flags: Vec<bool> = totalled
+    // A totalled standard quantity shares the BOM's display precision; every other total
+    // keeps the noise-stripped text.
+    let decimals: Vec<Option<usize>> = totalled
         .iter()
         .map(|i| {
             template
                 .columns
                 .get(*i)
-                .map(|column| mass_column(&column.field))
-                .unwrap_or(false)
+                .and_then(|column| bom_decimals(&column.field))
         })
         .collect();
     let rows = schedule
@@ -678,10 +693,12 @@ fn group_rows(template: &Template, schedule: &Schedule) -> (Vec<String>, Vec<Vec
         .map(|g| {
             let mut cells: Vec<String> = g.cells.clone();
             cells.push(g.count.to_string());
-            for (total, mass) in g.totals.iter().zip(&mass_flags) {
+            for (total, column_decimals) in g.totals.iter().zip(&decimals) {
                 match &total.sum {
-                    Some(CellValue::Number(v)) if *mass => cells.push(crate::bom::quantity(*v, 2)),
-                    Some(CellValue::Number(v)) => cells.push(crate::bom::num(*v)),
+                    Some(CellValue::Number(v)) => cells.push(
+                        column_decimals
+                            .map_or_else(|| crate::bom::num(*v), |d| crate::bom::quantity(*v, d)),
+                    ),
                     Some(CellValue::Integer(v)) => cells.push(v.to_string()),
                     _ => cells.push(String::new()),
                 }
@@ -876,7 +893,8 @@ mod tests {
             schedule.rows[1][2], "0.79",
             "PL2's mass reads like the BOM's"
         );
-        // A non-mass number keeps the noise-stripped text, exact values included.
+        // A standard quantity column shares the BOM's cell text as well: the exact areas
+        // print unchanged, and a fractional one rounds like the BOM's cell does.
         assert_eq!(schedule.rows[0][1], "83325");
         assert_eq!(schedule.rows[1][1], "10020.01");
         // The group total of the same masses rounds like the BOM's group table does; only
@@ -890,6 +908,60 @@ mod tests {
                 "8.64".to_owned(),
                 "0".to_owned()
             ]
+        );
+    }
+
+    #[test]
+    fn a_quantity_column_prints_the_bom_text_and_profiles_sort_naturally() {
+        // #562 items 39 and 40: the schedule printed 239244.610273 where the BOM printed
+        // 239244.61, and the plain string order sorted a PL8 profile after PL20. Every
+        // standard quantity column now renders the BOM's cell text, and text cells compare
+        // in the natural label order.
+        let mut t = template(vec![
+            column("profile", Field::Standard(StandardField::Profile)),
+            column("volume_mm3", Field::Standard(StandardField::VolumeMm3)),
+            column("volume_m3", Field::Standard(StandardField::VolumeM3)),
+        ]);
+        t.columns[1].total = true;
+        t.group_by = vec![0];
+        t.sort_by = vec![0];
+        let rows = [
+            row(
+                1,
+                vec![
+                    text("PL20"),
+                    number(239244.610273),
+                    number(0.000239244610273),
+                ],
+            ),
+            row(2, vec![text("PL8"), number(400.0), number(4e-7)]),
+        ];
+        let schedule = build(&t, &rows, 100).expect("admitted");
+        let profiles: Vec<&str> = schedule.rows.iter().map(|r| r[0].as_str()).collect();
+        assert_eq!(profiles, ["PL8", "PL20"]);
+        assert_eq!(schedule.rows[0][1], "400");
+        assert_eq!(
+            schedule.rows[1][1], "239244.61",
+            "the BOM prints 239244.61 too"
+        );
+        assert_eq!(
+            schedule.rows[1][2], "0.000239245",
+            "the m3 cell keeps the BOM's nine decimals"
+        );
+        assert_eq!(schedule.rows[0][2], "0.0000004");
+        let (_, group_rows) = group_rows(&t, &schedule);
+        assert_eq!(
+            group_rows[0],
+            vec![
+                "PL8".to_owned(),
+                "1".to_owned(),
+                "400".to_owned(),
+                "0".to_owned()
+            ]
+        );
+        assert_eq!(
+            group_rows[1][2], "239244.61",
+            "the total rounds like the BOM's"
         );
     }
 
