@@ -12,8 +12,8 @@
 //! fit the frame refuses instead of being rescaled or clipped.
 
 use super::svg::{
-    MAX_EXPORT_BYTES, StrokeGroups, dash_array, drafting_layers, escape, flipped_about, normalized,
-    path, path_element, stroke_groups, text_strokes, text_width,
+    MAX_EXPORT_BYTES, StrokeGroups, circle_strokes, dash_array, drafting_layers, escape,
+    flipped_about, normalized, path, path_element, stroke_groups, text_strokes, text_width,
 };
 use super::{Drawing, SheetSpec};
 use crate::drawing::pdf::{self, PagePath};
@@ -106,19 +106,27 @@ fn layer_key(layer: &SheetLayer) -> Option<(&'static str, &str)> {
 
 /// Renders one view of the sheet: its resolved geometry strokes plus the annotation line
 /// (title and scale) centred below the geometry's lowest stroke — below the view origin
-/// when the geometry is empty, as for a section whose cut misses the member box. The
-/// geometry and the annotation are validated and normalized; the id keys the SVG paths.
+/// when the geometry is empty, as for a section whose cut misses the member box.
+/// `dimension` carries the view's own dimension groups when it has one: the annotation
+/// must clear them too, so a title never lands inside a dimension's extension lines
+/// (visual audit finding 9). The geometry and the annotation are validated and
+/// normalized; the id keys the SVG paths.
 fn render_view(
     id: &DrawingViewId,
     title: &Option<String>,
     scale_denominator: f64,
     origin: [f64; 2],
     geometry: Vec<[[f64; 2]; 2]>,
+    dimension: Option<&StrokeGroups>,
 ) -> Result<RenderedView, CommandError> {
     let strokes = normalized(geometry)?;
+    // The annotation keeps the geometry's own horizontal centre and moves down to clear
+    // the view's dimension group as well: a dimension hanging beside or under the view
+    // widens the extent, so the centre stays geometry-owned while the bottom clears the
+    // whole group (visual audit finding 9).
     let mut low = [f64::INFINITY; 2];
     let mut high = [f64::NEG_INFINITY; 2];
-    for [start, end] in &strokes {
+    for [start, end] in strokes.iter() {
         for [x, y] in [*start, *end] {
             low[0] = low[0].min(x);
             low[1] = low[1].min(y);
@@ -126,10 +134,18 @@ fn render_view(
             high[1] = high[1].max(y);
         }
     }
+    let mut bottom = low[1];
+    for group in dimension.into_iter().flatten() {
+        for stroke in group {
+            for [_, y] in [stroke[0], stroke[1]] {
+                bottom = bottom.min(y);
+            }
+        }
+    }
     let label = annotation(title, scale_denominator);
     // An empty geometry annotates at the view origin instead of a fabricated bound.
     let (centre_x, bottom) = if low[0] <= high[0] {
-        ((low[0] + high[0]) / 2.0, low[1])
+        ((low[0] + high[0]) / 2.0, bottom)
     } else {
         (origin[0], origin[1])
     };
@@ -241,6 +257,9 @@ fn layout(
         spec.view.scale_denominator,
         spec.view.paper_origin_mm,
         primary_edges.iter().map(|edge| edge.paper_mm).collect(),
+        // The primary view's dimension hangs under its body; the annotation must clear
+        // the extension lines, the line, the arrowheads and the dimension label alike.
+        Some(&groups),
     )?;
     let mut layers = vec![
         SheetLayer {
@@ -268,6 +287,7 @@ fn layout(
             view.scale_denominator,
             view.paper_origin_mm,
             edges.iter().map(|edge| edge.paper_mm).collect(),
+            None,
         )?;
         layers.push(SheetLayer {
             class: "body",
@@ -304,6 +324,7 @@ fn layout(
             section.scale_denominator,
             section.paper_origin_mm,
             strokes,
+            None,
         )?;
         layers.push(SheetLayer {
             class: "body",
@@ -324,12 +345,21 @@ fn layout(
         let DetailProjection::Resolved(geometry) = projection else {
             return Err(invalid("unresolved drawing geometry cannot be exported"));
         };
+        // The detail draws its region's circular boundary: the ring is part of the view's
+        // picture, so the annotation clears it too (visual audit finding 8).
+        let mut strokes: Vec<[[f64; 2]; 2]> =
+            geometry.edges.iter().map(|edge| edge.paper_mm).collect();
+        strokes.extend(circle_strokes(
+            geometry.region_center_mm,
+            geometry.region_radius_mm,
+        )?);
         let (id, body, title) = render_view(
             &detail.id,
             &detail.title,
             detail.scale_denominator,
             detail.paper_origin_mm,
-            geometry.edges.iter().map(|edge| edge.paper_mm).collect(),
+            strokes,
+            None,
         )?;
         layers.push(SheetLayer {
             class: "body",
@@ -344,6 +374,21 @@ fn layout(
             data_drafting: None,
             dash: None,
             strokes: title,
+        });
+    }
+    // Every detail marks its region on the parent view: the circular callout that says
+    // where the magnified content comes from (visual audit finding 8). The mark belongs
+    // to the detail and draws in the parent's paper space, which the sheet shares.
+    for (detail, projection) in drawing.details().iter().zip(detail_bodies) {
+        let DetailProjection::Resolved(_) = projection else {
+            continue;
+        };
+        layers.push(SheetLayer {
+            class: "detailmark",
+            data_view: Some(detail.id.to_string()),
+            data_drafting: None,
+            dash: None,
+            strokes: normalized(circle_strokes(detail.center_paper_mm, detail.radius_mm)?)?,
         });
     }
     // Drawn objects on visible layers sit above the views they annotate.
@@ -1088,6 +1133,81 @@ mod tests {
         );
         let clear = vec![detail_body(vec![section_edge(125.0, 70.0)])];
         assert!(export_svg(&drawing, version, &projection(), &bodies, &[], &clear).is_ok());
+    }
+
+    #[test]
+    fn the_primary_title_clears_the_dimension_hanging_under_the_view() {
+        // Visual audit finding 9: the title cleared the body only, so a dimension under
+        // the view boxed the title between its extension lines. The annotation now clears
+        // the whole dimension group: extension lines, line, arrows and the dimension's
+        // own label beneath the line.
+        let base = sheet_drawing(Sheet::A4, &[]);
+        let mut spec = base.spec().clone();
+        spec.view.title = Some("ELEVATION".to_owned());
+        let drawing = Drawing::admit(spec).unwrap();
+        let version = DocumentVersionId::parse(C).unwrap();
+        let mut projected = projection();
+        if let DimensionProjection::Resolved(geometry) = &mut projected.dimension {
+            // The dimension hangs under the body (paper y 145): the line at 135, its
+            // label glyphs below the line around paper y 130.
+            geometry.anchors_paper_mm = [[35.0, 145.0], [45.0, 145.0]];
+            geometry.line_paper_mm = [[35.0, 135.0], [45.0, 135.0]];
+        }
+        let bytes = export_svg(&drawing, version, &projected, &[], &[], &[]).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        let title = text
+            .split("<path class=\"viewtitle\" data-view=\"B\" d=\"")
+            .nth(1)
+            .unwrap_or_default();
+        let title = title.split("\"/>").next().unwrap_or_default();
+        // Paper y 130 is the dimension label's lowest reach; in flipped SVG space the
+        // title must sit entirely below it.
+        let numbers: Vec<f64> = title
+            .split_whitespace()
+            .filter_map(|token| token.parse::<f64>().ok())
+            .collect();
+        let highest_title_y = numbers
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| index % 2 == 1)
+            .fold(f64::INFINITY, |min, (_, value)| min.min(*value));
+        assert!(
+            highest_title_y >= 297.0 - 130.0,
+            "the title clears the dimension group: {title}"
+        );
+    }
+
+    #[test]
+    fn a_detail_draws_its_boundary_and_marks_its_region_on_the_parent() {
+        // Visual audit finding 8: the detail drew a bare fragment with no region circle
+        // on the parent and no boundary. The detail carries its region's ring, and the
+        // sheet draws the callout circle on the parent at the detail's own region.
+        let version = DocumentVersionId::parse(C).unwrap();
+        const DETAIL: &str = "01900000-0000-7000-8000-000000000342";
+        let base = sheet_drawing(Sheet::A4, &[D]);
+        let mut s = base.spec().clone();
+        s.details = vec![detail_spec(DETAIL, B, Some("DET-1"))];
+        let drawing = Drawing::admit(s).unwrap();
+        let bodies = vec![placed_body([65.0, 145.0])];
+        let details = vec![detail_body(vec![section_edge(125.0, 145.0)])];
+        let bytes = export_svg(&drawing, version, &projection(), &bodies, &[], &details).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        // The parent-side callout circle keyed to the detail.
+        assert!(
+            text.contains(&format!("class=\"detailmark\" data-view=\"{DETAIL}\"")),
+            "{text}"
+        );
+        // The detail's own boundary ring: its body layer holds the mapped circle, at
+        // least the 16-chord floor of the tessellation.
+        let body = text
+            .split(&format!("<path class=\"body\" data-view=\"{DETAIL}\" d=\""))
+            .nth(1)
+            .unwrap_or_default();
+        let body = body.split("\"/>").next().unwrap_or_default();
+        assert!(
+            body.matches(" L ").count() >= 16,
+            "the boundary ring is in the detail's body: {body}"
+        );
     }
 
     #[test]

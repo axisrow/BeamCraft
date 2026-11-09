@@ -305,8 +305,9 @@ mod tests {
         // The tight page carries the label glyphs, so metadata text stays out of the page:
         // the model-mm label is drawn as strokes, never written as font text.
         assert!(!text.contains("label_mm"));
-        // The fixture strokes span 20.5 x 25 mm with the shared margin, in points.
-        assert!(text.contains("/MediaBox [0 0 58.1102 70.8661]"));
+        // The fixture strokes span 20.7 x 25 mm with the shared margin, in points; the
+        // centred digit 1's flag reaches left of the old right-column-only glyph.
+        assert!(text.contains("/MediaBox [0 0 58.6772 70.8661]"));
         assert!(text.contains("0.7087 w"));
         // No font anywhere: the glyphs are the shared original stroke geometry.
         assert!(!text.contains("/Font"));

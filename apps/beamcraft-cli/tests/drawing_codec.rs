@@ -169,7 +169,10 @@ fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
                     10,
                     DraftingGeometry::Text {
                         anchor: [12.0, 3.0],
-                        text: "Note \u{00ab}B\u{00bb}".to_owned(),
+                        // Text admits only what the stroke glyphs draw (issue 562 item
+                        // 11): guillemets or any other unsupported mark is a refusal, so
+                        // the round-trip exercises the drawable punctuation set.
+                        text: "Note #9 (B) +50%".to_owned(),
                         height: 3.5,
                         rotation: -0.25,
                     },
@@ -236,7 +239,7 @@ fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
     // A text entity without its required payload disagrees with its kind.
     let stripped = changed(
         &asset,
-        "            custom string drawing:text = \"Note «B»\"\n",
+        "            custom string drawing:text = \"Note #9 (B) +50%\"\n",
         "",
     );
     assert!(codec::decode(stripped, identity(), &control()).is_err());
