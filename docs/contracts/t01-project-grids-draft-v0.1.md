@@ -324,10 +324,11 @@ answers, recorded in `docs/plan/decisions.md` (2026-11-08) and delivered by T01.
   (`referenced_axes` over the element index, GR-N14) ignores frame-following relationships
   (`bim:followsGrid`) — a follower references the frame, not a line, so removing a line cannot
   orphan it — while any other relationship targeting the grid still marks every axis referenced.
-- **Hand edits.** Any write command that reshapes a bound element refuses with
-  `DEPENDENCY_CONFLICT`, `GRID_IN_USE` until the binding is released (GR-N22); the release
-  materializes the current world geometry as the plain placement. No detach-on-edit happens
-  implicitly, so the local record and the world snapshot can never diverge silently.
+- **Hand edits.** Any write command that reshapes or moves a bound element (a shape-input or
+  placement write) refuses with `DEPENDENCY_CONFLICT`, `GRID_IN_USE` until the binding is
+  released (GR-N22); the release materializes the current world geometry as the plain
+  placement. No detach-on-edit happens implicitly, so the local record and the world snapshot
+  can never diverge silently.
 - **Foreign grids.** A pinned coordination grid is never followed: `bind-grid` refuses with
   `FOREIGN_READ_ONLY`.
 
@@ -501,7 +502,7 @@ Negative:
 | GR-N19 | Drag a regular line past its neighbour or to less than 1 mm spacing | `INVALID_ARGUMENT`, `GRID_SPACING_INVALID`; the head, expression and AxisIds are unchanged |
 | GR-N20 | `bind-grid` names a pinned coordination grid | `FOREIGN_READ_ONLY`; the element stays unbound |
 | GR-N21 | Delete a grid with followers | `DEPENDENCY_CONFLICT`, `GRID_IN_USE`; every follower keeps its derived geometry; the view stays |
-| GR-N22 | Rewrite the geometry of a bound member (any shape-input write) | `DEPENDENCY_CONFLICT`, `GRID_IN_USE` until the binding is released; the release materializes the world axis, so the local record and the world snapshot never diverge silently |
+| GR-N22 | Rewrite the geometry or placement of a bound member (any shape-input or placement write) | `DEPENDENCY_CONFLICT`, `GRID_IN_USE` until the binding is released; the release materializes the world axis, so the local record and the world snapshot never diverge silently |
 | GR-N23 | `unbind-grid` | The current world geometry materializes as the plain placement; the element identity, profile and level links are unchanged; a later grid move no longer moves it |
 
 Viewer geometry is covered by GR-P16. Magnetic-mode cases are GR-P17 and GR-N20 to GR-N23 (O-G5
