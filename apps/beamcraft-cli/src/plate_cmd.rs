@@ -555,7 +555,7 @@ fn run(args: &[OsString], candidates: &mut Vec<Json>) -> Run<Json> {
         "definitions" => &["--store", "--name", "--offset", "--limit"],
         _ => return Err(invalid("unknown command")),
     };
-    if !tail.len().is_multiple_of(2) || tail.len() > 40 {
+    if !tail.len().is_multiple_of(2) {
         return Err(invalid("options are KEY VALUE pairs"));
     }
     let mut options = BTreeMap::new();

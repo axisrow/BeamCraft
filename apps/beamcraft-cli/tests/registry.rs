@@ -76,6 +76,34 @@ fn a_command_help_answers_with_help_not_a_refusal() {
 }
 
 #[test]
+fn early_route_commands_answer_help_before_dispatch() {
+    // The early-return routes (commands, session, the batch words, view export/screenshot and
+    // export) used to finish before the per-command help block, so `--help` on their words
+    // answered with a JSON refusal. The help check now sits above the route match, so every
+    // registered word gets its family's help with exit 0.
+    for word in [
+        "commands",
+        "session",
+        "batch-open",
+        "batch-commit",
+        "batch-abort",
+        "export-view",
+        "screenshot-view",
+        "export-ifc",
+        "ifc-guid",
+    ] {
+        let (code, out) = run(&[word, "--help"]);
+        assert_eq!(code, Some(0), "{word}: {out}");
+        assert!(!out.trim_start().starts_with('{'), "{word}: {out}");
+        assert!(out.contains(word), "{word}: {out}");
+    }
+    // A `-h` in a value position stays a value on an early route too.
+    let (value_code, value_out) = run(&["export-view", "--out", "-h"]);
+    assert_ne!(value_code, Some(0));
+    assert!(value_out.trim_start().starts_with('{'), "{value_out}");
+}
+
+#[test]
 fn every_registered_command_is_routed_by_the_binary() {
     let store = scratch_store();
     for command in COMMANDS {
@@ -287,6 +315,56 @@ fn every_listed_option_is_accepted_by_the_command() {
                 "{name}: {option} is listed but refused as unknown: {bare} {with_value}"
             );
         }
+    }
+}
+
+#[test]
+fn a_full_documented_option_set_is_parsed_in_one_call() {
+    // `main` used to truncate argv at 50 words and the plate/views adapters capped the pair
+    // count below the documented option sets, so a fully documented call was refused with a
+    // misleading "options come in name-value pairs" (issue 552). The widest documented sets
+    // must parse in one call; whatever refuses next is not an option-parsing refusal.
+    let (_, listing) = run(&["commands"]);
+    for (name, documented) in [
+        ("create-plate", 28),
+        ("define-profile", 27),
+        ("create-member", 32),
+        ("update-element", 33),
+        ("save-view", 46),
+        ("update-view", 39),
+    ] {
+        let entry = commands_of(&listing)
+            .into_iter()
+            .find(|c| field(c, "name").string() == Ok(name))
+            .unwrap_or_else(|| panic!("{name} is listed"));
+        let params = field(&entry, "parameters").array().expect("parameters");
+        assert!(
+            params.len() >= documented,
+            "{name}: only {} options documented, issue 552 pinned {documented}",
+            params.len()
+        );
+        let (flags, valued): (Vec<_>, Vec<_>) = params
+            .iter()
+            .map(|p| {
+                (
+                    field(p, "name").string().expect("param name"),
+                    field(p, "value").string().expect("param value"),
+                )
+            })
+            .partition(|(_, value)| value.is_empty());
+        let mut args = vec![name];
+        for (option, _) in &valued {
+            args.extend([*option, "x"]);
+        }
+        let out = probe(&args);
+        assert!(
+            !out.contains("KEY VALUE pairs")
+                && !out.contains("name-value pairs")
+                && !out.contains("unknown or repeated option"),
+            "{name}: a fully documented set of {} options plus {flags:?} flags was refused \
+             at option parsing: {out}",
+            valued.len()
+        );
     }
 }
 
