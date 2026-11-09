@@ -49,5 +49,11 @@ pub(super) const DOCUMENTS: &str = concat!(
     "view - placed views, sections and details - annotated below its geometry with its title ",
     "and display scale, a loose document keeps the tight-bounds export; pdf is a print-ready ",
     "centred 1:1 sheet page that refuses instead of rescaling and defaults to the ",
-    "document's sheet size; refuses an existing destination; the live model is not read).",
+    "document's sheet size; refuses an existing destination; the live model is not read); ",
+    "print-drawing --document-dir DIR --version-id UUID [--sheet a4|a3|a2|a1|a0 --printer ",
+    "NAME --dry-run true|false] (submits one exact published version to the printer through ",
+    "the native print service, the page travels on stdin and no temporary file is written; ",
+    "the same centred 1:1 sheet page as the pdf export; --dry-run true reports the exact ",
+    "invocation and byte count without submitting; a missing or rejecting print service is ",
+    "BackendUnavailable, never a crash).",
 );

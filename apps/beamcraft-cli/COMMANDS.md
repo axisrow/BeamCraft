@@ -1604,6 +1604,15 @@ export-drawing --document-dir DIR --version-id UUID --out FILE [--format svg|pdf
     [--sheet a4|a3|a2|a1|a0]
 ```
 
+### print-drawing
+
+write.
+
+```text
+print-drawing --document-dir DIR --version-id UUID [--sheet a4|a3|a2|a1|a0] [--printer NAME]
+    [--dry-run true|false]
+```
+
 ## start
 
 ### create-project
