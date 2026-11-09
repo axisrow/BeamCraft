@@ -329,7 +329,7 @@ fn a_full_documented_option_set_is_parsed_in_one_call() {
         ("create-plate", 28),
         ("define-profile", 27),
         ("create-member", 32),
-        ("update-element", 33),
+        ("update-element", 34),
         ("save-view", 46),
         ("update-view", 39),
     ] {

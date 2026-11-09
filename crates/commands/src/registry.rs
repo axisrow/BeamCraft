@@ -716,6 +716,7 @@ pub const COMMANDS: &[Command] = &[
             opt("--thickness", "MM"),
             opt("--thickness-side", "top|middle|bottom"),
             opt("--corners", "V=chamfer:D1[,D2];V=round:R|none"),
+            opt("--contour", "X,Y[,Z];X,Y[,Z];..."),
             opt("--axis-point", "X,Y,Z;X,Y,Z;..."),
             opt("--roll", "RAD"),
             opt("--section-plane", "left|centre|right"),
