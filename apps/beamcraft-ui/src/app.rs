@@ -578,6 +578,14 @@ fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
 }
 
+/// Rounds an engine quantity for display the way the engine rounds a mass for its
+/// `kg_display` (one decimal): the stored value stays the engine's, only the panel's text
+/// is a display rounding. A raw float volume runs wider than the value cell, and a value
+/// at 0.1 mm³ is far more precise than the 0.1 kg the mass row beside it shows.
+fn display_round(value: f64) -> String {
+    format!("{:.1}", (value * 10.0).round() / 10.0)
+}
+
 /// One text property: the label in the properties grid's label column, the field filling the
 /// value column (`width` is the most it takes, so a short number stays short).
 fn field(ui: &mut egui::Ui, label: &str, text: &mut String, width: f32) {
@@ -1995,9 +2003,9 @@ impl App {
                     ),
                 ] {
                     let (value, unit) = match (number, status) {
-                        (Some(value), Some("current")) => (format!("{value}"), Some(unit)),
+                        (Some(value), Some("current")) => (display_round(value), Some(unit)),
                         (Some(value), Some("stale")) => {
-                            (format!("{value} · out of date"), Some(unit))
+                            (format!("{} · out of date", display_round(value)), Some(unit))
                         }
                         _ => ("Not available".to_owned(), None),
                     };

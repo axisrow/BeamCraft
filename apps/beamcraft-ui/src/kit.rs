@@ -8,7 +8,7 @@
 
 use crate::theme::Palette;
 use egui::collapsing_header::CollapsingState;
-use egui::{Align2, FontId, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
+use egui::{Align, Align2, FontId, Rect, Response, Sense, Stroke, Ui, pos2, vec2};
 
 /// The smallest gap: between an icon and its text, under a group bar.
 pub const SPACE_XS: f32 = 4.0;
@@ -499,35 +499,54 @@ pub fn actions(
 }
 
 /// A read-only property row: the value right-aligned in the value column, with its unit muted
-/// after it, so numbers line up down the grid.
+/// after it, so numbers line up down the grid. A value wider than the cell wraps onto a second
+/// line instead of running left over the label column.
 pub fn prop_value(ui: &mut Ui, label: &str, value: &str, unit: Option<&str>) {
     prop_row(ui, label, |ui| {
         let palette = Palette::current(ui);
         let width = (ui.available_width() - FIT).max(40.0);
-        let (rect, response) =
-            ui.allocate_exact_size(vec2(width, ROW_HEIGHT - 4.0), Sense::hover());
-        let painter = ui.painter_at(rect);
         let unit_width = unit.map_or(0.0, |unit| {
+            ui.painter()
+                .layout_no_wrap(unit.to_owned(), FontId::proportional(11.0), palette.muted)
+                .size()
+                .x
+                + SPACE_XS * 2.0
+        });
+        // The value keeps its right edge where a one-line value ends, so single-line rows
+        // (the common case) paint exactly as before; only a too-wide value wraps.
+        let value_width = (width - unit_width).max(40.0);
+        let mut job = egui::text::LayoutJob::simple(
+            value.to_owned(),
+            FontId::proportional(12.0),
+            palette.text,
+            value_width,
+        );
+        job.halign = Align::RIGHT;
+        let galley = ui.painter().layout_job(job);
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(width, ROW_HEIGHT - 4.0).max(vec2(width, galley.size().y)),
+            Sense::hover(),
+        );
+        let painter = ui.painter_at(rect);
+        // A right-aligned galley lays its rows out to the left of the anchor, so anchoring at
+        // the value's right edge keeps single-line rows exactly where they were.
+        painter.galley(
+            pos2(rect.right() - unit_width, rect.center().y - galley.size().y / 2.0),
+            galley,
+            palette.text,
+        );
+        if let Some(unit) = unit {
             let galley =
                 painter.layout_no_wrap(unit.to_owned(), FontId::proportional(11.0), palette.muted);
-            let w = galley.size().x;
             painter.galley(
                 pos2(
-                    rect.right() - w - SPACE_XS,
+                    rect.right() - galley.size().x - SPACE_XS,
                     rect.center().y - galley.size().y / 2.0,
                 ),
                 galley,
                 palette.muted,
             );
-            w + SPACE_XS * 2.0
-        });
-        painter.text(
-            pos2(rect.right() - unit_width - SPACE_XS, rect.center().y),
-            Align2::RIGHT_CENTER,
-            value,
-            FontId::proportional(12.0),
-            palette.text,
-        );
+        }
         response.on_hover_text(match unit {
             Some(unit) => format!("{value} {unit}"),
             None => value.to_owned(),
@@ -630,5 +649,27 @@ mod tests {
         // Closed: the tip points right (+x); open: it points down (+y).
         assert!(closed[1].x > closed[0].x && (closed[1].y).abs() < 1e-3);
         assert!(open[1].y > open[0].y && (open[1].x).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_value_wider_than_its_cell_wraps_and_a_short_one_keeps_one_row() {
+        let ctx = egui::Context::default();
+        let long = std::cell::Cell::new(0.0_f32);
+        let short = std::cell::Cell::new(0.0_f32);
+        frame(&ctx, Vec::new(), |ui| {
+            prop_value(ui, "Volume", "2861833.1892138589999999999999999999", Some("mm³"));
+            long.set(ui.min_rect().height());
+        });
+        frame(&ctx, Vec::new(), |ui| {
+            prop_value(ui, "Mass", "39.3", Some("kg"));
+            short.set(ui.min_rect().height());
+        });
+        // The wide value wraps onto a second line inside its cell instead of running left
+        // over the label column; the short one keeps the one-row height.
+        assert!(
+            long.get() >= short.get() + 10.0,
+            "the wide value wrapped onto a second line"
+        );
+        assert!(short.get() <= 2.0 * ROW_HEIGHT, "one row for a short value");
     }
 }
