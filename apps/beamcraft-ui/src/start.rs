@@ -589,10 +589,16 @@ impl StartPage {
     }
 
     fn show_create(&mut self) {
-        self.note = None;
-        self.tab = Tab::Create;
-        self.selected = None;
+        self.show_tab(Tab::Create);
         self.create.show();
+    }
+
+    /// Switches the view and drops what belonged to the old one: a note or a selection made
+    /// under one tab must not follow the user to another (issue #562).
+    fn show_tab(&mut self, tab: Tab) {
+        self.note = None;
+        self.selected = None;
+        self.tab = tab;
     }
 
     /// Adopts a project that was opened or created: it is opened and put first in Recent.
@@ -880,6 +886,9 @@ impl StartPage {
             egui::ComboBox::from_id_salt("start-environment")
                 .width(ui.available_width())
                 .height(260.0)
+                // A long environment name is cut off, not allowed to widen the row: an
+                // overflowing combo collapsed the whole welcome layout (issue #562).
+                .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     for env in &self.environments {
@@ -895,7 +904,7 @@ impl StartPage {
         });
         ui.label(
             egui::RichText::new(
-                "Sections, materials and defaults. Blank is empty: a base for your own.",
+                "Sections, materials and defaults. Blank ships 19 generic profiles, 3 part presets and 2 materials.",
             )
             .small()
             .color(palette.muted),
@@ -1000,9 +1009,8 @@ impl StartPage {
                 if tab == Tab::Create {
                     self.show_create();
                 } else {
-                    self.tab = tab;
+                    self.show_tab(tab);
                 }
-                self.selected = None;
                 if tab == Tab::All && self.all.is_empty() && !self.folder.trim().is_empty() && !busy
                 {
                     self.list_folder();
@@ -1023,10 +1031,13 @@ impl StartPage {
                     .color(palette.side_text()),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(
-                    egui::RichText::new(self.environment().unwrap_or("none"))
-                        .size(11.0)
-                        .color(palette.side_text()),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(self.environment().unwrap_or("none"))
+                            .size(11.0)
+                            .color(palette.side_text()),
+                    )
+                    .truncate(),
                 );
             });
         });
@@ -1048,10 +1059,16 @@ impl StartPage {
                 palette.side_text(),
             );
             ui.vertical(|ui| {
-                ui.label(
-                    egui::RichText::new(name)
-                        .size(12.0)
-                        .color(palette.side_text()),
+                // A long name stays on one line: a wrapped one grows the card past the
+                // window bottom and pushes the way back to the start window out of view
+                // (issue #562).
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(name)
+                            .size(12.0)
+                            .color(palette.side_text()),
+                    )
+                    .truncate(),
                 );
                 if ui
                     .add_enabled(
@@ -1080,7 +1097,7 @@ impl StartPage {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     if back && theme::button(ui, Kind::Secondary, "‹ Back", !busy).clicked() {
-                        self.tab = Tab::Recent;
+                        self.show_tab(Tab::Recent);
                     }
                     ui.label(theme::bold(if back { title } else { "Your models" }, 28.0));
                     if back || self.tab == Tab::Recent {
@@ -1185,6 +1202,9 @@ impl StartPage {
                 if shown.is_empty() {
                     let empty = match (self.tab, needle.is_empty()) {
                         (_, false) => "No model matches the search.",
+                        (Tab::All, true) if self.folder.trim().is_empty() => {
+                            "Choose a folder with Browse… to list its models."
+                        }
                         (Tab::All, true) => "No model in this folder yet. Create one with New model.",
                         _ => "No model was opened yet. Create one with New model, or list a folder under All models.",
                     };
@@ -1225,6 +1245,9 @@ impl StartPage {
             ui.set_width(ui.available_width() - 6.0);
             let width = ui.available_width();
             let columns = [0.0, width * 0.60, width * 0.81];
+            // Two date columns need about 540 points of table; below that CREATED would
+            // overlap MODIFIED, so it gives way (issue #562).
+            let wide = width >= 540.0;
             let head = ui
                 .allocate_exact_size(egui::vec2(width, 40.0), egui::Sense::hover())
                 .0;
@@ -1238,7 +1261,9 @@ impl StartPage {
                 },
                 palette.page,
             );
-            for (x, text) in columns.iter().zip(["MODEL NAME", "MODIFIED", "CREATED"]) {
+            let head_labels: [&str; 3] = ["MODEL NAME", "MODIFIED", "CREATED"];
+            let head_shown = if wide { 3 } else { 2 };
+            for (x, text) in columns.iter().take(head_shown).zip(head_labels) {
                 ui.painter().text(
                     egui::pos2(head.left() + 12.0 + x, head.center().y),
                     egui::Align2::LEFT_CENTER,
@@ -1297,16 +1322,23 @@ impl StartPage {
                             );
                         }
                         let text_x = preview.right() + 10.0;
-                        // Name and folder stop before the date columns.
+                        // Name and folder stop before the date columns; both are cut with an
+                        // ellipsis instead of a mid-glyph clip (issue #562).
+                        let text_width = (columns[1] - (text_x - rect.left()) - 8.0).max(20.0);
                         let names = painter.with_clip_rect(egui::Rect::from_x_y_ranges(
                             text_x..=rect.left() + 4.0 + columns[1],
                             rect.y_range(),
                         ));
-                        names.text(
-                            egui::pos2(text_x, rect.center().y - 10.0),
-                            egui::Align2::LEFT_CENTER,
+                        let name_galley = ellipsized(
+                            painter,
                             &project.name,
+                            text_width,
                             egui::FontId::new(13.0, theme::bold_family()),
+                            palette.text,
+                        );
+                        names.galley(
+                            egui::pos2(text_x, rect.center().y - 10.0 - name_galley.size().y / 2.0),
+                            name_galley,
                             palette.text,
                         );
                         let meta = if project.ready() {
@@ -1314,29 +1346,40 @@ impl StartPage {
                         } else {
                             format!("cannot be opened: {}", project.state)
                         };
-                        names.text(
-                            egui::pos2(text_x, rect.center().y + 12.0),
-                            egui::Align2::LEFT_CENTER,
-                            meta,
+                        let meta_color = if project.ready() {
+                            palette.muted
+                        } else {
+                            palette.error
+                        };
+                        let meta_galley = ellipsized(
+                            painter,
+                            &meta,
+                            text_width,
                             egui::FontId::proportional(12.0),
-                            if project.ready() {
-                                palette.muted
-                            } else {
-                                palette.error
-                            },
+                            meta_color,
+                        );
+                        names.galley(
+                            egui::pos2(text_x, rect.center().y + 12.0 - meta_galley.size().y / 2.0),
+                            meta_galley,
+                            meta_color,
                         );
                         let when =
                             |ms: Option<u64>| ms.map(|ms| format_when(ms, now)).unwrap_or_default();
-                        for (x, text, color) in [
-                            (columns[1], when(project.modified_ms), palette.text),
-                            (columns[2], when(project.created_ms), palette.muted),
-                        ] {
+                        painter.text(
+                            egui::pos2(rect.left() + 12.0 + columns[1], rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            when(project.modified_ms),
+                            egui::FontId::proportional(11.0),
+                            palette.text,
+                        );
+                        // CREATED sits at the row's right edge, clear of MODIFIED.
+                        if wide {
                             painter.text(
-                                egui::pos2(rect.left() + 12.0 + x, rect.center().y),
-                                egui::Align2::LEFT_CENTER,
-                                text,
+                                egui::pos2(rect.right() - 12.0, rect.center().y),
+                                egui::Align2::RIGHT_CENTER,
+                                when(project.created_ms),
                                 egui::FontId::proportional(11.0),
-                                color,
+                                palette.muted,
                             );
                         }
                         if response.clicked() {
@@ -1374,109 +1417,141 @@ impl StartPage {
             egui::vec2(268.0, height),
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
-                ui.set_width(268.0);
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                let (rect, _) =
-                    ui.allocate_exact_size(egui::vec2(268.0, 184.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 4, palette.head);
-                if let Some(Ok(model)) = self.previews.get(&project.path) {
-                    model.paint(ui.painter(), rect, palette);
-                } else {
-                    theme::paint_icon(
-                        ui.painter(),
-                        egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(48.0)),
-                        Icon::Block,
-                        palette.muted,
-                    );
-                }
-                match self.previews.get(&project.path) {
-                    Some(Ok(model)) => {
-                        ui.label(
-                            egui::RichText::new(format!("{} elements · mm", model.elements))
-                                .small()
-                                .color(palette.muted),
+                // The image gives way first, and what still does not fit the panel scrolls
+                // instead of running past the window bottom (issue #562).
+                let image_height = (height - 240.0).clamp(110.0, 184.0);
+                egui::ScrollArea::vertical()
+                    .id_salt("model-preview-panel")
+                    .auto_shrink([false, true])
+                    .max_height(height)
+                    .show(ui, |ui| {
+                        ui.set_width(268.0);
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(268.0, image_height),
+                            egui::Sense::hover(),
                         );
-                    }
-                    Some(Err(error)) => {
-                        ui.label(
-                            egui::RichText::new("Preview unavailable")
-                                .small()
-                                .color(palette.error),
-                        )
-                        .on_hover_text(error);
-                        if ui.small_button("Retry preview").clicked() {
-                            self.previews.remove(&project.path);
+                        ui.painter().rect_filled(rect, 4, palette.head);
+                        if let Some(Ok(model)) = self.previews.get(&project.path) {
+                            model.paint(ui.painter(), rect, palette);
+                        } else {
+                            theme::paint_icon(
+                                ui.painter(),
+                                egui::Rect::from_center_size(
+                                    rect.center(),
+                                    egui::Vec2::splat(48.0),
+                                ),
+                                Icon::Block,
+                                palette.muted,
+                            );
                         }
-                    }
-                    None if !project.ready() => {
-                        ui.label(
-                            egui::RichText::new("Preview unavailable for this model")
-                                .small()
-                                .color(palette.muted),
-                        );
-                    }
-                    None => {
-                        ui.label(
-                            egui::RichText::new("Loading model preview...")
-                                .small()
-                                .color(palette.muted),
-                        );
-                    }
-                }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.label(theme::bold(&project.name, 16.0));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new("Local model")
-                                .size(10.0)
-                                .color(palette.muted),
-                        );
-                    });
-                });
-                ui.label(
-                    egui::RichText::new(&project.path)
-                        .small()
-                        .color(palette.muted),
-                );
-                ui.add_space(16.0);
-                for (label, value) in [
-                    (
-                        "Created",
-                        project
-                            .created_ms
-                            .map(format_time)
-                            .unwrap_or_else(|| "Unknown".into()),
-                    ),
-                    (
-                        "Modified",
-                        project
-                            .modified_ms
-                            .map(format_time)
-                            .unwrap_or_else(|| "Unknown".into()),
-                    ),
-                    ("Units", "mm".into()),
-                    ("State", project.state.clone()),
-                ] {
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(label).size(12.0).color(palette.muted));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(egui::RichText::new(value).size(12.0));
+                        match self.previews.get(&project.path) {
+                            Some(Ok(model)) => {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{} elements · mm",
+                                        model.elements
+                                    ))
+                                    .small()
+                                    .color(palette.muted),
+                                );
+                            }
+                            Some(Err(error)) => {
+                                ui.label(
+                                    egui::RichText::new("Preview unavailable")
+                                        .small()
+                                        .color(palette.error),
+                                )
+                                .on_hover_text(error);
+                                // The triangle budget never goes away: only a failure a
+                                // retry could fix offers the button, and it is a themed one
+                                // (issue #562).
+                                let permanent = error.contains("triangle budget");
+                                if !permanent
+                                    && theme::button(ui, Kind::Secondary, "Retry preview", !busy)
+                                        .clicked()
+                                {
+                                    self.previews.remove(&project.path);
+                                }
+                            }
+                            None if !project.ready() => {
+                                ui.label(
+                                    egui::RichText::new("Preview unavailable for this model")
+                                        .small()
+                                        .color(palette.muted),
+                                );
+                            }
+                            None => {
+                                ui.label(
+                                    egui::RichText::new("Loading model preview...")
+                                        .small()
+                                        .color(palette.muted),
+                                );
+                            }
+                        }
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.label(theme::bold(&project.name, 16.0));
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.label(
+                                        egui::RichText::new("Local model")
+                                            .size(10.0)
+                                            .color(palette.muted),
+                                    );
+                                },
+                            );
                         });
+                        ui.label(
+                            egui::RichText::new(&project.path)
+                                .small()
+                                .color(palette.muted),
+                        );
+                        ui.add_space(16.0);
+                        for (label, value) in [
+                            (
+                                "Created",
+                                project
+                                    .created_ms
+                                    .map(format_time)
+                                    .unwrap_or_else(|| "Unknown".into()),
+                            ),
+                            (
+                                "Modified",
+                                project
+                                    .modified_ms
+                                    .map(format_time)
+                                    .unwrap_or_else(|| "Unknown".into()),
+                            ),
+                            ("Units", "mm".into()),
+                            ("State", project.state.clone()),
+                        ] {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(label).size(12.0).color(palette.muted),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(egui::RichText::new(value).size(12.0));
+                                    },
+                                );
+                            });
+                        }
+                        ui.add_space(10.0);
+                        if theme::icon_text_button(
+                            ui,
+                            Icon::Folder,
+                            "Open model",
+                            project.ready() && !busy,
+                            268.0,
+                        )
+                        .clicked()
+                        {
+                            self.open_project(project.path.clone());
+                        }
                     });
-                }
-                ui.add_space((ui.available_height() - 36.0).max(16.0));
-                if theme::icon_text_button(
-                    ui,
-                    Icon::Folder,
-                    "Open model",
-                    project.ready() && !busy,
-                    268.0,
-                )
-                .clicked()
-                {
-                    self.open_project(project.path.clone());
-                }
             },
         );
     }
@@ -1564,6 +1639,32 @@ fn parent_of(path: &str) -> String {
         .and_then(Path::to_str)
         .unwrap_or_default()
         .to_owned()
+}
+
+/// `text` as one line no wider than `max_width`, cut with an ellipsis when it is longer.
+fn ellipsized(
+    painter: &egui::Painter,
+    text: &str,
+    max_width: f32,
+    font: egui::FontId,
+    color: egui::Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let galley = painter.layout_no_wrap(text.to_owned(), font.clone(), color);
+    if galley.size().x <= max_width {
+        return galley;
+    }
+    // ponytail: chop one character per try; row texts are short and this runs once a frame.
+    let mut chars: Vec<char> = text.chars().collect();
+    while chars.len() > 1 {
+        chars.pop();
+        let mut cut: String = chars.iter().collect();
+        cut.push('…');
+        let cut_galley = painter.layout_no_wrap(cut, font.clone(), color);
+        if cut_galley.size().x <= max_width {
+            return cut_galley;
+        }
+    }
+    galley
 }
 
 /// The current time, Unix milliseconds; 0 before 1970.
@@ -1772,6 +1873,323 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A page on the library view with one ready model, no worker running.
+    fn library_page(tag: &str) -> StartPage {
+        let mut page = StartPage::new(
+            PathBuf::from("missing-test-cli"),
+            scratch_config(tag),
+            Arc::new(Stats::default()),
+        );
+        page.job = None;
+        page.loaded = true;
+        page.launcher = false;
+        page.folder = "/m".into();
+        page.recent = vec![ProjectView {
+            name: "Bridge".into(),
+            path: "/m/Bridge".into(),
+            state: "ready".into(),
+            created_ms: Some(0),
+            modified_ms: Some(0),
+        }];
+        page
+    }
+
+    /// One frame of the library view at `size`; the drawn texts and their bounds.
+    fn library_frame(
+        page: &mut StartPage,
+        ctx: &egui::Context,
+        size: (f32, f32),
+    ) -> Vec<(String, egui::Rect)> {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(size.0, size.1),
+                )),
+                ..Default::default()
+            },
+            |ui| page.home_ui(ui, false),
+        );
+        let texts: Vec<(String, egui::Rect)> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    // The galley's own rect, not its size: a centered galley is drawn
+                    // symmetrically around the shape position.
+                    Some((
+                        text.galley.text().to_owned(),
+                        text.galley.rect.translate(text.pos.to_vec2()),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        output.drop_without_applying_deltas();
+        texts
+    }
+
+    #[test]
+    fn the_library_shows_the_whole_selected_model_panel_at_its_minimum_size() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let mut page = library_page("min-size");
+        for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
+            ctx.set_theme(preference);
+            let texts = library_frame(&mut page, &ctx, (1100.0, 680.0));
+            let inside = |bounds: egui::Rect| {
+                bounds.right() <= 1100.0 + 0.5 && bounds.bottom() <= 680.0 + 0.5
+            };
+            for (label, why) in [
+                ("Open model", "the panel button is clipped"),
+                ("State", "the state row is clipped"),
+                ("Units", "the units row is clipped"),
+            ] {
+                let bounds = texts
+                    .iter()
+                    .find(|(text, _)| text == label)
+                    .map(|(_, bounds)| *bounds)
+                    .unwrap_or_else(|| panic!("{label} is not drawn: {why}"));
+                assert!(inside(bounds), "{label} {why}: {bounds:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_narrow_library_hides_the_created_column_and_keeps_the_dates_apart() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let mut page = library_page("narrow");
+        let texts = library_frame(&mut page, &ctx, (700.0, 450.0));
+        assert!(
+            !texts.iter().any(|(text, _)| text == "CREATED"),
+            "CREATED overlaps MODIFIED on a narrow table"
+        );
+        assert!(texts.iter().any(|(text, _)| text == "MODIFIED"));
+        // The wide table carries both dates, kept clear of each other.
+        let mut page = library_page("wide");
+        let texts = library_frame(&mut page, &ctx, (1280.0, 800.0));
+        let modified = texts
+            .iter()
+            .find(|(text, _)| text == "just now")
+            .map(|(_, bounds)| *bounds);
+        let created = texts
+            .iter()
+            .filter(|(text, _)| text == "just now")
+            .map(|(_, bounds)| *bounds)
+            .max_by(|a, b| a.left().total_cmp(&b.left()));
+        if let (Some(modified), Some(created)) = (modified, created) {
+            assert!(
+                created.left() >= modified.right() - 0.5,
+                "the date columns overlap: {modified:?} vs {created:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_long_author_name_stays_on_one_line_in_the_side_panel() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let long_name =
+            "Jean-Baptiste Emmanuel Maximilien de la Croix-Aumont du Boisguillem".to_owned();
+        let mut page = library_page("long-name");
+        page.settings.profile = Some(Profile {
+            actor_id: "id".into(),
+            name: long_name.clone(),
+            email: "a@b.cl".into(),
+        });
+        for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
+            ctx.set_theme(preference);
+            let texts = library_frame(&mut page, &ctx, (1280.0, 800.0));
+            let drawn = texts
+                .iter()
+                .find(|(text, _)| *text == long_name)
+                .map(|(_, bounds)| *bounds)
+                .unwrap_or_else(|| panic!("the author name is not drawn"));
+            assert!(
+                drawn.height() < 24.0,
+                "the author name wraps ({} rows) and pushes the card past the window bottom",
+                drawn.height()
+            );
+            let settings = texts
+                .iter()
+                .find(|(text, _)| text == "Local workspace · Settings")
+                .map(|(_, bounds)| *bounds)
+                .unwrap_or_else(|| panic!("the way back to the start window is not drawn"));
+            assert!(
+                settings.bottom() <= 800.0 + 0.5 && settings.right() <= 1280.0 + 0.5,
+                "Local workspace · Settings is clipped: {settings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_launcher_keeps_a_long_environment_name_inside_the_window() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let long_title = "Trondhjem Bridgeworks and Steel Construction Showroom Environment Pack";
+        let mut page = StartPage::new(
+            PathBuf::from("missing-test-cli"),
+            scratch_config("launcher-long"),
+            Arc::new(Stats::default()),
+        );
+        page.job = None;
+        page.loaded = true;
+        page.environment = Some("showroom".into());
+        page.environments = vec![EnvironmentView {
+            id: Some("showroom".into()),
+            title: Some(long_title.into()),
+            origin: "user".into(),
+            shadowed: false,
+            refused: None,
+        }];
+        for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
+            ctx.set_theme(preference);
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, LAUNCHER_SIZE)),
+                    ..Default::default()
+                },
+                |ui| {
+                    // The real window draws the appearance bar before the page.
+                    egui::Panel::top("test-title")
+                        .exact_size(36.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label("BeamCraft");
+                                theme::window_controls_with_maximize(ui, false);
+                            });
+                        });
+                    page.ui(ui);
+                },
+            );
+            let mut texts = Vec::new();
+            for shape in &output.shapes {
+                if let egui::Shape::Text(text) = &shape.shape {
+                    texts.push((
+                        text.galley.text().to_owned(),
+                        text.galley.rect.translate(text.pos.to_vec2()),
+                    ));
+                }
+            }
+            output.drop_without_applying_deltas();
+            let outside: Vec<String> = texts
+                .iter()
+                .filter(|(_, bounds)| {
+                    bounds.right() > LAUNCHER_SIZE.x + 0.5
+                        || bounds.bottom() > LAUNCHER_SIZE.y + 0.5
+                })
+                .map(|(text, bounds)| format!("{text:?} {bounds:?}"))
+                .collect();
+            assert!(
+                outside.is_empty(),
+                "the welcome window overflows: {}",
+                outside.join("; ")
+            );
+            let has = |wanted: &str| texts.iter().any(|(text, _)| text == wanted);
+            for wanted in ["E-mail", "Quit", "Continue", "Your name"] {
+                assert!(has(wanted), "{wanted} disappeared from the welcome window");
+            }
+        }
+    }
+
+    #[test]
+    fn switching_tabs_drops_the_note_of_the_previous_tab() {
+        let mut page = library_page("note");
+        page.note = Some(Ok("16 project(s)".into()));
+        page.show_tab(Tab::Recent);
+        assert_eq!(page.note, None);
+        assert_eq!(page.selected, None);
+    }
+
+    #[test]
+    fn an_empty_all_models_without_a_folder_says_so() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let mut page = library_page("all-empty");
+        page.tab = Tab::All;
+        page.all = Vec::new();
+        page.folder = String::new();
+        let texts = library_frame(&mut page, &ctx, (1280.0, 800.0));
+        let joined: String = texts
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            joined.contains("Choose a folder with Browse"),
+            "the empty state must ask for a folder: {joined}"
+        );
+        assert!(!joined.contains("No model in this folder yet"));
+    }
+
+    #[test]
+    fn a_permanent_preview_refusal_offers_no_retry_button() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let mut page = library_page("preview-budget");
+        page.previews.insert(
+            "/m/Bridge".into(),
+            Err("invalid input: model exceeds the library preview triangle budget".into()),
+        );
+        let texts = library_frame(&mut page, &ctx, (1280.0, 800.0));
+        let joined: String = texts
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("Preview unavailable"), "{joined}");
+        assert!(
+            !joined.contains("Retry preview"),
+            "a triangle-budget refusal never recovers, so it offers no retry: {joined}"
+        );
+        page.previews.insert(
+            "/m/Bridge".into(),
+            Err("the model folder could not be read".into()),
+        );
+        let texts = library_frame(&mut page, &ctx, (1280.0, 800.0));
+        assert!(
+            texts.iter().any(|(text, _)| text == "Retry preview"),
+            "a transient refusal offers a themed retry"
+        );
+    }
+
+    #[test]
+    fn a_long_row_text_is_cut_with_an_ellipsis_not_clipped_mid_glyph() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let output = ctx.run_ui(Default::default(), |ui| {
+            let font = egui::FontId::proportional(12.0);
+            let short = ellipsized(
+                ui.painter(),
+                "short",
+                500.0,
+                font.clone(),
+                egui::Color32::WHITE,
+            );
+            assert_eq!(short.text(), "short");
+            let long = ellipsized(
+                ui.painter(),
+                "/tmp/very/long/folder/path/that/goes/on/and/on/without/end",
+                100.0,
+                font,
+                egui::Color32::WHITE,
+            );
+            assert!(long.size().x <= 100.0, "{}", long.size().x);
+            assert!(long.text().ends_with('…'), "{}", long.text());
+            assert!(long.text().starts_with("/tmp/very"));
+        });
+        output.drop_without_applying_deltas();
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! Appearance settings shared by the start and model windows, kept in the user's settings file
 //! through the `session` crate on a worker thread.
 
-use crate::theme::Palette;
+use crate::theme::{self, Kind, Palette};
 use crate::tools::ToolError;
 use egui::ThemePreference;
 use session::settings::{self, Settings};
@@ -191,17 +191,22 @@ impl Appearance {
         self.error_ui(ui, enabled);
     }
 
-    /// Reports appearance failures even on screens without an appearance selector.
+    /// Reports appearance failures even on screens without an appearance selector. The bar
+    /// shows a short word and carries the full reason on hover: a long message drawn here
+    /// runs across the window title and leaves neither legible (issue #562).
     pub fn error_ui(&mut self, ui: &mut egui::Ui, enabled: bool) {
         let palette = Palette::current(ui);
         if let Some(error) = self.error.clone() {
-            if ui
-                .add_enabled(enabled, egui::Button::new("Retry appearance"))
-                .clicked()
-            {
+            if theme::button(ui, Kind::Secondary, "Retry", enabled).clicked() {
                 self.request(self.retry);
             }
-            ui.colored_label(palette.error, error);
+            ui.label(
+                egui::RichText::new("Settings error")
+                    .size(11.0)
+                    .color(palette.error)
+                    .strong(),
+            )
+            .on_hover_text(error);
         }
     }
 
@@ -224,6 +229,74 @@ mod tests {
         ] {
             assert_eq!(egui_theme(stored_theme(theme)), theme);
         }
+    }
+
+    /// A configuration directory whose `settings.json` is a directory: every read refuses.
+    fn unreadable_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "ui-appearance-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(dir.join(settings::FILE_NAME)).unwrap();
+        dir
+    }
+
+    #[test]
+    fn an_unreadable_settings_file_stays_clear_of_the_window_title() {
+        let dir = unreadable_dir("error");
+        let mut appearance = Appearance::new(Some(dir.clone()));
+        let ctx = egui::Context::default();
+        for _ in 0..250 {
+            appearance.poll(&ctx);
+            if appearance.error.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(appearance.error.is_some(), "the read failure is reported");
+        assert!(crate::app::inter(&ctx));
+        crate::theme::install(&ctx);
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| appearance.titlebar(ui, true, true),
+        );
+        let mut title = None;
+        let mut texts = Vec::new();
+        for shape in &output.shapes {
+            if let egui::Shape::Text(text) = &shape.shape {
+                let bounds = text.galley.rect.translate(text.pos.to_vec2());
+                if text.galley.text() == "BeamCraft" {
+                    title = Some(bounds);
+                }
+                texts.push((text.galley.text().to_owned(), bounds));
+            }
+        }
+        output.drop_without_applying_deltas();
+        let title = title.expect("the window title is drawn");
+        assert!(
+            texts.iter().any(|(text, _)| text == "Settings error"),
+            "the short error word is shown: {texts:?}"
+        );
+        for (text, bounds) in &texts {
+            if text == "BeamCraft" {
+                continue;
+            }
+            assert!(
+                !bounds.intersects(title),
+                "{text:?} covers the window title {title:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
