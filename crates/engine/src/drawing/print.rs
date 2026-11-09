@@ -131,14 +131,20 @@ fn bounded_text(value: &str, cap: usize, empty: &'static str) -> Result<String, 
     Ok(owned)
 }
 
-/// The exact `lp` invocation for `job`: one argument per entry, no shell. A queue name
-/// must not start with `-` (it would read as an option) and stays within
-/// [`PRINTER_NAME_MAX_BYTES`]; the job name is bounded to [`JOB_NAME_MAX_BYTES`]. Both
-/// names keep no ASCII control characters.
+/// The exact `lp` invocation for `job`: one argument per entry, no shell. The queue name is
+/// stripped of control characters and bounded first, then must not start with `-` (it would
+/// read as an option), so the validated name is exactly the submitted one and stays within
+/// [`PRINTER_NAME_MAX_BYTES`]; the job name is bounded to [`JOB_NAME_MAX_BYTES`]. Both names
+/// keep no ASCII control characters.
 pub fn lp_arguments(job: &PrintJob) -> Result<Vec<String>, CommandError> {
     let mut args = vec![String::from("lp")];
     if let Some(printer) = &job.printer {
-        if printer.starts_with('-') {
+        let name = bounded_text(
+            printer,
+            PRINTER_NAME_MAX_BYTES,
+            "the printer queue name is empty",
+        )?;
+        if name.starts_with('-') {
             return Err(CommandError::new(
                 ErrorCode::InvalidArgument,
                 "drawing_print",
@@ -146,11 +152,7 @@ pub fn lp_arguments(job: &PrintJob) -> Result<Vec<String>, CommandError> {
             ));
         }
         args.push(String::from("-d"));
-        args.push(bounded_text(
-            printer,
-            PRINTER_NAME_MAX_BYTES,
-            "the printer queue name is empty",
-        )?);
+        args.push(name);
     }
     args.push(String::from("-J"));
     args.push(bounded_text(
@@ -411,7 +413,7 @@ mod tests {
                 String::from("Member drawing"),
             ]
         );
-        for bad in ["-evil", "\u{7}", ""] {
+        for bad in ["-evil", "\u{7}", "", "\u{1}-x"] {
             let job = PrintJob {
                 pdf: Vec::new(),
                 name: String::from("x"),
