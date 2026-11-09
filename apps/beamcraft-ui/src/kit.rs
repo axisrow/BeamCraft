@@ -20,8 +20,9 @@ pub const SPACE_M: f32 = 12.0;
 pub const SPACE_L: f32 = 16.0;
 /// The height of one row of a properties grid, a group bar or a tree row.
 pub const ROW_HEIGHT: f32 = 24.0;
-/// The width of the label column of a properties grid.
-pub const LABEL_WIDTH: f32 = 120.0;
+/// The width of the label column of a properties grid. Wide enough for the longest row label
+/// with its unit ("On plane offset, mm"), so the ellipsis never hides a unit.
+pub const LABEL_WIDTH: f32 = 136.0;
 /// The square a disclosure chevron is drawn in.
 pub const CHEVRON: f32 = 16.0;
 /// Slack left at the end of a row that fills the panel: a row sized to the exact available
@@ -253,6 +254,15 @@ pub fn dialog<'a>(
         .pivot(Align2::CENTER_CENTER)
         .default_pos(ctx.content_rect().center())
         .default_width(380.0)
+}
+
+/// A floating tool window (Details, the sheet editor, the drawing document): it opens centred
+/// on the content area, never over the header and ribbon that a default position would cover.
+pub fn tool_window<'a>(title: &str, open: &'a mut bool, ctx: &egui::Context) -> egui::Window<'a> {
+    egui::Window::new(egui::RichText::new(title).size(13.0).strong())
+        .open(open)
+        .pivot(Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
 }
 
 /// A search field with its magnifier inside the frame, filling the row up to `reserve`

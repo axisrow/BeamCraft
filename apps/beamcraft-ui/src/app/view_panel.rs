@@ -544,10 +544,18 @@ impl App {
         form
     }
 
+    /// The active pane's current visible height, from its camera. The panel's height field
+    /// follows this while it is not being edited, so the form never holds a height the user
+    /// has zoomed away from and Apply cannot re-zoom the viewport with it.
+    fn live_span(&self) -> Option<String> {
+        let pane = self.views.active_pane()?;
+        let (_, span) = pane.camera.frame(self.view_origin()).ok()?;
+        Some(format!("{}", span.round().max(1.0)))
+    }
+
     /// Opens the view panel on a new view built by `construction`; the constructions that pick
     /// in the model start picking at once, and Apply creates the view.
-    pub(crate) fn begin_view(&mut self, construction: Construction) {
-        self.set_bench(Bench::View);
+    pub(crate) fn begin_view(&mut self, construction: Construction) {        self.set_bench(Bench::View);
         if self.bench != Bench::View {
             self.view_note(Err("Wait for the running command to finish.".into()));
             return;
@@ -2026,8 +2034,12 @@ impl App {
                 });
                 text(ui, "Name", &mut filter.name);
                 row(ui, "Elements", |ui| {
-                    ui.selectable_value(&mut filter.matching, FilterMatch::All, "match all");
-                    ui.selectable_value(&mut filter.matching, FilterMatch::Any, "match any");
+                    // Wrapped: two toggles exceed the value cell on a narrow panel, and an
+                    // unwrapped row would break the second label into letters.
+                    ui.horizontal_wrapped(|ui| {
+                        ui.selectable_value(&mut filter.matching, FilterMatch::All, "match all");
+                        ui.selectable_value(&mut filter.matching, FilterMatch::Any, "match any");
+                    });
                 });
                 section(ui, "Conditions", true, |ui| {
                     let mut remove = None;
@@ -2566,6 +2578,7 @@ impl App {
                         .id
                         .and_then(|id| self.views.book.get(&id))
                         .map(crate::views::Form::from_view);
+                    let live_span = self.live_span();
                     let form = &mut self.views.form;
                     // The type box at the top, as Revit's properties palette shows the kind of
                     // what is selected: the view's kind and its name.
@@ -2798,11 +2811,39 @@ impl App {
                                     );
                                 });
                         });
+                        // The field follows the pane's zoom while it has never been edited,
+                        // so the form never holds a height the user zoomed away from and
+                        // Apply cannot re-zoom the viewport with a stale one. Once the user
+                        // types a height, their text stays until the panel reopens.
+                        let span_id = egui::Id::unique("view-form-span");
+                        let edited_id = egui::Id::unique(("view-form-span-edited", form.id));
+                        let mut span_edited =
+                            ui.data(|d| d.get_temp::<bool>(edited_id).unwrap_or(false));
+                        if !span_edited
+                            && !ui.memory(|m| m.has_focus(span_id))
+                            && let Some(live) = &live_span
+                        {
+                            form.span.clone_from(live);
+                        }
                         crate::kit::mark_next_changed(
                             ui,
                             saved.as_ref().is_some_and(|o| o.span != form.span),
                         );
-                        text(ui, "Height, mm", &mut form.span);
+                        let mut typed = None;
+                        row(ui, "Height, mm", |ui| {
+                            typed = Some(
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut form.span)
+                                        .id_salt(span_id)
+                                        .desired_width((ui.available_width() - FIT).max(40.0))
+                                        .char_limit(crate::views::FIELD),
+                                ),
+                            );
+                        });
+                        if typed.is_some_and(|r| r.changed()) {
+                            span_edited = true;
+                        }
+                        ui.data_mut(|d| d.insert_temp(edited_id, span_edited));
                         crate::kit::mark_next_changed(
                             ui,
                             saved.as_ref().is_some_and(|o| o.rotation != form.rotation),

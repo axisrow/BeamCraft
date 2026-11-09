@@ -534,11 +534,14 @@ fn choice_combo(
 
 fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
     ui.horizontal(|ui| {
+        // A share of the row, not a fixed width: three fixed 64 pt fields plus their labels
+        // ran past the right edge of a narrow side panel and the Z field was clipped.
+        let width = ((ui.available_width() - 72.0) / 3.0).max(40.0);
         for (axis, text) in ["X", "Y", "Z"].iter().zip(point.iter_mut()) {
             ui.label(*axis);
             ui.add(
                 egui::TextEdit::singleline(text)
-                    .desired_width(64.0)
+                    .desired_width(width)
                     .char_limit(MAX_TEXT),
             );
         }
@@ -1822,7 +1825,9 @@ impl App {
                         State::Stale { .. } => {
                             "The model changed. Reload properties before editing."
                         }
-                        _ => "Properties could not be loaded. Try Reload.",
+                        // No promise of a reload: a kind the editor reads nothing from
+                        // stays unreadable, and the reason is shown below.
+                        _ => "Properties could not be loaded.",
                     },
                 );
             }
@@ -2020,8 +2025,14 @@ impl App {
             if !editable {
                 ui.label("Editing is off until the properties are current.");
             }
-        } else if matches!(state, Some(State::Unknown { .. })) {
+        } else if let Some(State::Unknown { reason }) = state {
             ui.label("No property value is shown: none could be read.");
+            // The honest why, in the panel and not only in the status bar.
+            ui.label(
+                egui::RichText::new(reason)
+                    .size(12.0)
+                    .color(crate::theme::Palette::current(ui).muted),
+            );
         }
         if self.props.busy() {
             ui.label("Running…");
@@ -2178,7 +2189,16 @@ impl App {
             });
         });
         if busy {
-            ui.label("Evaluating the set…");
+            // The colours on screen and the legend below are still the previous set while the
+            // newly picked one evaluates; say so instead of reading as a contradiction.
+            let pending = (!pick.is_empty()
+                && applied.as_ref().is_some_and(|(name, _)| name != &pick))
+            .then(|| {
+                format!(
+                    "Evaluating {pick}… the colours and legend shown are the previous set"
+                )
+            });
+            ui.label(pending.as_deref().unwrap_or("Evaluating the set…"));
         }
         // The legend of the applied set: one swatch per rule, in rule order.
         if let Some((name, coloured)) = &applied {
@@ -2291,6 +2311,17 @@ impl App {
             || self.job.is_some()
             || self.grid_job.is_some()
             || self.contour.running()
+    }
+
+    /// True while a command that writes to the model is running: the header's Saving state.
+    /// The read-only background work says nothing about saving: a catalogue read, the
+    /// annotations list, a colour-set evaluation, and the reload of a change that is already
+    /// written are not writes.
+    fn writing_to_model(&self) -> bool {
+        self.other_command_running_pre_colour()
+            || self.annotation.commit_job.is_some()
+            || self.weld.commit_job.is_some()
+            || self.bolt.commit_job.is_some()
     }
 
     /// Clears the overlay and colours nothing again. The Hide is a colour choice: the

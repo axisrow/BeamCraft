@@ -839,7 +839,10 @@ pub fn parse_definitions(exit_code: Option<i32>, stdout: &[u8]) -> Result<Defini
                 digest,
                 rect_mm: None,
             });
-        } else {
+        } else if kind != "fastener" {
+            // A fastener definition is not a section: the profile dropdown (v05-1 decision 4)
+            // and the menu's profile catalog list profiles only. The bolt catalog carries the
+            // fasteners.
             let name = display
                 .or_else(|| text(definition, "designation"))
                 .unwrap_or_else(|| kind.clone());

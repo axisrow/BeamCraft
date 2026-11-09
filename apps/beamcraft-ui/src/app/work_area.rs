@@ -229,6 +229,7 @@ impl App {
         // inspector combo, Details, the publish dialog, the sheet editor or the command search
         // lying over the work area never focuses a pane.
         let layer = ui.layer_id();
+        let dividers = self.views.dock.dividers(area);
         let pressed = ui
             .input(|i| {
                 i.pointer
@@ -237,9 +238,20 @@ impl App {
                     .flatten()
             })
             .filter(|pos| ui.ctx().layer_id_at(*pos) == Some(layer))
+            // A press on a divider starts a resize, never a group switch.
+            .filter(|pos| !dividers.iter().any(|d| d.handle.contains(*pos)))
             .and_then(|pos| panes::topmost_at(&self.views.panes, pos));
-        // The dividers between groups resize them.
-        for divider in self.views.dock.dividers(area) {
+        let mut outcomes = Vec::new();
+        for (group, rect) in self.views.dock.layout(area) {
+            if let Some(outcome) =
+                self.group_window(ui, area, group, rect, active, (zoom_in, zoom_out))
+            {
+                outcomes.push(outcome);
+            }
+        }
+        // The dividers between groups resize them. They are interacted after the groups so
+        // the pane under the handle's overlap cannot take the drag first.
+        for divider in dividers {
             let response = ui.interact(
                 divider.handle,
                 egui::Id::unique(("dock-divider", divider.path.clone())),
@@ -258,14 +270,6 @@ impl App {
                 self.views
                     .dock
                     .drag_divider(&divider.path, divider.room, divider.across, pos);
-            }
-        }
-        let mut outcomes = Vec::new();
-        for (group, rect) in self.views.dock.layout(area) {
-            if let Some(outcome) =
-                self.group_window(ui, area, group, rect, active, (zoom_in, zoom_out))
-            {
-                outcomes.push(outcome);
             }
         }
         // 1. Tab changes.

@@ -300,8 +300,7 @@ impl SheetEditor {
         }
         self.poll(cli, stats);
         let mut open = self.open;
-        egui::Window::new("Sheet editor")
-            .open(&mut open)
+        crate::kit::tool_window("Sheet editor", &mut open, ctx)
             .resizable(true)
             .show(ctx, |ui| self.body(ui, cli, actor, stats));
         self.open = open;

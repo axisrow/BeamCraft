@@ -518,7 +518,10 @@ impl App {
                         .size(11.0)
                         .color(palette.muted),
                     );
-                    let saving = self.other_command_running() || self.reload_job.is_some();
+                    // Saving only while something writes; the read-only work (a catalogue
+                    // read, the annotations list, a reload of what is already written) is
+                    // not saving and says so.
+                    let saving = self.writing_to_model();
                     let state = if saving { "Saving…" } else { "Saved locally" };
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         theme::window_controls(ui);
@@ -675,7 +678,7 @@ impl App {
                 let has_pane = self.views.active_pane().is_some();
                 let mut pick = None;
                 let (mut undo, mut redo) = (false, false);
-                egui::ScrollArea::horizontal().id_salt("ribbon-tools").show(ui, |ui| {
+                let ribbon = egui::ScrollArea::horizontal().id_salt("ribbon-tools").show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let group = |ui: &mut Ui, name: &str, add: &mut dyn FnMut(&mut Ui)| {
                         ui.vertical(|ui| {
@@ -903,6 +906,29 @@ impl App {
                     }
                 });
                 });
+                // An overflow hint: a muted chevron at each edge that hides more groups, so a
+                // narrow window shows there is more to scroll to (the wheel scrolls too).
+                let more_right = ribbon.content_size.x > ribbon.inner_rect.width() + 1.0
+                    && ribbon.inner_rect.right() < ui.max_rect().right() - 1.0;
+                let more_left = ribbon.state.clamped_offset().x > 1.0;
+                for (at, points_right) in [
+                    (ribbon.inner_rect.right_center(), true),
+                    (ribbon.inner_rect.left_center(), false),
+                ] {
+                    let show = if points_right { more_right } else { more_left };
+                    if !show {
+                        continue;
+                    }
+                    let half = 3.5;
+                    let turn = |x: f32, y: f32| {
+                        let x = if points_right { x } else { -x };
+                        at + egui::vec2(x, y)
+                    };
+                    ui.painter().line(
+                        vec![turn(-half, -5.0), turn(half, 0.0), turn(-half, 5.0)],
+                        Stroke::new(1.5, palette.muted),
+                    );
+                }
                 if let Some(bench) = pick {
                     if bench == Bench::Delete && grid_selected {
                         self.delete_selection();
@@ -1061,11 +1087,18 @@ impl App {
     pub(crate) fn status_bar(&mut self, ui: &mut Ui) {
         let palette = Palette::current(ui);
         egui::Panel::bottom("model-status")
-            .exact_size(52.0)
+            .exact_size(56.0)
             .frame(
                 egui::Frame::new()
                     .fill(palette.surface)
-                    .inner_margin(egui::Margin::symmetric(6, 3)),
+                    // No bottom margin: the frame paints outside the content rect, and a
+                    // bottom margin ran past the window edge, clipping the Snap button.
+                    .inner_margin(egui::Margin {
+                        left: 6,
+                        right: 6,
+                        top: 3,
+                        bottom: 0,
+                    }),
             )
             .show(ui, |ui| {
                 ui.spacing_mut().interact_size.y = 16.0;
@@ -1151,8 +1184,7 @@ impl App {
     /// navigation settings.
     pub(crate) fn details_window(&mut self, ctx: &egui::Context) {
         let mut open = self.details;
-        egui::Window::new("Details")
-            .open(&mut open)
+        crate::kit::tool_window("Details", &mut open, ctx)
             .resizable(false)
             .default_width(360.0)
             .show(ctx, |ui| self.info(ui));
@@ -1514,9 +1546,34 @@ impl App {
             .exact_size(232.0)
             .frame(egui::Frame::new().fill(palette.side).inner_margin(12))
             .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height((ui.available_height() - 84.0).max(0.0))
+                // The store-path footer is a bottom panel of this panel: it stays pinned and
+                // the navigation scroll takes exactly the rest, so Logs and Help stay reachable
+                // at any window height instead of sliding under the footer.
+                egui::Panel::bottom("application-menu-footer")
+                    .frame(egui::Frame::new())
                     .show(ui, |ui| {
+                        ui.separator();
+                        ui.label(
+                            RichText::new(
+                                self.source
+                                    .store
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("Model"),
+                            )
+                            .size(12.0)
+                            .color(palette.side_text()),
+                        );
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(self.source.store.display().to_string())
+                                    .size(10.0)
+                                    .color(palette.side_text()),
+                            )
+                            .wrap(),
+                        );
+                    });
+                egui::ScrollArea::vertical().show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
                         // While a page opens a model, the menu waits for it.
                         let idle = !self.menu_busy();
@@ -1610,26 +1667,6 @@ impl App {
                             self.menu_section = help;
                         }
                     });
-                ui.add_space((ui.available_height() - 64.0).max(16.0));
-                ui.label(
-                    RichText::new(
-                        self.source
-                            .store
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or("Model"),
-                    )
-                    .size(12.0)
-                    .color(palette.side_text()),
-                );
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(self.source.store.display().to_string())
-                            .size(10.0)
-                            .color(palette.side_text()),
-                    )
-                    .wrap(),
-                );
             });
         egui::CentralPanel::default()
             .frame(
