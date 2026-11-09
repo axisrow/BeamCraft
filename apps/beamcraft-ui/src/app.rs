@@ -3220,6 +3220,16 @@ pub(crate) mod tests {
             renderer: std::sync::Arc::new(egui::mutex::RwLock::new(renderer)),
         });
         let missing = std::env::temp_dir().join("beamcraft-window-test-no-cli");
+        // A scratch configuration, so the user's real colour sets and shortcuts never
+        // decide a window test's outcome: every window test starts from the delivered
+        // presets alone.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let config =
+            std::env::temp_dir().join(format!("bc-window-test-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&config).unwrap();
         let source = Source {
             store: missing.clone(),
             cli: missing,
@@ -3229,7 +3239,7 @@ pub(crate) mod tests {
             actor: None,
             environment: None,
             author: None,
-            config_dir: None,
+            config_dir: Some(config),
         };
         let stats = Arc::new(crate::stats::Stats::default());
         Some(App::new(&cc, source, stats).unwrap())

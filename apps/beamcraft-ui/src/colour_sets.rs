@@ -630,7 +630,15 @@ mod tests {
                 class as u64
             );
         }
-        let (sets, note) = Sets::load(None);
+        // A scratch directory, so a colour-sets file the user really saved never decides
+        // what "no file" means here.
+        let scratch = std::env::temp_dir().join(format!(
+            "beamcraft-colour-sets-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let (sets, note) = Sets::load(Some(&scratch));
         assert_eq!(sets, Sets::default());
         assert!(note.is_none(), "a missing file is a normal first run");
         assert!(!sets.has_own(), "the presets alone are not the user's own");
@@ -679,8 +687,15 @@ mod tests {
             bolt.rule.get("field").and_then(Json::string).unwrap(),
             "type"
         );
-        // Both presets ride in every load; a file set cannot take a preset's name.
-        let (sets, note) = Sets::load(None);
+        // Both presets ride in every load; a file set cannot take a preset's name. The
+        // scratch directory keeps the user's real colour-sets file out of the assertion.
+        let scratch = std::env::temp_dir().join(format!(
+            "beamcraft-colour-sets-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let (sets, note) = Sets::load(Some(&scratch));
         assert!(note.is_none());
         assert_eq!(sets.find(CATALOGUE_SET_NAME), Some(&catalogue_set()));
         assert_eq!(sets.find(CLASS_SET_NAME), Some(&class_set()));
