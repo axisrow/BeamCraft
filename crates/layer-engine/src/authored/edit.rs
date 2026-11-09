@@ -66,7 +66,7 @@ pub(super) fn layer_sublayers(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
     }
 }
 /// The distinct layer-schema pins (`customLayerData:bimSchemaDigest`) of the request's owned
-/// USDA layers, in ascending order: what [`schema_pins`] compares with this build's mapping.
+/// USDA layers, in ascending order: what `schema_pins` compares with this build's mapping.
 /// A pin that is not a text is reported as the empty string (it is never accepted either).
 pub fn stored_schema_pins(request: &OpenRequest) -> Result<Vec<String>, Diagnostic> {
     let mut pins = BTreeSet::new();
