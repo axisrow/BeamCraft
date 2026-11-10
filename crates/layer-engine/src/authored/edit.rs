@@ -1971,6 +1971,20 @@ fn capture(
             Change::PartOf { .. } => add("bim:partOf", "rel", 0),
             Change::MainPart { .. } => add("bim:mainPart", "rel", 0),
             Change::Level { .. } => add("bim:level", "rel", 0),
+            Change::Follow {
+                binding: FollowBinding::Release { .. },
+                ..
+            } => {
+                add("bim:axisPointsMm", "double3[]", 0);
+                add("bim:followsGrid", "rel", 0);
+                add("steel:grid:localAxisMm", "double3[]", 0);
+                add("steel:grid:followOriginMm", "double3", 0);
+                add("steel:grid:followRotationZw", "double[]", 0);
+                // The release restores the derived world pose with the record erase.
+                for &(name, ty) in POSE {
+                    add(name, ty, 0);
+                }
+            }
             Change::Follow { .. } => {
                 add("bim:axisPointsMm", "double3[]", 0);
                 add("bim:followsGrid", "rel", 0);
