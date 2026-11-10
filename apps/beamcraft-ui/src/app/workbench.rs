@@ -908,8 +908,7 @@ impl App {
                 });
                 // An overflow hint: a muted chevron at each edge that hides more groups, so a
                 // narrow window shows there is more to scroll to (the wheel scrolls too).
-                let more_right = ribbon.content_size.x > ribbon.inner_rect.width() + 1.0
-                    && ribbon.inner_rect.right() < ui.max_rect().right() - 1.0;
+                let more_right = ribbon.content_size.x > ribbon.inner_rect.width() + 1.0;
                 let more_left = ribbon.state.clamped_offset().x > 1.0;
                 for (at, points_right) in [
                     (ribbon.inner_rect.right_center(), true),
