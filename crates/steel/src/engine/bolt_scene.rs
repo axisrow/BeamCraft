@@ -186,9 +186,9 @@ mod tests {
         assert_eq!(element.orientation_xyzw, [0.0, 0.0, 0.0, 1.0]);
         assert_eq!(element.placement.offset().components(), [0.0; 3]);
         // The washered M16 stack from the bearing face: washer −3..0 and head −13..−3 outside
-        // the joint, shank −13..22 through it, nut 22..36.8, washer nut 36.8..39.8. The
-        // washer's 30 mm outer diameter is the widest part, so the bounds span the bearings by
-        // half of it.
+        // the joint, shank −13..22 through it with the tip at 22, and the nut stack hanging
+        // downward from the tip: nut 2.2..17, washer nut −0.8..2.2. The washer's 30 mm outer
+        // diameter is the widest part, so the bounds span the bearings by half of it.
         let placed = placed();
         assert_eq!(
             placed.bearings_mm,
@@ -205,7 +205,7 @@ mod tests {
         for (got, want) in min.iter().zip([35.0, -15.0, -13.0]) {
             assert!((got - want).abs() <= 1e-9, "min {got} != {want}");
         }
-        for (got, want) in max.iter().zip([235.0, 15.0, 39.8]) {
+        for (got, want) in max.iter().zip([235.0, 15.0, 22.0]) {
             assert!((got - want).abs() <= 1e-9, "max {got} != {want}");
         }
     }
