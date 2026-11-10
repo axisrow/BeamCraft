@@ -106,8 +106,9 @@ pub fn persist(store: &Path, book: &ViewBook, baseline: &ViewBook) -> Result<Vie
 /// wrote. Views and filters the window changed or created win; ones it never touched keep
 /// the disk's version, so an edit elsewhere cannot revert what another process wrote, and
 /// ones another process dropped stay dropped; ones the window deleted stay deleted, and ones
-/// only the disk has are taken in. Folders have no versions: the merge keeps everything
-/// except a folder the window deleted and one it never saw.
+/// only the disk has are taken in. Temporary views are session state the file never holds,
+/// so they always stay. Folders have no versions: the merge keeps everything except a folder
+/// the window deleted and one it never saw.
 fn merge(book: &ViewBook, baseline: &ViewBook, disk: &ViewBook) -> Result<ViewBook, String> {
     let mut views = Vec::new();
     for view in disk.views() {
@@ -116,10 +117,16 @@ fn merge(book: &ViewBook, baseline: &ViewBook, disk: &ViewBook) -> Result<ViewBo
         }
     }
     for view in book.views() {
-        if disk.get(&view.id).is_none()
-            && let Some(merged) = merge_view(view.id, book, baseline, disk)
-        {
-            views.push(merged);
+        if disk.get(&view.id).is_none() {
+            // A temporary view lives in this session only — the file never holds it, so the
+            // merge has nothing to judge: the session's own copy always stays. A saved view
+            // that meanwhile took its name makes `from_all` refuse the merge, and the persist
+            // reports that instead of dropping the view silently.
+            if view.temporary {
+                views.push(view.clone());
+            } else if let Some(merged) = merge_view(view.id, book, baseline, disk) {
+                views.push(merged);
+            }
         }
     }
     let mut filters = Vec::new();
@@ -1254,6 +1261,46 @@ mod tests {
                 .unwrap();
         let merged = persist(&store, &edited, &merged).unwrap();
         assert_eq!(merged.get(&id(1)).unwrap().span_mm, 9000.0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_temporary_view_survives_every_merge() {
+        let dir =
+            std::env::temp_dir().join(format!("beamcraft-views-ui-temp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("m.store");
+        std::fs::create_dir_all(&store).unwrap();
+        let default = view(1, "3D View", "");
+        let mut temp = view(2, "Scratch", "");
+        temp.temporary = true;
+        // The window's book and baseline hold the temporary (as persist_views left them); the
+        // file holds the saved views only, so every merge must keep the temporary.
+        let mut book = ViewBook::from_all(vec![default.clone()], Vec::new(), Vec::new()).unwrap();
+        book.insert(temp.clone()).unwrap();
+        let baseline = book.clone();
+        std::fs::write(
+            session_path(&store),
+            session::views_layer::layer_bytes(
+                &ViewBook::from_all(vec![default.clone()], Vec::new(), Vec::new()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let merged = persist(&store, &book, &baseline).unwrap();
+        assert!(merged.get(&id(2)).is_some(), "the first merge keeps it");
+        let merged = persist(&store, &book, &merged).unwrap();
+        assert!(merged.get(&id(2)).is_some(), "the second merge keeps it");
+        // A saved view the file named like the temporary refuses the merge loudly instead of
+        // dropping the temporary silently.
+        let foreign = view(3, "Scratch", "");
+        let disk = ViewBook::from_all(vec![default, foreign], Vec::new(), Vec::new()).unwrap();
+        std::fs::write(
+            session_path(&store),
+            session::views_layer::layer_bytes(&disk).unwrap(),
+        )
+        .unwrap();
+        assert!(persist(&store, &book, &merged).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
