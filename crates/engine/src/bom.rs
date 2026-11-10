@@ -141,8 +141,8 @@ pub fn tables(rows: &[BomRow], max_rows: usize) -> Result<Bom, CommandError> {
             mass_kg: r.mass_kg,
         })
         .collect();
-    // The group key is the label tuple, so equal labels group together; the BTreeMap keeps the
-    // first-seen order of the sorted rows.
+    // The group key is the label tuple, so equal labels group together; the map only dedups,
+    // and the report order is sorted out of it below — the element table's own order.
     let mut keys = BTreeMap::new();
     for r in ordered {
         let key = (r.kind, r.profile.clone(), r.material.clone());
@@ -170,9 +170,20 @@ pub fn tables(rows: &[BomRow], max_rows: usize) -> Result<Bom, CommandError> {
             None => group.mass_unknown += 1,
         }
     }
+    // The map iterates in byte order of its keys, so PL20's group would precede PL8's; sort
+    // into the element table's own order instead: kind, then the natural label order
+    // (visual audit #562 review round 1 — the two tables of one export must agree).
+    let mut grouped: Vec<((ElementKind, String, String), BomGroup)> = keys.into_iter().collect();
+    grouped.sort_by(|(a_key, _), (b_key, _)| {
+        a_key
+            .0
+            .cmp(&b_key.0)
+            .then_with(|| natural(&a_key.1, &b_key.1))
+            .then_with(|| natural(&a_key.2, &b_key.2))
+    });
     Ok(Bom {
         elements,
-        groups: keys.into_values().collect(),
+        groups: grouped.into_iter().map(|(_, group)| group).collect(),
     })
 }
 
@@ -448,6 +459,10 @@ mod tests {
         let bom = tables(&rows, 10).unwrap();
         let profiles: Vec<&str> = bom.elements.iter().map(|e| e.profile.as_str()).collect();
         assert_eq!(profiles, ["PL8", "PL20"]);
+        // The summary table lists the groups in the element table's own order, not the byte
+        // order of the group labels (review round 1: the two tables of one export agree).
+        let group_profiles: Vec<&str> = bom.groups.iter().map(|g| g.profile.as_str()).collect();
+        assert_eq!(group_profiles, ["PL8", "PL20"]);
         assert_eq!(natural("PL8", "PL20"), Ordering::Less);
         assert_eq!(natural("PL10", "PL9"), Ordering::Greater);
         assert_eq!(natural("B2", "B10"), Ordering::Less);

@@ -57,7 +57,8 @@ pub enum StandardField {
     Profile,
     /// Material label; empty when the element pins no material.
     Material,
-    /// Axis length of a member; `None` for a plate.
+    /// The physical length of a member along its axis — what remains after cuts; `None` for
+    /// a plate.
     LengthMm,
     /// Area in mm2 derived from the current volume.
     AreaMm2,
@@ -440,10 +441,12 @@ impl Rule {
     }
 }
 
-/// One admitted comparison; same-variant cells compare in their natural order.
+/// One admitted comparison; same-variant cells compare in their natural order — text
+/// through the report labels' natural order, so an ordered filter over a profile column
+/// agrees with the sorted table (visual audit #562 review round 1).
 fn compare(op: Operator, cell: &CellValue, literal: &CellValue) -> bool {
     let ord = match (cell, literal) {
-        (CellValue::Text(u), CellValue::Text(v)) => u.as_str().cmp(v.as_str()),
+        (CellValue::Text(u), CellValue::Text(v)) => crate::bom::natural(u, v),
         (CellValue::Number(u), CellValue::Number(v)) => u.total_cmp(v),
         (CellValue::Integer(u), CellValue::Integer(v)) => u.cmp(v),
         (CellValue::Boolean(u), CellValue::Boolean(v)) => u.cmp(v),
@@ -963,6 +966,14 @@ mod tests {
             group_rows[1][2], "239244.61",
             "the total rounds like the BOM's"
         );
+        // The comparator an admitted rule uses agrees with the table's natural order; the
+        // admission currently refuses ordered operators over text, so this pins the
+        // comparator itself (review round 1).
+        assert!(compare(
+            Operator::Lt,
+            &CellValue::Text("PL8".to_owned()),
+            &CellValue::Text("PL20".to_owned())
+        ));
     }
 
     #[test]
