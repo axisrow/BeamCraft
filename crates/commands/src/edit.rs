@@ -382,6 +382,16 @@ pub fn update_element(
             None => not_found(),
         }
     })?;
+    // A mirror re-encodes the element's own authored path, roll and section position; the
+    // other instances of a shared definition would take the mirrored body under their unmirrored
+    // authored state. A mirror is per element, as a split is.
+    if patch_effect.mirror && instances.group_size(command.target_id)? > 1 {
+        return Err(Refusal::from(CommandError::new(
+            ErrorCode::DependencyConflict,
+            "target_id",
+            "the element shares an instance definition; a mirror is per element",
+        )));
+    }
     let next = head_element.patched(
         &command.patch,
         patch_effect.shape,

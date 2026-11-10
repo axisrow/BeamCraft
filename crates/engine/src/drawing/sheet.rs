@@ -401,7 +401,8 @@ fn layout(
             let mut origin = [cx + reach, cy + reach];
             // Two details of one region (or of overlapping regions) would write their names
             // over each other: a later callout steps up one line until it clears every name
-            // already placed. Bounded by the number of details, so it always ends.
+            // already placed. Each placed name can block at most two consecutive lines, so
+            // twice the names placed so far plus one tries always reach a free line.
             let overlaps = |origin: [f64; 2], placed: &[[f64; 4]]| {
                 placed.iter().any(|[lx, ly, hx, hy]| {
                     origin[0] < *hx
@@ -410,7 +411,7 @@ fn layout(
                         && origin[1] + DETAIL_CALLOUT_LINE_MM > *ly
                 })
             };
-            for _ in 0..=callouts.len() {
+            for _ in 0..=2 * callouts.len() {
                 if !overlaps(origin, &callouts) {
                     break;
                 }

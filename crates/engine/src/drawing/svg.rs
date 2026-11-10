@@ -425,17 +425,16 @@ pub(super) fn label_strokes(
         // The label may step out of the body only a short way: a label stepped across a
         // long body (a vertical dimension inside a 3000 mm beam's front view, whose normal
         // runs along the beam) would land metres away from its own line and read as
-        // belonging to nothing. Past the cap it stays beside its line (the regression of the
-        // finding 27 fix).
+        // belonging to nothing (the regression of the finding 27 fix). Within the cap it
+        // tries its own side first, then the other side of the line; when neither clears,
+        // it stays beside its line.
         let base = offset;
-        let mut steps = 0;
-        while box_overlaps(offset) && steps < LABEL_MAX_STEPS {
-            offset += 1.0;
-            steps += 1;
-        }
-        if box_overlaps(offset) {
-            offset = base;
-        }
+        let steps = (0..=LABEL_MAX_STEPS).map(|k| base + f64::from(k));
+        offset = steps
+            .clone()
+            .chain(steps.map(|o| -o))
+            .find(|o| !box_overlaps(*o))
+            .unwrap_or(base);
     }
     let mut x = line_mid[0] + normal[0] * offset - width / 2.0;
     let bottom = line_mid[1] + normal[1] * offset - GLYPH_HEIGHT / 2.0;
@@ -1552,10 +1551,38 @@ mod tests {
             .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
             .map(|x| (x - 5.0).abs())
             .fold(f64::INFINITY, f64::min);
+        // It may step a short way, here onto the other side of the line just past the body's
+        // near edge, but never along the body: within the step cap of its line.
         assert!(
-            nearest < 4.0,
+            nearest < 12.0,
             "the label sits beside its line: {nearest} mm away"
         );
+        let farthest = strokes
+            .iter()
+            .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            farthest < 20.0,
+            "the label never runs along the body: {farthest}"
+        );
+    }
+
+    #[test]
+    fn a_label_blocked_on_its_side_takes_the_other_side_of_the_line() {
+        // A body deeper than the step cap on the label's own side used to put the label back
+        // on the body's strokes; the other side of the line is clear, so it goes there.
+        let line = [[0.0, 0.0], [30.0, 0.0]];
+        // Anchors below the line: the label's own side is above, where the body sits 0..40.
+        let strokes = label_strokes("300", line, [15.0, -5.0], Some([0.0, 0.0, 30.0, 40.0]));
+        let highest = strokes
+            .iter()
+            .flat_map(|[[_, ay], [_, by]]| [*ay, *by])
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            highest < 0.0,
+            "the label sits below the line, off the body: {highest}"
+        );
+        assert!(highest > -6.0, "and still beside its line: {highest}");
     }
 
     #[test]

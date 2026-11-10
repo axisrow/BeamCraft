@@ -1937,11 +1937,12 @@ impl App {
     /// unreadable details stay an error.
     fn unreadable_kind(&self, id: &str) -> Option<(&'static str, String)> {
         let loaded = self.loaded.as_ref()?;
+        let wanted = beamcraft_model::id::ElementId::parse(id).ok()?;
         let entry = loaded
             .snapshot
             .elements()
             .iter()
-            .find(|entry| entry.id.to_string() == id)?;
+            .find(|entry| entry.id == wanted)?;
         match entry.kind {
             beamcraft_engine::ElementKind::Connection => {
                 let name = self
@@ -2166,13 +2167,19 @@ impl App {
             });
             crate::kit::section(ui, "part", "Quantities", true, |ui| {
                 let quantities = &details.quantities;
-                for (label, number, unit, status, stored_freshness) in [
+                // The volume is a raw float and keeps the panel's display rounding. The mass
+                // is the engine's own `kg_display`, already rounded the way every report
+                // prints it (22.54 in the BOM, the schedule and the inspection alike), so it
+                // is shown as given: re-rounding it would disagree with them.
+                let engine_display = |value: f64| format!("{value}");
+                for (label, number, unit, status, stored_freshness, shown) in [
                     (
                         "Volume",
                         quantities.volume_mm3,
                         "mm³",
                         quantities.volume_status.as_deref(),
                         quantities.stored_volume_freshness.as_deref(),
+                        &display_round as &dyn Fn(f64) -> String,
                     ),
                     (
                         "Mass",
@@ -2180,19 +2187,9 @@ impl App {
                         "kg",
                         quantities.mass_status.as_deref(),
                         quantities.stored_mass_freshness.as_deref(),
+                        &engine_display as &dyn Fn(f64) -> String,
                     ),
                 ] {
-                    // The mass is the engine's own `kg_display`, already rounded the way
-                    // every report prints it (22.54 in the BOM, the schedule and the
-                    // inspection alike): re-rounding it here would disagree with them. The
-                    // volume is a raw float and keeps the panel's display rounding.
-                    let shown = |value: f64| {
-                        if label == "Mass" {
-                            format!("{value}")
-                        } else {
-                            display_round(value)
-                        }
-                    };
                     let (value, unit) = match (number, status) {
                         (Some(value), Some("current")) => (shown(value), Some(unit)),
                         (Some(value), Some("stale")) => {

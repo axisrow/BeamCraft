@@ -1430,7 +1430,14 @@ impl StartPage {
                 // fixed guess of 240 pt was short of the real rows, so at the minimum window
                 // size the image kept its full height and pushed State and Open model below
                 // the fold (the recheck of item 25).
-                let details_id = egui::Id::unique("model-preview-details-height");
+                // Keyed on the tab and the model: the All models tab has a folder row more,
+                // and a model whose preview failed shows other rows, so a height measured for
+                // one never sizes the image of another, even for a frame.
+                let details_id = egui::Id::unique((
+                    "model-preview-details-height",
+                    self.tab == Tab::All,
+                    project.path.as_str(),
+                ));
                 let details = ui
                     .ctx()
                     .data(|data| data.get_temp::<f32>(details_id))
