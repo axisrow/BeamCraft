@@ -56,13 +56,15 @@ beamcraft array-polar    --store ROOT --id UUID --count N --point P --axis V --a
   hole records (A04.2) refuses too: the hole polygons live in a face's own frame, which has no
   face-aware mirrored encoding yet.
 - **Honesty limit:** the profile definition is not mirrored. The re-encode is exact for every
-  section symmetric about its own height axis — every parametric family (the I, the channel,
-  the hollow and the cold-formed ones) and such a custom outline — which is why a channel
-  member mirrors exactly instead of rendering as a translated copy (visual audit issue 562,
-  item 4). A section with no height symmetry (an L, a Z, an asymmetric custom outline) keeps
-  its profile handedness: the mirror renders the true image composed with the section's own
-  height flip. A mirrored-profile definition (or a mirror flag on the part) belongs to a
-  later task.
+  section symmetric top to bottom — the I, the channel, the hollow and the C families and such a
+  custom outline — which is why a channel member mirrors exactly instead of rendering as a
+  translated copy (visual audit issue 562, item 4). A section whose mirror image is a rotation of
+  itself mirrors exactly through extra roll (`mirror_section_roll`): a hat or a custom outline
+  symmetric left to right takes a half turn, an equal-leg angle a quarter turn, and the section
+  position rotates back with it so the bounding box stays where it was. Every other section — an
+  unequal angle, a Z, an asymmetric custom outline — refuses the mirror with
+  `UNSUPPORTED_GEOMETRY` instead of rendering the true image composed with a flip; a
+  mirrored-profile definition (or a mirror flag on the part) belongs to a later task.
 - Arrays create independent duplicates, never instances: a shared-definition array is a
   follow-up to P11, not part of the T03 acceptance. A weld or a bolt group refuses an array
   (its element links do not carry over, DV-REL-011), as for a copy.

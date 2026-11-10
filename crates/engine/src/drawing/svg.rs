@@ -41,6 +41,9 @@ const EXTENSION_GAP_MM: f64 = 1.5;
 const EXTENSION_OVERSHOOT_MM: f64 = 1.5;
 /// Label distance from the dimension line to the glyph box edge.
 const LABEL_GAP_MM: f64 = 1.5;
+/// Most 1 mm steps a dimension label takes along its normal to clear the body's box: two
+/// text heights, so the label always stays readable as its own line's label.
+const LABEL_MAX_STEPS: u32 = 7;
 /// Nominal ring radius of a drawn paper symbol at scale 1, in millimetres.
 const SYMBOL_RING_MM: f64 = 5.0;
 
@@ -150,16 +153,21 @@ pub(super) fn glyph(digit: char) -> Option<&'static [[[f64; 2]; 2]]> {
             [[1.0, 3.5], [2.0, 0.0]],
             [[0.4, 1.2], [1.6, 1.2]],
         ]),
-        // A B is not a narrower 8: the middle bar carries a spur past the upper box's right
-        // edge (1.7 > 1.5 > 1.2), so the silhouette shows the B's tongue where the digit 8
-        // has none (visual audit finding 26 — "DET B" read "DET 8").
+        // A B is not a narrower 8: its spine is straight and its two bowls round off on the
+        // right with chamfered corners, where the digit 8 keeps square corners on both sides
+        // and the letter keeps none on the left. The silhouette differs at every corner of
+        // the right side, so "DET B" never reads "DET 8" (visual audit finding 26).
         'B' => Some(&[
             [[0.0, 3.5], [0.0, 0.0]],
-            [[0.0, 3.5], [1.5, 3.5]],
-            [[1.5, 3.5], [1.5, 1.75]],
-            [[0.0, 1.75], [1.7, 1.75]],
-            [[0.0, 0.0], [1.2, 0.0]],
-            [[1.2, 0.0], [1.2, 1.75]],
+            [[0.0, 3.5], [1.3, 3.5]],
+            [[1.3, 3.5], [1.8, 3.0]],
+            [[1.8, 3.0], [1.8, 2.25]],
+            [[1.8, 2.25], [1.3, 1.75]],
+            [[0.0, 1.75], [1.3, 1.75]],
+            [[1.3, 1.75], [2.0, 1.15]],
+            [[2.0, 1.15], [2.0, 0.6]],
+            [[2.0, 0.6], [1.4, 0.0]],
+            [[1.4, 0.0], [0.0, 0.0]],
         ]),
         'C' => Some(&[
             [[2.0, 3.5], [0.0, 3.5]],
@@ -336,6 +344,20 @@ pub(super) fn draws(ch: char) -> bool {
     ch == ' ' || ch == '.' || glyph(ch.to_ascii_uppercase()).is_some()
 }
 
+/// The decimal point's stroke for a dot cell starting at `x` with its baseline at `bottom`.
+/// The cell is narrower than a glyph and the previous glyph's gap precedes it, so the dot
+/// is centred in the free space between the previous glyph's right edge (`x - GLYPH_GAP`)
+/// and the next glyph's left edge (`x + DOT_ADVANCE`): equal clearance on both sides, so
+/// "3000.000" never reads "3000 .000" (visual audit finding 27). It sits just above the
+/// baseline, where a decimal point belongs.
+fn decimal_point(x: f64, bottom: f64) -> [[f64; 2]; 2] {
+    let centre = x + (DOT_ADVANCE - GLYPH_GAP) / 2.0;
+    [
+        [centre - 0.12, bottom + 0.15],
+        [centre + 0.12, bottom + 0.15],
+    ]
+}
+
 /// Positions the label glyphs past the dimension line, along the line's own normal on
 /// the side away from the anchors. `avoid` is the body's bounding box in the same paper
 /// space, when one is known: the label steps further along the normal until its glyph box
@@ -400,10 +422,19 @@ pub(super) fn label_strokes(
             ];
             lo[0] < hi_x && hi[0] > lo_x && lo[1] < hi_y && hi[1] > lo_y
         };
+        // The label may step out of the body only a short way: a label stepped across a
+        // long body (a vertical dimension inside a 3000 mm beam's front view, whose normal
+        // runs along the beam) would land metres away from its own line and read as
+        // belonging to nothing. Past the cap it stays beside its line (the regression of the
+        // finding 27 fix).
+        let base = offset;
         let mut steps = 0;
-        while box_overlaps(offset) && steps < 128 {
+        while box_overlaps(offset) && steps < LABEL_MAX_STEPS {
             offset += 1.0;
             steps += 1;
+        }
+        if box_overlaps(offset) {
+            offset = base;
         }
     }
     let mut x = line_mid[0] + normal[0] * offset - width / 2.0;
@@ -416,9 +447,7 @@ pub(super) fn label_strokes(
             GLYPH_WIDTH + GLYPH_GAP
         };
         if ch == '.' {
-            // The decimal point sits clear of the baseline, so it never reads as glued
-            // to the next digit's bottom corner (visual audit finding 27).
-            strokes.push([[x + 0.9, bottom + 0.8], [x + 1.1, bottom + 0.8]]);
+            strokes.push(decimal_point(x, bottom));
         } else if let Some(segments) = glyph(ch) {
             for [[ax, ay], [bx, by]] in segments {
                 strokes.push([[x + ax, bottom + ay], [x + bx, bottom + by]]);
@@ -444,9 +473,7 @@ pub(super) fn text_strokes(text: &str, origin: [f64; 2]) -> Vec<[[f64; 2]; 2]> {
             GLYPH_WIDTH + GLYPH_GAP
         };
         if folded == '.' {
-            // Raised off the baseline like every decimal point here, so it never reads as
-            // glued to the next digit (visual audit finding 27).
-            strokes.push([[x + 0.9, origin[1] + 0.8], [x + 1.1, origin[1] + 0.8]]);
+            strokes.push(decimal_point(x, origin[1]));
         } else if let Some(segments) = glyph(folded) {
             for [[ax, ay], [bx, by]] in segments {
                 strokes.push([[x + ax, origin[1] + ay], [x + bx, origin[1] + by]]);
@@ -1446,26 +1473,28 @@ mod tests {
         assert_ne!(canonical('S'), canonical('5'), "S must differ from 5");
         assert_ne!(canonical('O'), canonical('0'), "O must differ from 0");
         assert_ne!(canonical('B'), canonical('8'), "B must differ from 8");
-        // B is not a narrower 8: its middle bar carries a spur past the upper box's right
-        // edge, a tongue no digit draws (visual audit finding 26). Every stroke stays
-        // inside the shared glyph box.
+        // B is not a narrower 8: its bowls round off on the right with chamfered corners
+        // (strokes that are neither horizontal nor vertical), while 8 draws only square
+        // corners, and its left side is one straight spine (visual audit finding 26).
+        // Every stroke stays inside the shared glyph box.
         let strokes = glyph('B').unwrap_or(&[]);
         let widest = strokes
             .iter()
             .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
             .fold(f64::NEG_INFINITY, f64::max);
-        let mid_bar_tip = strokes
-            .get(3)
-            .map(|[[_, _], [bx, _]]| *bx)
-            .unwrap_or_default();
-        let upper_right = strokes
-            .get(2)
-            .map(|[[_, _], [bx, _]]| *bx)
-            .unwrap_or_default();
         assert!(widest <= 2.0, "B stays inside its box: {widest}");
+        let chamfers = |ch: char| -> usize {
+            glyph(ch)
+                .unwrap_or(&[])
+                .iter()
+                .filter(|[[ax, ay], [bx, by]]| (ax - bx).abs() > 0.05 && (ay - by).abs() > 0.05)
+                .count()
+        };
+        assert!(chamfers('B') >= 4, "every right corner of B is chamfered");
+        assert_eq!(chamfers('8'), 0, "8 keeps square corners");
         assert!(
-            mid_bar_tip > upper_right,
-            "the middle bar's spur clears the upper box: {mid_bar_tip} vs {upper_right}"
+            strokes.contains(&[[0.0, 3.5], [0.0, 0.0]]),
+            "B has one straight spine"
         );
         // The shape test above passed while S still drew the digit 5 shifted: a corner
         // alignment cannot catch a same-shape glyph on a differently sized box. What makes
@@ -1482,6 +1511,51 @@ mod tests {
         assert!(diagonal('S'), "S carries a diagonal spine");
         assert!(!diagonal('5'), "5 has no diagonal");
         assert!(!diagonal('2'), "2 has no diagonal");
+    }
+
+    #[test]
+    fn the_decimal_point_sits_midway_between_its_digits() {
+        // Visual audit finding 27: the point sat 0.4 mm before the next digit and 1.9 mm
+        // after the previous one, so "3000.000" read "3000 .000".
+        for strokes in [
+            text_strokes("0.0", [0.0, 0.0]),
+            label_strokes("0.0", [[0.0, -1.0], [9.0, -1.0]], [4.5, -10.0], None),
+        ] {
+            let xs = |s: &[[f64; 2]; 2]| [s[0][0], s[1][0]];
+            let left_digit = strokes
+                .iter()
+                .take(6)
+                .flat_map(xs)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let dot = strokes.get(6).copied().unwrap_or_default();
+            let right_digit = strokes
+                .iter()
+                .skip(7)
+                .flat_map(xs)
+                .fold(f64::INFINITY, f64::min);
+            let before = dot[0][0].min(dot[1][0]) - left_digit;
+            let after = right_digit - dot[0][0].max(dot[1][0]);
+            assert!(before > 0.3 && after > 0.3, "{before} {after}");
+            assert!((before - after).abs() < 1e-9, "{before} vs {after}");
+        }
+    }
+
+    #[test]
+    fn a_label_never_walks_along_a_long_body_away_from_its_line() {
+        // Regression of the finding 27 fix: a vertical height dimension inside a 150 mm
+        // long body box stepped its label along the body's length and landed it past the
+        // far end, metres away from its own line. The label stays beside the line.
+        let line = [[5.0, 0.0], [5.0, 15.0]];
+        let strokes = label_strokes("300", line, [0.0, 7.5], Some([0.0, 0.0, 150.0, 15.0]));
+        let nearest = strokes
+            .iter()
+            .flat_map(|[[ax, _], [bx, _]]| [*ax, *bx])
+            .map(|x| (x - 5.0).abs())
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            nearest < 4.0,
+            "the label sits beside its line: {nearest} mm away"
+        );
     }
 
     #[test]

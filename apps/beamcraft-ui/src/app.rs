@@ -623,10 +623,27 @@ fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
 }
 
-/// Rounds an engine quantity for display the way the engine rounds a mass for its
-/// `kg_display` (one decimal): the stored value stays the engine's, only the panel's text
-/// is a display rounding. A raw float volume runs wider than the value cell, and a value
-/// at 0.1 mm³ is far more precise than the 0.1 kg the mass row beside it shows.
+/// The neutral properties note for a selected kind the editor has no editable properties for,
+/// e.g. "Bolt group BG1: this kind has no editable properties here yet." An unnamed element
+/// keeps the kind alone.
+fn unsupported_kind_text(kind: &str, name: &str) -> String {
+    let mut kind_title = String::new();
+    let mut chars = kind.chars();
+    if let Some(first) = chars.next() {
+        kind_title.extend(first.to_uppercase());
+        kind_title.push_str(chars.as_str());
+    }
+    if name.is_empty() {
+        format!("{kind_title}: this kind has no editable properties here yet.")
+    } else {
+        format!("{kind_title} {name}: this kind has no editable properties here yet.")
+    }
+}
+
+/// Rounds a raw engine quantity (the volume) to one decimal for display: the stored value
+/// stays the engine's, only the panel's text is a display rounding. A raw float volume runs
+/// wider than the value cell. The mass needs none: its `kg_display` is already the engine's
+/// display value.
 fn display_round(value: f64) -> String {
     format!("{:.1}", (value * 10.0).round() / 10.0)
 }
@@ -1549,10 +1566,18 @@ impl App {
                         self.editor.select(info);
                         self.edit_note = None;
                     }
-                    Err(e) => {
-                        self.editor.select_id(id.clone());
-                        self.edit_note = Some(Err(format!("details: {e}")));
-                    }
+                    Err(e) => match self.unreadable_kind(&id) {
+                        // A kind the editor reads nothing from is not a failure: the selection
+                        // names it and the panel says so plainly (issue 562 item 15).
+                        Some((kind, name)) => {
+                            self.editor.select_kind(id.clone(), kind, name);
+                            self.edit_note = None;
+                        }
+                        None => {
+                            self.editor.select_id(id.clone());
+                            self.edit_note = Some(Err(format!("details: {e}")));
+                        }
+                    },
                 }
                 if self.props.selected() != Some(id.as_str()) {
                     self.props_note = None;
@@ -1906,6 +1931,42 @@ impl App {
         self.refresh_selection();
     }
 
+    /// The display kind and name of a selected element the properties editor has no details
+    /// for, when the loaded snapshot knows it as such a kind: a bolt group is a connection
+    /// element, named from the bolt listing when it is loaded. `None` for anything else, whose
+    /// unreadable details stay an error.
+    fn unreadable_kind(&self, id: &str) -> Option<(&'static str, String)> {
+        let loaded = self.loaded.as_ref()?;
+        let entry = loaded
+            .snapshot
+            .elements()
+            .iter()
+            .find(|entry| entry.id.to_string() == id)?;
+        match entry.kind {
+            beamcraft_engine::ElementKind::Connection => {
+                let name = self
+                    .bolt
+                    .groups
+                    .iter()
+                    .find(|group| group.id == id)
+                    .map(|group| group.name.clone())
+                    .unwrap_or_default();
+                Some(("bolt group", name))
+            }
+            _ => None,
+        }
+    }
+
+    /// The neutral note shown instead of an error for a selected kind the properties editor
+    /// reads nothing from, or `None` when the selection is not such a kind.
+    fn unsupported_kind_note(&self) -> Option<String> {
+        let info = self.editor.selected()?;
+        if self.props.selected() != Some(info.id.as_str()) || info.kind != "bolt group" {
+            return None;
+        }
+        Some(unsupported_kind_text(&info.kind, &info.name))
+    }
+
     fn props_panel(&mut self, ui: &mut egui::Ui) {
         let Some(_id) = self.props.selected().map(str::to_owned) else {
             let palette = crate::theme::Palette::current(ui);
@@ -1921,6 +1982,12 @@ impl App {
             return;
         };
         let state = self.props.state();
+        if let (Some(State::Unknown { .. }), Some(note)) = (&state, self.unsupported_kind_note()) {
+            let palette = crate::theme::Palette::current(ui);
+            ui.add_space(crate::kit::SPACE_S);
+            ui.label(egui::RichText::new(note).color(palette.muted));
+            return;
+        }
         match &state {
             Some(State::Current) if self.props.head_known() => {}
             Some(State::Current) => {
@@ -2115,12 +2182,22 @@ impl App {
                         quantities.stored_mass_freshness.as_deref(),
                     ),
                 ] {
+                    // The mass is the engine's own `kg_display`, already rounded the way
+                    // every report prints it (22.54 in the BOM, the schedule and the
+                    // inspection alike): re-rounding it here would disagree with them. The
+                    // volume is a raw float and keeps the panel's display rounding.
+                    let shown = |value: f64| {
+                        if label == "Mass" {
+                            format!("{value}")
+                        } else {
+                            display_round(value)
+                        }
+                    };
                     let (value, unit) = match (number, status) {
-                        (Some(value), Some("current")) => (display_round(value), Some(unit)),
-                        (Some(value), Some("stale")) => (
-                            format!("{} · out of date", display_round(value)),
-                            Some(unit),
-                        ),
+                        (Some(value), Some("current")) => (shown(value), Some(unit)),
+                        (Some(value), Some("stale")) => {
+                            (format!("{} · out of date", shown(value)), Some(unit))
+                        }
                         _ => ("Not available".to_owned(), None),
                     };
                     let value = if stored_freshness == Some("stale") {
@@ -3319,6 +3396,20 @@ pub(crate) mod tests {
         App, Preset, Source, WATCH_INTERVAL, load_icon, needs_refit, revisions_token, spawn_watch,
         target_size,
     };
+
+    #[test]
+    fn a_bolt_group_reads_as_a_kind_without_editable_properties() {
+        // Issue 562 item 15: a selected bolt group read as a red load failure with a wrong
+        // reason. It is named as what it is, in a neutral note.
+        assert_eq!(
+            super::unsupported_kind_text("bolt group", "BG1"),
+            "Bolt group BG1: this kind has no editable properties here yet."
+        );
+        assert_eq!(
+            super::unsupported_kind_text("bolt group", ""),
+            "Bolt group: this kind has no editable properties here yet."
+        );
+    }
 
     #[test]
     fn a_committed_revision_moves_the_watch_token() {

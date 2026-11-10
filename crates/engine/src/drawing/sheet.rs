@@ -36,6 +36,10 @@ const TITLE_BLOCK_PAD_MM: f64 = 2.0;
 /// Gap between a view's lowest stroke and its annotation line below it. Above the 3.5 mm
 /// glyph height, so the title clears the geometry it annotates (visual audit finding 5).
 const VIEW_TITLE_GAP_MM: f64 = 5.0;
+/// Gap between a detail's parent-side circle and the callout text beside it.
+const DETAIL_CALLOUT_GAP_MM: f64 = 1.0;
+/// Line pitch of stacked detail callouts: the 3.5 mm glyph height plus a 1.5 mm gap.
+const DETAIL_CALLOUT_LINE_MM: f64 = 5.0;
 /// Exact contract of the whole-sheet export, independent of the loose-paper contract.
 pub const SHEET_EXPORT_CONTRACT: &str = "beamcraft-drawing-sheet/1";
 
@@ -380,16 +384,52 @@ fn layout(
     // Every detail marks its region on the parent view: the circular callout that says
     // where the magnified content comes from (visual audit finding 8). The mark belongs
     // to the detail and draws in the parent's paper space, which the sheet shares.
+    let mut callouts: Vec<[f64; 4]> = Vec::new();
     for (detail, projection) in drawing.details().iter().zip(detail_bodies) {
         let DetailProjection::Resolved(_) = projection else {
             continue;
         };
+        let mut mark = circle_strokes(detail.center_paper_mm, detail.radius_mm)?;
+        // The callout names the detail beside its circle, at the circle's upper right, so
+        // two marked regions on one parent never leave the reader guessing which detail
+        // each one feeds (the recheck of visual audit finding 8). An untitled detail keeps
+        // the bare circle: nothing is fabricated.
+        if let Some(title) = &detail.title {
+            let [cx, cy] = detail.center_paper_mm;
+            let reach = detail.radius_mm * std::f64::consts::FRAC_1_SQRT_2 + DETAIL_CALLOUT_GAP_MM;
+            let width = text_width(title);
+            let mut origin = [cx + reach, cy + reach];
+            // Two details of one region (or of overlapping regions) would write their names
+            // over each other: a later callout steps up one line until it clears every name
+            // already placed. Bounded by the number of details, so it always ends.
+            let overlaps = |origin: [f64; 2], placed: &[[f64; 4]]| {
+                placed.iter().any(|[lx, ly, hx, hy]| {
+                    origin[0] < *hx
+                        && origin[0] + width > *lx
+                        && origin[1] < *hy
+                        && origin[1] + DETAIL_CALLOUT_LINE_MM > *ly
+                })
+            };
+            for _ in 0..=callouts.len() {
+                if !overlaps(origin, &callouts) {
+                    break;
+                }
+                origin[1] += DETAIL_CALLOUT_LINE_MM;
+            }
+            callouts.push([
+                origin[0],
+                origin[1],
+                origin[0] + width,
+                origin[1] + DETAIL_CALLOUT_LINE_MM,
+            ]);
+            mark.extend(text_strokes(title, origin));
+        }
         layers.push(SheetLayer {
             class: "detailmark",
             data_view: Some(detail.id.to_string()),
             data_drafting: None,
             dash: None,
-            strokes: normalized(circle_strokes(detail.center_paper_mm, detail.radius_mm)?)?,
+            strokes: normalized(mark)?,
         });
     }
     // Drawn objects on visible layers sit above the views they annotate.
@@ -1204,6 +1244,22 @@ mod tests {
             text.contains(&format!("class=\"detailmark\" data-view=\"{DETAIL}\"")),
             "{text}"
         );
+        // The parent-side mark carries the detail's name beside the circle: more strokes
+        // than the circle's own chords, and the name's glyphs drawn outside the circle.
+        let mark = text
+            .split(&format!(
+                "<path class=\"detailmark\" data-view=\"{DETAIL}\" d=\""
+            ))
+            .nth(1)
+            .unwrap_or_default();
+        let mark = mark.split("\"/>").next().unwrap_or_default();
+        let circle_only = circle_strokes([0.0, 0.0], 5.0)
+            .map(|c| c.len())
+            .unwrap_or(0);
+        assert!(
+            mark.matches(" L ").count() > circle_only,
+            "the callout names the detail beside its circle: {mark}"
+        );
         // The detail's own boundary ring: its body layer holds the mapped circle, at
         // least the 16-chord floor of the tessellation.
         let body = text
@@ -1214,6 +1270,56 @@ mod tests {
         assert!(
             body.matches(" L ").count() >= 16,
             "the boundary ring is in the detail's body: {body}"
+        );
+    }
+
+    #[test]
+    fn two_details_of_one_region_stack_their_callouts() {
+        // Two details of the same region wrote their names over each other on the parent:
+        // the second callout steps up a line, so both stay readable.
+        let version = DocumentVersionId::parse(C).unwrap();
+        const FIRST: &str = "01900000-0000-7000-8000-000000000343";
+        const SECOND: &str = "01900000-0000-7000-8000-000000000344";
+        let base = sheet_drawing(Sheet::A4, &[D]);
+        let mut s = base.spec().clone();
+        let mut second = detail_spec(SECOND, B, Some("DET-2"));
+        second.paper_origin_mm = [120.0, 60.0];
+        s.details = vec![detail_spec(FIRST, B, Some("DET-1")), second];
+        let drawing = Drawing::admit(s).unwrap();
+        let bodies = vec![placed_body([65.0, 145.0])];
+        let details = vec![
+            detail_body(vec![section_edge(125.0, 145.0)]),
+            detail_body(vec![section_edge(125.0, 65.0)]),
+        ];
+        let bytes = export_svg(&drawing, version, &projection(), &bodies, &[], &details).unwrap();
+        let text = std::str::from_utf8(&bytes).unwrap();
+        // Both marks share one circle; the second name sits a line further from it, so the
+        // second mark's vertical extent is a line taller, whatever the SVG's y direction.
+        let extent = |id: &str| -> f64 {
+            let mark = text
+                .split(&format!(
+                    "<path class=\"detailmark\" data-view=\"{id}\" d=\""
+                ))
+                .nth(1)
+                .unwrap_or_default();
+            let mark = mark.split("\"/>").next().unwrap_or_default();
+            let numbers: Vec<f64> = mark
+                .split(|c: char| c == ' ' || c == ',' || c.is_ascii_alphabetic())
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            let ys: Vec<f64> = numbers
+                .chunks(2)
+                .filter_map(|p| p.get(1).copied())
+                .collect();
+            let high = ys.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            let low = ys.iter().copied().fold(f64::INFINITY, f64::min);
+            high - low
+        };
+        assert!(
+            extent(SECOND) - extent(FIRST) >= 3.5,
+            "the two callouts sit on different lines: {} vs {}",
+            extent(FIRST),
+            extent(SECOND)
         );
     }
 

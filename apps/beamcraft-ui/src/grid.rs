@@ -42,6 +42,10 @@ fn project(point: [f64; 3], rect: egui::Rect, view: &View, origin: [f64; 3]) -> 
     })
 }
 
+/// Clearance between a grid bubble and the pane edge, in points: the pane's frame stroke (2
+/// points) plus a margin, so no bubble is painted under the frame.
+const BUBBLE_FRAME_CLEARANCE: f32 = 4.0;
+
 /// Inputs of one regular grid family. Empty labels ask the CLI for its default label scheme.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FamilyForm {
@@ -1036,10 +1040,14 @@ impl GridScene {
             // A bubble wider or taller than the pane (a long label in a deeply split pane)
             // cannot be clamped into it: shrink2 would invert the inner bounds and
             // `Pos2::clamp` panics (AGENTS.md section 4). Such an end keeps no label.
-            if size.x > rect.width() || size.y > rect.height() {
+            // Bubbles stay clear of the pane's 2-point frame stroke, which is painted over the
+            // body's edge: a bubble clamped flush to the edge lost its outer ring under the
+            // active pane's frame (the recheck of item 38).
+            let area = rect.shrink(BUBBLE_FRAME_CLEARANCE);
+            if size.x > area.width() || size.y > area.height() {
                 continue;
             }
-            let inner = rect.shrink2(size * 0.5);
+            let inner = area.shrink2(size * 0.5);
             for (end, ahead) in [(a, -1.0f32), (b, 1.0)] {
                 if !rect.shrink(14.0).contains(end) {
                     continue;

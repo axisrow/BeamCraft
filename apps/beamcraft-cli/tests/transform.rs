@@ -427,6 +427,87 @@ fn a_mirror_of_an_omega_profile_refuses_instead_of_rebuilding_upside_down() {
 }
 
 #[test]
+fn a_mirror_refuses_for_an_element_that_shares_an_instance_definition() {
+    // A mirror is per element: the other instances of a shared definition would take the
+    // mirrored body under their unmirrored authored state, so the mirror refuses before it
+    // re-encodes anything (issue 562 item 4).
+    let f = Fixture::new();
+    let published = f.dir("mirror-shared");
+    std::fs::create_dir_all(&published).unwrap();
+    let profile = text(
+        at(
+            &f.ok(&[
+                "define-profile",
+                "--store",
+                &published,
+                "--family",
+                "angle",
+                "--h",
+                "100",
+                "--b",
+                "100",
+                "--t",
+                "8",
+                "--r",
+                "10",
+            ]),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let created = f.ok(&[
+        "create-member",
+        "--store",
+        &published,
+        "--profile-digest",
+        &profile,
+        "--start",
+        "0,0,0",
+        "--end",
+        "2000,0,0",
+        "--kind",
+        "beam",
+    ]);
+    let id = text(at(&created, &["member"]), "element_id");
+    let dir = f.dir("mirror-shared-ws");
+    f.ok(&[
+        "create-workspace",
+        "--store",
+        &published,
+        "--workspace-dir",
+        &dir,
+        "--user-id",
+        USER,
+    ]);
+    f.edit(
+        &dir,
+        &[
+            "copy-instance",
+            "--id",
+            &id,
+            "--name",
+            "Instance",
+            "--offset",
+            "0,0,500",
+        ],
+    );
+    assert_eq!(
+        f.code(&[
+            "update-element",
+            "--store",
+            &dir,
+            "--id",
+            &id,
+            "--mirror-point",
+            "0,0,0",
+            "--mirror-normal",
+            "0,1,0",
+        ]),
+        "DEPENDENCY_CONFLICT"
+    );
+}
+
+#[test]
 fn a_drilled_member_refuses_the_copy_the_array_and_the_mirror() {
     let f = Fixture::new();
     let published = f.dir("drilled");

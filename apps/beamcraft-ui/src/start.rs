@@ -37,6 +37,13 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Duration;
 
+/// The first-frame estimate of the height the selected model's details take below its
+/// preview image (status line, name, path, four rows and the Open model button); later frames
+/// use the measured height.
+const PREVIEW_DETAILS_GUESS: f32 = 300.0;
+/// The smallest preview image worth drawing; with less room the image is left out.
+const PREVIEW_MIN_IMAGE: f32 = 40.0;
+
 /// How long one start command may run.
 pub(crate) const DEADLINE: Duration = Duration::from_secs(60);
 /// Longest text in a field.
@@ -1418,8 +1425,21 @@ impl StartPage {
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 // The image gives way first, and what still does not fit the panel scrolls
-                // instead of running past the window bottom (issue axisrow/BeamCraft#562).
-                let image_height = (height - 240.0).clamp(110.0, 184.0);
+                // instead of running past the window bottom (issue axisrow/BeamCraft#562). The
+                // room the details below the image take is measured on the previous frame: a
+                // fixed guess of 240 pt was short of the real rows, so at the minimum window
+                // size the image kept its full height and pushed State and Open model below
+                // the fold (the recheck of item 25).
+                let details_id = egui::Id::unique("model-preview-details-height");
+                let details = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<f32>(details_id))
+                    .unwrap_or(PREVIEW_DETAILS_GUESS);
+                // Below a useful thumbnail height the image goes away entirely, so the
+                // details and the Open model button keep the room (the All models tab has a
+                // folder row more than Recent).
+                let room = (height - details - 4.0).min(184.0);
+                let image_height = if room >= PREVIEW_MIN_IMAGE { room } else { 0.0 };
                 egui::ScrollArea::vertical()
                     .id_salt("model-preview-panel")
                     .auto_shrink([false, true])
@@ -1427,24 +1447,29 @@ impl StartPage {
                     .show(ui, |ui| {
                         ui.set_width(268.0);
                         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                        let (rect, _) = ui.allocate_exact_size(
-                            egui::vec2(268.0, image_height),
-                            egui::Sense::hover(),
-                        );
-                        ui.painter().rect_filled(rect, 4, palette.head);
-                        if let Some(Ok(model)) = self.previews.get(&project.path) {
-                            model.paint(ui.painter(), rect, palette);
-                        } else {
-                            theme::paint_icon(
-                                ui.painter(),
-                                egui::Rect::from_center_size(
-                                    rect.center(),
-                                    egui::Vec2::splat(48.0),
-                                ),
-                                Icon::Block,
-                                palette.muted,
+                        let details_top = if image_height > 0.0 {
+                            let (rect, _) = ui.allocate_exact_size(
+                                egui::vec2(268.0, image_height),
+                                egui::Sense::hover(),
                             );
-                        }
+                            ui.painter().rect_filled(rect, 4, palette.head);
+                            if let Some(Ok(model)) = self.previews.get(&project.path) {
+                                model.paint(ui.painter(), rect, palette);
+                            } else {
+                                theme::paint_icon(
+                                    ui.painter(),
+                                    egui::Rect::from_center_size(
+                                        rect.center(),
+                                        egui::Vec2::splat(image_height.min(48.0)),
+                                    ),
+                                    Icon::Block,
+                                    palette.muted,
+                                );
+                            }
+                            rect.bottom()
+                        } else {
+                            ui.cursor().top()
+                        };
                         match self.previews.get(&project.path) {
                             Some(Ok(model)) => {
                                 ui.label(
@@ -1551,6 +1576,10 @@ impl StartPage {
                         .clicked()
                         {
                             self.open_project(project.path.clone());
+                        }
+                        let used = ui.min_rect().bottom() - details_top;
+                        if used.is_finite() && used > 0.0 {
+                            ui.ctx().data_mut(|data| data.insert_temp(details_id, used));
                         }
                     });
             },
@@ -1939,11 +1968,29 @@ mod tests {
         assert!(crate::app::inter(&ctx));
         theme::install(&ctx);
         let mut page = library_page("min-size");
-        for preference in [egui::ThemePreference::Light, egui::ThemePreference::Dark] {
+        // All models has a folder row more than Recent: the tighter of the two tabs.
+        page.all = page.recent.clone();
+        for (preference, tab) in [
+            (egui::ThemePreference::Light, Tab::Recent),
+            (egui::ThemePreference::Dark, Tab::Recent),
+            (egui::ThemePreference::Light, Tab::All),
+            (egui::ThemePreference::Dark, Tab::All),
+        ] {
+            page.tab = tab;
             ctx.set_theme(preference);
+            // Two frames: the second lays the image out against the measured details.
+            library_frame(&mut page, &ctx, (1100.0, 680.0));
             let texts = library_frame(&mut page, &ctx, (1100.0, 680.0));
+            // The panel ends above the footer hint, so a row below the hint's top is clipped
+            // by the panel's scroll area even though its shape is still emitted (the recheck
+            // of item 25 found State and Open model below the fold this way).
+            let fold = texts
+                .iter()
+                .find(|(text, _)| text.starts_with("Double-click a model"))
+                .map(|(_, bounds)| bounds.top())
+                .unwrap_or(680.0);
             let inside = |bounds: egui::Rect| {
-                bounds.right() <= 1100.0 + 0.5 && bounds.bottom() <= 680.0 + 0.5
+                bounds.right() <= 1100.0 + 0.5 && bounds.bottom() <= fold + 0.5
             };
             for (label, why) in [
                 ("Open model", "the panel button is clipped"),
