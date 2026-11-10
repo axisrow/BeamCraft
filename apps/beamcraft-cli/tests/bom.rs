@@ -333,6 +333,114 @@ fn the_exported_tables_match_the_verified_revision() {
 }
 
 #[test]
+fn a_cut_member_reports_the_length_that_remains_and_a_tiny_mass_is_never_zero() {
+    // #562 items 3 and 39: a beam cut from 4000 to 2000 mm printed the authored length and
+    // a non-physical area (the net volume over the authored length), and the 0.00314 kg of
+    // a 20x20x1 plate printed as `0` in every human-facing cell.
+    let f = Fixture::new();
+    f.ok("define-material", &["--grade", "S355", "--density", "7850"]);
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--width",
+                    "200",
+                    "--height",
+                    "300",
+                    "--designation",
+                    "RECT200x300",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let beam = text(
+        at(
+            &f.ok(
+                "create-member",
+                &[
+                    "--start",
+                    "0,0,0",
+                    "--end",
+                    "4000,0,0",
+                    "--profile-digest",
+                    &profile,
+                    "--material",
+                    "S355",
+                ],
+            ),
+            &["member"],
+        ),
+        "element_id",
+    );
+    f.ok(
+        "cut-by-plane",
+        &[
+            "--id",
+            &beam,
+            "--operation-id",
+            "019a7bf0-0000-7000-8000-000000ab0042",
+            "--point",
+            "2000,0,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+        ],
+    );
+    f.ok(
+        "create-plate",
+        &[
+            "--width",
+            "20",
+            "--length",
+            "20",
+            "--thickness",
+            "1",
+            "--material",
+            "S355",
+        ],
+    );
+
+    let elements_path = f.out("cut-elements.csv");
+    let summary_path = f.out("cut-summary.csv");
+    f.ok(
+        "export-bom",
+        &["--out", &elements_path, "--summary", &summary_path],
+    );
+    let elements_text = f.read("cut-elements.csv");
+    let lines: Vec<&str> = elements_text.lines().collect();
+    assert_eq!(lines.len(), 3, "one beam and one plate: {lines:?}");
+    let rows: Vec<Vec<&str>> = lines[1..].iter().map(|l| cells(l)).collect();
+    let beam_row = rows.iter().find(|r| r[2] == "beam").unwrap();
+    let plate_row = rows.iter().find(|r| r[2] == "plate").unwrap();
+    // The cut keeps x <= 2000: the report's length is the surviving extent, so the derived
+    // area is the physical 60000 mm2 section again and the cut-off half is not counted.
+    assert_eq!(beam_row[6], "2000", "the length is what remains, not 4000");
+    assert_eq!(beam_row[7], "60000", "area = net volume / surviving length");
+    assert_eq!(beam_row[8], "120000000");
+    assert_eq!(beam_row[9], "0.12");
+    assert_eq!(beam_row[10], "942");
+    // The tiny mass keeps its scale instead of printing zero.
+    assert_eq!(plate_row[10], "0.00314");
+
+    let summary_text = f.read("cut-summary.csv");
+    let summary_lines: Vec<&str> = summary_text.lines().collect();
+    let groups: Vec<Vec<&str>> = summary_lines[1..].iter().map(|l| cells(l)).collect();
+    let beam_group = groups.iter().find(|g| g[0] == "beam").unwrap();
+    assert_eq!(
+        beam_group[4], "2000",
+        "the total length counts only what remains"
+    );
+    assert_eq!(beam_group[5], "0.06");
+    assert_eq!(beam_group[7], "942");
+    let plate_group = groups.iter().find(|g| g[0] == "plate").unwrap();
+    assert_eq!(plate_group[5], "0.0004", "a small total keeps its scale");
+}
+
+#[test]
 fn refusals_write_nothing() {
     let f = Fixture::new();
     // A store without a revision has nothing to report.

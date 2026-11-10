@@ -17,6 +17,7 @@
 use crate::element::ElementKind;
 use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 /// One element of the report as the caller fills it.
@@ -36,7 +37,8 @@ pub struct BomRow {
     pub profile: String,
     /// Material label, or the empty string when the element pins no material.
     pub material: String,
-    /// Axis length of a member; `None` for a plate.
+    /// The physical length of a member along its axis — what remains after cuts; `None` for
+    /// a plate.
     pub length_mm: Option<f64>,
     /// Area in mm2 the caller derives from the current volume (`volume/length` for a member,
     /// `volume/thickness` for a plate); `None` when the denominator is not usable.
@@ -62,7 +64,7 @@ pub struct BomElement {
     pub profile: String,
     /// Material label, empty when none.
     pub material: String,
-    /// Axis length of a member; `None` for a plate.
+    /// The physical length of a member along its axis; `None` for a plate.
     pub length_mm: Option<f64>,
     /// Derived area in mm2.
     pub area_mm2: Option<f64>,
@@ -118,11 +120,10 @@ pub fn tables(rows: &[BomRow], max_rows: usize) -> Result<Bom, CommandError> {
     }
     let mut ordered: Vec<&BomRow> = rows.iter().collect();
     ordered.sort_by(|a, b| {
-        (a.kind, a.profile.as_str(), a.mark.as_str()).cmp(&(
-            b.kind,
-            b.profile.as_str(),
-            b.mark.as_str(),
-        ))
+        a.kind
+            .cmp(&b.kind)
+            .then_with(|| natural(&a.profile, &b.profile))
+            .then_with(|| natural(&a.mark, &b.mark))
     });
     let elements = ordered
         .iter()
@@ -140,8 +141,8 @@ pub fn tables(rows: &[BomRow], max_rows: usize) -> Result<Bom, CommandError> {
             mass_kg: r.mass_kg,
         })
         .collect();
-    // The group key is the label tuple, so equal labels group together; the BTreeMap keeps the
-    // first-seen order of the sorted rows.
+    // The group key is the label tuple, so equal labels group together; the map only dedups,
+    // and the report order is sorted out of it below — the element table's own order.
     let mut keys = BTreeMap::new();
     for r in ordered {
         let key = (r.kind, r.profile.clone(), r.material.clone());
@@ -169,9 +170,20 @@ pub fn tables(rows: &[BomRow], max_rows: usize) -> Result<Bom, CommandError> {
             None => group.mass_unknown += 1,
         }
     }
+    // The map iterates in byte order of its keys, so PL20's group would precede PL8's; sort
+    // into the element table's own order instead: kind, then the natural label order
+    // (visual audit #562 review round 1 — the two tables of one export must agree).
+    let mut grouped: Vec<((ElementKind, String, String), BomGroup)> = keys.into_iter().collect();
+    grouped.sort_by(|(a_key, _), (b_key, _)| {
+        a_key
+            .0
+            .cmp(&b_key.0)
+            .then_with(|| natural(&a_key.1, &b_key.1))
+            .then_with(|| natural(&a_key.2, &b_key.2))
+    });
     Ok(Bom {
         elements,
-        groups: keys.into_values().collect(),
+        groups: grouped.into_iter().map(|(_, group)| group).collect(),
     })
 }
 
@@ -269,17 +281,59 @@ pub(crate) fn num(value: f64) -> String {
     format!("{cleaned}")
 }
 
+/// The natural order of two label strings: a digit run compares as a number, so `PL8`
+/// lists before `PL20` and an approved mark `B2` before `B10` (visual audit #562 item 39 —
+/// the plain string order read as an error). Labels that differ only in zero padding stay
+/// equal; the sort above is stable, so their order is the caller's.
+pub(crate) fn natural(a: &str, b: &str) -> Ordering {
+    fn digits(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> (usize, String) {
+        let mut run = String::new();
+        while let Some(d) = chars.peek().copied() {
+            if !d.is_ascii_digit() {
+                break;
+            }
+            run.push(d);
+            let _ = chars.next();
+        }
+        let trimmed = run.trim_start_matches('0');
+        (trimmed.chars().count(), trimmed.to_owned())
+    }
+    let mut a = a.chars().peekable();
+    let mut b = b.chars().peekable();
+    loop {
+        let (x, y) = match (a.peek().copied(), b.peek().copied()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) => (x, y),
+        };
+        if x.is_ascii_digit() && y.is_ascii_digit() {
+            let ord = digits(&mut a).cmp(&digits(&mut b));
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        } else if x == y {
+            let _ = (a.next(), b.next());
+        } else {
+            return x.cmp(&y);
+        }
+    }
+}
+
 /// One quantity cell at its unit's display precision, trailing zeros trimmed. Shared with
-/// the schedule renderer, so a mass prints the same text in every human-facing report
-/// (#490 finding 3).
+/// the schedule renderer, so a quantity prints the same text in every human-facing report
+/// (#490 finding 3, visual audit #562 item 40). A non-zero value never prints as zero
+/// (visual audit #562 item 39): the cell keeps the noise-stripped full value instead.
 pub(crate) fn quantity(value: f64, decimals: usize) -> String {
     let text = format!("{value:.decimals$}");
     let trimmed = text.trim_end_matches('0').trim_end_matches('.');
-    if trimmed == "-0" {
-        "0".to_owned()
-    } else {
-        trimmed.to_owned()
+    if trimmed == "0" || trimmed == "-0" {
+        if value != 0.0 && value.is_finite() {
+            return num(value);
+        }
+        return "0".to_owned();
     }
+    trimmed.to_owned()
 }
 
 #[cfg(test)]
@@ -370,6 +424,51 @@ mod tests {
         let group = summary.lines().nth(1).unwrap_or_default();
         assert!(group.contains(",0.01,"), "{group}");
         assert!(group.ends_with(",0.0001002,0.79,0"), "{group}");
+    }
+
+    #[test]
+    fn a_non_zero_quantity_never_prints_as_zero() {
+        // #562 item 39: a known non-zero value that rounds below the unit's display
+        // precision printed "0" — the 0.00314 kg of a 20x20x1 plate and a 2485 mm2 group's
+        // 0.002485 m2 total. The cell keeps the noise-stripped full value; a real zero
+        // still prints "0" and an unknown mass still prints an empty cell.
+        assert_eq!(quantity(0.00314, 2), "0.00314");
+        assert_eq!(quantity(0.002485, 2), "0.002485");
+        assert_eq!(quantity(-0.0001, 2), "-0.0001");
+        assert_eq!(quantity(0.0, 2), "0");
+        let mut plate = row(1, ElementKind::Plate, "PL1", Some(0.00314));
+        plate.area_mm2 = Some(2485.0);
+        plate.volume_mm3 = 2485.0;
+        let bom = tables(&[plate], 10).unwrap();
+        let text = elements_csv(&bom);
+        let line = text.lines().nth(1).unwrap_or_default();
+        assert!(line.ends_with(",0.00314"), "{line}");
+        let summary = summary_csv(&bom);
+        let group = summary.lines().nth(1).unwrap_or_default();
+        assert!(group.contains(",0.002485,"), "{group}");
+    }
+
+    #[test]
+    fn profile_labels_and_marks_sort_naturally() {
+        // #562 item 39: the plain string order listed PL8 after PL20 and read as an error;
+        // digit runs now compare as numbers.
+        let rows = [
+            row(1, ElementKind::Plate, "PL20", Some(1.0)),
+            row(2, ElementKind::Plate, "PL8", Some(1.0)),
+        ];
+        let bom = tables(&rows, 10).unwrap();
+        let profiles: Vec<&str> = bom.elements.iter().map(|e| e.profile.as_str()).collect();
+        assert_eq!(profiles, ["PL8", "PL20"]);
+        // The summary table lists the groups in the element table's own order, not the byte
+        // order of the group labels (review round 1: the two tables of one export agree).
+        let group_profiles: Vec<&str> = bom.groups.iter().map(|g| g.profile.as_str()).collect();
+        assert_eq!(group_profiles, ["PL8", "PL20"]);
+        assert_eq!(natural("PL8", "PL20"), Ordering::Less);
+        assert_eq!(natural("PL10", "PL9"), Ordering::Greater);
+        assert_eq!(natural("B2", "B10"), Ordering::Less);
+        assert_eq!(natural("PL08", "PL8"), Ordering::Equal);
+        assert_eq!(natural("a2b", "a10b"), Ordering::Less);
+        assert_eq!(natural("plate", "plate"), Ordering::Equal);
     }
 
     #[test]

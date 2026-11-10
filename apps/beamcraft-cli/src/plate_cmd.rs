@@ -3882,18 +3882,26 @@ pub(crate) fn triple(values: [f64; 3]) -> Run<Json> {
     ))
 }
 
-/// A mass rounded to 0.1 kg for display. The stored and exact values are never rounded.
+/// A mass rounded to the human reports' shared display precision — the BOM's two decimals
+/// (#490 finding 3, visual audit #562 item 40: `inspect` printed `22.5` where the BOM and
+/// the schedule printed `22.54`). A non-zero mass never displays as zero (visual audit
+/// #562 item 39): the exact value keeps the cell instead. The stored and exact fields are
+/// never rounded.
 fn display_kg(kg: f64) -> f64 {
-    (kg * 10.0).round() / 10.0
+    let rounded = (kg * 100.0).round() / 100.0;
+    if rounded == 0.0 && kg != 0.0 {
+        return kg;
+    }
+    rounded
 }
 
 /// The quantities of a plate or a member.
 ///
 /// `volume.mm3`, `volume.m3` and `mass.kg` are the NET values and keep the names of the first
 /// quantity slices, so existing readers do not change. The explicit gross and net figures are
-/// next to them at full precision, and `mass.kg_display` and friends are the same masses rounded
-/// to 0.1 kg for display. `section_area_mm2` and `area_source` describe a member's effective
-/// area.
+/// next to them at full precision, and `mass.kg_display` and friends are the same masses at the
+/// human reports' shared display precision (the BOM's two decimals). `section_area_mm2` and
+/// `area_source` describe a member's effective area.
 fn quantities_json(q: &Quantities) -> Run<Json> {
     let optional = |value: Option<f64>| value.map_or(Ok(Json::Null), num);
     let display = |value: Option<f64>| value.map(display_kg).map_or(Ok(Json::Null), num);

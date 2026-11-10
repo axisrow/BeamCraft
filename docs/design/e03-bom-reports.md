@@ -62,13 +62,19 @@ the command that reports stored-quantity freshness.
 
 ### 2.3 Derived columns
 
-No new geometry is computed. Two columns are divisions of already-current quantities, exact for
-the stored algorithms (a member's volume is its section area times its axis length; a plate's
-volume is its net face area times its thickness, holes included):
+No new geometry is evaluated: `length_mm` reads the current certified body, and the other
+columns are divisions of already-current quantities (a member's net volume is its section area
+times the surviving length for a straight member; a plate's volume is its net face area times
+its thickness, holes included):
 
-* `length_mm` — members only: the length of the authored axis `p1..p2`.
-* `area_mm2` — members: `volume_mm3 / length_mm` (the detailed outline's net area); plates:
-  `volume_mm3 / thickness_mm` (the net face area). Empty when the denominator is not positive.
+* `length_mm` — members only. For a straight member it is the extent of the re-evaluated
+  solid projected onto the axis, so a cut reports the length that physically remains and the
+  cut-off part is not counted (visual audit #562 item 3); a polybeam or curved member keeps
+  its authored path length. Without length-changing operations this is the authored axis
+  length, P14 end offsets included.
+* `area_mm2` — members: `volume_mm3 / length_mm` (the detailed outline's net area over the
+  reported length); plates: `volume_mm3 / thickness_mm` (the net face area). Empty when the
+  denominator is not positive.
 
 Dimensions (`width`/`length`/`thickness`, `width`/`height` of a section's bounding box) are
 reported from the bodies, not re-derived.
@@ -94,7 +100,10 @@ the numbering state; the engine API carries both (`mark: String`, `id`).
 ### 2.6 Sorting and grouping
 
 * Element table: kind in registry order (`plate`, `beam`, `column`), then profile label, then
-  mark. Deterministic, and it keeps same-profile parts together for the shop.
+  mark. Profile labels and marks compare in natural order — a digit run compares as a
+  number, so `PL8` lists before `PL20` and `B2` before `B10` (#562 item 39; labels that
+  differ only in zero padding stay equal and keep the caller's order). Deterministic, and it
+  keeps same-profile parts together for the shop.
 * Summary: group key `(kind, profile label, material label)`; for a plate the thickness inside
   the `PL` label is the group's profile part, so plates group by thickness and grade. Columns:
   `count`, `total_length_mm` (members), `total_area_m2`, `total_volume_m3`, `total_mass_kg`

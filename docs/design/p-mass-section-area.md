@@ -94,7 +94,7 @@ operations net equals gross; for a plate with holes they are the values they alw
 |---|---|
 | `volume_gross_mm3`, `volume_net_mm3`, `removed_volume_mm3` | full precision |
 | `mass_gross_kg`, `mass_net_kg` | full precision, null when the mass is unknown |
-| `mass.kg_display`, `mass_gross_kg_display`, `mass_net_kg_display` | rounded to 0.1 kg for display only |
+| `mass.kg_display`, `mass_gross_kg_display`, `mass_net_kg_display` | rounded to the human reports' shared display precision (the BOM's two decimals, #490/#562) for display only; a non-zero mass never displays as zero (#562 item 39) |
 | `section_area_mm2`, `area_source` | members: the effective area and `catalogue` or `computed`; null for a plate |
 
 Stored values are never rounded. `inspect-elements` adds `expected_gross_signature`,

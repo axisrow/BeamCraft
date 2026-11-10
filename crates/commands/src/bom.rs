@@ -112,10 +112,50 @@ fn plate_row(inspection: &Inspection, marks: &[StoredMark], record: &PlateRecord
     })
 }
 
+/// The physical length of a member's current solid along its axis. For a straight member it is
+/// the extent of the re-evaluated certified mesh projected onto the axis direction, so a cut
+/// reports the length that physically remains and the derived area stays physical (visual
+/// audit #562 item 3); a polybeam or curved member keeps the body's path length, to which a
+/// single projection does not apply. Without length-changing operations the extent agrees with
+/// the body's own `axis_length_mm` (P14 end offsets included).
+fn member_length_mm(record: &MemberRecord) -> f64 {
+    let fallback = record.body.axis_length_mm;
+    let authored = &record.authored;
+    if authored.curved || authored.axis_points_mm.len() != 2 {
+        return fallback;
+    }
+    let (Some(start), Some(end)) = (
+        authored.axis_points_mm.first(),
+        authored.axis_points_mm.last(),
+    ) else {
+        return fallback;
+    };
+    let axis = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
+    let squared = axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2];
+    if !squared.is_finite() || squared <= 0.0 {
+        return fallback;
+    }
+    let scale = 1.0 / squared.sqrt();
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for vertex in record.body.solid.vertices() {
+        let along = (vertex[0] - start[0]) * axis[0]
+            + (vertex[1] - start[1]) * axis[1]
+            + (vertex[2] - start[2]) * axis[2];
+        low = low.min(along);
+        high = high.max(along);
+    }
+    let extent = (high - low) * scale;
+    if !extent.is_finite() || extent <= 0.0 {
+        return fallback;
+    }
+    extent
+}
+
 fn member_row(inspection: &Inspection, marks: &[StoredMark], record: &MemberRecord) -> Run<BomRow> {
-    // The member length is the body's own: the axis chord for a straight member, the polyline
-    // path length for a polybeam.
-    let length = record.body.axis_length_mm;
+    // The member length is the physical length of what remains: the solid's extent along the
+    // axis for a straight member, the polyline path length for a polybeam.
+    let length = member_length_mm(record);
     Ok(BomRow {
         id: record.authored.id,
         mark: mark_of(

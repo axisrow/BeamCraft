@@ -163,13 +163,15 @@ fn a_computed_area_gives_the_exact_mass_of_the_reference_i_section() {
         1e-9,
     );
     assert!((num(q, &["mass", "kg"]) - 192.168).abs() < 0.01);
-    assert_eq!(num(q, &["mass", "kg_display"]), 192.2);
+    // The display precision is the BOM's two decimals (#562 item 40): the same mass reads
+    // 192.17 in export-bom, schedule-export and inspect-elements.
+    assert_eq!(num(q, &["mass", "kg_display"]), 192.17);
     // Without operations gross and net are the same figure, and the old keys are the net ones.
     assert_eq!(num(q, &["volume_gross_mm3"]), num(q, &["volume_net_mm3"]));
     assert_eq!(num(q, &["volume_net_mm3"]), num(q, &["volume", "mm3"]));
     assert_eq!(num(q, &["mass_gross_kg"]), num(q, &["mass_net_kg"]));
     assert_eq!(num(q, &["mass_net_kg"]), num(q, &["mass", "kg"]));
-    assert_eq!(num(q, &["mass_net_kg_display"]), 192.2);
+    assert_eq!(num(q, &["mass_net_kg_display"]), 192.17);
     assert_eq!(num(q, &["removed_volume_mm3"]), 0.0);
     // The old polygon figure (192.58 kg) is not what is reported any more.
     assert!(num(q, &["mass", "kg"]) < 192.4);
@@ -356,8 +358,8 @@ fn a_plate_with_holes_has_a_gross_that_ignores_them_and_a_net_that_does_not() {
     assert_eq!(num(q, &["mass", "kg"]), num(q, &["mass_net_kg"]));
     close(num(q, &["mass_gross_kg"]), 39.25, 1e-12);
     close(num(q, &["mass_net_kg"]), 38.268_75, 1e-9);
-    assert_eq!(num(q, &["mass_gross_kg_display"]), 39.3);
-    assert_eq!(num(q, &["mass_net_kg_display"]), 38.3);
+    assert_eq!(num(q, &["mass_gross_kg_display"]), 39.25);
+    assert_eq!(num(q, &["mass_net_kg_display"]), 38.27);
     assert!(is_null(q, &["area_source"]));
     // A plate without holes: gross equals net.
     let solid = f.ok(
