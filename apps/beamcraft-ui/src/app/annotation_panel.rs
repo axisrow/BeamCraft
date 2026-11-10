@@ -84,7 +84,7 @@ pub(crate) struct Panel {
     /// R key or the store watcher changed the model, and the list must be read again (issue 569
     /// item 24).
     pub(crate) stamp: Option<String>,
-    pub(super) list_job: Option<Receiver<Result<Vec<Row>, ToolError>>>,
+    pub(super) list_job: Option<Receiver<(Option<String>, Result<Vec<Row>, ToolError>)>>,
     pub(super) commit_job: Option<Receiver<Result<(), ToolError>>>,
     /// Whether the running commit is a delete, so the note names the right action.
     pub(super) deleting: bool,
@@ -580,7 +580,10 @@ impl App {
         }
     }
 
-    /// Starts an `annotation-list` worker and keeps the last rows until it answers.
+    /// Starts an `annotation-list` worker and keeps the last rows until it answers. The
+    /// snapshot token captured here rides the reply: the rows describe the store the CLI read,
+    /// so the stamp they set on arrival is that token, not the live one a mid-flight change
+    /// would leave behind (review of 569 item 24).
     pub(crate) fn annotation_load(&mut self) {
         if self.other_command_running() || self.annotation.list_job.is_some() {
             return;
@@ -592,13 +595,17 @@ impl App {
             "--store".to_owned(),
             self.source.store.to_string_lossy().into_owned(),
         ];
+        let stamp = self
+            .loaded
+            .as_ref()
+            .map(|l| l.snapshot.token().as_str().to_owned());
         let (tx, rx) = channel();
         match std::thread::Builder::new()
             .name("beamcraft-annotation-list".into())
             .spawn(move || {
                 let result = command::run(&cli, &args, Duration::from_secs(30), &stats)
                     .and_then(|out| parse_rows(out.code, &out.stdout));
-                let _ = tx.send(result);
+                let _ = tx.send((stamp, result));
             }) {
             Ok(_) => self.annotation.list_job = Some(rx),
             Err(_) => self.annotation.rows = Err("The list command could not be started.".into()),
@@ -647,20 +654,22 @@ impl App {
             self.annotation_load();
         }
         if let Some(rx) = &self.annotation.list_job {
-            let result = match rx.try_recv() {
-                Ok(result) => result,
+            let (stamp, result) = match rx.try_recv() {
+                Ok(arrived) => arrived,
                 Err(TryRecvError::Empty) => return,
-                Err(TryRecvError::Disconnected) => Err(ToolError::local(
-                    "CLI_FAILED",
-                    "The list command ended without a result.",
-                )),
+                Err(TryRecvError::Disconnected) => (
+                    None,
+                    Err(ToolError::local(
+                        "CLI_FAILED",
+                        "The list command ended without a result.",
+                    )),
+                ),
             };
             self.annotation.list_job = None;
             self.annotation.rows = result.map_err(|e| e.to_string());
-            self.annotation.stamp = self
-                .loaded
-                .as_ref()
-                .map(|l| l.snapshot.token().as_str().to_owned());
+            // The stamp the job captured at spawn: the store state its rows describe, not the
+            // live token a change inside the job window would have moved (review 569/24).
+            self.annotation.stamp = stamp;
         }
         let Some(rx) = &self.annotation.commit_job else {
             return;
