@@ -402,11 +402,13 @@ mod tests {
 
     #[test]
     fn textual_metadata_is_escaped_in_pdf_strings() {
-        let drawing = drawing("a<b>&\"c'");
+        // The ampersand is admissible (it draws as strokes) and stays literal in the PDF
+        // string; an undrawable name like a<b> refuses at admission now.
+        let drawing = drawing("a&b");
         let version = DocumentVersionId::parse(C).unwrap();
         let bytes = export(&drawing, version, &projection("10.5")).unwrap();
         let text = std::str::from_utf8(&bytes).unwrap();
-        assert!(text.contains("/Title (a<b>&\"c')"));
+        assert!(text.contains("/Title (a&b)"));
         assert!(text.contains("/Keywords ("));
     }
 }

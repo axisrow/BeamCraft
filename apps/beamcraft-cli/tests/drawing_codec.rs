@@ -23,7 +23,10 @@ const MEMBER: &str = "01900000-0000-7000-8000-000000000004";
 fn drawing() -> Drawing {
     Drawing::admit(DrawingSpec {
         id: DrawingId::parse(DRAWING).unwrap(),
-        name: "Балка \"A\" \\ original".into(),
+        // The name draws as strokes (issue 562 item 11 now covers the drawing name),
+        // so it carries the drawable punctuation; non-ASCII wire coverage lives on the
+        // layer name below, which keeps the bounded label rule.
+        name: "MARK #7 (A) 50% - B/2".into(),
         source: SourceModelPin {
             project: ProjectId::parse(VIEW).unwrap(),
             revision: RevisionId::parse(DIM).unwrap(),

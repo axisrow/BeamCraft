@@ -758,45 +758,60 @@ fn pattern_strokes(geometry: &DraftingGeometry) -> Vec<[[f64; 2]; 2]> {
             symbol,
             scale,
         } => symbol_strokes(*anchor, *symbol, *scale),
-        DraftingGeometry::FreeDimension {
-            from,
-            to,
-            offset,
-            decimal_places,
-        } => {
-            let dx = to[0] - from[0];
-            let dy = to[1] - from[1];
-            let length = dx.hypot(dy);
-            // Admission refuses equal endpoints, so this is only a bounds guard; an
-            // impossible measure renders nothing instead of dividing by zero.
-            if !length.is_finite() || length == 0.0 {
-                return Vec::new();
-            }
-            let (nx, ny) = (-dy / length, dx / length);
-            let line = |p: [f64; 2]| [p[0] + nx * offset, p[1] + ny * offset];
-            let la = line(*from);
-            let lb = line(*to);
-            let line_length = (lb[0] - la[0]).hypot(lb[1] - la[1]);
-            let inward = [(lb[0] - la[0]) / line_length, (lb[1] - la[1]) / line_length];
-            let label = format!("{:.*}", usize::from(*decimal_places), line_length);
-            let anchor_mid = [(from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0];
-            vec![extension_line(*from, la), extension_line(*to, lb), [la, lb]]
-                .into_iter()
-                .chain(arrow_strokes_sized(la, inward, line_length))
-                .chain(arrow_strokes_sized(
-                    lb,
-                    [-inward[0], -inward[1]],
-                    line_length,
-                ))
-                .chain(label_strokes(&label, [la, lb], anchor_mid, None))
-                .collect()
-        }
+        DraftingGeometry::FreeDimension { .. } => free_dimension_strokes(geometry).0,
         // Text glyphs take their own continuous layer; nothing pattern-shaped here.
         DraftingGeometry::Text { .. } => Vec::new(),
     }
 }
 
-/// The glyph strokes of one drawn object: the text run, always drawn unbroken.
+/// One stroke group of a drawn object.
+type Strokes = Vec<[[f64; 2]; 2]>;
+
+/// One free dimension's two stroke groups: the pattern strokes (witness lines, the
+/// offset line and the arrowheads, drawn under the authored line type) and the numeric
+/// label's glyphs, which always draw unbroken — a dash pattern never cuts the measured
+/// number into pieces (visual audit finding 29).
+fn free_dimension_strokes(geometry: &DraftingGeometry) -> (Strokes, Strokes) {
+    let DraftingGeometry::FreeDimension {
+        from,
+        to,
+        offset,
+        decimal_places,
+    } = geometry
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let dx = to[0] - from[0];
+    let dy = to[1] - from[1];
+    let length = dx.hypot(dy);
+    // Admission refuses equal endpoints, so this is only a bounds guard; an impossible
+    // measure renders nothing instead of dividing by zero.
+    if !length.is_finite() || length == 0.0 {
+        return (Vec::new(), Vec::new());
+    }
+    let (nx, ny) = (-dy / length, dx / length);
+    let line = |p: [f64; 2]| [p[0] + nx * offset, p[1] + ny * offset];
+    let la = line(*from);
+    let lb = line(*to);
+    let line_length = (lb[0] - la[0]).hypot(lb[1] - la[1]);
+    let inward = [(lb[0] - la[0]) / line_length, (lb[1] - la[1]) / line_length];
+    let label = format!("{:.*}", usize::from(*decimal_places), line_length);
+    let anchor_mid = [(from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0];
+    let pattern = vec![extension_line(*from, la), extension_line(*to, lb), [la, lb]]
+        .into_iter()
+        .chain(arrow_strokes_sized(la, inward, line_length))
+        .chain(arrow_strokes_sized(
+            lb,
+            [-inward[0], -inward[1]],
+            line_length,
+        ))
+        .collect();
+    let glyphs = label_strokes(&label, [la, lb], anchor_mid, None);
+    (pattern, glyphs)
+}
+
+/// The glyph strokes of one drawn object: the text run and a free dimension's numeric
+/// label, always drawn unbroken.
 fn glyph_strokes(geometry: &DraftingGeometry) -> Vec<[[f64; 2]; 2]> {
     match geometry {
         DraftingGeometry::Text {
@@ -805,6 +820,7 @@ fn glyph_strokes(geometry: &DraftingGeometry) -> Vec<[[f64; 2]; 2]> {
             height,
             rotation,
         } => transformed_text(text, *anchor, height / GLYPH_HEIGHT, *rotation),
+        DraftingGeometry::FreeDimension { .. } => free_dimension_strokes(geometry).1,
         _ => Vec::new(),
     }
 }
@@ -1529,12 +1545,14 @@ mod tests {
 
     #[test]
     fn textual_metadata_is_escaped_and_label_glyphs_are_original_strokes() {
-        let drawing = drawing("a<b>&\"c'");
+        // The ampersand is admissible (it draws as strokes) and still exercises the XML
+        // escape: an undrawable name like a<b> refuses at admission now.
+        let drawing = drawing("a&b");
         let version = DocumentVersionId::parse(C).unwrap();
         let bytes = export(&drawing, version, &projection("10.5")).unwrap();
         let text = std::str::from_utf8(&bytes).unwrap();
-        assert!(text.contains("a&lt;b&gt;&amp;&quot;c&#39;"));
-        assert!(!text.contains("a<b>"));
+        assert!(text.contains("a&amp;b"));
+        assert!(!text.contains("a&b"));
         // "10.5" draws digit, point and digit glyphs as 2+6+1+5 original stroke subpaths,
         // never font text; the digit segments touch but never follow each other, so none
         // of them chain.
@@ -1824,5 +1842,28 @@ mod tests {
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0].line_type, LineType::Dashed);
         assert_eq!(dash_array(layers[0].line_type), Some(&[3.0, 3.0][..]));
+        // The free dimension's numeric label is glyphs too: it draws unbroken on its own
+        // continuous layer while its witnesses keep the authored dash (review of this PR).
+        let drawing = drawing_with_strokes(
+            "Dashed measure",
+            DraftingGeometry::FreeDimension {
+                from: [10.0, 10.0],
+                to: [50.0, 10.0],
+                offset: 8.0,
+                decimal_places: 1,
+            },
+            LineType::Dashed,
+        );
+        let layers = drafting_layers(&drawing).unwrap();
+        assert_eq!(layers.len(), 2, "pattern and glyph layers");
+        assert_eq!(layers[0].line_type, LineType::Dashed);
+        assert_eq!(layers[1].line_type, LineType::Continuous);
+        // The glyph layer carries only the label's strokes, above the offset line.
+        assert!(
+            layers[1].strokes.iter().all(|stroke| stroke
+                .iter()
+                .all(|[x, y]| { (20.0..=40.0).contains(x) && (19.0..=27.0).contains(y) })),
+            "the glyph layer holds only label strokes"
+        );
     }
 }

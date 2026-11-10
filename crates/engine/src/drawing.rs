@@ -266,13 +266,26 @@ fn finite_range(value: f64, min: f64, max: f64, field: &'static str) -> Result<(
     Ok(())
 }
 
-/// Validates one view's authored title; a present title obeys the bounded label rule, an
-/// absent one is the unannotated default.
+/// Validates one view's authored title; a present title obeys the bounded label rule and
+/// draws with the stroke glyphs, an absent one is the unannotated default. A character
+/// the glyphs cannot draw refuses here: a title that silently blanked its own marks lied
+/// about its content exactly like a drawn text object would (visual audit finding 11).
 fn validate_title(title: &Option<String>) -> Result<(), CommandError> {
-    if title.as_ref().is_some_and(|title| !label_is_valid(title)) {
+    let Some(title) = title else {
+        return Ok(());
+    };
+    if !label_is_valid(title) {
         return Err(invalid(
             "title",
             "view title must satisfy the bounded label rule",
+        ));
+    }
+    if title.chars().any(|ch| !svg::draws(ch)) {
+        return Err(invalid(
+            "title",
+            "title draws with the drawing's own stroke glyphs; a character outside the \
+             supported set cannot be drawn faithfully (use ASCII capitals, digits and \
+             , ; / ( ) + = # & _ % - : .)",
         ));
     }
     Ok(())
@@ -363,6 +376,16 @@ impl Drawing {
             return Err(invalid(
                 "name",
                 "drawing name must satisfy the bounded label rule",
+            ));
+        }
+        // The name is the sheet's DRAWING row and the export title: the same
+        // every-mark-draws rule as the titles (visual audit finding 11).
+        if spec.name.chars().any(|ch| !svg::draws(ch)) {
+            return Err(invalid(
+                "name",
+                "drawing name draws with the drawing's own stroke glyphs; a character \
+                 outside the supported set cannot be drawn faithfully (use ASCII \
+                 capitals, digits and , ; / ( ) + = # & _ % - : .)",
             ));
         }
         validate_paper_settings(spec.view.scale_denominator, spec.view.paper_origin_mm)?;

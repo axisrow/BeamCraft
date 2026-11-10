@@ -84,6 +84,41 @@ fn typed_document_ids_are_full_uuidv7_and_distinct_objects_cannot_share_one_uuid
 }
 
 #[test]
+fn titles_and_the_name_admit_only_what_the_stroke_glyphs_draw() {
+    // Visual audit finding 11 over the whole sheet surface: a title or the drawing name
+    // that silently blanked its own marks lied about its content. "ÎLE" draws as "LE",
+    // so it refuses exactly like a drawn text object would; the supported set admits.
+    let mut s = spec();
+    s.view.title = Some("ELEVATION (MAIN) 1:20".into());
+    assert!(Drawing::admit(s.clone()).is_ok());
+    s.view.title = Some("ÎLE".into());
+    assert_eq!(
+        Drawing::admit(s).unwrap_err().code,
+        ErrorCode::InvalidArgument
+    );
+    let mut s = spec();
+    s.sections = vec![SectionSpec {
+        id: DrawingViewId::parse("01900000-0000-7000-8000-000000000031").unwrap(),
+        plane: Plane::Right,
+        cut_mm: 0.0,
+        side: CutSide::Positive,
+        scale_denominator: 20.0,
+        paper_origin_mm: [100.0, 40.0],
+        title: Some("РАЗРЕЗ".into()),
+    }];
+    assert_eq!(
+        Drawing::admit(s).unwrap_err().code,
+        ErrorCode::InvalidArgument
+    );
+    let mut s = spec();
+    s.name = "Чертёж вала".into();
+    assert_eq!(Drawing::admit(s).unwrap_err().field, "name");
+    let mut s = spec();
+    s.name = "SHAFT #7 (2 pcs) 50%".into();
+    assert!(Drawing::admit(s).is_ok());
+}
+
+#[test]
 fn admission_accepts_only_member_vertex_references_of_the_selected_owner() {
     let admitted = Drawing::admit(spec()).unwrap();
     assert_eq!(admitted.spec(), &spec());
