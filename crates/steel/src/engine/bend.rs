@@ -591,10 +591,13 @@ fn fold_loft(
         p1: [cursor[0] + heading[0] * tail, cursor[1] + heading[1] * tail],
     });
     let (section, deviation) = assemble_section(&elems, thickness)?;
-    // The body axis is the fold direction, anchored at the blank's along-axis minimum.
+    // The body axis is the fold direction, anchored at the blank's along-axis minimum and at
+    // the blank's cross-axis minimum: the section's first coordinate runs along `cross` from
+    // zero, so without the cross anchor the whole body lands past the far blank edge instead
+    // of on the authored blank (issue 562 item 2).
     let origin = [
-        axis[0] * along_min(&authored.contour_points_mm, axis),
-        axis[1] * along_min(&authored.contour_points_mm, axis),
+        axis[0] * along_min(&authored.contour_points_mm, axis) + cross[0] * min_cross,
+        axis[1] * along_min(&authored.contour_points_mm, axis) + cross[1] * min_cross,
         0.0,
     ];
     Ok((seal_loft(&section, origin, axis, along)?, deviation))
@@ -881,6 +884,51 @@ mod tests {
             .volume_mm3;
         close(thin_volume, 40_000.0, 2e-3);
         close(thick_volume, 40_000.0, 2e-3);
+    }
+
+    /// A folded body sits on its authored blank: a blank far from the origin keeps the blank's
+    /// own bounds, not a body shifted onto them (issue 562 item 2).
+    #[test]
+    fn a_folded_body_stays_on_its_authored_blank() {
+        let (x0, y0, along, across) = (1000.0, 2000.0, 600.0, 400.0);
+        let mut authored = plate(
+            vec![
+                [x0, y0, 0.0],
+                [x0 + along, y0, 0.0],
+                [x0 + along, y0 + across, 0.0],
+                [x0, y0 + across, 0.0],
+            ],
+            6.0,
+        );
+        // One fold across the middle of the blank, parallel to the x axis.
+        authored.bends = vec![BendRecord {
+            operation_id: op(4),
+            spec: BendSpec::Fold {
+                a_mm: [x0, y0 + across / 2.0, 0.0],
+                b_mm: [x0 + along, y0 + across / 2.0, 0.0],
+                radius_mm: 20.0,
+                angle_rad: core::f64::consts::FRAC_PI_2,
+            },
+        }];
+        let body = crate::engine::command::evaluate_plate(&authored).unwrap();
+        let mut low = [f64::INFINITY; 2];
+        let mut high = [f64::NEG_INFINITY; 2];
+        for v in body.solid.vertices() {
+            low[0] = low[0].min(v[0]);
+            low[1] = low[1].min(v[1]);
+            high[0] = high[0].max(v[0]);
+            high[1] = high[1].max(v[1]);
+        }
+        // The body spans the blank along the fold direction and starts at the blank's own
+        // cross minimum; the folded tail rises out of the plane, so the cross extent ends at
+        // the bend region's outer face, inside the blank.
+        close(low[0], x0, 1e-9);
+        close(high[0], x0 + along, 1e-9);
+        close(low[1], y0, 1e-9);
+        let mid_radius = 20.0 + 3.0;
+        let extent = across / 2.0 - mid_radius * core::f64::consts::FRAC_PI_4 + 20.0 + 6.0;
+        close(high[1], y0 + extent, 1e-9);
+        assert!(high[1] < y0 + across);
     }
 
     /// A cylinder roll of a rectangular blank: the wrap angle follows from the developed
