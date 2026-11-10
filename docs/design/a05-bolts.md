@@ -51,12 +51,14 @@ beamcraft bolts --store ROOT
 - **"Face reachable" is a conservative bounds check.** The engine requires every bolt position to
   lie within the world bounding box of both parts, inclusive of the boundary (a bolt on a face is
   reachable). The adapter derives the bounds from the authored inputs without the kernel: a plate
-  contributes the exact box of its contour extruded by its thickness; a member contributes its
+  contributes the exact box of its contour extruded by its thickness on its authored
+  `thickness_side` (issue 555); a member contributes its
   two world axis points expanded by half the section's bounding-box diagonal in every axis, which
   contains the member under any roll. The placement rotation is part of the bounds: the plate box
   is turned by the quaternion and the member axis points rotate with it, so a rotated part is
-  bounded, never refused. Generated holes stay refused on a rotated plate, whose plate-local
-  frame the world box alone does not give. The check accepts boxes that overlap in
+  bounded, never refused. Generated holes are decided in the plate-local frame from the
+  plate's own local box and the inverse placement (issue 555), so a rotated plate takes them
+  too. The check accepts boxes that overlap in
   mid-air and never proves a real face intersection; a face-exact test needs the kernel in the
   decision path and stays open. The reachability itself stays this box proxy — but the placed
   bolt group's grip is not bound by it: since issue 519 (defect B) the length follows the

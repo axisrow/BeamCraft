@@ -23,7 +23,8 @@ cargo build --offline -p beamcraft-cli --bins
   stable `code` and `message` and exit code 2; treat it as the normal error channel and read it.
 - **`--op-id` on every write.** Repeat the same id on a retry: the same id with the same
   arguments replays (`member_replayed`, `plate_replayed`, `element_replayed`, no new revision);
-  the same id with different arguments is refused (`OP_ID_REUSE`).
+  the same id with different arguments is refused (`OP_ID_REUSE`). Without `--new-id` the new
+  element id is derived from `--op-id`, so the verbatim retry replays.
 - **Exit codes.** 0 success, 2 input or validation refusal, 3 backend unavailable,
   4 outcome unknown, 124 deadline, 130 cancelled.
 

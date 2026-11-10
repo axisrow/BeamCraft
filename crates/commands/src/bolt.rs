@@ -117,12 +117,11 @@ struct Model {
     /// The world triangles of every part's stored scene mesh: the face-exact grip geometry
     /// (issue 519 defect B). A part without a usable mesh has no entry and grips per its box.
     faces: BTreeMap<ElementId, Faces>,
-    /// The groups whose generated hole records each part carries: a re-place over such a part
-    /// heals the group's own coaxial holes from the conservative box, so its stored length
-    /// survives the meshes it rewrote itself.
-    hole_owners: BTreeMap<ElementId, BTreeSet<ElementId>>,
+    /// The element-local box of every plate (contour extents and the material band of its
+    /// `thickness_side`): the frame a generated hole is decided in (A14.4, issue 555).
+    slabs: BTreeMap<ElementId, Bounds>,
     /// The world placement of every part: the frame a generated hole's polygon is mapped into
-    /// (A14.4); generation refuses a plate whose placement is rotated.
+    /// (A14.4); any rotation is carried into the plate-local frame (issue 555).
     placements: BTreeMap<ElementId, Placement>,
     /// Identities of the decoded beams and columns: a generating group refuses them until G14.
     members: std::collections::BTreeSet<ElementId>,
@@ -312,12 +311,13 @@ pub(crate) fn bolt_group_of(
 
 /// The geometry the placement and hole decisions read: conservative world bounds of every
 /// decoded part, the world triangles of its stored scene mesh (the face-exact grip geometry,
-/// issue 519 defect B), its world placement and the member identities.
+/// issue 519 defect B), its world placement, the member identities and every plate's local box.
 type Geometry = (
     BTreeMap<ElementId, Bounds>,
     BTreeMap<ElementId, Faces>,
     BTreeMap<ElementId, Placement>,
     std::collections::BTreeSet<ElementId>,
+    BTreeMap<ElementId, Bounds>,
 );
 
 /// The world-space triangles of a part's stored scene mesh, turned by its placement. A mesh
@@ -347,7 +347,7 @@ fn part_faces(mesh: &Option<crate::plate::DerivedMesh>, placement: &Placement) -
 }
 
 /// Conservative world bounds of every decoded part: a plate contributes the exact box of its
-/// contour extruded by its thickness, turned by its placement; a member its two world axis
+/// contour extruded by its thickness on its authored side, turned by its placement; a member its two world axis
 /// points expanded by half the section's bounding-box diagonal in every axis (which contains it
 /// under any roll and any placement rotation). Alongside the bounds it collects every part's
 /// world faces (issue 519 defect B), placement and the member identities the hole decision
@@ -357,24 +357,17 @@ fn world_geometry(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> 
     let mut faces = BTreeMap::new();
     let mut placements = BTreeMap::new();
     let mut members = std::collections::BTreeSet::new();
+    let mut slabs = BTreeMap::new();
     let profiles = profile_lookup(&decoded.definitions);
     for (authored, mesh) in &decoded.plates {
         let placement = authored.placement;
         let translation = placement.translation_mm;
-        let Some(first) = authored.contour_points_mm.first() else {
+        // The local box lays the thickness off by the authored side (issue 555 finding 3):
+        // one shared definition, never `+ thickness` upwards by assumption.
+        let Some([min, max]) = authored.local_box_mm() else {
             return Err(integrity("a committed plate has no contour points"));
         };
-        let mut min = *first;
-        let mut max = *first;
-        for p in &authored.contour_points_mm {
-            min[0] = min[0].min(p[0]);
-            min[1] = min[1].min(p[1]);
-            min[2] = min[2].min(p[2]);
-            max[0] = max[0].max(p[0]);
-            max[1] = max[1].max(p[1]);
-            max[2] = max[2].max(p[2]);
-        }
-        max[2] += authored.thickness_mm;
+        slabs.insert(authored.id, [min, max]);
         // The placement turns the local box: its world bounds contain every turned corner.
         let mut world_min = [f64::INFINITY; 3];
         let mut world_max = [f64::NEG_INFINITY; 3];
@@ -439,7 +432,7 @@ fn world_geometry(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> 
         }
         placements.insert(authored.id, placement);
     }
-    Ok((bounds, faces, placements, members))
+    Ok((bounds, faces, placements, members, slabs))
 }
 
 fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> {
@@ -465,7 +458,7 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
         placements: BTreeMap::new(),
         members: std::collections::BTreeSet::new(),
         faces: BTreeMap::new(),
-        hole_owners: BTreeMap::new(),
+        slabs: BTreeMap::new(),
     };
     for prim in &prims {
         let Some(id) = by_path.get(prim.path.as_str()).copied() else {
@@ -505,36 +498,14 @@ fn model_of(request: &OpenRequest, control: &Control) -> Result<Model, Refusal> 
     model.bolts.sort_by_key(|b| b.id);
     model.groups.sort_by_key(|g| g.id);
     let decoded = decode(&reader, &opened, control)?;
-    let (bounds, faces, placements, members) = world_geometry(&decoded)?;
+    let (bounds, faces, placements, members, slabs) = world_geometry(&decoded)?;
     model.bounds = bounds;
+    model.slabs = slabs;
     model.faces = faces;
     model.placements = placements;
     model.members = members;
     model.definitions = decoded.definitions;
-    for (authored, _) in &decoded.plates {
-        for record in &authored.hole_records {
-            if let Some(owner) = record.owner {
-                model
-                    .hole_owners
-                    .entry(authored.id)
-                    .or_default()
-                    .insert(owner);
-            }
-        }
-    }
     Ok(model)
-}
-
-/// The parts whose meshes carry the group's own generated hole records: a re-place heals the
-/// group's own coaxial holes from the conservative box over exactly these parts, so the
-/// stored length survives the meshes the group rewrote itself (issue 519 review).
-fn own_hole_parts(model: &Model, group: ElementId) -> BTreeSet<ElementId> {
-    model
-        .hole_owners
-        .iter()
-        .filter(|(_, owners)| owners.contains(&group))
-        .map(|(part, _)| *part)
-        .collect()
 }
 
 /// The bolt group `id` as the operation committed at `sequence` created it: present in that
@@ -947,14 +918,9 @@ pub fn create_bolt_group(
     // The replay comparison needs the placement; a request that no longer places (its parts
     // moved away) is not a replay of anything, so a failure here just means "not the same".
     let expected = || {
-        steel::engine::bolt::place_bolt_group(
-            &command.inputs,
-            &model.bounds,
-            &model.faces,
-            &own_hole_parts(&model, command.new_id),
-        )
-        .map(|placed| expected_spec(&command.inputs, &placed))
-        .ok()
+        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds, &model.faces)
+            .map(|placed| expected_spec(&command.inputs, &placed))
+            .ok()
     };
     let accepted = match (&prior, &recorded) {
         (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
@@ -989,18 +955,16 @@ pub fn create_bolt_group(
         }
         PriorOp::Unseen => {}
     }
-    let (placed, footprint) = model.parts.create_bolt_group(
-        command,
-        &model.bounds,
-        &model.faces,
-        &own_hole_parts(&model, command.new_id),
-    )?;
+    let (placed, footprint) =
+        model
+            .parts
+            .create_bolt_group(command, &model.bounds, &model.faces)?;
     // The hole decision shares the transaction: generate writes one record per crossing
     // fastener on every plate, none writes no part (A14.4).
     let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
         &placed.row(),
-        &model.bounds,
+        &model.slabs,
         &model.placements,
         &model.members,
     )?;
@@ -1117,14 +1081,9 @@ pub fn update_bolt_group(
     })?;
     // A request that no longer places is not a replay of anything (see the create).
     let expected = || {
-        steel::engine::bolt::place_bolt_group(
-            &command.inputs,
-            &model.bounds,
-            &model.faces,
-            &own_hole_parts(&model, command.target_id),
-        )
-        .map(|placed| expected_spec(&command.inputs, &placed))
-        .ok()
+        steel::engine::bolt::place_bolt_group(&command.inputs, &model.bounds, &model.faces)
+            .map(|placed| expected_spec(&command.inputs, &placed))
+            .ok()
     };
     let accepted = match (&prior, &recorded) {
         (PriorOp::Accepted { .. }, Some((_, sequence, _))) => {
@@ -1163,19 +1122,17 @@ pub fn update_bolt_group(
         }
         PriorOp::Unseen => {}
     }
-    let (placed, footprint) = model.parts.update_bolt_group(
-        command,
-        &model.bounds,
-        &model.faces,
-        &own_hole_parts(&model, command.target_id),
-    )?;
+    let (placed, footprint) =
+        model
+            .parts
+            .update_bolt_group(command, &model.bounds, &model.faces)?;
     // Editing regenerates the holes (bolt amendment section 6): the new decision replaces the
     // group's old records in the same transaction, and turning generate off removes them. A
     // group that never generated and stays quiet touches no part.
     let holes = steel::engine::bolt::generate_holes(
         &command.inputs,
         &placed.row(),
-        &model.bounds,
+        &model.slabs,
         &model.placements,
         &model.members,
     )?;
@@ -1393,8 +1350,8 @@ pub fn create_bolt(
 /// the delta; a group whose other part moves keeps its fasteners where they are. Either way
 /// every group over the part is re-placed against the moved geometry and its generated holes
 /// are regenerated in the same transaction, so the stored node never comes apart: a part that
-/// no longer crosses the row, or a generated hole the engine cannot place (a rotated plate),
-/// refuses the whole edit with nothing written. A mirror is not rigid and refuses on a bolted
+/// no longer crosses the row, or a generated hole the engine cannot place (a shank axis too
+/// oblique to the moved plate), refuses the whole edit with nothing written. A mirror is not rigid and refuses on a bolted
 /// part. `moved_plate` is the moved part's patched authored record when it is a plate.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn follow_moved_part(
@@ -1528,17 +1485,15 @@ pub(crate) fn follow_moved_part(
             name: None,
             inputs,
         };
-        let (placed, group_footprint) = model.parts.update_bolt_group(
-            &command,
-            &model.bounds,
-            &model.faces,
-            &own_hole_parts(&model, group.id),
-        )?;
+        let (placed, group_footprint) =
+            model
+                .parts
+                .update_bolt_group(&command, &model.bounds, &model.faces)?;
         footprint = footprint.union(group_footprint)?;
         let holes = steel::engine::bolt::generate_holes(
             &command.inputs,
             &placed.row(),
-            &model.bounds,
+            &model.slabs,
             &model.placements,
             &model.members,
         )?;

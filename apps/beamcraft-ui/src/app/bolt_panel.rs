@@ -1012,10 +1012,12 @@ pub(crate) struct BoltDraft {
 }
 
 /// The picked parts' geometry the preview's hole decision reads, as the snapshot on screen
-/// reports it: the world bounds, the placements and the member identities. The snapshot's
-/// bounds are the placed mesh's own box — the same decision input the commit's adapter derives
-/// from the head — and the hole decision refuses a member or a rotated plate, as the commit's
-/// does.
+/// reports it: every part's element-local box (the box of its own mesh before placement — for
+/// a plate the contour extents and the material band of its thickness side, the same frame
+/// the commit's adapter decides in), the placements and the member identities. The hole
+/// decision carries any placement rotation into that frame and refuses a member, as the
+/// commit's does (issue 555 finding 2). A part whose mesh the snapshot does not carry is left
+/// out, so the decision refuses it as unreachable and the preview draws nothing.
 fn preview_geometry(
     snapshot: &ViewSnapshot,
     parts: &[ElementId],
@@ -1024,17 +1026,19 @@ fn preview_geometry(
     BTreeMap<ElementId, PartPlacement>,
     BTreeSet<ElementId>,
 ) {
-    let mut bounds = BTreeMap::new();
+    let mut slabs = BTreeMap::new();
     let mut placements = BTreeMap::new();
     let mut members = BTreeSet::new();
     for part in parts {
         let Some(entry) = snapshot.element(part) else {
             continue;
         };
-        bounds.insert(
-            *part,
-            [entry.full.world_bounds.min, entry.full.world_bounds.max],
-        );
+        if let Some(local) = snapshot
+            .mesh(&entry.full.mesh_digest)
+            .and_then(|mesh| mesh.local_bounds())
+        {
+            slabs.insert(*part, local);
+        }
         placements.insert(
             *part,
             PartPlacement {
@@ -1046,29 +1050,35 @@ fn preview_geometry(
             members.insert(*part);
         }
     }
-    (bounds, placements, members)
+    (slabs, placements, members)
 }
 
-/// Lifts the generated holes into world space for the preview: only identity-rotation plates
-/// reach the hole decision, so each polygon is the plate's local XY without rotation, and the
-/// world lift is the part's own translation; the circle sits at the plate's mid-plane height,
-/// as the engine cuts it (the world bounds are already placed). A hole whose part the
-/// decision geometry does not carry is skipped whole.
+/// Lifts the generated holes into world space for the preview: each polygon is the plate's
+/// local XY, set on the mid-plane of the plate's local box (where the engine centres it) and
+/// carried by the plate's whole placement, rotation included. A hole whose part the decision
+/// geometry does not carry is skipped whole.
 fn hole_world_rings(
     holes: &[GeneratedHole],
     placements: &BTreeMap<ElementId, PartPlacement>,
-    bounds: &BTreeMap<ElementId, Bounds>,
+    slabs: &BTreeMap<ElementId, Bounds>,
 ) -> Vec<Vec<[f64; 3]>> {
     holes
         .iter()
         .filter_map(|hole| {
-            let translation = placements.get(&hole.part)?.translation_mm;
-            let slab = bounds.get(&hole.part)?;
+            let placement = placements.get(&hole.part)?;
+            let slab = slabs.get(&hole.part)?;
             let mid = (slab[0][2] + slab[1][2]) / 2.0;
+            let t = placement.translation_mm;
             Some(
                 hole.polygon_mm
                     .iter()
-                    .map(|[x, y]| [x + translation[0], y + translation[1], mid])
+                    .map(|[x, y]| {
+                        let turned = beamcraft_engine::solid::rotate_vector(
+                            [*x, *y, mid],
+                            placement.orientation_xyzw,
+                        );
+                        [turned[0] + t[0], turned[1] + t[1], turned[2] + t[2]]
+                    })
                     .collect::<Vec<_>>(),
             )
         })
@@ -1477,11 +1487,11 @@ impl App {
         if row.bearings_mm.len().saturating_mul(inputs.parts.len()) > MAX_PREVIEW_HOLES {
             return None;
         }
-        let (bounds, placements, members) = preview_geometry(&loaded.snapshot, &inputs.parts);
+        let (slabs, placements, members) = preview_geometry(&loaded.snapshot, &inputs.parts);
         let holes =
-            steel::engine::bolt::generate_holes(&inputs, &row, &bounds, &placements, &members)
+            steel::engine::bolt::generate_holes(&inputs, &row, &slabs, &placements, &members)
                 .ok()?;
-        let holes_mm = hole_world_rings(&holes, &placements, &bounds);
+        let holes_mm = hole_world_rings(&holes, &placements, &slabs);
         Some(BoltDraft {
             point1: inputs.point1_mm,
             point2: inputs.point2_mm,
@@ -2166,11 +2176,10 @@ mod tests {
     }
 
     #[test]
-    fn hole_rings_lift_the_plate_local_polygon_by_the_part_translation() {
-        // A translated plate reaches the hole decision with identity rotation only, so the
-        // polygon is local XY and the world lift is the part's own translation: a ring centred
-        // on local (0,0) on a plate set down at (40, 30) draws at (40, 30), at the world
-        // mid-plane of its placed bounds (10..20 -> 15).
+    fn hole_rings_lift_the_plate_local_polygon_by_the_part_placement() {
+        // The polygon is local XY on the mid-plane of the plate's local box (0..10 -> 5),
+        // carried by the whole placement: a ring centred on local (0,0) on a plate set down at
+        // (40, 30, 12) draws at (40, 30, 17) without rotation.
         let part = ElementId::parse("019a7bf0-0000-7000-8000-000000510001").unwrap();
         let mut placements = BTreeMap::new();
         placements.insert(
@@ -2181,17 +2190,37 @@ mod tests {
             },
         );
         let mut bounds = BTreeMap::new();
-        bounds.insert(part, [[-10.0, -5.0, 10.0], [10.0, 5.0, 20.0]]);
+        bounds.insert(part, [[-10.0, -5.0, 0.0], [10.0, 5.0, 10.0]]);
         let hole = GeneratedHole {
             part,
             polygon_mm: vec![[0.0, 0.0], [4.0, 0.0], [0.0, 4.0]],
         };
-        let rings = hole_world_rings(&[hole], &placements, &bounds);
+        let rings = hole_world_rings(std::slice::from_ref(&hole), &placements, &bounds);
         assert_eq!(rings.len(), 1);
         assert_eq!(
             rings[0],
-            vec![[40.0, 30.0, 15.0], [44.0, 30.0, 15.0], [40.0, 34.0, 15.0]]
+            vec![[40.0, 30.0, 17.0], [44.0, 30.0, 17.0], [40.0, 34.0, 17.0]]
         );
+        // A quarter turn about +X (a plate standing in the world XZ plane) maps local y to +Z
+        // and the local mid-plane z = 5 to world -Y (issue 555 finding 2).
+        let half = core::f64::consts::FRAC_1_SQRT_2;
+        placements.insert(
+            part,
+            PartPlacement {
+                translation_mm: [40.0, 30.0, 12.0],
+                orientation_xyzw: [half, 0.0, 0.0, half],
+            },
+        );
+        let turned = hole_world_rings(&[hole], &placements, &bounds);
+        for (got, want) in
+            turned[0]
+                .iter()
+                .zip([[40.0, 25.0, 12.0], [44.0, 25.0, 12.0], [40.0, 25.0, 16.0]])
+        {
+            for (g, w) in got.iter().zip(want) {
+                assert!((g - w).abs() <= 1e-9, "{got:?} != {want:?}");
+            }
+        }
         // A hole on a part the decision geometry does not carry is skipped whole.
         let stranger = ElementId::parse("019a7bf0-0000-7000-8000-000000510002").unwrap();
         let rings = hole_world_rings(

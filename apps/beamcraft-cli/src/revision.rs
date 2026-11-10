@@ -199,10 +199,46 @@ fn commit_checked(
     Ok(summary(label, &committed.info))
 }
 
-/// `open-revision`: opens the current root and verifies the manifest and every layer blob.
-pub(crate) fn open(blobs: &BlobStore) -> Result<Json, HostError> {
-    let revision = RevisionStore::new(blobs.clone()).open().map_err(failure)?;
-    Ok(summary("revision_verified", revision.info()))
+/// `open-revision`: opens the current root and verifies the manifest and every layer blob, then
+/// reports whether this build can read the layers (issue 555 finding 5): `schema` carries the
+/// store's layer-schema pins, this build's digest and `compatible`. A project store pinned to
+/// another layer mapping is intact but unreadable by every content command, so it is not
+/// `revision_verified`: the command refuses with `UNSUPPORTED_VERSION` and the schema object
+/// as its diagnostic (`Err` carries it). A store whose head is not a project base (raw
+/// revisions of arbitrary blobs) has no layer schema to compare and reports `schema: null`.
+pub(crate) fn open(blobs: &BlobStore) -> Result<Json, Result<HostError, (HostError, Json)>> {
+    let store = RevisionStore::new(blobs.clone());
+    let revision = store.open().map_err(|e| Ok(failure(e)))?;
+    let mut json = summary("revision_verified", revision.info());
+    let status = beamcraft_commands::store_schema::schema_status(&store)
+        .ok()
+        .flatten();
+    let schema = status.as_ref().map_or(Json::Null, |status| {
+        Json::object([
+            (
+                "store_digests",
+                Json::Array(
+                    status
+                        .store_digests
+                        .iter()
+                        .map(|d| Json::text(d.as_str()))
+                        .collect(),
+                ),
+            ),
+            ("build_digest", Json::text(status.build_digest.as_str())),
+            ("compatible", Json::Bool(status.compatible)),
+        ])
+    });
+    if status.is_some_and(|status| !status.compatible) {
+        return Err(Err((
+            HostError::logical(ErrorCode::UnsupportedVersion),
+            Json::object([("schema", schema)]),
+        )));
+    }
+    if let Json::Object(entries) = &mut json {
+        entries.insert("schema".to_owned(), schema);
+    }
+    Ok(json)
 }
 
 /// Most unreferenced digests `recover-revision` prints; the total is always exact.

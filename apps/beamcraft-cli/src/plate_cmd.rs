@@ -1087,7 +1087,11 @@ fn create(
     let plane = command_plane(options)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2617,7 +2621,11 @@ fn copy_command(
         .map_err(id_error)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2720,7 +2728,11 @@ fn lofted_create(
     let given = |key: &str| options.get(key).copied();
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -2896,8 +2908,12 @@ fn array_command(store: &RevisionStore, options: &BTreeMap<&str, &str>, polar: b
         return Err(invalid("count must be at least one"));
     }
     let mut new_ids = Vec::new();
-    for _ in 0..count {
-        new_ids.push(ElementId::from_uuid(fresh()?));
+    for index in 0..count {
+        new_ids.push(ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            &format!("new_id/{index}"),
+            &mut fresh,
+        )?));
     }
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -3261,7 +3277,11 @@ fn create_member_command(
     let plane = command_plane(options)?;
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,
@@ -3442,7 +3462,11 @@ fn create_polybeam_command(
     let given = |key: &str| options.get(key).copied();
     let new_id = match given("--new-id") {
         Some(text) => ElementId::parse(text).map_err(id_error)?,
-        None => ElementId::from_uuid(fresh()?),
+        None => ElementId::from_uuid(crate::command_context::default_id(
+            options.get("--op-id").copied(),
+            "new_id/0",
+            &mut fresh,
+        )?),
     };
     let op_id = match given("--op-id") {
         Some(text) => OpId::parse(text).map_err(crate::plate_cmd::context_id_error)?,

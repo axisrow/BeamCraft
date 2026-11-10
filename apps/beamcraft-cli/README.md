@@ -174,7 +174,9 @@ operations are saved as authored-only plates: `inspect-elements` reports `validi
 They remain in the plate list and inspection snapshot without a render instance. Replays create
 no revision and deletion works. Editing/copying these plates and geometry-dependent numbering,
 BOM, IFC and binary view export return `DEPENDENCY_UNAVAILABLE`; none silently drops the element.
-Rotated element placements remain `UNSUPPORTED_GEOMETRY` at command application. The layer engine runs in
+Rotated placements (`--plane`, `--orientation-xyzw`) are applied by plate and member commands,
+`add-hole` and bolt groups, including generated holes (issue 555); the remaining placement-rotation
+refusals are named in the help of their commands. The layer engine runs in
 process by the U17 decision. Workspace and undo commands have their own sections below; a full
 F04 envelope/JSON command adapter remains absent. Quantities are printed, not stored in USD
 (the pinned schema has none).

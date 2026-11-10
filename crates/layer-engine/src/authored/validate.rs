@@ -572,7 +572,9 @@ pub(super) fn snapshot(
     {
         return Err(fail(
             ErrorCode::UnsupportedVersion,
-            "layer schema digest mismatch",
+            "layer schema digest mismatch: the store was written with another layer mapping \
+             (pre-alpha stores are not migrated); open-revision reports the store and build \
+             digests",
         ));
     }
     project_record(metadata)?;

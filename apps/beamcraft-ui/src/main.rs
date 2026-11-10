@@ -518,6 +518,17 @@ fn main() -> ExitCode {
             ExitCode::from(code)
         }
         Ok(None) => ExitCode::SUCCESS,
+        // A relayed CLI rejection keeps its own code, message and diagnostics (issue 555
+        // finding 6): `screenshot-view` re-issues them unchanged.
+        Err(Error::Rejected(r)) => {
+            println!(
+                "{{\"outcome\":\"rejected\",\"code\":{},\"message\":{},\"diagnostics\":{}}}",
+                json_string(&r.code),
+                json_string(&r.message),
+                r.diagnostics
+            );
+            ExitCode::from(2)
+        }
         Err(e) => {
             let code = match e {
                 Error::NoAdapter | Error::Graphics(_) => 3,

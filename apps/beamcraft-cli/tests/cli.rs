@@ -63,6 +63,7 @@ mod ifc_inspect;
 mod independent_reader;
 mod inspection_cache;
 mod instance_group;
+mod issue_555;
 mod levels;
 mod libraries;
 mod lofted_plates;

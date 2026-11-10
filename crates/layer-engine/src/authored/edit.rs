@@ -65,6 +65,32 @@ pub(super) fn layer_sublayers(bytes: &[u8]) -> Result<Vec<String>, Diagnostic> {
         _ => Err(invalid()),
     }
 }
+/// The distinct layer-schema pins (`customLayerData:bimSchemaDigest`) of the request's owned
+/// USDA layers, in ascending order: what `schema_pins` compares with this build's mapping.
+/// A pin that is not a text is reported as the empty string (it is never accepted either).
+pub fn stored_schema_pins(request: &OpenRequest) -> Result<Vec<String>, Diagnostic> {
+    let mut pins = BTreeSet::new();
+    for asset in request
+        .assets
+        .iter()
+        .filter(|asset| request.owned_layers.contains(&asset.name) && asset.name.ends_with(".usda"))
+    {
+        let layer = data(asset)?;
+        if let Some(value) = layer
+            .try_field(&sdf::Path::abs_root(), "customLayerData")
+            .map_err(|_| corrupt())?
+            && let sdf::Value::Dictionary(fields) = value.as_ref()
+            && let Some(pin) = fields.get("bimSchemaDigest")
+        {
+            pins.insert(match pin {
+                sdf::Value::String(value) => value.clone(),
+                _ => String::new(),
+            });
+        }
+    }
+    Ok(pins.into_iter().collect())
+}
+
 /// Inspect each owned USDA marker after the reader has verified the manifest and bytes.
 pub(super) fn schema_pins(request: &OpenRequest) -> Result<(), Diagnostic> {
     for asset in request
@@ -82,7 +108,9 @@ pub(super) fn schema_pins(request: &OpenRequest) -> Result<(), Diagnostic> {
         {
             return Err(fail(
                 ErrorCode::UnsupportedVersion,
-                "layer schema digest mismatch",
+                "layer schema digest mismatch: the store was written with another layer mapping \
+                 (pre-alpha stores are not migrated); open-revision reports the store and build \
+                 digests",
             ));
         }
     }

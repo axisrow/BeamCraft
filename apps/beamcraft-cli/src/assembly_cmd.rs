@@ -114,7 +114,11 @@ fn run(args: &[OsString]) -> Run<Json> {
         "create-assembly" => {
             let new_id = match given("--new-id") {
                 Some(text) => ElementId::parse(text).map_err(id_error)?,
-                None => ElementId::from_uuid(fresh()?),
+                None => ElementId::from_uuid(crate::command_context::default_id(
+                    options.get("--op-id").copied(),
+                    "new_id/0",
+                    &mut fresh,
+                )?),
             };
             let command = CreateAssembly {
                 new_id,
