@@ -69,6 +69,9 @@ pub struct Row {
     pub hosts: Vec<String>,
 }
 
+/// One list job's reply: the snapshot token the job captured at spawn and the rows it parsed.
+type ListReply = (Option<String>, Result<Vec<Row>, ToolError>);
+
 /// The stored state between frames; everything else is on [`App`].
 pub(crate) struct Panel {
     pub(crate) tool: Tool,
@@ -84,7 +87,7 @@ pub(crate) struct Panel {
     /// R key or the store watcher changed the model, and the list must be read again (issue 569
     /// item 24).
     pub(crate) stamp: Option<String>,
-    pub(super) list_job: Option<Receiver<(Option<String>, Result<Vec<Row>, ToolError>)>>,
+    pub(super) list_job: Option<Receiver<ListReply>>,
     pub(super) commit_job: Option<Receiver<Result<(), ToolError>>>,
     /// Whether the running commit is a delete, so the note names the right action.
     pub(super) deleting: bool,
