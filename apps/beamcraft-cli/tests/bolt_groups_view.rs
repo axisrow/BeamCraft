@@ -132,10 +132,11 @@ fn a_committed_group_exports_its_fasteners_into_the_bundle() {
     assert_eq!(group.kind, ElementKind::Connection);
     assert_eq!(group.placement_mm, [0.0; 3]);
     assert_eq!(group.orientation_xyzw, [0.0, 0.0, 0.0, 1.0]);
-    // The placed stack, by hand: washer 0..2, head 2..8.5, shank 2..42, nut 42..51,
-    // washer nut 51..53; the washer's 22 mm outer diameter is the widest part.
+    // The placed stack, by hand: washer −2..0 and head −8.5..−2 outside the joint, shank
+    // −8.5..31.5 through it, nut 31.5..40.5, washer nut 40.5..42.5; the washer's 22 mm outer
+    // diameter is the widest part.
     let bounds = snapshot.element_bounds(&id).unwrap();
-    let expected = [[89.0, 239.0, 0.0], [261.0, 261.0, 53.0]];
+    let expected = [[89.0, 239.0, -8.5], [261.0, 261.0, 42.5]];
     for (got, want) in bounds.min.iter().zip(expected[0]) {
         assert!((got - want).abs() <= 1e-6, "min {got} != {want}");
     }
