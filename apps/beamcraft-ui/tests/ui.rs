@@ -18,6 +18,7 @@ mod grids;
 mod properties;
 mod screenshot;
 mod selection;
+mod sheet;
 mod viewport;
 
 /// With `autotests = false` a suite file missing from the list above would never build or run,

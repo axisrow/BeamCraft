@@ -4,16 +4,17 @@
 //! D05 sheet editor: hand placement of a drawing document's views on its sheet.
 //!
 //! The editor reads the document through the same `inspect-drawing` command a user runs,
-//! shows the sheet furniture and one marker per placed view, and applies moved origins
-//! through the same `edit-views` command with fresh identities from the shared
-//! [`IdSource`]. The UI computes no engineering geometry: the reproducible sheet output is
-//! the engine's whole-sheet export, reached through the CLI. Dropping a marker within the
-//! align tolerance of another view's axis snaps it onto that axis, so aligned views are
-//! one gesture, not a numeric edit.
+//! shows the sheet furniture and one marker per placed view, section and detail, and
+//! applies moved origins through the same `edit-views` command with fresh identities from
+//! the shared [`IdSource`]. The UI computes no engineering geometry: the reproducible sheet
+//! output is the engine's whole-sheet export, reached through the CLI. Dropping a marker
+//! within the align tolerance of another view's axis snaps it onto that axis, so aligned
+//! views are one gesture, not a numeric edit.
 
 use crate::command::{self, Output};
 use crate::stats::Stats;
 use crate::tools::{ToolError, decode, rejection, text};
+use beamcraft_engine::drawing::sheet::{TITLE_BLOCK_HEIGHT_MM, TITLE_BLOCK_WIDTH_MM};
 use beamcraft_host::ids::IdSource;
 use beamcraft_json::Json;
 use beamcraft_model::sheet::Sheet;
@@ -40,6 +41,46 @@ pub struct Placement {
     pub scale_denominator: f64,
     /// Paper-space origin in millimetres.
     pub origin: [f64; 2],
+    /// The authored annotation beside the display scale; absent is the unannotated default.
+    pub title: Option<String>,
+}
+
+/// One placed section view as the document inspect reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SectionPlacement {
+    /// Stable view identity.
+    pub id: String,
+    /// Projection basis token (`front`, `top` or `right`).
+    pub plane: String,
+    /// Cut position along the basis's depth axis, model millimetres.
+    pub cut_mm: f64,
+    /// Which side of the cut plane is visible (`positive` or `negative`).
+    pub side: String,
+    /// Paper/model scale denominator.
+    pub scale_denominator: f64,
+    /// Paper-space origin in millimetres.
+    pub origin: [f64; 2],
+    /// The authored annotation beside the display scale; absent is the unannotated default.
+    pub title: Option<String>,
+}
+
+/// One placed detail view as the document inspect reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DetailPlacement {
+    /// Stable view identity.
+    pub id: String,
+    /// The parent view's id (the primary or a placed view).
+    pub parent: String,
+    /// The magnified region centre in the parent's paper millimetres.
+    pub center: [f64; 2],
+    /// The magnified region radius in parent paper millimetres.
+    pub radius_mm: f64,
+    /// Paper/model scale denominator.
+    pub scale_denominator: f64,
+    /// Paper-space origin in millimetres.
+    pub origin: [f64; 2],
+    /// The authored annotation beside the display scale; absent is the unannotated default.
+    pub title: Option<String>,
 }
 
 /// The sheet the document is laid on, mirrored for the preview.
@@ -70,10 +111,23 @@ pub struct Doc {
     pub primary: Placement,
     /// The placed views in document order.
     pub placed: Vec<Placement>,
+    /// The placed sections in document order.
+    pub sections: Vec<SectionPlacement>,
+    /// The placed details in document order.
+    pub details: Vec<DetailPlacement>,
 }
 
 fn coordinate(json: &Json, key: &str, index: usize) -> Option<f64> {
     json.get(key).ok()?.array().ok()?.get(index)?.float().ok()
+}
+
+/// One view's optional title: absent or null is the unannotated default; anything else must
+/// be a string or the whole reply is malformed for this editor.
+fn title_of(json: &Json) -> Option<Option<String>> {
+    match json.get("title") {
+        Err(_) | Ok(Json::Null) => Some(None),
+        Ok(value) => value.string().ok().map(|title| Some(title.to_owned())),
+    }
 }
 
 fn placement(json: &Json) -> Option<Placement> {
@@ -85,7 +139,150 @@ fn placement(json: &Json) -> Option<Placement> {
             coordinate(json, "paper_origin_mm", 0)?,
             coordinate(json, "paper_origin_mm", 1)?,
         ],
+        title: title_of(json)?,
     })
+}
+
+fn section(json: &Json) -> Option<SectionPlacement> {
+    Some(SectionPlacement {
+        id: text(json, "id")?,
+        plane: text(json, "plane")?,
+        cut_mm: json.get("cut_mm").ok()?.float().ok()?,
+        side: text(json, "side")?,
+        scale_denominator: json.get("scale_denominator").ok()?.float().ok()?,
+        origin: [
+            coordinate(json, "paper_origin_mm", 0)?,
+            coordinate(json, "paper_origin_mm", 1)?,
+        ],
+        title: title_of(json)?,
+    })
+}
+
+fn detail(json: &Json) -> Option<DetailPlacement> {
+    Some(DetailPlacement {
+        id: text(json, "id")?,
+        parent: text(json, "parent")?,
+        center: [
+            coordinate(json, "center_paper_mm", 0)?,
+            coordinate(json, "center_paper_mm", 1)?,
+        ],
+        radius_mm: json.get("radius_mm").ok()?.float().ok()?,
+        scale_denominator: json.get("scale_denominator").ok()?.float().ok()?,
+        origin: [
+            coordinate(json, "paper_origin_mm", 0)?,
+            coordinate(json, "paper_origin_mm", 1)?,
+        ],
+        title: title_of(json)?,
+    })
+}
+
+/// The origins of every movable view, flat in document order: placed views, then sections,
+/// then details. `pending` mirrors this order one to one.
+fn movable(doc: &Doc) -> Vec<[f64; 2]> {
+    doc.placed
+        .iter()
+        .map(|view| view.origin)
+        .chain(doc.sections.iter().map(|section| section.origin))
+        .chain(doc.details.iter().map(|detail| detail.origin))
+        .collect()
+}
+
+/// One view's optional title segment of a spec value: `Some` is the whole remainder (it may
+/// hold colons), `None` ends the value after the origin.
+fn title_segment(title: &Option<String>) -> String {
+    match title {
+        Some(title) => format!(":{title}"),
+        None => String::new(),
+    }
+}
+
+/// The `edit-views` option values that put every moved origin back: one `--placed-view`,
+/// `--placed-section` and `--placed-detail` value per placed view, section and detail, each
+/// carrying the kind's whole state. edit-views replaces the three sets together, so sending
+/// only the moved family would delete the other two.
+fn placement_args(doc: &Doc, pending: &[[f64; 2]]) -> Vec<String> {
+    let origins = movable(doc);
+    let origin_of = |index: usize| {
+        pending
+            .get(index)
+            .or_else(|| origins.get(index))
+            .copied()
+            .unwrap_or_default()
+    };
+    let mut args = Vec::new();
+    for (index, view) in doc.placed.iter().enumerate() {
+        args.push("--placed-view".to_owned());
+        args.push(format!(
+            "{}:{}:{}:{:.2},{:.2}{}",
+            view.id,
+            view.plane,
+            fmt_number(view.scale_denominator),
+            origin_of(index)[0],
+            origin_of(index)[1],
+            title_segment(&view.title),
+        ));
+    }
+    let sections_at = doc.placed.len();
+    for (index, section) in doc.sections.iter().enumerate() {
+        args.push("--placed-section".to_owned());
+        args.push(format!(
+            "{}:{}:{}:{}:{}:{:.2},{:.2}{}",
+            section.id,
+            section.plane,
+            fmt_number(section.cut_mm),
+            section.side,
+            fmt_number(section.scale_denominator),
+            origin_of(sections_at + index)[0],
+            origin_of(sections_at + index)[1],
+            title_segment(&section.title),
+        ));
+    }
+    let details_at = sections_at + doc.sections.len();
+    for (index, detail) in doc.details.iter().enumerate() {
+        args.push("--placed-detail".to_owned());
+        args.push(format!(
+            "{}:{}:{:.2},{:.2}:{}:{}:{:.2},{:.2}{}",
+            detail.id,
+            detail.parent,
+            detail.center[0],
+            detail.center[1],
+            fmt_number(detail.radius_mm),
+            fmt_number(detail.scale_denominator),
+            origin_of(details_at + index)[0],
+            origin_of(details_at + index)[1],
+            title_segment(&detail.title),
+        ));
+    }
+    args
+}
+
+/// The full `edit-views` command that applies `pending` to `doc`: every placed view, section
+/// and detail goes back, moved or not, with fresh identities. Engine admission still owns
+/// every bound; this only builds the command the editor itself spawns.
+pub fn apply_args(
+    document_dir: &str,
+    expected_head: &str,
+    op_id: &str,
+    revision_id: &str,
+    actor_id: &str,
+    doc: &Doc,
+    pending: &[[f64; 2]],
+) -> Vec<String> {
+    let mut args = vec![
+        "edit-views".to_owned(),
+        "--document-dir".to_owned(),
+        document_dir.to_owned(),
+        "--expected-head".to_owned(),
+        expected_head.to_owned(),
+        "--op-id".to_owned(),
+        op_id.to_owned(),
+        "--revision-id".to_owned(),
+        revision_id.to_owned(),
+        "--actor-id".to_owned(),
+        actor_id.to_owned(),
+    ];
+    args.extend(placement_args(doc, pending));
+    args
 }
 
 /// Reads the `inspect-drawing` reply into the editor's document mirror. `None` means the
@@ -117,6 +314,22 @@ pub fn parse_doc(reply: &Json) -> Option<Doc> {
             .ok()?
             .iter()
             .map(placement)
+            .collect::<Option<Vec<_>>>()?,
+        sections: reply
+            .get("placed_sections")
+            .ok()?
+            .array()
+            .ok()?
+            .iter()
+            .map(section)
+            .collect::<Option<Vec<_>>>()?,
+        details: reply
+            .get("placed_details")
+            .ok()?
+            .array()
+            .ok()?
+            .iter()
+            .map(detail)
             .collect::<Option<Vec<_>>>()?,
     })
 }
@@ -351,15 +564,16 @@ impl SheetEditor {
             doc.name, furniture.size, furniture.frame_inset_mm
         ));
         self.preview(ui, &doc, furniture);
+        let origins = movable(&doc);
+        let moved = self
+            .pending
+            .iter()
+            .zip(&origins)
+            .any(|(pending, origin)| pending != origin);
         ui.horizontal(|ui| {
-            let moved = self.pending.iter().enumerate().any(|(index, origin)| {
-                doc.placed
-                    .get(index)
-                    .is_some_and(|placement| placement.origin != *origin)
-            });
             if ui
                 .add_enabled(
-                    moved && self.job.is_none() && !doc.placed.is_empty(),
+                    moved && self.job.is_none() && !origins.is_empty(),
                     egui::Button::new("Apply placements"),
                 )
                 .clicked()
@@ -368,12 +582,14 @@ impl SheetEditor {
                 self.apply(cli, actor, stats, &doc);
             }
             if ui.add_enabled(moved, egui::Button::new("Reset")).clicked() {
-                self.pending = doc.placed.iter().map(|p| p.origin).collect();
+                self.pending = origins.clone();
             }
         });
         ui.label(format!(
-            "{} placed views; the primary view is placed by the document, not here.",
-            doc.placed.len()
+            "{} placed views, {} sections and {} details; the primary view is placed by the document, not here.",
+            doc.placed.len(),
+            doc.sections.len(),
+            doc.details.len()
         ));
         crate::kit::section(ui, "sheet", "Sheet", false, |ui| {
             self.sheet_form(ui, cli, actor, stats, &doc)
@@ -545,9 +761,13 @@ impl SheetEditor {
             egui::Stroke::new(1.0, egui::Color32::BLACK),
             egui::StrokeKind::Inside,
         );
-        // Title block: a plain box with the two authored fields, bottom right.
+        // Title block: a plain box with the two authored fields, bottom right; the engine's
+        // own block size, so the preview shows the same block the export draws and enforces.
         let block = egui::Rect::from_min_max(
-            egui::pos2(frame.right() - 120.0 * scale, frame.bottom() - 44.0 * scale),
+            egui::pos2(
+                frame.right() - TITLE_BLOCK_WIDTH_MM as f32 * scale,
+                frame.bottom() - TITLE_BLOCK_HEIGHT_MM as f32 * scale,
+            ),
             egui::pos2(frame.right(), frame.bottom()),
         );
         painter.rect_stroke(
@@ -571,15 +791,15 @@ impl SheetEditor {
             egui::Color32::BLACK,
         );
         // Align guides while a marker is dragged.
+        let origins = movable(doc);
         if let Some((index, ..)) = &self.drag
             && let Some(origin) = self.pending.get(*index)
         {
-            for other in doc
-                .placed
+            for other in origins
                 .iter()
                 .enumerate()
                 .filter(|(other, _)| other != index)
-                .map(|(_, placement)| placement.origin)
+                .map(|(_, origin)| *origin)
                 .chain(std::iter::once(doc.primary.origin))
             {
                 if (origin[0] - other[0]).abs() <= ALIGN_TOLERANCE_MM {
@@ -617,16 +837,31 @@ impl SheetEditor {
             ),
             egui::Color32::from_gray(120),
         );
-        for (index, placement) in doc.placed.iter().enumerate() {
-            let origin = self.pending.get(index).copied().unwrap_or(placement.origin);
+        // One marker per movable view, flat in document order: views, sections, details.
+        let mut labels = Vec::new();
+        for view in &doc.placed {
+            labels.push(format!(
+                "{} 1:{}",
+                view.plane,
+                fmt_number(view.scale_denominator)
+            ));
+        }
+        for section in &doc.sections {
+            labels.push(format!(
+                "{} 1:{}",
+                section.plane,
+                fmt_number(section.scale_denominator)
+            ));
+        }
+        for detail in &doc.details {
+            labels.push(format!("1:{}", fmt_number(detail.scale_denominator)));
+        }
+        for ((index, origin), label) in origins.iter().enumerate().zip(&labels) {
+            let origin = self.pending.get(index).copied().unwrap_or(*origin);
             marker(
                 painter,
                 origin,
-                format!(
-                    "{} 1:{}",
-                    placement.plane,
-                    fmt_number(placement.scale_denominator)
-                ),
+                label.clone(),
                 egui::Color32::from_rgb(20, 90, 200),
             );
         }
@@ -634,17 +869,13 @@ impl SheetEditor {
         if let Some(pointer) = response.interact_pointer_pos() {
             let paper = to_paper(pointer);
             if response.drag_started() {
-                let hit = doc.placed.iter().enumerate().find(|(index, placement)| {
-                    let origin = self
-                        .pending
-                        .get(*index)
-                        .copied()
-                        .unwrap_or(placement.origin);
+                let hit = origins.iter().enumerate().find(|(index, origin)| {
+                    let origin = self.pending.get(*index).copied().unwrap_or(**origin);
                     let screen = to_screen(origin);
                     ((screen - pointer).length() as f64) <= HIT_PX as f64
                 });
-                if let Some((index, placement)) = hit {
-                    self.drag = Some((index, paper, placement.origin));
+                if let Some((index, origin)) = hit {
+                    self.drag = Some((index, paper, *origin));
                 }
             } else if let Some((index, grab, start)) = &self.drag {
                 let moved = [start[0] + paper[0] - grab[0], start[1] + paper[1] - grab[1]];
@@ -657,12 +888,11 @@ impl SheetEditor {
         if response.drag_stopped()
             && let Some((index, ..)) = self.drag.take()
         {
-            let others = doc
-                .placed
+            let others = origins
                 .iter()
                 .enumerate()
                 .filter(|(other, _)| *other != index)
-                .map(|(_, placement)| placement.origin)
+                .map(|(_, origin)| *origin)
                 .chain(std::iter::once(doc.primary.origin))
                 .collect::<Vec<_>>();
             if let Some(origin) = self.pending.get(index) {
@@ -674,53 +904,32 @@ impl SheetEditor {
         }
     }
 
-    /// Applies every pending origin through `edit-views` with fresh identities.
+    /// Applies every pending origin through `edit-views` with fresh identities. The command
+    /// replaces the placed views, sections and details together, so every one of them goes
+    /// back, moved or not.
     fn apply(&mut self, cli: &Path, actor: Option<&str>, stats: &Arc<Stats>, doc: &Doc) {
-        let mut args = vec![
-            "edit-views".to_owned(),
-            "--document-dir".to_owned(),
-            self.document_dir.clone(),
-            "--expected-head".to_owned(),
-            doc.revision_id.clone(),
-        ];
+        let missing = || "no identity could be generated".to_owned();
         let Some(op) = fresh_id() else {
-            self.note = Some(Err("no identity could be generated".to_owned()));
+            self.note = Some(Err(missing()));
             return;
         };
         let Some(revision) = fresh_id() else {
-            self.note = Some(Err("no identity could be generated".to_owned()));
+            self.note = Some(Err(missing()));
             return;
         };
         let actor = actor
             .map(str::to_owned)
             .or_else(fresh_id)
             .unwrap_or_default();
-        args.extend([
-            "--op-id".to_owned(),
-            op,
-            "--revision-id".to_owned(),
-            revision,
-            "--actor-id".to_owned(),
-            actor,
-        ]);
-        for placement in &doc.placed {
-            let origin = self
-                .pending
-                .get(index_of(placement, doc))
-                .copied()
-                .unwrap_or(placement.origin);
-            args.extend([
-                "--placed-view".to_owned(),
-                format!(
-                    "{}:{}:{}:{:.2},{:.2}",
-                    placement.id,
-                    placement.plane,
-                    fmt_number(placement.scale_denominator),
-                    origin[0],
-                    origin[1]
-                ),
-            ]);
-        }
+        let args = apply_args(
+            &self.document_dir,
+            &doc.revision_id,
+            &op,
+            &revision,
+            &actor,
+            doc,
+            &self.pending,
+        );
         self.start(cli, stats, Job::Apply, args);
     }
 
@@ -762,11 +971,7 @@ impl SheetEditor {
         match (job, parsed) {
             (Job::Load, Ok(reply)) => match parse_doc(&reply) {
                 Some(doc) => {
-                    self.pending = doc
-                        .placed
-                        .iter()
-                        .map(|placement| placement.origin)
-                        .collect();
+                    self.pending = movable(&doc);
                     if let Some(furniture) = doc.furniture.clone() {
                         self.sheet_size = furniture.size;
                         self.sheet_project = furniture.project;
@@ -826,13 +1031,6 @@ impl SheetEditor {
     }
 }
 
-fn index_of(placement: &Placement, doc: &Doc) -> usize {
-    doc.placed
-        .iter()
-        .position(|candidate| candidate.id == placement.id)
-        .unwrap_or(usize::MAX)
-}
-
 /// One fresh system identity, when the system source yields one.
 pub(crate) fn fresh_id() -> Option<String> {
     IdSource::system().next_id().ok().map(|id| id.to_string())
@@ -853,8 +1051,14 @@ mod tests {
         "view": {"id": "p", "plane": "front", "scale_denominator": 100, "paper_origin_mm": [30.0, 40.0]},
         "sheet": {"size": "a3", "frame_inset_mm": 10.0, "project": "Bridge", "author": "Drafter"},
         "placed_views": [
-            {"id": "t", "plane": "top", "scale_denominator": 50, "paper_origin_mm": [200.0, 60.0]},
-            {"id": "r", "plane": "right", "scale_denominator": 50, "paper_origin_mm": [240.5, 60.4]}
+            {"id": "t", "plane": "top", "scale_denominator": 50, "paper_origin_mm": [200.0, 60.0], "title": "PLAN"},
+            {"id": "r", "plane": "right", "scale_denominator": 50, "paper_origin_mm": [240.5, 60.4], "title": null}
+        ],
+        "placed_sections": [
+            {"id": "s", "plane": "right", "cut_mm": 1500.0, "side": "positive", "scale_denominator": 5, "paper_origin_mm": [230.0, 250.0], "title": "SECTION A-A"}
+        ],
+        "placed_details": [
+            {"id": "d", "parent": "t", "center_paper_mm": [30.0, 100.0], "radius_mm": 4.0, "scale_denominator": 5, "paper_origin_mm": [230.0, 330.0], "title": null}
         ]
     }"#;
 
@@ -875,9 +1079,20 @@ mod tests {
         assert_eq!(doc.primary.plane, "front");
         assert_eq!(doc.placed.len(), 2);
         assert_eq!(doc.placed[1].origin, [240.5, 60.4]);
+        assert_eq!(doc.placed[0].title.as_deref(), Some("PLAN"));
+        assert_eq!(doc.placed[1].title, None);
+        assert_eq!(doc.sections.len(), 1);
+        assert_eq!(doc.sections[0].cut_mm, 1500.0);
+        assert_eq!(doc.sections[0].side, "positive");
+        assert_eq!(doc.sections[0].title.as_deref(), Some("SECTION A-A"));
+        assert_eq!(doc.details.len(), 1);
+        assert_eq!(doc.details[0].parent, "t");
+        assert_eq!(doc.details[0].center, [30.0, 100.0]);
+        assert_eq!(doc.details[0].radius_mm, 4.0);
+        assert_eq!(doc.details[0].title, None);
         // A sheetless document reads with furniture absent, not an error.
         let loose = beamcraft_json::decode(
-            br#"{"revision_id":"r","name":"n","view":{"id":"p","plane":"front","scale_denominator":1,"paper_origin_mm":[0,0]},"sheet":null,"placed_views":[]}"#,
+            br#"{"revision_id":"r","name":"n","view":{"id":"p","plane":"front","scale_denominator":1,"paper_origin_mm":[0,0]},"sheet":null,"placed_views":[],"placed_sections":[],"placed_details":[]}"#,
             &beamcraft_json::Limits::DEFAULT,
         )
         .unwrap();
@@ -885,11 +1100,53 @@ mod tests {
         assert!(doc.furniture.is_none());
         // A malformed reply is refused, never half-read.
         let broken = beamcraft_json::decode(
-            br#"{"revision_id":"r","name":"n","view":{"id":"p"},"sheet":null,"placed_views":[]}"#,
+            br#"{"revision_id":"r","name":"n","view":{"id":"p"},"sheet":null,"placed_views":[],"placed_sections":[],"placed_details":[]}"#,
             &beamcraft_json::Limits::DEFAULT,
         )
         .unwrap();
         assert!(parse_doc(&broken).is_none());
+        // A section reply without its sections key is malformed, never half-read.
+        let broken = beamcraft_json::decode(
+            br#"{"revision_id":"r","name":"n","view":{"id":"p","plane":"front","scale_denominator":1,"paper_origin_mm":[0,0]},"sheet":null,"placed_views":[],"placed_details":[]}"#,
+            &beamcraft_json::Limits::DEFAULT,
+        )
+        .unwrap();
+        assert!(parse_doc(&broken).is_none());
+    }
+
+    #[test]
+    fn the_placement_args_carry_every_view_kind_and_title() {
+        let doc = doc();
+        let moved = vec![[205.0, 60.0], [240.5, 60.4], [235.0, 250.0], [230.0, 330.0]];
+        let args = placement_args(&doc, &moved);
+        assert_eq!(
+            args,
+            vec![
+                "--placed-view",
+                "t:top:50:205.00,60.00:PLAN",
+                "--placed-view",
+                "r:right:50:240.50,60.40",
+                "--placed-section",
+                "s:right:1500:positive:5:235.00,250.00:SECTION A-A",
+                "--placed-detail",
+                "d:t:30.00,100.00:4:5:230.00,330.00",
+            ]
+        );
+        // Without pending origins every document origin passes through unchanged.
+        let untouched = placement_args(&doc, &[]);
+        assert_eq!(
+            untouched,
+            vec![
+                "--placed-view",
+                "t:top:50:200.00,60.00:PLAN",
+                "--placed-view",
+                "r:right:50:240.50,60.40",
+                "--placed-section",
+                "s:right:1500:positive:5:230.00,250.00:SECTION A-A",
+                "--placed-detail",
+                "d:t:30.00,100.00:4:5:230.00,330.00",
+            ]
+        );
     }
 
     #[test]

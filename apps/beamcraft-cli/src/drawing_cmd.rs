@@ -770,13 +770,24 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 )
             };
             let source = SourceArchive::capture(std::path::Path::new(model_path))?;
-            let drawing = document_drawing(options, source.pin())?;
+            let mut drawing = document_drawing(options, source.pin())?;
             let document_path = std::path::Path::new(document_path);
             let documents = if command == "create-drawing" && !document_path.exists() {
                 DocumentStore::create(document_path)?
             } else {
                 DocumentStore::open(document_path)?
             };
+            // The drawn objects and their layers are the document's own (D07, d01 §3): a
+            // refresh recaptures the source pin and re-authors the primary intent but carries
+            // them over. The placed views, sections and details do drop: a refreshed document
+            // carries only the views its caller named (§6b), and the CLI names none here.
+            if command == "refresh-drawing" {
+                let head = documents.head()?;
+                drawing = drawing.with_drafting(
+                    head.drawing.layers().to_vec(),
+                    head.drawing.drafting().to_vec(),
+                )?;
+            }
             let latest_published = if command == "create-drawing" {
                 None
             } else if let Some(previous) = documents.query(&op)? {
