@@ -1447,7 +1447,9 @@ pub(super) fn apply(
                     // While bound the derived world geometry (local points + current frame)
                     // is authoritative; the stored world axis stays as the bind-time frozen
                     // snapshot the member storage schema requires, and the release overwrites
-                    // it with the current world.
+                    // it with the current world. The bind-time frame snapshot travels with the
+                    // record (issue 569 item 7): every read derives the follower's rigid
+                    // motion from this frame to the grid's current one.
                     let targets = vec![path(&target_path(
                         &record.grid,
                         ElementCategory::Grid,
@@ -1462,10 +1464,28 @@ pub(super) fn apply(
                         "double3[]",
                         points(&record.local_axis_mm),
                     )?;
+                    attr(
+                        &mut authored,
+                        &p,
+                        "steel:grid:followOriginMm",
+                        "double3",
+                        sdf::Value::vec3d(
+                            record.frame.translation_mm[0],
+                            record.frame.translation_mm[1],
+                            0.0,
+                        ),
+                    )?;
+                    attr(
+                        &mut authored,
+                        &p,
+                        "steel:grid:followRotationZw",
+                        "double[]",
+                        sdf::Value::DoubleVec(record.frame.orientation_zw.to_vec()),
+                    )?;
                 }
-                FollowBinding::Release(world) => {
+                FollowBinding::Release { axis_mm, placement } => {
                     // An explicit empty target list masks a weaker layer's record, as a
-                    // part-of detach does; the world axis points are restored as a whole.
+                    // part-of detach does; the derived world pose is restored as a whole.
                     relationship_targets(&mut authored, &p, "bim:followsGrid", Some(Vec::new()))?;
                     attribute(
                         &mut authored,
@@ -1475,13 +1495,30 @@ pub(super) fn apply(
                         Opinion::Remove,
                         true,
                     )?;
+                    attribute(
+                        &mut authored,
+                        &p,
+                        "steel:grid:followOriginMm",
+                        "double3",
+                        Opinion::Remove,
+                        true,
+                    )?;
+                    attribute(
+                        &mut authored,
+                        &p,
+                        "steel:grid:followRotationZw",
+                        "double[]",
+                        Opinion::Remove,
+                        true,
+                    )?;
                     attr(
                         &mut authored,
                         &p,
                         "bim:axisPointsMm",
                         "double3[]",
-                        points(world),
+                        points(axis_mm),
                     )?;
+                    pose(&mut authored, &p, placement)?;
                 }
             },
             Change::Mark { mark, .. } => {
@@ -1938,6 +1975,8 @@ fn capture(
                 add("bim:axisPointsMm", "double3[]", 0);
                 add("bim:followsGrid", "rel", 0);
                 add("steel:grid:localAxisMm", "double3[]", 0);
+                add("steel:grid:followOriginMm", "double3", 0);
+                add("steel:grid:followRotationZw", "double[]", 0);
             }
             Change::Mark { .. } => {
                 add(MARK_SERIES, "string", 0);

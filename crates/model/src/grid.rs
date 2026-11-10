@@ -71,6 +71,18 @@ pub struct Grid {
     pub v: GridFamily,
 }
 
+/// The frame a follower was bound against (T01.8): the grid's translation and orientation at
+/// bind time, stored with the binding so every read derives the rigid motion the follower made
+/// from that frame to the grid's current one. Records bound before the field existed carry no
+/// snapshot and follow the axis points only, exactly as they always did.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GridFrameSnapshot {
+    /// The grid's world translation at bind time.
+    pub translation_mm: [f64; 2],
+    /// The grid's quaternion Z and W components at bind time.
+    pub orientation_zw: [f64; 2],
+}
+
 /// Parse and normalize a regular-family coordinate expression.
 ///
 /// The first number is the first position; later numbers are positive spacings. `N*D` expands

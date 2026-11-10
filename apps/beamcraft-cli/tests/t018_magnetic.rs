@@ -169,7 +169,7 @@ fn a_bound_member_follows_the_frame_and_unbinding_materializes_the_world_axis() 
     let still_local = authored_layer(&f, &move_reply);
     assert!(still_local.contains("steel:grid:localAxisMm"));
     let j = ok(&f, "inspect-elements", &["--element", MEMBER]);
-    let world = axis_points(&j);
+    let world = member_world(&j);
     assert_eq!(world.len(), 2);
     near(world[0], [0.0, 3000.0, 0.0]);
     near(world[1], [0.0, 4000.0, 0.0]);
@@ -191,7 +191,7 @@ fn a_bound_member_follows_the_frame_and_unbinding_materializes_the_world_axis() 
     // relationship spec stays as an explicit empty list (the PartOf detach pattern).
     assert!(!released.contains("steel:grid:localAxisMm"));
     let j = ok(&f, "inspect-elements", &["--element", MEMBER]);
-    assert_eq!(axis_points(&j), world);
+    assert_eq!(member_world(&j), world);
 }
 
 /// A grid with followers refuses deletion (GR-N21); releasing the follower unblocks it
@@ -443,10 +443,33 @@ fn the_binding_survives_a_reopen_and_the_delete_guard_stays_armed() {
 }
 
 const PLACED: &str = "01990000-0000-7000-8000-000000000110";
+const COLUMN: &str = "01990000-0000-7000-8000-000000000103";
+const TWIN: &str = "01990000-0000-7000-8000-000000000104";
 
-/// The world axis of the first member of an inspection: the element-local axis moved by the
-/// member's placement translation (the placed members here carry no rotation).
-fn placed_world(j: &Json) -> Vec<[f64; 3]> {
+/// Rotates a vector by a unit xyzw quaternion.
+fn rotated(p: [f64; 3], q: [f64; 4]) -> [f64; 3] {
+    let [qx, qy, qz, qw] = q;
+    let u = [qx, qy, qz];
+    let cross = |a: [f64; 3], b: [f64; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let t = cross(u, p).map(|c| 2.0 * c);
+    let s = cross(u, t);
+    [
+        p[0] + qw * t[0] + s[0],
+        p[1] + qw * t[1] + s[1],
+        p[2] + qw * t[2] + s[2],
+    ]
+}
+
+/// The world axis of the first member of an inspection: the element-local axis carried by
+/// the member's placement (rotation, then translation). A followed frame edit conjugates the
+/// placement, so this stays the rigid world read before and after every grid move.
+fn member_world(j: &Json) -> Vec<[f64; 3]> {
     let member = j.get("members").unwrap().array().unwrap()[0].clone();
     let placement = member.get("placement").unwrap();
     let q: Vec<f64> = placement
@@ -457,7 +480,6 @@ fn placed_world(j: &Json) -> Vec<[f64; 3]> {
         .iter()
         .map(|v| v.float().unwrap())
         .collect();
-    assert_eq!(q, vec![0.0, 0.0, 0.0, 1.0]);
     let t: Vec<f64> = placement
         .get("translation_mm")
         .unwrap()
@@ -468,8 +490,235 @@ fn placed_world(j: &Json) -> Vec<[f64; 3]> {
         .collect();
     axis_points(j)
         .into_iter()
-        .map(|p| [p[0] + t[0], p[1] + t[1], p[2] + t[2]])
+        .map(|p| {
+            let r = rotated(p, [q[0], q[1], q[2], q[3]]);
+            [r[0] + t[0], r[1] + t[1], r[2] + t[2]]
+        })
         .collect()
+}
+
+/// The net volume in mm3 of the first member of an inspection.
+fn volume_mm3(j: &Json) -> f64 {
+    j.get("members").unwrap().array().unwrap()[0]
+        .get("quantities")
+        .unwrap()
+        .get("volume")
+        .unwrap()
+        .get("mm3")
+        .unwrap()
+        .float()
+        .unwrap()
+}
+
+/// The orientation quaternion of the first member of an inspection.
+fn orientation(j: &Json) -> [f64; 4] {
+    let q: Vec<f64> = j.get("members").unwrap().array().unwrap()[0]
+        .get("placement")
+        .unwrap()
+        .get("orientation_xyzw")
+        .unwrap()
+        .array()
+        .unwrap()
+        .iter()
+        .map(|v| v.float().unwrap())
+        .collect();
+    [q[0], q[1], q[2], q[3]]
+}
+
+/// Issue 569 item 7 (contract §7.5 O-G5): the follow is rigid. A cut bound to a moved grid
+/// travels with the member, so the volume matches the hand-moved twin; a rotated grid turns
+/// a bound column's section with its axis; the release keeps both.
+#[test]
+fn a_frame_edit_moves_the_cuts_and_turns_the_section_with_the_axis() {
+    let f = fixture();
+    let profile = text(
+        ok(&f, "define-profile", &["--width", "200", "--height", "300"])
+            .get("definition")
+            .unwrap(),
+        "digest",
+    );
+    // Cut the bound beam 500 mm before its far end, then bind it and a column.
+    ok(
+        &f,
+        "cut-by-plane",
+        &[
+            "--id",
+            MEMBER,
+            "--point",
+            "1500,1000,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+            "--operation-id",
+            "01990000-0000-7000-8000-000000000240",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000230",
+        ],
+    );
+    ok(
+        &f,
+        "create-member",
+        &[
+            "--kind",
+            "column",
+            "--start",
+            "6000,6000,0",
+            "--end",
+            "6000,6000,300",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "C1",
+            "--new-id",
+            COLUMN,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000231",
+        ],
+    );
+    ok(
+        &f,
+        "bind-grid",
+        &[
+            "--id",
+            MEMBER,
+            "--grid",
+            GRID,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000232",
+        ],
+    );
+    ok(
+        &f,
+        "bind-grid",
+        &[
+            "--id",
+            COLUMN,
+            "--grid",
+            GRID,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000233",
+        ],
+    );
+    // The unbound twin repeats the beam's authoring and is moved by hand afterwards.
+    ok(
+        &f,
+        "create-member",
+        &[
+            "--start",
+            "1000,1000,0",
+            "--end",
+            "2000,1000,0",
+            "--profile-digest",
+            &profile,
+            "--name",
+            "Twin",
+            "--new-id",
+            TWIN,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000234",
+        ],
+    );
+    ok(
+        &f,
+        "cut-by-plane",
+        &[
+            "--id",
+            TWIN,
+            "--point",
+            "1500,1000,0",
+            "--normal",
+            "1,0,0",
+            "--keep",
+            "negative",
+            "--operation-id",
+            "01990000-0000-7000-8000-000000000241",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000235",
+        ],
+    );
+    let cut_volume = volume_mm3(&ok(&f, "inspect-elements", &["--element", MEMBER]));
+    assert!((cut_volume - 30_000_000.0).abs() <= 1.0, "{cut_volume}");
+
+    ok(
+        &f,
+        "update-grid",
+        &[
+            "--id",
+            GRID,
+            "--origin",
+            "2000,0",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000236",
+        ],
+    );
+    ok(
+        &f,
+        "update-element",
+        &[
+            "--id",
+            TWIN,
+            "--move-from",
+            "1000,1000,0",
+            "--move-to",
+            "3000,1000,0",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000237",
+        ],
+    );
+    // The bound beam keeps its cut volume: the cut plane travelled with the axis, exactly
+    // like the hand-moved twin.
+    let moved = volume_mm3(&ok(&f, "inspect-elements", &["--element", MEMBER]));
+    assert!((moved - cut_volume).abs() <= 1.0, "{moved} vs {cut_volume}");
+    let twin = volume_mm3(&ok(&f, "inspect-elements", &["--element", TWIN]));
+    assert!((twin - cut_volume).abs() <= 1.0, "{twin}");
+    near(
+        member_world(&ok(&f, "inspect-elements", &["--element", MEMBER]))[0],
+        [3000.0, 1000.0, 0.0],
+    );
+
+    // The rotation turns the bound column's section with its axis: the placement orientation
+    // carries the frame's 90 degrees, and the world pose lands on the rotated grid point.
+    ok(
+        &f,
+        "update-grid",
+        &[
+            "--id",
+            GRID,
+            "--rotation",
+            "90",
+            "--op-id",
+            "01990000-0000-7000-8000-000000000238",
+        ],
+    );
+    let column = ok(&f, "inspect-elements", &["--element", COLUMN]);
+    let q = orientation(&column);
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    assert!(
+        (q[0] - 0.0).abs() < 1e-9 && (q[1] - 0.0).abs() < 1e-9,
+        "{q:?}"
+    );
+    assert!((q[2] - s).abs() < 1e-9 && (q[3] - s).abs() < 1e-9, "{q:?}");
+    near(member_world(&column)[0], [2000.0 - 6000.0, 6000.0, 0.0]);
+    // The release materializes the followed pose: the world axis and the orientation stay.
+    ok(
+        &f,
+        "unbind-grid",
+        &[
+            "--id",
+            MEMBER,
+            "--op-id",
+            "01990000-0000-7000-8000-000000000239",
+        ],
+    );
+    let released = ok(&f, "inspect-elements", &["--element", MEMBER]);
+    near(member_world(&released)[0], [1000.0, 1000.0, 0.0]);
+    assert!((moved - volume_mm3(&released)).abs() <= 1.0);
+    let released_q = orientation(&released);
+    assert!(
+        (released_q[2] - s).abs() < 1e-9 && (released_q[3] - s).abs() < 1e-9,
+        "{released_q:?}"
+    );
 }
 
 /// Issue 549: a member with a placement offset follows a grid rotation onto exactly the
@@ -514,7 +763,7 @@ fn a_placed_bound_member_follows_the_frame_with_its_placement_applied_once() {
         ],
     );
     let before = ok(&f, "inspect-elements", &["--element", PLACED]);
-    let world_before = placed_world(&before);
+    let world_before = member_world(&before);
     near(world_before[0], [3000.0, 2000.0, 0.0]);
     ok(
         &f,
@@ -530,8 +779,8 @@ fn a_placed_bound_member_follows_the_frame_with_its_placement_applied_once() {
     );
     // Binding alone must not move the member.
     let bound = ok(&f, "inspect-elements", &["--element", PLACED]);
-    near(placed_world(&bound)[0], [3000.0, 2000.0, 0.0]);
-    near(placed_world(&bound)[1], [11000.0, 2000.0, 0.0]);
+    near(member_world(&bound)[0], [3000.0, 2000.0, 0.0]);
+    near(member_world(&bound)[1], [11000.0, 2000.0, 0.0]);
     ok(
         &f,
         "update-grid",
@@ -559,7 +808,7 @@ fn a_placed_bound_member_follows_the_frame_with_its_placement_applied_once() {
     // The unbound twin moved by (2000,1000) and turned 90 degrees about (2000,1000) lands at
     // (0,4000) -> (0,12000).
     let turned = ok(&f, "inspect-elements", &["--element", PLACED]);
-    let world = placed_world(&turned);
+    let world = member_world(&turned);
     near(world[0], [0.0, 4000.0, 0.0]);
     near(world[1], [0.0, 12000.0, 0.0]);
     // A placement edit of a bound member is a hand edit: it refuses with nothing written.
@@ -587,7 +836,7 @@ fn a_placed_bound_member_follows_the_frame_with_its_placement_applied_once() {
         ],
     );
     let released = ok(&f, "inspect-elements", &["--element", PLACED]);
-    let world = placed_world(&released);
+    let world = member_world(&released);
     near(world[0], [0.0, 4000.0, 0.0]);
     near(world[1], [0.0, 12000.0, 0.0]);
 }

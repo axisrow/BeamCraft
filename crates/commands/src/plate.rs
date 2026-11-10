@@ -1293,7 +1293,10 @@ pub(crate) fn decode(
     }
     // T01.8: a bound member's world axis points are derived from its grid's frame and the
     // stored local points at read time, so the grid edit that moved it never wrote the member.
-    // A binding without its grid is an integrity error, not a silent unbound member.
+    // A binding without its grid is an integrity error, not a silent unbound member. With the
+    // bind-time frame snapshot (issue 569 item 7) the placement is conjugated by the frame
+    // delta first: the derived axis then reads back through the moved placement, and the
+    // section orientation, roll and element-local cuts and holes follow the axis rigidly.
     if members.iter().any(|(m, _)| m.follow.is_some()) {
         let grids = beamcraft_layer_engine::authored::grid::read_grids(&prims)?;
         for (member, _) in members.iter_mut() {
@@ -1302,11 +1305,16 @@ pub(crate) fn decode(
                     .iter()
                     .find(|g| g.id == follow.grid)
                     .ok_or_else(|| integrity("a bound member's grid is missing"))?;
-                member.axis_points_mm = steel::engine::member::grid_world_axis(
+                let placed = steel::engine::member::grid_followed_placement(
                     frame,
+                    follow,
                     &member.placement,
-                    &follow.local_axis_mm,
-                );
+                )
+                .unwrap_or(member.placement);
+                let axis =
+                    steel::engine::member::grid_world_axis(frame, &placed, &follow.local_axis_mm);
+                member.placement = placed;
+                member.axis_points_mm = axis;
             }
         }
     }
@@ -1469,9 +1477,23 @@ fn decode_member(prim: &Prim, id: ElementId, kind: MemberKind) -> Result<Authore
                 if local_axis_mm.len() < 2 {
                     return Err(bad());
                 }
+                // The bind-time frame snapshot (issue 569 item 7); absent on records stored
+                // before the field existed, which follow the axis points only.
+                let frame = match (
+                    property(prim, "steel:grid:followOriginMm").and_then(numbers::<3>),
+                    property(prim, "steel:grid:followRotationZw").and_then(numbers::<2>),
+                ) {
+                    (Some([x, y, _]), Some(zw)) => Some(beamcraft_model::grid::GridFrameSnapshot {
+                        translation_mm: [x, y],
+                        orientation_zw: zw,
+                    }),
+                    (None, None) => None,
+                    _ => return Err(bad()),
+                };
                 Some(steel::engine::member::GridFollow {
                     grid,
                     local_axis_mm,
+                    frame,
                 })
             }
             _ => return Err(bad()),

@@ -515,14 +515,17 @@ fn side_offset(authored: &AuthoredPlate) -> f64 {
         .map_or(0.0, |side| side.offset_mm(authored.thickness_mm))
 }
 
-/// The certified plain body of a plate laid off by `offset_mm` along the element-local Z
-/// (A12.1 thickness side), with its mesh for the base result: the kernel blob is translated
-/// by the pure translation of the production rigid map and re-certified with the face table,
-/// normals and tolerance of the body it certifies. `None` for a zero offset, so the default
-/// `top` side keeps the kernel results bit-identical to A02. The offset is the authored
-/// thickness halved or negated, both exact, so every vertex moves by exactly that amount and
-/// winding, adjacency, the face table and the measured volume are preserved; a refusal is
-/// therefore `UNSUPPORTED_GEOMETRY`, field `thickness_side`, and never an input rejection.
+/// The certified plain body of a plate laid off by `offset_mm` along the element-local
+/// `direction` (A12.1 thickness side; `+Z` for a `z = 0` contour, the contour frame's own Z
+/// for a framed one, issue 569 item 8), with its mesh for the base result: the kernel blob is
+/// translated by the pure translation of the production rigid map and re-certified with the
+/// face table, normals and tolerance of the body it certifies. `None` for a zero offset, so
+/// the default `top` side keeps the kernel results bit-identical to A02. The offset is the
+/// authored thickness halved or negated, both exact, so every vertex moves by exactly that
+/// amount and winding, adjacency, the face table and the measured volume are preserved; a
+/// refusal is therefore `UNSUPPORTED_GEOMETRY`, field `thickness_side`, and never an input
+/// rejection.
+#[allow(clippy::too_many_arguments)]
 fn laid_off(
     blob: &[u8],
     face_table: &[String],
@@ -530,6 +533,7 @@ fn laid_off(
     tolerance: beamcraft_geom::tolerance::Tolerance,
     volume_mm3: f64,
     offset_mm: f64,
+    direction: [f64; 3],
 ) -> Result<Option<(Body, SolidMesh)>, CommandError> {
     if offset_mm == 0.0 {
         return Ok(None);
@@ -550,8 +554,15 @@ fn laid_off(
         axis([0.0, 0.0, 1.0])?,
     )
     .map_err(|_| refused())?;
-    let translation = RigidTransform::from_body_frame(frame, Point3::new(0.0, 0.0, offset_mm))
-        .map_err(|_| refused())?;
+    let translation = RigidTransform::from_body_frame(
+        frame,
+        Point3::new(
+            direction[0] * offset_mm,
+            direction[1] * offset_mm,
+            direction[2] * offset_mm,
+        ),
+    )
+    .map_err(|_| refused())?;
     let translated = plain.placed(&translation).map_err(|_| refused())?;
     let body = Body::from_mesh(
         translated.clone(),
@@ -646,6 +657,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 result.tolerance(),
                 result.volume_mm3(),
                 offset,
+                [0.0, 0.0, 1.0],
             )?;
             let base = shifted
                 .as_ref()
@@ -719,6 +731,20 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
             }
             let result =
                 crate::kernel::plate_contour::rectangular_body(points, authored.thickness_mm)?;
+            // The thickness side lays off along the framed body's own extrusion axis (issue
+            // 569 item 8): the contour frame's ordered area vector, element-local. The exact
+            // rectangle admission above certifies the frame, so its absence here refuses
+            // instead of silently extruding the offset into the plate's own plane.
+            let z = contour
+                .frame
+                .ok_or_else(|| {
+                    CommandError::new(
+                        ErrorCode::UnsupportedGeometry,
+                        "thickness_side",
+                        "the framed contour carries no certified frame",
+                    )
+                })?
+                .z();
             let shifted = laid_off(
                 result.mesh().blob(),
                 &result
@@ -736,6 +762,7 @@ pub fn evaluate_plate(authored: &AuthoredPlate) -> Result<PlateBody, CommandErro
                 result.tolerance(),
                 result.volume_mm3(),
                 offset,
+                [z.x(), z.y(), z.z()],
             )?;
             let base = shifted
                 .as_ref()
@@ -822,6 +849,7 @@ fn evaluate_contour(authored: &AuthoredPlate) -> Result<PlateBody, CommandError>
         extrusion.tolerance(),
         extrusion.volume_mm3(),
         offset,
+        [0.0, 0.0, 1.0],
     )?;
     let base = match shifted.as_ref() {
         Some((_, mesh)) => mesh.clone(),
@@ -1714,6 +1742,47 @@ mod tests {
         let laid = evaluate_plate(&contour(Some(PlateSide::Bottom))).unwrap();
         assert_eq!(z_range(&laid), (-8.0, 0.0));
         assert_eq!(laid.quantities().volume_mm3, flat.quantities().volume_mm3);
+    }
+
+    #[test]
+    fn a_framed_plate_lays_its_thickness_off_along_its_own_frame() {
+        // Issue 569 item 8: a rectangle contour in the XZ plane (area vector +Y). The side
+        // lays the thickness off across the plate along the frame Z, never inside its own
+        // plane: the contour stays at z 0..500 for every side while the y band moves.
+        let contour = vec![
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 500.0],
+            [800.0, 0.0, 500.0],
+            [800.0, 0.0, 0.0],
+        ];
+        let framed = |side: Option<PlateSide>| {
+            AuthoredPlate::from_command(&CreatePlate {
+                contour_points_mm: contour.clone(),
+                thickness_mm: 100.0,
+                thickness_side: side,
+                ..command(Vec::new(), 100.0)
+            })
+        };
+        let range = |axis: usize, body: &PlateBody| {
+            let values = || body.solid.vertices().iter().map(|p| p[axis]);
+            (
+                values().fold(f64::INFINITY, f64::min),
+                values().fold(f64::NEG_INFINITY, f64::max),
+            )
+        };
+        let top = evaluate_plate(&framed(Some(PlateSide::Top))).unwrap();
+        assert_eq!(range(0, &top), (0.0, 800.0));
+        assert_eq!(range(1, &top), (0.0, 100.0));
+        assert_eq!(range(2, &top), (0.0, 500.0));
+        let middle = evaluate_plate(&framed(Some(PlateSide::Middle))).unwrap();
+        assert_eq!(range(1, &middle), (-50.0, 50.0));
+        assert_eq!(range(2, &middle), (0.0, 500.0));
+        let bottom = evaluate_plate(&framed(Some(PlateSide::Bottom))).unwrap();
+        assert_eq!(range(1, &bottom), (-100.0, 0.0));
+        assert_eq!(range(2, &bottom), (0.0, 500.0));
+        let volume = top.quantities().volume_mm3;
+        assert_eq!(middle.quantities().volume_mm3, volume);
+        assert_eq!(bottom.quantities().volume_mm3, volume);
     }
 
     #[test]
