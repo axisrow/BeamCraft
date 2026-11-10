@@ -10,11 +10,10 @@
 //! is to report the store's pins next to this build's digest and let `open-revision` refuse an
 //! incompatible store instead of calling it verified.
 
-use beamcraft_host::revision::{RevisionError, RevisionStore};
+use beamcraft_host::revision::Revision;
 use beamcraft_layer_engine::authored::{schema_identity, stored_schema_pins};
-use beamcraft_model::id::{ProjectId, WorkspaceId};
 use session::Refusal;
-use session::pipeline::{integrity, load_base, open_base};
+use session::pipeline::{ROOT_LAYER, base_with_layers, open_base};
 
 /// The layer-schema pins of a store's head against this build.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,18 +26,23 @@ pub struct SchemaStatus {
     pub compatible: bool,
 }
 
-/// The schema status of the verified head; `None` for a store without a revision.
-pub fn schema_status(store: &RevisionStore) -> Result<Option<SchemaStatus>, Refusal> {
-    let revision = match store.open() {
-        Ok(revision) => revision,
-        Err(RevisionError::NoRevision) => return Ok(None),
-        Err(error) => return Err(error.into()),
-    };
-    let content = revision.manifest().content();
-    let damaged = |_| integrity("head manifest identity is not a UUIDv7");
-    let project = ProjectId::parse(content.project().as_str()).map_err(damaged)?;
-    let workspace = WorkspaceId::parse(content.workspace().as_str()).map_err(damaged)?;
-    let (_, base) = load_base(store, &project, &workspace)?;
+/// The schema status of a verified head, read from `layers`: its verified layer bytes in
+/// manifest entry order (what `RevisionStore::open_with_layers` returns), so no blob is read
+/// or hashed again.
+///
+/// `Ok(None)` only for a head that is not a project base: its root layer is not the project
+/// root (`root.usda`), as for a raw revision of arbitrary blobs; no content command reads it
+/// and it has no layer schema to compare. A project head whose layers cannot be read (a
+/// damaged layer committed through `commit-revision`) is an `Err` with the reader's code, the
+/// same refusal the content commands give, never a silent `None`.
+pub fn schema_status(
+    revision: &Revision,
+    layers: Vec<Vec<u8>>,
+) -> Result<Option<SchemaStatus>, Refusal> {
+    if revision.manifest().content().root_layer() != ROOT_LAYER {
+        return Ok(None);
+    }
+    let base = base_with_layers(revision, layers)?;
     let request = open_base(&base)?;
     let store_digests = stored_schema_pins(&request)?;
     let build_digest = schema_identity()?.digest.to_string();

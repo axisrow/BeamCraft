@@ -62,9 +62,22 @@ impl RevisionStore {
     /// missing (for example garbage-collected), corrupt or resized blob is a typed error and
     /// no partial revision is returned. [`RevisionError::NoRevision`] if nothing is published.
     pub fn open(&self) -> Result<Revision, RevisionError> {
+        self.open_verified(drop)
+    }
+
+    /// [`Self::open`] that also returns the verified bytes of every layer, in manifest entry
+    /// order, from the same single verification pass: a caller that reads the layers right
+    /// after opening (for example to inspect their schema pins) does not hash them twice.
+    pub fn open_with_layers(&self) -> Result<(Revision, Vec<Vec<u8>>), RevisionError> {
+        let mut layers = Vec::new();
+        let revision = self.open_verified(|bytes| layers.push(bytes))?;
+        Ok((revision, layers))
+    }
+
+    fn open_verified(&self, mut keep: impl FnMut(Vec<u8>)) -> Result<Revision, RevisionError> {
         let info = self.head()?.ok_or(RevisionError::NoRevision)?;
         for (index, entry) in info.manifest.content().entries().iter().enumerate() {
-            self.read_entry(index, entry)?;
+            keep(self.read_entry(index, entry)?);
         }
         if let Some(pin) = info.manifest.content().operation_evidence() {
             self.read_evidence(pin)?;

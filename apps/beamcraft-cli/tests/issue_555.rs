@@ -7,7 +7,8 @@
 //! the bolt grip reads the bearing ring around any coaxial hole (finding 1), a generated hole
 //! follows a rotated plate (finding 2), the plate box honours `thickness_side` (finding 3), a
 //! verbatim retry of a `create-*` without `--new-id` replays (finding 4) and a store pinned to
-//! another layer mapping is reported honestly by `open-revision` (finding 5).
+//! another layer mapping is reported honestly by `open-revision` (finding 5), as is a project
+//! store whose layers cannot be read (the #557 review follow-up).
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -64,6 +65,11 @@ impl Fixture {
     /// Commits a head-based revision with edited layer text, the way a store written by
     /// another build arrives (`commit-revision` checks bytes, never the layer mapping).
     fn tamper(&self, edit: impl Fn(&str, String) -> String) {
+        self.commit_edited(None, edit);
+    }
+
+    /// [`Self::tamper`], optionally naming another root layer (a head that is no project base).
+    fn commit_edited(&self, root_layer: Option<&str>, edit: impl Fn(&str, String) -> String) {
         let store = RevisionStore::new(BlobStore::new(self.shared.root.join("store")).unwrap());
         let head = store.open().unwrap();
         let content = head.manifest().content();
@@ -84,7 +90,7 @@ impl Fixture {
             op: Uuid7::parse(&ids.next_id().unwrap().to_string()).unwrap(),
             workspace_generation: content.workspace_generation() + 1,
             schema: content.schema(),
-            root_layer: content.root_layer().to_owned(),
+            root_layer: root_layer.unwrap_or(content.root_layer()).to_owned(),
             entries,
         };
         store
@@ -431,4 +437,39 @@ fn a_store_of_another_layer_mapping_is_not_reported_verified() {
         text(&inspected, "message").contains("open-revision reports"),
         "{inspected:?}"
     );
+}
+
+#[test]
+fn open_revision_refuses_a_project_head_whose_layers_cannot_be_read() {
+    // #557 review: a byte-verified project head with a damaged layer is not
+    // `revision_verified`; open-revision refuses it with the code the content commands give,
+    // while a head that is no project base still verifies with `schema: null`.
+    let f = Fixture::new();
+    f.plate(&["--width", "200", "--length", "200", "--thickness", "20"]);
+    f.tamper(|name, text| {
+        if name == "authored.usda" {
+            "this is not a USD layer".to_owned()
+        } else {
+            text
+        }
+    });
+    let (code, refused) = f.run("open-revision", &[]);
+    assert_eq!(code, 2, "{refused:?}");
+    assert_eq!(text(&refused, "code"), "INTEGRITY_ERROR");
+    let (code, inspected) = f.run("inspect-elements", &[]);
+    assert_eq!(code, 2, "{inspected:?}");
+    assert_eq!(text(&inspected, "code"), "INTEGRITY_ERROR");
+
+    let raw = Fixture::new();
+    raw.plate(&["--width", "200", "--length", "200", "--thickness", "20"]);
+    raw.commit_edited(Some("authored.usda"), |name, text| {
+        if name == "authored.usda" {
+            "opaque bytes".to_owned()
+        } else {
+            text
+        }
+    });
+    let verified = raw.ok("open-revision", &[]);
+    assert_eq!(text(&verified, "outcome"), "revision_verified");
+    assert_eq!(at(&verified, &["schema"]), &Json::Null);
 }

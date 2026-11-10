@@ -213,18 +213,34 @@ pub struct Base {
 
 /// The layers of one stored revision as a base to open or author over.
 pub fn base_of(revision: &Revision) -> Result<Base, Refusal> {
+    let layers = revision
+        .manifest()
+        .content()
+        .entries()
+        .iter()
+        .map(|e| revision.layer_bytes(e.name()))
+        .collect::<Result<Vec<_>, _>>()?;
+    base_with_layers(revision, layers)
+}
+
+/// [`base_of`] over layer bytes the caller already verified, in manifest entry order (what
+/// [`RevisionStore::open_with_layers`] returns), so they are not read and hashed again. A count
+/// that differs from the manifest's entries is an `INTEGRITY_ERROR`.
+pub fn base_with_layers(revision: &Revision, layers: Vec<Vec<u8>>) -> Result<Base, Refusal> {
     let content = revision.manifest().content();
+    if layers.len() != content.entries().len() {
+        return Err(integrity("the verified layers do not match the manifest"));
+    }
     let assets = content
         .entries()
         .iter()
-        .map(|e| {
-            Ok(Asset {
-                name: e.name().into(),
-                digest: e.digest(),
-                bytes: revision.layer_bytes(e.name())?,
-            })
+        .zip(layers)
+        .map(|(e, bytes)| Asset {
+            name: e.name().into(),
+            digest: e.digest(),
+            bytes,
         })
-        .collect::<Result<Vec<_>, Refusal>>()?;
+        .collect();
     Ok(Base {
         project: content.project().as_str().to_owned(),
         workspace: content.workspace().as_str().to_owned(),
