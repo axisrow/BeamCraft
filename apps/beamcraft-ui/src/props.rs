@@ -328,8 +328,7 @@ pub fn parse_details(
     }
     Err(ToolError::local(
         "NOT_FOUND",
-        "the engine has no properties for this element: the properties editor reads only \
-         plates and straight members",
+        "the reply has no plate or member for this element",
     ))
 }
 
