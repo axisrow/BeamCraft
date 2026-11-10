@@ -84,9 +84,23 @@ impl App {
             .map_or(RenderMode::Shaded, |p| p.mode)
     }
 
-    /// Sets the render mode of the active pane; switching never reloads the scene.
+    /// Sets the render mode of the active pane; switching never reloads the scene. The view owns
+    /// the display (V12): every pane on it, the stored view and the open View properties form take
+    /// the mode too, so the panel tells the truth and an unrelated Apply keeps the switch
+    /// (issue 569 item 25).
     pub(super) fn set_active_mode(&mut self, mode: RenderMode) {
+        let view = self.views.active_pane().and_then(|p| p.view);
         if let Some(pane) = self.views.active_pane_mut() {
+            pane.mode = mode;
+        }
+        let Some(id) = view else { return };
+        if let Some(view) = self.views.book.get_mut(&id) {
+            view.render_mode = mode;
+        }
+        if self.views.form.id == Some(id) {
+            self.views.form.mode = mode;
+        }
+        for pane in self.views.panes.iter_mut().filter(|p| p.view == Some(id)) {
             pane.mode = mode;
         }
     }
@@ -96,9 +110,21 @@ impl App {
         self.views.active_pane().is_some_and(|p| p.grids)
     }
 
-    /// Shows or hides the grid guides of the active pane.
+    /// Shows or hides the grid guides of the active pane; the view and the open form follow like
+    /// the render mode does (issue 569 item 25).
     pub(super) fn set_grids_shown(&mut self, on: bool) {
+        let view = self.views.active_pane().and_then(|p| p.view);
         if let Some(pane) = self.views.active_pane_mut() {
+            pane.grids = on;
+        }
+        let Some(id) = view else { return };
+        if let Some(view) = self.views.book.get_mut(&id) {
+            view.grids_visible = on;
+        }
+        if self.views.form.id == Some(id) {
+            self.views.form.grids = on;
+        }
+        for pane in self.views.panes.iter_mut().filter(|p| p.view == Some(id)) {
             pane.grids = on;
         }
     }
@@ -848,7 +874,10 @@ impl App {
             }
         }
         if let Some(l) = &self.loaded {
-            if pane.grids {
+            // A view that hides the grid kind hides its lines and bubbles too, like it hides
+            // beams (issue 569 item 13): `pane.grids` is only the pane's guides switch.
+            if pane.grids && shown.is_none_or(|v| v.shows_kind(beamcraft_engine::ElementKind::Grid))
+            {
                 self.grid_scene.paint(
                     ui,
                     response.rect,
@@ -882,13 +911,12 @@ impl App {
                     &self.selection_edges.1,
                 );
                 // The selected plate's contour grips (V18): dormant while a creation tool or a
-                // view pick owns the pointer, and on any bench other than Select, whose click
-                // pickers (weld pairs, annotations) would lose their clicks to a grip.
+                // view pick owns the pointer, on any bench other than Select, whose click
+                // pickers (weld pairs, annotations) would lose their clicks to a grip, and while
+                // the selection's reading is stale — a grip off the moved plate floats (issue
+                // 569 item 12).
                 if let Some(contour) = selected.contour.as_ref()
-                    && !self.beam_mode
-                    && !self.plate_mode
-                    && self.views.picking.is_none()
-                    && self.bench == workbench::Bench::Select
+                    && !self.contour_grips_dormant()
                 {
                     contour_grips::paint(
                         &painter,

@@ -244,6 +244,9 @@ pub struct App {
     cut_form: crate::cut_plane::Form,
     /// The window's applied display cut; `None` shows the whole model.
     cut: Option<beamcraft_engine::view_clipping::Clipping>,
+    /// The last cut outcome or refusal; it stays until the next one, so a refusal is readable
+    /// (issue 569 item 21: the message of one frame is no message).
+    cut_note: Option<Result<String, String>>,
     /// The model views of this model (V12): the book, the browser and properties state and the
     /// panes of the work area (the last one is active).
     views: crate::views::Views,
@@ -1032,6 +1035,7 @@ impl App {
             logo_tried: false,
             cut_form: crate::cut_plane::Form::default(),
             cut: None,
+            cut_note: None,
             shortcuts,
             shortcuts_note,
             selection_edges: Default::default(),
@@ -2166,17 +2170,19 @@ impl App {
         }
     }
 
-    /// The V15 cut plane inspector: the form, the applied state, nothing model-touching.
+    /// The V15 cut plane inspector: the form, the applied state, nothing model-touching. The
+    /// outcome of a click stays until the next one, and the applied line carries the effective
+    /// half-space count, so a refusal and a success are both readable afterwards (issue 569
+    /// item 21).
     fn cut_panel(&mut self, ui: &mut egui::Ui) {
         ui.label(
             "The cut plane hides part of the model in this window only. The model, its \
              revisions and every measurement stay unchanged.",
         );
-        let mut note = None;
         match self.cut_form.show(ui) {
             Ok(Some(crate::cut_plane::Action::Apply(cut))) => {
                 let planes = cut.effective().map_or(0, |p| p.len());
-                note = Some(Ok(format!(
+                self.cut_note = Some(Ok(format!(
                     "Cut applied: {} user plane(s), work-area box {}, {planes} effective \
                      half-space(s).",
                     cut.planes.len(),
@@ -2185,29 +2191,29 @@ impl App {
                 self.cut = Some(cut);
             }
             Ok(Some(crate::cut_plane::Action::Clear)) => {
-                note = Some(Ok("Cut removed: the whole model is visible.".into()));
+                self.cut_note = Some(Ok("Cut removed: the whole model is visible.".into()));
                 self.cut = None;
             }
-            Err(error) => note = Some(Err(error.to_string())),
+            Err(error) => self.cut_note = Some(Err(error.to_string())),
             Ok(None) => {}
         }
         match &self.cut {
             Some(cut) => ui.label(format!(
-                "Applied: {} user plane(s), work-area box {}.",
+                "Applied: {} user plane(s), work-area box {}, {} effective half-space(s).",
                 cut.planes.len(),
                 if cut.area.is_some() { "on" } else { "off" },
+                cut.effective().map_or(0, |p| p.len()),
             )),
             None => ui.label("No cut: the whole model is visible."),
         };
-        if let Some(note) = note {
-            match note {
-                Ok(message) => {
-                    ui.label(message);
-                }
-                Err(message) => {
-                    ui.colored_label(crate::theme::Palette::current(ui).error, message);
-                }
+        match self.cut_note.as_ref() {
+            Some(Ok(message)) => {
+                ui.label(message);
             }
+            Some(Err(message)) => {
+                ui.colored_label(crate::theme::Palette::current(ui).error, message);
+            }
+            None => {}
         }
     }
 
@@ -8129,6 +8135,138 @@ pub(crate) mod tests {
         }
         app.begin_view(Construction::PlanXy);
         assert_eq!(app.views.form.name, "View 1");
+    }
+
+    #[test]
+    fn a_visual_style_or_guides_switch_reaches_the_view_and_the_open_form() {
+        use beamcraft_engine::RenderMode;
+        use beamcraft_engine::views::ModelView;
+        use beamcraft_engine::work_plane::WorkPlane;
+        use beamcraft_model::id::Uuid7;
+        let Some(mut app) = headless() else { return };
+        let id = Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap();
+        app.views
+            .book
+            .insert(ModelView::new(id, "Plan", WorkPlane::default(), 5000.0))
+            .unwrap();
+        app.activate_view(Some(id));
+        app.edit_view(id);
+        assert_eq!(app.views.form.id, Some(id));
+        assert_eq!(app.views.active_pane().unwrap().mode, RenderMode::Shaded);
+
+        // A switch from the Visual style dropdown or a shortcut lands in the pane, the stored
+        // view and the open properties form, so the panel agrees with the viewport and an
+        // unrelated Apply keeps the switch (issue 569 item 25).
+        app.set_active_mode(RenderMode::Wireframe);
+        assert_eq!(app.views.active_pane().unwrap().mode, RenderMode::Wireframe);
+        assert_eq!(
+            app.views.book.get(&id).unwrap().render_mode,
+            RenderMode::Wireframe
+        );
+        assert_eq!(app.views.form.mode, RenderMode::Wireframe);
+
+        app.set_grids_shown(false);
+        assert!(!app.views.active_pane().unwrap().grids);
+        assert!(!app.views.book.get(&id).unwrap().grids_visible);
+        assert!(!app.views.form.grids);
+
+        // The free 3D pane has no view: its switches stay pane-local and touch no view.
+        app.activate_view(None);
+        app.set_active_mode(RenderMode::Grey);
+        assert_eq!(
+            app.views.book.get(&id).unwrap().render_mode,
+            RenderMode::Wireframe
+        );
+    }
+
+    #[test]
+    fn the_status_bar_carries_the_publish_and_cut_outcomes() {
+        use super::workbench::Bench;
+        let Some(mut app) = headless() else { return };
+        // A publish result or refusal stays readable on any bench (issue 569 item 16).
+        app.publisher.note = Some(Err("Publication refused, nothing was published: no".into()));
+        app.set_bench(Bench::Select);
+        assert_eq!(
+            app.status_note(),
+            Some(Err("Publication refused, nothing was published: no"))
+        );
+        app.set_bench(Bench::Colour);
+        assert!(app.status_note().is_some(), "still shown from any bench");
+
+        // The cut panel's outcome survives the frame that made it (issue 569 item 21).
+        app.publisher.note = None;
+        app.set_bench(Bench::CutPlane);
+        app.cut_note = Some(Err("enter a finite offset".into()));
+        assert_eq!(app.status_note(), Some(Err("enter a finite offset")));
+        app.cut_note = Some(Ok(
+            "Cut applied: 1 user plane(s), work-area box off, 1 effective \
+                               half-space(s)."
+                .into(),
+        ));
+        assert!(matches!(app.status_note(), Some(Ok(message)) if message.contains("effective")));
+    }
+
+    #[test]
+    fn the_contour_grips_stand_down_while_the_selection_reading_is_stale() {
+        let Some(mut app) = headless() else { return };
+        let plate = crate::edit::ElementInfo {
+            id: "01990000-0000-7000-8000-000000000001".into(),
+            kind: "plate".into(),
+            name: "P".into(),
+            translation_mm: [0.0; 3],
+            contour: Some(crate::edit::PlateContour {
+                points: vec![[0.0, 0.0, 0.0], [100.0, 0.0, 0.0], [100.0, 100.0, 0.0]],
+                corners: Vec::new(),
+                translation_mm: [0.0; 3],
+                orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            }),
+        };
+        let details = crate::props::Details {
+            id: plate.id.clone(),
+            kind: plate.kind.clone(),
+            revision: crate::props::RevisionStamp {
+                revision_id: "r1".into(),
+                manifest_digest: "0123456789abcdef".into(),
+                sequence: 1,
+            },
+            name: plate.name.clone(),
+            class: 0,
+            material: None,
+            material_name: None,
+            translation_mm: [0.0; 3],
+            contour: plate.contour.clone(),
+            thickness_mm: Some(20.0),
+            plate_size_mm: Some([100.0, 100.0]),
+            section_mm: None,
+            axis_points_mm: None,
+            profile: None,
+            profile_name: None,
+            roll_rad: None,
+            section_placement: None,
+            level: None,
+            levels: Vec::new(),
+            shared_definition: None,
+            quantities: crate::props::Quantities::default(),
+        };
+        let id = plate.id.clone();
+        app.editor.select(plate);
+        app.props.load(&id, Ok(details));
+        assert!(
+            !app.contour_grips_dormant(),
+            "a current reading lets the grips show"
+        );
+
+        // The head moved under the window (a live refresh): the cached reading lags, so the
+        // grips hide until Reload properties re-reads the element (issue 569 item 12).
+        app.props.observe_head(Some(crate::props::RevisionStamp {
+            revision_id: "r2".into(),
+            manifest_digest: "fedcba9876543210".into(),
+            sequence: 2,
+        }));
+        assert!(
+            app.contour_grips_dormant(),
+            "grips of a moved element would float off the plate"
+        );
     }
 
     #[test]
