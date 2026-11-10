@@ -1058,11 +1058,12 @@ mod tests {
                 });
                 out
             };
-            let mirrors: [([f64; 3], [f64; 3], &dyn Fn(&[f64; 3]) -> [f64; 3]); 2] = [
-                ([0.0, 1.0, 0.0], [0.0, 250.0, 0.0], &|v: &[f64; 3]| {
+            type WorldMap = fn(&[f64; 3]) -> [f64; 3];
+            let mirrors: [([f64; 3], [f64; 3], WorldMap); 2] = [
+                ([0.0, 1.0, 0.0], [0.0, 250.0, 0.0], |v: &[f64; 3]| {
                     [v[0], 500.0 - v[1], v[2]]
                 }),
-                ([0.0, 0.0, 1.0], [0.0, 0.0, 0.0], &|v: &[f64; 3]| {
+                ([0.0, 0.0, 1.0], [0.0, 0.0, 0.0], |v: &[f64; 3]| {
                     [v[0], v[1], -v[2]]
                 }),
             ];
@@ -1090,7 +1091,7 @@ mod tests {
                 };
                 let mirrored = crate::engine::update::patch_member(&original, &patch).unwrap();
                 let after = world(&mirrored);
-                let mut expected: Vec<[f64; 3]> = before.iter().map(|v| map(v)).collect();
+                let mut expected: Vec<[f64; 3]> = before.iter().map(map).collect();
                 expected.sort_by(|a, b| {
                     a.iter()
                         .zip(b.iter())
