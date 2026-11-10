@@ -252,8 +252,13 @@ fn framing(min: [f32; 3], max: [f32; 3]) -> ([f32; 3], f32) {
 }
 
 impl SceneSummary {
-    /// Centre and size of the bounds, for camera framing.
+    /// Centre and size of the bounds, for camera framing. A scene with no elements has no
+    /// bounds to report: it frames the metre scale the window starts at, not the 1 mm the
+    /// degenerate bounds would give (issue 569 item 10).
     pub fn framing(&self) -> ([f32; 3], f32) {
+        if self.elements == 0 {
+            return ([0.0; 3], 1000.0);
+        }
         framing(self.min, self.max)
     }
 

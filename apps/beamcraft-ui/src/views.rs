@@ -68,14 +68,29 @@ fn load_bytes(bytes: &[u8]) -> Result<ViewBook, String> {
 }
 
 /// Persists the book through a sibling temporary file, so a failed write keeps the old content.
-/// Temporary views are not written. A store that is not a directory (no model is open there)
-/// has nothing to keep the views beside, so nothing is written.
-pub fn persist(store: &Path, book: &ViewBook) -> Result<(), String> {
+/// The file also serves the CLI headlessly (`docs/design/v12-named-views.md`), so it may have
+/// moved on since the window read it: the disk is read back and merged before the write —
+/// what the window never touched keeps the version another process wrote, what it deleted
+/// stays deleted, and what it created or changed wins (issue 569 item 3). The merged book
+/// comes back, so the caller can take it as what the file now holds. An unreadable file
+/// refuses the write instead of clobbering it. Temporary views are not written. A store that
+/// is not a directory (no model is open there) has nothing to keep the views beside, so
+/// nothing is written.
+pub fn persist(store: &Path, book: &ViewBook, baseline: &ViewBook) -> Result<ViewBook, String> {
     if !store.is_dir() {
-        return Ok(());
+        return Ok(book.clone());
     }
     let path = session_path(store);
-    let bytes = session::views_layer::layer_bytes(book)
+    let disk = match std::fs::read(&path) {
+        Ok(bytes) => Some(load_bytes(&bytes)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(format!("the saved views could not be read: {}", e.kind())),
+    };
+    let merged = match disk {
+        None => book.clone(),
+        Some(disk) => merge(book, baseline, &disk)?,
+    };
+    let bytes = session::views_layer::layer_bytes(&merged)
         .map_err(|e| format!("the saved views were refused: {}", e.message))?;
     if bytes.len() > 1024 * 1024 {
         return Err("the saved views exceed the file limit".to_owned());
@@ -83,7 +98,93 @@ pub fn persist(store: &Path, book: &ViewBook) -> Result<(), String> {
     let temp = path.with_extension("usda.tmp");
     std::fs::write(&temp, &bytes)
         .and_then(|()| std::fs::rename(&temp, &path))
-        .map_err(|e| format!("the saved views could not be written: {}", e.kind()))
+        .map_err(|e| format!("the saved views could not be written: {}", e.kind()))?;
+    Ok(merged)
+}
+
+/// Merges the window's book with what the file holds, over what the window last read or
+/// wrote. Views and filters the window changed or created win; ones it never touched keep
+/// the disk's version, so an edit elsewhere cannot revert what another process wrote, and
+/// ones another process dropped stay dropped; ones the window deleted stay deleted, and ones
+/// only the disk has are taken in. Folders have no versions: the merge keeps everything
+/// except a folder the window deleted and one it never saw.
+fn merge(book: &ViewBook, baseline: &ViewBook, disk: &ViewBook) -> Result<ViewBook, String> {
+    let mut views = Vec::new();
+    for view in disk.views() {
+        if let Some(merged) = merge_view(view.id, book, baseline, disk) {
+            views.push(merged);
+        }
+    }
+    for view in book.views() {
+        if disk.get(&view.id).is_none()
+            && let Some(merged) = merge_view(view.id, book, baseline, disk)
+        {
+            views.push(merged);
+        }
+    }
+    let mut filters = Vec::new();
+    for filter in disk.filters() {
+        if let Some(merged) = merge_filter(&filter.name, book, baseline, disk) {
+            filters.push(merged.clone());
+        }
+    }
+    for filter in book.filters() {
+        if disk.filter(&filter.name).is_none()
+            && let Some(merged) = merge_filter(&filter.name, book, baseline, disk)
+        {
+            filters.push(merged.clone());
+        }
+    }
+    let mut folders = Vec::new();
+    for folder in disk.folders().chain(book.folders()) {
+        let dropped =
+            baseline.folders().any(|f| f == folder) && !book.folders().any(|f| f == folder);
+        if !dropped && !folders.iter().any(|f| f == folder) {
+            folders.push(folder.to_owned());
+        }
+    }
+    ViewBook::from_all(views, folders, filters).map_err(|e| e.to_string())
+}
+
+/// The merged version of one view by identity: the window's edit when it has one, the disk's
+/// view when the window never touched it, gone when the window or the disk removed it.
+fn merge_view(
+    id: Uuid7,
+    book: &ViewBook,
+    baseline: &ViewBook,
+    disk: &ViewBook,
+) -> Option<ModelView> {
+    match (book.get(&id), baseline.get(&id), disk.get(&id)) {
+        // Changed or created in the window: the window wins, the disk has nothing to keep.
+        (Some(view), Some(kept), _) if view != kept => Some(view.clone()),
+        (Some(view), None, _) => Some(view.clone()),
+        // Untouched by the window: the disk's version, or its removal, stands.
+        (Some(_), Some(_), Some(view)) => Some(view.clone()),
+        (Some(_), Some(_), None) => None,
+        // Deleted in the window.
+        (None, Some(_), _) => None,
+        // Only the disk has it: written by another process after the window read.
+        (None, None, Some(view)) => Some(view.clone()),
+        (None, None, None) => None,
+    }
+}
+
+/// [`merge_view`] for a named filter.
+fn merge_filter<'a>(
+    name: &str,
+    book: &'a ViewBook,
+    baseline: &'a ViewBook,
+    disk: &'a ViewBook,
+) -> Option<&'a beamcraft_engine::views::ViewFilter> {
+    match (book.filter(name), baseline.filter(name), disk.filter(name)) {
+        (Some(view), Some(kept), _) if view != kept => Some(view),
+        (Some(view), None, _) => Some(view),
+        (Some(_), Some(_), Some(view)) => Some(view),
+        (Some(_), Some(_), None) => None,
+        (None, Some(_), _) => None,
+        (None, None, Some(view)) => Some(view),
+        (None, None, None) => None,
+    }
 }
 
 /// The file the user's discipline view presets (V07) are kept in, inside the configuration
@@ -457,7 +558,7 @@ impl Form {
         if let Some([above, below]) = view.depth {
             self.depth = [format!("{above}"), format!("{below}")];
         }
-        self.rotation = view.rotation_rad.map(|r| format!("{}", r.to_degrees()));
+        self.rotation = view.rotation_rad.map(degree_text);
         self.mode = view.render_mode;
         self.grids = view.grids_visible;
         self.hidden = view.hidden_kinds;
@@ -530,6 +631,22 @@ impl Form {
     pub fn plane_offset(&self) -> Result<f64, String> {
         number(&self.offset, "the plane offset")
     }
+}
+
+/// The degree text of a rotation held in radians: the coarsest rounded degree value that
+/// turns back into the very same radians. Degrees round-tripped through radians otherwise
+/// never read back exactly, so 30 came back as "29.999999999999996" and kept the form dirty
+/// after Apply (issue 569 item 20). A rotation no rounding reproduces keeps the full text.
+fn degree_text(rad: f64) -> String {
+    let deg = rad.to_degrees();
+    for digits in [0_u32, 3, 6, 9, 12] {
+        let scale = 10_f64.powi(digits as i32);
+        let rounded = (deg * scale).round() / scale;
+        if rounded.to_radians() == rad {
+            return format!("{rounded}");
+        }
+    }
+    format!("{deg}")
 }
 
 /// A view-construction pick in progress: points picked in the model, and the face of a surface
@@ -736,6 +853,10 @@ impl Subject {
 pub struct Views {
     /// The book: saved and temporary views and the folders.
     pub book: ViewBook,
+    /// What this window last read from the views file or wrote to it: the baseline a persist
+    /// merges against, so an edit here cannot revert what the CLI wrote to the same file
+    /// (issue 569 item 3).
+    pub baseline: ViewBook,
     /// The user's discipline view presets (V07), kept in the configuration directory.
     pub presets: PresetBook,
     /// Why the last action failed, or what it did.
@@ -1039,7 +1160,7 @@ mod tests {
         let mut temp = view(2, "Scratch", "");
         temp.temporary = true;
         book.insert(temp).unwrap();
-        persist(&store, &book).unwrap();
+        persist(&store, &book, &ViewBook::new()).unwrap();
         // The sidecar is the views layer: a camera-prim USD document, not JSON.
         let written = std::fs::read(session_path(&store)).unwrap();
         assert!(session::views_layer::looks_like_layer(&written));
@@ -1072,11 +1193,80 @@ mod tests {
         assert_eq!(back.len(), 1);
         assert_eq!(back.get(&id(1)), book.get(&id(1)));
         // A layer beside the legacy sidecar wins; the JSON copy is never read again.
-        persist(&store, &back).unwrap();
+        persist(&store, &back, &ViewBook::new()).unwrap();
         std::fs::write(legacy_path(&store), b"{broken").unwrap();
         let layer = load(&store).unwrap();
         assert_eq!(layer.len(), 1);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn persisting_merges_what_another_process_wrote() {
+        let dir =
+            std::env::temp_dir().join(format!("beamcraft-views-ui-merge-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = dir.join("m.store");
+        std::fs::create_dir_all(&store).unwrap();
+        let elev = view(1, "Elev", "Plans");
+        let baseline =
+            ViewBook::from_all(vec![elev.clone()], ["Plans".to_owned()], Vec::new()).unwrap();
+        persist(&store, &baseline, &baseline).unwrap();
+        // Another process turns Elev wireframe and adds AgentView, writing the file directly.
+        let mut updated = elev.clone();
+        updated.render_mode = RenderMode::Wireframe;
+        let cli = ViewBook::from_all(
+            vec![updated, view(2, "AgentView", "")],
+            ["Plans".to_owned()],
+            Vec::new(),
+        )
+        .unwrap();
+        std::fs::write(
+            session_path(&store),
+            session::views_layer::layer_bytes(&cli).unwrap(),
+        )
+        .unwrap();
+        // The stale window edits nothing but a folder: the other process's work survives.
+        let book = ViewBook::from_all(
+            vec![elev.clone()],
+            ["Plans".to_owned(), "F".to_owned()],
+            Vec::new(),
+        )
+        .unwrap();
+        let merged = persist(&store, &book, &baseline).unwrap();
+        let back = load(&store).unwrap();
+        assert_eq!(back.get(&id(1)).unwrap().render_mode, RenderMode::Wireframe);
+        assert!(back.get(&id(2)).is_some());
+        assert!(back.folders().any(|f| f == "F"));
+        assert!(merged.get(&id(2)).is_some());
+        // A view the window deleted stays deleted, one it edited takes its own version.
+        let shrink = ViewBook::from_all(
+            vec![elev.clone()],
+            ["Plans".to_owned(), "F".to_owned()],
+            Vec::new(),
+        )
+        .unwrap();
+        let merged = persist(&store, &shrink, &merged).unwrap();
+        assert!(merged.get(&id(2)).is_none());
+        let mut mine = elev.clone();
+        mine.span_mm = 9000.0;
+        let edited =
+            ViewBook::from_all(vec![mine], ["Plans".to_owned(), "F".to_owned()], Vec::new())
+                .unwrap();
+        let merged = persist(&store, &edited, &merged).unwrap();
+        assert_eq!(merged.get(&id(1)).unwrap().span_mm, 9000.0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_rotation_field_round_trips_whole_degrees() {
+        let mut v = view(3, "Rot", "");
+        v.rotation_rad = [30.0_f64.to_radians(), 0.0];
+        let form = Form::from_view(&v);
+        assert_eq!(form.rotation, ["30".to_owned(), "0".to_owned()]);
+        let mut applied = v.clone();
+        form.apply(&mut applied).unwrap();
+        assert_eq!(applied.rotation_rad, v.rotation_rad);
+        assert_eq!(Form::from_view(&applied).rotation, form.rotation);
     }
 
     #[test]

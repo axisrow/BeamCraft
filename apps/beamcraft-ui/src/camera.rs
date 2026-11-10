@@ -100,10 +100,14 @@ impl Camera {
             reach: extent,
         })
     }
-    /// The camera a model view restores: its rotated view plane as the basis, the target on the
-    /// plane origin (scene-relative to `origin`, the display origin in millimetres), the visible
-    /// height and the projection. `extent` is the scene diagonal, so an orthographic eye stands
-    /// in front of everything.
+    /// The camera a model view restores: its rotated view plane as the basis, the visible
+    /// height and the projection. The target is the scene centre cast onto the plane
+    /// (scene-relative to `origin`, the display origin in millimetres): a plane is anchored in
+    /// the world, a level plan at (0, 0, elevation) and a grid-axis plane at its line start, so
+    /// a view opened for the first time would centre on that anchor and miss the model
+    /// (issue 569 item 14). Orthographic, the cast along the normal is invisible; the move
+    /// across the plane is the framing. `extent` is the scene diagonal, so an orthographic eye
+    /// stands in front of everything.
     pub fn from_view(view: &ModelView, origin: [f64; 3], extent: f32) -> Result<Self, Error> {
         let frame = view
             .camera_plane()
@@ -112,6 +116,15 @@ impl Camera {
         camera.orthographic = view.projection == Projection::Orthographic;
         if let Some([above, _]) = view.depth {
             camera.reach = camera.reach.max(above as f32 + 10.0);
+        }
+        let normal = frame.normal();
+        let [px, py, pz] = frame.origin();
+        let d = (origin[0] - px) * normal[0]
+            + (origin[1] - py) * normal[1]
+            + (origin[2] - pz) * normal[2];
+        let cast = narrow([-normal[0] * d, -normal[1] * d, -normal[2] * d]);
+        if cast.iter().all(|x| x.is_finite() && x.abs() <= 1e7) {
+            camera.target = cast;
         }
         Ok(camera)
     }
@@ -432,10 +445,11 @@ mod tests {
         assert!(c.is_aligned() && c.is_orthographic());
         let v = c.view(1.0).unwrap();
         assert!((v.back[1] + 1.0).abs() < 1e-6, "{:?}", v.back);
-        // The plane origin projects to the centre; a point 2 m up reaches the top edge.
-        let centre = v.project([0.0, 2000.0, 300.0]);
+        // The scene centre cast onto the plane projects to the centre; a point 2 m up reaches
+        // the top edge.
+        let centre = v.project([0.0, 2000.0, 0.0]);
         assert!(centre[0].abs() < 1e-5 && centre[1].abs() < 1e-5);
-        let top = v.project([0.0, 2000.0, 2300.0]);
+        let top = v.project([0.0, 2000.0, 2000.0]);
         assert!((top[1] - 1.0).abs() < 1e-3, "{top:?}");
         // The eye stands in front of the whole depth towards the viewer.
         assert!(v.eye[1] < 2000.0 - 20_000.0, "{:?}", v.eye);
@@ -471,6 +485,22 @@ mod tests {
         }
         assert!(c.view(1.0).unwrap().bytes().len() == 112);
         assert!(c.distance().is_finite());
+    }
+    #[test]
+    fn a_view_opened_for_the_first_time_centres_on_the_model_not_on_the_plane_anchor() {
+        use beamcraft_engine::views::ModelView;
+        let id = beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000002").unwrap();
+        // A level plan at elevation 4000 for a model centred at (106000, 52500, 6000) —
+        // the plane's own anchor (0, 0, 4000) is metres away from anything (issue 569 item 14).
+        let plane = WorkPlane::new([0.0, 0.0, 4000.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]).unwrap();
+        let view = ModelView::new(id, "Plan", plane, 21390.0);
+        let c = Camera::from_view(&view, [106_000.0, 52_500.0, 6000.0], 500.0).unwrap();
+        // The target sits on the plane (scene z -2000 is model z 4000) over the scene centre.
+        let cast = c.target;
+        assert!(
+            cast[0].abs() < 1e-2 && cast[1].abs() < 1e-2 && (cast[2] + 2000.0).abs() < 1e-2,
+            "{cast:?}"
+        );
     }
     #[test]
     fn orthographic_zoom_toward_the_cursor_keeps_the_point_under_the_cursor_still() {

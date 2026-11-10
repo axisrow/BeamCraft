@@ -280,10 +280,45 @@ impl App {
         self.views.note = Some(result);
     }
 
-    /// Writes the book beside the store; a failure is a note.
+    /// Writes the book beside the store, merged with what the file holds now (issue 569
+    /// item 3); a failure is a note. The window takes the merged book and makes it the new
+    /// baseline, so the views it never touched follow the file from here on.
     pub(super) fn persist_views(&mut self) {
-        if let Err(e) = crate::views::persist(&self.source.store, &self.views.book) {
-            self.view_note(Err(e));
+        match crate::views::persist(&self.source.store, &self.views.book, &self.views.baseline) {
+            Ok(merged) => {
+                self.views.book = merged.clone();
+                self.views.baseline = merged;
+            }
+            Err(e) => self.view_note(Err(e)),
+        }
+    }
+
+    /// Takes the views file as the book, keeping this session's temporary views: the file
+    /// also serves the CLI headlessly, and a scene that came from another process usually
+    /// carries its view changes with it (issue 569 item 3). A store the window has not
+    /// written views beside yet has no file: nothing to adopt, and an empty read must not
+    /// take the book for deleted. A failure is a note.
+    pub(crate) fn adopt_views_file(&mut self) {
+        if !crate::views::session_path(&self.source.store).exists() {
+            return;
+        }
+        match crate::views::load(&self.source.store) {
+            Ok(mut book) => {
+                let temporary: Vec<ModelView> = self
+                    .views
+                    .book
+                    .views()
+                    .iter()
+                    .filter(|v| v.temporary)
+                    .cloned()
+                    .collect();
+                for view in temporary {
+                    let _ = book.insert(view);
+                }
+                self.views.baseline = book.clone();
+                self.views.book = book;
+            }
+            Err(e) => self.view_note(Err(e)),
         }
     }
 
@@ -802,6 +837,9 @@ impl App {
                 self.recolour();
             }
         }
+        // The form reloads from the saved view, so Apply leaves it clean (issue 569 item 20):
+        // the dirty flag and the row dots compare the form's text with the view's.
+        self.edit_view(id);
         Ok(Some("The view was updated; the model is unchanged.".into()))
     }
 
@@ -965,7 +1003,9 @@ impl App {
         if let Some(first) = first {
             self.views.selected.clear();
             self.views.selected.insert(first);
-            self.activate_view(Some(first));
+            // A new view opens as a tab of the active group, like from the browser, instead of
+            // taking over the active tab (issue 569 item 19).
+            self.open_view_at(first, None);
             // The panel moves on to the created view's properties.
             self.edit_view(first);
         }
@@ -1117,13 +1157,14 @@ impl App {
                     .map(|v| v.id)
                     .filter(|id| !before.contains(id))
                     .collect();
+                self.views.baseline = book.clone();
                 self.views.book = book;
                 self.view_note(Ok(format!(
                     "{} view(s) were created; the model is unchanged.",
                     added.len()
                 )));
                 if let Some(first) = added.first().copied() {
-                    self.activate_view(Some(first));
+                    self.open_view_at(first, None);
                     self.edit_view(first);
                 }
             }
