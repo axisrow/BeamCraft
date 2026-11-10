@@ -134,8 +134,13 @@ fn create_plate(store: &str, id: &str, op: &str, thickness: &str) -> String {
 
 fn fresh() -> (PathBuf, Store) {
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    // The suite-wide random nonce keeps a recycled process id from colliding with the
+    // directory a previous run left behind: nextest runs every test in its own process,
+    // macOS reuses pids aggressively, and the fixture directories are not removed until
+    // the temp sweep.
     let root = std::env::temp_dir().join(format!(
-        "beamcraft-session-{}-{}",
+        "beamcraft-session-{}-{}-{}",
+        crate::support::boot_nonce(),
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
