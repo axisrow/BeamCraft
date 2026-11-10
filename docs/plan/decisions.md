@@ -4,6 +4,16 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-10
+
+- **Gate K8 is passed.** Owner decision: the drawings scope (D01 to D08) is accepted as
+  delivered — the associative document lifecycle and publication, placed and derived views,
+  sheets, annotations bound to FeatureIds, drafting tools and the PDF page, with the printer
+  submission through the native print service closing D08. The Windows submission backend and
+  a native print dialog stay documented follow-ups, and the native drawing UI stays tracked
+  by the broader-drawing follow-up outside the M4 milestone
+  ([the K8 evidence](k8-acceptance-evidence.md)).
+
 ## 2026-11-09
 
 - **Gates K10 and K11 are passed.** Owner decision: the tools-and-views scope (T01 to T04,
