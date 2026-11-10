@@ -303,7 +303,11 @@ pub fn parse_element_info(
     }
     Err(ToolError {
         code: "NOT_FOUND".into(),
-        message: "the element is not in the accepted revision".into(),
+        // The pick found the element; the reply just has no plate or member to name. Saying
+        // "not in the accepted revision" would be false for a bolt group sitting in the head.
+        message: "the properties editor reads only plates and straight members; this kind \
+                  has no details to show"
+            .into(),
     })
 }
 
