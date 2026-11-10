@@ -215,8 +215,7 @@ impl Manager {
         }
         self.poll(cli, model_store, stats);
         let mut open = self.open;
-        egui::Window::new("Drawing document")
-            .open(&mut open)
+        crate::kit::tool_window("Drawing document", &mut open, ctx)
             .resizable(true)
             .show(ctx, |ui| self.body(ui, cli, model_store, actor, stats));
         self.open = open;

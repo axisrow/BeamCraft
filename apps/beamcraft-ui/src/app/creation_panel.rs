@@ -716,7 +716,9 @@ impl App {
                     ui.label("Pick contour vertices in 3D. Aim, type a length and press Enter to add a point. O toggles orthogonal X/Y/Z. Enter without a length, right-click, wheel-click or Finish creates the plate. Backspace removes a digit or point.");
                     ui.checkbox(&mut self.selection.orthogonal,"Orthogonal X/Y/Z (O)");
                     ui.label(format!("{} vertices", self.plate_draft.points().len()));
-                    ui.horizontal(|ui| {
+                    // Wrapped: three actions exceed the panel's width, and an unwrapped row
+                    // would squeeze the last button into a letter-per-line column.
+                    ui.horizontal_wrapped(|ui| {
                         if ui.add_enabled(self.plate_draft.points().len() >= 3, egui::Button::new("Finish plate")).clicked() { self.finish_plate(); }
                         if ui.add_enabled(!self.plate_draft.points().is_empty(), egui::Button::new("Remove last point")).clicked() { self.plate_draft.back(); }
                         if ui.add_enabled(self.plate_draft.points().len() >= 3, egui::Button::new("Reverse direction")).clicked() { self.plate_draft.reverse(); }
@@ -772,20 +774,23 @@ impl App {
                     });
                 }
             }
-            crate::kit::section(ui, "create", "Work plane", false, |ui| {
-                match self.plane_form.show(ui) {
-                    Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
-                    Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
-                    Ok(Some(crate::work_plane::Action::PickFace)) => { self.install_plane(self.tools.plane); self.plane_pick = true; },
-                    Err(error) => self.tool_note = Some(Err(error.to_string())),
-                    _ => {}
-                }
-            });
+            // The form draws its own "Work plane" section; wrapping it again nested one
+            // collapsible inside another of the same name.
+            match self.plane_form.show(ui) {
+                Ok(Some(crate::work_plane::Action::Apply(plane))) => self.install_plane(Some(plane)),
+                Ok(Some(crate::work_plane::Action::Clear)) => self.install_plane(None),
+                Ok(Some(crate::work_plane::Action::PickFace)) => { self.install_plane(self.tools.plane); self.plane_pick = true; },
+                Err(error) => self.tool_note = Some(Err(error.to_string())),
+                _ => {}
+            }
             if ui.button("Cancel").clicked() { self.tools.cancel(); self.set_bench(Bench::Select); self.tool_note = None; }
         });
         if busy {
             ui.spinner();
-            ui.label("Saving element…");
+            // Only the creation's own write says saving; another command running is just busy.
+            if self.tools.busy() {
+                ui.label("Saving element…");
+            }
         }
         // Its outcome is told in the status bar (`App::status_note`).
     }

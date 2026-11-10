@@ -546,11 +546,14 @@ fn choice_combo(
 
 fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
     ui.horizontal(|ui| {
+        // A share of the row, not a fixed width: three fixed 64 pt fields plus their labels
+        // ran past the right edge of a narrow side panel and the Z field was clipped.
+        let width = ((ui.available_width() - 72.0) / 3.0).max(40.0);
         for (axis, text) in ["X", "Y", "Z"].iter().zip(point.iter_mut()) {
             ui.label(*axis);
             ui.add(
                 egui::TextEdit::singleline(text)
-                    .desired_width(64.0)
+                    .desired_width(width)
                     .char_limit(MAX_TEXT),
             );
         }
@@ -588,6 +591,14 @@ fn draw_selection(
 /// Viewport clicks do not capture keyboard focus from construction input.
 fn viewport_sense() -> egui::Sense {
     egui::Sense::CLICK | egui::Sense::DRAG
+}
+
+/// Rounds an engine quantity for display the way the engine rounds a mass for its
+/// `kg_display` (one decimal): the stored value stays the engine's, only the panel's text
+/// is a display rounding. A raw float volume runs wider than the value cell, and a value
+/// at 0.1 mm³ is far more precise than the 0.1 kg the mass row beside it shows.
+fn display_round(value: f64) -> String {
+    format!("{:.1}", (value * 10.0).round() / 10.0)
 }
 
 /// One text property: the label in the properties grid's label column, the field filling the
@@ -1878,7 +1889,9 @@ impl App {
                         State::Stale { .. } => {
                             "The model changed. Reload properties before editing."
                         }
-                        _ => "Properties could not be loaded. Try Reload.",
+                        // No promise of a reload: a kind the editor reads nothing from
+                        // stays unreadable, and the reason is shown below.
+                        _ => "Properties could not be loaded.",
                     },
                 );
             }
@@ -2059,10 +2072,11 @@ impl App {
                     ),
                 ] {
                     let (value, unit) = match (number, status) {
-                        (Some(value), Some("current")) => (format!("{value}"), Some(unit)),
-                        (Some(value), Some("stale")) => {
-                            (format!("{value} · out of date"), Some(unit))
-                        }
+                        (Some(value), Some("current")) => (display_round(value), Some(unit)),
+                        (Some(value), Some("stale")) => (
+                            format!("{} · out of date", display_round(value)),
+                            Some(unit),
+                        ),
                         _ => ("Not available".to_owned(), None),
                     };
                     let value = if stored_freshness == Some("stale") {
@@ -2076,8 +2090,14 @@ impl App {
             if !editable {
                 ui.label("Editing is off until the properties are current.");
             }
-        } else if matches!(state, Some(State::Unknown { .. })) {
+        } else if let Some(State::Unknown { reason }) = state {
             ui.label("No property value is shown: none could be read.");
+            // The honest why, in the panel and not only in the status bar.
+            ui.label(
+                egui::RichText::new(reason)
+                    .size(12.0)
+                    .color(crate::theme::Palette::current(ui).muted),
+            );
         }
         if self.props.busy() {
             ui.label("Running…");
@@ -2205,10 +2225,23 @@ impl App {
             ui.colored_label(palette.muted, note);
         }
         let busy = self.colour_job.is_some();
-        let applied = self
-            .colour
-            .as_ref()
-            .map(|(name, overlay)| (name.clone(), overlay.len()));
+        let applied = self.colour.as_ref().map(|(name, overlay)| {
+            // The legend counts what this scene shows coloured. The evaluation matches the
+            // model's head, which can hold an element the drawn revision does not (an
+            // unpublished edit, a body the view leaves out); counting it would read as a
+            // colour the viewport never shows. A membership test over the snapshot, not a
+            // set of the overlay built per frame.
+            let coloured = match self.loaded.as_ref() {
+                Some(l) => l
+                    .snapshot
+                    .elements()
+                    .iter()
+                    .filter(|e| overlay.contains(e.id))
+                    .count(),
+                None => overlay.len(),
+            };
+            (name.clone(), coloured)
+        });
         let pick = self.colour_pick.clone();
         ui.add_enabled_ui(!busy, |ui| {
             egui::ComboBox::from_id_salt("colour-set")
@@ -2234,7 +2267,14 @@ impl App {
             });
         });
         if busy {
-            ui.label("Evaluating the set…");
+            // The colours on screen and the legend below are still the previous set while the
+            // newly picked one evaluates; say so instead of reading as a contradiction.
+            let pending = (!pick.is_empty()
+                && applied.as_ref().is_some_and(|(name, _)| name != &pick))
+            .then(|| {
+                format!("Evaluating {pick}… the colours and legend shown are the previous set")
+            });
+            ui.label(pending.as_deref().unwrap_or("Evaluating the set…"));
         }
         // The legend of the applied set: one swatch per rule, in rule order.
         if let Some((name, coloured)) = &applied {
@@ -2381,6 +2421,17 @@ impl App {
             || self.job.is_some()
             || self.grid_job.is_some()
             || self.contour.running()
+    }
+
+    /// True while a command that writes to the model is running: the header's Saving state.
+    /// The read-only background work says nothing about saving: a catalogue read, the
+    /// annotations list, a colour-set evaluation, and the reload of a change that is already
+    /// written are not writes.
+    fn writing_to_model(&self) -> bool {
+        self.other_command_running_pre_colour()
+            || self.annotation.commit_job.is_some()
+            || self.weld.commit_job.is_some()
+            || self.bolt.commit_job.is_some()
     }
 
     /// Clears the overlay and colours nothing again. The Hide is a colour choice: the
@@ -3384,6 +3435,66 @@ pub(crate) mod tests {
         // applied to the device, never a new reading of the model.
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
         assert!(app.colour.is_some());
+    }
+
+    #[test]
+    fn the_colour_legend_counts_the_elements_the_scene_shows() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        // The evaluation matched the head, which holds an element this drawn revision does
+        // not: the legend counts the drawn ones only, so the two counters of one window
+        // cannot disagree.
+        let mut matched = app
+            .loaded
+            .as_ref()
+            .unwrap()
+            .snapshot
+            .elements()
+            .iter()
+            .map(|e| e.id)
+            .collect::<std::collections::BTreeSet<beamcraft_model::id::ElementId>>();
+        let head_only =
+            beamcraft_model::id::ElementId::parse("019a7bf0-0000-7000-9000-000000000042").unwrap();
+        assert!(!matched.contains(&head_only), "fixture: an undrawn id");
+        matched.insert(head_only);
+        app.colour = Some((
+            "Test".into(),
+            Arc::new(crate::colour_sets::Overlay::from_rules(vec![(
+                matched,
+                [0.0, 1.0, 0.0, 1.0],
+            )])),
+        ));
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(500.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.colour_panel(ui),
+        );
+        let labels = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(t) = &shape.shape {
+                    Some(t.galley.text().to_owned())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            labels.iter().any(|t| t.contains("2 element(s) coloured")),
+            "the two drawn elements: {labels:?}"
+        );
+        assert!(
+            !labels.iter().any(|t| t.contains("3 element(s) coloured")),
+            "the undrawn element is not counted: {labels:?}"
+        );
+        output.drop_without_applying_deltas();
     }
 
     #[test]

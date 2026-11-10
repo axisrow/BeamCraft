@@ -446,7 +446,8 @@ fn a_move_from_the_tool_equals_the_move_by_hand() {
     two_plates(&cli, &stores.hand());
     let mut editor = Editor::default();
     select(&cli, &stores.ui(), &mut editor, A);
-    assert_eq!(editor.move_to, ["0.0", "0.0", "0.0"]);
+    // The plain form the properties panel shows too, no trailing ".0" (issue 562 item 51).
+    assert_eq!(editor.move_to, ["0", "0", "0"]);
     editor.move_to = ["250".into(), "-125.5".into(), "40".into()];
     let ui = stores.ui();
     let done = commit(&cli, &mut editor, EditKind::Move, target(&ui)).unwrap();

@@ -303,7 +303,11 @@ pub fn parse_element_info(
     }
     Err(ToolError {
         code: "NOT_FOUND".into(),
-        message: "the element is not in the accepted revision".into(),
+        // The pick found the element; the reply just has no plate or member to name. Saying
+        // "not in the accepted revision" would be false for a bolt group sitting in the head.
+        message: "the properties editor reads only plates and straight members; this kind \
+                  has no details to show"
+            .into(),
     })
 }
 
@@ -437,8 +441,9 @@ impl EditKind {
             Self::Move => "Moved",
             Self::Copy => "Copied",
             Self::Delete => "Deleted",
-            Self::Undo => "Undid the last change of",
-            Self::Redo => "Redid the last undone change of",
+            // Complete sentences: an undo has no single element to name.
+            Self::Undo => "Undid the last change",
+            Self::Redo => "Redid the last undone change",
         }
     }
 }
@@ -534,6 +539,17 @@ impl Default for Editor {
     }
 }
 
+/// The form's coordinate text: the plain form the properties panel uses too, unless it runs
+/// long, where the debug exponent form stays short and round-trips for every finite value.
+fn coordinate_text(value: f64) -> String {
+    let plain = format!("{value}");
+    if plain.chars().count() <= 16 {
+        plain
+    } else {
+        format!("{value:?}")
+    }
+}
+
 impl Editor {
     /// The action the panel is set to (move, copy or delete).
     pub fn action(&self) -> EditKind {
@@ -560,9 +576,11 @@ impl Editor {
     /// dropped: it was for another selection, or the selection was made again.
     pub fn select(&mut self, info: ElementInfo) {
         if self.selected.as_ref() != Some(&info) {
-            // Debug formatting: the shortest round-trip form, which stays within the
-            // `number` length cap for every finite value (exponents included).
-            self.move_to = info.translation_mm.map(|v| format!("{v:?}"));
+            // The same plain form the properties panel shows the translation in ("4000", not
+            // the debug "4000.0"): one coordinate, one format. A value whose plain form runs
+            // long keeps the debug exponent form, which stays short and round-trips for
+            // every finite value.
+            self.move_to = info.translation_mm.map(coordinate_text);
         }
         if self.copy_offset.iter().all(String::is_empty) {
             self.copy_offset = ["0".into(), "0".into(), "0".into()];
@@ -1164,7 +1182,7 @@ mod tests {
             "Selection"
         );
         editor.select(info());
-        assert_eq!(editor.move_to, ["100.0", "-20.5", "0.0"]);
+        assert_eq!(editor.move_to, ["100", "-20.5", "0"]);
         editor.move_to[0] = " 250 ".into();
         assert_eq!(
             editor.prepare(EditKind::Move, target()).unwrap().args,
@@ -1175,7 +1193,7 @@ mod tests {
                 "--id",
                 "019a7bf0-0000-7000-8000-000000000001",
                 "--translation",
-                "250,-20.5,0.0"
+                "250,-20.5,0"
             ]
         );
         editor.copy_offset = ["0".into(), "800".into(), "0".into()];
@@ -1247,7 +1265,8 @@ mod tests {
             ..info()
         };
         editor.select(noisy.clone());
-        assert_eq!(editor.move_to, ["5.551115123125783e-17", "1.5e20", "0.0"]);
+        // Long plain forms keep the exponent form; the plain-looking zero stays plain.
+        assert_eq!(editor.move_to, ["5.551115123125783e-17", "1.5e20", "0"]);
         assert!(editor.move_to.iter().all(|v| v.len() <= 32));
         assert!(editor.prepare(EditKind::Move, target()).is_ok());
         // Selecting the already selected element again keeps the typed coordinates.
@@ -1256,7 +1275,7 @@ mod tests {
         assert_eq!(editor.move_to[0], "250");
         // Another selection pre-fills its own translation.
         editor.select(info());
-        assert_eq!(editor.move_to, ["100.0", "-20.5", "0.0"]);
+        assert_eq!(editor.move_to, ["100", "-20.5", "0"]);
     }
 
     #[test]

@@ -77,7 +77,25 @@ impl Set {
     }
 
     /// One-line description of a rule for the legend: the field, the operator and the value.
+    /// A composite rule (`any` / `all`) describes as its branches joined; a branch nest past
+    /// the depth cap, a shape the legend cannot read, says `?`.
     pub fn describe(rule: &Json) -> String {
+        Self::describe_at(rule, 0)
+    }
+
+    fn describe_at(rule: &Json, depth: u8) -> String {
+        if depth > 4 {
+            return "?".into();
+        }
+        for (key, joiner) in [("any", " or "), ("all", " and ")] {
+            if let Ok(branches) = rule.get(key).and_then(Json::array) {
+                return branches
+                    .iter()
+                    .map(|branch| Self::describe_at(branch, depth + 1))
+                    .collect::<Vec<_>>()
+                    .join(joiner);
+            }
+        }
         let field = rule.get("field").and_then(Json::string).unwrap_or("?");
         let attribute = match rule.get("attribute") {
             Ok(name) => format!(" {}", name.string().unwrap_or("?")),
@@ -399,6 +417,11 @@ impl Overlay {
         self.0.get(&id).copied().unwrap_or(WHITE)
     }
 
+    /// Whether `id` carries a colour.
+    pub fn contains(&self, id: ElementId) -> bool {
+        self.0.contains_key(&id)
+    }
+
     /// Whether `id` is hidden by a view's filter override.
     pub fn hides(&self, id: ElementId) -> bool {
         self.1.contains(&id)
@@ -718,6 +741,13 @@ mod tests {
             bolt.rule.get("field").and_then(Json::string).unwrap(),
             "type"
         );
+        // The legend reads every catalogue rule as field/operator/value (issue 562 item 16).
+        assert_eq!(
+            Set::describe(&member.rule),
+            "type eq beam or type eq column"
+        );
+        assert_eq!(Set::describe(&plate.rule), "type eq plate");
+        assert_eq!(Set::describe(&bolt.rule), "type eq connection");
         // Both presets ride in every load; a file set cannot take a preset's name. The
         // scratch directory keeps the user's real colour-sets file out of the assertion.
         let scratch = std::env::temp_dir().join(format!(
