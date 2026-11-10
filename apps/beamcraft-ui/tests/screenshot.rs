@@ -19,9 +19,21 @@ use image::GenericImageView;
 use std::path::Path;
 use std::process::Command;
 
-/// The background bands of the renderer's clear colour, as the pixel tests use them.
+/// The background bands of the renderer's clear colour, as the pixel tests use them: the dark
+/// clear colour quantized, with the same one-step tolerance the other pixel tests use (issue
+/// 562 item 36 moved it from rgb(5, 8, 13) to rgb(23, 33, 43)).
 fn is_background([r, g, b, a]: [u8; 4]) -> bool {
-    (4..=6).contains(&r) && (7..=9).contains(&g) && (12..=14).contains(&b) && a == 255
+    let [dr, dg, db] = [
+        beamcraft_ui::render::DARK_BACKGROUND.r,
+        beamcraft_ui::render::DARK_BACKGROUND.g,
+        beamcraft_ui::render::DARK_BACKGROUND.b,
+    ]
+    .map(|c| (c * 255.0).round() as u8);
+    let near = |channel: u8, expected: u8| {
+        i16::from(channel) - i16::from(expected) <= 1
+            && i16::from(expected) - i16::from(channel) <= 1
+    };
+    near(r, dr) && near(g, dg) && near(b, db) && a == 255
 }
 
 /// Runs the CLI next to this package's binary; fails the test on a nonzero exit.

@@ -162,6 +162,37 @@ fn presets() -> Vec<Set> {
     vec![catalogue_set(), class_set()]
 }
 
+/// The catalogue overlay of a snapshot: the set's three rules are `type eq` rules, so the
+/// kinds the snapshot carries answer them — the same elements the engine's rule evaluation
+/// colours, derived where the kinds already are (issue 562 items 20 and 34). The model then
+/// colours as it is delivered, with no CLI round trip, and elements another process added
+/// colour with the next refresh like the rest.
+pub fn catalogue_overlay(entries: &[beamcraft_engine::ElementEntry]) -> Overlay {
+    let set = catalogue_set();
+    let mut tints = set.rules.iter().map(Set::tint);
+    let Some(member) = tints.next() else {
+        return Overlay::default();
+    };
+    let Some(plate) = tints.next() else {
+        return Overlay::default();
+    };
+    let Some(bolt) = tints.next() else {
+        return Overlay::default();
+    };
+    let mut map = BTreeMap::new();
+    for entry in entries {
+        let tint = match entry.kind {
+            beamcraft_engine::ElementKind::Beam | beamcraft_engine::ElementKind::Column => member,
+            beamcraft_engine::ElementKind::Plate => plate,
+            beamcraft_engine::ElementKind::Connection => bolt,
+            // Everything else of the set stays uncoloured.
+            _ => continue,
+        };
+        map.insert(entry.id, tint);
+    }
+    Overlay(map, BTreeSet::new())
+}
+
 impl Default for Sets {
     fn default() -> Self {
         Self(presets())

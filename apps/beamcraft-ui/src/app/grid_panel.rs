@@ -312,7 +312,9 @@ impl App {
         match grids {
             Ok(scene) => self.grid_scene = scene,
             Err(error) => {
-                self.grid_scene = GridScene::default();
+                // The guides the window already shows stay: a transient CLI failure must not
+                // wipe them or reframe the view onto the shrunken framing (issue 562 item 50,
+                // review). The failure is reported on its own.
                 self.grid_note = Some(Err(error.to_string()));
             }
         }

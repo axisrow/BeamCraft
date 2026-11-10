@@ -83,7 +83,13 @@ pub struct Source {
 struct Loaded {
     /// Shared with the selection worker, which picks on what the window shows.
     snapshot: Arc<ViewSnapshot>,
+    /// What the drawn scene (the active pane's hidden kinds applied) reports: counts and the
+    /// bounds the device buffers are relative to.
     summary: SceneSummary,
+    /// What the whole delivered snapshot reports: the framing of the model. Display filters
+    /// (`recolour`) never touch it, so hiding a category does not pull the camera onto the
+    /// rest (issue 562 item 19).
+    full: SceneSummary,
     uploaded: Uploaded,
 }
 
@@ -223,6 +229,9 @@ pub struct App {
     details: bool,
     /// A fit requested by the ribbon or command search, applied in the next frame.
     pending_fit: bool,
+    /// The next refresh keeps the camera: a window-run undo or redo is view state, not model
+    /// state, so the delivery tracks the framing without fitting (issue 562 item 50).
+    keep_camera: bool,
     logo: Option<egui::TextureHandle>,
     logo_tried: bool,
     /// The render-mode shortcuts: the user's file or the defaults.
@@ -385,6 +394,7 @@ fn navigation(
     ctrl: bool,
     shift: bool,
     distance: f32,
+    viewport_height: f32,
     hovered: bool,
     scroll_y: f32,
     pinch: f32,
@@ -393,7 +403,9 @@ fn navigation(
     invert_zoom: bool,
 ) -> ([f32; 2], [f32; 2], f32) {
     let sign = if invert_zoom { -1.0 } else { 1.0 };
-    let factor = distance * 0.0008;
+    // The model follows the pointer exactly (issue 562 item 21): one point of drag covers the
+    // screen millimetres one point spans at the target plane, not a fixed fraction of it.
+    let factor = Camera::pan_per_pixel(distance, viewport_height);
     let pan = [-pointer_delta.x * factor, pointer_delta.y * factor];
     // Drag the visible model with the pointer; the orbit camera moves the other way.
     let orbit = [-pointer_delta.x * 0.008, pointer_delta.y * 0.008];
@@ -1004,6 +1016,7 @@ impl App {
             contour: contour_grips::Grips::default(),
             details: false,
             pending_fit: false,
+            keep_camera: false,
             logo: None,
             logo_tried: false,
             cut_form: crate::cut_plane::Form::default(),
@@ -1169,6 +1182,7 @@ impl App {
                 Ok(Some(Loaded {
                     snapshot: Arc::new(snapshot),
                     summary: scene.summary(),
+                    full: scene.summary(),
                     uploaded,
                 }))
             }
@@ -1179,7 +1193,7 @@ impl App {
             Ok(None) => {
                 self.apply_grids(grids);
                 if let Some((target, extent)) =
-                    self.loaded.as_ref().map(|l| self.grid_framing(&l.summary))
+                    self.loaded.as_ref().map(|l| self.grid_framing(&l.full))
                 {
                     let aspect = self.aspect();
                     // An active model view keeps its own camera (V12); the default view fits
@@ -1191,27 +1205,38 @@ impl App {
                         .filter(|p| p.view.is_none() || p.view == default)
                     {
                         Some(pane) if needs_refit(pane.framed, target, extent, aspect) => {
-                            match pane.camera.fit(target, extent, aspect) {
-                                Ok(()) => {
-                                    pane.framed = Some((target, extent, aspect));
-                                    self.error = None;
+                            if std::mem::take(&mut self.keep_camera) {
+                                // The undo's new framing is tracked, not fitted (item 50).
+                                pane.framed = Some((target, extent, aspect));
+                            } else {
+                                match pane.camera.fit(target, extent, aspect) {
+                                    Ok(()) => {
+                                        pane.framed = Some((target, extent, aspect));
+                                        self.error = None;
+                                    }
+                                    Err(e) => self.error = Some(e.to_string()),
                                 }
-                                Err(e) => self.error = Some(e.to_string()),
                             }
                         }
-                        _ => self.error = None,
+                        _ => {
+                            std::mem::take(&mut self.keep_camera);
+                            self.error = None;
+                        }
                     }
                 }
             }
             Ok(Some(loaded)) => {
                 let next_grids = grids.unwrap_or_else(|error| {
+                    // A failed grid read keeps the guides and the framing the window already
+                    // has, so a transient CLI failure cannot reshape the view or wipe the
+                    // grids (issue 562 item 50: the reset must not ride a refresh).
                     self.grid_note = Some(Err(error.to_string()));
-                    crate::grid::GridScene::default()
+                    self.grid_scene.clone()
                 });
                 let (target, extent) = if self.grids_shown() {
-                    next_grids.framing(&loaded.summary)
+                    next_grids.framing(&loaded.full)
                 } else {
-                    loaded.summary.framing()
+                    loaded.full.framing()
                 };
                 let aspect = self.aspect();
                 let default = self.default_view_id();
@@ -1222,12 +1247,23 @@ impl App {
                     .active_pane_mut()
                     .filter(|p| p.view.is_none() || p.view == default)
                 {
-                    Some(pane) if needs_refit(pane.framed, target, extent, aspect) => Some(
-                        pane.camera
-                            .fit(target, extent, aspect)
-                            .map(|()| pane.framed = Some((target, extent, aspect))),
-                    ),
-                    _ => None,
+                    Some(pane) if needs_refit(pane.framed, target, extent, aspect) => {
+                        if std::mem::take(&mut self.keep_camera) {
+                            // The undo's new framing is tracked, not fitted (item 50).
+                            pane.framed = Some((target, extent, aspect));
+                            Some(Ok(()))
+                        } else {
+                            Some(
+                                pane.camera
+                                    .fit(target, extent, aspect)
+                                    .map(|()| pane.framed = Some((target, extent, aspect))),
+                            )
+                        }
+                    }
+                    _ => {
+                        std::mem::take(&mut self.keep_camera);
+                        None
+                    }
                 };
                 match fitted {
                     Some(Err(e)) => self.error = Some(e.to_string()),
@@ -1248,6 +1284,29 @@ impl App {
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
+        }
+        // The built-in catalogue set is kind-based: every delivery re-derives its overlay from
+        // the snapshot's own kinds, so elements another process added since the set was applied
+        // colour with this refresh like the rest (issue 562 item 20). Replacing the overlay
+        // makes the delivery stale below, so the scene is rebuilt with it exactly once.
+        if self.colour_job.is_none()
+            && self
+                .colour
+                .as_ref()
+                .is_some_and(|(name, _)| name == crate::colour_sets::CATALOGUE_SET_NAME)
+            && let Some(loaded) = self.loaded.as_ref()
+        {
+            let derived = crate::colour_sets::catalogue_overlay(loaded.snapshot.elements());
+            let unchanged = self
+                .colour
+                .as_ref()
+                .is_some_and(|(_, overlay)| **overlay == derived);
+            if !unchanged {
+                self.colour = Some((
+                    crate::colour_sets::CATALOGUE_SET_NAME.to_owned(),
+                    Arc::new(derived),
+                ));
+            }
         }
         // The default catalogue colours ride the delivered scene (issue 526): while the user
         // keeps no colour set of their own, the first shown model opens coloured, with no
@@ -1552,6 +1611,11 @@ impl App {
             Ok(done) => {
                 // A lookup that started before this edit describes the element as it was.
                 self.invalidate_select();
+                // Undo and redo reshape the scene but move no model point the user chose: the
+                // refreshed view keeps the camera and only tracks the framing (issue 562 item 50).
+                if matches!(done.kind, EditKind::Undo | EditKind::Redo) {
+                    self.keep_camera = true;
+                }
                 self.reload();
                 self.edit_note = Some(Ok(format!("{}.", done.kind.done())));
                 match done.kind {
@@ -2239,6 +2303,40 @@ impl App {
             }
             return;
         }
+        // The built-in catalogue set is the snapshot's own kinds (issue 562 items 20 and 34):
+        // derived where the kinds already are, so it applies at once — the model opens
+        // coloured on its first frame, with no CLI round trip to wait for.
+        if name == crate::colour_sets::CATALOGUE_SET_NAME {
+            self.colour_touched = true;
+            let Some(loaded) = self.loaded.as_ref() else {
+                return;
+            };
+            let derived = crate::colour_sets::catalogue_overlay(loaded.snapshot.elements());
+            if derived.is_empty() {
+                // The automatic default matching nothing stays quiet (issue 526 review); an
+                // explicit Show of an empty set says so and colours nothing, as the evaluated
+                // path does.
+                if !auto {
+                    self.colour_note = Some(Err(format!(
+                        "no element in `{name}` matches: nothing to colour"
+                    )));
+                }
+                self.colour = None;
+                self.recolour();
+                return;
+            }
+            self.colour_note = Some(Ok(format!(
+                "`{}` colours {} element(s).",
+                crate::colour_sets::CATALOGUE_SET_NAME,
+                derived.len()
+            )));
+            self.colour = Some((
+                crate::colour_sets::CATALOGUE_SET_NAME.to_owned(),
+                Arc::new(derived),
+            ));
+            self.recolour();
+            return;
+        }
         let Some(set) = self.colour_sets.find(name).cloned() else {
             return;
         };
@@ -2368,6 +2466,8 @@ impl App {
             .map(|uploaded| (summary, uploaded))
         }) {
             Ok((summary, uploaded)) => {
+                // The drawn scene's counts and bounds follow the filter; the model's framing
+                // (`full`) stays, so hiding a category cannot pull the camera in (item 19).
                 loaded.summary = summary;
                 loaded.uploaded = uploaded;
                 self.views.shown = shown;
@@ -3061,7 +3161,7 @@ impl eframe::App for App {
         }
         let fit = fit || std::mem::take(&mut self.pending_fit);
         if fit && let Some(l) = &self.loaded {
-            let (target, extent) = self.grid_framing(&l.summary);
+            let (target, extent) = self.grid_framing(&l.full);
             let aspect = self.aspect();
             if let Some(pane) = self.views.active_pane_mut()
                 && let Err(e) = pane.camera.fit(target, extent, aspect)
@@ -3266,6 +3366,7 @@ pub(crate) mod tests {
         app.loaded = Some(super::Loaded {
             snapshot: Arc::clone(&snapshot),
             summary: scene.summary(),
+            full: scene.summary(),
             uploaded,
         });
         let ids: std::collections::BTreeSet<beamcraft_model::id::ElementId> =
@@ -3305,28 +3406,33 @@ pub(crate) mod tests {
     #[test]
     fn the_default_catalogue_set_rides_the_first_shown_scene_once() {
         let Some(mut app) = headless() else { return };
-        // No set of the user's own: the delivered scene starts the default evaluation alone.
+        // The test's own colour sets: a set of the user's own suppresses the default by
+        // design, and this machine may carry one.
+        let dir =
+            std::env::temp_dir().join(format!("bc-catalogue-{}-{}", std::process::id(), line!()));
+        std::fs::create_dir_all(&dir).unwrap();
+        app.colour_sets = crate::colour_sets::Sets::load(Some(&dir)).0;
         assert!(!app.colour_sets.has_own());
         deliver(&mut app, refreshed(2));
         assert!(
-            app.colour_job.is_some(),
-            "the default applies without any user action"
-        );
-        for _ in 0..250 {
-            app.poll_colour();
-            if app.colour_job.is_none() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        // The evaluation itself failed (no CLI in this window), but it was still a colour
-        // run of this window: the default never starts twice behind the user's back.
-        assert!(app.colour.is_none());
-        deliver(&mut app, refreshed(2));
-        assert!(
             app.colour_job.is_none(),
-            "no second default after a finished colour run"
+            "the default is derived from the snapshot's kinds; no evaluation waits"
         );
+        let (name, overlay) = app
+            .colour
+            .as_ref()
+            .expect("the default applies without any user action");
+        assert_eq!(name, crate::colour_sets::CATALOGUE_SET_NAME);
+        let count = overlay.len();
+        assert!(count > 0);
+        // A second delivery of the same scene keeps the user's default exactly once: the set
+        // was applied, not re-derived behind their back.
+        deliver(&mut app, refreshed(2));
+        assert_eq!(
+            app.colour.as_ref().map(|(_, overlay)| overlay.len()),
+            Some(count)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -4457,6 +4563,554 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_undo_that_keeps_the_extents_keeps_the_zoomed_camera() {
+        // Issue 562 item 50: undo and redo reset a zoomed-in camera to the whole-model fit
+        // although the framing did not change; a Move keeps it. The workspace edit sits inside
+        // the model's bounds, so the extents agree before and after the undo.
+        let Some(mut app) = headless() else { return };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-undo-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        };
+        run(&[
+            "create-project",
+            "--parent",
+            root.to_str().unwrap(),
+            "--name",
+            "model",
+        ]);
+        run(&[
+            "define-profile",
+            "--store",
+            store.to_str().unwrap(),
+            "--family",
+            "i_shape",
+            "--h",
+            "300",
+            "--b",
+            "150",
+            "--tw",
+            "8",
+            "--tf",
+            "12",
+            "--r",
+            "12",
+            "--designation",
+            "I300",
+        ]);
+        for (name, start, end, kind) in [
+            ("B1", "0,0,0", "12000,0,0", "beam"),
+            ("B2", "0,6000,0", "12000,6000,0", "beam"),
+            ("C1", "12000,0,0", "12000,6000,0", "column"),
+        ] {
+            run(&[
+                "create-member",
+                "--store",
+                store.to_str().unwrap(),
+                "--start",
+                start,
+                "--end",
+                end,
+                "--profile",
+                "I300",
+                "--kind",
+                kind,
+                "--name",
+                name,
+            ]);
+        }
+        let workspace = root.join("workspace");
+        run(&[
+            "create-workspace",
+            "--store",
+            store.to_str().unwrap(),
+            "--workspace-dir",
+            workspace.to_str().unwrap(),
+        ]);
+        // The edit the undo takes back: a plate far outside the model's bounds, so the undo
+        // really shrinks the framing.
+        run(&[
+            "create-plate",
+            "--store",
+            workspace.to_str().unwrap(),
+            "--width",
+            "1200",
+            "--length",
+            "800",
+            "--thickness",
+            "12",
+            "--name",
+            "P1",
+            "--translation",
+            "1500,2000,0",
+            "--new-id",
+            "019a0000-0000-7000-8000-000000005001",
+        ]);
+        // A second element outside the beams' box, so its undo changes the extents.
+        run(&[
+            "create-plate",
+            "--store",
+            workspace.to_str().unwrap(),
+            "--width",
+            "500",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--name",
+            "P9",
+            "--translation",
+            "20000,20000,0",
+            "--new-id",
+            "019a0000-0000-7000-8000-000000005009",
+        ]);
+        app.source.store = workspace.clone();
+        app.source.cli = cli.clone();
+        app.source.workspace = Some(workspace.clone());
+        let snapshot = Arc::new(
+            crate::source::load_with_grids(&cli, &workspace, &app.stats)
+                .unwrap()
+                .0,
+        );
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            full: scene.summary(),
+            uploaded,
+        });
+        // The delivery's own framing, then a zoom in.
+        let refresh = |app: &mut App| {
+            app.reload();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.reload_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_reload();
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.reload_job.is_none(), "the refresh timed out");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.colour_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        refresh(&mut app);
+        let (before_target, before_extent, before_aspect) = {
+            let summary = app.loaded.as_ref().unwrap().summary;
+            let (target, extent) = app.grid_framing(&summary);
+            let aspect = app.aspect();
+            let pane = app.views.active_pane_mut().unwrap();
+            pane.camera.fit(target, extent, aspect).unwrap();
+            pane.framed = Some((target, extent, aspect));
+            (target, extent, aspect)
+        };
+        app.views
+            .active_pane_mut()
+            .unwrap()
+            .camera
+            .navigate([0.0, 0.0], [0.0; 2], 3.0)
+            .unwrap();
+        let zoomed = app.views.active_pane().unwrap().camera;
+        assert_ne!(
+            zoomed.distance(),
+            10.0,
+            "the zoom must be visible in the distance"
+        );
+        // Undo the outside plate the way the window runs it (Ctrl+Z): the framing shrinks (the
+        // extents change), and undo is view state, not model state — the camera must stay
+        // where the user left it (issue 562 item 50).
+        app.start_edit(Some(crate::edit::EditKind::Undo));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.edit_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_edit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.edit_job.is_none(), "the undo timed out");
+        refresh(&mut app);
+        assert!(app.loaded.is_some(), "the undo must not empty the view");
+        {
+            let summary = app.loaded.as_ref().unwrap().summary;
+            let (target, extent) = app.grid_framing(&summary);
+            assert_ne!(
+                (target, extent),
+                (before_target, before_extent),
+                "the test must shrink the framing for the undo to matter"
+            );
+            let pane = app.views.active_pane().unwrap();
+            assert_eq!(
+                pane.framed,
+                Some((target, extent, before_aspect)),
+                "the tracked framing follows the scene without moving the camera"
+            );
+        }
+        // Redo brings the plate back: the camera still stays.
+        app.start_edit(Some(crate::edit::EditKind::Redo));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while app.edit_job.is_some() && std::time::Instant::now() < deadline {
+            app.poll_edit();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.edit_job.is_none(), "the redo timed out");
+        refresh(&mut app);
+        let pane = app.views.active_pane().unwrap();
+        assert_eq!(
+            pane.framed,
+            Some((before_target, before_extent, before_aspect))
+        );
+        assert!(
+            (pane.camera.distance() - zoomed.distance()).abs() < 1e-3,
+            "undo/redo reset the zoom: {:?} -> {:?}",
+            zoomed.distance(),
+            pane.camera.distance()
+        );
+        let before_view = zoomed.view(1.0).unwrap().project([0.0; 3]);
+        let after_view = pane.camera.view(1.0).unwrap().project([0.0; 3]);
+        assert!(
+            (before_view[0] - after_view[0]).abs() < 1e-3
+                && (before_view[1] - after_view[1]).abs() < 1e-3,
+            "the target moved: {before_view:?} -> {after_view:?}"
+        );
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_hidden_category_does_not_pull_the_camera_into_the_rest() {
+        // Issue 562 item 19: hiding a category filters the drawn scene, and the next refresh
+        // framed that remainder — the camera landed inside the model with two grid lines and a
+        // hugely magnified element. The framing is the model's own; a hide is display state.
+        let Some(mut app) = headless() else { return };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-hide-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        };
+        run(&[
+            "create-project",
+            "--parent",
+            root.to_str().unwrap(),
+            "--name",
+            "model",
+        ]);
+        // One beam and one plate far outside it: hiding the plates must not reframe onto the
+        // beam.
+        run(&[
+            "create-plate",
+            "--store",
+            store.to_str().unwrap(),
+            "--width",
+            "1200",
+            "--length",
+            "800",
+            "--thickness",
+            "12",
+            "--name",
+            "Near",
+            "--translation",
+            "1500,2000,0",
+        ]);
+        run(&[
+            "create-plate",
+            "--store",
+            store.to_str().unwrap(),
+            "--width",
+            "500",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--name",
+            "Far",
+            "--translation",
+            "20000,20000,0",
+        ]);
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        let snapshot = Arc::new(crate::source::load(&cli, &store, &app.stats).unwrap());
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            full: scene.summary(),
+            uploaded,
+        });
+        let refresh = |app: &mut App| {
+            app.reload();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.reload_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_reload();
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.reload_job.is_none(), "the refresh timed out");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.colour_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        refresh(&mut app);
+        let (target, extent, aspect) = {
+            let summary = app.loaded.as_ref().unwrap().full;
+            let (target, extent) = app.grid_framing(&summary);
+            let aspect = app.aspect();
+            let pane = app.views.active_pane_mut().unwrap();
+            pane.camera.fit(target, extent, aspect).unwrap();
+            pane.framed = Some((target, extent, aspect));
+            (target, extent, aspect)
+        };
+        let fitted = app.views.active_pane().unwrap().camera;
+        // The hide filters the drawn scene: its summary covers the near plate only, while the
+        // model's framing keeps both plates.
+        let mut shrunk = app.loaded.as_ref().unwrap().summary;
+        shrunk.max = [
+            shrunk.max[0].min(2500.0),
+            shrunk.max[1].min(3000.0),
+            shrunk.max[2],
+        ];
+        app.loaded.as_mut().unwrap().summary = shrunk;
+        // An unchanged refresh (the same head again, as the `R` key reads it).
+        refresh(&mut app);
+        assert!(app.loaded.is_some());
+        let pane = app.views.active_pane().unwrap();
+        assert!(
+            (pane.camera.distance() - fitted.distance()).abs() < 1e-3,
+            "the hide pulled the camera onto the rest: {:?} -> {:?}",
+            fitted.distance(),
+            pane.camera.distance()
+        );
+        assert_eq!(pane.framed, Some((target, extent, aspect)));
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_catalogue_default_colours_the_first_delivery_without_a_job() {
+        // Issue 562 item 34: the model opened grey for seconds (and in every --window-shot)
+        // because the automatic catalogue set waited for a CLI evaluation. The set is the
+        // snapshot's own kinds, so the first delivery colours at once.
+        let Some(mut app) = headless() else { return };
+        let pin = ViewPin::new(Sha256::digest(b"revision").unwrap(), 1);
+        let snapshot = Arc::new(
+            ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap(),
+        );
+        let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+        let uploaded =
+            crate::render::Uploaded::new(&app.state.device, &app.state.queue, &scene, &app.stats)
+                .unwrap();
+        app.loaded = Some(super::Loaded {
+            snapshot: Arc::clone(&snapshot),
+            summary: scene.summary(),
+            full: scene.summary(),
+            uploaded,
+        });
+        assert!(app.colour.is_none() && app.colour_job.is_none());
+        app.start_colour(crate::colour_sets::CATALOGUE_SET_NAME, true);
+        assert!(
+            app.colour_job.is_none(),
+            "no evaluation may wait behind the default"
+        );
+        let (name, overlay) = app.colour.as_ref().expect("the default applied");
+        assert_eq!(name, crate::colour_sets::CATALOGUE_SET_NAME);
+        assert_eq!(overlay.len(), snapshot.elements().len());
+        // The tint the CLI evaluation answers with, straight from the set's own rules.
+        let plate_tint =
+            crate::colour_sets::Set::tint(&crate::colour_sets::catalogue_set().rules[1]);
+        for entry in snapshot.elements() {
+            assert_eq!(overlay.tint_of(entry.id), plate_tint, "{:?}", entry.id);
+        }
+        assert!(app.colour_touched);
+    }
+
+    #[test]
+    fn a_refresh_colours_elements_another_process_added() {
+        // Issue 562 item 20: a plate added while the window was open stayed grey beside its
+        // coloured siblings; R did not help. Every delivery of the catalogue set re-derives
+        // the overlay from the snapshot's kinds.
+        let Some(mut app) = headless() else { return };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("bc-live-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            beamcraft_json::decode(&output.stdout, &beamcraft_json::Limits::DEFAULT).unwrap()
+        };
+        run(&[
+            "create-project",
+            "--parent",
+            root.to_str().unwrap(),
+            "--name",
+            "model",
+        ]);
+        let first = run(&[
+            "create-plate",
+            "--store",
+            store.to_str().unwrap(),
+            "--width",
+            "1200",
+            "--length",
+            "800",
+            "--thickness",
+            "12",
+            "--name",
+            "P1",
+            "--translation",
+            "1500,2000,0",
+        ]);
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        // A user colour-sets file of their own would suppress the automatic default by
+        // design; the test's config directory is empty.
+        let config = root.join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        app.source.config_dir = Some(config.clone());
+        app.colour_sets = crate::colour_sets::Sets::load(Some(&config)).0;
+        let refresh = |app: &mut App| {
+            app.reload();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.reload_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_reload();
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.reload_job.is_none(), "the refresh timed out");
+        };
+        refresh(&mut app);
+        {
+            let (_, overlay) = app.colour.as_ref().expect("the default rode the delivery");
+            assert_eq!(overlay.len(), 1, "{:?}", app.colour_note);
+        }
+        // Another process adds a plate while the window shows the model.
+        let second = run(&[
+            "create-plate",
+            "--store",
+            store.to_str().unwrap(),
+            "--width",
+            "500",
+            "--length",
+            "500",
+            "--thickness",
+            "10",
+            "--name",
+            "P2",
+            "--translation",
+            "6000,2000,0",
+        ]);
+        refresh(&mut app);
+        let (_, overlay) = app.colour.as_ref().expect("still coloured");
+        assert_eq!(overlay.len(), 2, "the added plate must colour too");
+        let added = second
+            .get("plate")
+            .ok()
+            .and_then(|p| p.get("element_id").ok())
+            .and_then(|j| j.string().ok())
+            .and_then(|s| beamcraft_model::id::ElementId::parse(s).ok())
+            .expect("the added plate's id");
+        let plate_tint =
+            crate::colour_sets::Set::tint(&crate::colour_sets::catalogue_set().rules[1]);
+        assert_eq!(overlay.tint_of(added), plate_tint);
+        let _ = first;
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_grid_read_keeps_the_guides_the_window_shows() {
+        // Issue 562 review: the unchanged-snapshot path must not wipe the guides (or reframe
+        // onto the shrunken framing) when one grids read fails; the error reports alone.
+        let Some(mut app) = headless() else { return };
+        app.grid_scene.lines = vec![crate::grid::GridLine {
+            label: "1".into(),
+            points: [[0.0, 0.0, 0.0], [0.0, 10_000.0, 0.0]],
+        }];
+        app.apply_grids(Err(ToolError::local(
+            "UNREADABLE_REPLY",
+            "the grids could not be read",
+        )));
+        assert_eq!(app.grid_scene.lines.len(), 1, "the guides stay");
+        assert!(matches!(app.grid_note, Some(Err(_))), "{:?}", app.grid_note);
+    }
+
+    #[test]
     fn the_weld_ribbon_button_picks_two_parts_and_commits_the_cli_weld_command() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
@@ -4546,6 +5200,7 @@ pub(crate) mod tests {
         app.loaded = Some(super::Loaded {
             snapshot: Arc::clone(&snapshot),
             summary: scene.summary(),
+            full: scene.summary(),
             uploaded,
         });
         let ctx = egui::Context::default();
@@ -4833,6 +5488,7 @@ pub(crate) mod tests {
         app.loaded = Some(super::Loaded {
             snapshot: Arc::clone(&snapshot),
             summary: scene.summary(),
+            full: scene.summary(),
             uploaded,
         });
         let ctx = egui::Context::default();
@@ -5333,6 +5989,7 @@ pub(crate) mod tests {
         app.loaded = Some(super::Loaded {
             snapshot: Arc::clone(&snapshot),
             summary: scene.summary(),
+            full: scene.summary(),
             uploaded,
         });
         let ctx = egui::Context::default();
@@ -8700,7 +9357,8 @@ mod navigation_tests {
     const KEYS_NONE: (bool, bool) = (false, false);
     const NO_BUTTON: (bool, bool, bool) = (false, false, false);
 
-    /// One `navigation` call with the flat argument list folded into tuples.
+    /// One `navigation` call with the flat argument list folded into tuples. The test viewport
+    /// is 600 points tall, the window's pane at the audit's window size.
     #[allow(clippy::too_many_arguments)] // test wrapper over the already flat mapping
     fn navigate(
         preset: Preset,
@@ -8716,7 +9374,7 @@ mod navigation_tests {
         invert: bool,
     ) -> ([f32; 2], [f32; 2], f32) {
         navigation(
-            preset, delta, buttons.0, buttons.1, buttons.2, ctrl, shift, distance, hovered,
+            preset, delta, buttons.0, buttons.1, buttons.2, ctrl, shift, distance, 600.0, hovered,
             scroll_y, pinch, keys.0, keys.1, invert,
         )
     }
@@ -8861,11 +9519,12 @@ mod navigation_tests {
             false,
         );
         assert_eq!(orbit, [0.0; 2]);
-        // The pan factor is distance * 0.0008; 0.0008 is not exact in f32.
-        assert!(
-            (pan[0] + 8.0).abs() < 1e-4 && (pan[1] + 16.0).abs() < 1e-4,
-            "{pan:?}"
-        );
+        // The pan factor is the viewport scale 2 tan(π/8) · distance / 600; the constant is
+        // not exact in f32.
+        let expected = 10.0 * Camera::pan_per_pixel(1000.0, 600.0);
+        assert!((pan[0] + expected).abs() < 1e-3, "{pan:?}");
+        let expected_y = -20.0 * Camera::pan_per_pixel(1000.0, 600.0);
+        assert!((pan[1] - expected_y).abs() < 1e-3, "{pan:?}");
         let (orbit, pan, _) = navigate(
             Preset::Mouse,
             delta,
@@ -8884,6 +9543,70 @@ mod navigation_tests {
             "{orbit:?}"
         );
         assert_eq!(pan, [0.0; 2]);
+    }
+
+    #[test]
+    fn a_middle_drag_moves_the_model_exactly_as_far_as_the_pointer() {
+        // Issue 562 item 21: a 200-point drag used to move the model ~58% of the way because
+        // the pan factor ignored the pane's height. A point on the target plane must travel the
+        // dragged distance in screen points, at any zoom.
+        let aspect = 1.5;
+        for zoom in [0.0f32, -3.0, 3.0] {
+            let mut camera = Camera::new([0.0; 3], 12_000.0, aspect).unwrap();
+            camera.navigate([0.0, 0.0], [0.0; 2], zoom).unwrap();
+            // The anchor below is built with the perspective's field angle (params[0] carries a
+            // length under the orthographic window).
+            camera.set_projection(false);
+            let height = 600.0f32;
+            for delta in [
+                egui::vec2(200.0, 0.0),
+                egui::vec2(-100.0, 0.0),
+                egui::vec2(0.0, 150.0),
+                egui::vec2(0.0, -80.0),
+            ] {
+                let view = camera.view(aspect).unwrap();
+                // A point at the screen centre offset by the drag, on the plane through the
+                // target: under the cursor once the drag has moved the model.
+                let ndc = [delta.x / (aspect * height / 2.0), -delta.y / (height / 2.0)];
+                let [tan, va, _, _] = view.params;
+                let d = camera.distance();
+                let point = [
+                    view.eye[0] - view.back[0] * d
+                        + view.right[0] * ndc[0] * tan * va * d
+                        + view.up[0] * ndc[1] * tan * d,
+                    view.eye[1] - view.back[1] * d
+                        + view.right[1] * ndc[0] * tan * va * d
+                        + view.up[1] * ndc[1] * tan * d,
+                    view.eye[2] - view.back[2] * d
+                        + view.right[2] * ndc[0] * tan * va * d
+                        + view.up[2] * ndc[1] * tan * d,
+                ];
+                let before = view.project(point);
+                let (orbit, pan, zoom_step) = navigate(
+                    Preset::Mouse,
+                    delta,
+                    (false, false, true),
+                    false,
+                    false,
+                    camera.distance(),
+                    false,
+                    0.0,
+                    1.0,
+                    KEYS_NONE,
+                    false,
+                );
+                camera.navigate(orbit, pan, zoom_step).unwrap();
+                let after = camera.view(aspect).unwrap().project(point);
+                let moved = egui::vec2(
+                    (after[0] - before[0]) * aspect * height / 2.0,
+                    (before[1] - after[1]) * height / 2.0,
+                );
+                assert!(
+                    (moved.x - delta.x).abs() < 0.5 && (moved.y - delta.y).abs() < 0.5,
+                    "zoom {zoom}: dragged {delta:?}, the model moved {moved:?}"
+                );
+            }
+        }
     }
 
     #[test]

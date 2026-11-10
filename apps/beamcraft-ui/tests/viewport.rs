@@ -21,7 +21,7 @@ use beamcraft_model::digest::Sha256;
 use beamcraft_ui::camera::{Camera, View};
 use beamcraft_ui::colour_sets::WHITE;
 use beamcraft_ui::cut_plane::ClipGpu;
-use beamcraft_ui::render::{Gpu, Renderer, Uploaded, wait};
+use beamcraft_ui::render::{DARK_BACKGROUND, Gpu, Renderer, Uploaded, wait};
 use beamcraft_ui::scene::{Scene, SelectedDraw, instance_bytes};
 use beamcraft_ui::stats::Stats;
 use beamcraft_ui::tools::{ToolKind, Tools};
@@ -84,7 +84,15 @@ fn render_view(gpu: &Gpu, scene: &Scene, view: View) -> ([u8; 4], [u8; 4], usize
 }
 
 fn is_background([r, g, b, a]: [u8; 4]) -> bool {
-    (4..=6).contains(&r) && (7..=9).contains(&g) && (12..=14).contains(&b) && a == 255
+    // The dark clear colour, quantized with the same one-step tolerance the screenshot
+    // pixel tests use (issue 562 item 36 moved it from rgb(5, 8, 13) to rgb(23, 33, 43)).
+    let [dr, dg, db] = [DARK_BACKGROUND.r, DARK_BACKGROUND.g, DARK_BACKGROUND.b]
+        .map(|c| (c * 255.0).round() as u8);
+    let near = |channel: u8, expected: u8| {
+        i16::from(channel) - i16::from(expected) <= 1
+            && i16::from(expected) - i16::from(channel) <= 1
+    };
+    near(r, dr) && near(g, dg) && near(b, db) && a == 255
 }
 
 /// A pixel of the model: the logo's cream and grey-teal, lit, never darker than its unlit side

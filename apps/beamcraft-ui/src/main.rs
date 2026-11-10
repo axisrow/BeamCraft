@@ -345,8 +345,16 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 set
             }
         };
-        let overlay = colour_sets::evaluate(&cli, &store, &set, &AtomicBool::new(false), &stats)
-            .map_err(Error::Cli)?;
+        // The catalogue preset is the snapshot's own kinds: derived, not evaluated (the same
+        // shift the window made for issue 562 items 20 and 34). Every other set evaluates on
+        // the store head the way the window does, and a headless screenshot reads no
+        // colour-sets file on its own.
+        let overlay = if set.name == colour_sets::CATALOGUE_SET_NAME {
+            colour_sets::catalogue_overlay(snapshot.elements())
+        } else {
+            colour_sets::evaluate(&cli, &store, &set, &AtomicBool::new(false), &stats)
+                .map_err(Error::Cli)?
+        };
         let scene = Scene::from_snapshot_showing(
             &snapshot,
             Representation::Full,
