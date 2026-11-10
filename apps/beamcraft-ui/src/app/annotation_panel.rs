@@ -64,6 +64,9 @@ pub struct Row {
     pub anchors: Vec<[f64; 3]>,
     /// The leader's free end, when the record is a leader.
     pub end_mm: Option<[f64; 3]>,
+    /// The element ids the anchors address, in stored order: what an annotation is attached
+    /// to, so a view that hides an element hides its annotations with it (issue 569 item 18).
+    pub hosts: Vec<String>,
 }
 
 /// The stored state between frames; everything else is on [`App`].
@@ -77,6 +80,10 @@ pub(crate) struct Panel {
     pub(crate) text: String,
     /// The last listing, or why there is none yet.
     pub(crate) rows: Result<Vec<Row>, String>,
+    /// The snapshot token the rows were read against: a newer token means another process, the
+    /// R key or the store watcher changed the model, and the list must be read again (issue 569
+    /// item 24).
+    pub(crate) stamp: Option<String>,
     pub(super) list_job: Option<Receiver<Result<Vec<Row>, ToolError>>>,
     pub(super) commit_job: Option<Receiver<Result<(), ToolError>>>,
     /// Whether the running commit is a delete, so the note names the right action.
@@ -93,6 +100,7 @@ impl Panel {
             attribute: String::new(),
             text: String::new(),
             rows: Ok(Vec::new()),
+            stamp: None,
             list_job: None,
             commit_job: None,
             deleting: false,
@@ -147,7 +155,7 @@ pub fn parse_rows(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Row>, Too
         .iter()
         .map(|a| {
             // The CLI writes anchors for every record; an absent key (an older reply) is the
-            // same as nothing resolved.
+            // same as nothing resolved. The host element ids read the same way.
             let anchors = a
                 .get("anchors_mm")
                 .ok()
@@ -155,6 +163,14 @@ pub fn parse_rows(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Row>, Too
                 .unwrap_or(&[])
                 .iter()
                 .map(point)
+                .collect::<Result<Vec<_>, _>>()?;
+            let hosts = a
+                .get("host_elements")
+                .ok()
+                .and_then(|j| j.array().ok())
+                .unwrap_or(&[])
+                .iter()
+                .map(|v| v.string().map(str::to_owned).map_err(|_| unreadable()))
                 .collect::<Result<Vec<_>, _>>()?;
             let end_mm = a.get("end_mm").ok().and_then(|v| point(v).ok());
             Ok(Row {
@@ -167,12 +183,54 @@ pub fn parse_rows(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Row>, Too
                 text: text(a, "bound_text").or_else(|| text(a, "text")),
                 anchors,
                 end_mm,
+                hosts,
             })
         })
         .collect()
 }
 
-pub(crate) fn paint(ui: &egui::Ui, rect: egui::Rect, view: &View, origin: [f64; 3], rows: &[Row]) {
+/// The span of `p..q` inside `rect` (Liang-Barsky in screen space): the part of a segment the
+/// pane actually shows, so a label lands beside visible pixels. `None` when the whole span
+/// lies outside.
+fn label_span(p: egui::Pos2, q: egui::Pos2, rect: egui::Rect) -> Option<(egui::Pos2, egui::Pos2)> {
+    let d = q - p;
+    let (mut enter, mut leave) = (0.0f32, 1.0f32);
+    for (denominator, numerator) in [
+        (-d.x, p.x - rect.left()),
+        (d.x, rect.right() - p.x),
+        (-d.y, p.y - rect.top()),
+        (d.y, rect.bottom() - p.y),
+    ] {
+        if denominator == 0.0 {
+            if numerator < 0.0 {
+                return None;
+            }
+            continue;
+        }
+        let t = numerator / denominator;
+        if denominator < 0.0 {
+            enter = enter.max(t);
+        } else {
+            leave = leave.min(t);
+        }
+    }
+    (enter <= leave).then(|| (p + d * enter, p + d * leave))
+}
+
+/// Paints the resolved annotation overlay. `keep` filters rows before any drawing: a pane in
+/// the SelectedOnly mode hides the annotations of hidden elements with them (issue 569 item 18).
+/// A segment is clipped at the near plane instead of vanishing when one anchor sits behind the
+/// eye (issue 569 item 22), and every label sits beside its own line, off the line's side, and
+/// stacks below one it would overprint (issue 569 item 23).
+pub(crate) fn paint(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    view: &View,
+    origin: [f64; 3],
+    rows: &[Row],
+    keep: &dyn Fn(&Row) -> bool,
+) {
+    let painter = ui.painter_at(rect);
     let project = |point: [f64; 3]| {
         let local = std::array::from_fn(|i| {
             (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0)) as f32
@@ -185,9 +243,86 @@ pub(crate) fn paint(ui: &egui::Ui, rect: egui::Rect, view: &View, origin: [f64; 
             )
         })
     };
-    let painter = ui.painter_at(rect);
+    // The view depth of a scene-local point: what the near plane compares against.
+    let [ex, ey, ez, _] = view.eye;
+    let [bx, by, bz, _] = view.back;
+    let depth = |p: [f32; 3]| -((p[0] - ex) * bx + (p[1] - ey) * by + (p[2] - ez) * bz);
+    let near = view.params.get(2).copied().unwrap_or(0.1);
+    // Both endpoints moved into the kept depth range: an endpoint before the near plane slides
+    // along the segment to the plane, so the visible part draws and the hidden part does not.
+    let segment = |a: [f64; 3], b: [f64; 3]| -> Option<([f32; 3], [f32; 3])> {
+        let local = |point: [f64; 3]| {
+            std::array::from_fn(|i| {
+                (point.get(i).copied().unwrap_or(0.0) - origin.get(i).copied().unwrap_or(0.0))
+                    as f32
+            })
+        };
+        let (mut la, mut lb) = (local(a), local(b));
+        let (mut da, mut db) = (depth(la), depth(lb));
+        if da < near && db < near {
+            return None;
+        }
+        let slide = |d: &mut f32, other: f32, p: &mut [f32; 3], q: &[f32; 3]| {
+            let t = (*d - near) / (*d - other);
+            for (slot, end) in p.iter_mut().zip(q) {
+                *slot += (end - *slot) * t;
+            }
+            *d = near;
+        };
+        if da < near {
+            slide(&mut da, db, &mut la, &lb);
+        }
+        if db < near {
+            slide(&mut db, da, &mut lb, &la);
+        }
+        Some((la, lb))
+    };
+    let to_screen = |p: [f32; 3]| {
+        let [x, y, _] = view.project(p);
+        egui::pos2(
+            rect.min.x + (x * 0.5 + 0.5) * rect.width(),
+            rect.min.y + (0.5 - y * 0.5) * rect.height(),
+        )
+    };
+    // The rectangles labels already claim: a new label that would overprint one stacks below
+    // it instead (issue 569 item 23).
+    let mut claimed: Vec<egui::Rect> = Vec::new();
+    let mut label = |mid: egui::Pos2, line: Option<egui::Vec2>, text: String, color: Color32| {
+        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), color);
+        // Beside the line, on one side: the offset follows the line's screen normal, along its
+        // dominant axis, so a rising line never runs through its own label. Without a line (a
+        // mark) the label sits above the point.
+        let (anchor, align) = match line.map(egui::Vec2::normalized) {
+            Some(n) if n.x.abs() >= n.y.abs() => (
+                mid + egui::vec2(if n.x > 0.0 { 4.0 } else { -4.0 }, 0.0),
+                if n.x > 0.0 {
+                    egui::Align2::LEFT_CENTER
+                } else {
+                    egui::Align2::RIGHT_CENTER
+                },
+            ),
+            Some(n) => (
+                mid + egui::vec2(0.0, if n.y > 0.0 { 4.0 } else { -4.0 }),
+                if n.y > 0.0 {
+                    egui::Align2::CENTER_TOP
+                } else {
+                    egui::Align2::CENTER_BOTTOM
+                },
+            ),
+            None => (mid + egui::vec2(0.0, -6.0), egui::Align2::CENTER_BOTTOM),
+        };
+        let mut placed = align.anchor_size(anchor, galley.size());
+        while claimed.iter().any(|other| other.intersects(placed)) {
+            placed = placed.translate(egui::vec2(0.0, placed.height() + 2.0));
+        }
+        claimed.push(placed);
+        painter.galley(placed.min, galley, color);
+    };
     for row in rows {
-        let (stroke, label) = match row.status.as_str() {
+        if !keep(row) {
+            continue;
+        }
+        let (stroke, label_text) = match row.status.as_str() {
             "current" => (
                 egui::Stroke::new(1.5, BRAND),
                 row.text.clone().or(row.value_mm.map(|v| format!("{v:.1}"))),
@@ -200,55 +335,42 @@ pub(crate) fn paint(ui: &egui::Ui, rect: egui::Rect, view: &View, origin: [f64; 
             ),
             _ => continue,
         };
+        let text = label_text.map(|text| format!("{}: {text}", row.name));
         match (row.anchors.first().copied(), row.anchors.get(1).copied()) {
             (Some(a), Some(b)) => {
-                let (Some(p), Some(q)) = (project(a), project(b)) else {
+                let Some((la, lb)) = segment(a, b) else {
                     continue;
                 };
+                let (p, q) = (to_screen(la), to_screen(lb));
                 painter.line_segment([p, q], stroke);
-                if let Some(text) = label
-                    && let Some(mid) = project(std::array::from_fn(|i| {
-                        (a.get(i).copied().unwrap_or(0.0) + b.get(i).copied().unwrap_or(0.0)) / 2.0
-                    }))
-                {
-                    painter.text(
-                        mid + egui::vec2(4.0, -4.0),
-                        egui::Align2::LEFT_BOTTOM,
-                        format!("{}: {text}", row.name),
-                        egui::FontId::proportional(12.0),
-                        stroke.color,
-                    );
+                if let Some(text) = text {
+                    // The label sits at the mid of the drawn span clipped to the pane: an
+                    // endpoint kept at the near plane projects far outside the image, and the
+                    // label belongs beside what is actually visible (issue 569 item 22).
+                    if let Some((cp, cq)) = label_span(p, q, rect) {
+                        let mid = egui::pos2((cp.x + cq.x) / 2.0, (cp.y + cq.y) / 2.0);
+                        label(mid, Some(cq - cp), text, stroke.color);
+                    }
                 }
             }
             (Some(a), None) => {
                 // A leader runs from its feature to the free end and shows the text there; a
                 // mark (or a leader whose end is off screen) is a dot at the feature.
                 if let Some(end) = row.end_mm
-                    && let (Some(p), Some(q)) = (project(a), project(end))
+                    && let Some((la, lb)) = segment(a, end)
                 {
+                    let (p, q) = (to_screen(la), to_screen(lb));
                     painter.line_segment([p, q], stroke);
                     painter.circle_filled(p, 2.5, stroke.color);
-                    if let Some(text) = label {
-                        painter.text(
-                            q + egui::vec2(6.0, -6.0),
-                            egui::Align2::LEFT_BOTTOM,
-                            format!("{}: {text}", row.name),
-                            egui::FontId::proportional(12.0),
-                            stroke.color,
-                        );
+                    if let Some(text) = text {
+                        label(q, Some(q - p), text, stroke.color);
                     }
                     continue;
                 }
                 let Some(p) = project(a) else { continue };
                 painter.circle_filled(p, 3.0, stroke.color);
-                if let Some(text) = label {
-                    painter.text(
-                        p + egui::vec2(6.0, -6.0),
-                        egui::Align2::LEFT_BOTTOM,
-                        format!("{}: {text}", row.name),
-                        egui::FontId::proportional(12.0),
-                        stroke.color,
-                    );
+                if let Some(text) = text {
+                    label(p, None, text, stroke.color);
                 }
             }
             _ => {}
@@ -319,7 +441,10 @@ impl App {
             }
             Ok(rows) => {
                 for row in &rows {
-                    ui.horizontal(|ui| {
+                    // Wrapped: a long row must not squeeze the Delete button into a
+                    // letter-per-line column; the button drops to its own line instead
+                    // (issue 569 item 27, the Plate tool's fix).
+                    ui.horizontal_wrapped(|ui| {
                         let color = status_color(&palette, &row.status);
                         ui.colored_label(color, row.status.clone());
                         ui.label(format!("{} ({})", row.name, row.kind));
@@ -509,8 +634,18 @@ impl App {
         }
     }
 
-    /// Drains the annotation jobs; a successful commit refreshes the list.
+    /// Drains the annotation jobs; a successful commit refreshes the list. The rows describe
+    /// the snapshot they were read against: every reload (another process's live refresh, the
+    /// R key, the store watcher) rebuilds that snapshot under a new token, so this re-reads the
+    /// list instead of keeping stale lines and "current" rows (issue 569 item 24).
     pub(crate) fn poll_annotations(&mut self) {
+        let token = self
+            .loaded
+            .as_ref()
+            .map(|l| l.snapshot.token().as_str().to_owned());
+        if self.annotation.stamp != token && self.annotation.list_job.is_none() {
+            self.annotation_load();
+        }
         if let Some(rx) = &self.annotation.list_job {
             let result = match rx.try_recv() {
                 Ok(result) => result,
@@ -522,6 +657,10 @@ impl App {
             };
             self.annotation.list_job = None;
             self.annotation.rows = result.map_err(|e| e.to_string());
+            self.annotation.stamp = self
+                .loaded
+                .as_ref()
+                .map(|l| l.snapshot.token().as_str().to_owned());
         }
         let Some(rx) = &self.annotation.commit_job else {
             return;
@@ -665,5 +804,122 @@ mod tests {
         assert_eq!(fresh_name(&[], "DIM"), "DIM1");
         assert_eq!(fresh_name(&["DIM1".into(), "MK9".into()], "DIM"), "DIM2");
         assert_eq!(fresh_name(&["DIM7".into()], "LD"), "LD1");
+    }
+
+    #[test]
+    fn a_row_carries_the_elements_its_anchors_address() {
+        let reply = br#"{"annotations":[
+            {"id":"a","name":"DIM1","kind":"dimension","status":"current",
+             "value_mm":1200,"anchors_mm":[[0,300,5],[1200,300,5]],
+             "host_elements":["m1","m1"]},
+            {"id":"b","name":"LD1","kind":"leader","status":"stale",
+             "text":"note","end_mm":[1500,900,50],"anchors_mm":[[0,300,10]],
+             "host_elements":["p1"]}
+        ]}"#;
+        let rows = parse_rows(Some(0), reply).unwrap();
+        assert_eq!(rows[0].hosts, vec!["m1".to_owned(), "m1".to_owned()]);
+        assert_eq!(rows[1].hosts, vec!["p1".to_owned()]);
+        // An older reply without the field reads as no hosts, not a refusal.
+        let old = parse_rows(
+            Some(0),
+            br#"{"annotations":[{"id":"c","name":"MK1","kind":"mark","status":"unresolved","reason":"feature-missing","anchors_mm":[]}]}"#,
+        )
+        .unwrap();
+        assert!(old[0].hosts.is_empty());
+    }
+
+    /// A perspective view whose eye sits 1811 mm from the target, close enough that an anchor
+    /// 3000 mm away is behind the eye (the picture of issue 569 item 22).
+    fn near_view() -> (View, [f64; 3]) {
+        let mut camera = crate::camera::Camera::new([0.0, 0.0, 100.0], 1500.0, 2.0).unwrap();
+        camera
+            .navigate([0.6 - -0.8, 0.5 - 0.85], [0.0, 0.0], 0.0)
+            .unwrap();
+        camera.set_projection(false);
+        (camera.view(2.0).unwrap(), [0.0, 0.0, 0.0])
+    }
+
+    fn dimension_row(name: &str, a: [f64; 3], b: [f64; 3]) -> Row {
+        Row {
+            id: format!("id-{name}"),
+            name: name.to_owned(),
+            kind: "dimension".to_owned(),
+            status: "current".to_owned(),
+            reason: None,
+            value_mm: Some(3000.0),
+            text: None,
+            anchors: vec![a, b],
+            end_mm: None,
+            hosts: Vec::new(),
+        }
+    }
+
+    fn painted_shapes(view: &View, rows: &[Row]) -> Vec<egui::Shape> {
+        let context = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 600.0));
+        let output = context.run_ui(Default::default(), |ui| {
+            paint(ui, rect, view, [0.0; 3], rows, &|_| true);
+        });
+        let shapes = output.shapes.clone();
+        output.drop_without_applying_deltas();
+        fn flat(from: Vec<egui::Shape>, into: &mut Vec<egui::Shape>) {
+            for shape in from {
+                match shape {
+                    egui::Shape::Vec(list) => flat(list, into),
+                    other => into.push(other),
+                }
+            }
+        }
+        let mut out = Vec::new();
+        flat(
+            shapes.into_iter().map(|layer| layer.shape).collect(),
+            &mut out,
+        );
+        out
+    }
+
+    #[test]
+    fn a_dimension_with_one_anchor_behind_the_eye_still_draws() {
+        let (view, origin) = near_view();
+        let behind = [3000.0, -50.0, 100.0];
+        let local = std::array::from_fn(|i| (behind[i] - origin[i]) as f32);
+        assert!(
+            !(0.0..1.0).contains(&view.project(local)[2]),
+            "the far anchor must sit outside the image for this repro"
+        );
+        let rows = [dimension_row("DIMB", [0.0, -50.0, 100.0], behind)];
+        let shapes = painted_shapes(&view, &rows);
+        assert!(
+            shapes
+                .iter()
+                .any(|s| matches!(s, egui::Shape::LineSegment { .. })),
+            "the visible part of the dimension is clipped at the near plane, not dropped"
+        );
+    }
+
+    #[test]
+    fn labels_at_one_midpoint_do_not_overprint() {
+        let camera = crate::camera::Camera::new([500.0, 300.0, 20.0], 2000.0, 2.0).unwrap();
+        let view = camera.view(2.0).unwrap();
+        // The two diagonals of a plate share their midpoint: both labels must stay readable.
+        let rows = [
+            dimension_row("DG1", [0.0, 0.0, 20.0], [1000.0, 600.0, 20.0]),
+            dimension_row("DG2", [1000.0, 0.0, 20.0], [0.0, 600.0, 20.0]),
+        ];
+        let shapes = painted_shapes(&view, &rows);
+        let texts: Vec<egui::Rect> = shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Text(text) => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts.len(), 2, "both diagonal labels draw");
+        assert!(
+            !texts[0].intersects(texts[1]),
+            "labels at one midpoint stack instead of overprinting"
+        );
     }
 }

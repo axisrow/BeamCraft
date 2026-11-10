@@ -1070,6 +1070,62 @@ fn the_default_catalogue_set_colours_the_element_classes_in_the_viewport() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// A body cut through face-on still shows its section (issue 569 item 1): the kept half's
+/// back face draws as the opened inside and the plane crossing draws the section outline,
+/// instead of the whole body vanishing in a straight-through view.
+#[test]
+fn a_body_cut_through_face_on_still_shows_its_section() {
+    let pin = ViewPin::new(Sha256::digest(b"cut-face-on").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let gpu = gpu();
+    let stats = Stats::default();
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    // Straight top view, orthographic: the picture runs perpendicular to the cut.
+    camera
+        .navigate(
+            [0.0 - -0.8, std::f32::consts::FRAC_PI_2 - 0.85],
+            [0.0, 0.0],
+            0.0,
+        )
+        .unwrap();
+    camera.set_projection(true);
+    let view = camera.view(1.0).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
+    let lit = |clip: &ClipGpu| {
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+            clip,
+        );
+        wait(&gpu.device, index).unwrap();
+        let (pixels, _) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| is_lit(**p))
+            .count()
+    };
+    assert!(lit(&ClipGpu::none()) > 0, "the uncut body draws face-on");
+    // The cut keeps the lower half: the top face is discarded, the bottom face faces away.
+    let bounds = scene.summary();
+    let mid = bounds.origin_mm[2] + 5.0;
+    let cut = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, mid], [0.0, 0.0, -1.0]).unwrap()],
+        area: None,
+    };
+    let seen = lit(&ClipGpu::of(&cut, bounds.origin_mm));
+    assert!(seen > 0, "a face-on cut body keeps its section visible");
+}
+
 /// V15: a display cut hides pixels in the image only. The masked picture keeps the bodies
 /// that straddle the plane (conservative), an empty work area hides everything, and the cut
 /// leaves the snapshot and its token untouched.

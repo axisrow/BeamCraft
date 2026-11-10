@@ -284,6 +284,7 @@ fn a_click_selects_what_the_engine_picks() {
             SelectionFilter::ALL,
             None,
             None,
+            None,
         )
         .unwrap()
         .unwrap();
@@ -316,6 +317,7 @@ fn a_click_selects_what_the_engine_picks() {
         &AtomicBool::new(false),
         &Stats::default(),
         SelectionFilter::ALL,
+        None,
         None,
         None,
     )
@@ -426,6 +428,7 @@ fn a_click_selects_an_i_section_member_and_a_holed_plate() {
             &AtomicBool::new(false),
             &Stats::default(),
             SelectionFilter::ALL,
+            None,
             None,
             None,
         )

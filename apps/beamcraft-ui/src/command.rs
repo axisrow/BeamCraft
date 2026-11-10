@@ -8,7 +8,7 @@
 
 use crate::edit::{
     Edit, EditKind, Edited, ElementInfo, Ray, inspect_element_args, parse_edited,
-    parse_element_info, pick_in,
+    parse_element_info,
 };
 use crate::props::{Details, PropertyEdit, parse_details};
 use crate::publish::{Published, Status, parse_published, parse_status, status_args};
@@ -284,9 +284,10 @@ pub fn lookup(
 }
 
 /// Selects along `ray`: the engine's pick on `snapshot`, the snapshot the window shows, in this
-/// process ([`pick_in`]), then [`lookup`] of the element it hit. `selection` carries the
-/// window's switches (V11); a class that is off is never selected. A click costs one CLI process
-/// and one inspection; `cancel` gives the lookup up.
+/// process, then [`lookup`] of the element it hit. `selection` carries the window's switches
+/// (V11); a class that is off is never selected. `cut` is the window's display cut (V15): what
+/// it hides is not picked. A click costs one CLI process and one inspection; `cancel` gives the
+/// lookup up.
 #[allow(clippy::too_many_arguments)]
 pub fn select(
     cli: &Path,
@@ -298,9 +299,12 @@ pub fn select(
     selection: SelectionFilter,
     view: Option<&beamcraft_engine::views::ModelView>,
     hidden: Option<&std::collections::BTreeSet<beamcraft_engine::ElementId>>,
+    cut: Option<&beamcraft_engine::view_clipping::Clipping>,
 ) -> Result<Option<Selected>, ToolError> {
     // With an active model view only what it shows can be picked: geometry clipped by its depth
-    // or work area, or of a hidden kind, never masks a visible part behind it (V12).
+    // or work area, or of a hidden kind, never masks a visible part behind it (V12); the
+    // window's cut hides the same way (issue 569 item 2). Without a view the same cut filter
+    // runs alone.
     let picked = match view {
         Some(view) => beamcraft_engine::views::pick_visible_except(
             snapshot,
@@ -309,10 +313,15 @@ pub fn select(
             ray.direction,
             selection,
             hidden.unwrap_or(&std::collections::BTreeSet::new()),
+            cut,
         )
         .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string()))?
         .map(|hit| hit.element_id.to_string()),
-        None => pick_in(snapshot, ray, selection)?,
+        None => {
+            beamcraft_engine::views::pick_kept(snapshot, ray.origin, ray.direction, selection, cut)
+                .map_err(|e| ToolError::local("PICK_REFUSED", e.to_string()))?
+                .map(|hit| hit.element_id.to_string())
+        }
     };
     let Some(id) = picked else {
         return Ok(None);

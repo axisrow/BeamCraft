@@ -860,7 +860,25 @@ impl App {
             if let Ok(rows) = self.annotation.rows.as_deref()
                 && !rows.is_empty()
             {
-                annotation_panel::paint(ui, response.rect, &view, l.summary.origin_mm, rows);
+                // V16 SelectedOnly draws the selected element only: annotations of hidden
+                // elements hide with their hosts, and nothing is selected draws none (issue 569
+                // item 18). Every other mode keeps all rows.
+                let selected = (pane.mode == RenderMode::SelectedOnly)
+                    .then(|| self.editor.selected().map(|s| s.id.clone()));
+                let all_rows = |_: &annotation_panel::Row| true;
+                let nothing_selected = |_: &annotation_panel::Row| false;
+                let selected_rows = |row: &annotation_panel::Row| {
+                    selected
+                        .as_ref()
+                        .and_then(|s| s.as_ref())
+                        .is_some_and(|id| row.hosts.iter().any(|h| h == id))
+                };
+                let keep: &dyn Fn(&annotation_panel::Row) -> bool = match &selected {
+                    None => &all_rows,
+                    Some(None) => &nothing_selected,
+                    Some(Some(_)) => &selected_rows,
+                };
+                annotation_panel::paint(ui, response.rect, &view, l.summary.origin_mm, rows, keep);
             }
             if let Some(selected) = self.editor.selected() {
                 let key = (selected.id.clone(), l.snapshot.token().as_str().to_owned());
@@ -880,6 +898,7 @@ impl App {
                     &view,
                     l.summary.origin_mm,
                     &self.selection_edges.1,
+                    cut.as_ref(),
                 );
                 // The selected plate's contour grips (V18): dormant while a creation tool or a
                 // view pick owns the pointer, and on any bench other than Select, whose click

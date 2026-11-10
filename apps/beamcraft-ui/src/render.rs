@@ -420,7 +420,7 @@ fn pipeline(
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &instance_attributes,
     });
-    let pipeline = |label, fragment, polygon_mode, blend, depth_write| {
+    let pipeline = |label, fragment, polygon_mode, blend, depth_write, cull| {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
             layout: Some(&pipeline_layout),
@@ -431,7 +431,12 @@ fn pipeline(
                 buffers: &[vertex_layout(), instance_layout.clone()],
             },
             primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
+                // The fill pipelines cull in the shader instead: with a cut applied the back
+                // faces draw as the opened body's inside, and without one the fragment's
+                // `front_facing` test culls exactly what the hardware would (issue 569 item 1).
+                // The wireframe keeps the hardware cull: its line fragments carry no reliable
+                // facing.
+                cull_mode: cull,
                 polygon_mode,
                 ..Default::default()
             },
@@ -461,6 +466,8 @@ fn pipeline(
         })
     };
     let alpha = wgpu::BlendState::ALPHA_BLENDING;
+    let no_cull: Option<wgpu::Face> = None;
+    let back_cull = Some(wgpu::Face::Back);
     let pipelines = Pipelines {
         shaded: pipeline(
             "BeamCraft shaded",
@@ -468,6 +475,7 @@ fn pipeline(
             wgpu::PolygonMode::Fill,
             None,
             true,
+            no_cull,
         ),
         // `Line` draws every triangle edge; native backends only, which is all this app targets.
         wireframe: pipeline(
@@ -476,6 +484,7 @@ fn pipeline(
             wgpu::PolygonMode::Line,
             None,
             true,
+            back_cull,
         ),
         transparent: pipeline(
             "BeamCraft transparent",
@@ -483,6 +492,7 @@ fn pipeline(
             wgpu::PolygonMode::Fill,
             Some(alpha),
             false,
+            no_cull,
         ),
         grey: pipeline(
             "BeamCraft grey",
@@ -490,6 +500,7 @@ fn pipeline(
             wgpu::PolygonMode::Fill,
             None,
             true,
+            no_cull,
         ),
         ghost: pipeline(
             "BeamCraft ghost",
@@ -497,6 +508,7 @@ fn pipeline(
             wgpu::PolygonMode::Fill,
             None,
             true,
+            no_cull,
         ),
     };
     finish_scopes(scopes)?;

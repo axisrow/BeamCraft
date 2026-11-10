@@ -1449,8 +1449,9 @@ impl StartPage {
                             Some(Ok(model)) => {
                                 ui.label(
                                     egui::RichText::new(format!(
-                                        "{} elements · mm",
-                                        model.elements
+                                        "{} element{} · mm",
+                                        model.elements,
+                                        if model.elements == 1 { "" } else { "s" },
                                     ))
                                     .small()
                                     .color(palette.muted),

@@ -3,7 +3,7 @@
 
 //! Modelling properties and point-driven creation on the existing command adapters.
 
-use super::{App, View, choice_combo, field, ground_point, pick_point_in, workbench::Bench};
+use super::{App, View, choice_combo, field, ground_point, workbench::Bench};
 use crate::tools::{ToolError, ToolKind};
 use beamcraft_engine::query::pick::{
     SnapContext, SnapCursor, SnapKind, SnapQuery, snap_with_context,
@@ -148,18 +148,29 @@ impl App {
         } else if let Some(plane) = self.tools.plane {
             plane.ray_point(ray.origin, ray.direction)
         } else if let Some(loaded) = &self.loaded {
-            // An active model view hits only what it shows (V12).
+            // An active model view hits only what it shows (V12); the display cut hides in the
+            // picture, so picks and snaps skip it too (issue 569 item 17).
             match self.views.active_view() {
-                Some(view) => beamcraft_engine::views::pick_visible(
+                Some(view) => beamcraft_engine::views::pick_visible_except(
                     &loaded.snapshot,
                     view,
                     ray.origin,
                     ray.direction,
                     beamcraft_engine::query::pick::SelectionFilter::ALL,
+                    &std::collections::BTreeSet::new(),
+                    self.cut.as_ref(),
                 )
                 .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
                 .map(|hit| hit.point_world_mm),
-                None => pick_point_in(&loaded.snapshot, &ray)?.map(|(point, _)| point),
+                None => beamcraft_engine::views::pick_kept(
+                    &loaded.snapshot,
+                    ray.origin,
+                    ray.direction,
+                    beamcraft_engine::query::pick::SelectionFilter::ALL,
+                    self.cut.as_ref(),
+                )
+                .map_err(|e| ToolError::local("INVALID_ARGUMENT", e.to_string()))?
+                .map(|hit| hit.point_world_mm),
             }
             .or_else(|| ground_point(&ray))
         } else {
@@ -270,6 +281,9 @@ impl App {
         if !kinds.is_empty()
             && let Some(loaded) = &self.loaded
         {
+            // The cut's kept half-spaces: a snap target they hide never offers itself (issue
+            // 569 item 17), like the view's own slab and work area below.
+            let cut_planes = self.cut.as_ref().and_then(|cut| cut.effective().ok());
             let grids = if self.grids_shown() {
                 self.grid_scene.query_grids.as_slice()
             } else {
@@ -326,7 +340,15 @@ impl App {
                 if let Some((hit, _)) = result
                     .candidates
                     .iter()
-                    // The active view snaps only to what it shows (V12).
+                    // The active view snaps only to what it shows (V12), and what the window
+                    // cut hides never offers itself either (issue 569 item 17).
+                    .filter(|hit| {
+                        cut_planes.as_ref().is_none_or(|planes| {
+                            planes
+                                .iter()
+                                .all(|plane| plane.distance(hit.point_world_mm) >= 0.0)
+                        })
+                    })
                     .filter(|hit| {
                         self.views.active_view().is_none_or(|view| {
                             view.contains(hit.point_world_mm)

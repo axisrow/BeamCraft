@@ -18,6 +18,12 @@ struct Face {
     points: [Pos2; 3],
     depth: f32,
     light: f32,
+    /// The world-space face normal (scene-centred), for the cull test and its test.
+    #[allow(dead_code)] // read by the unit test, kept beside the cull that fills it
+    normal: [f32; 3],
+    /// The face midpoint, scene-centred.
+    #[allow(dead_code)]
+    mid: [f32; 3],
 }
 
 /// A display-only projection of an engine snapshot, built once on a worker thread.
@@ -81,6 +87,8 @@ impl ModelPreview {
                     let mut points = [Pos2::ZERO; 3];
                     let mut depth = 0.0;
                     let mut light = 0.5;
+                    let mut normal = [0.0f32; 3];
+                    let mut mid = [0.0f32; 3];
                     for (point, vertex) in points
                         .iter_mut()
                         .zip(triangle.as_chunks::<VERTEX_BYTES>().0)
@@ -90,14 +98,33 @@ impl ModelPreview {
                         let [sx, sy, sz] = view.project([x + tx, y + ty, z + tz]);
                         *point = pos2(sx * 0.5 + 0.5, 0.5 - sy * 0.5);
                         depth += sz / 3.0;
-                        let [nx, ny, nz] = rotate([nx, ny, nz], quaternion);
-                        light = (0.55 + 0.45 * (nx * 0.3 - ny * 0.4 + nz * 0.85).max(0.0))
+                        let [rnx, rny, rnz] = rotate([nx, ny, nz], quaternion);
+                        normal = [normal[0] + rnx, normal[1] + rny, normal[2] + rnz];
+                        mid = [mid[0] + x + tx, mid[1] + y + ty, mid[2] + z + tz];
+                        light = (0.55 + 0.45 * (rnx * 0.3 - rny * 0.4 + rnz * 0.85).max(0.0))
                             .clamp(0.4, 1.0);
+                    }
+                    // Back-face cull (issue 569 item 15): a face turned away from the eye never
+                    // paints, so a plain box's hidden faces cannot streak over the visible ones
+                    // in the painter's sort. The flat painter stays; convex parts read clean.
+                    let eye_to_face = [
+                        mid[0] / 3.0 - view.eye[0],
+                        mid[1] / 3.0 - view.eye[1],
+                        mid[2] / 3.0 - view.eye[2],
+                    ];
+                    if normal[0] * eye_to_face[0]
+                        + normal[1] * eye_to_face[1]
+                        + normal[2] * eye_to_face[2]
+                        >= 0.0
+                    {
+                        continue;
                     }
                     faces.push(Face {
                         points,
                         depth,
                         light,
+                        normal,
+                        mid,
                     });
                 }
             }
@@ -152,7 +179,26 @@ mod tests {
             ViewSnapshot::build(pin, plate_scene(3, false).unwrap(), &Limits::default()).unwrap();
         let preview = ModelPreview::from_snapshot(&snapshot).unwrap();
         assert_eq!(preview.elements, 3);
-        assert_eq!(preview.faces.len(), 36);
+        // Back faces are culled (issue 569 item 15): some of the 36 triangles survive — the
+        // ones facing the fitted camera — and every survivor really faces it.
+        assert!(preview.faces.len() < 36, "back faces are culled");
+        assert!(!preview.faces.is_empty());
+        let (target, extent) = crate::scene::Scene::from_snapshot(&snapshot, Representation::Full)
+            .unwrap()
+            .framing();
+        let view = Camera::new(target, extent, 268.0 / 184.0)
+            .unwrap()
+            .view(268.0 / 184.0)
+            .unwrap();
+        for face in &preview.faces {
+            assert!(
+                face.normal[0] * (view.eye[0] - face.mid[0] / 3.0)
+                    + face.normal[1] * (view.eye[1] - face.mid[1] / 3.0)
+                    + face.normal[2] * (view.eye[2] - face.mid[2] / 3.0)
+                    > 0.0,
+                "every kept face points toward the eye"
+            );
+        }
         assert!(
             preview
                 .faces
@@ -178,7 +224,8 @@ mod tests {
             .flatten()
             .collect();
         output.drop_without_applying_deltas();
-        assert_eq!(vertices.len(), 36 * 3);
+        // Only the kept faces reach the mesh: one triangle per face, its three vertices.
+        assert_eq!(vertices.len(), preview.faces.len() * 3);
         assert!(vertices.iter().all(|position| rect.contains(*position)));
     }
 
