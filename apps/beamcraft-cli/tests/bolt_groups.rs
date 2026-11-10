@@ -315,7 +315,7 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     assert!(strings(group, "spacings_mm") == ["150"], "{group:?}");
     assert_eq!(text(group, "spacing_mode"), "spacings");
     assert_eq!(text(group, "length_mode"), "auto");
-    assert_eq!(text(group, "length_mm"), "40");
+    assert_eq!(text(group, "length_mm"), "50");
     assert_eq!(text(group, "washer_under_head"), "true");
     assert_eq!(text(group, "washer_under_nut"), "true");
     assert_eq!(text(group, "count"), "2");
@@ -347,14 +347,14 @@ fn a_group_places_its_row_and_edits_as_one_undo_unit() {
     assert!(strings(group, "spacings_mm") == ["150"]);
     // The re-place runs over the meshes the group's own generated holes rewrote: the stored
     // length survives them (issue 519 review).
-    assert_eq!(text(group, "length_mm"), "40");
+    assert_eq!(text(group, "length_mm"), "50");
     for part in &parts {
         assert_eq!(holes_of(&f, part).len(), 2, "{part}");
     }
     f.undo();
     let group = &f.groups()[0];
     assert_eq!(strings(group, "point2_mm"), ["600", "250", "0"]);
-    assert_eq!(text(group, "length_mm"), "40");
+    assert_eq!(text(group, "length_mm"), "50");
     // The undo returns the created records with their identities.
     for part in &parts {
         let holes = holes_of(&f, part);
@@ -395,7 +395,7 @@ fn a_rename_reaches_the_authored_layer_and_survives_a_reopen() {
     assert_eq!(text(group, "name"), "G2");
     // A plain rename re-places the group over the meshes its own generated holes rewrote: the
     // stored length survives them instead of collapsing (issue 519 review).
-    assert_eq!(text(group, "length_mm"), "40");
+    assert_eq!(text(group, "length_mm"), "50");
 
     // A retry of the same operation replays; a different name under the same id is reuse:
     // the label is part of the operation's content.
@@ -620,8 +620,8 @@ fn the_definition_is_pinned_repinned_and_the_holes_follow_a_repin() {
     assert_eq!(text(group, "length_mode"), "auto");
     assert_eq!(
         text(group, "length_mm"),
-        "40",
-        "grip 20 + nut 12 + protrusion 4 = 36"
+        "50",
+        "grip 20 + nut 12 + head 14 + protrusion 4 = 50"
     );
     // The repin regenerates the holes: the records keep the group ownership and the count.
     for part in &parts {

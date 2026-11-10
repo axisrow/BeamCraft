@@ -696,15 +696,16 @@ fn a_bolt_group_shows_its_fasteners_in_the_viewport() {
     // Two plates share one mesh; the group adds its merged fastener mesh.
     assert_eq!(scene.elements, 3);
     assert_eq!(scene.counts(), (2, 3));
-    // The stack of the two 40 mm fasteners spans z = −8.5..42.5 over the plates' z = 0..20:
-    // the washer and head hang below the bearing plane and the nut tops out at 42.5, so only
-    // the group's geometry reaches that high, at the bearing points x = 100 and 250. The
-    // scene bounds are relative to the model origin, the centre of the union.
-    assert_eq!(scene.origin_mm, [500.0, 250.0, 17.0]);
-    assert_eq!(scene.min, [-500.0, -250.0, -25.5]);
-    assert_eq!(scene.max, [500.0, 250.0, 25.5]);
+    // The stack of the two 50 mm fasteners spans z = −8.5..52.5 over the plates' z = 0..20:
+    // the washer and head hang below the bearing plane, the nut seats over the far plate
+    // with the washer under it, and the tip protrudes past, so only the group's geometry
+    // reaches that high, at the bearing points x = 100 and 250. The scene bounds are
+    // relative to the model origin, the centre of the union.
+    assert_eq!(scene.origin_mm, [500.0, 250.0, 22.0]);
+    assert_eq!(scene.min, [-500.0, -250.0, -30.5]);
+    assert_eq!(scene.max, [500.0, 250.0, 30.5]);
     let size = [0, 1, 2].map(|a| scene.max[a] - scene.min[a]);
-    assert!((size[2] - 51.0).abs() < 1e-6, "{size:?}");
+    assert!((size[2] - 61.0).abs() < 1e-6, "{size:?}");
     let gpu = gpu();
     let (corner, _, lit) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");

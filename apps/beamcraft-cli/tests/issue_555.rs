@@ -128,16 +128,16 @@ fn grip_group<'a>(parts: &'a str, name: &'a str) -> Vec<&'a str> {
 
 #[test]
 fn foreign_coaxial_holes_keep_the_grip_and_a_rename_keeps_the_length() {
-    // Finding 1: M16 through 2 x 20 mm needs 40 + washers 2 x 3 + nut 14.8 + protrusion 5
-    // = 65.8 -> 70, whether the coaxial holes were cut before or after the group, by
-    // `add-hole` or by `create-plate --hole-round`, and a plain rename keeps it.
+    // Finding 1: M16 through 2 x 20 mm needs 40 + washers 2 x 3 + nut 14.8 + head 10 +
+    // protrusion 5 = 75.8 -> 80, whether the coaxial holes were cut before or after the
+    // group, by `add-hole` or by `create-plate --hole-round`, and a plain rename keeps it.
     let f = Fixture::new();
     let common = ["--width", "200", "--length", "200", "--thickness", "20"];
     let p1 = f.plate(&[&common[..], &["--name", "P1"]].concat());
     let p2 = f.plate(&[&common[..], &["--translation", "0,0,20", "--name", "P2"]].concat());
     let parts = format!("{p1},{p2}");
     let first = f.ok("create-bolt-group", &grip_group(&parts, "G_A"));
-    assert_eq!(Fixture::lengths(&first), vec![("G_A".into(), "70".into())]);
+    assert_eq!(Fixture::lengths(&first), vec![("G_A".into(), "80".into())]);
     let group_a = text(&first, "element_id");
     for plate in [&p1, &p2] {
         for y in ["75", "125"] {
@@ -156,7 +156,7 @@ fn foreign_coaxial_holes_keep_the_grip_and_a_rename_keeps_the_length() {
         Fixture::lengths(&second)
             .into_iter()
             .chain(Fixture::lengths(&renamed))
-            .filter(|(_, length)| length != "70")
+            .filter(|(_, length)| length != "80")
             .collect::<Vec<_>>(),
         Vec::<(String, String)>::new()
     );
@@ -179,7 +179,7 @@ fn foreign_coaxial_holes_keep_the_grip_and_a_rename_keeps_the_length() {
     args[9] = "550,150,40";
     let created = f.ok("create-bolt-group", &args);
     assert!(
-        Fixture::lengths(&created).contains(&("G_C".into(), "70".into())),
+        Fixture::lengths(&created).contains(&("G_C".into(), "80".into())),
         "{created:?}"
     );
 }
@@ -258,7 +258,7 @@ fn generate_cuts_holes_in_rotated_plates_on_the_bolt_axes() {
     );
     assert_eq!(
         Fixture::lengths(&reply),
-        vec![("G_ROT".into(), "50".into())]
+        vec![("G_ROT".into(), "60".into())]
     );
     let inspected = f.ok("inspect-elements", &[]);
     let plates = list(&inspected, "plates");
@@ -341,7 +341,7 @@ fn a_bottom_sided_plate_admits_a_bolt_from_its_real_top_face() {
             "G_E",
         ],
     );
-    assert_eq!(Fixture::lengths(&reply), vec![("G_E".into(), "70".into())]);
+    assert_eq!(Fixture::lengths(&reply), vec![("G_E".into(), "80".into())]);
 }
 
 #[test]
