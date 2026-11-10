@@ -317,6 +317,18 @@ fn commit_and_open_round_trip_with_a_verified_chain() {
         RevisionError::Storage(StorageError::NotFound)
     );
     assert_eq!(fresh.manifest().content().workspace_generation(), 42);
+
+    // The single verification pass can hand back the bytes it verified, in entry order.
+    let (opened, bytes) = fx.store().open_with_layers().unwrap();
+    assert_eq!(opened.info(), &second);
+    let expected = opened
+        .manifest()
+        .content()
+        .entries()
+        .iter()
+        .map(|e| opened.layer_bytes(e.name()).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(bytes, expected);
 }
 
 #[test]

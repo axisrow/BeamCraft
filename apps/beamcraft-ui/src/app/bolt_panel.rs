@@ -1012,34 +1012,47 @@ pub(crate) struct BoltDraft {
 }
 
 /// The picked parts' geometry the preview's hole decision reads, as the snapshot on screen
-/// reports it: every part's element-local box (the box of its own mesh before placement — for
-/// a plate the contour extents and the material band of its thickness side, the same frame
-/// the commit's adapter decides in), the placements and the member identities. The hole
-/// decision carries any placement rotation into that frame and refuses a member, as the
-/// commit's does (issue 555 finding 2). A part whose mesh the snapshot does not carry is left
-/// out, so the decision refuses it as unreachable and the preview draws nothing.
-fn preview_geometry(
-    snapshot: &ViewSnapshot,
-    parts: &[ElementId],
-) -> (
-    BTreeMap<ElementId, Bounds>,
-    BTreeMap<ElementId, PartPlacement>,
-    BTreeSet<ElementId>,
-) {
-    let mut slabs = BTreeMap::new();
-    let mut placements = BTreeMap::new();
-    let mut members = BTreeSet::new();
+/// reports it.
+struct PreviewGeometry {
+    /// Every decided part's element-local box (the box of its own mesh before placement: for a
+    /// flat plate the contour extents and the material band of its thickness side, the same
+    /// box the commit's adapter decides in).
+    slabs: BTreeMap<ElementId, Bounds>,
+    /// Every shown part's placement.
+    placements: BTreeMap<ElementId, PartPlacement>,
+    /// The linear members among the parts.
+    members: BTreeSet<ElementId>,
+    /// The parts whose holes the preview does not decide: ruled-loft plates (bent or lofted).
+    /// The commit decides their holes over the authored outline's box (for a bent plate the
+    /// developed, unfolded contour), which the shown mesh's box is not and which the snapshot
+    /// does not carry; a preview over the mesh box would draw holes the commit does not cut.
+    undecided: BTreeSet<ElementId>,
+}
+
+/// Reads [`PreviewGeometry`] for the picked parts. The hole decision carries any placement
+/// rotation into the element-local frame and refuses a member, as the commit's does (issue 555
+/// finding 2). A part whose mesh the snapshot does not carry is left out, so the decision
+/// refuses it as unreachable and the preview draws nothing.
+fn preview_geometry(snapshot: &ViewSnapshot, parts: &[ElementId]) -> PreviewGeometry {
+    let mut geometry = PreviewGeometry {
+        slabs: BTreeMap::new(),
+        placements: BTreeMap::new(),
+        members: BTreeSet::new(),
+        undecided: BTreeSet::new(),
+    };
     for part in parts {
         let Some(entry) = snapshot.element(part) else {
             continue;
         };
-        if let Some(local) = snapshot
+        if steel::kernel::ruled::is_loft_face_table(&entry.full_face_table) {
+            geometry.undecided.insert(*part);
+        } else if let Some(local) = snapshot
             .mesh(&entry.full.mesh_digest)
             .and_then(|mesh| mesh.local_bounds())
         {
-            slabs.insert(*part, local);
+            geometry.slabs.insert(*part, local);
         }
-        placements.insert(
+        geometry.placements.insert(
             *part,
             PartPlacement {
                 translation_mm: entry.placement_mm,
@@ -1047,10 +1060,10 @@ fn preview_geometry(
             },
         );
         if entry.kind.is_linear_member() {
-            members.insert(*part);
+            geometry.members.insert(*part);
         }
     }
-    (slabs, placements, members)
+    geometry
 }
 
 /// Lifts the generated holes into world space for the preview: each polygon is the plate's
@@ -1487,11 +1500,22 @@ impl App {
         if row.bearings_mm.len().saturating_mul(inputs.parts.len()) > MAX_PREVIEW_HOLES {
             return None;
         }
-        let (slabs, placements, members) = preview_geometry(&loaded.snapshot, &inputs.parts);
-        let holes =
-            steel::engine::bolt::generate_holes(&inputs, &row, &slabs, &placements, &members)
-                .ok()?;
-        let holes_mm = hole_world_rings(&holes, &placements, &slabs);
+        let geometry = preview_geometry(&loaded.snapshot, &inputs.parts);
+        // The row and its bearings still draw over a ruled-loft plate; only its holes, which
+        // the commit decides in a box the snapshot does not carry, are left out.
+        let mut decided = inputs.clone();
+        decided
+            .parts
+            .retain(|part| !geometry.undecided.contains(part));
+        let holes = steel::engine::bolt::generate_holes(
+            &decided,
+            &row,
+            &geometry.slabs,
+            &geometry.placements,
+            &geometry.members,
+        )
+        .ok()?;
+        let holes_mm = hole_world_rings(&holes, &geometry.placements, &geometry.slabs);
         Some(BoltDraft {
             point1: inputs.point1_mm,
             point2: inputs.point2_mm,
@@ -2232,6 +2256,84 @@ mod tests {
             &bounds,
         );
         assert!(rings.is_empty());
+    }
+
+    #[test]
+    fn a_bent_plate_gets_no_preview_holes_from_its_shown_mesh_box() {
+        // #557 review: the commit decides a plate's holes over the authored contour's box,
+        // which for a bent plate is the developed (unfolded) outline, while its shown mesh is
+        // folded out of plane; the preview leaves a bent plate's holes undecided instead of
+        // drawing holes over a box the commit never uses. A flat plate keeps the mesh box,
+        // which is the commit's.
+        use steel::engine::command::AuthoredPlate;
+        use steel::model::command::{BendRecord, BendSpec};
+        let flat_id = ElementId::parse(MAIN).unwrap();
+        let bent_id = ElementId::parse(OTHER).unwrap();
+        let flat = AuthoredPlate {
+            id: flat_id,
+            name: "Flat".into(),
+            class: 0,
+            contour_points_mm: vec![
+                [0.0, 0.0, 0.0],
+                [100.0, 0.0, 0.0],
+                [100.0, 200.0, 0.0],
+                [0.0, 200.0, 0.0],
+            ],
+            thickness_mm: 10.0,
+            thickness_side: None,
+            corners: Vec::new(),
+            placement: PartPlacement {
+                translation_mm: [0.0; 3],
+                orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+            },
+            material: None,
+            holes_mm: Vec::new(),
+            hole_records: Vec::new(),
+            cuts: Vec::new(),
+            bends: Vec::new(),
+        };
+        let mut bent = flat.clone();
+        bent.id = bent_id;
+        bent.name = "Bent".into();
+        bent.bends = vec![BendRecord {
+            operation_id: beamcraft_model::id::OpId::parse("0197aabb-ccdd-7ebb-9beb-59df63a5fc13")
+                .unwrap(),
+            spec: BendSpec::Fold {
+                a_mm: [0.0, 100.0, 0.0],
+                b_mm: [100.0, 100.0, 0.0],
+                radius_mm: 8.0,
+                angle_rad: core::f64::consts::FRAC_PI_2,
+            },
+        }];
+        let pin = beamcraft_engine::ViewPin::new(
+            beamcraft_model::digest::Sha256::digest(b"revision").unwrap(),
+            1,
+        );
+        // The committed-model path the window's snapshot comes from.
+        let records = steel::engine::committed::evaluate_committed(
+            &[flat.clone(), bent.clone()],
+            &steel::engine::command::no_materials,
+        )
+        .unwrap();
+        let snapshot = ViewSnapshot::build(
+            pin,
+            steel::engine::committed::scene_elements(&records).unwrap(),
+            &beamcraft_engine::Limits::default(),
+        )
+        .unwrap();
+        // The shown bent mesh leaves the contour's box: its box is not the commit's.
+        let bent_mesh = snapshot
+            .mesh(&snapshot.element(&bent_id).unwrap().full.mesh_digest)
+            .and_then(|mesh| mesh.local_bounds())
+            .unwrap();
+        assert_ne!(Some(bent_mesh), bent.local_box_mm());
+
+        let geometry = preview_geometry(&snapshot, &[flat_id, bent_id]);
+        assert_eq!(geometry.undecided, BTreeSet::from([bent_id]));
+        assert!(!geometry.slabs.contains_key(&bent_id));
+        assert_eq!(geometry.slabs.get(&flat_id).copied(), flat.local_box_mm());
+        assert!(geometry.placements.contains_key(&bent_id));
+        assert!(geometry.members.is_empty());
     }
 
     #[test]

@@ -13,10 +13,10 @@ is a feature, tracked in the epic #556.
 | Finding | Behaviour now |
 |---|---|
 | 1. Grip through foreign coaxial holes | The grip is read on the bearing ring (axis plus eight parallel rays between the clearance hole and the washer's outer radius), so a coaxial hole cut by anyone grips its slab; M16 through 2 x 20 mm is 70 before and after `add-hole`, for a new group and after a rename. A listed part no bearing ring finds material in is refused (`INVALID_ARGUMENT`, `parts`). The under-head washer now counts in `auto` (audit item 9). |
-| 2. `generate` on rotated plates | Decided in the plate's own frame through the inverse placement; refused only for a shank axis more than 60 degrees off the plate normal. The window preview decides over each part's local mesh box and lifts the rings by the whole placement. |
+| 2. `generate` on rotated plates | Decided in the plate's own frame through the inverse placement; refused only for a shank axis more than 60 degrees off the plate normal. The window preview decides over each part's local mesh box and lifts the rings by the whole placement; a ruled-loft (bent or lofted) plate gets no preview holes (below). |
 | 3. Plate box ignored `thickness_side` | One helper, `AuthoredPlate::local_z_band_mm` / `local_box_mm`, feeds the bolt admission box, the box grip fallback and the generated-hole slab. |
 | 4. Verbatim `create-*` retry was `OP_ID_REUSE` | Without `--new-id`, the created identity is derived from `--op-id` (below). |
-| 5. Unreadable store reported `revision_verified` | `open-revision` reports `schema` and refuses an incompatible project store with both digests; content refusals say what happened. |
+| 5. Unreadable store reported `revision_verified` | `open-revision` reports `schema` and refuses an incompatible project store with both digests; a project store whose layers cannot be read is refused with the reader's code (`INTEGRITY_ERROR`, ...), never `schema: null`; content refusals say what happened. |
 | 6. `screenshot-view` lost the code | The window keeps the CLI's code, message and diagnostics (`Error::Rejected`) and prints them; `screenshot-view` re-issues them with the code's exit. |
 | 8. Documentation drift | The CLI README, the bolt, plate, revision and screenshot help (the generated `COMMANDS.md` follows the registry) and the `beamcraft-model` skill follow the behaviour above. |
 
@@ -39,6 +39,23 @@ is a feature, tracked in the epic #556.
   as its diagnostic instead of `revision_verified`, and the content commands' refusal message
   names the cause and points at `open-revision`. A migration or a per-section compatibility
   policy needs an owner decision and stays out of this change.
+- **`schema: null` means "not a project base", nothing else.** A head whose root layer is not
+  `root.usda` (a raw revision of arbitrary blobs) is read by no content command and has no
+  layer schema, so `open-revision` verifies it with `schema: null`. A project head whose
+  layers cannot be parsed (a damaged layer committed through `commit-revision`) is refused
+  with the reader's code, the same refusal the content commands give (#557 review).
+- **Each blob is verified once.** `open-revision` reads the head with
+  `RevisionStore::open_with_layers`, which returns the bytes of the single verification pass,
+  and the schema check (`store_schema::schema_status`) opens the stage from those bytes
+  (`pipeline::base_with_layers`) instead of opening and hashing the store again.
+- **The bolt preview leaves a ruled-loft plate's holes undecided.** The commit decides a
+  plate's holes over the authored contour's box (`AuthoredPlate::local_box_mm`); for a flat
+  plate that is the box of its shown mesh, for a bent plate it is the developed (unfolded)
+  outline, which the folded mesh is not and the view snapshot does not carry. The preview
+  recognises a loft body by its stable face ids (`ruled:`,
+  `steel::kernel::ruled::is_loft_face_table`) and draws the row and bearings over it but no
+  holes, rather than holes the commit never cuts (the bent-plate evaluation refuses holes in
+  any case).
 - **A refusal crosses process boundaries whole.** Anything that runs the CLI and reads its JSON
   keeps `code`, `message` and `diagnostics`; a catch-all code is used only when the child's
   reply carries no stable code of its own.

@@ -204,15 +204,18 @@ fn commit_checked(
 /// store's layer-schema pins, this build's digest and `compatible`. A project store pinned to
 /// another layer mapping is intact but unreadable by every content command, so it is not
 /// `revision_verified`: the command refuses with `UNSUPPORTED_VERSION` and the schema object
-/// as its diagnostic (`Err` carries it). A store whose head is not a project base (raw
-/// revisions of arbitrary blobs) has no layer schema to compare and reports `schema: null`.
+/// as its diagnostic (`Err` carries it). A store whose head is not a project base (its root
+/// layer is not `root.usda`, as for raw revisions of arbitrary blobs) has no layer schema to
+/// compare and reports `schema: null`. A project head whose layers cannot be read is refused
+/// with the reader's code (for example `INTEGRITY_ERROR`), as every content command refuses
+/// it. Every blob is read and verified once: the schema check reads the bytes the
+/// verification returned.
 pub(crate) fn open(blobs: &BlobStore) -> Result<Json, Result<HostError, (HostError, Json)>> {
     let store = RevisionStore::new(blobs.clone());
-    let revision = store.open().map_err(|e| Ok(failure(e)))?;
+    let (revision, layers) = store.open_with_layers().map_err(|e| Ok(failure(e)))?;
     let mut json = summary("revision_verified", revision.info());
-    let status = beamcraft_commands::store_schema::schema_status(&store)
-        .ok()
-        .flatten();
+    let status = beamcraft_commands::store_schema::schema_status(&revision, layers)
+        .map_err(|refusal| Ok(HostError::logical(refusal.code)))?;
     let schema = status.as_ref().map_or(Json::Null, |status| {
         Json::object([
             (

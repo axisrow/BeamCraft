@@ -54,6 +54,17 @@ pub const MAX_LOFT_TRIANGLES: u64 = 8192;
 /// bound as a G12 mitre) and is not a fold line.
 pub const MIN_FOLD_CROSS: f64 = 1e-9;
 
+/// The prefix of every face id of a ruled loft (its walls `ruled:w<i>` and caps
+/// `ruled:f.cap<n>`). Operations on the body (holes, cuts) keep the input ids, so the prefix
+/// marks a loft body for the life of the element.
+pub const FACE_ID_PREFIX: &str = "ruled:";
+
+/// Whether a stable face table is that of a ruled-loft body (a bent or a lofted plate), with
+/// or without operations applied: any face id carries [`FACE_ID_PREFIX`].
+pub fn is_loft_face_table(face_table: &[String]) -> bool {
+    face_table.iter().any(|id| id.starts_with(FACE_ID_PREFIX))
+}
+
 /// Why a contour input was refused; every token reuses established F06 vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoftCode {
@@ -521,7 +532,7 @@ fn build_mesh(
         let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
         faces.push(face);
         faces.push(face);
-        ids.push(format!("ruled:w{i}"));
+        ids.push(format!("{FACE_ID_PREFIX}w{i}"));
         normals.push(quad_area_vector(&vertices, a, a2, b2, b));
     }
     let cap_normal = |z: Vec3, sign: f64| -> Option<[f64; 3]> {
@@ -532,7 +543,7 @@ fn build_mesh(
     // One face id per logical cap: the triangles of a cap share the id, as the face table
     // requires one entry per logical face with no duplicated id.
     let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
-    ids.push("ruled:f.cap0".to_owned());
+    ids.push(format!("{FACE_ID_PREFIX}f.cap0"));
     normals.push(start_z);
     for cap in caps0 {
         let (a, b, c) = tri_points(cap)?;
@@ -542,7 +553,7 @@ fn build_mesh(
         faces.push(face);
     }
     let face = u16::try_from(ids.len()).map_err(|_| numeric())?;
-    ids.push("ruled:f.cap1".to_owned());
+    ids.push(format!("{FACE_ID_PREFIX}f.cap1"));
     normals.push(end_z);
     for cap in caps1 {
         let (a, b, c) = tri_points(cap)?;
