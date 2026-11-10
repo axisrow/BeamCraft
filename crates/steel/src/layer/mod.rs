@@ -318,7 +318,9 @@ pub fn patch_changes(
     }
     // A mirror (T03) re-encodes the local body: the plate's side flips, the member's path
     // reflects and the cuts of either part kind reflect, all read back from the patched
-    // record and authored on the canonical part.
+    // record and authored on the canonical part. A member's re-encode also writes the roll
+    // and the section position (issue 562 item 4), with the same opinion rules as an
+    // explicit patch: a zero roll and the centred default remove the opinions.
     if patch.mirror.is_some() {
         if let Some(side) = patched.thickness_side() {
             changes.push(thickness_side(definition.to_owned(), side));
@@ -327,6 +329,24 @@ pub fn patch_changes(
             changes.push(axis(definition.to_owned(), points.to_vec()));
         }
         changes.push(cuts(definition.to_owned(), patched.cuts().to_vec()));
+        if let crate::engine::part::PartRecord::Member(member) = patched {
+            let rad = member.authored.roll_rad.unwrap_or(0.0);
+            changes.push(roll(
+                definition.to_owned(),
+                if rad == 0.0 {
+                    Opinion::Remove
+                } else {
+                    Opinion::Value(rad)
+                },
+            ));
+            changes.push(section_placement(
+                definition.to_owned(),
+                member
+                    .authored
+                    .section_placement
+                    .filter(|placement| !placement.is_default()),
+            ));
+        }
     }
     changes
 }
