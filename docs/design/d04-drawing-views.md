@@ -91,6 +91,8 @@ three view collections in one fingerprinted document operation via
 `--placed-detail UUID:parent:center:radius:scale:x,y`; `inspect-drawing` reports them as
 `placed_sections`/`placed_details`.
 
-Known boundary: the whole-sheet renderer (`drawing::sheet`, D05) draws placed views and
-the primary dimension groups; section and detail geometry resolves headlessly but does not
-render on exports yet. Titles and scales are slice 3.
+Boundary update: the whole-sheet renderer (`drawing::sheet`, D05) draws placed views,
+sections and details in document order beside the primary dimension groups, and the labels,
+titles and title block are laid out on the paper they describe. The UI hand-placement of
+views lives in the sheet editor; a native drafting-tool surface stays outside the delivered
+headless scope and is tracked in issue #333.

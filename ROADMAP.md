@@ -1,6 +1,6 @@
 # Roadmap
 
-**Stage:** pre-alpha. Last changed 2026-10-31; gate verdicts are unchanged.
+**Stage:** pre-alpha. Last changed 2026-11-09.
 
 This file holds what the owner decides: the stage, the acceptance-gate verdicts and the MVP scope
 with what is deferred. It lists no tasks and no task status. Task IDs, scope, dependencies,
@@ -29,8 +29,8 @@ claimed until the gate below says **passed**. Closing a task does not pass its g
 | K7 | Complete alpha scenario and native packaging rehearsal | Q01–Q02 | open |
 | K8 | Associative drawings, dimensions and marks, drafting, a published document version | D01–D08 | open; in the MVP |
 | K9 | Full manual steel modelling: polybeams, curved members, complex plates, fits and cuts, bolts, welds, nested assemblies | P12–P15, G12–G13, A10–A16 | open |
-| K10 | Model tools, views, filters, cut plane, render modes, colour by filter, selection and snap panels | T01–T04, V11–V17 | open |
-| K11 | User attributes and schedules | I04, I05 | open; I01–I03 deferred after the MVP |
+| K10 | Model tools, views, filters, cut plane, render modes, colour by filter, selection and snap panels | T01–T04, V11–V17 | **passed 2026-11-09** (owner decision; evidence in [`docs/plan/k10-k11-acceptance-evidence.md`](docs/plan/k10-k11-acceptance-evidence.md)) |
+| K11 | User attributes and schedules | I04, I05 | **passed 2026-11-09** (owner decision; evidence in [`docs/plan/k10-k11-acceptance-evidence.md`](docs/plan/k10-k11-acceptance-evidence.md)); I01–I03 deferred after the MVP |
 
 ## MVP scope
 

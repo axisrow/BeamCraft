@@ -4,6 +4,14 @@ Decisions that shape the plan, newest first. Each names its date and, where one 
 document that records it in detail. A later decision overrides an earlier one where they differ.
 Open questions are at the end.
 
+## 2026-11-09
+
+- **Gates K10 and K11 are passed.** Owner decision: the tools-and-views scope (T01 to T04,
+  V11 to V17) and the attributes-and-schedules work (I04, I05) are accepted as delivered,
+  with [the K10 and K11 evidence](k10-k11-acceptance-evidence.md) recording what was delivered
+  and the follow-ups that stay documented and unscheduled. The M3 milestone closes on the same
+  decision.
+
 ## 2026-11-08
 
 - **O-G5, the magnetic grid mode (T01.8), is answered.** The owner delegated the resolution
