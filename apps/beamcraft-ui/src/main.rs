@@ -269,10 +269,11 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 Some((yaw, pitch))
             }
         };
+        // `None` keeps the fitted orthographic default; both named projections switch.
         let ortho = match map.get("--projection").map(String::as_str) {
-            None => false,
-            Some("perspective") => false,
-            Some("ortho") => true,
+            None => None,
+            Some("perspective") => Some(false),
+            Some("ortho") => Some(true),
             Some(_) => return Err(usage()),
         };
         let zoom: f32 = map
@@ -354,6 +355,22 @@ fn run() -> Result<Option<(String, u8)>, Error> {
             Some(&overlay),
             beamcraft_engine::KindFilter::SHOW_ALL,
         )?;
+        // The resolved D06 annotations ride the screenshot like the grid guides (issue 562
+        // item 37): the same `annotation-list` query the window's panel runs, painted by the
+        // same painter. A store without annotations or a failed query renders without them.
+        let annotations = beamcraft_ui::command::run(
+            &cli,
+            &[
+                "annotation-list".to_owned(),
+                "--store".to_owned(),
+                store.to_string_lossy().into_owned(),
+            ],
+            std::time::Duration::from_secs(30),
+            &stats,
+        )
+        .ok()
+        .and_then(|out| beamcraft_ui::app::annotation_panel::parse_rows(out.code, &out.stdout).ok())
+        .unwrap_or_default();
         let saved = screenshot::capture(
             &scene,
             &grids,
@@ -367,6 +384,7 @@ fn run() -> Result<Option<(String, u8)>, Error> {
                 pan,
             },
             background,
+            &annotations,
             &stats,
         )?
         .to_json();
