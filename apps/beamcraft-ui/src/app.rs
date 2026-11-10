@@ -2160,10 +2160,21 @@ impl App {
             ui.colored_label(palette.muted, note);
         }
         let busy = self.colour_job.is_some();
-        let applied = self
-            .colour
-            .as_ref()
-            .map(|(name, overlay)| (name.clone(), overlay.len()));
+        let applied = self.colour.as_ref().map(|(name, overlay)| {
+            // The legend counts what this scene shows coloured. The evaluation matches the
+            // model's head, which can hold an element the drawn revision does not (an
+            // unpublished edit, a body the view leaves out); counting it would read as a
+            // colour the viewport never shows.
+            let coloured = match self.loaded.as_ref() {
+                Some(l) => {
+                    let drawn: std::collections::BTreeSet<beamcraft_model::id::ElementId> =
+                        l.snapshot.elements().iter().map(|e| e.id).collect();
+                    overlay.entries().filter(|(id, _)| drawn.contains(id)).count()
+                }
+                None => overlay.len(),
+            };
+            (name.clone(), coloured)
+        });
         let pick = self.colour_pick.clone();
         ui.add_enabled_ui(!busy, |ui| {
             egui::ComboBox::from_id_salt("colour-set")
@@ -3322,6 +3333,68 @@ pub(crate) mod tests {
         // applied to the device, never a new reading of the model.
         assert_eq!(app.loaded.as_ref().unwrap().snapshot.token(), &token);
         assert!(app.colour.is_some());
+    }
+
+    #[test]
+    fn the_colour_legend_counts_the_elements_the_scene_shows() {
+        let Some(mut app) = headless() else { return };
+        deliver(&mut app, refreshed(2));
+        // The evaluation matched the head, which holds an element this drawn revision does
+        // not: the legend counts the drawn ones only, so the two counters of one window
+        // cannot disagree.
+        let mut matched = app
+            .loaded
+            .as_ref()
+            .unwrap()
+            .snapshot
+            .elements()
+            .iter()
+            .map(|e| e.id)
+            .collect::<std::collections::BTreeSet<beamcraft_model::id::ElementId>>();
+        let head_only = beamcraft_model::id::ElementId::parse(
+            "019a7bf0-0000-7000-9000-000000000042",
+        )
+        .unwrap();
+        assert!(!matched.contains(&head_only), "fixture: an undrawn id");
+        matched.insert(head_only);
+        app.colour = Some((
+            "Test".into(),
+            Arc::new(crate::colour_sets::Overlay::from_rules(vec![(
+                matched,
+                [0.0, 1.0, 0.0, 1.0],
+            )])),
+        ));
+        let ctx = egui::Context::default();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(500.0, 600.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.colour_panel(ui),
+        );
+        let labels = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Text(t) = &shape.shape {
+                    Some(t.galley.text().to_owned())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            labels.iter().any(|t| t.contains("2 element(s) coloured")),
+            "the two drawn elements: {labels:?}"
+        );
+        assert!(
+            !labels.iter().any(|t| t.contains("3 element(s) coloured")),
+            "the undrawn element is not counted: {labels:?}"
+        );
+        output.drop_without_applying_deltas();
     }
 
     #[test]
