@@ -555,7 +555,8 @@ impl App {
 
     /// Opens the view panel on a new view built by `construction`; the constructions that pick
     /// in the model start picking at once, and Apply creates the view.
-    pub(crate) fn begin_view(&mut self, construction: Construction) {        self.set_bench(Bench::View);
+    pub(crate) fn begin_view(&mut self, construction: Construction) {
+        self.set_bench(Bench::View);
         if self.bench != Bench::View {
             self.view_note(Err("Wait for the running command to finish.".into()));
             return;

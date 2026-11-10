@@ -1573,99 +1573,90 @@ impl App {
                         );
                     });
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = 1.0;
-                        // While a page opens a model, the menu waits for it.
-                        let idle = !self.menu_busy();
-                        if menu_navigation(ui, Icon::Back, "Back to model", false, idle).clicked() {
-                            self.close_menu();
-                        }
-                        ui.add_space(14.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(12.0);
-                            ui.label(theme::bold("Menu", 23.0).color(palette.side_text()));
-                        });
-                        ui.add_space(14.0);
-                        let free = idle && self.from_library && !self.other_command_running();
-                        let new = MenuSection::New;
-                        if menu_navigation(ui, Icon::Plus, "New", self.menu_section == new, free)
-                            .clicked()
-                        {
-                            self.menu_section = new;
-                            if let Some(parent) =
-                                self.source.store.parent().and_then(|p| p.to_str())
-                            {
-                                self.menu_new.seed_parent(parent);
-                            }
-                            self.menu_new.show();
-                        }
-                        let open = MenuSection::Open;
-                        if menu_navigation(
-                            ui,
-                            Icon::Folder,
-                            "Open",
-                            self.menu_section == open,
-                            free,
-                        )
-                        .clicked()
-                        {
-                            self.menu_section = open;
-                            self.menu_models.refresh(self.source.config_dir.as_deref());
-                        }
-                        menu_navigation(ui, Icon::Copy, "Save as", false, false);
-                        if menu_navigation(ui, Icon::Folder, "Open model folder", false, idle)
-                            .clicked()
-                        {
-                            self.menu_note = crate::dialog::open_folder(&self.source.store)
-                                .err()
-                                .map(Err);
-                        }
-                        for (section, icon, label) in [
-                            (MenuSection::Import, Icon::Back, "Import"),
-                            (MenuSection::Export, Icon::Shared, "Export"),
-                        ] {
-                            if menu_navigation(ui, icon, label, self.menu_section == section, idle)
-                                .clicked()
-                            {
-                                self.menu_section = section;
-                            }
-                        }
-                        let project = MenuSection::Project;
-                        if menu_navigation(
-                            ui,
-                            Icon::Block,
-                            "Project properties",
-                            self.menu_section == project,
-                            idle,
-                        )
-                        .clicked()
-                        {
-                            self.menu_section = project;
-                            self.read_project();
-                        }
-                        for (section, icon, label) in [
-                            (MenuSection::Settings, Icon::Grid, "Settings"),
-                            (MenuSection::Catalogs, Icon::Wire, "Catalogs"),
-                            (MenuSection::Editors, Icon::Plate, "Editors"),
-                        ] {
-                            let active = self.menu_section.top() == section;
-                            if menu_navigation(ui, icon, label, active, idle).clicked() {
-                                self.menu_section = section;
-                            }
-                        }
-                        menu_navigation(ui, Icon::Recent, "Logs", false, false);
-                        let help = MenuSection::Help;
-                        if menu_navigation(
-                            ui,
-                            Icon::Recent,
-                            "Help",
-                            self.menu_section.top() == help,
-                            idle,
-                        )
-                        .clicked()
-                        {
-                            self.menu_section = help;
-                        }
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    // While a page opens a model, the menu waits for it.
+                    let idle = !self.menu_busy();
+                    if menu_navigation(ui, Icon::Back, "Back to model", false, idle).clicked() {
+                        self.close_menu();
+                    }
+                    ui.add_space(14.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(12.0);
+                        ui.label(theme::bold("Menu", 23.0).color(palette.side_text()));
                     });
+                    ui.add_space(14.0);
+                    let free = idle && self.from_library && !self.other_command_running();
+                    let new = MenuSection::New;
+                    if menu_navigation(ui, Icon::Plus, "New", self.menu_section == new, free)
+                        .clicked()
+                    {
+                        self.menu_section = new;
+                        if let Some(parent) = self.source.store.parent().and_then(|p| p.to_str()) {
+                            self.menu_new.seed_parent(parent);
+                        }
+                        self.menu_new.show();
+                    }
+                    let open = MenuSection::Open;
+                    if menu_navigation(ui, Icon::Folder, "Open", self.menu_section == open, free)
+                        .clicked()
+                    {
+                        self.menu_section = open;
+                        self.menu_models.refresh(self.source.config_dir.as_deref());
+                    }
+                    menu_navigation(ui, Icon::Copy, "Save as", false, false);
+                    if menu_navigation(ui, Icon::Folder, "Open model folder", false, idle).clicked()
+                    {
+                        self.menu_note = crate::dialog::open_folder(&self.source.store)
+                            .err()
+                            .map(Err);
+                    }
+                    for (section, icon, label) in [
+                        (MenuSection::Import, Icon::Back, "Import"),
+                        (MenuSection::Export, Icon::Shared, "Export"),
+                    ] {
+                        if menu_navigation(ui, icon, label, self.menu_section == section, idle)
+                            .clicked()
+                        {
+                            self.menu_section = section;
+                        }
+                    }
+                    let project = MenuSection::Project;
+                    if menu_navigation(
+                        ui,
+                        Icon::Block,
+                        "Project properties",
+                        self.menu_section == project,
+                        idle,
+                    )
+                    .clicked()
+                    {
+                        self.menu_section = project;
+                        self.read_project();
+                    }
+                    for (section, icon, label) in [
+                        (MenuSection::Settings, Icon::Grid, "Settings"),
+                        (MenuSection::Catalogs, Icon::Wire, "Catalogs"),
+                        (MenuSection::Editors, Icon::Plate, "Editors"),
+                    ] {
+                        let active = self.menu_section.top() == section;
+                        if menu_navigation(ui, icon, label, active, idle).clicked() {
+                            self.menu_section = section;
+                        }
+                    }
+                    menu_navigation(ui, Icon::Recent, "Logs", false, false);
+                    let help = MenuSection::Help;
+                    if menu_navigation(
+                        ui,
+                        Icon::Recent,
+                        "Help",
+                        self.menu_section.top() == help,
+                        idle,
+                    )
+                    .clicked()
+                    {
+                        self.menu_section = help;
+                    }
+                });
             });
         egui::CentralPanel::default()
             .frame(

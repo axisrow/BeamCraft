@@ -541,7 +541,10 @@ pub fn prop_value(ui: &mut Ui, label: &str, value: &str, unit: Option<&str>) {
         // A right-aligned galley lays its rows out to the left of the anchor, so anchoring at
         // the value's right edge keeps single-line rows exactly where they were.
         painter.galley(
-            pos2(rect.right() - unit_width, rect.center().y - galley.size().y / 2.0),
+            pos2(
+                rect.right() - unit_width,
+                rect.center().y - galley.size().y / 2.0,
+            ),
             galley,
             palette.text,
         );
@@ -667,7 +670,12 @@ mod tests {
         let long = std::cell::Cell::new(0.0_f32);
         let short = std::cell::Cell::new(0.0_f32);
         frame(&ctx, Vec::new(), |ui| {
-            prop_value(ui, "Volume", "2861833.1892138589999999999999999999", Some("mm³"));
+            prop_value(
+                ui,
+                "Volume",
+                "2861833.1892138589999999999999999999",
+                Some("mm³"),
+            );
             long.set(ui.min_rect().height());
         });
         frame(&ctx, Vec::new(), |ui| {

@@ -2009,9 +2009,10 @@ impl App {
                 ] {
                     let (value, unit) = match (number, status) {
                         (Some(value), Some("current")) => (display_round(value), Some(unit)),
-                        (Some(value), Some("stale")) => {
-                            (format!("{} · out of date", display_round(value)), Some(unit))
-                        }
+                        (Some(value), Some("stale")) => (
+                            format!("{} · out of date", display_round(value)),
+                            Some(unit),
+                        ),
                         _ => ("Not available".to_owned(), None),
                     };
                     let value = if stored_freshness == Some("stale") {
@@ -2169,7 +2170,10 @@ impl App {
                 Some(l) => {
                     let drawn: std::collections::BTreeSet<beamcraft_model::id::ElementId> =
                         l.snapshot.elements().iter().map(|e| e.id).collect();
-                    overlay.entries().filter(|(id, _)| drawn.contains(id)).count()
+                    overlay
+                        .entries()
+                        .filter(|(id, _)| drawn.contains(id))
+                        .count()
                 }
                 None => overlay.len(),
             };
@@ -2205,9 +2209,7 @@ impl App {
             let pending = (!pick.is_empty()
                 && applied.as_ref().is_some_and(|(name, _)| name != &pick))
             .then(|| {
-                format!(
-                    "Evaluating {pick}… the colours and legend shown are the previous set"
-                )
+                format!("Evaluating {pick}… the colours and legend shown are the previous set")
             });
             ui.label(pending.as_deref().unwrap_or("Evaluating the set…"));
         }
@@ -3351,10 +3353,8 @@ pub(crate) mod tests {
             .iter()
             .map(|e| e.id)
             .collect::<std::collections::BTreeSet<beamcraft_model::id::ElementId>>();
-        let head_only = beamcraft_model::id::ElementId::parse(
-            "019a7bf0-0000-7000-9000-000000000042",
-        )
-        .unwrap();
+        let head_only =
+            beamcraft_model::id::ElementId::parse("019a7bf0-0000-7000-9000-000000000042").unwrap();
         assert!(!matched.contains(&head_only), "fixture: an undrawn id");
         matched.insert(head_only);
         app.colour = Some((
