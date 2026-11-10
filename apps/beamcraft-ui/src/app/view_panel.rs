@@ -544,12 +544,23 @@ impl App {
         form
     }
 
-    /// The active pane's current visible height, from its camera. The panel's height field
-    /// follows this while it is not being edited, so the form never holds a height the user
-    /// has zoomed away from and Apply cannot re-zoom the viewport with it.
+    /// The pane whose camera the form is editing, resolved by the subject: a browser click
+    /// opens a saved view's form without activating its pane, and the height must track that
+    /// view's own pane, not whichever pane happens to be active. A saved view no pane shows
+    /// has no live camera, and the field keeps the saved value.
+    fn subject_pane(&self) -> Option<&crate::panes::ViewPane> {
+        match self.views.subject {
+            Subject::SavedView(id) => self.views.panes.iter().rev().find(|p| p.view == Some(id)),
+            Subject::FreeView(key) => self.views.panes.iter().find(|p| Some(p.key) == key),
+            Subject::NewView => self.views.active_pane(),
+        }
+    }
+
+    /// That pane's current visible height, from its camera. The panel's height field follows
+    /// this while it is not being edited, so the form never holds a height the user has
+    /// zoomed away from and Apply cannot re-zoom the viewport with it.
     fn live_span(&self) -> Option<String> {
-        let pane = self.views.active_pane()?;
-        let (_, span) = pane.camera.frame(self.view_origin()).ok()?;
+        let (_, span) = self.subject_pane()?.camera.frame(self.view_origin()).ok()?;
         Some(format!("{}", span.round().max(1.0)))
     }
 

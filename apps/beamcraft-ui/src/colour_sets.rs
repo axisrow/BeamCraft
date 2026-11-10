@@ -386,6 +386,11 @@ impl Overlay {
         self.0.get(&id).copied().unwrap_or(WHITE)
     }
 
+    /// Whether `id` carries a colour.
+    pub fn contains(&self, id: ElementId) -> bool {
+        self.0.contains_key(&id)
+    }
+
     /// Whether `id` is hidden by a view's filter override.
     pub fn hides(&self, id: ElementId) -> bool {
         self.1.contains(&id)

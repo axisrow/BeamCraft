@@ -2165,16 +2165,15 @@ impl App {
             // The legend counts what this scene shows coloured. The evaluation matches the
             // model's head, which can hold an element the drawn revision does not (an
             // unpublished edit, a body the view leaves out); counting it would read as a
-            // colour the viewport never shows.
+            // colour the viewport never shows. A membership test over the snapshot, not a
+            // set of the overlay built per frame.
             let coloured = match self.loaded.as_ref() {
-                Some(l) => {
-                    let drawn: std::collections::BTreeSet<beamcraft_model::id::ElementId> =
-                        l.snapshot.elements().iter().map(|e| e.id).collect();
-                    overlay
-                        .entries()
-                        .filter(|(id, _)| drawn.contains(id))
-                        .count()
-                }
+                Some(l) => l
+                    .snapshot
+                    .elements()
+                    .iter()
+                    .filter(|e| overlay.contains(e.id))
+                    .count(),
                 None => overlay.len(),
             };
             (name.clone(), coloured)
