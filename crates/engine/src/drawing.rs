@@ -266,6 +266,28 @@ fn finite_range(value: f64, min: f64, max: f64, field: &'static str) -> Result<(
     Ok(())
 }
 
+/// Validates the sheet's authored title block. Both fields draw through the stroke
+/// glyphs on the sheet's title block, so a character they cannot draw refuses here: an
+/// admitted Cyrillic author or project name would otherwise blank its own marks in the
+/// drawn title block (visual audit finding 11, review round 2). The bounded label rule
+/// itself stays `SheetSpec::admit`'s.
+fn validate_title_block(sheet: &SheetSpec) -> Result<(), CommandError> {
+    for (field, text) in [
+        ("sheet_project", &sheet.title.project),
+        ("sheet_author", &sheet.title.author),
+    ] {
+        if text.chars().any(|ch| !svg::draws(ch)) {
+            return Err(invalid(
+                field,
+                "title block draws with the drawing's own stroke glyphs; a character \
+                 outside the supported set cannot be drawn faithfully (use ASCII \
+                 capitals, digits and , ; / ( ) + = # & _ % - : .)",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Validates one view's authored title; a present title obeys the bounded label rule and
 /// draws with the stroke glyphs, an absent one is the unannotated default. A character
 /// the glyphs cannot draw refuses here: a title that silently blanked its own marks lied
@@ -424,6 +446,7 @@ impl Drawing {
         }
         if let Some(sheet) = &spec.sheet {
             sheet.admit()?;
+            validate_title_block(sheet)?;
         }
         Self::validate_paper_objects(
             &spec.id,
@@ -571,6 +594,7 @@ impl Drawing {
     /// is neither read nor touched.
     pub fn with_sheet(mut self, sheet: SheetSpec) -> Result<Self, CommandError> {
         sheet.admit()?;
+        validate_title_block(&sheet)?;
         Self::validate_paper_objects(
             &self.0.id,
             &self.0.view.id,

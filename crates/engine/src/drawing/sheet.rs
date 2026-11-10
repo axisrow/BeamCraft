@@ -1224,4 +1224,34 @@ mod tests {
         // A diagonal clipping the corner region.
         assert!(crosses_interior([[30.0, 40.0], [50.0, 60.0]], b));
     }
+
+    #[test]
+    fn the_title_block_admits_only_what_the_stroke_glyphs_draw() {
+        // Review round 2: the title block's project and author draw through the stroke
+        // glyphs, so an admitted Cyrillic field would blank its own marks in the drawn
+        // block. Both admission entry points refuse it.
+        let fixture = sheet_drawing(Sheet::A4, &[]);
+        assert!(Drawing::admit(fixture.spec().clone()).is_ok());
+        let mut s = fixture.spec().clone();
+        s.sheet.as_mut().unwrap().title.author = "Кузнецов".to_owned();
+        assert_eq!(
+            Drawing::admit(s).unwrap_err().field,
+            "sheet_author",
+            "the author refuses at admission"
+        );
+        let mut s = fixture.spec().clone();
+        s.sheet.as_mut().unwrap().title.project = "Мост".to_owned();
+        assert_eq!(
+            Drawing::admit(s).unwrap_err().field,
+            "sheet_project",
+            "the project refuses at admission"
+        );
+        let mut sheet = sheet(Sheet::A4);
+        sheet.title.project = "Мост".to_owned();
+        assert_eq!(
+            fixture.without_sheet().with_sheet(sheet).unwrap_err().field,
+            "sheet_project",
+            "with_sheet refuses like admit"
+        );
+    }
 }
