@@ -12,6 +12,7 @@ mod derived;
 mod drafting;
 mod export;
 mod lifecycle;
+mod print;
 mod projection;
 mod sections;
 mod sheet;

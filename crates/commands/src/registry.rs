@@ -2662,6 +2662,20 @@ pub const COMMANDS: &[Command] = &[
         ],
     ),
     entry(
+        Route::Drawing,
+        "drawing",
+        "print-drawing",
+        Access::Write,
+        Ids::None,
+        &[
+            req("--document-dir", "DIR"),
+            req("--version-id", "UUID"),
+            opt("--sheet", "a4|a3|a2|a1|a0"),
+            opt("--printer", "NAME"),
+            opt("--dry-run", "true|false"),
+        ],
+    ),
+    entry(
         Route::Project,
         "start",
         "create-project",

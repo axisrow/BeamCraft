@@ -206,6 +206,8 @@ fn document_options(args: &[OsString]) -> Run<DocumentOptions<'_>> {
                     | "--out"
                     | "--format"
                     | "--sheet"
+                    | "--printer"
+                    | "--dry-run"
             ) && options.insert(*key, *value).is_none() => {}
             _ => return Err(invalid("unknown or repeated drawing document option")),
         }
@@ -1171,6 +1173,126 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 ),
                 ("bytes", num(bytes.len() as f64)?),
             ]))
+        }
+        "print-drawing" => {
+            let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
+            let version = DocumentVersionId::parse(required("--version-id")?)
+                .map_err(|_| invalid("document version id must be UUIDv7"))?;
+            let dry_run = match options.get("--dry-run").copied() {
+                None => false,
+                Some("true") => true,
+                Some("false") => false,
+                Some(_) => return Err(invalid("--dry-run must be true or false")),
+            };
+            // One exact published version, reopened from its own immutable archived source.
+            // The live model is never read and never changes; the document head is only read.
+            let published = documents
+                .history()?
+                .into_iter()
+                .find(|revision| {
+                    revision.state == State::Published && revision.version == Some(version)
+                })
+                .ok_or(Refusal {
+                    rule_id: None,
+                    code: ErrorCode::NotFound,
+                    message: "no published document version carries this id",
+                })?;
+            let snapshot = published.source.inspect()?.snapshot;
+            let projection = projection::resolve(&published.drawing, &snapshot)?;
+            let sheet = published.drawing.sheet();
+            let mut bodies = Vec::new();
+            let mut sections = Vec::new();
+            let mut details = Vec::new();
+            if sheet.is_some() {
+                for view in published.drawing.views() {
+                    bodies.push(projection::resolve_view(
+                        &published.drawing,
+                        view,
+                        &snapshot,
+                    )?);
+                }
+                for section in published.drawing.sections() {
+                    sections.push(projection::resolve_section(
+                        &published.drawing,
+                        section,
+                        &snapshot,
+                    )?);
+                }
+                for detail in published.drawing.details() {
+                    details.push(projection::resolve_detail(
+                        &published.drawing,
+                        detail,
+                        &snapshot,
+                    )?);
+                }
+            }
+            let pdf = match sheet {
+                // The sheet document prints its own fixed sheet; a different --sheet
+                // is a contradictory request and refuses.
+                Some(spec) => {
+                    if let Some(requested) = options.get("--sheet") {
+                        let parsed = Sheet::parse(requested)
+                            .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+                        if parsed.as_str() != spec.size.as_str() {
+                            return Err(invalid("--sheet contradicts the document's own sheet"));
+                        }
+                    }
+                    sheet::export_pdf(
+                        &published.drawing,
+                        version,
+                        &projection,
+                        &bodies,
+                        &sections,
+                        &details,
+                    )?
+                }
+                None => {
+                    let sheet = Sheet::parse(options.get("--sheet").copied().unwrap_or("a4"))
+                        .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
+                    print::export(&published.drawing, version, &projection, sheet)?
+                }
+            };
+            let spec = published.drawing.spec();
+            let job = print::PrintJob {
+                pdf,
+                name: format!("{} ({version})", spec.name),
+                printer: options.get("--printer").map(|value| (*value).to_owned()),
+            };
+            // The invocation is validated before anything is submitted, so a dry run and a
+            // real submission refuse on the same shape.
+            let arguments = print::lp_arguments(&job)?;
+            let printer_json = match &job.printer {
+                Some(printer) => Json::text(printer),
+                None => Json::Null,
+            };
+            let mut fields = vec![
+                ("outcome", Json::text("drawing_print")),
+                ("dry_run", Json::Bool(dry_run)),
+                ("printer", printer_json),
+                ("drawing_id", Json::text(spec.id.to_string())),
+                ("version_id", Json::text(version.to_string())),
+                (
+                    "source_revision_id",
+                    Json::text(published.source.pin().revision.to_string()),
+                ),
+                (
+                    "source_manifest",
+                    Json::text(published.source.pin().manifest.to_string()),
+                ),
+                ("bytes", num(job.pdf.len() as f64)?),
+            ];
+            if dry_run {
+                fields.push((
+                    "arguments",
+                    Json::Array(arguments.iter().map(Json::text).collect()),
+                ));
+            } else {
+                let submitted = print::submit(&job)?;
+                fields.push(("request", Json::text(&submitted.request)));
+            }
+            Ok(Json::Object(
+                fields.into_iter().map(|(k, v)| (k.to_owned(), v)).collect(),
+            ))
         }
         "inspect-drawing" => {
             let documents = DocumentStore::open(std::path::Path::new(required("--document-dir")?))?;
