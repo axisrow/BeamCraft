@@ -644,7 +644,17 @@ pub fn place_bolt_group(
         0.0
     };
     let nut_height = spec.nut_height_mm.unwrap_or(0.0);
-    let required = max_grip + near_washer + far_washer + nut_height + spec.thread_protrusion_mm;
+    // The prototype stacks the head assembly on the outside of the joint, below the bearing
+    // plane, and the shank starts inside the head (issue 562 item 5): the shank's course
+    // through the joint loses the head height before the grip begins, so the length must
+    // cover it on top of the grip, the nut washer, the nut and the protrusion — otherwise
+    // the nut lands short of the far plate and floats on bare shank.
+    let required = max_grip
+        + near_washer
+        + far_washer
+        + nut_height
+        + spec.head_height_mm
+        + spec.thread_protrusion_mm;
     let length = match inputs.length {
         BoltLength::Auto => spec
             .lengths_mm
@@ -1169,7 +1179,7 @@ mod tests {
                 thickness_mm: 3.0,
             }),
             hole_clearance_mm: 2.0,
-            lengths_mm: vec![30.0, 35.0, 40.0, 45.0, 50.0],
+            lengths_mm: vec![30.0, 35.0, 40.0, 45.0, 50.0, 60.0, 80.0],
             thread_protrusion_mm: 5.0,
             washer_under_head: true,
             washer_under_nut: true,
@@ -1314,13 +1324,15 @@ mod tests {
     #[test]
     fn auto_picks_the_smallest_length_that_covers_grip_washer_nut_and_protrusion() {
         // Grip 10 (the two overlapping plates count once) + under-head washer 3 + under-nut
-        // washer 3 + nut 14.8 + protrusion 5 = 35.8: the smallest listed length is 40. A
-        // wrongly summed grip of 20 would pick 50. The bolt length runs from under the head,
-        // so the under-head washer lies on the shank and counts (issue 555 audit item 9).
+        // washer 3 + nut 14.8 + head 10 (the head assembly lives outside the joint, and the
+        // shank's course through it comes off the length) + protrusion 5 = 45.8: the
+        // smallest listed length is 50. A wrongly summed grip of 20 would pick 60 (issue
+        // 555 audit item 9: the bolt length runs from inside the head, so the under-head
+        // washer lies on the shank and counts).
         let placed = place(&group_inputs(), &group_bounds(1000.0)).unwrap();
-        assert_eq!(placed.length_mm, 40.0);
+        assert_eq!(placed.length_mm, 50.0);
         assert!(placed.washer_under_head && placed.washer_under_nut);
-        // Without the far washer the requirement is 32.8, so 35 covers it.
+        // Without the far washer the requirement is 42.8, so 45 covers it.
         let bare = place(
             &BoltGroupInputs {
                 washer_under_nut: Some(false),
@@ -1329,8 +1341,8 @@ mod tests {
             &group_bounds(1000.0),
         )
         .unwrap();
-        assert_eq!(bare.length_mm, 35.0);
-        // Without either washer the requirement is 29.8, so 30 covers it.
+        assert_eq!(bare.length_mm, 45.0);
+        // Without either washer the requirement is 39.8, so 40 covers it.
         let none = place(
             &BoltGroupInputs {
                 washer_under_head: Some(false),
@@ -1340,7 +1352,7 @@ mod tests {
             &group_bounds(1000.0),
         )
         .unwrap();
-        assert_eq!(none.length_mm, 30.0);
+        assert_eq!(none.length_mm, 40.0);
     }
 
     #[test]
@@ -1363,15 +1375,15 @@ mod tests {
         );
         // A fixed length below the requirement is refused; an adequate one is kept.
         let mut fixed = group_inputs();
-        fixed.length = BoltLength::Fixed(35.0);
+        fixed.length = BoltLength::Fixed(45.0);
         assert_eq!(
             place(&fixed, &group_bounds(1000.0)).unwrap_err().code,
             ErrorCode::UnsupportedGeometry
         );
-        fixed.length = BoltLength::Fixed(40.0);
+        fixed.length = BoltLength::Fixed(50.0);
         assert_eq!(
             place(&fixed, &group_bounds(1000.0)).unwrap().length_mm,
-            40.0
+            50.0
         );
         // Degenerate rows and a normal parallel to the row are refused.
         let same = place(
@@ -1724,7 +1736,7 @@ mod tests {
         let (placed, footprint) = parts
             .create_bolt_group(&command, &bounds, &box_faces_of(&bounds))
             .unwrap();
-        assert_eq!(placed.length_mm, 40.0);
+        assert_eq!(placed.length_mm, 50.0);
         // The parts' lifecycles and the definition are read; the group is written.
         assert!(
             footprint
@@ -1848,8 +1860,9 @@ mod tests {
                 thickness_mm: 2.0,
             }),
             hole_clearance_mm: 1.5,
-            // The face grip is 36.5 (36.5 + washer 2 + nut 9 + protrusion 3 = 50.5): the
-            // listed 50 refuses and the listed 55 covers, which pins the grip between them.
+            // The face grip is 36.5 (36.5 + washer 2 + nut 9 + head 7.5 + protrusion 3 = 58):
+            // the listed 55 refuses and the listed 60 covers, which pins the grip between
+            // them.
             lengths_mm: vec![30.0, 40.0, 50.0, 55.0, 60.0, 80.0],
             thread_protrusion_mm: 3.0,
             washer_under_head: true,
@@ -1944,26 +1957,27 @@ mod tests {
     fn a_rotated_knee_brace_requires_its_face_grip_not_its_box_grip() {
         // The brace's conservative box reaches 48.9 mm along the shank where its solid grips
         // 36.5 mm (from the bearing inside it to the far face), so the requirement is
-        // 36.5 + washer 2 + nut 9 + protrusion 3 = 50.5 and the smallest covering length is
-        // 55, not the box-driven 80 that exceeds every real library length (issue 519
-        // defect B). The second fastener's axis runs past the brace solid at x = 625: the box
-        // still admits it, it adds no grip, and the first bearing pins the length.
+        // 36.5 + washer 2 + nut 9 + head 7.5 + protrusion 3 = 58 and the smallest covering
+        // length is 60, not the box-driven 80 that exceeds every real library length
+        // (issue 519 defect B). The second fastener's axis runs past the brace solid at
+        // x = 625: the box still admits it, it adds no grip, and the first bearing pins the
+        // length.
         let bounds = knee_bounds();
         let faces = knee_faces();
         let placed = place_bolt_group(&knee_inputs(), &bounds, &faces).unwrap();
-        assert_eq!(placed.length_mm, 55.0);
-        // The grip boundary: a listed 50 refuses, a listed 55 covers the 50.5 requirement.
+        assert_eq!(placed.length_mm, 60.0);
+        // The grip boundary: a listed 55 refuses, a listed 60 covers the 58 requirement.
         let mut short = knee_inputs();
-        short.length = BoltLength::Fixed(50.0);
+        short.length = BoltLength::Fixed(55.0);
         assert_eq!(
             place_bolt_group(&short, &bounds, &faces).unwrap_err().code,
             ErrorCode::UnsupportedGeometry
         );
         let mut exact = knee_inputs();
-        exact.length = BoltLength::Fixed(55.0);
+        exact.length = BoltLength::Fixed(60.0);
         assert_eq!(
             place_bolt_group(&exact, &bounds, &faces).unwrap().length_mm,
-            55.0
+            60.0
         );
         // A part without faces grips per its conservative box, which errs long: 80, never
         // under the real grip.
@@ -1990,10 +2004,10 @@ mod tests {
         inputs.spacing = BoltSpacing::Spacings(vec![100.0]);
         // The row runs along the caps' (0,0)-(1000,500) ear-clip diagonal, so both bearings
         // land on the shared edge of each cap's two triangles, below the plate: grip 10, so
-        // the requirement is 10 + washers 2 x 3 + nut 14.8 + protrusion 5 = 35.8 and the length
-        // is 40; collapsed (t, t) pairings would pick 30.
+        // the requirement is 10 + washers 2 x 3 + nut 14.8 + head 10 + protrusion 5 = 45.8
+        // and the length is 50; collapsed (t, t) pairings would pick 40.
         let placed = place(&inputs, &group_bounds(1000.0)).unwrap();
-        assert_eq!(placed.length_mm, 40.0);
+        assert_eq!(placed.length_mm, 50.0);
     }
 
     #[test]
@@ -2025,13 +2039,13 @@ mod tests {
                 .chain(box_faces([120.0, 280.0, 10.0], [140.0, 500.0, 20.0]))
                 .collect(),
         );
-        // The grip is 20: 20 + head washer 3 + nut washer 3 + nut 14.8 + protrusion 5 = 45.8,
-        // so the length is 50 — the same as over the solid plates, whatever order the holes
-        // and the group were made in.
+        // The grip is 20: 20 + head washer 3 + nut washer 3 + nut 14.8 + head 10 + protrusion
+        // 5 = 55.8, so the length is 60 — the same as over the solid plates, whatever order
+        // the holes and the group were made in.
         let holed = place_bolt_group(&inputs, &bounds, &faces).unwrap();
         let solid = place(&inputs, &bounds).unwrap();
         assert_eq!(holed.length_mm, solid.length_mm);
-        assert_eq!(holed.length_mm, 50.0);
+        assert_eq!(holed.length_mm, 60.0);
     }
 
     #[test]
@@ -2112,9 +2126,10 @@ mod tests {
         }
         faces.insert(id(1), rings);
         faces.insert(id(2), box_faces([0.0, 0.0, 10.0], [1000.0, 500.0, 20.0]));
-        // Grip 20: 20 + nut washer 3 + nut 14.8 + protrusion 5 = 42.8, so the length is 45.
+        // Grip 20: 20 + nut washer 3 + nut 14.8 + head 10 + protrusion 5 = 52.8, so the
+        // length is 60.
         let placed = place_bolt_group(&inputs, &bounds, &faces).unwrap();
-        assert_eq!(placed.length_mm, 45.0);
+        assert_eq!(placed.length_mm, 60.0);
         // The same geometry with the washer really under the head probes to its OD and
         // refuses: no ray of the ring finds the part.
         let mut washer = inputs;

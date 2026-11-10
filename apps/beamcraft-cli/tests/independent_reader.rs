@@ -321,13 +321,14 @@ fn the_reader_reads_a_plate_with_through_holes_against_the_closed_form() {
     ));
     let inspected = run_binary(&["inspect-elements", "--store", store_arg]);
     copy_layers(Path::new(store_arg), &scratch.layers(), &inspected);
-    // Closed form: the box minus a 200 x 200 square and a regular 32-gon inscribed in a circle of
-    // diameter 100, whose area is (32 / 2) * r^2 * sin(2 pi / 32).
-    let polygon = 16.0 * 50.0 * 50.0 * (std::f64::consts::PI / 16.0).sin();
+    // Closed form: the box minus a 200 x 200 square and the round hole's polygon. Without
+    // --hole-segments the round hole follows the chord rule: a 100 mm hole is a 72-gon,
+    // (72 / 2) * r^2 * sin(2 pi / 72) in area.
+    let polygon = 36.0 * 50.0 * 50.0 * (std::f64::consts::PI / 36.0).sin();
     let expected = (1000.0 * 500.0 - 200.0 * 200.0 - polygon) * 10.0;
     assert!((num(&created, &["plate", "quantities", "volume", "mm3"]) - expected).abs() < 1e-3);
     let expect = format!(
-        r#"[{{"id":"{}","name":"Holed","width":1000.0,"length":500.0,"thickness":10.0,"translation":[0.0,0.0,0.0],"cli_volume_mm3":{:?},"expected_volume_mm3":{expected:?},"hole_counts":[4,32]}}]"#,
+        r#"[{{"id":"{}","name":"Holed","width":1000.0,"length":500.0,"thickness":10.0,"translation":[0.0,0.0,0.0],"cli_volume_mm3":{:?},"expected_volume_mm3":{expected:?},"hole_counts":[4,72]}}]"#,
         text(created.get("plate").unwrap(), "element_id"),
         num(&created, &["plate", "quantities", "volume", "mm3"]),
     );

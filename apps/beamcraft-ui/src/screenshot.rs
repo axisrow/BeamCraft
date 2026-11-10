@@ -45,8 +45,9 @@ pub struct CameraPose {
     /// Orbit direction in radians (`yaw`, `pitch` above the horizon); `None` keeps the
     /// fitted default direction exactly as the `Fit model` action shows it.
     pub angles: Option<(f32, f32)>,
-    /// The orthographic projection instead of perspective.
-    pub ortho: bool,
+    /// The projection: `Some(true)` orthographic, `Some(false)` perspective; `None` keeps
+    /// the fitted default, which is the orthographic start of `Camera::new`.
+    pub ortho: Option<bool>,
     /// Logarithmic zoom; positive moves the camera closer, the orthographic window
     /// follows the distance.
     pub zoom: f32,
@@ -66,9 +67,10 @@ pub enum Background {
 }
 
 /// Renders `scene` once at `size`, fits the camera over the scene and the `grids`, paints the
-/// grid lines and labels over it, and writes the PNG to `out`, which must not exist. `samples`
-/// is 1 or 4; `None` is the adapter's default. `background` picks the clear colour the
-/// renderer starts its frame from and the theme the grid labels are painted in.
+/// grid lines and labels over it, paints the resolved D06 `annotations` the way the window's
+/// viewport does, and writes the PNG to `out`, which must not exist. `samples` is 1 or 4;
+/// `None` is the adapter's default. `background` picks the clear colour the renderer starts
+/// its frame from and the theme the overlays are painted in.
 #[allow(clippy::too_many_arguments)]
 pub fn capture(
     scene: &Scene,
@@ -78,6 +80,7 @@ pub fn capture(
     samples: Option<u32>,
     pose: &CameraPose,
     background: Background,
+    annotations: &[crate::app::annotation_panel::Row],
     stats: &Stats,
 ) -> Result<Screenshot, Error> {
     let gpu = pollster::block_on(Gpu::headless())?;
@@ -96,8 +99,10 @@ pub fn capture(
     // the final distance.
     let (yaw, pitch) = pose.angles.unwrap_or((-0.8, 0.85));
     camera.navigate([yaw - -0.8, pitch - 0.85], pose.pan, pose.zoom)?;
-    if pose.ortho {
-        camera.set_projection(true);
+    // The switch is applied even for the perspective request: the camera starts orthographic,
+    // so only an explicit switch ever reaches it (issue 562 item 13).
+    if let Some(ortho) = pose.ortho {
+        camera.set_projection(ortho);
     }
     let view = camera.view(aspect)?;
     let index = renderer.draw(
@@ -110,8 +115,17 @@ pub fn capture(
         &ClipGpu::none(),
     );
     wait(&gpu.device, index)?;
-    if !grids.lines.is_empty() {
-        paint_grids(&gpu, &renderer, grids, scene, &view, size, background)?;
+    if !grids.lines.is_empty() || !annotations.is_empty() {
+        paint_overlays(
+            &gpu,
+            &renderer,
+            grids,
+            scene,
+            &view,
+            size,
+            background,
+            annotations,
+        )?;
     }
     let (data, row) = renderer.readback(&gpu.device, &gpu.queue)?;
     let height = usize::try_from(size[1]).map_err(|_| Error::Allocation)?;
@@ -167,10 +181,13 @@ pub fn capture(
     })
 }
 
-/// Paints the grids over the resolved render with the window's [`GridScene::paint`]: one
-/// headless egui frame at one pixel per point, tessellated and drawn by `egui_wgpu` into the
-/// renderer's own target with the render kept (`LoadOp::Load`).
-fn paint_grids(
+/// Paints the overlays over the resolved render with the window's own painters: the grid
+/// guides through [`GridScene::paint`] and the resolved D06 annotations through the
+/// annotation panel's painter — one headless egui frame at one pixel per point, tessellated
+/// and drawn by `egui_wgpu` into the renderer's own target with the render kept
+/// (`LoadOp::Load`).
+#[allow(clippy::too_many_arguments)]
+fn paint_overlays(
     gpu: &Gpu,
     renderer: &Renderer,
     grids: &GridScene,
@@ -178,6 +195,7 @@ fn paint_grids(
     view: &View,
     size: [u32; 2],
     background: Background,
+    annotations: &[crate::app::annotation_panel::Row],
 ) -> Result<(), Error> {
     use eframe::egui_wgpu;
     let ctx = egui::Context::default();
@@ -203,7 +221,18 @@ fn paint_grids(
         let mut frame = ctx.run_ui(input.clone(), |ui| {
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
-                .show(ui, |ui| grids.paint(ui, rect, view, scene.origin_mm, None));
+                .show(ui, |ui| {
+                    grids.paint(ui, rect, view, scene.origin_mm, None);
+                    if !annotations.is_empty() {
+                        crate::app::annotation_panel::paint(
+                            ui,
+                            rect,
+                            view,
+                            scene.origin_mm,
+                            annotations,
+                        );
+                    }
+                });
         });
         deltas.extend(
             frame

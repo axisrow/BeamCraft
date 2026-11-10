@@ -2861,7 +2861,7 @@ fn a_bolt_group_generates_its_holes_and_survives_publication() {
     assert_eq!(text(record, "id"), group_id);
     assert_eq!(text(record, "hole_mode"), "generate");
     assert_eq!(text(record, "length_mode"), "auto");
-    assert_eq!(text(record, "length_mm"), "40");
+    assert_eq!(text(record, "length_mm"), "50");
     assert_eq!(text(record, "count"), "2");
     let bolted = parts(&s.ok("bolts-draft", "inspect-elements", &[]));
     assert_eq!(bolted.len(), 2);
@@ -2936,7 +2936,7 @@ fn a_bolt_group_generates_its_holes_and_survives_publication() {
     let published_record = &at(&published_book, &["bolt_groups"]).array().unwrap()[0];
     assert_eq!(text(published_record, "hole_mode"), "generate");
     assert_eq!(text(published_record, "count"), "2");
-    assert_eq!(text(published_record, "length_mm"), "40");
+    assert_eq!(text(published_record, "length_mm"), "50");
 }
 
 /// The model-data tool story (T01/T02): construction objects and the drawn grid line

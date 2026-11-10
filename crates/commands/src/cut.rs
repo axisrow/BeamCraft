@@ -1218,6 +1218,17 @@ pub fn a13_record(
                 AuthoredState::Plate(a) => (a.cuts.clone(), a.id.to_string()),
                 AuthoredState::Member(a) => (a.cuts.clone(), a.id.to_string()),
             };
+            // The created half carries the target's authored class: a create without the class
+            // change lands on the default class 0 and shows under the wrong colour (issue 562
+            // item 33), like every other creation path (copy, create) authors the class.
+            let (created_id, created_class) = match &created_state {
+                AuthoredState::Plate(a) => (a.id.to_string(), a.class),
+                AuthoredState::Member(a) => (a.id.to_string(), a.class),
+            };
+            changes.push(Change::PartClass {
+                id: created_id,
+                class: created_class,
+            });
             changes.push(steel_layer::cuts(kept_id, kept_cuts));
             changes.push(Change::Create(created_element(&created_state)?));
             changes.push(mesh_change_of(&kept)?);

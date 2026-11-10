@@ -8,7 +8,7 @@
 //! platform (`Trackpad` on macOS, `Mouse` elsewhere). In both the wheel zooms toward
 //! the cursor, F fits and R reloads.
 
-mod annotation_panel;
+pub mod annotation_panel;
 mod bolt_panel;
 mod contour_grips;
 mod creation_panel;

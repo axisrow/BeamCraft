@@ -13,15 +13,16 @@
 //! | Body | `L` | Local fields the mirror rewrites |
 //! |------|-----|----------------------------------|
 //! | Plate | reflection in the local `z = 0` plane | `thickness_side` flips (top and bottom trade places, middle is its own image); the plane cuts reflect |
-//! | Straight member | reflection across the plane perpendicular to the axis | the path reflects (two points), the cuts reflect; the section placement re-encodes for the reversed sweep (offsets stay, the across-width pair negates, the roll negates) |
+//! | Straight member | reflection across the plane perpendicular to the axis | the path reflects (two points), the cuts reflect; the section placement re-encodes for the reversed sweep (the across-width pair stays, the depth position flips with its offset negated, the end offsets stay, the roll becomes `pi - roll`) |
 //!
 //! Contours, holes and corner treatments are through-thickness or in-plane and need no change.
 //! A polybeam or curved member, and a plate with bend records (A10), have no expressible
-//! symmetry and refuse a mirror with `UNSUPPORTED_GEOMETRY`. Honesty limit: the profile sweep
-//! keeps the unmirrored profile definition, so a member mirror is exact for mirror-symmetric
-//! sections and preserves the profile handedness of a chiral one (L, Z); there is no
-//! mirrored-profile definition yet. Arrays reuse the copy rules (fresh identities, freshly
-//! minted records) and give each copy the stepped placement.
+//! symmetry and refuse a mirror with `UNSUPPORTED_GEOMETRY`. The member re-encode is exact
+//! for sections symmetric about their own height axis (I, TEE, channel, hollow and cold-formed
+//! families) and preserves the profile handedness of the rest (an L or a Z), because the
+//! profile sweep keeps the unmirrored profile definition; there is no mirrored-profile
+//! definition yet. Arrays reuse the copy rules (fresh identities, freshly minted records) and
+//! give each copy the stepped placement.
 
 use crate::engine::command::AuthoredPlate;
 use crate::engine::member::AuthoredMember;
@@ -354,12 +355,25 @@ pub fn mirror_plate_local(plate: &mut AuthoredPlate) -> Result<(), CommandError>
 }
 
 /// The straight member's mirrored authored state: the path and the cuts reflect, and the
-/// section placement is re-encoded for the reversed sweep direction: the end offsets stay at
-/// their ends (the kernel's net length is asymmetric in them and the reflected path keeps the
-/// start anchor), the across-width position and offset negate as a pair (the sweep frame's
-/// `X_m` flips when the path direction reverses), and the roll negates (it is defined about the
-/// sweep direction). A polybeam or a curved member refuses: its path has no expressible mirror
-/// symmetry (`UNSUPPORTED_GEOMETRY`).
+/// section placement is re-encoded for the reversed sweep direction.
+///
+/// The reversed sweep flips the sweep frame: its across-width axis negates while the height
+/// axis and the half turn about the axis stay. The re-encode that makes the rebuilt body the
+/// image of the original under the local symmetry (and the placed part the exact world
+/// mirror, up to the profile's own height symmetry):
+///
+/// * the across-width position and its offset stay (the flipped frame already mirrors them);
+/// * the depth position flips (front and back trade places, centre stays) and its offset
+///   negates, which negates the whole depth shift for every position;
+/// * the end offsets stay at their ends (the kernel's net length is asymmetric in them and
+///   the reflected path keeps the start anchor);
+/// * the roll becomes `pi - roll`, the negated roll composed with the half turn the flipped
+///   sweep frame itself applies. Without the half turn the rebuilt section keeps the
+///   unflipped across-width profile and a channel renders as a translated copy (issue 562
+///   item 4); with it, a height-symmetric section is exact.
+///
+/// A polybeam or a curved member refuses: its path has no expressible mirror symmetry
+/// (`UNSUPPORTED_GEOMETRY`).
 pub fn mirror_member_local(member: &mut AuthoredMember) -> Result<(), CommandError> {
     if member.curved || member.axis_points_mm.len() != 2 {
         return Err(CommandError::new(
@@ -386,20 +400,36 @@ pub fn mirror_member_local(member: &mut AuthoredMember) -> Result<(), CommandErr
         .collect();
     member.cuts = reflect_cuts(&member.cuts, &symmetry);
     if let Some(section) = &mut member.section_placement {
-        section.plane = match section.plane {
-            crate::model::command::SectionPlanePosition::Left => {
-                crate::model::command::SectionPlanePosition::Right
+        // The depth side flips: front and back trade places (the centre is its own image) and
+        // the offset negates. Together with the kept across-width pair this negates the whole
+        // depth shift exactly, whatever the position's half-shift anchor is (`half_shift` of
+        // the swapped position complements the old one to the height, so
+        // `half_shift(d') - offset' = -(half_shift(d) + offset)` after the kernel's centring).
+        // The across-width pair stays: the flipped sweep frame mirrors it already.
+        section.depth = match section.depth {
+            crate::model::command::SectionDepthPosition::Front => {
+                crate::model::command::SectionDepthPosition::Back
             }
-            crate::model::command::SectionPlanePosition::Right => {
-                crate::model::command::SectionPlanePosition::Left
+            crate::model::command::SectionDepthPosition::Back => {
+                crate::model::command::SectionDepthPosition::Front
             }
-            crate::model::command::SectionPlanePosition::Centre => {
-                crate::model::command::SectionPlanePosition::Centre
+            crate::model::command::SectionDepthPosition::Centre => {
+                crate::model::command::SectionDepthPosition::Centre
             }
         };
-        section.plane_offset_mm = -section.plane_offset_mm;
+        section.depth_offset_mm = -section.depth_offset_mm;
     }
-    member.roll_rad = member.roll_rad.map(|roll| -roll);
+    // The roll re-encode: the reversed sweep's frame applies its own half turn about `Y_m`,
+    // and `rot(pi - roll)` is the negated roll composed with that half turn. Without it the
+    // rebuilt section keeps the unflipped across-width profile and the mirror renders as a
+    // translated copy (issue 562 item 4). The wrap keeps every value inside the roll cap.
+    member.roll_rad = Some(
+        match member.roll_rad {
+            Some(roll) => core::f64::consts::PI - roll,
+            None => core::f64::consts::PI,
+        }
+        .rem_euclid(core::f64::consts::TAU),
+    );
     Ok(())
 }
 
@@ -517,6 +547,11 @@ pub fn array_member_copies(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The mirror re-encode of the tests' fixture member.
+    fn mirror_member_local(member: &mut AuthoredMember) -> Result<(), CommandError> {
+        super::mirror_member_local(member)
+    }
     use crate::model::command::{BendRecord, BendSpec, KeepSide};
     use beamcraft_model::id::{ElementId, OpId};
 
@@ -925,13 +960,162 @@ mod tests {
         // start anchor, so the offsets stay at their ends.
         assert_eq!(section.start_offset_mm, 100.0);
         assert_eq!(section.end_offset_mm, -50.0);
-        // The sweep frame's X_m flips with the direction: the across-width pair negates and
-        // the depth (Y_m) stays.
-        assert_eq!(section.plane, SectionPlanePosition::Right);
-        assert_eq!(section.plane_offset_mm, -5.0);
-        assert_eq!(section.depth_offset_mm, 3.0);
-        // The roll is defined about the sweep direction, which reverses.
-        assert_eq!(source.roll_rad, Some(-0.4));
+        // The sweep frame's X_m flips with the direction and mirrors the across-width pair
+        // already, so the authored plane pair stays; the depth side flips and its offset
+        // negates: centre + 3 mm becomes centre - 3 mm.
+        assert_eq!(section.plane, SectionPlanePosition::Left);
+        assert_eq!(section.plane_offset_mm, 5.0);
+        assert_eq!(section.depth_offset_mm, -3.0);
+        // The roll is defined about the sweep direction, which reverses; the half turn absorbs
+        // the flipped sweep frame, so a height-symmetric section rebuilds as the exact local
+        // image.
+        assert_eq!(source.roll_rad, Some(core::f64::consts::PI - 0.4));
+    }
+
+    #[test]
+    fn a_mirrored_member_body_is_the_exact_world_mirror_of_the_original() {
+        use crate::engine::member::{ProfileInfo, evaluate_member};
+        use crate::model::command::{SectionDepthPosition, SectionPlacement, SectionPlanePosition};
+        use crate::model::section::{ParametricSection, SectionFamily, SectionShape};
+        // Height-symmetric sections mirror exactly: the channel default case of the audit and
+        // the re-encode's full path (roll and a shifted section position) over an I section.
+        // A height-asymmetric profile (an L, a Z) keeps the documented handedness limit and
+        // is not asserted here.
+        let cases: Vec<(SectionShape, Option<f64>, bool)> = vec![
+            (
+                SectionShape::Parametric(
+                    ParametricSection::new(
+                        SectionFamily::Channel,
+                        vec![200.0, 75.0, 6.0, 10.0, 8.0],
+                    )
+                    .unwrap(),
+                ),
+                None,
+                false,
+            ),
+            (
+                SectionShape::Parametric(
+                    ParametricSection::new(
+                        SectionFamily::IShape,
+                        vec![200.0, 100.0, 6.0, 10.0, 8.0],
+                    )
+                    .unwrap(),
+                ),
+                Some(0.4),
+                false,
+            ),
+            (
+                SectionShape::Parametric(
+                    ParametricSection::new(
+                        SectionFamily::IShape,
+                        vec![200.0, 100.0, 6.0, 10.0, 8.0],
+                    )
+                    .unwrap(),
+                ),
+                None,
+                true,
+            ),
+            (
+                SectionShape::Parametric(
+                    ParametricSection::new(
+                        SectionFamily::IShape,
+                        vec![200.0, 100.0, 6.0, 10.0, 8.0],
+                    )
+                    .unwrap(),
+                ),
+                Some(0.4),
+                true,
+            ),
+        ];
+        for (shape, roll, shifted) in cases {
+            let profile = ProfileInfo::Section {
+                shape,
+                declared_area_mm2: None,
+            };
+            let world = |m: &AuthoredMember| {
+                let solid = evaluate_member(m, profile.clone()).unwrap().solid;
+                // Coordinates quantize to a 1e-6 mm grid before sorting: the mirrored build
+                // re-derives every vertex through different trigonometry and may differ in the
+                // last bits, which must not flip a near-tie in the sorted order.
+                let mut out: Vec<[f64; 3]> = solid
+                    .vertices()
+                    .iter()
+                    .map(|v| placement_to_world(&m.placement, *v))
+                    .map(|v| {
+                        [
+                            (v[0] * 1e6).round() / 1e6,
+                            (v[1] * 1e6).round() / 1e6,
+                            (v[2] * 1e6).round() / 1e6,
+                        ]
+                    })
+                    .collect();
+                out.sort_by(|a, b| {
+                    a.iter()
+                        .zip(b.iter())
+                        .map(|(x, y)| x.total_cmp(y))
+                        .find(|o| *o != core::cmp::Ordering::Equal)
+                        .unwrap_or(core::cmp::Ordering::Equal)
+                });
+                out
+            };
+            type WorldMap = fn(&[f64; 3]) -> [f64; 3];
+            let mirrors: [([f64; 3], [f64; 3], WorldMap); 2] = [
+                ([0.0, 1.0, 0.0], [0.0, 250.0, 0.0], |v: &[f64; 3]| {
+                    [v[0], 500.0 - v[1], v[2]]
+                }),
+                ([0.0, 0.0, 1.0], [0.0, 0.0, 0.0], |v: &[f64; 3]| {
+                    [v[0], v[1], -v[2]]
+                }),
+            ];
+            for (normal, plane_point, map) in mirrors {
+                let mut original = member();
+                original.roll_rad = roll;
+                // A non-default section position must survive the re-encode too.
+                if shifted {
+                    original.section_placement = Some(SectionPlacement {
+                        plane: SectionPlanePosition::Left,
+                        plane_offset_mm: 5.0,
+                        depth: SectionDepthPosition::Centre,
+                        depth_offset_mm: 3.0,
+                        start_offset_mm: 0.0,
+                        end_offset_mm: 0.0,
+                    });
+                }
+                let before = world(&original);
+                let patch = crate::model::command::ElementPatch {
+                    mirror: Some(crate::model::command::ElementMirror {
+                        point_mm: plane_point,
+                        normal,
+                    }),
+                    ..Default::default()
+                };
+                let mirrored = crate::engine::update::patch_member(&original, &patch).unwrap();
+                let after = world(&mirrored);
+                let mut expected: Vec<[f64; 3]> = before.iter().map(map).collect();
+                expected.sort_by(|a, b| {
+                    a.iter()
+                        .zip(b.iter())
+                        .map(|(x, y)| x.total_cmp(y))
+                        .find(|o| *o != core::cmp::Ordering::Equal)
+                        .unwrap_or(core::cmp::Ordering::Equal)
+                });
+                assert_eq!(
+                    after.len(),
+                    expected.len(),
+                    "vertex counts differ for {normal:?}"
+                );
+                let mut worst = 0.0_f64;
+                for (got, want) in after.iter().zip(expected.iter()) {
+                    for (g, w) in got.iter().zip(want.iter()) {
+                        worst = worst.max((g - w).abs());
+                    }
+                }
+                assert!(
+                    worst < 1e-6,
+                    "the mirrored body is not the world mirror of the original for {normal:?} (worst {worst} mm)"
+                );
+            }
+        }
     }
 
     #[test]

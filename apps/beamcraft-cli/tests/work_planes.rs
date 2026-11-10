@@ -186,6 +186,10 @@ fn a_named_hole_facet_can_define_its_actual_planar_work_plane() {
             "10",
             "--hole-round",
             "100,50,40",
+            // The facet geometry this test reasons about is pinned: the chord-rule default
+            // would pick a finer polygon and a smaller facet angle.
+            "--hole-segments",
+            "32",
         ],
     );
     let before = ok(&f, "open-revision", &[]);

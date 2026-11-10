@@ -191,11 +191,17 @@ fn refused(field: &'static str, message: &'static str) -> FastenerFailure {
 
 /// Builds one fastener prototype from an admitted definition (bolt amendment section 3).
 ///
-/// The bearing face of the head (under the head washer when there is one) is the plane z = 0
-/// and the shank runs along +Z: the head washer, head, shank, nut and nut washer stack upwards,
-/// the shank always starting at the under-head plane. The definition is re-admitted and the
-/// washer switches follow its rules, so a switch a definition cannot honour refuses the build
-/// and nothing is produced.
+/// The bearing face of the head assembly — the washer's joint face when there is one, the
+/// head's own face otherwise — is the plane z = 0, where the placement puts the group's
+/// bearing point (bolt amendment section 4). The head washer and the head stack on the
+/// **outside** of the joint, below the bearing plane; the shank starts inside the head and
+/// runs along +Z through the joint, and the nut stack hangs downward from the thread tip:
+/// the tip protrudes past the nut and the nut washer sits under the nut, so a length that
+/// covers the grip and the hardware seats the washer exactly on the far plate. Stacking the
+/// head into the joint instead put it inside the supported plates and floated the nut on
+/// bare shank (issue 562 item 5). The definition is re-admitted and the washer switches
+/// follow its rules, so a switch a definition cannot honour refuses the build and nothing
+/// is produced.
 pub fn build(
     spec: &FastenerSpec,
     length_mm: f64,
@@ -223,8 +229,11 @@ pub fn build(
     } else {
         0.0
     };
-    let shank_end = under_head + length_mm;
-    let nut_end = shank_end + nut.1.unwrap_or(0.0);
+    // The head's far face: the washer and the head live below the bearing plane (outside the
+    // joint) and the shank starts there, so it crosses the whole head on its way through the
+    // joint — the shank-through-head overlap the union volume subtracts is preserved.
+    let head_base = -(under_head + spec.head_height_mm);
+    let shank_end = head_base + length_mm;
     let mut components = Vec::new();
     let mut push = |component: ComponentKind,
                     z_offset_mm: f64,
@@ -251,7 +260,7 @@ pub fn build(
         .map_err(FastenerFailure::Profile)?;
         push(
             ComponentKind::WasherHead,
-            0.0,
+            -under_head,
             washer.thickness_mm,
             extrude(&outer, &[cavity], washer.thickness_mm),
             Some(approximation),
@@ -259,7 +268,7 @@ pub fn build(
     }
     push(
         ComponentKind::Head,
-        under_head,
+        head_base,
         spec.head_height_mm,
         extrude(
             &hexagon(spec.head_across_flats_mm),
@@ -271,7 +280,7 @@ pub fn build(
     let (outer, approximation) = ring(spec.nominal_diameter_mm / 2.0)?;
     push(
         ComponentKind::Shank,
-        under_head,
+        head_base,
         length_mm,
         extrude(&outer, &[], length_mm),
         Some(approximation),
@@ -283,9 +292,15 @@ pub fn build(
                 "a bolt definition carries a nut",
             ));
         };
+        // The nut stack hangs downward from the thread tip: the tip protrudes past the nut,
+        // the nut sits under it and its washer sits under the nut, so a length that covers
+        // grip + washers + nut + head + protrusion lands the washer exactly on the far plate
+        // and seats the nut (issue 562 item 5; stacking it upward from the shank end instead
+        // lifted the whole stack off the joint by the same course).
+        let nut_base = shank_end - spec.thread_protrusion_mm - height;
         push(
             ComponentKind::Nut,
-            shank_end,
+            nut_base,
             height,
             extrude(&hexagon(across), &[], height),
             None,
@@ -300,7 +315,7 @@ pub fn build(
             .map_err(FastenerFailure::Profile)?;
             push(
                 ComponentKind::WasherNut,
-                nut_end,
+                nut_base - washer.thickness_mm,
                 washer.thickness_mm,
                 extrude(&outer, &[cavity], washer.thickness_mm),
                 Some(approximation),
@@ -442,22 +457,26 @@ mod tests {
         let shank = of(&build, ComponentKind::Shank);
         let nut = of(&build, ComponentKind::Nut);
         let top = of(&build, ComponentKind::WasherNut);
-        assert_eq!(washer.z_offset_mm, 0.0);
-        assert_eq!(head.z_offset_mm, 3.0);
-        // The shank starts at the under-head plane, not at the top of the head.
-        assert_eq!(shank.z_offset_mm, 3.0);
+        // The washer bears on the plane z = 0 (the joint face); the head is outside the joint,
+        // below it, the shank starts inside the head and runs through the joint, and the nut
+        // stack hangs downward from the thread tip (37): washer nut 14.2..17.2, nut 17.2..32.
+        assert_eq!(washer.z_offset_mm, -3.0);
+        assert_eq!(head.z_offset_mm, -13.0);
+        assert_eq!(shank.z_offset_mm, -13.0);
         assert_eq!(shank.height_mm, 50.0);
-        assert_eq!(nut.z_offset_mm, 53.0);
-        assert_eq!(top.z_offset_mm, 67.8);
+        assert_eq!(nut.z_offset_mm, 17.2);
+        assert_eq!(top.z_offset_mm, 14.2);
         assert_eq!(build.components.len(), 5);
     }
 
     #[test]
     fn without_washers_the_head_bears_at_zero() {
         let build = build(&bolt(), 50.0, false, false).unwrap();
-        assert_eq!(of(&build, ComponentKind::Head).z_offset_mm, 0.0);
-        assert_eq!(of(&build, ComponentKind::Shank).z_offset_mm, 0.0);
-        assert_eq!(of(&build, ComponentKind::Nut).z_offset_mm, 50.0);
+        // The head occupies the band below the bearing plane; its joint face is z = 0, the
+        // tip is at 40 and the nut hangs 5 mm of protrusion plus its own height below it.
+        assert_eq!(of(&build, ComponentKind::Head).z_offset_mm, -10.0);
+        assert_eq!(of(&build, ComponentKind::Shank).z_offset_mm, -10.0);
+        assert_eq!(of(&build, ComponentKind::Nut).z_offset_mm, 20.2);
         assert_eq!(build.components.len(), 3);
     }
 

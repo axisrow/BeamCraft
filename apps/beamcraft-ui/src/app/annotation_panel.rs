@@ -45,7 +45,7 @@ impl Tool {
 
 /// One listed annotation with its binding state.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Row {
+pub struct Row {
     /// The element id.
     pub id: String,
     /// The label.
@@ -113,7 +113,7 @@ impl Panel {
 }
 
 /// The `annotation-list` reply as rows; the order is the CLI's (ascending identity).
-pub(crate) fn parse_rows(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Row>, ToolError> {
+pub fn parse_rows(exit_code: Option<i32>, stdout: &[u8]) -> Result<Vec<Row>, ToolError> {
     let reply = decode(stdout)?;
     if let Some(error) = rejection(&reply, exit_code) {
         return Err(error);

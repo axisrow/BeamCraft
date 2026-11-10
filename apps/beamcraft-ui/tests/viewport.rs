@@ -704,14 +704,16 @@ fn a_bolt_group_shows_its_fasteners_in_the_viewport() {
     // Two plates share one mesh; the group adds its merged fastener mesh.
     assert_eq!(scene.elements, 3);
     assert_eq!(scene.counts(), (2, 3));
-    // The stack of the two 40 mm fasteners reaches z = 53 over the plates' z = 20: only the
+    // The stack of the two 50 mm fasteners spans z = −8.5..41.5 over the plates' z = 0..20:
+    // the washer and head hang below the bearing plane, the shank's tip tops out at 41.5
+    // with the nut stack hanging downward from it (seated over the far plate), so only the
     // group's geometry reaches that high, at the bearing points x = 100 and 250. The scene
     // bounds are relative to the model origin, the centre of the union.
-    assert_eq!(scene.origin_mm, [500.0, 250.0, 26.5]);
-    assert_eq!(scene.min, [-500.0, -250.0, -26.5]);
-    assert_eq!(scene.max, [500.0, 250.0, 26.5]);
+    assert_eq!(scene.origin_mm, [500.0, 250.0, 16.5]);
+    assert_eq!(scene.min, [-500.0, -250.0, -25.0]);
+    assert_eq!(scene.max, [500.0, 250.0, 25.0]);
     let size = [0, 1, 2].map(|a| scene.max[a] - scene.min[a]);
-    assert!((size[2] - 53.0).abs() < 1e-6, "{size:?}");
+    assert!((size[2] - 50.0).abs() < 1e-6, "{size:?}");
     let gpu = gpu();
     let (corner, _, lit) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
@@ -807,7 +809,8 @@ fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport
     );
     // The row runs along `x` with the bearing plane on the gusset's near face (`y = -12`),
     // so the stack drives through the plate: the library M20 dimensions put the head tip
-    // 3.5 mm past the far face and the nut stack 102 mm past it. The length is fixed at a
+    // 15.5 mm past the near face and the nut stack 83.5 mm past the far one. The length is
+    // fixed at a
     // standard 90 mm, so the pin reads the stack, not the box-conservative grip of defect B.
     let library = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -855,28 +858,22 @@ fn a_din_bolt_group_on_the_knee_brace_joint_shows_the_full_stack_in_the_viewport
     assert_eq!(scene.elements, 3);
     // The merged stack of both fasteners, by hand from the library definition (head across
     // flats 30, head height 12.5, nut height 18, washer 37/21/3, shank 20, length 90): the
-    // stack from each bearing runs washer 0..3, head 3..15.5, shank 3..93, nut 93..111,
-    // washer nut 111..114 along the plane normal. The bearings sit at x = 525 and 625 on
-    // y = -12, so the mesh spans x 506.5..643.5 (the washer's 37 mm is the widest part),
-    // y -12..102 and z 1581.5..1618.5.
+    // stack from each bearing runs washer −3..0, head −15.5..−3, shank −15.5..74.5 with the
+    // tip at 74.5, and the nut stack hanging downward from it: nut 53.5..71.5, washer nut
+    // 50.5..53.5 along the plane normal, with the head assembly on the outside of the joint.
+    // The bearings sit at x = 525 and 625 on y = -12, so the mesh spans x 506.5..643.5 (the
+    // washer's 37 mm is the widest part), y -27.5..62.5 and z 1581.5..1618.5.
     let id = beamcraft_engine::ElementId::parse(group).unwrap();
     let element = snapshot.element(&id).unwrap();
     assert_eq!(element.kind, beamcraft_engine::ElementKind::Connection);
     let bounds = snapshot.element_bounds(&id).unwrap();
-    let want = [[506.5, -12.0, 1581.5], [643.5, 102.0, 1618.5]];
+    let want = [[506.5, -27.5, 1581.5], [643.5, 62.5, 1618.5]];
     for (got, should) in bounds.min.iter().zip(want[0]) {
         assert!((got - should).abs() <= 1e-6, "min {got} != {should}");
     }
     for (got, should) in bounds.max.iter().zip(want[1]) {
         assert!((got - should).abs() <= 1e-6, "max {got} != {should}");
     }
-    // The head reaches past the plate's far face: washer 3 + head 12.5 from the bearing on
-    // `y = -12` puts the head tip at `y = 3.5`, and the nut stack tops out 102 mm past it —
-    // geometry a shank-only mesh (to `y = 81`) cannot produce.
-    assert!(
-        bounds.max[1] - 81.0 > 1.0,
-        "the nut stack must pass the shank end"
-    );
     let gpu = gpu();
     let (corner, _, lit) = render(&gpu, &scene);
     assert!(is_background(corner), "background {corner:?}");
