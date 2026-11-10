@@ -257,7 +257,7 @@ impl NewModelForm {
         let busy = self.busy() || outer_busy;
         let palette = Palette::current(ui);
         ui.label(theme::bold("Name", 14.0));
-        field(ui, &mut self.name, 100);
+        let name_field = field(ui, &mut self.name, 100);
         ui.label(
             egui::RichText::new("Also the name of the model's folder.")
                 .small()
@@ -265,8 +265,8 @@ impl NewModelForm {
         );
         ui.add_space(8.0);
         ui.label(theme::bold("Location", 14.0));
-        ui.horizontal(|ui| {
-            let location = ui.add(
+        let location = |ui: &mut egui::Ui| -> bool {
+            let response = ui.add(
                 egui::TextEdit::singleline(&mut self.parent)
                     .hint_text("Choose a folder with Browse…")
                     .desired_width(ui.available_width() - 130.0)
@@ -275,7 +275,8 @@ impl NewModelForm {
                     .margin(egui::Margin::symmetric(12, 8))
                     .char_limit(MAX_FIELD),
             );
-            if location.lost_focus() && !outer_busy {
+            let changed = response.changed();
+            if response.lost_focus() && !outer_busy {
                 self.suggest();
             }
             if theme::button(ui, Kind::Secondary, "Browse…", !busy).clicked() {
@@ -288,11 +289,18 @@ impl NewModelForm {
                     Err(e) => self.note = Some(Err(e)),
                 }
             }
-        });
+            changed
+        };
+        let location_changed = ui.horizontal(location).inner;
+        // An error names what was typed; editing either field drops it, so a cleared name
+        // never keeps the previous refusal on show (issue #562).
+        if name_field.changed() || location_changed {
+            self.note = None;
+        }
         ui.add_space(8.0);
         ui.label(theme::bold("Template", 14.0));
         ui.horizontal(|ui| {
-            template_card(ui, "Blank", "An empty model with no grids or levels.", true);
+            template_card(ui, "Blank", "Empty: no grids or levels.", true);
             template_card(ui, "Grid and levels", "Coming with the model tools.", false);
             template_card(
                 ui,
@@ -1002,6 +1010,121 @@ mod tests {
         assert_eq!(facts.project_id, None);
         assert_eq!(facts.created_ms, None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn template_cards_share_one_height() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let (cli, stats) = host_parts();
+        let host = Host {
+            cli: &cli,
+            config_dir: None,
+            actor: None,
+            environment: None,
+            stats: &stats,
+        };
+        let mut form = NewModelForm::new();
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1280.0, 800.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let _ = form.ui(ui, &host, false);
+            },
+        );
+        // One card frame per template, drawn as a filled stroked rectangle ~230 wide.
+        let mut heights: Vec<f32> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                if let egui::Shape::Rect(rect) = &shape.shape
+                    && (220.0..=240.0).contains(&rect.rect.width())
+                    && rect.rect.height() > 150.0
+                {
+                    Some(rect.rect.height())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        output.drop_without_applying_deltas();
+        heights.sort_by(|a, b| a.total_cmp(b));
+        heights.dedup_by(|a, b| (*a - *b).abs() < 1.0);
+        assert_eq!(
+            heights,
+            vec![heights.first().copied().unwrap_or(0.0)],
+            "the template cards must share one height: {heights:?}"
+        );
+    }
+
+    #[test]
+    fn editing_a_field_drops_the_previous_refusal() {
+        let ctx = egui::Context::default();
+        assert!(crate::app::inter(&ctx));
+        theme::install(&ctx);
+        let (cli, stats) = host_parts();
+        let host = Host {
+            cli: &cli,
+            config_dir: None,
+            actor: None,
+            environment: None,
+            stats: &stats,
+        };
+        let mut form = NewModelForm::new();
+        form.note = Some(Err("The folder \"/gone\" does not exist.".into()));
+        let mut field = None;
+        let mut frame = |events: Vec<egui::Event>| {
+            let output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    let _ = form.ui(ui, &host, false);
+                },
+            );
+            if field.is_none() {
+                // The name field shows the default name until it is typed into.
+                field = output.shapes.iter().find_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape
+                        && text.galley.text() == DEFAULT_MODEL_NAME
+                    {
+                        return Some(text.galley.rect.translate(text.pos.to_vec2()).center());
+                    }
+                    None
+                });
+            }
+            output.drop_without_applying_deltas();
+            field
+        };
+        let field = frame(vec![]).expect("the name field is drawn");
+        let click = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![
+            egui::Event::PointerMoved(field),
+            click(field, true),
+            click(field, false),
+        ]);
+        frame(vec![egui::Event::Text("x".into())]);
+        assert!(
+            form.note.is_none(),
+            "editing the name drops the old refusal"
+        );
+        assert!(form.name.contains('x') && form.name != DEFAULT_MODEL_NAME);
     }
 
     #[test]
