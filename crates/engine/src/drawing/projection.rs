@@ -11,7 +11,8 @@ use super::{
     CutSide, DetailSpec, Drawing, MAX_PAPER_MM, Plane, SectionSpec, SourceModelPin, ViewSpec,
 };
 use crate::query::feature::{
-    BodyKind, FeatureGeometry, FeatureId, FeatureKind, list_features, lookup_feature,
+    BodyKind, BoxFeatures, FeatureGeometry, FeatureId, FeatureKind, NamedFeatures, list_features,
+    lookup_feature,
 };
 use crate::{ViewPin, ViewSnapshot};
 use beamcraft_geom::tolerance::ABSOLUTE_FLOOR_MM;
@@ -178,17 +179,49 @@ fn check_pin(source: &SourceModelPin, snapshot: &ViewSnapshot) -> Result<(), Com
 /// The member's canonical box edges: each with its semantic address and world endpoints.
 type MemberEdges = Vec<(FeatureId, [[f64; 3]; 2])>;
 
-/// The member's canonical box edges as semantic (feature id, world endpoints) pairs, or the
-/// explicit unresolved state. Fixed work: at most 26 named roles and twelve edges.
+/// The member's wireframe: canonical box edges (the frozen twelve, drawn as they always
+/// were) or the evaluated boundary of a reshaped body (whose degenerate projections draw
+/// nothing and stay out of the picture).
+/// How many boundary edges a reshaped member's honest wireframe may carry before it
+/// stops fitting the bounded drawing surfaces. An audited cut or fitted end stays far
+/// below it (a cut box draws some twenty edges); a body that outruns the budget — a
+/// member with many holes — keeps the named-edge wireframe this change replaced, since
+/// widening the downstream encodings' own budgets (the derived layer's byte cap) is an
+/// owner decision, not this fix's.
+const BOUNDARY_WIREFRAME_BUDGET: usize = 64;
+
+enum MemberWireframe {
+    /// The canonical box edges in frozen role order.
+    Box(MemberEdges),
+    /// The evaluated boundary of a reshaped body; edges that project to points are noise.
+    Boundary(MemberEdges),
+}
+
+/// The member's wireframe as semantic (feature id, world endpoints) pairs, or the explicit
+/// unresolved state. A member whose canonical box topology still holds draws its twelve named
+/// box edges. A member the operations reshaped (a plane cut, a fitted end) no longer is that
+/// box: drawing the surviving box edges would publish a fragment as if it were the member
+/// (visual audit finding 1 — a cut beam exported as one line while the 3D view showed the
+/// whole cut solid). Such a member draws the evaluated boundary of its own named faces
+/// instead, each boundary edge addressed by its owning face; the wireframe then shows
+/// exactly the solid the model carries, hidden and coincident edges included.
 fn member_edges(
     member: ElementId,
     snapshot: &ViewSnapshot,
-) -> Result<MemberEdges, UnresolvedReason> {
+) -> Result<MemberWireframe, UnresolvedReason> {
     let Some(owner) = snapshot.element(&member) else {
         return Err(UnresolvedReason::MissingOwner);
     };
     if BodyKind::of(owner.kind) != Some(BodyKind::Member) {
         return Err(UnresolvedReason::UnsupportedBody);
+    }
+    if BoxFeatures::world(snapshot, owner).is_none() {
+        let boundary = face_boundary_edges(owner, snapshot)?;
+        if boundary.len() <= BOUNDARY_WIREFRAME_BUDGET {
+            return Ok(MemberWireframe::Boundary(boundary));
+        }
+        // A hole-riddled body's boundary outruns the bounded drawing surfaces; it keeps
+        // the named-edge wireframe below, exactly as before this change.
     }
     let Ok(features) = list_features(snapshot, &member) else {
         return Err(UnresolvedReason::UnsupportedBody);
@@ -206,6 +239,39 @@ fn member_edges(
         };
         edges.push((id, ends));
     }
+    Ok(MemberWireframe::Box(edges))
+}
+
+/// The evaluated boundary wireframe of a reshaped member: every named face's boundary
+/// edges, deduplicated by geometry, each addressed by its owning face's `FeatureId`. A
+/// body without named faces stays explicitly unresolved.
+fn face_boundary_edges(
+    owner: &crate::query::snapshot::ElementEntry,
+    snapshot: &ViewSnapshot,
+) -> Result<MemberEdges, UnresolvedReason> {
+    let Some(named) = NamedFeatures::world(snapshot, owner) else {
+        return Err(UnresolvedReason::UnsupportedBody);
+    };
+    // Boundary edges are shared by two faces, so the same segment arrives twice; the
+    // orientation-independent bit key deduplicates without fabricating addresses.
+    let mut seen = std::collections::BTreeSet::new();
+    let mut edges = Vec::new();
+    for face in &named.faces {
+        for ends in &face.boundary {
+            let key = {
+                let mut key = ends.map(|point| point.map(f64::to_bits));
+                key.sort_unstable();
+                key
+            };
+            if !seen.insert(key) {
+                continue;
+            }
+            edges.push((face.id.clone(), *ends));
+        }
+    }
+    if edges.is_empty() {
+        return Err(UnresolvedReason::UnsupportedBody);
+    }
     Ok(edges)
 }
 
@@ -220,12 +286,26 @@ fn body_edges(
         Ok(edges) => edges,
         Err(reason) => return Ok(BodyProjection::Unresolved(reason)),
     };
+    // The boundary wireframe of a reshaped body drops edges that project to a point: they
+    // draw nothing and only print zero-length segments into the picture (visual audit
+    // finding 1). The canonical twelve keep the frozen contract exactly as it was.
+    let drop_degenerate = matches!(world, MemberWireframe::Boundary(_));
+    let world = match world {
+        MemberWireframe::Box(edges) | MemberWireframe::Boundary(edges) => edges,
+    };
     let mut edges = Vec::with_capacity(world.len());
     for (id, ends) in world {
-        edges.push(ProjectedEdge {
-            feature: id,
-            paper_mm: [paper(view, ends[0])?, paper(view, ends[1])?],
-        });
+        let paper_mm = [paper(view, ends[0])?, paper(view, ends[1])?];
+        let degenerate = {
+            let [[ax, ay], [bx, by]] = paper_mm;
+            (ax - bx).hypot(ay - by) < ABSOLUTE_FLOOR_MM
+        };
+        if !drop_degenerate || !degenerate {
+            edges.push(ProjectedEdge {
+                feature: id,
+                paper_mm,
+            });
+        }
     }
     Ok(BodyProjection::Resolved(edges))
 }
@@ -414,10 +494,11 @@ pub fn resolve_section(
     }
     let mut edges = Vec::with_capacity(12);
     let mut crossings = Vec::new();
-    for (id, ends) in match member_edges(spec.member, snapshot) {
-        Ok(edges) => edges,
+    let world = match member_edges(spec.member, snapshot) {
+        Ok(MemberWireframe::Box(edges) | MemberWireframe::Boundary(edges)) => edges,
         Err(reason) => return Ok(SectionProjection::Unresolved(reason)),
-    } {
+    };
+    for (id, ends) in world {
         let [a, b] = ends;
         let (da, db) = (section_depth(section, a), section_depth(section, b));
         // A strict sign change places the crossing point on the cut contour; an endpoint
@@ -552,4 +633,183 @@ pub fn resolve_detail(
         region_center_mm: bounded(origin)?,
         region_radius_mm: radius * magnification,
     }))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::drawing::{
+        DEFAULT_SCALE_DENOMINATOR, DimensionSpec, DrawingSpec, SourceModelPin, ViewSpec,
+    };
+    use crate::element::ElementKind;
+    use crate::scene::SceneMesh;
+    use crate::{Limits, ViewPin, ViewSnapshot};
+    use beamcraft_geom::{Point3, Translation3};
+    use beamcraft_kernel::ops::{Body, CutPlane, Keep, plane_cut};
+    use beamcraft_kernel::{RectangularPlate, rectangular_plate};
+    use beamcraft_model::digest::{ContentDigest, Sha256};
+    use beamcraft_model::id::{
+        DimensionId, DrawingId, DrawingViewId, ElementId, ProjectId, RevisionId,
+    };
+
+    const A: &str = "01900000-0000-7000-8000-000000000001";
+    const B: &str = "01900000-0000-7000-8000-000000000002";
+    const C: &str = "01900000-0000-7000-8000-000000000003";
+    const MEMBER: &str = "019a7bf0-0000-7000-8000-000000700002";
+
+    /// A cut member snapshot built with the real kernel: the R200x300 beam box cut by the
+    /// visual audit's oblique plane, keeping the negative half.
+    fn cut_member_snapshot() -> (Drawing, ViewSnapshot) {
+        let plate = rectangular_plate(RectangularPlate {
+            width_mm: 3000.0,
+            length_mm: 200.0,
+            thickness_mm: 300.0,
+        })
+        .expect("plate body");
+        let body = Body::from_plate(&plate).expect("kernel body");
+        // The plane goes at the audit's relative position (two thirds along the axis),
+        // placed inside the body's own local extent whatever convention the builder uses.
+        let base_blob = body.to_blob();
+        let count = u32::from_le_bytes(
+            base_blob
+                .get(12..16)
+                .expect("header")
+                .try_into()
+                .expect("count"),
+        );
+        let mut low = [f64::INFINITY; 3];
+        let mut high = [f64::NEG_INFINITY; 3];
+        for i in 0..count {
+            let at = 32 + i as usize * 24;
+            for (axis, value) in low.iter_mut().zip(high.iter_mut()).enumerate() {
+                let bytes = base_blob
+                    .get(at + axis * 8..at + axis * 8 + 8)
+                    .expect("position");
+                let v = f64::from_le_bytes(bytes.try_into().expect("f64"));
+                *value.0 = value.0.min(v);
+                *value.1 = value.1.max(v);
+            }
+        }
+        let point = [
+            low[0] + (high[0] - low[0]) * 2.0 / 3.0,
+            0.0,
+            (low[2] + high[2]) / 2.0,
+        ];
+        let cut = plane_cut(
+            &body,
+            &CutPlane::new(point, [1.0, 0.0, 0.5]),
+            Keep::Negative,
+            0,
+        )
+        .expect("oblique cut");
+        let blob: Vec<u8> = cut.body().to_blob();
+        let digest = Sha256::digest(&blob).expect("mesh digest");
+        let count =
+            u32::from_le_bytes(blob.get(12..16).expect("header").try_into().expect("count"));
+        let vertices = (0..count)
+            .map(|i| {
+                let at = 32 + i as usize * 24;
+                let mut p = [0.0; 3];
+                for (axis, value) in p.iter_mut().enumerate() {
+                    let bytes = blob
+                        .get(at + axis * 8..at + axis * 8 + 8)
+                        .expect("position");
+                    *value = f64::from_le_bytes(bytes.try_into().expect("f64"));
+                }
+                Point3::new(p[0], p[1], p[2])
+            })
+            .collect();
+        let member = ElementId::parse(MEMBER).unwrap();
+        let mesh =
+            SceneMesh::new(blob, digest, vertices).with_face_table(cut.face_table().to_vec());
+        let placement = Translation3::new(0.0, 0.0, 0.0).expect("placement");
+        let scene = vec![crate::scene::SceneElement::new(
+            member,
+            ElementKind::Beam,
+            placement,
+            mesh,
+        )];
+        let drawing = Drawing::admit(DrawingSpec {
+            id: DrawingId::parse(A).unwrap(),
+            name: "Cut member".to_owned(),
+            source: SourceModelPin {
+                project: ProjectId::parse(A).unwrap(),
+                revision: RevisionId::parse(B).unwrap(),
+                manifest: ContentDigest::from_bytes([1; 32]),
+                schema: ContentDigest::from_bytes([2; 32]),
+                generation: 42,
+            },
+            member,
+            view: ViewSpec {
+                id: DrawingViewId::parse(B).unwrap(),
+                plane: Plane::Front,
+                scale_denominator: DEFAULT_SCALE_DENOMINATOR,
+                paper_origin_mm: [0.0, 0.0],
+                title: None,
+            },
+            dimension: DimensionSpec {
+                id: DimensionId::parse(C).unwrap(),
+                anchors: ["v.x0.y0.z0", "v.x0.y0.z1"]
+                    .map(|role| FeatureId::parse(&format!("fid1:{MEMBER}:member:{role}")).unwrap()),
+                paper_offset_mm: 10.0,
+                decimal_places: 0,
+            },
+            drafting: Vec::new(),
+            layers: Vec::new(),
+            views: Vec::new(),
+            sections: Vec::new(),
+            details: Vec::new(),
+            sheet: None,
+        })
+        .unwrap();
+        let pin = drawing.spec().source;
+        let snapshot = ViewSnapshot::build(
+            ViewPin::new(pin.manifest, pin.generation),
+            scene,
+            &Limits::default(),
+        )
+        .unwrap();
+        (drawing, snapshot)
+    }
+
+    #[test]
+    fn a_cut_member_draws_its_whole_boundary_not_a_fragment() {
+        // Visual audit finding 1: a cut member's surviving box-edge features describe only
+        // the start end-face ring, so the drawing published a single line while the 3D
+        // view showed the whole cut solid. The wireframe now draws the evaluated boundary
+        // of the cut body's own faces: the front view spans the kept ~2000 mm length
+        // (20 mm on paper at 1:100) and the full 300 mm height.
+        let (drawing, snapshot) = cut_member_snapshot();
+        let view = drawing.spec().view.clone();
+        let body = resolve_view(&drawing, &view, &snapshot).unwrap();
+        let BodyProjection::Resolved(edges) = body else {
+            panic!("a cut member resolves its boundary wireframe");
+        };
+        assert!(!edges.is_empty());
+        let mut low = [f64::INFINITY; 2];
+        let mut high = [f64::NEG_INFINITY; 2];
+        for edge in &edges {
+            for [x, y] in edge.paper_mm {
+                low[0] = low[0].min(x);
+                low[1] = low[1].min(y);
+                high[0] = high[0].max(x);
+                high[1] = high[1].max(y);
+            }
+        }
+        assert!(
+            high[0] - low[0] >= 19.0,
+            "the kept length spans the view, not one line: {}",
+            high[0] - low[0]
+        );
+        assert!(
+            high[1] - low[1] >= 2.5,
+            "the section height spans the view: {}",
+            high[1] - low[1]
+        );
+        // Every edge keeps a semantic address of the document's member.
+        for edge in &edges {
+            assert_eq!(edge.feature.element(), drawing.spec().member);
+        }
+    }
 }

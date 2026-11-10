@@ -23,7 +23,10 @@ const MEMBER: &str = "01900000-0000-7000-8000-000000000004";
 fn drawing() -> Drawing {
     Drawing::admit(DrawingSpec {
         id: DrawingId::parse(DRAWING).unwrap(),
-        name: "Балка \"A\" \\ original".into(),
+        // The name draws as strokes (issue 562 item 11 now covers the drawing name),
+        // so it carries the drawable punctuation; non-ASCII wire coverage lives on the
+        // layer name below, which keeps the bounded label rule.
+        name: "MARK #7 (A) 50% - B/2".into(),
         source: SourceModelPin {
             project: ProjectId::parse(VIEW).unwrap(),
             revision: RevisionId::parse(DIM).unwrap(),
@@ -169,7 +172,10 @@ fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
                     10,
                     DraftingGeometry::Text {
                         anchor: [12.0, 3.0],
-                        text: "Note \u{00ab}B\u{00bb}".to_owned(),
+                        // Text admits only what the stroke glyphs draw (issue 562 item
+                        // 11): guillemets or any other unsupported mark is a refusal, so
+                        // the round-trip exercises the drawable punctuation set.
+                        text: "Note #9 (B) +50%".to_owned(),
                         height: 3.5,
                         rotation: -0.25,
                     },
@@ -236,7 +242,7 @@ fn drawn_objects_round_trip_exactly_and_foreign_topology_refuses() {
     // A text entity without its required payload disagrees with its kind.
     let stripped = changed(
         &asset,
-        "            custom string drawing:text = \"Note «B»\"\n",
+        "            custom string drawing:text = \"Note #9 (B) +50%\"\n",
         "",
     );
     assert!(codec::decode(stripped, identity(), &control()).is_err());

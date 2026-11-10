@@ -375,7 +375,7 @@ fn text_hatch_symbol_and_free_dimension_are_drawn_objects_with_their_own_payload
         &[
             layer_args(),
             spec(format!(
-                "{TEXT}:text:10,20,3.5,0.25:{LAYER}:continuous:Note \u{00ab}A\u{bb}"
+                "{TEXT}:text:10,20,3.5,0.25:{LAYER}:continuous:Note (A) +50%"
             )),
             spec(format!(
                 "{HATCH}:hatch:0,0,8,0,8,3:{LAYER}:dashed:crosshatch"
@@ -396,7 +396,7 @@ fn text_hatch_symbol_and_free_dimension_are_drawn_objects_with_their_own_payload
     let drawn = list(&inspected, "drafting");
     assert_eq!(drawn.len(), 4);
     assert_eq!(text(&drawn[0], "kind"), "text");
-    assert_eq!(text(&drawn[0], "text"), "Note \u{00ab}A\u{bb}");
+    assert_eq!(text(&drawn[0], "text"), "Note (A) +50%");
     assert_eq!(text(&drawn[1], "kind"), "hatch");
     assert_eq!(text(&drawn[1], "pattern"), "crosshatch");
     assert_eq!(text(&drawn[2], "kind"), "symbol");
