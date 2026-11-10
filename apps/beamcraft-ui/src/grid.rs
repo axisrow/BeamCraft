@@ -1007,6 +1007,12 @@ impl GridScene {
                 palette.text,
             );
             let size = (galley.size() + egui::vec2(10.0, 6.0)).max(egui::vec2(24.0, 24.0));
+            // A bubble wider or taller than the pane (a long label in a deeply split pane)
+            // cannot be clamped into it: shrink2 would invert the inner bounds and
+            // `Pos2::clamp` panics (AGENTS.md section 4). Such an end keeps no label.
+            if size.x > rect.width() || size.y > rect.height() {
+                continue;
+            }
             let inner = rect.shrink2(size * 0.5);
             for (end, ahead) in [(a, -1.0f32), (b, 1.0)] {
                 if !rect.shrink(14.0).contains(end) {
@@ -1183,6 +1189,47 @@ mod form_tests {
                 assert!(!a.intersects(*b), "bubbles {a:?} and {b:?} overlap");
             }
         }
+    }
+
+    #[test]
+    fn a_bubble_that_cannot_fit_the_pane_is_dropped_instead_of_panicking() {
+        // Issue 562 review: a label longer than a deeply split pane inverts the clamped
+        // bounds, and `Pos2::clamp` panics on min > max. The paint must quietly drop what
+        // cannot fit (AGENTS.md section 4).
+        let scene = demo_scene();
+        let ctx = egui::Context::default();
+        crate::app::inter(&ctx);
+        crate::theme::install(&ctx);
+        let view = crate::camera::Camera::aligned_to(
+            beamcraft_engine::work_plane::WorkPlane::new(
+                [0.0; 3],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            )
+            .unwrap(),
+            [0.0; 3],
+            20_000.0,
+            100.0,
+        )
+        .unwrap()
+        .view(2.0)
+        .unwrap();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(20.0, 10.0));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            },
+            |ui| scene.paint(ui, rect, &view, [0.0; 3], None),
+        );
+        output.textures_delta.clear();
+        assert!(
+            output
+                .shapes
+                .iter()
+                .all(|shape| !matches!(&shape.shape, egui::Shape::Rect(r) if r.fill != egui::Color32::TRANSPARENT)),
+            "no bubble fits a 20 x 10 pane"
+        );
     }
 
     #[test]

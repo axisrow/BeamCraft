@@ -5094,6 +5094,23 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_failed_grid_read_keeps_the_guides_the_window_shows() {
+        // Issue 562 review: the unchanged-snapshot path must not wipe the guides (or reframe
+        // onto the shrunken framing) when one grids read fails; the error reports alone.
+        let Some(mut app) = headless() else { return };
+        app.grid_scene.lines = vec![crate::grid::GridLine {
+            label: "1".into(),
+            points: [[0.0, 0.0, 0.0], [0.0, 10_000.0, 0.0]],
+        }];
+        app.apply_grids(Err(ToolError::local(
+            "UNREADABLE_REPLY",
+            "the grids could not be read",
+        )));
+        assert_eq!(app.grid_scene.lines.len(), 1, "the guides stay");
+        assert!(matches!(app.grid_note, Some(Err(_))), "{:?}", app.grid_note);
+    }
+
+    #[test]
     fn the_weld_ribbon_button_picks_two_parts_and_commits_the_cli_weld_command() {
         let mut app =
             headless().expect("a native/software adapter is required for modelling acceptance");
