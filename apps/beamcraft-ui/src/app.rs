@@ -1311,10 +1311,6 @@ impl App {
         }
         self.views.shown = beamcraft_engine::KindFilter::SHOW_ALL;
         self.loaded = Some(loaded);
-        // The D06 annotations ride every load and reload, so the viewports draw them from the
-        // first frame without waiting for the annotations bench to have been opened (issue 562
-        // item 37). The load is guarded against a running command and stays silent on failure.
-        self.annotation_load();
         // A new revision may have moved or replaced the selected element: the selected-only
         // draw of every pane is rebuilt against this scene.
         for pane in &mut self.views.panes {
