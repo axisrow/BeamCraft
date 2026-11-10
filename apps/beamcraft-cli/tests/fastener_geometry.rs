@@ -124,12 +124,13 @@ fn a_group_shares_one_prototype_and_reports_the_components() {
     assert!(num(&shank, "volume_each_mm3") <= circle);
     assert!(circle - num(&shank, "volume_each_mm3") < circle * 0.01);
     // The stack: the bearing face is zero, the washer and head sit below it (outside the
-    // joint) and the shank starts inside the head, running through the joint to the nut.
+    // joint), the shank starts inside the head and runs through the joint, and the nut stack
+    // hangs downward from the thread tip at 41.5: nut 29.5..38.5, washer nut 27.5..29.5.
     assert_eq!(num(&component(&body, "washer_head"), "z_offset_mm"), -2.0);
     assert_eq!(num(&component(&body, "head"), "z_offset_mm"), -8.5);
     assert_eq!(num(&component(&body, "shank"), "z_offset_mm"), -8.5);
-    assert_eq!(num(&component(&body, "nut"), "z_offset_mm"), 41.5);
-    assert_eq!(num(&component(&body, "washer_nut"), "z_offset_mm"), 50.5);
+    assert_eq!(num(&component(&body, "nut"), "z_offset_mm"), 29.5);
+    assert_eq!(num(&component(&body, "washer_nut"), "z_offset_mm"), 27.5);
     // The chord rule: a multiple of four vertices, at most 0.05 mm deviation.
     for name in ["washer_head", "shank"] {
         let row = component(&body, name);
