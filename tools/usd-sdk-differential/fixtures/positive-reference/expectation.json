@@ -1,8 +1,0 @@
-{
-  "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-  "name": "Synthetic Reference",
-  "digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-  "world_points": [[100, 50, 200], [2100, 50, 200], [2100, 50, -800], [100, 50, -800]],
-  "world_min": [100, 50, -800],
-  "world_max": [2100, 50, 200]
-}

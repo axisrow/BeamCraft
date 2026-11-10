@@ -1,9 +1,0 @@
-# Every checkout is byte-identical to the repository: no line-ending conversion.
-* -text
-
-*.png binary
-*.jpg binary
-*.ico binary
-*.ttf binary
-*.otf binary
-*.woff2 binary

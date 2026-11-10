@@ -1,6 +1,0 @@
-def Xform "Source"
-custom string note = "declared by the source"
-double3 xformOp:translate = (100, 50, 200)
-double xformOp:rotateX:bimUpAxis = -90
-double3 xformOp:scale:bimUnits = (1000, 1000, 1000)
-!double probe = 2

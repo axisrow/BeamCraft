@@ -1,8 +1,0 @@
-double probe = 1
-!double probe = 2
-!double probe = 3
-def Mesh "Geometry"
-instanceable = true
-double3 xformOp:translate = (10, 20, 30)
-uniform token[] xformOpOrder = ["xformOp:translate"]
-double bim:volumeMm3 = 200000
