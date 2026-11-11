@@ -3790,3 +3790,154 @@ pub(crate) enum BrowserAction {
     CloseAll(Vec<Uuid7>),
     Move(Uuid7, String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::App;
+    use beamcraft_engine::RenderMode;
+
+    /// R and Reload adopt the views file even when the store is unchanged (issue 584 item 5):
+    /// a views-only CLI edit must be visible after a refresh, not only after the window's own
+    /// next write or a committed revision.
+    #[test]
+    fn a_reload_adopts_views_only_edits_of_the_file() {
+        let Some(mut app) = super::super::tests::headless() else {
+            return;
+        };
+        let executable = std::env::current_exe().unwrap();
+        let cli = executable
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join(format!("beamcraft{}", std::env::consts::EXE_SUFFIX));
+        assert!(
+            cli.is_file(),
+            "build beamcraft-cli before native modelling tests"
+        );
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("bc-584-adopt-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = root.join("model");
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new(&cli)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        };
+        run(&[
+            "create-project",
+            "--parent",
+            root.to_str().unwrap(),
+            "--name",
+            "model",
+            "--environment",
+            "blank",
+        ]);
+        run(&[
+            "create-member",
+            "--store",
+            store.to_str().unwrap(),
+            "--kind",
+            "column",
+            "--start",
+            "0,0,0",
+            "--end",
+            "0,0,3500",
+            "--profile",
+            "H-200x200",
+            "--material",
+            "Steel",
+        ]);
+        run(&[
+            "save-view",
+            "--file",
+            crate::views::session_path(&store).to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--name",
+            "Elev",
+            "--yaw",
+            "-1.0",
+            "--pitch",
+            "0.45",
+            "--target",
+            "3000,0,1750",
+            "--default",
+            "true",
+        ]);
+        app.source.store = store.clone();
+        app.source.cli = cli.clone();
+        let refresh = |app: &mut App| {
+            app.reload();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.reload_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_reload();
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(app.reload_job.is_none(), "the refresh timed out");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            while app.colour_job.is_some() && std::time::Instant::now() < deadline {
+                app.poll_colour();
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        refresh(&mut app);
+        let named = |app: &App, name: &str| {
+            app.views
+                .book
+                .views()
+                .iter()
+                .find(|v| v.name == name)
+                .cloned()
+        };
+        let elev = named(&app, "Elev").expect("the first refresh lists the file's Elev");
+        assert_eq!(elev.render_mode, RenderMode::Shaded);
+        // The views-only CLI edits while the window is open, then the R key: the store is
+        // unchanged, so no scene is delivered, and the window must take the file's book.
+        run(&[
+            "update-view",
+            "--file",
+            crate::views::session_path(&store).to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--view",
+            "Elev",
+            "--render-mode",
+            "wireframe",
+            "--color",
+            "1,0,0",
+        ]);
+        run(&[
+            "save-view",
+            "--file",
+            crate::views::session_path(&store).to_str().unwrap(),
+            "--store",
+            store.to_str().unwrap(),
+            "--name",
+            "AgentView",
+            "--parallel",
+            "xz",
+            "--offset",
+            "0",
+        ]);
+        refresh(&mut app);
+        let elev = named(&app, "Elev").expect("the reload keeps Elev");
+        let agent = named(&app, "AgentView").expect("the reload adopts the added AgentView");
+        assert_eq!(elev.render_mode, RenderMode::Wireframe, "{:?}", elev);
+        assert_eq!(elev.color, Some([1.0, 0.0, 0.0]), "{:?}", elev);
+        assert!(!agent.temporary, "the adopted view is the file's own");
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
