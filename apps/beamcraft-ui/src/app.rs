@@ -923,7 +923,10 @@ impl App {
         // unreadable one only notes, never blocks opening the model.
         let mut views = crate::views::Views::default();
         match crate::views::load(&source.store) {
-            Ok(book) => views.book = book,
+            Ok(book) => {
+                views.baseline = book.clone();
+                views.book = book;
+            }
             Err(note) => views.note = Some(Err(note)),
         }
         let (presets, presets_note) = crate::views::load_presets(source.config_dir.as_deref());
@@ -1237,6 +1240,9 @@ impl App {
                 }
             }
             Ok(Some(loaded)) => {
+                // The scene may have come from a revision another process committed: take the
+                // views file's own changes with it (issue 569 item 3).
+                self.adopt_views_file();
                 let next_grids = grids.unwrap_or_else(|error| {
                     // A failed grid read keeps the guides and the framing the window already
                     // has, so a transient CLI failure cannot reshape the view or wipe the
@@ -8041,6 +8047,9 @@ pub(crate) mod tests {
         let plan = app.views.book.find("Plan +3000").unwrap().clone();
         assert_eq!(plan.plane.origin(), [0.0, 0.0, 3000.0]);
         assert_eq!(app.views.active(), Some(plan.id));
+        // The created view opened as a new tab of the active group; the model's default view
+        // tab was not replaced (issue 569 item 19).
+        assert_eq!(app.views.panes.len(), 2);
         // The panel moves on to the created view's properties.
         assert_eq!(app.bench, super::workbench::Bench::View);
         assert_eq!(app.views.subject, crate::views::Subject::SavedView(plan.id));
@@ -8105,7 +8114,10 @@ pub(crate) mod tests {
         // The book round-trips through the sidecar, and a confirmed delete persists.
         assert_eq!(crate::views::load(&dir).unwrap().len(), 2);
         app.browser_action(super::view_panel::BrowserAction::ConfirmDelete(plan.id));
-        assert!(app.views.active().is_none());
+        // The created view opened as its own tab (issue 569 item 19): the delete closes that
+        // tab and the default view's tab is what remains active.
+        assert!(app.views.panes.iter().all(|p| p.view != Some(plan.id)));
+        assert_eq!(app.views.active(), app.default_view_id());
         assert_eq!(
             crate::views::load(&dir).unwrap().len(),
             1,
