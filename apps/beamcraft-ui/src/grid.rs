@@ -939,9 +939,11 @@ impl GridScene {
     /// (issue 562 items 35 and 38). A line seen nearly end-on owns no labels at all, so an
     /// elevation does not draw a plan grid's labels on one horizontal line. The selected grid's
     /// bubbles claim their places first. `shown` is the view the pane displays: lines outside
-    /// its depth slab and work area draw and label nothing, so an elevation on grid axis B
-    /// labels B and not the family's first line, which an elevation flattens onto the same
-    /// screen line (issue 584 item 8).
+    /// its depth slab draw and label nothing, so an elevation on grid axis B labels B and not
+    /// the family's first line, which an elevation flattens onto the same screen line (issue
+    /// 584 item 8). The work area is not part of the test: its box may lie strictly inside the
+    /// spans while grid endpoints sit at the model limits, so requiring the endpoints inside
+    /// would drop every guide from a work-area view (PR 587 review).
     pub fn paint(
         &self,
         ui: &egui::Ui,
@@ -951,10 +953,20 @@ impl GridScene {
         selected: Option<&str>,
         shown: Option<&beamcraft_engine::views::ModelView>,
     ) {
-        // A grid line is straight and axis-parallel within its family, so its two endpoints
-        // carry the whole line across the view's slab test.
-        let in_view =
-            |points: &[[f64; 3]; 2]| shown.is_none_or(|v| points.iter().all(|p| v.contains(*p)));
+        // A grid line is straight and constant across its family's axis, so its two endpoints
+        // carry the whole line across the depth-slab test.
+        let in_view = |points: &[[f64; 3]; 2]| {
+            shown.is_none_or(|v| {
+                let Some([above, below]) = v.depth else {
+                    return true;
+                };
+                let within = |p: &[f64; 3]| {
+                    let d = v.plane_distance(*p);
+                    d >= -below && d <= above
+                };
+                points.iter().all(within)
+            })
+        };
         let painter = ui.painter_at(rect);
         let palette = theme::Palette::current(ui);
         let selected_lines = selected
@@ -1279,6 +1291,28 @@ mod form_tests {
             as_str(&labels),
             ["B", "B"],
             "the elevation on B labels B: {labels:?}"
+        );
+        // A work area is not part of the test: its box may lie strictly inside the spans
+        // while grid endpoints sit at the model limits, and a box test would drop every
+        // guide from such a view (PR 587 review). With no depth, a boxed view paints
+        // exactly what a free view paints.
+        let mut boxed = beamcraft_engine::views::ModelView::new(
+            beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000002").unwrap(),
+            "Boxed",
+            on_b,
+            20_000.0,
+        );
+        boxed.work_area = beamcraft_engine::view_clipping::WorkArea::new(
+            [2000.0, 2000.0, -1000.0],
+            [7000.0, 9000.0, 1000.0],
+        )
+        .ok();
+        let free = painted_labels(&scene, on_a, None);
+        let labels = painted_labels(&scene, on_a, Some(&boxed));
+        assert_eq!(
+            as_str(&labels),
+            as_str(&free),
+            "a work-area view without a depth keeps every guide: {labels:?}"
         );
     }
 
