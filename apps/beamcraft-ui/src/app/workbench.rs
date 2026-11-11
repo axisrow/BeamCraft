@@ -1127,16 +1127,29 @@ impl App {
                     // filters (issue 562 item 47).
                     let room = (ui.max_rect().right() - ui.min_rect().right()).max(0.0);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // The slot is one row tall, like the row the switches always hang
+                        // from: the scroll area reserves its content's height from the top
+                        // of its slot, so a slot as tall as the switches reserved the space
+                        // above them and the status row below climbed onto them (the 584
+                        // recheck). Its bar stays hidden, since a floating bar covers the
+                        // switches it scrolls (the edge fade still marks more to the side),
+                        // and the plain wheel scrolls the strip: it has no other direction.
                         ui.allocate_ui_with_layout(
-                            vec2(super::switches::snaps_width().min(room), 24.0),
+                            vec2(
+                                super::switches::snaps_width().min(room),
+                                ui.spacing().interact_size.y,
+                            ),
                             egui::Layout::left_to_right(egui::Align::Center),
                             |ui| {
-                                egui::ScrollArea::horizontal().id_salt("status-snaps").show(
-                                    ui,
-                                    |ui| {
+                                ui.style_mut().always_scroll_the_only_direction = true;
+                                egui::ScrollArea::horizontal()
+                                    .id_salt("status-snaps")
+                                    .scroll_bar_visibility(
+                                        egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
+                                    )
+                                    .show(ui, |ui| {
                                         super::switches::snaps(ui, &mut self.selection);
-                                    },
-                                );
+                                    });
                             },
                         );
                     });
