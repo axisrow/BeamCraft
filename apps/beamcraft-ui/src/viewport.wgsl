@@ -37,8 +37,14 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     for (var i = 0u; i < clip.count; i += 1u) {
         let plane = clip.planes[i];
         if (abs(dot(camera.back.xyz, plane.xyz)) > 0.99) {
-            let low = dot(plane.xyz, bmin) + plane.w;
-            let high = dot(plane.xyz, bmax) + plane.w;
+            // The box's distance interval, from the per-component extremes: dotting the two
+            // corners is the exact interval only when every normal component shares a sign, and
+            // a mixed-sign normal can put both corners on one side of a plane the box truly
+            // straddles, which would silently drop a cut body's cap (review of issue 584 item 4).
+            let positive = max(plane.xyz, vec3f(0.0));
+            let negative = min(plane.xyz, vec3f(0.0));
+            let low = dot(positive, bmin) + dot(negative, bmax) + plane.w;
+            let high = dot(positive, bmax) + dot(negative, bmin) + plane.w;
             if ((low < 0.0) != (high < 0.0)) {
                 let d = dot(plane.xyz, world) + plane.w;
                 if (d < 0.0) {
