@@ -3925,9 +3925,9 @@ pub(crate) fn triple(values: [f64; 3]) -> Run<Json> {
 }
 
 /// A mass rounded to the human reports' shared display precision — the BOM's two decimals
-/// (#490 finding 3, visual audit #562 item 40: `inspect` printed `22.5` where the BOM and
+/// (axisrow/BeamCraft#490 finding 3, visual audit axisrow/BeamCraft#562 item 40: `inspect` printed `22.5` where the BOM and
 /// the schedule printed `22.54`). A non-zero mass never displays as zero (visual audit
-/// #562 item 39): the exact value keeps the cell instead. The stored and exact fields are
+/// axisrow/BeamCraft#562 item 39): the exact value keeps the cell instead. The stored and exact fields are
 /// never rounded.
 fn display_kg(kg: f64) -> f64 {
     let rounded = (kg * 100.0).round() / 100.0;

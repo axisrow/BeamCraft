@@ -219,7 +219,7 @@ fn admits(field: &Field, cell: &CellValue) -> bool {
 
 /// The total order of one column's cells: missing first, then by value. Text compares in
 /// the natural order of the report labels, so a `profile` column sorts `PL8` before `PL20`
-/// exactly like the BOM table (visual audit #562 item 39).
+/// exactly like the BOM table (visual audit axisrow/BeamCraft#562 item 39).
 fn cell_cmp(a: Option<&CellValue>, b: Option<&CellValue>) -> Ordering {
     match (a, b) {
         (None, None) => Ordering::Equal,
@@ -247,8 +247,8 @@ fn rank(value: &CellValue) -> u8 {
 
 /// The display precision a standard quantity column shares with the BOM's CSV cells: the
 /// human reports print the same quantity with the same text, so a length, an area, a volume
-/// or a mass reads identically in `schedule-export` and `export-bom` (#490 finding 3
-/// extended to every report quantity, visual audit #562 item 40). `None` keeps the
+/// or a mass reads identically in `schedule-export` and `export-bom` (axisrow/BeamCraft#490 finding 3
+/// extended to every report quantity, visual audit axisrow/BeamCraft#562 item 40). `None` keeps the
 /// noise-stripped `num`: attribute columns render the definition's own values, and text
 /// never rounds.
 fn bom_decimals(field: &Field) -> Option<usize> {
@@ -443,7 +443,7 @@ impl Rule {
 
 /// One admitted comparison; same-variant cells compare in their natural order — text
 /// through the report labels' natural order, so an ordered filter over a profile column
-/// agrees with the sorted table (visual audit #562 review round 1).
+/// agrees with the sorted table (visual audit axisrow/BeamCraft#562 review round 1).
 fn compare(op: Operator, cell: &CellValue, literal: &CellValue) -> bool {
     let ord = match (cell, literal) {
         (CellValue::Text(u), CellValue::Text(v)) => crate::bom::natural(u, v),
@@ -872,7 +872,7 @@ mod tests {
 
     #[test]
     fn a_mass_cell_prints_the_shared_bom_precision() {
-        // #490 finding 3: the schedule rendered every number noise-stripped, so the same
+        // axisrow/BeamCraft#490 finding 3: the schedule rendered every number noise-stripped, so the same
         // plate mass read 0.786570785 in schedule-export and 0.79 in export-bom. A mass
         // column — and a mass group total — now round to the BOM's two decimals; every
         // other number keeps its noise-stripped text.
@@ -916,7 +916,7 @@ mod tests {
 
     #[test]
     fn a_quantity_column_prints_the_bom_text_and_profiles_sort_naturally() {
-        // #562 items 39 and 40: the schedule printed 239244.610273 where the BOM printed
+        // axisrow/BeamCraft#562 items 39 and 40: the schedule printed 239244.610273 where the BOM printed
         // 239244.61, and the plain string order sorted a PL8 profile after PL20. Every
         // standard quantity column now renders the BOM's cell text, and text cells compare
         // in the natural label order.

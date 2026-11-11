@@ -6,10 +6,12 @@
 use crate::plate_cmd::num;
 use beamcraft_commands::drawing::archive::SourceArchive;
 use beamcraft_commands::drawing::document::store::request_fingerprint;
-use beamcraft_commands::drawing::document::{DocumentStore, DocumentWrite, State};
+use beamcraft_commands::drawing::document::{
+    DocumentRevision, DocumentStore, DocumentWrite, State,
+};
 use beamcraft_commands::plate::inspect_revision;
 use beamcraft_engine::drawing::projection::{
-    self, BodyProjection, DimensionProjection, Projection,
+    self, BodyProjection, DetailProjection, DimensionProjection, Projection, SectionProjection,
 };
 use beamcraft_engine::drawing::{
     CutSide, DEFAULT_SCALE_DENOMINATOR, DetailSpec, DimensionSpec, DraftingGeometry, DraftingSpec,
@@ -38,6 +40,70 @@ fn invalid(message: &'static str) -> Refusal {
         code: ErrorCode::InvalidArgument,
         message,
     }
+}
+
+/// One exact published version reopened from its own immutable archived source, with every
+/// derived view of a sheet document already resolved. The live model is never read and never
+/// changes; the document head is only read.
+struct PublishedDrawing {
+    revision: DocumentRevision,
+    projection: Projection,
+    bodies: Vec<BodyProjection>,
+    sections: Vec<SectionProjection>,
+    details: Vec<DetailProjection>,
+}
+
+/// Reopens the one revision that carries `version` as its published state and resolves its
+/// geometry: the primary projection always, and for a sheet document every placed view,
+/// section and detail, since both output surfaces render the same fixed sheet.
+fn resolve_published(
+    documents: &DocumentStore,
+    version: DocumentVersionId,
+) -> Run<PublishedDrawing> {
+    let revision = documents
+        .history()?
+        .into_iter()
+        .find(|revision| revision.state == State::Published && revision.version == Some(version))
+        .ok_or(Refusal {
+            rule_id: None,
+            code: ErrorCode::NotFound,
+            message: "no published document version carries this id",
+        })?;
+    let snapshot = revision.source.inspect()?.snapshot;
+    let projection = projection::resolve(&revision.drawing, &snapshot)?;
+    let mut bodies = Vec::new();
+    let mut sections = Vec::new();
+    let mut details = Vec::new();
+    if revision.drawing.sheet().is_some() {
+        for view in revision.drawing.views() {
+            bodies.push(projection::resolve_view(
+                &revision.drawing,
+                view,
+                &snapshot,
+            )?);
+        }
+        for section in revision.drawing.sections() {
+            sections.push(projection::resolve_section(
+                &revision.drawing,
+                section,
+                &snapshot,
+            )?);
+        }
+        for detail in revision.drawing.details() {
+            details.push(projection::resolve_detail(
+                &revision.drawing,
+                detail,
+                &snapshot,
+            )?);
+        }
+    }
+    Ok(PublishedDrawing {
+        revision,
+        projection,
+        bodies,
+        sections,
+        details,
+    })
 }
 
 /// Runs the headless adapter; successful unresolved geometry is explicit in the JSON result.
@@ -1058,65 +1124,23 @@ fn run_document(args: &[OsString]) -> Run<Json> {
             let version = DocumentVersionId::parse(required("--version-id")?)
                 .map_err(|_| invalid("document version id must be UUIDv7"))?;
             let destination = required("--out")?;
-            // One exact published version, reopened from its own immutable archived source.
-            // The live model is never read and never changes; the document head is only read.
-            let published = documents
-                .history()?
-                .into_iter()
-                .find(|revision| {
-                    revision.state == State::Published && revision.version == Some(version)
-                })
-                .ok_or(Refusal {
-                    rule_id: None,
-                    code: ErrorCode::NotFound,
-                    message: "no published document version carries this id",
-                })?;
-            let snapshot = published.source.inspect()?.snapshot;
-            let projection = projection::resolve(&published.drawing, &snapshot)?;
+            let published = resolve_published(&documents, version)?;
             let format = options.get("--format").copied().unwrap_or("svg");
-            // A sheet document resolves every derived view once and both surfaces render
-            // the same fixed sheet; a loose document keeps the tight-bounds export. Both
-            // stay bound to the exact version.
-            let sheet = published.drawing.sheet();
-            let mut bodies = Vec::new();
-            let mut sections = Vec::new();
-            let mut details = Vec::new();
-            if sheet.is_some() {
-                for view in published.drawing.views() {
-                    bodies.push(projection::resolve_view(
-                        &published.drawing,
-                        view,
-                        &snapshot,
-                    )?);
-                }
-                for section in published.drawing.sections() {
-                    sections.push(projection::resolve_section(
-                        &published.drawing,
-                        section,
-                        &snapshot,
-                    )?);
-                }
-                for detail in published.drawing.details() {
-                    details.push(projection::resolve_detail(
-                        &published.drawing,
-                        detail,
-                        &snapshot,
-                    )?);
-                }
-            }
             let bytes = match format {
-                "svg" => match sheet {
+                "svg" => match published.revision.drawing.sheet() {
                     Some(_) => sheet::export_svg(
-                        &published.drawing,
+                        &published.revision.drawing,
                         version,
-                        &projection,
-                        &bodies,
-                        &sections,
-                        &details,
+                        &published.projection,
+                        &published.bodies,
+                        &published.sections,
+                        &published.details,
                     )?,
-                    None => svg::export(&published.drawing, version, &projection)?,
+                    None => {
+                        svg::export(&published.revision.drawing, version, &published.projection)?
+                    }
                 },
-                "pdf" => match sheet {
+                "pdf" => match published.revision.drawing.sheet() {
                     // The sheet document prints its own fixed sheet; a different --sheet
                     // is a contradictory request and refuses.
                     Some(spec) => {
@@ -1130,18 +1154,23 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                             }
                         }
                         sheet::export_pdf(
-                            &published.drawing,
+                            &published.revision.drawing,
                             version,
-                            &projection,
-                            &bodies,
-                            &sections,
-                            &details,
+                            &published.projection,
+                            &published.bodies,
+                            &published.sections,
+                            &published.details,
                         )?
                     }
                     None => {
                         let sheet = Sheet::parse(options.get("--sheet").copied().unwrap_or("a4"))
                             .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
-                        print::export(&published.drawing, version, &projection, sheet)?
+                        print::export(
+                            &published.revision.drawing,
+                            version,
+                            &published.projection,
+                            sheet,
+                        )?
                     }
                 },
                 _ => return Err(invalid("format must be svg or pdf")),
@@ -1171,16 +1200,16 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 ("format", Json::text(format)),
                 (
                     "drawing_id",
-                    Json::text(published.drawing.spec().id.to_string()),
+                    Json::text(published.revision.drawing.spec().id.to_string()),
                 ),
                 ("version_id", Json::text(version.to_string())),
                 (
                     "source_revision_id",
-                    Json::text(published.source.pin().revision.to_string()),
+                    Json::text(published.revision.source.pin().revision.to_string()),
                 ),
                 (
                     "source_manifest",
-                    Json::text(published.source.pin().manifest.to_string()),
+                    Json::text(published.revision.source.pin().manifest.to_string()),
                 ),
                 ("bytes", num(bytes.len() as f64)?),
             ]))
@@ -1195,49 +1224,8 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 Some("false") => false,
                 Some(_) => return Err(invalid("--dry-run must be true or false")),
             };
-            // One exact published version, reopened from its own immutable archived source.
-            // The live model is never read and never changes; the document head is only read.
-            let published = documents
-                .history()?
-                .into_iter()
-                .find(|revision| {
-                    revision.state == State::Published && revision.version == Some(version)
-                })
-                .ok_or(Refusal {
-                    rule_id: None,
-                    code: ErrorCode::NotFound,
-                    message: "no published document version carries this id",
-                })?;
-            let snapshot = published.source.inspect()?.snapshot;
-            let projection = projection::resolve(&published.drawing, &snapshot)?;
-            let sheet = published.drawing.sheet();
-            let mut bodies = Vec::new();
-            let mut sections = Vec::new();
-            let mut details = Vec::new();
-            if sheet.is_some() {
-                for view in published.drawing.views() {
-                    bodies.push(projection::resolve_view(
-                        &published.drawing,
-                        view,
-                        &snapshot,
-                    )?);
-                }
-                for section in published.drawing.sections() {
-                    sections.push(projection::resolve_section(
-                        &published.drawing,
-                        section,
-                        &snapshot,
-                    )?);
-                }
-                for detail in published.drawing.details() {
-                    details.push(projection::resolve_detail(
-                        &published.drawing,
-                        detail,
-                        &snapshot,
-                    )?);
-                }
-            }
-            let pdf = match sheet {
+            let published = resolve_published(&documents, version)?;
+            let pdf = match published.revision.drawing.sheet() {
                 // The sheet document prints its own fixed sheet; a different --sheet
                 // is a contradictory request and refuses.
                 Some(spec) => {
@@ -1249,21 +1237,26 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                         }
                     }
                     sheet::export_pdf(
-                        &published.drawing,
+                        &published.revision.drawing,
                         version,
-                        &projection,
-                        &bodies,
-                        &sections,
-                        &details,
+                        &published.projection,
+                        &published.bodies,
+                        &published.sections,
+                        &published.details,
                     )?
                 }
                 None => {
                     let sheet = Sheet::parse(options.get("--sheet").copied().unwrap_or("a4"))
                         .ok_or_else(|| invalid("sheet must be a4, a3, a2, a1 or a0"))?;
-                    print::export(&published.drawing, version, &projection, sheet)?
+                    print::export(
+                        &published.revision.drawing,
+                        version,
+                        &published.projection,
+                        sheet,
+                    )?
                 }
             };
-            let spec = published.drawing.spec();
+            let spec = published.revision.drawing.spec();
             let job = print::PrintJob {
                 pdf,
                 name: format!("{} ({version})", spec.name),
@@ -1284,11 +1277,11 @@ fn run_document(args: &[OsString]) -> Run<Json> {
                 ("version_id", Json::text(version.to_string())),
                 (
                     "source_revision_id",
-                    Json::text(published.source.pin().revision.to_string()),
+                    Json::text(published.revision.source.pin().revision.to_string()),
                 ),
                 (
                     "source_manifest",
-                    Json::text(published.source.pin().manifest.to_string()),
+                    Json::text(published.revision.source.pin().manifest.to_string()),
                 ),
                 ("bytes", num(job.pdf.len() as f64)?),
             ];

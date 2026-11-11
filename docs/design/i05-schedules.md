@@ -90,10 +90,10 @@ The element table sorts by the template's `sort_by` columns with the element id 
 tiebreaker; groups follow first-seen order of the sorted rows and group keys are the rendered
 cell strings, so equal labels group together without float-equality traps. Text cells compare
 in the natural order of the report labels (digit runs compare as numbers, so `PL8` precedes
-`PL20` exactly as in the BOM table, #562 item 39). Output carries no timestamps, tool name or
+`PL20` exactly as in the BOM table, axisrow/BeamCraft#562 item 39). Output carries no timestamps, tool name or
 version. A standard quantity column renders at the display precision shared with the BOM's
 CSV cells (two decimals for mm/mm2/kg, nine for m3); every other number renders in the
-shortest round-trip form with a `.` and no separators (#490, #562 item 40). Same head, same
+shortest round-trip form with a `.` and no separators (axisrow/BeamCraft#490, axisrow/BeamCraft#562 item 40). Same head, same
 template file: byte-identical CSV and HTML.
 
 ## Files

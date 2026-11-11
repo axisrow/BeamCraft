@@ -334,7 +334,7 @@ fn the_exported_tables_match_the_verified_revision() {
 
 #[test]
 fn a_cut_member_reports_the_length_that_remains_and_a_tiny_mass_is_never_zero() {
-    // #562 items 3 and 39: a beam cut from 4000 to 2000 mm printed the authored length and
+    // axisrow/BeamCraft#562 items 3 and 39: a beam cut from 4000 to 2000 mm printed the authored length and
     // a non-physical area (the net volume over the authored length), and the 0.00314 kg of
     // a 20x20x1 plate printed as `0` in every human-facing cell.
     let f = Fixture::new();

@@ -69,7 +69,7 @@ its thickness, holes included):
 
 * `length_mm` — members only. For a straight member it is the extent of the re-evaluated
   solid projected onto the axis, so a cut reports the length that physically remains and the
-  cut-off part is not counted (visual audit #562 item 3); a polybeam or curved member keeps
+  cut-off part is not counted (visual audit axisrow/BeamCraft#562 item 3); a polybeam or curved member keeps
   its authored path length. Without length-changing operations this is the authored axis
   length, P14 end offsets included.
 * `area_mm2` — members: `volume_mm3 / length_mm` (the detailed outline's net area over the
@@ -101,7 +101,7 @@ the numbering state; the engine API carries both (`mark: String`, `id`).
 
 * Element table: kind in registry order (`plate`, `beam`, `column`), then profile label, then
   mark. Profile labels and marks compare in natural order — a digit run compares as a
-  number, so `PL8` lists before `PL20` and `B2` before `B10` (#562 item 39; labels that
+  number, so `PL8` lists before `PL20` and `B2` before `B10` (axisrow/BeamCraft#562 item 39; labels that
   differ only in zero padding stay equal and keep the caller's order). Deterministic, and it
   keeps same-profile parts together for the shop.
 * Summary: group key `(kind, profile label, material label)`; for a plate the thickness inside

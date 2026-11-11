@@ -163,7 +163,7 @@ fn a_computed_area_gives_the_exact_mass_of_the_reference_i_section() {
         1e-9,
     );
     assert!((num(q, &["mass", "kg"]) - 192.168).abs() < 0.01);
-    // The display precision is the BOM's two decimals (#562 item 40): the same mass reads
+    // The display precision is the BOM's two decimals (axisrow/BeamCraft#562 item 40): the same mass reads
     // 192.17 in export-bom, schedule-export and inspect-elements.
     assert_eq!(num(q, &["mass", "kg_display"]), 192.17);
     // Without operations gross and net are the same figure, and the old keys are the net ones.

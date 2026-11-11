@@ -172,7 +172,7 @@ pub fn tables(rows: &[BomRow], max_rows: usize) -> Result<Bom, CommandError> {
     }
     // The map iterates in byte order of its keys, so PL20's group would precede PL8's; sort
     // into the element table's own order instead: kind, then the natural label order
-    // (visual audit #562 review round 1 — the two tables of one export must agree).
+    // (visual audit axisrow/BeamCraft#562 review round 1 — the two tables of one export must agree).
     let mut grouped: Vec<((ElementKind, String, String), BomGroup)> = keys.into_iter().collect();
     grouped.sort_by(|(a_key, _), (b_key, _)| {
         a_key
@@ -282,7 +282,7 @@ pub(crate) fn num(value: f64) -> String {
 }
 
 /// The natural order of two label strings: a digit run compares as a number, so `PL8`
-/// lists before `PL20` and an approved mark `B2` before `B10` (visual audit #562 item 39 —
+/// lists before `PL20` and an approved mark `B2` before `B10` (visual audit axisrow/BeamCraft#562 item 39 —
 /// the plain string order read as an error). Labels that differ only in zero padding stay
 /// equal; the sort above is stable, so their order is the caller's.
 pub(crate) fn natural(a: &str, b: &str) -> Ordering {
@@ -322,8 +322,8 @@ pub(crate) fn natural(a: &str, b: &str) -> Ordering {
 
 /// One quantity cell at its unit's display precision, trailing zeros trimmed. Shared with
 /// the schedule renderer, so a quantity prints the same text in every human-facing report
-/// (#490 finding 3, visual audit #562 item 40). A non-zero value never prints as zero
-/// (visual audit #562 item 39): the cell keeps the noise-stripped full value instead.
+/// (axisrow/BeamCraft#490 finding 3, visual audit axisrow/BeamCraft#562 item 40). A non-zero value never prints as zero
+/// (visual audit axisrow/BeamCraft#562 item 39): the cell keeps the noise-stripped full value instead.
 pub(crate) fn quantity(value: f64, decimals: usize) -> String {
     let text = format!("{value:.decimals$}");
     let trimmed = text.trim_end_matches('0').trim_end_matches('.');
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn a_non_zero_quantity_never_prints_as_zero() {
-        // #562 item 39: a known non-zero value that rounds below the unit's display
+        // axisrow/BeamCraft#562 item 39: a known non-zero value that rounds below the unit's display
         // precision printed "0" — the 0.00314 kg of a 20x20x1 plate and a 2485 mm2 group's
         // 0.002485 m2 total. The cell keeps the noise-stripped full value; a real zero
         // still prints "0" and an unknown mass still prints an empty cell.
@@ -450,7 +450,7 @@ mod tests {
 
     #[test]
     fn profile_labels_and_marks_sort_naturally() {
-        // #562 item 39: the plain string order listed PL8 after PL20 and read as an error;
+        // axisrow/BeamCraft#562 item 39: the plain string order listed PL8 after PL20 and read as an error;
         // digit runs now compare as numbers.
         let rows = [
             row(1, ElementKind::Plate, "PL20", Some(1.0)),

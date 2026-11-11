@@ -6,6 +6,13 @@ Open questions are at the end.
 
 ## 2026-11-10
 
+- **D08 closes with CUPS-only printer submission.** Owner decision ("закрыть с границами"):
+  the printer half of D08 is the native print service submission (CUPS `lp`), which covers
+  macOS and Linux desktops; a platform without a submission backend refuses
+  `BACKEND_UNAVAILABLE` until one exists, so the Windows submission backend and a native
+  print dialog are documented follow-ups (the Windows page itself is already the exact
+  1:1 PDF). The same decision moves the broader-drawing follow-up #333 out of the M4
+  milestone, so the epic #464 stays open while that work is tracked.
 - **Gate K8 is passed.** Owner decision: the drawings scope (D01 to D08) is accepted as
   delivered — the associative document lifecycle and publication, placed and derived views,
   sheets, annotations bound to FeatureIds, drafting tools and the PDF page, with the printer

@@ -293,7 +293,7 @@ impl NewModelForm {
         };
         let location_changed = ui.horizontal(location).inner;
         // An error names what was typed; editing either field drops it, so a cleared name
-        // never keeps the previous refusal on show (issue #562).
+        // never keeps the previous refusal on show (issue axisrow/BeamCraft#562).
         if name_field.changed() || location_changed {
             self.note = None;
         }

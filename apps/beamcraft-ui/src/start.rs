@@ -594,7 +594,7 @@ impl StartPage {
     }
 
     /// Switches the view and drops what belonged to the old one: a note or a selection made
-    /// under one tab must not follow the user to another (issue #562).
+    /// under one tab must not follow the user to another (issue axisrow/BeamCraft#562).
     fn show_tab(&mut self, tab: Tab) {
         self.note = None;
         self.selected = None;
@@ -887,7 +887,7 @@ impl StartPage {
                 .width(ui.available_width())
                 .height(260.0)
                 // A long environment name is cut off, not allowed to widen the row: an
-                // overflowing combo collapsed the whole welcome layout (issue #562).
+                // overflowing combo collapsed the whole welcome layout (issue axisrow/BeamCraft#562).
                 .truncate()
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
@@ -1061,7 +1061,7 @@ impl StartPage {
             ui.vertical(|ui| {
                 // A long name stays on one line: a wrapped one grows the card past the
                 // window bottom and pushes the way back to the start window out of view
-                // (issue #562).
+                // (issue axisrow/BeamCraft#562).
                 ui.add(
                     egui::Label::new(
                         egui::RichText::new(name)
@@ -1246,7 +1246,7 @@ impl StartPage {
             let width = ui.available_width();
             let columns = [0.0, width * 0.60, width * 0.81];
             // Two date columns need about 540 points of table; below that CREATED would
-            // overlap MODIFIED, so it gives way (issue #562).
+            // overlap MODIFIED, so it gives way (issue axisrow/BeamCraft#562).
             let wide = width >= 540.0;
             let head = ui
                 .allocate_exact_size(egui::vec2(width, 40.0), egui::Sense::hover())
@@ -1323,7 +1323,7 @@ impl StartPage {
                         }
                         let text_x = preview.right() + 10.0;
                         // Name and folder stop before the date columns; both are cut with an
-                        // ellipsis instead of a mid-glyph clip (issue #562).
+                        // ellipsis instead of a mid-glyph clip (issue axisrow/BeamCraft#562).
                         let text_width = (columns[1] - (text_x - rect.left()) - 8.0).max(20.0);
                         let names = painter.with_clip_rect(egui::Rect::from_x_y_ranges(
                             text_x..=rect.left() + 4.0 + columns[1],
@@ -1418,7 +1418,7 @@ impl StartPage {
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 // The image gives way first, and what still does not fit the panel scrolls
-                // instead of running past the window bottom (issue #562).
+                // instead of running past the window bottom (issue axisrow/BeamCraft#562).
                 let image_height = (height - 240.0).clamp(110.0, 184.0);
                 egui::ScrollArea::vertical()
                     .id_salt("model-preview-panel")
@@ -1466,7 +1466,7 @@ impl StartPage {
                                 .on_hover_text(error);
                                 // The triangle budget never goes away: only a failure a
                                 // retry could fix offers the button, and it is a themed one
-                                // (issue #562).
+                                // (issue axisrow/BeamCraft#562).
                                 let permanent = error.contains("triangle budget");
                                 if !permanent
                                     && theme::button(ui, Kind::Secondary, "Retry preview", !busy)

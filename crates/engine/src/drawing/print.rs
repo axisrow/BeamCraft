@@ -168,11 +168,19 @@ pub fn lp_arguments(job: &PrintJob) -> Result<Vec<String>, CommandError> {
 /// the filesystem.
 #[cfg(unix)]
 pub fn submit(job: &PrintJob) -> Result<Submission, CommandError> {
+    submit_using("lp", job)
+}
+
+/// Submits through an explicit print program; `submit` is this with the platform's `lp`.
+/// The seam exists so a test can drive a real submission end to end without touching the
+/// environment the other tests share.
+#[cfg(unix)]
+fn submit_using(program: &str, job: &PrintJob) -> Result<Submission, CommandError> {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     let args = lp_arguments(job)?;
-    let Some((program, rest)) = args.split_first() else {
+    let Some((_command, rest)) = args.split_first() else {
         return Err(CommandError::new(
             ErrorCode::BackendUnavailable,
             "drawing_print",
@@ -200,6 +208,10 @@ pub fn submit(job: &PrintJob) -> Result<Submission, CommandError> {
         ));
     };
     if stdin.write_all(&job.pdf).is_err() {
+        // The service may exit before reading the page; reap it either way so no zombie
+        // is left behind.
+        let _ = child.kill();
+        let _ = child.wait();
         return Err(CommandError::new(
             ErrorCode::BackendUnavailable,
             "drawing_print",
@@ -461,6 +473,48 @@ mod tests {
         assert_eq!(
             submit(&job).unwrap_err().code,
             ErrorCode::BackendUnavailable
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_successful_submission_hands_the_page_over_and_reports_the_request_line() {
+        #![allow(clippy::unwrap_used)]
+        use std::os::unix::fs::PermissionsExt;
+
+        // A stub print service: it records the argv it received, reads the page from stdin
+        // into a file and answers with a queue request line. `submit_using` drives it
+        // directly, so the test never touches the shared PATH.
+        let dir = std::env::temp_dir().join(format!("beamcraft-stub-lp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let program = dir.join("lp");
+        let recorded_args = dir.join("args");
+        let page = dir.join("page.pdf");
+        std::fs::write(
+            &program,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat > '{}'\necho 'request id is beamcraft-stub-1 (1 file(s))'\n",
+                recorded_args.display(),
+                page.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let job = PrintJob {
+            pdf: b"%PDF-1.4\nstub page".to_vec(),
+            name: String::from("stub drawing"),
+            printer: Some(String::from("shop-laser")),
+        };
+        let submitted = submit_using(program.to_str().unwrap(), &job).unwrap();
+        assert_eq!(
+            submitted.request,
+            "request id is beamcraft-stub-1 (1 file(s))"
+        );
+        assert_eq!(std::fs::read(&page).unwrap(), b"%PDF-1.4\nstub page");
+        let argv = std::fs::read_to_string(&recorded_args).unwrap();
+        assert_eq!(
+            argv, "-d\nshop-laser\n-J\nstub drawing\n",
+            "the invocation reaches the service as plain arguments"
         );
     }
 }

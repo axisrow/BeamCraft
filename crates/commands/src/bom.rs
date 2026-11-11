@@ -115,7 +115,7 @@ fn plate_row(inspection: &Inspection, marks: &[StoredMark], record: &PlateRecord
 /// The physical length of a member's current solid along its axis. For a straight member it is
 /// the extent of the re-evaluated certified mesh projected onto the axis direction, so a cut
 /// reports the length that physically remains and the derived area stays physical (visual
-/// audit #562 item 3); a polybeam or curved member keeps the body's path length, to which a
+/// audit axisrow/BeamCraft#562 item 3); a polybeam or curved member keeps the body's path length, to which a
 /// single projection does not apply. Without length-changing operations the extent agrees with
 /// the body's own `axis_length_mm` (P14 end offsets included).
 fn member_length_mm(record: &MemberRecord) -> f64 {

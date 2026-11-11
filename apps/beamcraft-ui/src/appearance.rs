@@ -193,7 +193,7 @@ impl Appearance {
 
     /// Reports appearance failures even on screens without an appearance selector. The bar
     /// shows a short word and carries the full reason on hover: a long message drawn here
-    /// runs across the window title and leaves neither legible (issue #562).
+    /// runs across the window title and leaves neither legible (issue axisrow/BeamCraft#562).
     pub fn error_ui(&mut self, ui: &mut egui::Ui, enabled: bool) {
         let palette = Palette::current(ui);
         if let Some(error) = self.error.clone() {
