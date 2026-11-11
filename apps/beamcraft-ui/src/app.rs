@@ -10330,6 +10330,204 @@ mod navigation_tests {
         }
     }
 
+    /// What the status strips drew in one frame, composed like `strip_buttons_at_size` but
+    /// with input: the square switch buttons in paint order (the 20 entity filters, then the
+    /// snap switches the strip shows), every other rect of the band, and the frame of the Snap
+    /// toggle (the smallest band rect around its text; the toggle is on by default).
+    struct Strips {
+        buttons: Vec<egui::Rect>,
+        others: Vec<egui::Rect>,
+        snap_toggle: Option<egui::Rect>,
+    }
+
+    fn strips_at(
+        app: &mut App,
+        ctx: &egui::Context,
+        size: [f32; 2],
+        events: Vec<egui::Event>,
+        time: f64,
+    ) -> Strips {
+        let output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(size[0], size[1]),
+                )),
+                events,
+                time: Some(time),
+                ..Default::default()
+            },
+            |ui| {
+                app.header(ui);
+                app.ribbon(ui);
+                app.status_bar(ui);
+                app.inspector(ui);
+                app.project_browser(ui);
+                egui::CentralPanel::default().show(ui, |_| {});
+            },
+        );
+        let band_top = size[1] - 60.0;
+        let mut buttons = Vec::new();
+        let mut others = Vec::new();
+        let mut snap_text = None;
+        for clipped in &output.shapes {
+            match &clipped.shape {
+                egui::Shape::Rect(rect) if rect.rect.top() >= band_top => {
+                    let r = rect.rect;
+                    if (16.0..=40.0).contains(&r.width()) && (r.width() - r.height()).abs() < 1.0 {
+                        buttons.push(r);
+                    } else {
+                        others.push(r);
+                    }
+                }
+                egui::Shape::Text(text)
+                    if text.pos.y >= band_top && text.galley.text() == "Snap" =>
+                {
+                    snap_text = Some(egui::Rect::from_min_size(text.pos, text.galley.size()));
+                }
+                _ => {}
+            }
+        }
+        output.drop_without_applying_deltas();
+        let snap_toggle = snap_text.and_then(|text| {
+            others
+                .iter()
+                .copied()
+                .filter(|r| r.contains_rect(text))
+                .min_by(|a, b| a.area().total_cmp(&b.area()))
+        });
+        Strips {
+            buttons,
+            others,
+            snap_toggle,
+        }
+    }
+
+    #[test]
+    fn the_status_row_stays_below_the_switch_row_at_every_width() {
+        // The 584 recheck: the scrolling snap strip reserved the space above its switches
+        // rather than where they hang, so the status row (selection, Details, Snap) climbed
+        // 4 px at every width and the Snap toggle painted over the snap switches. The rows
+        // keep their item spacing apart, at a wide window exactly as before the scroll.
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        for size in [
+            [1400.0, 900.0],
+            [1100.0, 800.0],
+            [900.0, 650.0],
+            [800.0, 600.0],
+        ] {
+            let strips = strips_at(&mut app, &ctx, size, Vec::new(), 0.1);
+            assert!(
+                strips.buttons.len() > 20,
+                "the status strips drew at {size:?}: {:?}",
+                strips.buttons
+            );
+            let switches_bottom = strips
+                .buttons
+                .iter()
+                .map(|rect| rect.bottom())
+                .fold(f32::NEG_INFINITY, f32::max);
+            let toggle = strips
+                .snap_toggle
+                .unwrap_or_else(|| panic!("the Snap toggle at {size:?}: {:?}", strips.others));
+            assert!(
+                toggle.top() - switches_bottom >= 2.0,
+                "at {size:?} the Snap toggle starts at {} but the switches reach {switches_bottom}",
+                toggle.top()
+            );
+        }
+    }
+
+    #[test]
+    fn the_plain_wheel_scrolls_the_narrow_snap_strip() {
+        // The 584 recheck: the narrow snap strip scrolled only with Shift held, so the plain
+        // wheel over it did nothing. The strip has one direction, and the wheel scrolls it.
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        let size = [800.0, 600.0];
+        let before = strips_at(&mut app, &ctx, size, Vec::new(), 0.1);
+        let snaps_before: Vec<f32> = before.buttons.iter().skip(20).map(|r| r.left()).collect();
+        let over = before
+            .buttons
+            .get(21)
+            .map(|rect| rect.center())
+            .unwrap_or_else(|| panic!("the snap switches at {size:?}: {:?}", before.buttons));
+        let mut after = before;
+        for frame in 0..12 {
+            let mut events = vec![egui::Event::PointerMoved(over)];
+            if frame < 3 {
+                events.push(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -60.0),
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            after = strips_at(&mut app, &ctx, size, events, 0.2 + f64::from(frame) * 0.05);
+        }
+        let snaps_after: Vec<f32> = after.buttons.iter().skip(20).map(|r| r.left()).collect();
+        assert_ne!(
+            snaps_after, snaps_before,
+            "the plain wheel scrolls the narrow snap strip"
+        );
+    }
+
+    #[test]
+    fn hovering_the_narrow_snap_strip_covers_none_of_its_switches() {
+        // The 584 recheck: hovering the narrow snap strip grew egui's floating scroll bar
+        // over the lower half of the switches it scrolls. Hovering adds nothing over them.
+        let Some(mut app) = headless() else { return };
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        assert!(crate::app::inter(&ctx));
+        let size = [800.0, 600.0];
+        // What lies over a snap switch without covering it whole (the band's own fill does).
+        let over_switches = |strips: &Strips| -> Vec<egui::Rect> {
+            let snaps: Vec<egui::Rect> = strips.buttons.iter().skip(20).copied().collect();
+            strips
+                .others
+                .iter()
+                .copied()
+                .filter(|r| {
+                    snaps
+                        .iter()
+                        .any(|s| r.intersects(*s) && !r.contains_rect(*s))
+                })
+                .collect()
+        };
+        let away = strips_at(&mut app, &ctx, size, Vec::new(), 0.1);
+        let resting = over_switches(&away);
+        let over = away
+            .buttons
+            .get(21)
+            .map(|rect| rect.center())
+            .unwrap_or_else(|| panic!("the snap switches at {size:?}: {:?}", away.buttons));
+        let mut hovered = away;
+        for frame in 0..4 {
+            hovered = strips_at(
+                &mut app,
+                &ctx,
+                size,
+                vec![egui::Event::PointerMoved(over)],
+                0.2 + f64::from(frame) * 0.1,
+            );
+        }
+        let added: Vec<egui::Rect> = over_switches(&hovered)
+            .into_iter()
+            .filter(|r| !resting.contains(r))
+            .collect();
+        assert!(
+            added.is_empty(),
+            "hovering the snap strip paints over its switches: {added:?}"
+        );
+    }
+
     #[test]
     fn an_elided_store_path_shows_a_single_tooltip_on_hover() {
         let Some(mut app) = headless() else { return };

@@ -201,7 +201,7 @@ fn sync_report_must_bind_full_scope_tree_and_both_actual_parents() {
 
 #[test]
 fn required_ci_jobs_cannot_be_skipped_or_failed_while_platform_tests_run_beside_the_pipeline() {
-    let oses = vec!["macos-latest".into(), "windows-latest".into()];
+    let oses = vec!["macos-15".into(), "windows-latest".into()];
     let mut needs = serde_json::json!({});
     for name in ["plan", "quality", "wasm", "deny"] {
         needs[name] = serde_json::json!({"result":"success"});

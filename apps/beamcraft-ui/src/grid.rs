@@ -938,12 +938,15 @@ impl GridScene {
     /// pitch or in an elevation the ends pile up, and stacked labels read as one long chain
     /// (issue 562 items 35 and 38). A line seen nearly end-on owns no labels at all, so an
     /// elevation does not draw a plan grid's labels on one horizontal line. The selected grid's
-    /// bubbles claim their places first. `shown` is the view the pane displays: lines outside
-    /// its depth slab draw and label nothing, so an elevation on grid axis B labels B and not
-    /// the family's first line, which an elevation flattens onto the same screen line (issue
-    /// 584 item 8). The work area is not part of the test: its box may lie strictly inside the
-    /// spans while grid endpoints sit at the model limits, so requiring the endpoints inside
-    /// would drop every guide from a work-area view (PR 587 review).
+    /// bubbles claim their places first. `shown` is the view the pane displays: in a vertical
+    /// view, lines outside its depth slab draw and label nothing, so an elevation on grid axis
+    /// B labels B and not the family's first line, which an elevation flattens onto the same
+    /// screen line (issue 584 item 8). A grid line stands for its vertical grid plane, which a
+    /// plan or inclined slab always crosses, so a depth-limited level plan keeps its whole grid
+    /// (the 584 recheck: a level plan at 2000 with a ±500 depth lost every line). The work
+    /// area is not part of the test: its box may lie strictly inside the spans while grid
+    /// endpoints sit at the model limits, so requiring the endpoints inside would drop every
+    /// guide from a work-area view (PR 587 review).
     pub fn paint(
         &self,
         ui: &egui::Ui,
@@ -953,13 +956,18 @@ impl GridScene {
         selected: Option<&str>,
         shown: Option<&beamcraft_engine::views::ModelView>,
     ) {
-        // A grid line is straight and constant across its family's axis, so its two endpoints
-        // carry the whole line across the depth-slab test.
+        // A grid line stands for the vertical grid plane through it (the engine snaps to grid
+        // guides the same way). A plane that is not vertical meets that grid plane at every
+        // distance, so its slab always crosses it; in a vertical view the distance does not
+        // depend on height, and the line's two ground endpoints carry the whole plane.
         let in_view = |points: &[[f64; 3]; 2]| {
             shown.is_none_or(|v| {
                 let Some([above, below]) = v.depth else {
                     return true;
                 };
+                if crate::views::view_kind(v) != crate::views::ViewKind::Vertical {
+                    return true;
+                }
                 let within = |p: &[f64; 3]| {
                     let d = v.plane_distance(*p);
                     d >= -below && d <= above
@@ -1313,6 +1321,70 @@ mod form_tests {
             as_str(&labels),
             as_str(&free),
             "a work-area view without a depth keeps every guide: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn a_depth_limited_plan_keeps_the_whole_grid() {
+        // The 584 recheck: the item 8 slab test dropped every line from a level plan whose
+        // depth does not reach the grid's ground plane (a level at 2000 with ±500 mm), and
+        // from an inclined view likewise. A grid line stands for its vertical grid plane,
+        // which every plan or inclined slab crosses, so both keep what a free view paints.
+        let scene = demo_scene();
+        fn as_str(labels: &[String]) -> Vec<&str> {
+            labels.iter().map(String::as_str).collect()
+        }
+        let view = |name: &str, plane, depth| {
+            let mut view = beamcraft_engine::views::ModelView::new(
+                beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000003").unwrap(),
+                name,
+                plane,
+                20_000.0,
+            );
+            view.depth = Some(depth);
+            view
+        };
+        let level = beamcraft_engine::work_plane::WorkPlane::parallel("xy", 2000.0).unwrap();
+        let plan = view("L1 plan", level, [500.0, 500.0]);
+        let free = painted_labels(&scene, level, None);
+        assert!(!free.is_empty(), "the free plan labels the grid: {free:?}");
+        let labels = painted_labels(&scene, level, Some(&plan));
+        assert_eq!(
+            as_str(&labels),
+            as_str(&free),
+            "a depth-limited plan keeps the whole grid: {labels:?}"
+        );
+        let tilted = beamcraft_engine::work_plane::WorkPlane::new(
+            [0.0, 0.0, 2000.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.6, 0.8],
+        )
+        .unwrap();
+        let inclined = view("Inclined", tilted, [500.0, 500.0]);
+        let free = painted_labels(&scene, tilted, None);
+        assert!(
+            !free.is_empty(),
+            "the free inclined view labels the grid: {free:?}"
+        );
+        let labels = painted_labels(&scene, tilted, Some(&inclined));
+        assert_eq!(
+            as_str(&labels),
+            as_str(&free),
+            "a depth-limited inclined view keeps the whole grid: {labels:?}"
+        );
+        // A vertical view still tests its slab: the section on line 2 labels 2 alone.
+        let on_2 = beamcraft_engine::work_plane::WorkPlane::new(
+            [4000.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        )
+        .unwrap();
+        let section = view("Section 2", on_2, [300.0, 300.0]);
+        let labels = painted_labels(&scene, on_2, Some(&section));
+        assert_eq!(
+            as_str(&labels),
+            ["2", "2"],
+            "the section on 2 labels 2: {labels:?}"
         );
     }
 
