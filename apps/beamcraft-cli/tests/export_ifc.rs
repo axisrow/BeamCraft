@@ -704,7 +704,10 @@ fn an_assembly_of_parts_is_exported_as_one_ifcelementassembly_aggregating_them()
         "element_id",
     );
     for part in [&plate, &column] {
-        f.ok("attach-to-assembly", &["--id", part, "--assembly-id", &assembly]);
+        f.ok(
+            "attach-to-assembly",
+            &["--id", part, "--assembly-id", &assembly],
+        );
     }
     let report = f.export(&f.path("joint.ifc"), &[]);
     assert_eq!(text(&report, "outcome"), "exported");
