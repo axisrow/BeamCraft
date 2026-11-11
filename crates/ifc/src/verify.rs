@@ -455,6 +455,7 @@ impl StepFile {
                         | "IFCBEAM"
                         | "IFCCOLUMN"
                         | "IFCPLATE"
+                        | "IFCELEMENTASSEMBLY"
                         | "IFCBUILDINGELEMENTPROXY"
                         | "IFCPROPERTYSET"
                         | "IFCELEMENTQUANTITY"
