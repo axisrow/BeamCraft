@@ -245,13 +245,17 @@ impl Publisher {
         });
     }
 
-    /// Records the outcome of a status read.
+    /// Records the outcome of a status read. A failed read never overwrites the publication's
+    /// own result or refusal: the status read retries with the next refresh, while the publish
+    /// outcome is the answer the user is waiting for (issue 569 item 16).
     pub fn set_status(&mut self, result: Result<Status, ToolError>) {
         match result {
             Ok(status) => self.status = Some(status),
             Err(error) => {
                 self.status = None;
-                self.note = Some(Err(format!("workspace status: {error}")));
+                if self.note.is_none() {
+                    self.note = Some(Err(format!("workspace status: {error}")));
+                }
             }
         }
     }

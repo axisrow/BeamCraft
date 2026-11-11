@@ -460,22 +460,30 @@ fn grip_colours() -> [Color32; 2] {
 }
 
 impl App {
+    /// Whether the contour grips take no input and draw nothing: a creation tool or a view pick
+    /// owns the pointer, a bench other than Select owns the clicks (the weld pair pick and the
+    /// annotation placement would lose them), or the selection's reading is stale against the
+    /// head — a live refresh moved the element and the cached contour lags until the re-read
+    /// lands, so the grips would float off the plate (issue 569 item 12).
+    pub(super) fn contour_grips_dormant(&self) -> bool {
+        self.beam_mode
+            || self.plate_mode
+            || self.views.picking.is_some()
+            || self.bench != workbench::Bench::Select
+            || !matches!(self.props.state(), Some(crate::props::State::Current))
+    }
+
     /// Feeds one frame of the pane's pointer to the contour grips. Returns true when the grips
     /// consumed the input: while a promoted drag runs nothing else may take the click, and the
-    /// frame that releases a grip commits its edit. Grips stay dormant while a creation tool is
-    /// armed, a view pick is in progress, or another bench than Select owns the clicks (the
-    /// weld pair pick and the annotation placement would lose them); a selection without a
-    /// plate contour resets them.
+    /// frame that releases a grip commits its edit. Grips stay dormant while
+    /// [`App::contour_grips_dormant`] holds; a selection without a plate contour resets them.
     pub(crate) fn contour_input(
         &mut self,
         ui: &egui::Ui,
         response: &Response,
         view: &crate::camera::View,
     ) -> bool {
-        let dormant = self.beam_mode
-            || self.plate_mode
-            || self.views.picking.is_some()
-            || self.bench != workbench::Bench::Select;
+        let dormant = self.contour_grips_dormant();
         let Some(contour) = self
             .editor
             .selected()

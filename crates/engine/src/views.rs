@@ -643,6 +643,12 @@ impl ViewBook {
         self.views.iter().find(|v| v.id == *id)
     }
 
+    /// The view with this identity, to change in place. A display-only change (the render mode,
+    /// the grid guides) cannot invalidate the view, so it needs no `update` round trip.
+    pub fn get_mut(&mut self, id: &Uuid7) -> Option<&mut ModelView> {
+        self.views.iter_mut().find(|v| v.id == *id)
+    }
+
     /// The view named by `selector`: its identity, or its exact name (case-insensitively).
     pub fn find(&self, selector: &str) -> Option<&ModelView> {
         if let Ok(id) = Uuid7::parse(selector)
@@ -1531,6 +1537,19 @@ mod tests {
                 "beam",
             )],
         )
+    }
+
+    #[test]
+    fn get_mut_changes_one_view_in_place_without_a_validation_round_trip() {
+        let mut book = ViewBook::new();
+        book.insert(view(1, "A")).unwrap();
+        let seen = book.get_mut(&id(1)).is_some_and(|v| {
+            v.render_mode = RenderMode::Wireframe;
+            true
+        });
+        assert!(seen, "the view is there");
+        assert_eq!(book.get(&id(1)).unwrap().render_mode, RenderMode::Wireframe);
+        assert!(book.get_mut(&id(2)).is_none());
     }
 
     #[test]

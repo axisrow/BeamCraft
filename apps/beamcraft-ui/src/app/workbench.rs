@@ -1063,7 +1063,9 @@ impl App {
     }
 
     /// What the active editor last has to tell the user (an outcome or a refusal), for the
-    /// status bar: the panel of the bench in use first, then the selection's edits.
+    /// status bar: the panel of the bench in use first, then the selection's edits, then the
+    /// publication, whose result and refusal must be readable long after the dialog closed
+    /// (issue 569 item 16).
     pub(crate) fn status_note(&self) -> Option<Result<&str, &str>> {
         let bench_note = match self.bench {
             Bench::View => self.views.note.as_ref(),
@@ -1074,11 +1076,13 @@ impl App {
             Bench::Annotations => self.annotation.note.as_ref(),
             Bench::Move | Bench::Copy | Bench::Delete => self.edit_note.as_ref(),
             Bench::Select => self.props_note.as_ref().or(self.grid_note.as_ref()),
-            Bench::CutPlane | Bench::Colour => None,
+            Bench::CutPlane => self.cut_note.as_ref(),
+            Bench::Colour => None,
         };
         bench_note
             .or(self.edit_note.as_ref())
             .or(self.views.note.as_ref())
+            .or(self.publisher.note.as_ref())
             .map(|note| note.as_ref().map(String::as_str).map_err(String::as_str))
     }
 
@@ -1564,13 +1568,17 @@ impl App {
                             .color(palette.side_text()),
                         );
                         ui.add(
+                            // The path elides on one line with a tooltip: a deep folder wraps
+                            // past the window edge otherwise, and the tail is never drawn
+                            // (issue 569 item 26).
                             egui::Label::new(
                                 RichText::new(self.source.store.display().to_string())
                                     .size(10.0)
                                     .color(palette.side_text()),
                             )
-                            .wrap(),
-                        );
+                            .truncate(),
+                        )
+                        .on_hover_text(self.source.store.display().to_string());
                     });
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
