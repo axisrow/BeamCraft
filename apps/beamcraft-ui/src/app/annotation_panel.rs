@@ -290,37 +290,31 @@ pub(crate) fn paint(
     // The rectangles labels already claim: a new label that would overprint one stacks below
     // it instead (issue 569 item 23).
     let mut claimed: Vec<egui::Rect> = Vec::new();
-    let mut label = |mid: egui::Pos2, line: Option<egui::Vec2>, text: String, color: Color32| {
-        let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), color);
-        // Beside the line, on one side: the offset follows the line's screen normal, along its
-        // dominant axis, so a rising line never runs through its own label. Without a line (a
-        // mark) the label sits above the point.
-        let (anchor, align) = match line.map(egui::Vec2::normalized) {
-            Some(n) if n.x.abs() >= n.y.abs() => (
-                mid + egui::vec2(if n.x > 0.0 { 4.0 } else { -4.0 }, 0.0),
-                if n.x > 0.0 {
-                    egui::Align2::LEFT_CENTER
-                } else {
-                    egui::Align2::RIGHT_CENTER
-                },
-            ),
-            Some(n) => (
-                mid + egui::vec2(0.0, if n.y > 0.0 { 4.0 } else { -4.0 }),
-                if n.y > 0.0 {
-                    egui::Align2::CENTER_TOP
-                } else {
-                    egui::Align2::CENTER_BOTTOM
-                },
-            ),
-            None => (mid + egui::vec2(0.0, -6.0), egui::Align2::CENTER_BOTTOM),
+    let mut label =
+        |mid: egui::Pos2, line: Option<(egui::Pos2, egui::Pos2)>, text: String, color: Color32| {
+            let galley = painter.layout_no_wrap(text, egui::FontId::proportional(12.0), color);
+            // Beside the line, on one side: the offset follows the line's screen normal, far
+            // enough that the label's nearest corner clears the line by 4 px — the distance along
+            // a normal from a box's centre to its support point — so no angle of line runs through
+            // its own label (issue 584 item 2: a dominant-axis 4 px anchor let a horizontal or
+            // vertical line cross the middle of its label). Without a line (a mark) the label sits
+            // above the point.
+            let (anchor, align) = match line {
+                Some((from, to)) if (to - from).length_sq() > 1.0 => {
+                    let n = (to - from).normalized().rot90();
+                    let half = galley.size() * 0.5;
+                    let clear = n.x.abs() * half.x + n.y.abs() * half.y + 4.0;
+                    (mid + n * clear, egui::Align2::CENTER_CENTER)
+                }
+                _ => (mid + egui::vec2(0.0, -6.0), egui::Align2::CENTER_BOTTOM),
+            };
+            let mut placed = align.anchor_size(anchor, galley.size());
+            while claimed.iter().any(|other| other.intersects(placed)) {
+                placed = placed.translate(egui::vec2(0.0, placed.height() + 2.0));
+            }
+            claimed.push(placed);
+            painter.galley(placed.min, galley, color);
         };
-        let mut placed = align.anchor_size(anchor, galley.size());
-        while claimed.iter().any(|other| other.intersects(placed)) {
-            placed = placed.translate(egui::vec2(0.0, placed.height() + 2.0));
-        }
-        claimed.push(placed);
-        painter.galley(placed.min, galley, color);
-    };
     for row in rows {
         if !keep(row) {
             continue;
@@ -352,7 +346,7 @@ pub(crate) fn paint(
                     // label belongs beside what is actually visible (issue 569 item 22).
                     if let Some((cp, cq)) = label_span(p, q, rect) {
                         let mid = egui::pos2((cp.x + cq.x) / 2.0, (cp.y + cq.y) / 2.0);
-                        label(mid, Some(cq - cp), text, stroke.color);
+                        label(mid, Some((cp, cq)), text, stroke.color);
                     }
                 }
             }
@@ -366,7 +360,7 @@ pub(crate) fn paint(
                     painter.line_segment([p, q], stroke);
                     painter.circle_filled(p, 2.5, stroke.color);
                     if let Some(text) = text {
-                        label(q, Some(q - p), text, stroke.color);
+                        label(q, Some((p, q)), text, stroke.color);
                     }
                     continue;
                 }
@@ -933,5 +927,74 @@ mod tests {
             !texts[0].intersects(texts[1]),
             "labels at one midpoint stack instead of overprinting"
         );
+    }
+
+    /// Whether the segment `a..b` reaches `rect`: an endpoint inside, or a crossing of one of
+    /// the rectangle's four edges.
+    fn segment_reaches(rect: egui::Rect, a: egui::Pos2, b: egui::Pos2) -> bool {
+        fn area(p: egui::Pos2, q: egui::Pos2, r: egui::Pos2) -> f32 {
+            (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
+        }
+        fn straddle(p1: egui::Pos2, p2: egui::Pos2, q1: egui::Pos2, q2: egui::Pos2) -> bool {
+            area(p1, p2, q1) * area(p1, p2, q2) < 0.0 && area(q1, q2, p1) * area(q1, q2, p2) < 0.0
+        }
+        if rect.contains(a) || rect.contains(b) {
+            return true;
+        }
+        let corners = [
+            rect.left_top(),
+            rect.right_top(),
+            rect.right_bottom(),
+            rect.left_bottom(),
+        ];
+        (0..4).any(|i| {
+            let c = corners[i];
+            let d = corners[(i + 1) % 4];
+            straddle(a, b, c, d)
+        })
+    }
+
+    /// Issue 584 item 2: each label sits beside its own line, never on it — a horizontal, a
+    /// vertical and a rising diagonal edge (the Top view of the issue's plate) must all keep
+    /// their labels clear of the segments the painter drew.
+    #[test]
+    fn a_label_stays_clear_of_its_own_line() {
+        let mut camera = crate::camera::Camera::new([500.0, 300.0, 20.0], 2000.0, 2.0).unwrap();
+        camera
+            .navigate(
+                [0.0 - -0.8, std::f32::consts::FRAC_PI_2 - 0.85],
+                [0.0, 0.0],
+                0.0,
+            )
+            .unwrap();
+        camera.set_projection(true);
+        let view = camera.view(2.0).unwrap();
+        let rows = [
+            dimension_row("LEN", [0.0, 0.0, 20.0], [1000.0, 0.0, 20.0]),
+            dimension_row("WID", [1000.0, 0.0, 20.0], [1000.0, 600.0, 20.0]),
+            dimension_row("DG1", [0.0, 0.0, 20.0], [1000.0, 600.0, 20.0]),
+        ];
+        let shapes = painted_shapes(&view, &rows);
+        let mut pairs: Vec<(egui::Pos2, egui::Pos2, egui::Rect)> = Vec::new();
+        let mut last: Option<(egui::Pos2, egui::Pos2)> = None;
+        for shape in shapes {
+            match shape {
+                egui::Shape::LineSegment { points, .. } => last = Some((points[0], points[1])),
+                egui::Shape::Text(text) => {
+                    let rect = egui::Rect::from_min_size(text.pos, text.galley.size());
+                    if let Some((a, b)) = last {
+                        pairs.push((a, b, rect));
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(pairs.len(), 3, "every dimension drew its line and label");
+        for (name, (a, b, rect)) in ["LEN", "WID", "DG1"].into_iter().zip(pairs) {
+            assert!(
+                !segment_reaches(rect, a, b),
+                "{name}'s line runs through its own label"
+            );
+        }
     }
 }

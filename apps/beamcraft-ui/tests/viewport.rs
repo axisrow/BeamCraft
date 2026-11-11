@@ -1126,6 +1126,87 @@ fn a_body_cut_through_face_on_still_shows_its_section() {
     assert!(seen > 0, "a face-on cut body keeps its section visible");
 }
 
+/// Issue 584 item 4: looking straight along a depth slab's normal, a body both of whose end
+/// faces the slab clips used to draw nothing at all — the walls are edge-on and rasterize no
+/// fragments, so neither the crossing outline nor a dimmed inside remained. The face-on cap
+/// paints the section ink there instead.
+#[test]
+fn a_face_on_depth_slab_shows_the_cut_body_as_a_section() {
+    let pin = ViewPin::new(Sha256::digest(b"cut-slab-face-on").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let gpu = gpu();
+    let stats = Stats::default();
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    // Straight top view, orthographic: the eye runs along the slab's plane normals.
+    camera
+        .navigate(
+            [0.0 - -0.8, std::f32::consts::FRAC_PI_2 - 0.85],
+            [0.0, 0.0],
+            0.0,
+        )
+        .unwrap();
+    camera.set_projection(true);
+    let view = camera.view(1.0).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
+    let picture = |clip: &ClipGpu| {
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+            clip,
+        );
+        wait(&gpu.device, index).unwrap();
+        renderer.readback(&gpu.device, &gpu.queue).unwrap().0
+    };
+    // The slab clips the plate's 0 and 20 end faces away: [5, 15] keeps only wall material.
+    let bounds = scene.summary();
+    let slab = Clipping {
+        planes: vec![
+            ClipPlane::new([0.0, 0.0, bounds.origin_mm[2] + 15.0], [0.0, 0.0, -1.0]).unwrap(),
+            ClipPlane::new([0.0, 0.0, bounds.origin_mm[2] + 5.0], [0.0, 0.0, 1.0]).unwrap(),
+        ],
+        area: None,
+    };
+    // The section ink, CUT_OUTLINE sRGB bytes (0, 180, 216) within MSAA blending.
+    let cap_ink = |p: &[u8; 4]| {
+        p[0] <= 8 && (p[1] as i16 - 180).abs() <= 4 && (p[2] as i16 - 216).abs() <= 4 && p[3] == 255
+    };
+    let ink = |pixels: &[u8]| {
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| cap_ink(p))
+            .count()
+    };
+    let drawn = ink(&picture(&ClipGpu::of(&slab, bounds.origin_mm)));
+    // The control: the same straight-through view without a cut draws the body, whose face-on
+    // silhouette is the section's own footprint.
+    let uncut = picture(&ClipGpu::none());
+    let whole = uncut
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|p| !is_background(**p))
+        .count();
+    assert!(whole > 0, "the uncut body draws face-on");
+    // Before the cap the straight-through slab picture kept only sliver fragments and crossing
+    // specks, under a fifth of the silhouette's area in ink; the cap fills about a third of it
+    // at this scale, the rest being MSAA-blended edges. Resolution moves both counts together,
+    // so the test pins the filled section, not a pixel threshold.
+    assert!(
+        drawn > 10 && drawn * 5 > whole,
+        "a face-on slab draws the body's filled section: {drawn} ink pixels against {whole} body pixels"
+    );
+}
+
 /// V15: a display cut hides pixels in the image only. The masked picture keeps the bodies
 /// that straddle the plane (conservative), an empty work area hides everything, and the cut
 /// leaves the snapshot and its token untouched.

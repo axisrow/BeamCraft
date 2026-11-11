@@ -373,7 +373,9 @@ fn pipeline(
             },
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
+                // The face-on cap of a cut (issue 584 item 4) clamps vertices onto a plane in
+                // the vertex stage, so the clip planes must be readable there too.
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
