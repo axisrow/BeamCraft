@@ -22,10 +22,11 @@ use beamcraft_model::command::CommandError;
 use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::{DocumentVersionId, DrawingViewId};
 
-/// Title block width in millimetres, anchored inside the frame's bottom-right corner.
-const TITLE_BLOCK_WIDTH_MM: f64 = 160.0;
-/// Title block height in millimetres: four equal rows.
-const TITLE_BLOCK_HEIGHT_MM: f64 = 44.0;
+/// Title block width in millimetres, anchored inside the frame's bottom-right corner. Public
+/// because the sheet editor preview draws the same block the export draws and enforces.
+pub const TITLE_BLOCK_WIDTH_MM: f64 = 160.0;
+/// Title block height in millimetres: four equal rows, shared with the preview like the width.
+pub const TITLE_BLOCK_HEIGHT_MM: f64 = 44.0;
 /// Width of the fixed label column inside the title block.
 const TITLE_BLOCK_LABEL_MM: f64 = 30.0;
 /// Number of title block rows, bottom to top: scale, author, drawing, project.
