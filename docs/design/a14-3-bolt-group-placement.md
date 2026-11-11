@@ -27,7 +27,7 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
 | Area | What exists |
 |---|---|
 | `steel::model::command` | `BoltGroupInputs` (2 to 1024 distinct parts, the digest and complete `FastenerSpec` of the pinned definition, two distinct points, a unit plane normal, rotation in radians, `on_plane`/`depth`/`offset_start`, `BoltSpacing` and `BoltLength`), `CreateBoltGroup` and `UpdateBoltGroup` with admission (`F04` codes, the vocabulary rules) and versioned content fingerprints. The definition travels by digest: equal digests are equal definitions, so the fingerprint carries the digest, not the fifteen values. |
-| `steel::engine::bolt` | `place_bolt_group`: the frame (`x` along the row, `z` the plane normal's component perpendicular to `x` turned by the rotation, `y = z × x`), the authoritative spacings (the generators expand once and travel with the group), the bearing points (`point1 + on_plane·y + depth·z + s_i·x`) and the one length for the whole group. The crossing admission stays the conservative A05 boxes (a part the axis never crosses is refused); the grip itself is face-exact (issue 519 defect B): the union length of the shank inside the actual faces of the crossed parts — the world triangles of their stored scene meshes, exact under any placement rotation, overlapping parts merged. A part without a usable stored mesh grips per its conservative box, which errs long and never under. `auto` picks the smallest listed length over the largest grip plus the far washers, the nut and the protrusion; a fixed length must be listed and must cover the joint. `Parts::create_bolt_group`/`update_bolt_group` add the identity, the parts' kinds and the footprints. |
+| `steel::engine::bolt` | `place_bolt_group`: the frame (`x` along the row, `z` the plane normal's component perpendicular to `x` turned by the rotation, `y = z × x`), the authoritative spacings (the generators expand once and travel with the group), the bearing points (`point1 + on_plane·y + depth·z + s_i·x`) and the one length for the whole group. The crossing admission stays the conservative A05 boxes (a part the axis never crosses is refused); the grip itself is face-exact (issue 519 defect B): the union length of the shank inside the actual faces of the crossed parts — the world triangles of their stored scene meshes, exact under any placement rotation, overlapping parts merged. A part without a usable stored mesh grips per its conservative box, which errs long and never under. `auto` picks the smallest listed length over the largest grip plus the head height, the far washers, the nut and the protrusion; a fixed length must be listed and must cover the joint. `Parts::create_bolt_group`/`update_bolt_group` add the identity, the parts' kinds and the footprints. |
 | `beamcraft_layer_engine::authored` | `Shape::bolt_group` and `Change::bolt_group` (the discipline hooks of the element interface): fifteen `steel:bolt:*` attributes (the definition digest, both points, the normal, rotation, the position values, the spacing mode and value, the authoritative spacings, the length mode and the resolved length, the washer switches) replaced as a whole on every write; the `connects` record carries 2 to 1024 targets. The loaded-content discriminator is the definition digest: an A05 group (the five annotation attributes) and an A14.3 group (the fifteen) are never mixed, and a stored group re-validates against its pinned definition (the resolved length is a listed length, a washer switch honours the definition). The schema descriptor gains the A14.3 lines; pre-alpha stores are not migrated (the standing rule). |
 | `beamcraft_commands::bolt_cmd` | `create_bolt_group`: resolves the library entry, pins its definition **in the same transaction** when the model does not hold the digest yet, decides the placement, authors the group and publishes one revision. Replay is decided from the operation's own revision (the group created there, present, and matching the complete record); otherwise `OP_ID_REUSE`. `update_bolt_group`: the complete new inputs replace the stored record as one atomic edit and one undo unit; a `repin` takes the current library entry and pins it; the stored definition is otherwise kept verbatim even if the file changed. `bolts` lists both forms. |
 
@@ -69,13 +69,15 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
   opening wider than the washer, or a box overlap past the part's outline) is refused with
   `INVALID_ARGUMENT`, field `parts`: the group would not clamp it, and it is never silently
   dropped from the grip.
-  The length rule reads "plus the washers" as every washer the shank passes through: the bolt
-  length runs from under the head, so a washer under the head lies on the shank exactly as the
-  washer under the nut does (EN 15048-1 / EN 1993-1-8 3.6 clamp length). `auto` is the smallest
-  listed length covering grip + head washer + nut washer (each when placed) + nut + protrusion
-  (issue 555 audit item 9; the earlier rule left the head washer out and could resolve one
-  step short). The A14.2 prototype stack draws the head washer, the head and the shank from the
-  bearing face as before: it is the schematic prototype, not the assembled position.
+  The length rule reads "plus the washers" as every washer the shank passes through, and the
+  length requirement adds the head height (EN 15048-1 / EN 1993-1-8 3.6 clamp length): the
+  bearing plane is the joint face, the head washer and the head stack outside the joint below
+  it, the shank starts inside the head and runs through it into the joint, and the nut stack
+  hangs downward from the thread tip, so a length covering grip + head + head washer + nut
+  washer (each when placed) + nut + protrusion seats the nut washer exactly on the far plate.
+  `auto` is the smallest listed length covering that requirement (issue 555 audit item 9; the
+  earlier rule left the head out and could resolve one step short, and the earlier prototype
+  stacked the whole assembly inside the joint).
 - **The digest is the definition identity.** The command carries the digest and the resolved
   spec; the adapter re-renders the canonical resource and refuses a mismatch, the engine
   re-admits the spec for its decisions, and the layer validator re-checks the stored record

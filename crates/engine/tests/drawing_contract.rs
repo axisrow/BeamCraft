@@ -119,6 +119,24 @@ fn titles_and_the_name_admit_only_what_the_stroke_glyphs_draw() {
 }
 
 #[test]
+fn a_stored_revision_re_admits_text_the_glyph_set_grew_to_refuse_and_its_export_gates() {
+    // The glyph rule is presentation-era (the review on the 1111 batch): a drawing authored
+    // while the name admitted any bounded label must still open after the upgrade, because
+    // gating decode would refuse every document command on it with no migration path. The
+    // authoring admission refuses the same text, and the stored revision's drawn export
+    // refuses honestly until the document is retitled.
+    let mut s = spec();
+    s.name = "Чертёж вала".into();
+    assert_eq!(Drawing::admit(s.clone()).unwrap_err().field, "name");
+    let stored = Drawing::admit_stored(s).unwrap();
+    assert_eq!(stored.ensure_drawable_text().unwrap_err().field, "name");
+    let mut s = spec();
+    s.name = "SHAFT DRAWING".into();
+    let authored = Drawing::admit(s).unwrap();
+    assert!(authored.ensure_drawable_text().is_ok());
+}
+
+#[test]
 fn admission_accepts_only_member_vertex_references_of_the_selected_owner() {
     let admitted = Drawing::admit(spec()).unwrap();
     assert_eq!(admitted.spec(), &spec());

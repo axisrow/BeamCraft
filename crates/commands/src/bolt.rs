@@ -360,6 +360,18 @@ fn world_geometry(decoded: &crate::plate::Decoded) -> Result<Geometry, Refusal> 
     let mut slabs = BTreeMap::new();
     let profiles = profile_lookup(&decoded.definitions);
     for (authored, mesh) in &decoded.plates {
+        // A framed (out-of-plane contour) plate carries its material along its contour
+        // frame, not the element-local Z this slab and the world bounds assume, so the
+        // bearing and generated-hole decisions would read the wrong slab and mis-decide
+        // (the review on the 1111 batch). Refuse the group honestly; the frame-aware bolt
+        // slice is a documented follow-up.
+        if authored.contour_points_mm.iter().any(|p| p[2] != 0.0) {
+            return Err(Refusal::new(
+                ErrorCode::UnsupportedGeometry,
+                "a framed (out-of-plane contour) plate in a bolt group has no slab this \
+                 slice reads",
+            ));
+        }
         let placement = authored.placement;
         let translation = placement.translation_mm;
         // The local box lays the thickness off by the authored side (issue 555 finding 3):

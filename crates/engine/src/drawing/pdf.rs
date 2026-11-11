@@ -164,6 +164,9 @@ pub fn export(
     version: DocumentVersionId,
     projection: &Projection,
 ) -> Result<Vec<u8>, CommandError> {
+    // A stored revision with a now-undrawable name or title exports as blanks; refuse the
+    // drawn surface honestly instead (visual audit finding 11).
+    drawing.ensure_drawable_text()?;
     let (groups, _) = stroke_groups(projection)?;
     let drafting = drafting_layers(drawing)?;
     let [min_x, min_y, max_x, max_y] = bounds(

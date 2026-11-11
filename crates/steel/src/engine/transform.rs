@@ -18,11 +18,13 @@
 //! Contours, holes and corner treatments are through-thickness or in-plane and need no change.
 //! A polybeam or curved member, and a plate with bend records (A10), have no expressible
 //! symmetry and refuse a mirror with `UNSUPPORTED_GEOMETRY`. The member re-encode is exact
-//! for sections symmetric about their own height axis (I, TEE, channel, hollow and cold-formed
-//! families) and preserves the profile handedness of the rest (an L or a Z), because the
-//! profile sweep keeps the unmirrored profile definition; there is no mirrored-profile
-//! definition yet. Arrays reuse the copy rules (fresh identities, freshly minted records) and
-//! give each copy the stepped placement.
+//! for sections symmetric about their own height axis (I, channel, hollow, lipped C and plain
+//! C). An omega (hat) profile is not height-symmetric and its across-width flip is not
+//! expressible either, so it refuses rather than silently rebuilding the hat upside-down; the
+//! handed profiles (an angle or a Z) and a custom outline keep their documented handedness
+//! limit, because the profile sweep keeps the unmirrored profile definition; there is no
+//! mirrored-profile definition yet. Arrays reuse the copy rules (fresh identities, freshly
+//! minted records) and give each copy the stepped placement.
 
 use crate::engine::command::AuthoredPlate;
 use crate::engine::member::AuthoredMember;
@@ -370,7 +372,9 @@ pub fn mirror_plate_local(plate: &mut AuthoredPlate) -> Result<(), CommandError>
 /// * the roll becomes `pi - roll`, the negated roll composed with the half turn the flipped
 ///   sweep frame itself applies. Without the half turn the rebuilt section keeps the
 ///   unflipped across-width profile and a channel renders as a translated copy (issue 562
-///   item 4); with it, a height-symmetric section is exact.
+///   item 4); with it, a height-symmetric section is exact. An omega profile is exact under
+///   neither flip, so the patch layer refuses it before this re-encode runs
+///   (`UNSUPPORTED_GEOMETRY`, the review on the 1111 batch).
 ///
 /// A polybeam or a curved member refuses: its path has no expressible mirror symmetry
 /// (`UNSUPPORTED_GEOMETRY`).

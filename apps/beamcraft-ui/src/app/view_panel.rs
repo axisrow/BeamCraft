@@ -288,6 +288,7 @@ impl App {
             Ok(merged) => {
                 self.views.book = merged.clone();
                 self.views.baseline = merged;
+                self.reconcile_panes_with_book();
             }
             Err(e) => self.view_note(Err(e)),
         }
@@ -297,7 +298,9 @@ impl App {
     /// also serves the CLI headlessly, and a scene that came from another process usually
     /// carries its view changes with it (issue 569 item 3). A store the window has not
     /// written views beside yet has no file: nothing to adopt, and an empty read must not
-    /// take the book for deleted. A failure is a note.
+    /// take the book for deleted. A failure is a note; so is a file that would drop a
+    /// session temporary view — the session's temporary views always survive an adoption,
+    /// the same clash the persist merge refuses loudly (the review on the 1111 batch).
     pub(crate) fn adopt_views_file(&mut self) {
         if !crate::views::session_path(&self.source.store).exists() {
             return;
@@ -313,13 +316,59 @@ impl App {
                     .cloned()
                     .collect();
                 for view in temporary {
-                    let _ = book.insert(view);
+                    if let Err(e) = book.insert(view) {
+                        self.view_note(Err(e.to_string()));
+                        return;
+                    }
                 }
                 self.views.baseline = book.clone();
                 self.views.book = book;
+                self.reconcile_panes_with_book();
             }
             Err(e) => self.view_note(Err(e)),
         }
+    }
+
+    /// Re-anchors the open panes to the book after an adoption or a persist merge swapped it
+    /// under them (the review on the 1111 batch): a pane whose view the new book no longer
+    /// holds re-anchors to the default view instead of dangling as a silent free view, and a
+    /// surviving view's pane takes the book's render mode, grid guides and name, which
+    /// `activate_view` never re-reads for the same id.
+    fn reconcile_panes_with_book(&mut self) {
+        let default = self.default_view_id();
+        let default_view = default
+            .as_ref()
+            .and_then(|id| self.views.book.get(id).cloned());
+        let origin = self.view_origin();
+        let extent = self.view_extent();
+        for pane in &mut self.views.panes {
+            let Some(id) = pane.view else { continue };
+            match self.views.book.get(&id) {
+                Some(view) => {
+                    pane.mode = view.render_mode;
+                    pane.grids = view.grids_visible;
+                    pane.title = view.name.clone();
+                }
+                None => match default_view.as_ref() {
+                    Some(view) => {
+                        pane.view = default;
+                        pane.title = view.name.clone();
+                        pane.mode = view.render_mode;
+                        pane.grids = view.grids_visible;
+                        if let Ok(camera) = Camera::from_view(view, origin, extent) {
+                            pane.camera = camera;
+                        }
+                    }
+                    None => {
+                        pane.view = None;
+                        pane.title = "3D view".to_owned();
+                    }
+                },
+            }
+        }
+        self.views
+            .open
+            .retain(|id| self.views.book.get(id).is_some());
     }
 
     /// The default view's identity: the view a model opens on, and the one that stands for

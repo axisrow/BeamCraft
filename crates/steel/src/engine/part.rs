@@ -22,10 +22,35 @@ use crate::model::command::{
     ArrayElements, CopyElement, CutRecord, ElementPatch, MemberKind, PlateSide,
 };
 use crate::model::instance::PartKind;
+use crate::model::section::{SectionFamily, SectionShape};
 use beamcraft_engine::solid::SolidMesh;
 use beamcraft_model::command::{CommandError, Placement};
 use beamcraft_model::digest::ContentDigest;
+use beamcraft_model::error::ErrorCode;
 use beamcraft_model::id::ElementId;
+
+/// The mirror gate over the standing profile: the straight-member re-encode flips the depth
+/// side and composes the half turn about the axis, so it rebuilds the placed section exactly
+/// only when the profile is symmetric about its own height axis. An omega (hat) profile is
+/// not, and its across-width flip is not expressible either, so it refuses rather than
+/// silently rebuilding the hat upside-down (the review on the 1111 batch). The handed
+/// profiles (an angle or a Z) and a custom outline keep their documented handedness limit.
+fn refuse_omega_mirror(patch: &ElementPatch, profile: &ProfileInfo) -> Result<(), CommandError> {
+    if patch.mirror.is_some()
+        && let ProfileInfo::Section {
+            shape: SectionShape::Parametric(p),
+            ..
+        } = profile
+        && p.family() == SectionFamily::Omega
+    {
+        return Err(CommandError::new(
+            ErrorCode::UnsupportedGeometry,
+            "mirror",
+            "an omega profile has no expressible mirrored re-encode; the world mirror would rebuild the hat upside-down",
+        ));
+    }
+    Ok(())
+}
 
 /// A committed steel part with its evaluated body and quantities.
 #[derive(Debug, Clone, PartialEq)]
@@ -252,19 +277,24 @@ impl PartRecord {
                 }))
             }
             Self::Member(head) => {
+                // The resolved profile of the patch (the replacement it names, else the
+                // standing one): the mirror's family refusal and the re-evaluation read it.
+                let standing = if patch.mirror.is_some() || shape {
+                    match patch.member.profile {
+                        Some(digest) => profile(&digest)?,
+                        None => head.body.profile.clone(),
+                    }
+                } else {
+                    head.body.profile.clone()
+                };
+                refuse_omega_mirror(patch, &standing)?;
                 let authored = patch_member(&head.authored, patch)?;
                 let info = authored.material.as_ref().map(&material).transpose()?;
                 // A path patch (P12) is the supported member shape edit: the body is
                 // re-evaluated from the resolved profile. The other supported member edits
                 // change metadata, placement or material, never local shape.
                 let body = if shape {
-                    // A profile patch rebuilds the body from the new section; any other shape
-                    // patch keeps the standing one.
-                    let resolved = match patch.member.profile {
-                        Some(digest) => profile(&digest)?,
-                        None => head.body.profile.clone(),
-                    };
-                    evaluate_member(&authored, resolved)?
+                    evaluate_member(&authored, standing)?
                 } else {
                     head.body.clone()
                 };
@@ -297,6 +327,7 @@ impl PartRecord {
                 quantities: next.quantities,
             }))),
             (Self::Member(next), Self::Member(head)) => {
+                refuse_omega_mirror(patch, &head.body.profile)?;
                 Some(Self::Member(Box::new(MemberRecord {
                     authored: patch_member(&head.authored, patch)?,
                     body: next.body.clone(),

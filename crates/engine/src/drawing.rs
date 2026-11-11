@@ -266,6 +266,23 @@ fn finite_range(value: f64, min: f64, max: f64, field: &'static str) -> Result<(
     Ok(())
 }
 
+/// Validates one view's authored title; a present title obeys the bounded label rule, an
+/// absent one is the unannotated default. The glyph half of the rule lives in
+/// [`validate_drawable_text`], so a stored revision authored before the glyph set grew can
+/// still be re-admitted at decode ([`Drawing::admit_stored`]).
+fn validate_title(title: &Option<String>) -> Result<(), CommandError> {
+    let Some(title) = title else {
+        return Ok(());
+    };
+    if !label_is_valid(title) {
+        return Err(invalid(
+            "title",
+            "view title must satisfy the bounded label rule",
+        ));
+    }
+    Ok(())
+}
+
 /// Validates the sheet's authored title block. Both fields draw through the stroke
 /// glyphs on the sheet's title block, so a character they cannot draw refuses here: an
 /// admitted Cyrillic author or project name would otherwise blank its own marks in the
@@ -288,27 +305,49 @@ fn validate_title_block(sheet: &SheetSpec) -> Result<(), CommandError> {
     Ok(())
 }
 
-/// Validates one view's authored title; a present title obeys the bounded label rule and
-/// draws with the stroke glyphs, an absent one is the unannotated default. A character
-/// the glyphs cannot draw refuses here: a title that silently blanked its own marks lied
-/// about its content exactly like a drawn text object would (visual audit finding 11).
-fn validate_title(title: &Option<String>) -> Result<(), CommandError> {
-    let Some(title) = title else {
-        return Ok(());
-    };
-    if !label_is_valid(title) {
+/// The glyph half of one authored text field: a character the stroke glyphs cannot draw
+/// advances a blank gap in the drawn output and the text silently lies about its content
+/// (visual audit finding 11).
+fn refuse_undrawable(field: &'static str, text: &str) -> Result<(), CommandError> {
+    if text.chars().any(|ch| !svg::draws(ch)) {
         return Err(invalid(
-            "title",
-            "view title must satisfy the bounded label rule",
+            field,
+            "text draws with the drawing's own stroke glyphs; a character outside the \
+             supported set cannot be drawn faithfully (use ASCII capitals, digits \
+             and , ; / ( ) + = # & _ % - : .)",
         ));
     }
-    if title.chars().any(|ch| !svg::draws(ch)) {
-        return Err(invalid(
-            "title",
-            "title draws with the drawing's own stroke glyphs; a character outside the \
-             supported set cannot be drawn faithfully (use ASCII capitals, digits and \
-             , ; / ( ) + = # & _ % - : .)",
-        ));
+    Ok(())
+}
+
+/// The every-mark-draws half of the admission (visual audit finding 11): the drawing name,
+/// the primary view title, every placed, section and detail view title and the title block's
+/// project and author must draw with the drawing's own stroke glyphs. This is a
+/// presentation-era rule that evolved after some published revisions were authored, so it
+/// gates authoring ([`Drawing::admit`]) and drawn export ([`Drawing::ensure_drawable_text`]),
+/// never the decode of an existing revision.
+fn validate_drawable_text(spec: &DrawingSpec) -> Result<(), CommandError> {
+    refuse_undrawable("name", &spec.name)?;
+    if let Some(title) = &spec.view.title {
+        refuse_undrawable("title", title)?;
+    }
+    for view in &spec.views {
+        if let Some(title) = &view.title {
+            refuse_undrawable("title", title)?;
+        }
+    }
+    for section in &spec.sections {
+        if let Some(title) = &section.title {
+            refuse_undrawable("title", title)?;
+        }
+    }
+    for detail in &spec.details {
+        if let Some(title) = &detail.title {
+            refuse_undrawable("title", title)?;
+        }
+    }
+    if let Some(sheet) = &spec.sheet {
+        validate_title_block(sheet)?;
     }
     Ok(())
 }
@@ -376,8 +415,24 @@ fn validate_detail(detail: &DetailSpec) -> Result<(), CommandError> {
 impl Drawing {
     /// Admits one bounded document and its qualified semantic references without any geometry work.
     /// Duplicate drawing/view/dimension UUIDs, invalid labels, foreign/non-vertex references,
-    /// nonfinite numbers and out-of-range paper settings refuse with no partial result.
+    /// nonfinite numbers and out-of-range paper settings refuse with no partial result, and
+    /// the every-mark-draws text rule gates the authored surfaces (name, titles, title block).
+    /// This is the authoring admission; a stored revision re-admits through
+    /// [`Drawing::admit_stored`], whose stricter sibling refuses text the stroke glyphs
+    /// cannot draw.
     pub fn admit(spec: DrawingSpec) -> Result<Self, CommandError> {
+        validate_drawable_text(&spec)?;
+        Self::admit_stored(spec)
+    }
+
+    /// The decode-time admission of an already-authored document: every structural rule of
+    /// [`Drawing::admit`] (identities, labels, references, bounds, paper settings) without
+    /// the presentation-era every-mark-draws rule. The glyph set evolved after some
+    /// published revisions were authored; gating decode with it would refuse every document
+    /// command on a drawing whose name or titles carry a now-undrawable character, with no
+    /// migration path. Such a revision opens honestly and refuses only its drawn export
+    /// ([`Drawing::ensure_drawable_text`]) until it is retitled.
+    pub fn admit_stored(spec: DrawingSpec) -> Result<Self, CommandError> {
         let ids = [
             spec.id.uuid(),
             spec.view.id.uuid(),
@@ -398,16 +453,6 @@ impl Drawing {
             return Err(invalid(
                 "name",
                 "drawing name must satisfy the bounded label rule",
-            ));
-        }
-        // The name is the sheet's DRAWING row and the export title: the same
-        // every-mark-draws rule as the titles (visual audit finding 11).
-        if spec.name.chars().any(|ch| !svg::draws(ch)) {
-            return Err(invalid(
-                "name",
-                "drawing name draws with the drawing's own stroke glyphs; a character \
-                 outside the supported set cannot be drawn faithfully (use ASCII \
-                 capitals, digits and , ; / ( ) + = # & _ % - : .)",
             ));
         }
         validate_paper_settings(spec.view.scale_denominator, spec.view.paper_origin_mm)?;
@@ -446,7 +491,6 @@ impl Drawing {
         }
         if let Some(sheet) = &spec.sheet {
             sheet.admit()?;
-            validate_title_block(sheet)?;
         }
         Self::validate_paper_objects(
             &spec.id,
@@ -584,6 +628,15 @@ impl Drawing {
         &self.0
     }
 
+    /// The drawn-export gate of the every-mark-draws rule (visual audit finding 11). A
+    /// stored revision whose name, view title or title block carries a character the stroke
+    /// glyphs cannot draw opens and reads honestly ([`Drawing::admit_stored`]), but a drawn
+    /// export of it refuses here: the renderer advances a blank gap for such a character,
+    /// so the sheet would silently lie about its content. Retitle the document to export it.
+    pub fn ensure_drawable_text(&self) -> Result<(), CommandError> {
+        validate_drawable_text(&self.0)
+    }
+
     /// Borrows the sheet this document is laid out on, when one was chosen.
     pub fn sheet(&self) -> Option<&SheetSpec> {
         self.0.sheet.as_ref()
@@ -594,6 +647,8 @@ impl Drawing {
     /// is neither read nor touched.
     pub fn with_sheet(mut self, sheet: SheetSpec) -> Result<Self, CommandError> {
         sheet.admit()?;
+        // The operation's own authored surface obeys the every-mark-draws rule; the standing
+        // name and title stay as decoded, and their gate is the drawn export's.
         validate_title_block(&sheet)?;
         Self::validate_paper_objects(
             &self.0.id,

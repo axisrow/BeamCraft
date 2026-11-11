@@ -476,6 +476,9 @@ pub fn export_svg(
     section_bodies: &[SectionProjection],
     detail_bodies: &[DetailProjection],
 ) -> Result<Vec<u8>, CommandError> {
+    // A stored revision with a now-undrawable name, title or title block exports as blanks;
+    // refuse the drawn surface honestly instead (visual audit finding 11).
+    drawing.ensure_drawable_text()?;
     let layout = layout(
         drawing,
         version,
@@ -541,6 +544,9 @@ pub fn export_pdf(
     section_bodies: &[SectionProjection],
     detail_bodies: &[DetailProjection],
 ) -> Result<Vec<u8>, CommandError> {
+    // A stored revision with a now-undrawable name, title or title block exports as blanks;
+    // refuse the drawn surface honestly instead (visual audit finding 11).
+    drawing.ensure_drawable_text()?;
     let layout = layout(
         drawing,
         version,

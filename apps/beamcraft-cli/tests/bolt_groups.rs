@@ -1177,3 +1177,47 @@ fn a_group_follows_its_main_part_and_never_comes_apart() {
         "DEPENDENCY_CONFLICT"
     );
 }
+
+#[test]
+fn a_framed_plate_in_a_bolt_group_refuses_instead_of_reading_a_wrong_slab() {
+    // The review on the 1111 batch: a framed (out-of-plane contour) plate carries its
+    // material along its contour frame, not the element-local Z the bolt slice's slab and
+    // world bounds assume, so the bearing and generated-hole decisions would read the wrong
+    // slab. The group refuses honestly; the frame-aware bolt slice is a documented
+    // follow-up.
+    let mut f = Fixture::new();
+    let flat = f.plate("019a7bf0-0000-7000-8000-0000007100f4", "0");
+    // A framed plate: an exactly rectangular contour lifted out of z = 0 (A12.3/P13).
+    let framed = text(
+        at(
+            &f.ok(&owned(
+                "create-plate",
+                &[
+                    "--name",
+                    "F",
+                    "--new-id",
+                    "019a7bf0-0000-7000-8000-0000007100f5",
+                    "--contour",
+                    "0,0,0;200,0,100;200,100,100;0,100,0",
+                    "--thickness",
+                    "10",
+                ],
+            )),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    f.fork();
+    assert_eq!(
+        f.rejected(&strs(
+            "create-bolt-group",
+            &f.group_args(
+                "019a7bf0-0000-7000-8000-000000710004",
+                &[flat, framed],
+                WASHERED,
+                &["--spacings", "150"],
+            ),
+        )),
+        "UNSUPPORTED_GEOMETRY"
+    );
+}
