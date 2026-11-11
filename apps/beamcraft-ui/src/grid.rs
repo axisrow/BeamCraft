@@ -938,7 +938,10 @@ impl GridScene {
     /// pitch or in an elevation the ends pile up, and stacked labels read as one long chain
     /// (issue 562 items 35 and 38). A line seen nearly end-on owns no labels at all, so an
     /// elevation does not draw a plan grid's labels on one horizontal line. The selected grid's
-    /// bubbles claim their places first.
+    /// bubbles claim their places first. `shown` is the view the pane displays: lines outside
+    /// its depth slab and work area draw and label nothing, so an elevation on grid axis B
+    /// labels B and not the family's first line, which an elevation flattens onto the same
+    /// screen line (issue 584 item 8).
     pub fn paint(
         &self,
         ui: &egui::Ui,
@@ -946,13 +949,21 @@ impl GridScene {
         view: &View,
         origin: [f64; 3],
         selected: Option<&str>,
+        shown: Option<&beamcraft_engine::views::ModelView>,
     ) {
+        // A grid line is straight and axis-parallel within its family, so its two endpoints
+        // carry the whole line across the view's slab test.
+        let in_view =
+            |points: &[[f64; 3]; 2]| shown.is_none_or(|v| points.iter().all(|p| v.contains(*p)));
         let painter = ui.painter_at(rect);
         let palette = theme::Palette::current(ui);
         let selected_lines = selected
             .and_then(|id| self.get(id))
             .map(|g| g.lines.clone());
         for (index, line) in self.lines.iter().enumerate() {
+            if !in_view(&line.points) {
+                continue;
+            }
             let active = selected_lines
                 .as_ref()
                 .is_some_and(|range| range.contains(&index));
@@ -987,6 +998,9 @@ impl GridScene {
             let Some(line) = self.lines.get(index) else {
                 continue;
             };
+            if !in_view(&line.points) {
+                continue;
+            }
             let active = selected_lines
                 .as_ref()
                 .is_some_and(|range| range.contains(&index));
@@ -1129,7 +1143,7 @@ mod form_tests {
                 screen_rect: Some(rect),
                 ..Default::default()
             },
-            |ui| scene.paint(ui, rect, &view, [0.0; 3], None),
+            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, None),
         );
         output.textures_delta.clear();
         output
@@ -1191,6 +1205,83 @@ mod form_tests {
         }
     }
 
+    /// The label texts one paint pass draws, in paint order, with `shown` as the view the
+    /// pane displays.
+    fn painted_labels(
+        scene: &GridScene,
+        plane: beamcraft_engine::work_plane::WorkPlane,
+        shown: Option<&beamcraft_engine::views::ModelView>,
+    ) -> Vec<String> {
+        let ctx = egui::Context::default();
+        crate::app::inter(&ctx);
+        crate::theme::install(&ctx);
+        let view = crate::camera::Camera::aligned_to(plane, [0.0; 3], 20_000.0, 100.0)
+            .unwrap()
+            .view(800.0 / 600.0)
+            .unwrap();
+        let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(rect),
+                ..Default::default()
+            },
+            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, shown),
+        );
+        output.textures_delta.clear();
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_elevation_on_a_grid_axis_labels_that_axis_not_the_family_head() {
+        // Issue 584 item 8: an elevation on grid line B flattens the parallel lines A and B
+        // onto one screen line, and the first placed bubble won, so the view read A. The
+        // view's depth slab excludes the family's other lines, and only B labels anything.
+        let scene = demo_scene();
+        let on_a = beamcraft_engine::work_plane::WorkPlane::new(
+            [0.0; 3],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        )
+        .unwrap();
+        let on_b = beamcraft_engine::work_plane::WorkPlane::new(
+            [0.0, 5000.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+        )
+        .unwrap();
+        let mut elevation_b = beamcraft_engine::views::ModelView::new(
+            beamcraft_model::id::Uuid7::parse("019a7bf0-0000-7000-8000-000000000001").unwrap(),
+            "Elevation B",
+            on_b,
+            20_000.0,
+        );
+        elevation_b.depth = Some([300.0, 300.0]);
+        fn as_str(labels: &[String]) -> Vec<&str> {
+            labels.iter().map(String::as_str).collect()
+        }
+        // A free view keeps the shared-corner rule: one pair, and the family head wins it.
+        let labels = painted_labels(&scene, on_a, None);
+        assert_eq!(
+            as_str(&labels),
+            ["A", "A"],
+            "the uncut elevation keeps one pair: {labels:?}"
+        );
+        // The elevation on B shows only line B: the slab excludes A at v=0 and the U lines.
+        let labels = painted_labels(&scene, on_b, Some(&elevation_b));
+        assert_eq!(
+            as_str(&labels),
+            ["B", "B"],
+            "the elevation on B labels B: {labels:?}"
+        );
+    }
+
     #[test]
     fn a_bubble_that_cannot_fit_the_pane_is_dropped_instead_of_panicking() {
         // Issue 562 review: a label longer than a deeply split pane inverts the clamped
@@ -1220,7 +1311,7 @@ mod form_tests {
                 screen_rect: Some(rect),
                 ..Default::default()
             },
-            |ui| scene.paint(ui, rect, &view, [0.0; 3], None),
+            |ui| scene.paint(ui, rect, &view, [0.0; 3], None, None),
         );
         output.textures_delta.clear();
         assert!(
