@@ -115,9 +115,10 @@ beamcraft bolts --store ROOT        # A05 groups as annotations, A14.3 groups wi
 `steel::model::command`: the inputs admit two parts, generators and a listed fixed length;
 refusals name their field; every input and the part order enters the fingerprint.
 `steel::engine::bolt`: the frame under rotation, `on_plane`/`depth`, the bearing points,
-the generator expansions and the offset-end re-expansion, the auto boundary (grip + far
-washer + nut + protrusion, the under-head washer adding nothing, overlapping parts counted
-once), the fixed and crossing refusals, the washer switches against the definition, and the
+the generator expansions and the offset-end re-expansion, the auto boundary (grip + head
+height + the far washers + nut + protrusion, the under-head washer counted when placed,
+overlapping parts counted once), the fixed and crossing refusals, the washer switches
+against the definition, and the
 identity/parts/footprint decisions. The face grip (issue 519 defect B) has its own tests: the
 rotated knee brace resolves to its face length and not the box one, with the exact grip
 boundary pinned by a fixed length that refuses and one that covers, a part without faces

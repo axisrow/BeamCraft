@@ -134,6 +134,30 @@ fn a_stored_revision_re_admits_text_the_glyph_set_grew_to_refuse_and_its_export_
     s.name = "SHAFT DRAWING".into();
     let authored = Drawing::admit(s).unwrap();
     assert!(authored.ensure_drawable_text().is_ok());
+    // The same rule over a drawn text object: the old fixture content (a guillemet) refuses
+    // the authoring admission and the drawn export, and the stored revision still opens.
+    let layer = LayerSpec {
+        id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000009").unwrap(),
+        name: "Outlines".into(),
+        visible: true,
+    };
+    let entity = DraftingSpec {
+        id: DraftingEntityId::parse("01900000-0000-7000-8000-000000000005").unwrap(),
+        geometry: DraftingGeometry::Text {
+            anchor: [12.0, 3.0],
+            text: "Note «B» +50%".to_owned(),
+            height: 3.5,
+            rotation: -0.25,
+        },
+        layer: layer.id,
+        line_type: LineType::Continuous,
+    };
+    let mut s = spec();
+    s.layers = vec![layer];
+    s.drafting = vec![entity];
+    assert_eq!(Drawing::admit(s.clone()).unwrap_err().field, "drafting");
+    let stored = Drawing::admit_stored(s).unwrap();
+    assert_eq!(stored.ensure_drawable_text().unwrap_err().field, "drafting");
 }
 
 #[test]

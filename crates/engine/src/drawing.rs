@@ -346,6 +346,11 @@ fn validate_drawable_text(spec: &DrawingSpec) -> Result<(), CommandError> {
             refuse_undrawable("title", title)?;
         }
     }
+    for entity in &spec.drafting {
+        if let DraftingGeometry::Text { text, .. } = &entity.geometry {
+            refuse_undrawable("drafting", text)?;
+        }
+    }
     if let Some(sheet) = &spec.sheet {
         validate_title_block(sheet)?;
     }
@@ -571,7 +576,7 @@ impl Drawing {
             }
         }
         for entity in drafting {
-            drafting::validate_geometry(&entity.geometry)?;
+            drafting::validate_geometry_stored(&entity.geometry)?;
             if !layers
                 .iter()
                 .any(|layer| layer.id.uuid() == entity.layer.uuid())
