@@ -22,9 +22,7 @@ mod workbench;
 
 use crate::camera::{Camera, View};
 use crate::command::Selected;
-use crate::edit::{
-    EditKind, Edited, Editor, Epoch, Target, ground_point, pick_point_in, ray_through,
-};
+use crate::edit::{EditKind, Edited, Editor, Epoch, Target, ground_point, ray_through};
 use crate::perf::{Observed, PerfRun, Phase as PerfPhase, RefreshTiming, Request};
 use crate::props::{Properties, State};
 use crate::publish::{Phase, Published, Publisher, Status};
@@ -561,12 +559,16 @@ fn point_fields(ui: &mut egui::Ui, point: &mut [String; 3]) {
 }
 
 /// Draws the selected body's evaluated boundary instead of inventing corners from its bounds.
+/// `clip` is the pane's display cut (V12 slab, V15 cut plane): an edge is drawn only where it
+/// survives it, so a selected body hidden by the cut does not outline itself in empty space
+/// (issue 569 item 2).
 fn draw_selection(
     painter: &egui::Painter,
     rect: egui::Rect,
     view: &View,
     origin: [f64; 3],
     edges: &[[[f64; 3]; 2]],
+    clip: Option<&beamcraft_engine::view_clipping::Clipping>,
 ) {
     let project = |point: [f64; 3]| {
         let local = std::array::from_fn(|i| {
@@ -580,9 +582,34 @@ fn draw_selection(
             )
         })
     };
+    let planes = clip
+        .and_then(|clip| clip.effective().ok())
+        .unwrap_or_default();
+    // The point a share `t` toward `b`: one component per axis, no indexing.
+    let toward = |a: [f64; 3], b: [f64; 3], t: f64| -> [f64; 3] {
+        [
+            a[0] + (b[0] - a[0]) * t,
+            a[1] + (b[1] - a[1]) * t,
+            a[2] + (b[2] - a[2]) * t,
+        ]
+    };
     let stroke = egui::Stroke::new(2.0, crate::theme::BRAND);
-    for [a, b] in edges {
-        if let (Some(p), Some(q)) = (project(*a), project(*b)) {
+    'edge: for edge in edges {
+        let (mut a, mut b) = (edge[0], edge[1]);
+        for plane in &planes {
+            let (da, db) = (plane.distance(a), plane.distance(b));
+            if da < 0.0 && db < 0.0 {
+                continue 'edge;
+            }
+            // Move the outside endpoint to the plane; the kept part is what a click could
+            // still see.
+            if da < 0.0 {
+                a = toward(a, b, da / (da - db));
+            } else if db < 0.0 {
+                b = toward(b, a, db / (db - da));
+            }
+        }
+        if let (Some(p), Some(q)) = (project(a), project(b)) {
             painter.line_segment([p, q], stroke);
         }
     }
@@ -1435,6 +1462,8 @@ impl App {
             .as_ref()
             .and_then(|v| self.views.overlays.get(&v.id))
             .map(|o| Arc::clone(&o.overlay));
+        // The display cut hides in the picture, so it hides from the pick too (issue 569 item 2).
+        let cut = self.cut.clone();
         let spawned = std::thread::Builder::new()
             .name("beamcraft-pick".into())
             .spawn(move || {
@@ -1448,6 +1477,7 @@ impl App {
                     selection,
                     view.as_ref(),
                     overlay.as_ref().map(|o| o.hidden()),
+                    cut.as_ref(),
                 ));
             });
         if spawned.is_err() {
@@ -6735,7 +6765,7 @@ pub(crate) mod tests {
                 ..Default::default()
             },
             |ui| {
-                super::draw_selection(ui.painter(), rect, &view, [0.; 3], &edges);
+                super::draw_selection(ui.painter(), rect, &view, [0.; 3], &edges, None);
             },
         );
         let lines = output

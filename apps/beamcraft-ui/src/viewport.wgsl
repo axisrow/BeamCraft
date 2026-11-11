@@ -43,12 +43,22 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     o.tint = tint;
     return o;
 }
-// Discards every fragment outside all half-spaces: the cut is a display filter.
-fn cut(world: vec3f) {
+// Discards every fragment outside all half-spaces: the cut is a display filter. The verdict
+// also marks the surface's crossing of a plane — one pixel wide in screen space — so the
+// fragment can draw the section outline there, and reports whether a cut is applied at all, so
+// the shader can take over back-face culling while one is (issue 569 item 1).
+struct CutVerdict { kept: bool, edge: bool }
+const CUT_OUTLINE: vec3f = vec3f(0.0, 0.7059, 0.8471); // the app's overlay ink (BRAND)
+fn cut_verdict(world: vec3f) -> CutVerdict {
+    var verdict = CutVerdict(true, false);
+    // Derivatives stay in uniform control flow: the plane count is a uniform.
     for (var i = 0u; i < clip.count; i += 1u) {
         let plane = clip.planes[i];
-        if (dot(plane.xyz, world) + plane.w < 0.0) { discard; }
+        let d = dot(plane.xyz, world) + plane.w;
+        if (d < 0.0) { verdict.kept = false; }
+        if (abs(d) < fwidth(d)) { verdict.edge = true; }
     }
+    return verdict;
 }
 // The model view tint (V12): a fully transparent view draws nothing, and a colour override
 // replaces the base colour of the model faces; a negative red keeps the pipeline colour.
@@ -63,38 +73,47 @@ fn overlay(base: vec3f, tint: vec3f, n: vec3f) -> vec3f {
     if (all(tint >= vec3f(0.999))) { return base; }
     return tint * mix(0.82, 1.0, clamp(n.z, 0.0, 1.0));
 }
+// The body colour of a fragment under a cut: the section outline at the plane crossing, the
+// dimmed inside on a back face (the cut opened the body there), otherwise the lit face. With
+// no cut the pipeline's own back-face cull applies, so this never sees a back face — it is
+// copied into the shader so a cut can lift the cull without a second pipeline set.
+fn cut_shade(front: bool, verdict: CutVerdict, lit: vec3f, alpha: f32) -> vec4f {
+    if (!verdict.kept || (!front && clip.count == 0u)) { discard; }
+    if (verdict.edge) { return vec4f(CUT_OUTLINE, alpha); }
+    return vec4f(select(lit, lit * 0.55, !front), alpha);
+}
 // Cool steel faces keep the engineering model distinct from the application chrome. The
 // overlay tint replaces the base colour (also in wireframe, which shares this fragment); a
 // white tint leaves the face untouched.
-@fragment fn shade(o: Out) -> @location(0) vec4f {
-    cut(o.world);
+@fragment fn shade(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+    let verdict = cut_verdict(o.world);
     let n = normalize(o.normal);
     let base = view_colour(mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
-    return vec4f(overlay(base, o.tint.rgb, n) * light, 1.0);
+    return cut_shade(front, verdict, overlay(base, o.tint.rgb, n) * light, 1.0);
 }
 // The ghost preview of the member being placed: the same lighting on a distinct amber, so the
 // not-yet-committed shape never reads as a model element.
-@fragment fn shade_ghost(o: Out) -> @location(0) vec4f {
-    cut(o.world);
+@fragment fn shade_ghost(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+    let verdict = cut_verdict(o.world);
     let n = normalize(o.normal);
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
-    return vec4f(vec3f(0.85, 0.55, 0.1) * light, 1.0);
+    return cut_shade(front, verdict, vec3f(0.85, 0.55, 0.1) * light, 1.0);
 }
 // The grey mode: the same lighting on one neutral grey, without the part colours.
-@fragment fn shade_grey(o: Out) -> @location(0) vec4f {
-    cut(o.world);
+@fragment fn shade_grey(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+    let verdict = cut_verdict(o.world);
     let n = normalize(o.normal);
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
-    return vec4f(view_colour(vec3f(0.62, 0.62, 0.62)) * light, 1.0);
+    return cut_shade(front, verdict, view_colour(vec3f(0.62, 0.62, 0.62)) * light, 1.0);
 }
 // The transparent mode: the shaded colours at partial opacity; the pipeline blends and keeps
 // depth testing but not depth writing, so hidden faces show through. The overlay tint carries
 // its own transparency on top of the mode's base opacity.
-@fragment fn shade_transparent(o: Out) -> @location(0) vec4f {
-    cut(o.world);
+@fragment fn shade_transparent(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
+    let verdict = cut_verdict(o.world);
     let n = normalize(o.normal);
     let base = view_colour(mix(vec3f(0.47, 0.71, 0.77), vec3f(0.96, 0.94, 0.88), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
-    return vec4f(overlay(base, o.tint.rgb, n) * light, 0.45 * o.tint.a * camera.tint.a);
+    return cut_shade(front, verdict, overlay(base, o.tint.rgb, n) * light, 0.45 * o.tint.a * camera.tint.a);
 }

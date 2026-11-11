@@ -230,6 +230,7 @@ fn paint_overlays(
                             view,
                             scene.origin_mm,
                             annotations,
+                            &|_| true,
                         );
                     }
                 });

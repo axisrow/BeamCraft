@@ -1415,11 +1415,14 @@ pub fn pick_visible(
         direction,
         selection,
         &BTreeSet::new(),
+        None,
     )
 }
 
 /// [`pick_visible`] that also passes through the elements in `hidden`: the ones a view's
-/// filter overrides hide, which the window evaluates.
+/// filter overrides hide, which the window evaluates. `cut` is the window's display cut (V15):
+/// a face hit outside its kept half-spaces is skipped like clipped geometry, so a click never
+/// selects what the cut hides (`None` keeps every hit).
 pub fn pick_visible_except(
     snapshot: &ViewSnapshot,
     view: &ModelView,
@@ -1427,17 +1430,20 @@ pub fn pick_visible_except(
     direction: [f64; 3],
     selection: SelectionFilter,
     hidden: &BTreeSet<ElementId>,
+    cut: Option<&Clipping>,
 ) -> Result<Option<Hit>, CommandError> {
     use crate::query::feature::FeatureKind;
     use crate::query::pick::{MAX_HITS, PickQuery, RayPick, pick};
     view.validate()?;
+    let planes = kept_planes(cut);
     let mut query = RayPick::new(origin, direction, vec![FeatureKind::Face]);
     query.max_hits = MAX_HITS;
     query.selection = selection;
     let hits = pick(snapshot, &PickQuery::Ray(query))
         .map_err(|e| CommandError::new(e.f04_code(), "views.pick", "the view pick failed"))?;
     if let Some(hit) = hits.hits.into_iter().find(|hit| {
-        view.contains(hit.point_world_mm)
+        kept_by(&planes, hit.point_world_mm)
+            && view.contains(hit.point_world_mm)
             && !hidden.contains(&hit.element_id)
             && snapshot
                 .element(&hit.element_id)
@@ -1453,6 +1459,49 @@ pub fn pick_visible_except(
         ));
     }
     Ok(None)
+}
+
+/// The first face hit along a ray that `cut` keeps, where no [`ModelView`] limits the pick (the
+/// free 3D view): the same skip a window cut applies to the drawn fragments (V15), so picking
+/// sees what the picture shows. An invalid cut keeps every hit, like [`crate::view_clipping`]
+/// display of it.
+pub fn pick_kept(
+    snapshot: &ViewSnapshot,
+    origin: [f64; 3],
+    direction: [f64; 3],
+    selection: SelectionFilter,
+    cut: Option<&Clipping>,
+) -> Result<Option<Hit>, CommandError> {
+    use crate::query::feature::FeatureKind;
+    use crate::query::pick::{MAX_HITS, PickQuery, RayPick, pick};
+    let planes = kept_planes(cut);
+    let mut query = RayPick::new(origin, direction, vec![FeatureKind::Face]);
+    query.max_hits = MAX_HITS;
+    query.selection = selection;
+    let hits = pick(snapshot, &PickQuery::Ray(query))
+        .map_err(|e| CommandError::new(e.f04_code(), "views.pick", "the view pick failed"))?;
+    let hit = hits
+        .hits
+        .into_iter()
+        .find(|hit| kept_by(&planes, hit.point_world_mm));
+    if hit.is_none() && hits.truncated {
+        return Err(CommandError::new(
+            ErrorCode::LimitExceeded,
+            "views.pick",
+            "the view pick exceeds the hit budget",
+        ));
+    }
+    Ok(hit)
+}
+
+/// The half-spaces `cut` keeps, empty for `None` or an invalid record (which cuts nothing).
+fn kept_planes(cut: Option<&Clipping>) -> Vec<ClipPlane> {
+    cut.and_then(|cut| cut.effective().ok()).unwrap_or_default()
+}
+
+/// Whether `point` survives every plane: the same side the drawn fragments keep.
+fn kept_by(planes: &[ClipPlane], point: [f64; 3]) -> bool {
+    planes.iter().all(|plane| plane.distance(point) >= 0.0)
 }
 
 #[cfg(test)]

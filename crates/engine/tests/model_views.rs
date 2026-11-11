@@ -6,6 +6,7 @@
 
 #![allow(clippy::unwrap_used)]
 use beamcraft_engine::query::pick::SelectionFilter;
+use beamcraft_engine::view_clipping::{ClipPlane, Clipping};
 use beamcraft_engine::views::{self, ModelView, PartSide};
 use beamcraft_engine::work_plane::WorkPlane;
 use beamcraft_engine::{
@@ -51,6 +52,51 @@ fn degenerate_points_make_no_plane() {
     )
     .unwrap();
     assert_eq!(section.y(), [0.0, -1.0, 0.0]);
+}
+
+#[test]
+fn a_display_cut_hides_the_pick_like_the_picture() {
+    let snapshot = snapshot();
+    let bounds = snapshot.engineering_bounds().unwrap();
+    let [ax, ay, _] = bounds.min;
+    let [bx, by, bz] = bounds.max;
+    let ray = [(ax + bx) / 2.0, (ay + by) / 2.0, bz + 1000.0];
+    let down = [0.0, 0.0, -1.0];
+    let v = plan();
+    let visible = |cut: Option<&Clipping>| {
+        views::pick_visible_except(
+            &snapshot,
+            &v,
+            ray,
+            down,
+            SelectionFilter::ALL,
+            &std::collections::BTreeSet::new(),
+            cut,
+        )
+        .unwrap()
+        .is_some()
+    };
+    let kept = |cut: Option<&Clipping>| {
+        views::pick_kept(&snapshot, ray, down, SelectionFilter::ALL, cut)
+            .unwrap()
+            .is_some()
+    };
+    // The top-face hit sits above the mid plane. Keeping the upper half keeps the hit;
+    // keeping the lower half hides it, for the view pick and the free pick alike (issue 569
+    // item 2): a click never selects what the cut hides.
+    let mid = (bounds.min[2] + bz) / 2.0;
+    let keep_above = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, mid], [0.0, 0.0, 1.0]).unwrap()],
+        area: None,
+    };
+    let keep_below = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, mid], [0.0, 0.0, -1.0]).unwrap()],
+        area: None,
+    };
+    assert!(visible(None) && visible(Some(&keep_above)));
+    assert!(!visible(Some(&keep_below)));
+    assert!(kept(None) && kept(Some(&keep_above)));
+    assert!(!kept(Some(&keep_below)));
 }
 
 #[test]
