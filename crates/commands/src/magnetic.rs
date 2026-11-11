@@ -238,6 +238,13 @@ pub fn bind_grid(
             binding: FollowBinding::Bind(FollowRecord {
                 grid: command.grid.to_string(),
                 local_axis_mm,
+                // The bind-time frame (issue 569 item 7): every read derives the follower's
+                // rigid motion from this frame to the grid's current one, so a frame edit
+                // moves the section orientation and the element-local records with the axis.
+                frame: beamcraft_model::grid::GridFrameSnapshot {
+                    translation_mm: grid.translation_mm,
+                    orientation_zw: grid.orientation_zw,
+                },
             }),
         }],
         hook,
@@ -267,12 +274,20 @@ pub fn unbind_grid(
     })?;
     let grid = head_grid(store, context, &follow.grid)?;
     // The released axis is element-local, like every stored member axis: the placement stays
-    // on the member and is applied on top by every consumer (issue 549).
+    // on the member and is applied on top by every consumer (issue 549). The decoded
+    // placement is the followed one (the frame delta composed onto the stored pose), so the
+    // release restores it together with the axis: the member keeps the orientation it
+    // visually has (issue 569 item 7).
     let released = steel::engine::member::grid_world_axis(
         &grid,
         &member.authored.placement,
         &follow.local_axis_mm,
     );
+    let [qx, qy, qz, qw] = member.authored.placement.orientation_xyzw;
+    let followed = beamcraft_layer_engine::authored::Placement {
+        translation_mm: member.authored.placement.translation_mm,
+        orientation_xyzw: [qx, qy, qz, qw],
+    };
     // The release re-materializes the world axis and refreshes the derived mesh with it:
     // the stored mesh stops lagging the frame the moment the member stops following it.
     // The record's body is evaluated from the current derived world, identical to the
@@ -302,7 +317,12 @@ pub fn unbind_grid(
         &reads,
         &member_entries(
             &command.target_id,
-            [Group::ShapeInputs, Group::Relationship, Group::Derived],
+            [
+                Group::ShapeInputs,
+                Group::Relationship,
+                Group::Derived,
+                Group::Placement,
+            ],
         )
         .collect::<Vec<_>>(),
     )?;
@@ -314,7 +334,10 @@ pub fn unbind_grid(
         vec![
             Change::Follow {
                 id: command.target_id.to_string(),
-                binding: FollowBinding::Release(released),
+                binding: FollowBinding::Release {
+                    axis_mm: released,
+                    placement: followed,
+                },
             },
             mesh,
         ],

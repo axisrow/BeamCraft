@@ -463,17 +463,28 @@ pub struct FollowRecord {
     pub grid: String,
     /// The element's axis points in the grid's local frame; `z` is kept as authored.
     pub local_axis_mm: Vec<[f64; 3]>,
+    /// The grid frame at bind time, stored with the binding so every read derives the rigid
+    /// motion the follower made from this frame to the grid's current one (issue 569 item 7).
+    pub frame: beamcraft_model::grid::GridFrameSnapshot,
 }
 
-/// The payload of [`Change::Follow`]: bind to a grid, or release with the world axis points
-/// the element carries from now on.
+/// The payload of [`Change::Follow`]: bind to a grid, or release with the world state the
+/// element carries from now on.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FollowBinding {
     /// Bind to the grid: the record is authored and the stored world axis points stay as the
     /// frozen snapshot of the binding event, untouched until the release overwrites them.
     Bind(FollowRecord),
-    /// Release: the record is erased and the given world axis points are restored.
-    Release(Vec<[f64; 3]>),
+    /// Release: the record is erased and the derived world pose — the axis points and the
+    /// placement the world was derived with — is restored as the plain storage truth (issue
+    /// 569 item 7). One semantic operation: the pose lands with the record erase, so the
+    /// bound-element edit guard never sees a hand placement rewrite.
+    Release {
+        /// The element-local axis points for the released placement.
+        axis_mm: Vec<[f64; 3]>,
+        /// The released rigid pose (the followed placement the axis is local to).
+        placement: Placement,
+    },
 }
 
 /// Closed batch items, produced by a trusted engine, never raw USD setters.

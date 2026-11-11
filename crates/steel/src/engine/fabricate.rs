@@ -535,16 +535,60 @@ fn fit_plane(
     ))
 }
 
-/// The two tool face plane points (the contour centre at each face) and the face normal in
-/// world coordinates.
+/// The two tool face plane points and the face normal in world coordinates. The extrusion
+/// axis is the plate's own: the contour frame's ordered area vector for a 3D contour (its
+/// body frame, `docs/design/k1-plate-contour-frame.md`), the placement `+Z` for a `z = 0`
+/// contour. The faces sit at the material band the authored thickness side lays off (A12.1),
+/// not at the phantom `0..t` slab a `top` plate alone has (issue 569 items 6 and 9).
 fn tool_faces(tool: &AuthoredPlate) -> ([f64; 3], [f64; 3], [f64; 3]) {
-    let (cx, cy) = bbox_center(tool.contour_points_mm.iter().map(|p| [p[0], p[1]]));
-    let normal = rotate_vector([0.0, 0.0, 1.0], tool.placement.orientation_xyzw);
-    (
-        local_to_world([cx, cy, 0.0], &tool.placement),
-        local_to_world([cx, cy, tool.thickness_mm], &tool.placement),
-        normal,
-    )
+    let [low, high] = tool.local_z_band_mm();
+    let framed = if tool.contour_points_mm.iter().any(|p| p[2] != 0.0) {
+        crate::kernel::plate_contour::admit(&tool.contour_points_mm, tool.thickness_mm)
+            .ok()
+            .and_then(|contour| contour.frame)
+            .map(|frame| {
+                let z = frame.z();
+                (
+                    [z.x(), z.y(), z.z()],
+                    tool.contour_points_mm
+                        .first()
+                        .copied()
+                        .unwrap_or([0.0, 0.0, 0.0]),
+                )
+            })
+    } else {
+        None
+    };
+    match framed {
+        // The face planes run through the contour origin laid off along the frame Z.
+        Some((axis, origin)) => {
+            let at = |offset: f64| {
+                local_to_world(
+                    [
+                        origin[0] + axis[0] * offset,
+                        origin[1] + axis[1] * offset,
+                        origin[2] + axis[2] * offset,
+                    ],
+                    &tool.placement,
+                )
+            };
+            (
+                at(low),
+                at(high),
+                rotate_vector(axis, tool.placement.orientation_xyzw),
+            )
+        }
+        // A `z = 0` contour: the contour centre carried along the placement `+Z`.
+        None => {
+            let (cx, cy) = bbox_center(tool.contour_points_mm.iter().map(|p| [p[0], p[1]]));
+            let normal = rotate_vector([0.0, 0.0, 1.0], tool.placement.orientation_xyzw);
+            (
+                local_to_world([cx, cy, low], &tool.placement),
+                local_to_world([cx, cy, high], &tool.placement),
+                normal,
+            )
+        }
+    }
 }
 
 /// The centre of the axis-aligned bounding box of the given planar points.
@@ -1366,6 +1410,122 @@ mod tests {
                 .code,
             ErrorCode::NotFound
         );
+    }
+
+    #[test]
+    fn a_fit_against_a_framed_contour_tool_trims_at_the_contour_plane() {
+        // Issue 569 item 6: the tool's contour is a rectangle in the plane x = 2000. Its
+        // frame Z is the ordered area vector +X, so the fit plane is the contour plane, not
+        // the phantom placement-Z slab that sliced the member lengthwise.
+        let beam = member(6, 3000.0, [0.0; 3], digest(b"profile"));
+        let end_plate = AuthoredPlate {
+            contour_points_mm: vec![
+                [2000.0, -300.0, -300.0],
+                [2000.0, 300.0, -300.0],
+                [2000.0, 300.0, 300.0],
+                [2000.0, -300.0, 300.0],
+            ],
+            thickness_mm: 20.0,
+            ..tool(7, 0.0, 0.0, 20.0, Placement::IDENTITY)
+        };
+        let command = FitEndToPart {
+            target_id: id(6),
+            operation_id: op(207),
+            tool_id: id(7),
+        };
+        let outcome =
+            fit_end_to_part(&command, None, Some(&beam), Some(&end_plate), &none, 0).unwrap();
+        let CutTarget::Member(authored) = &outcome.target else {
+            panic!("expected the member target");
+        };
+        let [record] = authored.cuts.as_slice() else {
+            panic!("expected one cut record");
+        };
+        // The plane is x = 2000 and the midpoint side is kept.
+        assert!((record.point_mm[0] - 2000.0).abs() <= 1e-9);
+        assert_eq!(record.normal, [1.0, 0.0, 0.0]);
+        assert_eq!(record.keep, KeepSide::Negative);
+        // A cap plate written at z = 3000 trims the column there, not at its thickness.
+        let column = AuthoredMember {
+            kind: crate::model::command::MemberKind::Column,
+            axis_points_mm: vec![[0.0, 0.0, 0.0], [0.0, 0.0, 3500.0]],
+            ..member(6, 3500.0, [0.0; 3], digest(b"profile"))
+        };
+        let cap = AuthoredPlate {
+            contour_points_mm: vec![
+                [-300.0, -300.0, 3000.0],
+                [300.0, -300.0, 3000.0],
+                [300.0, 300.0, 3000.0],
+                [-300.0, 300.0, 3000.0],
+            ],
+            thickness_mm: 20.0,
+            ..tool(8, 0.0, 0.0, 20.0, Placement::IDENTITY)
+        };
+        let column_command = FitEndToPart {
+            target_id: id(6),
+            operation_id: op(208),
+            tool_id: id(8),
+        };
+        let outcome =
+            fit_end_to_part(&column_command, None, Some(&column), Some(&cap), &none, 0).unwrap();
+        let CutTarget::Member(authored) = &outcome.target else {
+            panic!("expected the member target");
+        };
+        let [record] = authored.cuts.as_slice() else {
+            panic!("expected one cut record");
+        };
+        assert!((record.point_mm[2] - 3000.0).abs() <= 1e-9);
+        assert_eq!(record.normal, [0.0, 0.0, 1.0]);
+        assert_eq!(record.keep, KeepSide::Negative);
+    }
+
+    #[test]
+    fn a_fit_reads_the_tool_thickness_side_not_the_phantom_slab() {
+        // Issue 569 item 9: a `bottom` tool spans x = 1900..2000, so the near face is
+        // x = 2000; reading the phantom 0..t slab would cut one thickness short at 2100. The
+        // same body authored as `top` with its plane one thickness back fits identically.
+        let beam = AuthoredMember {
+            axis_points_mm: vec![[1000.0, 0.0, 0.0], [5000.0, 0.0, 0.0]],
+            ..member(6, 4000.0, [0.0; 3], digest(b"profile"))
+        };
+        // Placement x-axis +Y, y-axis +Z, so the plate's local Z is the world +X.
+        let orientation = [0.5, 0.5, 0.5, 0.5];
+        let bottom = AuthoredPlate {
+            thickness_mm: 100.0,
+            thickness_side: Some(crate::model::command::PlateSide::Bottom),
+            placement: Placement {
+                translation_mm: [2000.0, -300.0, -300.0],
+                orientation_xyzw: orientation,
+            },
+            ..tool(7, 600.0, 600.0, 100.0, Placement::IDENTITY)
+        };
+        let top = AuthoredPlate {
+            thickness_mm: 100.0,
+            placement: Placement {
+                translation_mm: [1900.0, -300.0, -300.0],
+                orientation_xyzw: orientation,
+            },
+            ..tool(8, 600.0, 600.0, 100.0, Placement::IDENTITY)
+        };
+        for (tool_id, authored) in [(id(7), &bottom), (id(8), &top)] {
+            let command = FitEndToPart {
+                target_id: id(6),
+                operation_id: op(209),
+                tool_id,
+            };
+            let outcome =
+                fit_end_to_part(&command, None, Some(&beam), Some(authored), &none, 0).unwrap();
+            let CutTarget::Member(fitted) = &outcome.target else {
+                panic!("expected the member target");
+            };
+            let [record] = fitted.cuts.as_slice() else {
+                panic!("expected one cut record");
+            };
+            // The trim is flush with the shared real face x = 2000.
+            assert_eq!(record.point_mm, [2000.0, 0.0, 0.0]);
+            assert_eq!(record.normal, [1.0, 0.0, 0.0]);
+            assert_eq!(record.keep, KeepSide::Positive);
+        }
     }
 
     #[test]

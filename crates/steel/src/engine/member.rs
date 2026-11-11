@@ -202,6 +202,9 @@ pub struct GridFollow {
     pub grid: ElementId,
     /// The member's axis points in the grid's local frame; `z` is kept as authored.
     pub local_axis_mm: Vec<[f64; 3]>,
+    /// The grid frame at bind time; `None` for records stored before the field existed, which
+    /// follow the axis points only.
+    pub frame: Option<beamcraft_model::grid::GridFrameSnapshot>,
 }
 
 /// Maps a member's element-local axis points into the grid's local frame (T01.8): the
@@ -237,6 +240,51 @@ pub fn grid_world_axis(
             crate::engine::transform::placement_to_local(placement, [wx, wy, *z])
         })
         .collect()
+}
+
+/// The member's placement as the world sees it while bound (T01.8, contract §7.5 O-G5): the
+/// stored placement conjugated by the rigid motion the grid made since the binding's frame
+/// snapshot. Every consumer derives the world from the placement, so composing the frame delta
+/// onto it moves the section orientation, the roll and every element-local record (cuts,
+/// holes) together with the derived axis, rigidly. `None` for a binding without a frame
+/// snapshot — records stored before the field existed follow the axis points only, exactly as
+/// they always did.
+pub fn grid_followed_placement(
+    grid: &beamcraft_model::grid::Grid,
+    follow: &GridFollow,
+    placement: &Placement,
+) -> Option<Placement> {
+    let frame = follow.frame?;
+    // The frame rotation angles; both quaternions are unit by grid admission.
+    let delta = 2.0 * f64::atan2(grid.orientation_zw[0], grid.orientation_zw[1])
+        - 2.0 * f64::atan2(frame.orientation_zw[0], frame.orientation_zw[1]);
+    let (s, c) = (delta / 2.0).sin_cos();
+    let (rs, rc) = delta.sin_cos();
+    let turn = |p: [f64; 2]| [rc * p[0] - rs * p[1], rs * p[0] + rc * p[1]];
+    // D = G ∘ G_bind⁻¹ as a placement: the delta rotation about the world Z axis, then the
+    // translation `t_g - R_delta · t_b`.
+    let bind_turned = turn(frame.translation_mm);
+    let d = [
+        grid.translation_mm[0] - bind_turned[0],
+        grid.translation_mm[1] - bind_turned[1],
+    ];
+    let [qx, qy, qz, qw] = placement.orientation_xyzw;
+    // D composed onto the placement: the delta rotation first, then the placement's own.
+    // Renormalized: a unit product can push one component past 1.0 by an ulp, and the stored
+    // component bound refuses that.
+    let q = [
+        c * qx - s * qy,
+        s * qx + c * qy,
+        c * qz + s * qw,
+        c * qw - s * qz,
+    ];
+    let norm = (q[0] * q[0] + q[1] * q[1] + (q[2] * q[2] + q[3] * q[3])).sqrt();
+    let [tx, ty, tz] = placement.translation_mm;
+    let turned = turn([tx, ty]);
+    Some(Placement {
+        translation_mm: [turned[0] + d[0], turned[1] + d[1], tz],
+        orientation_xyzw: [q[0] / norm, q[1] / norm, q[2] / norm, q[3] / norm],
+    })
 }
 
 impl AuthoredMember {
