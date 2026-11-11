@@ -83,7 +83,8 @@ fn element(last: u16, entity: Entity, name: &str) -> ElementData {
             Entity::Beam => "beam",
             Entity::Column => "column",
             Entity::Plate => "plate",
-            Entity::Proxy => "assembly",
+            Entity::Assembly => "assembly",
+            Entity::Proxy => "weld",
         }
         .into(),
         name: name.into(),
@@ -118,7 +119,7 @@ fn model() -> ExportModel {
         mass_per_meter_kg: Some(22.4),
         surface_per_meter_m2: None,
     });
-    let mut assembly = element(0x22, Entity::Proxy, "Assembly A");
+    let mut assembly = element(0x22, Entity::Assembly, "Assembly A");
     assembly.pose = None;
     assembly.mesh = None;
     let mut part = element(0x23, Entity::Column, "Column C1");
@@ -206,7 +207,7 @@ fn the_file_has_the_fixed_header_and_a_valid_structure() {
         ("IFCPLATE", 1),
         ("IFCBEAM", 1),
         ("IFCCOLUMN", 1),
-        ("IFCBUILDINGELEMENTPROXY", 1),
+        ("IFCELEMENTASSEMBLY", 1),
         ("IFCMATERIAL", 1),
         ("IFCRELASSOCIATESMATERIAL", 1),
         ("IFCTRIANGULATEDFACESET", 3),
@@ -270,8 +271,9 @@ fn placements_are_relative_to_the_building_and_written_as_axes() {
 fn storeys_contain_their_elements_and_the_rest_is_in_the_building() {
     let file = verify::parse(&write(&model())).unwrap();
     let contained = file.all("IFCRELCONTAINEDINSPATIALSTRUCTURE");
-    // Level 1 holds the plate and the column; the beam and the assembly have no level; the
-    // second level holds nothing and gets no relationship (IFCX-EMIT-001).
+    // Level 1 holds the plate; the column aggregates under the assembly instead of the storey,
+    // the beam and the assembly have no level; the second level holds nothing and gets no
+    // relationship (IFCX-EMIT-001).
     assert_eq!(contained.len(), 2);
     let storeys = file.all("IFCBUILDINGSTOREY");
     assert_eq!(file.text(storeys[0].args.get(2)), Some("Level 1"));
@@ -281,7 +283,7 @@ fn storeys_contain_their_elements_and_the_rest_is_in_the_building() {
     let Value::List(members) = &first.args[4] else {
         panic!("members");
     };
-    assert_eq!(members.len(), 2);
+    assert_eq!(members.len(), 1);
     let building = contained[1];
     assert_eq!(building.args[5], Value::Ref(file.all("IFCBUILDING")[0].id));
 }
@@ -296,7 +298,30 @@ fn a_model_without_levels_has_no_storey_and_no_building_storey_aggregate() {
     let file = verify::parse(&write(&m)).unwrap();
     file.check().unwrap();
     assert!(file.all("IFCBUILDINGSTOREY").is_empty());
-    assert_eq!(file.all("IFCRELAGGREGATES").len(), 2);
+    // Two spatial aggregates (project-site, site-building) plus the element aggregation.
+    assert_eq!(file.all("IFCRELAGGREGATES").len(), 3);
+}
+
+#[test]
+fn a_part_whose_assembly_is_not_an_assembly_element_is_refused() {
+    // A part must aggregate under a written IfcElementAssembly: naming a plain element or a
+    // missing one leaves the part without its parent, so the write refuses whole.
+    let mut m = model();
+    m.elements[3].assembly = Some(uuid(0x21));
+    assert!(matches!(
+        write_ifc(&m, &Limits::DEFAULT, Vec::new()),
+        Err(WriteError::Integrity(
+            "an element names an assembly that is not an exported assembly element"
+        ))
+    ));
+    let mut m = model();
+    m.elements[3].assembly = Some(uuid(0x99));
+    assert!(matches!(
+        write_ifc(&m, &Limits::DEFAULT, Vec::new()),
+        Err(WriteError::Integrity(
+            "an element names an assembly that is not an exported assembly element"
+        ))
+    ));
 }
 
 #[test]
@@ -321,11 +346,13 @@ fn optional_entities_exist_only_with_content() {
         sets.iter()
             .all(|s| file.text(s.args.get(2)) == Some("BeamCraft_Element"))
     );
-    // The assembly has no placement and no representation.
-    let proxy = file.all("IFCBUILDINGELEMENTPROXY")[0];
-    assert_eq!(proxy.args[5], Value::Null);
-    assert_eq!(proxy.args[6], Value::Null);
-    assert_eq!(file.text(proxy.args.get(4)), Some("assembly"));
+    // The assembly has no placement, no representation and no object type; its predefined type
+    // is the rigid frame of a steel assembly.
+    let assembly = file.all("IFCELEMENTASSEMBLY")[0];
+    assert_eq!(assembly.args[4], Value::Null);
+    assert_eq!(assembly.args[5], Value::Null);
+    assert_eq!(assembly.args[6], Value::Null);
+    assert_eq!(assembly.args[8], Value::Enum("RIGID_FRAME".into()));
 }
 
 #[test]
@@ -513,7 +540,10 @@ fn a_repeated_global_id_cannot_be_written() {
 #[test]
 fn a_mesh_that_is_not_closed_leaves_the_flag_unset() {
     let mut m = model();
+    // A proxy with an uncertified mesh; the column drops its membership so the model stays
+    // valid (its parent is no longer an assembly element).
     m.elements[2].entity = Entity::Proxy;
+    m.elements[3].assembly = None;
     m.elements[2].pose = Pose::from_quaternion([0.0; 3], [0.0, 0.0, 0.0, 1.0]);
     m.elements[2].mesh = Some(Mesh {
         closed: false,

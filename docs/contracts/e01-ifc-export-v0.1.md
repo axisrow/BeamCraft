@@ -3,6 +3,10 @@
 Status: **draft 0.1.0.** Implemented by `export-ifc` and `ifc-guid`; it is frozen once the checks of
 section 19 pass.
 
+Amendment of 2026-11-11 (fork issue 559): an element of kind `assembly` maps to `IfcElementAssembly`
+(`.RIGID_FRAME.`) and its parts aggregate under it with `IfcRelAggregates`, replacing the proxy
+mapping for that kind; the `AssemblyId` property stays (section 2.2, 5.1, 12).
+
 This contract fixes **what BeamCraft writes to an IFC file, how an element becomes an IFC entity,
 how its 22-character GlobalId is derived, what is lost, and how the writer is built and driven.**
 The examples are acceptance descriptions, not APIs or saved files.
@@ -88,9 +92,10 @@ object model. The spec column cites section 18.
 | E-01 | `IfcProject` | One per file; units and representation context | S10 |
 | E-02 | `IfcSite`, `IfcBuilding` | One synthetic site and one synthetic building above the stored levels | S11, S12 |
 | E-03 | `IfcBuildingStorey` | One per stored Level | S13 |
-| E-04 | `IfcRelAggregates` | Project to site, site to building, building to storeys | S14 |
-| E-05 | `IfcRelContainedInSpatialStructure` | Elements in their storey, or in the building when they have no level | S15 |
+| E-04 | `IfcRelAggregates` | Project to site, site to building, building to storeys; assembly to its parts | S14 |
+| E-05 | `IfcRelContainedInSpatialStructure` | Elements with no assembly in their storey, or in the building when they have no level | S15 |
 | E-06 | `IfcBeam`, `IfcColumn`, `IfcPlate` | One per element of kind `beam`, `column`, `plate` | S16, S17, S18 |
+| E-06a | `IfcElementAssembly` | One per element of kind `assembly`; its parts aggregate under it | S50 |
 | E-07 | `IfcBuildingElementProxy` | One per element of any other kind | S19 |
 | E-08 | `IfcLocalPlacement`, `IfcAxis2Placement3D`, `IfcCartesianPoint`, `IfcDirection` | Placement | S20 to S22, S23 |
 | E-09 | `IfcProductDefinitionShape`, `IfcShapeRepresentation` | The body representation | S24, S25 |
@@ -102,19 +107,19 @@ object model. The spec column cites section 18.
 | E-15 | `IfcUnitAssignment`, `IfcSIUnit`, `IfcDerivedUnit`, `IfcDerivedUnitElement` | Units | S39, S40, S41 |
 | E-16 | Types `IfcGloballyUniqueId`, `IfcLabel`, `IfcIdentifier`, `IfcText`, `IfcMassMeasure` | Attribute and property value types | S03 to S07 |
 
-Predefined types (IFC4 enumerations, S45 to S48): `IfcBeam` gets `.BEAM.`, `IfcColumn` gets
-`.COLUMN.`, `IfcPlate` and `IfcBuildingElementProxy` get `.NOTDEFINED.`. (The IFC4 plate
-enumeration is curtain panel, sheet, user defined and not defined; BeamCraft has no purpose
-attribute, so it claims none.) `IfcRoot.OwnerHistory` is written as unset (`$`); whether the
-validation tool requires it is checked at acceptance.
+Predefined types (IFC4 enumerations, S45 to S48 and S51): `IfcBeam` gets `.BEAM.`, `IfcColumn` gets
+`.COLUMN.`, `IfcElementAssembly` gets `.RIGID_FRAME.`, `IfcPlate` and `IfcBuildingElementProxy` get
+`.NOTDEFINED.`. (The IFC4 plate enumeration is curtain panel, sheet, user defined and not defined;
+BeamCraft has no purpose attribute, so it claims none.) `IfcRoot.OwnerHistory` is written as unset
+(`$`); whether the validation tool requires it is checked at acceptance.
 
 ### 2.3 Not in the subset
 
 `IfcExtrudedAreaSolid`, profile definitions, boolean results, `IfcOpeningElement` and
 `IfcRelVoidsElement`, `IfcPolygonalFaceSet`, brep items, `IfcBeamType`, `IfcColumnType`,
 `IfcPlateType`, `IfcMaterialProfileSet` and usage entities, styles and colours, grids,
-classification references, `IfcOwnerHistory`, groups, assemblies and connections, annotations and
-any analysis entity.
+classification references, `IfcOwnerHistory`, groups, connections, annotations and any analysis
+entity.
 
 ## 3. Identity and the GlobalId
 
@@ -331,6 +336,12 @@ characters, `Name` is truncated to 255 and the full text is in `Description` (`I
 with no level is contained in the building (`IFCX-LVL-003`); a project with no level has no storey. A storey with no exported element is still written, without a containment relationship (`IFCX-EMIT-001`, 11.2).
 An element assigned to a LevelId that the revision does not carry refuses the export
 (`IFCX-LVL-002`).
+
+An element of kind `assembly` is contained like any element, and its parts aggregate under it: each element whose `part-of` record names an assembly is written
+as one `RelatedObject` of an `IfcRelAggregates` of that assembly, in element order, and is not also contained in the spatial structure — in IFC decomposition
+replaces spatial containment. The `AssemblyId` property of section 9.1 stays on the parts. A `part-of` record that names an element that is not an exported
+`IfcElementAssembly` (no such element, or an unmapped kind) refuses the export (`IFCX-LVL-005`, `INTEGRITY_ERROR`). Nested assemblies aggregate the same way,
+one level per record.
 
 ### 5.2 Element placement
 
@@ -693,7 +704,7 @@ is listed in the report when it applies to an element and is stated here once.
 | L-06 | Quantities that are not current are absent (stale, missing, unknown). Quantities that no record publishes are absent (section 8.2). Declared section values are exported as declared properties and are not quantities. |
 | L-07 | A profile is reduced to its digest and its declared values. There is no `IfcBeamType`, no material profile set, no catalogue reference. |
 | L-08 | Authorship (`bim:createdBy`), per-element revision, workspace and draft state, the journal, undo and redo history and every time are not exported. |
-| L-09 | Relationships between elements (F10 section 5) are not exported; none exist in the first slice. |
+| L-09 | Relationships between elements (F10 section 5) are not exported except the assembly membership: an assembly is written as an `IfcElementAssembly` and its parts aggregate under it (section 5.1). Every other relationship — welds, connections, marks — stays in the store (`IFCX-SCOPE-001`). |
 | L-10 | Display appearance and colours are not exported. |
 | L-11 | A text longer than 255 characters in an `IfcLabel` attribute (element, storey, project or material name, object type) is truncated to 255 code points; the full text is in `Label`, `FullName` or `Description` (`IFCX-PSET-004`). |
 | L-12 | The site and the building are synthetic. The export records no grids (the [grid contract draft](t01-project-grids-draft-v0.1.md) keeps them in the model, skipped by the exporter), no site data and no building data. |
@@ -725,7 +736,7 @@ fatal in strict mode (see below).
 | `IFC_INPUT_UNAVAILABLE` | `DEPENDENCY_UNAVAILABLE` | error, request | Revision, definition or index cannot be read completely; no stored ProjectId | SCOPE-002, PRJ-001, ERR-001 |
 | `IFC_LEVEL_DANGLING` | `DANGLING_RELATIONSHIP` | error, request | Element assigned to a level the revision does not carry | LVL-002 |
 | `IFC_ID_DUPLICATE` | `DUPLICATE_ID` | error, request | Two elements with one ElementId | GUID-005 |
-| `IFC_INTEGRITY` | `INTEGRITY_ERROR` | error, request | Repeated GlobalId; stored mesh differs from re-evaluation; invalid mesh; current record with a bad value | GUID-006, GEO-005, GEO-006, QTY-005 |
+| `IFC_INTEGRITY` | `INTEGRITY_ERROR` | error, request | Repeated GlobalId; stored mesh differs from re-evaluation; invalid mesh; current record with a bad value; a `part-of` record names a missing or unmapped assembly element | GUID-006, GEO-005, GEO-006, QTY-005, LVL-005 |
 | `IFC_LIMIT` | `LIMIT_EXCEEDED` | error, request | Too many elements, levels, mesh vertices or triangles, or output bytes | LIM-001, LIM-002, LIM-005 |
 | `IFC_OUTPUT_FAILED` | `BACKEND_UNAVAILABLE` | error, request | The output sink or file system failed | ERR-002 |
 | `IFC_CANCELLED` | `CANCELLED` | error, request | Cancelled before the install point | ERR-004 |
@@ -841,9 +852,9 @@ outputs; the exit code follows the existing CLI convention.
 
 ## 16. Acceptance cases
 
-[The case file](../../tests/fixtures/contracts/e01-ifc-export-cases-v0.1.json) holds 105 original logical acceptance
-descriptions: 52 positive and 53 negative, with stable IDs `E01-POS-nn` and `E01-NEG-nn`, and
-78 rules `IFCX-<FAMILY>-<NNN>` of which every one is exercised by at least one case. A
+[The case file](../../tests/fixtures/contracts/e01-ifc-export-cases-v0.1.json) holds 106 original logical acceptance
+descriptions: 52 positive and 54 negative, with stable IDs `E01-POS-nn` and `E01-NEG-nn`, and
+79 rules `IFCX-<FAMILY>-<NNN>` of which every one is exercised by at least one case. A
 negative case is one where the rule fires: an element is exported with a listed loss, a warning is
 raised, or the request is refused with the stated F04 code. A case with a `needs` field depends on
 a limit that is not yet lifted or a harness hook. Acceptance runs them against the real exporter
@@ -863,7 +874,7 @@ and a real store, with an independent check of the written file.
 ### 16.1 Rule catalogue
 
 Severity `error` rules name the F04 code of the failing condition; `mapping` rules have no runtime
-diagnostic and are checked by the acceptance cases. Counts: 78 rules, 26 error, 5 warning, 3 info,
+diagnostic and are checked by the acceptance cases. Counts: 79 rules, 27 error, 5 warning, 3 info,
 44 mapping.
 
 | Rule | Severity | F04 code | Statement |
@@ -894,6 +905,7 @@ diagnostic and are checked by the acceptance cases. Counts: 78 rules, 26 error, 
 | IFCX-LVL-002 | error | DANGLING_RELATIONSHIP | An element assigned to a LevelId that no Level of the revision carries refuses the export. |
 | IFCX-LVL-003 | mapping | - | An element with no level is contained in the IfcBuilding. A project with no Level has no storey. |
 | IFCX-LVL-004 | mapping | - | A storey placement is the point (0, 0, elevation) relative to the building placement. Element placements stay relative to the building placement, so a level adds no arithmetic to any element number. |
+| IFCX-LVL-005 | error | INTEGRITY_ERROR | An element whose `part-of` record names an element that is not an exported IfcElementAssembly - no such element, or a kind without the assembly mapping - refuses the export: the aggregation would dangle. |
 | IFCX-PLC-001 | mapping | - | The element placement becomes one IfcLocalPlacement relative to the building placement: Location is translation_mm, Axis is R(q) applied to (0,0,1), RefDirection is R(q) applied to (1,0,0). |
 | IFCX-PLC-002 | warning | UNSUPPORTED_GEOMETRY | A placement of a proxy element that cannot be read as a rigid pose (scale, shear, reflection, matrix form) is not exported: the element has no ObjectPlacement and no representation, and is listed. |
 | IFCX-PLC-003 | error | INVALID_ARGUMENT | A stored quaternion of a plate, beam or column outside the F04 section 3 caps refuses the export: the revision violates F04. |
@@ -1036,6 +1048,8 @@ row whose description proves wrong is a defect of this document, not of the spec
 | S47 | IfcPlateTypeEnum | <https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcsharedbldgelements/lexical/ifcplatetypeenum.htm> | IFC4 values: curtain panel, sheet, user defined, not defined | excerpt (a third-party enumeration listing, to verify) |
 | S48 | IfcBuildingElementProxyTypeEnum | <https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcbuildingelementproxytypeenum.htm> | Value NOTDEFINED | not seen |
 | S49 | Pset_MaterialCommon and IfcMassDensityMeasure | <https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcmaterialresource/pset/pset_materialcommon.htm> | MassDensity property of a material | not seen |
+| S50 | IfcElementAssembly | <https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcelementassembly.htm> | The assembly entity; its `PredefinedType` attribute and its aggregation of parts | not seen |
+| S51 | IfcElementAssemblyTypeEnum | <https://standards.buildingsmart.org/IFC/RELEASE/IFC4/ADD2_TC1/HTML/schema/ifcproductextension/lexical/ifcelementassemblytypeenum.htm> | Value RIGID_FRAME | not seen |
 
 ## 19. Remaining acceptance checks
 

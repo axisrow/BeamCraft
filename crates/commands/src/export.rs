@@ -657,14 +657,19 @@ fn proxy_element(
     row: &mut ElementReport,
     findings: &mut Vec<Finding>,
 ) -> ElementData {
-    findings.push(Finding {
-        code: "IFC_KIND_PROXY",
-        f04_code: None,
-        severity: Severity::Warning,
-        element_id: Some(id),
-        field: "kind",
-        message: "the kind has no IFC mapping and is exported as a proxy",
-    });
+    // An assembly element has a mapping: it is the IfcElementAssembly its parts aggregate
+    // under. A kind without one is a proxy and says so in the report.
+    let assembly = meta.kind == "assembly";
+    if !assembly {
+        findings.push(Finding {
+            code: "IFC_KIND_PROXY",
+            f04_code: None,
+            severity: Severity::Warning,
+            element_id: Some(id),
+            field: "kind",
+            message: "the kind has no IFC mapping and is exported as a proxy",
+        });
+    }
     row.omissions.clear();
     let pose = match meta.placement {
         PlacementRead::Absent => None,
@@ -702,7 +707,11 @@ fn proxy_element(
     let (name, schema_version, geometry_mode) = names(meta);
     ElementData {
         id: id.uuid(),
-        entity: Entity::Proxy,
+        entity: if assembly {
+            Entity::Assembly
+        } else {
+            Entity::Proxy
+        },
         kind_token: meta.kind.clone(),
         name,
         schema_version,

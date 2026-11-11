@@ -258,6 +258,12 @@ fn validate(model: &ExportModel, limits: &Limits) -> Result<(), WriteError> {
     }
     let levels: BTreeSet<Uuid7> = model.levels.iter().map(|l| l.id).collect();
     let materials: BTreeSet<ContentDigest> = model.materials.iter().map(|m| m.digest).collect();
+    let assemblies: BTreeSet<Uuid7> = model
+        .elements
+        .iter()
+        .filter(|e| e.entity == Entity::Assembly)
+        .map(|e| e.id)
+        .collect();
     for e in &model.elements {
         if e.level.is_some_and(|l| !levels.contains(&l)) {
             return Err(WriteError::Integrity("an element names an unknown level"));
@@ -265,6 +271,13 @@ fn validate(model: &ExportModel, limits: &Limits) -> Result<(), WriteError> {
         if e.material.is_some_and(|m| !materials.contains(&m)) {
             return Err(WriteError::Integrity(
                 "an element names an unknown material",
+            ));
+        }
+        if let Some(assembly) = e.assembly
+            && !assemblies.contains(&assembly)
+        {
+            return Err(WriteError::Integrity(
+                "an element names an assembly that is not an exported assembly element",
             ));
         }
         if let Some(mesh) = &e.mesh {
@@ -313,14 +326,37 @@ pub fn write_ifc<W: Write>(
     let materials = materials(&mut w, model)?;
     let mut contained: BTreeMap<Option<Uuid7>, Vec<Ref>> = BTreeMap::new();
     let mut associated: BTreeMap<ContentDigest, Vec<Ref>> = BTreeMap::new();
+    // The parts of an assembly are aggregated under it, so they are not also contained in the
+    // spatial structure: in IFC decomposition replaces spatial containment.
+    let mut aggregated: BTreeMap<Uuid7, Vec<Ref>> = BTreeMap::new();
+    let mut products: BTreeMap<Uuid7, Ref> = BTreeMap::new();
     for element in &model.elements {
         let product = emit_element(&mut w, element, &spatial, ctx.body)?;
-        contained.entry(element.level).or_default().push(product);
+        products.insert(element.id, product);
+        match element.assembly {
+            Some(assembly) => aggregated.entry(assembly).or_default().push(product),
+            None => contained.entry(element.level).or_default().push(product),
+        }
         if let Some(material) = element.material {
             associated.entry(material).or_default().push(product);
         }
     }
     containment(&mut w, model, &spatial, &contained)?;
+    for (assembly, members) in &aggregated {
+        // The parent was validated to be an exported assembly element, so its product exists.
+        let relating = products
+            .get(assembly)
+            .copied()
+            .ok_or(WriteError::Integrity(
+                "an assembly part names a product that was not written",
+            ))?;
+        let gid = w.synthetic("rel-assembly", &[&w.project.clone(), assembly.as_bytes()])?;
+        w.line(&format!(
+            "IFCRELAGGREGATES({gid},$,$,$,{},{})",
+            refs(members),
+            relating.s()
+        ))?;
+    }
     for material in &model.materials {
         if let (Some(members), Some(&at)) = (
             associated.get(&material.digest),

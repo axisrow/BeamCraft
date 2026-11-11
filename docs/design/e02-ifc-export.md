@@ -45,6 +45,11 @@ elements are not exported; every other kind is an `IfcBuildingElementProxy`.
    so membership is not lost (L-09 is narrowed). No `IfcElementAssembly` and no `IfcRelAggregates`
    between elements are written; a weld's connection record is not exported. If the owner wants a
    real IFC assembly, that needs a contract change (new entities, rules and cases).
+   **Amended 2026-11-11 (fork issue 559):** the owner asked for the real assembly, and the
+   contract amendment landed: an element of kind `assembly` is `IfcElementAssembly`
+   (`.RIGID_FRAME.`) and its parts aggregate under it with `IfcRelAggregates`, so the parts no
+   longer hang as a flat list beside it; the `AssemblyId` property stays. Welds and references are
+   still proxies; connections are still not exported.
 2. **The adapter is in the CLI, not in the engine.** The contract proposed
    `beamcraft_engine::export` and a `beamcraft-engine` to `beamcraft-ifc` edge. The committed
    records (`Inspection`, stored quantity reports, definitions) are CLI adapter types in every
