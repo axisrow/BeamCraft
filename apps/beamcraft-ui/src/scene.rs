@@ -11,9 +11,11 @@ use std::collections::BTreeSet;
 
 /// Bytes of one expanded vertex: position and normal, 3 x f32 each.
 pub const VERTEX_BYTES: usize = 24;
-/// Bytes of one instance: a translation, a quaternion and the V17 overlay tint, 11 x f32 plus
-/// one pad word for the 16-byte colour alignment.
-pub const INSTANCE_BYTES: usize = 48;
+/// Bytes of one instance: a translation, a quaternion and the V17 overlay tint (11 x f32), one
+/// pad word for the 16-byte colour alignment, and the element's world bounds box relative to the
+/// scene origin (2 x 3 x f32) — what a face-on cut (issue 584 item 4) needs to tell a body the
+/// plane cuts through from one lying entirely beyond it, which must stay invisible.
+pub const INSTANCE_BYTES: usize = 72;
 /// Largest total of expanded vertex bytes a scene may upload.
 pub const MAX_VERTEX_BYTES: usize = 256 * 1024 * 1024;
 
@@ -87,27 +89,17 @@ impl GhostMesh {
                 }
             }
         }
-        let mut instance = [0u8; INSTANCE_BYTES];
-        for (k, (a, o)) in anchor.iter().zip(origin_mm).enumerate() {
-            if let Some(slot) = instance.get_mut(k * 4..k * 4 + 4) {
-                slot.copy_from_slice(&((*a - o) as f32).to_le_bytes());
-            }
-        }
-        // The identity orientation: x = y = z = 0, w = 1 (after the 12-byte translation).
-        if let Some(w) = instance.get_mut(24..28) {
-            w.copy_from_slice(&1.0f32.to_le_bytes());
-        }
-        // The ghost is never coloured by an overlay.
-        if let Some(tint) = instance.get_mut(28..44) {
-            for (slot, value) in tint
-                .as_chunks_mut::<4>()
-                .0
-                .iter_mut()
-                .zip(crate::colour_sets::WHITE)
-            {
-                slot.copy_from_slice(&value.to_le_bytes());
-            }
-        }
+        // The ghost's vertices are engine-validated world coordinates, so the bytes always
+        // build; a degenerate zero instance draws at the scene origin instead of crashing.
+        let instance = instance_bytes(
+            anchor,
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0; 3],
+            origin_mm,
+            crate::colour_sets::WHITE,
+            Some([low, high]),
+        )
+        .unwrap_or([0u8; INSTANCE_BYTES]);
         Self {
             vertex_count: (triangles.len() * 3) as u32,
             vertices: out,
@@ -119,14 +111,17 @@ impl GhostMesh {
 
 /// The instance bytes of one element: its placement translation and orientation, with the mesh's
 /// own anchor (rotated in) and the scene origin folded in, then the display tint (V17 overlay,
-/// [`crate::colour_sets::WHITE`] when nothing colours it), little-endian f32. `None` when the
-/// orientation is not a usable rotation or a coordinate is not finite.
+/// [`crate::colour_sets::WHITE`] when nothing colours it), then the element's world bounds box
+/// relative to the scene origin, little-endian f32. `None` when the orientation is not a usable
+/// rotation or a coordinate is not finite. Bounds of `None` pack a zero box, which no plane
+/// straddles, so a cut that needs them clamps nothing.
 pub fn instance_bytes(
     placement_mm: [f64; 3],
     orientation_xyzw: [f64; 4],
     anchor_mm: [f64; 3],
     origin_mm: [f64; 3],
     tint: [f32; 4],
+    bounds_mm: Option<[[f64; 3]; 2]>,
 ) -> Option<[u8; INSTANCE_BYTES]> {
     let [qx, qy, qz, qw] = orientation_xyzw;
     let norm = (((qx * qx + qy * qy) + qz * qz) + qw * qw).sqrt();
@@ -158,6 +153,15 @@ pub fn instance_bytes(
     .into_iter()
     .chain([x, y, z, w])
     .chain(tint.map(f64::from))
+    .chain([0.0])
+    .chain(
+        bounds_mm
+            .map_or([[0.0; 3], [0.0; 3]], |[low, high]| {
+                [sub(low, origin_mm), sub(high, origin_mm)]
+            })
+            .into_iter()
+            .flatten(),
+    )
     .map(|value| {
         let value = value as f32;
         value.is_finite().then_some(value)
@@ -194,6 +198,7 @@ impl SelectedDraw {
             anchor,
             origin_mm,
             crate::colour_sets::WHITE,
+            Some([entry.full.world_bounds.min, entry.full.world_bounds.max]),
         )?;
         Some(Self {
             digest: mesh.digest(),
@@ -490,6 +495,7 @@ impl Scene {
                 mesh.anchor_mm,
                 origin_mm,
                 tint,
+                Some([reference.world_bounds.min, reference.world_bounds.max]),
             )
             .ok_or(Error::Input("instance"))?;
             mesh.instances.extend_from_slice(&bytes);
@@ -632,13 +638,13 @@ mod tests {
                     .collect::<Vec<_>>()
             };
             for (instance, plain) in words(&mesh.instances)
-                .as_chunks::<12>()
+                .as_chunks::<18>()
                 .0
                 .iter()
-                .zip(words(&plain.instances).as_chunks::<12>().0)
+                .zip(words(&plain.instances).as_chunks::<18>().0)
             {
-                let [x, y, z, qx, qy, qz, qw, r, g, b, a, pad] = *instance;
-                let [px, py, pz, pqx, pqy, pqz, pqw, _, _, _, _, ppad] = *plain;
+                let [x, y, z, qx, qy, qz, qw, r, g, b, a, pad, ..] = *instance;
+                let [px, py, pz, pqx, pqy, pqz, pqw, _, _, _, _, ppad, ..] = *plain;
                 assert_eq!(
                     [x, y, z, qx, qy, qz, qw, pad],
                     [px, py, pz, pqx, pqy, pqz, pqw, ppad],
@@ -838,7 +844,8 @@ mod tests {
                 [0.0; 4],
                 [0.0; 3],
                 [0.0; 3],
-                crate::colour_sets::WHITE
+                crate::colour_sets::WHITE,
+                None
             ),
             None
         );
@@ -848,7 +855,8 @@ mod tests {
                 [0.0, 0.0, 0.0, 1.0],
                 [0.0; 3],
                 [0.0; 3],
-                crate::colour_sets::WHITE
+                crate::colour_sets::WHITE,
+                None
             ),
             None
         );
@@ -858,6 +866,7 @@ mod tests {
             [0.0; 3],
             [0.0; 3],
             crate::colour_sets::WHITE,
+            Some([[2.0, -6.0, 1.0], [12.0, -2.0, 3.0]]),
         )
         .unwrap();
         let words: Vec<f32> = identity
@@ -868,9 +877,23 @@ mod tests {
             .collect();
         assert_eq!(
             words,
-            [10.0, -4.0, 2.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0],
-            "placement, identity quaternion, the neutral tint and the pad"
+            [
+                10.0, -4.0, 2.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 2.0, -6.0, 1.0, 12.0,
+                -2.0, 3.0
+            ],
+            "placement, identity quaternion, the neutral tint, the pad and the re-centred bounds"
         );
+        // A missing bounds box packs a zero box, which no plane straddles, so a cut clamps nothing.
+        let unbounded = instance_bytes(
+            [0.0; 3],
+            [0.0, 0.0, 0.0, 1.0],
+            [0.0; 3],
+            [0.0; 3],
+            crate::colour_sets::WHITE,
+            None,
+        )
+        .unwrap();
+        assert!(unbounded[44..68].iter().all(|byte| *byte == 0));
     }
 }
 

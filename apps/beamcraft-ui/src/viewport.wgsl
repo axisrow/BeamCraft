@@ -10,7 +10,7 @@ struct Clip { count: u32, pad0: u32, pad1: u32, pad2: u32, planes: array<vec4f, 
 @group(0) @binding(1) var<uniform> clip: Clip;
 // The V17 colour overlay: a per-instance tint (rgb colour, a = 1 - transparency). White keeps
 // the pipeline's own colours, so an element no rule matches draws exactly as before.
-struct Out { @builtin(position) position: vec4f, @location(0) normal: vec3f, @location(1) world: vec3f, @location(2) tint: vec4f }
+struct Out { @builtin(position) position: vec4f, @location(0) normal: vec3f, @location(1) world: vec3f, @location(2) tint: vec4f, @location(3) cap: f32 }
 fn rotate(v: vec3f, q: vec4f) -> vec3f {
     return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
 }
@@ -20,8 +20,40 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     @location(2) t: vec3f,
     @location(3) q: vec4f,
     @location(4) tint: vec4f,
+    @location(5) bmin: vec3f,
+    @location(6) bmax: vec3f,
 ) -> Out {
-    let world = rotate(p, q) + t;
+    var world = rotate(p, q) + t;
+    // The face-on cap (issue 584 item 4): beyond a cut plane a body shows nothing when the eye
+    // looks straight along that plane's normal — its walls are edge-on and rasterize no
+    // fragments, so the crossing outline never fires, and a depth slab clips both end faces
+    // and drops the body entirely. A plane the view runs along takes the body's far geometry
+    // onto itself; the fragment paints that clamped face as the section. Oblique views keep
+    // the opened-inside presentation (issue 569 item 1). Plane normals arrive normalized.
+    // Only a body the plane cuts through may take the cap: the instance's bounds box straddles
+    // the plane. A body lying entirely beyond stays invisible, and one entirely on the kept
+    // side has no vertex beyond, so the box test alone keeps both as they were.
+    var cap = 0.0;
+    for (var i = 0u; i < clip.count; i += 1u) {
+        let plane = clip.planes[i];
+        if (abs(dot(camera.back.xyz, plane.xyz)) > 0.99) {
+            // The box's distance interval, from the per-component extremes: dotting the two
+            // corners is the exact interval only when every normal component shares a sign, and
+            // a mixed-sign normal can put both corners on one side of a plane the box truly
+            // straddles, which would silently drop a cut body's cap (review of issue 584 item 4).
+            let positive = max(plane.xyz, vec3f(0.0));
+            let negative = min(plane.xyz, vec3f(0.0));
+            let low = dot(positive, bmin) + dot(negative, bmax) + plane.w;
+            let high = dot(positive, bmax) + dot(negative, bmin) + plane.w;
+            if ((low < 0.0) != (high < 0.0)) {
+                let d = dot(plane.xyz, world) + plane.w;
+                if (d < 0.0) {
+                    world = world - d * plane.xyz;
+                    cap = 1.0;
+                }
+            }
+        }
+    }
     let v = world - camera.eye.xyz;
     let d = -dot(v, camera.back.xyz);
     let near = camera.params.z;
@@ -41,16 +73,18 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     o.normal = rotate(n, q);
     o.world = world;
     o.tint = tint;
+    o.cap = cap;
     return o;
 }
 // Discards every fragment outside all half-spaces: the cut is a display filter. The verdict
 // also marks the surface's crossing of a plane — one pixel wide in screen space — so the
-// fragment can draw the section outline there, and reports whether a cut is applied at all, so
-// the shader can take over back-face culling while one is (issue 569 item 1).
-struct CutVerdict { kept: bool, edge: bool }
+// fragment can draw the section outline there, carries the vertex stage's clamped-face mark,
+// and reports whether a cut is applied at all, so the shader can take over back-face culling
+// while one is (issue 569 item 1).
+struct CutVerdict { kept: bool, edge: bool, cap: f32 }
 const CUT_OUTLINE: vec3f = vec3f(0.0, 0.7059, 0.8471); // the app's overlay ink (BRAND)
-fn cut_verdict(world: vec3f) -> CutVerdict {
-    var verdict = CutVerdict(true, false);
+fn cut_verdict(world: vec3f, cap: f32) -> CutVerdict {
+    var verdict = CutVerdict(true, false, cap);
     // Derivatives stay in uniform control flow: the plane count is a uniform.
     for (var i = 0u; i < clip.count; i += 1u) {
         let plane = clip.planes[i];
@@ -73,12 +107,15 @@ fn overlay(base: vec3f, tint: vec3f, n: vec3f) -> vec3f {
     if (all(tint >= vec3f(0.999))) { return base; }
     return tint * mix(0.82, 1.0, clamp(n.z, 0.0, 1.0));
 }
-// The body colour of a fragment under a cut: the section outline at the plane crossing, the
-// dimmed inside on a back face (the cut opened the body there), otherwise the lit face. With
-// no cut the pipeline's own back-face cull applies, so this never sees a back face — it is
-// copied into the shader so a cut can lift the cull without a second pipeline set.
+// The body colour of a fragment under a cut: the section ink on the clamped cap face and at
+// the plane crossing, the dimmed inside on a back face (the cut opened the body there),
+// otherwise the lit face. The cap lies on the plane, so its crossing test would be float
+// noise: the vertex mark decides, not the derivative edge. With no cut the pipeline's own
+// back-face cull applies, so this never sees a back face — it is copied into the shader so a
+// cut can lift the cull without a second pipeline set.
 fn cut_shade(front: bool, verdict: CutVerdict, lit: vec3f, alpha: f32) -> vec4f {
     if (!verdict.kept || (!front && clip.count == 0u)) { discard; }
+    if (verdict.cap > 0.5) { return vec4f(CUT_OUTLINE, alpha); }
     if (verdict.edge) { return vec4f(CUT_OUTLINE, alpha); }
     return vec4f(select(lit, lit * 0.55, !front), alpha);
 }
@@ -86,7 +123,7 @@ fn cut_shade(front: bool, verdict: CutVerdict, lit: vec3f, alpha: f32) -> vec4f 
 // overlay tint replaces the base colour (also in wireframe, which shares this fragment); a
 // white tint leaves the face untouched.
 @fragment fn shade(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
-    let verdict = cut_verdict(o.world);
+    let verdict = cut_verdict(o.world, o.cap);
     let n = normalize(o.normal);
     let base = view_colour(mix(vec3f(0.38, 0.51, 0.59), vec3f(0.74, 0.80, 0.84), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
@@ -95,14 +132,14 @@ fn cut_shade(front: bool, verdict: CutVerdict, lit: vec3f, alpha: f32) -> vec4f 
 // The ghost preview of the member being placed: the same lighting on a distinct amber, so the
 // not-yet-committed shape never reads as a model element.
 @fragment fn shade_ghost(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
-    let verdict = cut_verdict(o.world);
+    let verdict = cut_verdict(o.world, o.cap);
     let n = normalize(o.normal);
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return cut_shade(front, verdict, vec3f(0.85, 0.55, 0.1) * light, 1.0);
 }
 // The grey mode: the same lighting on one neutral grey, without the part colours.
 @fragment fn shade_grey(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
-    let verdict = cut_verdict(o.world);
+    let verdict = cut_verdict(o.world, o.cap);
     let n = normalize(o.normal);
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
     return cut_shade(front, verdict, view_colour(vec3f(0.62, 0.62, 0.62)) * light, 1.0);
@@ -111,7 +148,7 @@ fn cut_shade(front: bool, verdict: CutVerdict, lit: vec3f, alpha: f32) -> vec4f 
 // depth testing but not depth writing, so hidden faces show through. The overlay tint carries
 // its own transparency on top of the mode's base opacity.
 @fragment fn shade_transparent(o: Out, @builtin(front_facing) front: bool) -> @location(0) vec4f {
-    let verdict = cut_verdict(o.world);
+    let verdict = cut_verdict(o.world, o.cap);
     let n = normalize(o.normal);
     let base = view_colour(mix(vec3f(0.47, 0.71, 0.77), vec3f(0.96, 0.94, 0.88), clamp(n.z, 0.0, 1.0)));
     let light = 0.55 + 0.45 * max(dot(n, normalize(vec3f(0.3, -0.4, 0.85))), 0.0);
