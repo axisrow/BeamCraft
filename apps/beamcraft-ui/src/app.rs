@@ -1236,6 +1236,10 @@ impl App {
             // The snapshot on screen again: nothing to build, upload or draw, unless the
             // viewport changed since it was framed.
             Ok(None) => {
+                // An unchanged store delivers no scene, so R and Reload would keep the stale
+                // book: the file's own views-only edits are adopted here too (issue 584
+                // item 5), as the changed-scene delivery already does below.
+                self.adopt_views_file();
                 self.apply_grids(grids);
                 if let Some((target, extent)) =
                     self.loaded.as_ref().map(|l| self.grid_framing(&l.full))
