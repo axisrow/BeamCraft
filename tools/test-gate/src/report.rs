@@ -38,7 +38,10 @@ impl Os {
     pub const fn runner(self) -> &'static str {
         match self {
             Self::Linux => "ubuntu-latest",
-            Self::Macos => "macos-latest",
+            // macos-latest (macOS 26) leaves this repository's jobs in the acquire queue
+            // until they are cancelled; macos-15 is the proven neighbouring pool
+            // (macos-icon-acceptance.yml since PR 517, owner override of 2026-11-12).
+            Self::Macos => "macos-15",
             Self::Windows => "windows-latest",
         }
     }

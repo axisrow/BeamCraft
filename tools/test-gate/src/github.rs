@@ -175,7 +175,7 @@ pub fn select(report: &Report) -> Result<Plan> {
 
 /// Aggregates every required lane, rejecting failures, missing jobs and unexpected skips.
 pub fn verdict(needs: &Value, oses: &[String], event: &str) -> Result<()> {
-    let valid = ["ubuntu-latest", "macos-latest", "windows-latest"];
+    let valid = ["ubuntu-latest", "macos-15", "windows-latest"];
     if oses.len() != 2
         || oses.first() == oses.get(1)
         || oses.iter().any(|s| !valid.contains(&s.as_str()))

@@ -117,7 +117,7 @@ fn pr_event_requires_current_head_base_source_tree_and_eligible_scope() {
     let (status, out, err) = plan(&r, "pull_request", payload.clone());
     assert_eq!(status.exit_code, 0, "{err}");
     let selected: github::Plan = serde_json::from_str(&out).unwrap();
-    assert_eq!(selected.oses, vec!["macos-latest", "windows-latest"]);
+    assert_eq!(selected.oses, vec!["macos-15", "windows-latest"]);
     let mut stale = payload.clone();
     stale["pull_request"]["base"]["sha"] = report.commit.clone().into();
     assert_ne!(plan(&r, "pull_request", stale).0.exit_code, 0);
@@ -226,7 +226,7 @@ fn a_receipt_published_after_the_push_is_found_within_the_grace_window() {
     };
     let selected =
         plan_with_grace(&r, payload, Duration::from_secs(1), &mut fetch).expect("grace receipt");
-    assert_eq!(selected.oses, vec!["macos-latest", "windows-latest"]);
+    assert_eq!(selected.oses, vec!["macos-15", "windows-latest"]);
     assert_eq!(calls, 2);
 }
 
@@ -273,5 +273,5 @@ fn a_current_payload_receipt_never_reaches_the_live_poll() {
         panic!("the fast path must not consult the API")
     };
     let selected = plan_with_grace(&r, payload, Duration::from_secs(30), &mut fetch).unwrap();
-    assert_eq!(selected.oses, vec!["macos-latest", "windows-latest"]);
+    assert_eq!(selected.oses, vec!["macos-15", "windows-latest"]);
 }
