@@ -458,7 +458,8 @@ fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() 
         ("IFCPLATE", 1),
         ("IFCBEAM", 1),
         ("IFCCOLUMN", 1),
-        ("IFCBUILDINGELEMENTPROXY", 2),
+        ("IFCELEMENTASSEMBLY", 1),
+        ("IFCBUILDINGELEMENTPROXY", 1),
         ("IFCTRIANGULATEDFACESET", 3),
         ("IFCMATERIAL", 1),
         ("IFCRELASSOCIATESMATERIAL", 1),
@@ -485,7 +486,11 @@ fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() 
         5
     );
     assert_eq!(at(&report, &["counts", "exported"]).unsigned().unwrap(), 5);
-    assert_eq!(at(&report, &["counts", "proxies"]).unsigned().unwrap(), 2);
+    assert_eq!(at(&report, &["counts", "proxies"]).unsigned().unwrap(), 1);
+    assert_eq!(
+        text(row(&report, &s.assembly), "entity"),
+        "IfcElementAssembly"
+    );
 
     // GlobalIds are the deterministic encoding of the ids, in the file and in the report.
     for id in [&s.plate, &s.beam, &s.column, &s.assembly, &s.weld] {
@@ -555,6 +560,35 @@ fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() 
         .unwrap();
     assert_eq!(in_storey.args[4], Value::List(vec![Value::Ref(plate.id)]));
     assert_eq!(storey.args[9], Value::Real(3000.0));
+    // The beam is a part of the assembly A1: it aggregates under it (with the parts in element
+    // order) and is not also contained in the building; the assembly itself is contained.
+    let assembly_product = file.all("IFCELEMENTASSEMBLY")[0];
+    assert_eq!(str_arg(&file, assembly_product.args.get(2)), "A1");
+    assert_eq!(assembly_product.args[8], Value::Enum("RIGID_FRAME".into()));
+    let beam_product = file.all("IFCBEAM")[0];
+    let column_product = file.all("IFCCOLUMN")[0];
+    let weld_product = file.all("IFCBUILDINGELEMENTPROXY")[0];
+    let in_building = contained
+        .iter()
+        .find(|c| c.args[5] != Value::Ref(storey.id))
+        .unwrap();
+    assert_eq!(
+        in_building.args[4],
+        Value::List(vec![
+            Value::Ref(column_product.id),
+            Value::Ref(assembly_product.id),
+            Value::Ref(weld_product.id),
+        ])
+    );
+    let aggregates = file.all("IFCRELAGGREGATES");
+    let element_aggregate = aggregates
+        .iter()
+        .find(|a| a.args[5] == Value::Ref(assembly_product.id))
+        .unwrap();
+    assert_eq!(
+        element_aggregate.args[4],
+        Value::List(vec![Value::Ref(beam_product.id)])
+    );
 
     // Quantities: plate volume in the base quantity set, mass as properties; hole count; the
     // beam's declared section values; the assembly id of the beam.
@@ -590,6 +624,139 @@ fn a_scene_exports_to_a_structurally_valid_file_with_the_volumes_of_the_store() 
     );
     let material = file.all("IFCMATERIAL")[0];
     assert_eq!(str_arg(&file, material.args.first()), "S355");
+}
+
+#[test]
+fn an_assembly_of_parts_is_exported_as_one_ifcelementassembly_aggregating_them() {
+    // Issue 559 finding 3: the base joint's parts went out as a flat list with only an
+    // AssemblyId property. The assembly element now maps to IfcElementAssembly and its parts
+    // aggregate under it instead of hanging in the spatial structure beside it.
+    let f = Fixture::new();
+    let profile = text(
+        at(
+            &f.ok(
+                "define-profile",
+                &[
+                    "--project-id",
+                    PROJECT,
+                    "--width",
+                    "200",
+                    "--height",
+                    "200",
+                    "--name",
+                    "RECT 200x200",
+                ],
+            ),
+            &["definition"],
+        ),
+        "digest",
+    );
+    let plate = text(
+        at(
+            &f.ok(
+                "create-plate",
+                &[
+                    "--project-id",
+                    PROJECT,
+                    "--width",
+                    "460",
+                    "--length",
+                    "460",
+                    "--thickness",
+                    "20",
+                    "--name",
+                    "BASE-PLATE",
+                ],
+            ),
+            &["plate"],
+        ),
+        "element_id",
+    );
+    let column = text(
+        at(
+            &f.ok(
+                "create-member",
+                &[
+                    "--project-id",
+                    PROJECT,
+                    "--profile-digest",
+                    &profile,
+                    "--kind",
+                    "column",
+                    "--start",
+                    "0,0,20",
+                    "--end",
+                    "0,0,1820",
+                    "--name",
+                    "COLUMN",
+                ],
+            ),
+            &["member"],
+        ),
+        "element_id",
+    );
+    let assembly = text(
+        f.ok(
+            "create-assembly",
+            &["--project-id", PROJECT, "--name", "BASE-JOINT"],
+        )
+        .as_ref(),
+        "element_id",
+    );
+    for part in [&plate, &column] {
+        f.ok(
+            "attach-to-assembly",
+            &["--id", part, "--assembly-id", &assembly],
+        );
+    }
+    let report = f.export(&f.path("joint.ifc"), &[]);
+    assert_eq!(text(&report, "outcome"), "exported");
+    assert_eq!(
+        text(row(&report, &assembly), "entity"),
+        "IfcElementAssembly"
+    );
+    assert!(
+        !findings(&report)
+            .iter()
+            .any(|(code, _, _)| code == "IFC_KIND_PROXY"),
+        "the assembly kind has a mapping and is not a proxy"
+    );
+    let file = f.parsed("joint.ifc");
+    file.check().unwrap();
+    let assembly_product = file.all("IFCELEMENTASSEMBLY")[0];
+    assert_eq!(str_arg(&file, assembly_product.args.get(2)), "BASE-JOINT");
+    assert_eq!(assembly_product.args[8], Value::Enum("RIGID_FRAME".into()));
+    let plate_product = file.all("IFCPLATE")[0];
+    let column_product = file.all("IFCCOLUMN")[0];
+    // The parts aggregate under the assembly, in element order, and nothing else hangs beside
+    // it: the one spatial-containment record carries the assembly alone.
+    let aggregate = file
+        .all("IFCRELAGGREGATES")
+        .into_iter()
+        .find(|a| a.args[5] == Value::Ref(assembly_product.id))
+        .unwrap();
+    assert_eq!(
+        aggregate.args[4],
+        Value::List(vec![
+            Value::Ref(plate_product.id),
+            Value::Ref(column_product.id),
+        ])
+    );
+    let contained = file.all("IFCRELCONTAINEDINSPATIALSTRUCTURE");
+    assert_eq!(contained.len(), 1);
+    assert_eq!(
+        contained[0].args[4],
+        Value::List(vec![Value::Ref(assembly_product.id)])
+    );
+    // The AssemblyId property stays on the parts.
+    assert_eq!(
+        property_values(&file, plate_product)["AssemblyId"],
+        Value::Str(assembly.clone())
+    );
+    assert_eq!(
+        property_values(&file, column_product)["AssemblyId"],
+        Value::Str(assembly.clone())
+    );
 }
 
 #[test]
@@ -844,6 +1011,7 @@ fn a_deactivated_element_is_not_exported_and_is_listed() {
         "IFCPLATE",
         "IFCBEAM",
         "IFCCOLUMN",
+        "IFCELEMENTASSEMBLY",
         "IFCBUILDINGELEMENTPROXY",
     ]
     .iter()
@@ -883,9 +1051,10 @@ fn a_reference_wrapper_is_a_proxy_with_its_pose_and_no_representation() {
     );
     let report = f.export(&f.path("a.ifc"), &[]);
     let codes: Vec<String> = findings(&report).into_iter().map(|(c, _, _)| c).collect();
+    // The weld and the reference are proxies; the assembly has the IfcElementAssembly mapping.
     assert_eq!(
         codes.iter().filter(|c| *c == "IFC_KIND_PROXY").count(),
-        3,
+        2,
         "{codes:?}"
     );
     assert!(!codes.contains(&"IFC_PLACEMENT_ABSENT".to_owned()));
@@ -909,8 +1078,8 @@ fn a_reference_wrapper_is_a_proxy_with_its_pose_and_no_representation() {
 #[test]
 fn strict_mode_does_not_refuse_proxies_omitted_quantities_or_truncated_names() {
     let f = Fixture::new();
-    // No density: a mass is omitted for every member; the long label is cut; assembly and weld
-    // are proxies. None of these carries an F04 code, so none is fatal.
+    // No density: a mass is omitted for every member; the long label is cut; the weld is a
+    // proxy. None of these carries an F04 code, so none is fatal.
     f.scene();
     f.ok(
         "update-element",

@@ -53,6 +53,8 @@ pub enum Entity {
     Column,
     /// `IfcPlate`, predefined type `.NOTDEFINED.`.
     Plate,
+    /// `IfcElementAssembly`, predefined type `.RIGID_FRAME.`; its parts aggregate under it.
+    Assembly,
     /// `IfcBuildingElementProxy`, predefined type `.NOTDEFINED.`.
     Proxy,
 }
@@ -64,6 +66,7 @@ impl Entity {
             Self::Beam => "IFCBEAM",
             Self::Column => "IFCCOLUMN",
             Self::Plate => "IFCPLATE",
+            Self::Assembly => "IFCELEMENTASSEMBLY",
             Self::Proxy => "IFCBUILDINGELEMENTPROXY",
         }
     }
@@ -74,6 +77,7 @@ impl Entity {
             Self::Beam => "IfcBeam",
             Self::Column => "IfcColumn",
             Self::Plate => "IfcPlate",
+            Self::Assembly => "IfcElementAssembly",
             Self::Proxy => "IfcBuildingElementProxy",
         }
     }
@@ -83,6 +87,7 @@ impl Entity {
         match self {
             Self::Beam => ".BEAM.",
             Self::Column => ".COLUMN.",
+            Self::Assembly => ".RIGID_FRAME.",
             Self::Plate | Self::Proxy => ".NOTDEFINED.",
         }
     }
@@ -92,7 +97,7 @@ impl Entity {
             Self::Beam => Some("Qto_BeamBaseQuantities"),
             Self::Column => Some("Qto_ColumnBaseQuantities"),
             Self::Plate => Some("Qto_PlateBaseQuantities"),
-            Self::Proxy => None,
+            Self::Assembly | Self::Proxy => None,
         }
     }
 
