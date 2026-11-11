@@ -3,6 +3,10 @@
 Status: **draft 0.1.0.** Implemented by `export-ifc` and `ifc-guid`; it is frozen once the checks of
 section 19 pass.
 
+Amendment of 2026-11-11 (fork issue 559): an element of kind `assembly` maps to `IfcElementAssembly`
+(`.RIGID_FRAME.`) and its parts aggregate under it with `IfcRelAggregates`, replacing the proxy
+mapping for that kind; the `AssemblyId` property stays (section 2.2, 5.1, 12).
+
 This contract fixes **what BeamCraft writes to an IFC file, how an element becomes an IFC entity,
 how its 22-character GlobalId is derived, what is lost, and how the writer is built and driven.**
 The examples are acceptance descriptions, not APIs or saved files.
@@ -88,9 +92,10 @@ object model. The spec column cites section 18.
 | E-01 | `IfcProject` | One per file; units and representation context | S10 |
 | E-02 | `IfcSite`, `IfcBuilding` | One synthetic site and one synthetic building above the stored levels | S11, S12 |
 | E-03 | `IfcBuildingStorey` | One per stored Level | S13 |
-| E-04 | `IfcRelAggregates` | Project to site, site to building, building to storeys | S14 |
-| E-05 | `IfcRelContainedInSpatialStructure` | Elements in their storey, or in the building when they have no level | S15 |
+| E-04 | `IfcRelAggregates` | Project to site, site to building, building to storeys; assembly to its parts | S14 |
+| E-05 | `IfcRelContainedInSpatialStructure` | Elements with no assembly in their storey, or in the building when they have no level | S15 |
 | E-06 | `IfcBeam`, `IfcColumn`, `IfcPlate` | One per element of kind `beam`, `column`, `plate` | S16, S17, S18 |
+| E-06a | `IfcElementAssembly` | One per element of kind `assembly`; its parts aggregate under it | S16 |
 | E-07 | `IfcBuildingElementProxy` | One per element of any other kind | S19 |
 | E-08 | `IfcLocalPlacement`, `IfcAxis2Placement3D`, `IfcCartesianPoint`, `IfcDirection` | Placement | S20 to S22, S23 |
 | E-09 | `IfcProductDefinitionShape`, `IfcShapeRepresentation` | The body representation | S24, S25 |
@@ -103,18 +108,18 @@ object model. The spec column cites section 18.
 | E-16 | Types `IfcGloballyUniqueId`, `IfcLabel`, `IfcIdentifier`, `IfcText`, `IfcMassMeasure` | Attribute and property value types | S03 to S07 |
 
 Predefined types (IFC4 enumerations, S45 to S48): `IfcBeam` gets `.BEAM.`, `IfcColumn` gets
-`.COLUMN.`, `IfcPlate` and `IfcBuildingElementProxy` get `.NOTDEFINED.`. (The IFC4 plate
-enumeration is curtain panel, sheet, user defined and not defined; BeamCraft has no purpose
-attribute, so it claims none.) `IfcRoot.OwnerHistory` is written as unset (`$`); whether the
-validation tool requires it is checked at acceptance.
+`.COLUMN.`, `IfcElementAssembly` gets `.RIGID_FRAME.`, `IfcPlate` and `IfcBuildingElementProxy` get
+`.NOTDEFINED.`. (The IFC4 plate enumeration is curtain panel, sheet, user defined and not defined;
+BeamCraft has no purpose attribute, so it claims none.) `IfcRoot.OwnerHistory` is written as unset
+(`$`); whether the validation tool requires it is checked at acceptance.
 
 ### 2.3 Not in the subset
 
 `IfcExtrudedAreaSolid`, profile definitions, boolean results, `IfcOpeningElement` and
 `IfcRelVoidsElement`, `IfcPolygonalFaceSet`, brep items, `IfcBeamType`, `IfcColumnType`,
 `IfcPlateType`, `IfcMaterialProfileSet` and usage entities, styles and colours, grids,
-classification references, `IfcOwnerHistory`, groups, assemblies and connections, annotations and
-any analysis entity.
+classification references, `IfcOwnerHistory`, groups, connections, annotations and any analysis
+entity.
 
 ## 3. Identity and the GlobalId
 
@@ -331,6 +336,12 @@ characters, `Name` is truncated to 255 and the full text is in `Description` (`I
 with no level is contained in the building (`IFCX-LVL-003`); a project with no level has no storey. A storey with no exported element is still written, without a containment relationship (`IFCX-EMIT-001`, 11.2).
 An element assigned to a LevelId that the revision does not carry refuses the export
 (`IFCX-LVL-002`).
+
+An element of kind `assembly` is contained like any element, and its parts aggregate under it: each element whose `part-of` record names an assembly is written
+as one `RelatedObject` of an `IfcRelAggregates` of that assembly, in element order, and is not also contained in the spatial structure — in IFC decomposition
+replaces spatial containment. The `AssemblyId` property of section 9.1 stays on the parts. A `part-of` record that names an element that is not an exported
+`IfcElementAssembly` (no such element, or an unmapped kind) refuses the export (`IFCX-SCOPE-001`, `INTEGRITY_ERROR`). Nested assemblies aggregate the same way,
+one level per record.
 
 ### 5.2 Element placement
 
@@ -693,7 +704,7 @@ is listed in the report when it applies to an element and is stated here once.
 | L-06 | Quantities that are not current are absent (stale, missing, unknown). Quantities that no record publishes are absent (section 8.2). Declared section values are exported as declared properties and are not quantities. |
 | L-07 | A profile is reduced to its digest and its declared values. There is no `IfcBeamType`, no material profile set, no catalogue reference. |
 | L-08 | Authorship (`bim:createdBy`), per-element revision, workspace and draft state, the journal, undo and redo history and every time are not exported. |
-| L-09 | Relationships between elements (F10 section 5) are not exported; none exist in the first slice. |
+| L-09 | Relationships between elements (F10 section 5) are not exported except the assembly membership: an assembly is written as an `IfcElementAssembly` and its parts aggregate under it (section 5.1). Every other relationship — welds, connections, marks — stays in the store (`IFCX-SCOPE-001`). |
 | L-10 | Display appearance and colours are not exported. |
 | L-11 | A text longer than 255 characters in an `IfcLabel` attribute (element, storey, project or material name, object type) is truncated to 255 code points; the full text is in `Label`, `FullName` or `Description` (`IFCX-PSET-004`). |
 | L-12 | The site and the building are synthetic. The export records no grids (the [grid contract draft](t01-project-grids-draft-v0.1.md) keeps them in the model, skipped by the exporter), no site data and no building data. |
