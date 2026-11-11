@@ -79,11 +79,13 @@ fn narrow(v: [f64; 3]) -> [f32; 3] {
 /// line's start (world-up local Y, origin on the ground plane); a view opened for the first
 /// time on such a plane is cast to the scene centre (issue 569 item 14). A view saved with
 /// its own target — an orbit plane, or any user-drawn anchor — is kept (issue 584 item 1).
-fn derived_anchor(frame: &WorkPlane) -> bool {
-    let [ox, oy, oz] = frame.origin();
+/// The stored plane decides, not the rotated camera frame: a camera rotation the user added
+/// on top of a derived anchor does not give the anchor framing meaning.
+fn derived_anchor(plane: &WorkPlane) -> bool {
+    let [ox, oy, oz] = plane.origin();
     let zero = |v: f64| v == 0.0;
     let axis_anchored = (zero(ox) && zero(oy)) || (zero(oy) && zero(oz)) || (zero(ox) && zero(oz));
-    let [yx, yy, yz] = frame.y();
+    let [yx, yy, yz] = plane.y();
     let line_start = zero(oz) && yx.abs() <= 1e-9 && yy.abs() <= 1e-9 && (yz - 1.0).abs() <= 1e-9;
     axis_anchored || line_start
 }
@@ -138,7 +140,7 @@ impl Camera {
             + (origin[1] - py) * normal[1]
             + (origin[2] - pz) * normal[2];
         let cast = narrow([-normal[0] * d, -normal[1] * d, -normal[2] * d]);
-        if derived_anchor(&frame) && cast.iter().all(|x| x.is_finite() && x.abs() <= 1e7) {
+        if derived_anchor(&view.plane) && cast.iter().all(|x| x.is_finite() && x.abs() <= 1e7) {
             camera.target = cast;
         }
         Ok(camera)
@@ -549,6 +551,16 @@ mod tests {
             c.target.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-2),
             "{:?}",
             c.target
+        );
+        // A camera rotation stored on top of the derived anchor changes neither the anchor nor
+        // the cast: the stored plane decides, so the scene centre still projects to the middle.
+        let mut turned = ModelView::new(id, "Along 1 turned", plane, 21390.0);
+        turned.rotation_rad = [0.3, 0.2];
+        let c = Camera::from_view(&turned, [106_000.0, 52_500.0, 2000.0], 500.0).unwrap();
+        let centre = c.view(1.0).unwrap().project([0.0; 3]);
+        assert!(
+            centre[0].abs() < 1e-4 && centre[1].abs() < 1e-4,
+            "{centre:?}"
         );
     }
     #[test]
