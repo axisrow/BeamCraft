@@ -20,6 +20,8 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     @location(2) t: vec3f,
     @location(3) q: vec4f,
     @location(4) tint: vec4f,
+    @location(5) bmin: vec3f,
+    @location(6) bmax: vec3f,
 ) -> Out {
     var world = rotate(p, q) + t;
     // The face-on cap (issue 584 item 4): beyond a cut plane a body shows nothing when the eye
@@ -28,14 +30,21 @@ fn rotate(v: vec3f, q: vec4f) -> vec3f {
     // and drops the body entirely. A plane the view runs along takes the body's far geometry
     // onto itself; the fragment paints that clamped face as the section. Oblique views keep
     // the opened-inside presentation (issue 569 item 1). Plane normals arrive normalized.
+    // Only a body the plane cuts through may take the cap: the instance's bounds box straddles
+    // the plane. A body lying entirely beyond stays invisible, and one entirely on the kept
+    // side has no vertex beyond, so the box test alone keeps both as they were.
     var cap = 0.0;
     for (var i = 0u; i < clip.count; i += 1u) {
         let plane = clip.planes[i];
         if (abs(dot(camera.back.xyz, plane.xyz)) > 0.99) {
-            let d = dot(plane.xyz, world) + plane.w;
-            if (d < 0.0) {
-                world = world - d * plane.xyz;
-                cap = 1.0;
+            let low = dot(plane.xyz, bmin) + plane.w;
+            let high = dot(plane.xyz, bmax) + plane.w;
+            if ((low < 0.0) != (high < 0.0)) {
+                let d = dot(plane.xyz, world) + plane.w;
+                if (d < 0.0) {
+                    world = world - d * plane.xyz;
+                    cap = 1.0;
+                }
             }
         }
     }

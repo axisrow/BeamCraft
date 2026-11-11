@@ -409,7 +409,36 @@ fn pipeline(
         source: wgpu::ShaderSource::Wgsl(include_str!("viewport.wgsl").into()),
     });
     let attributes = wgpu::vertex_attr_array![0=>Float32x3,1=>Float32x3];
-    let instance_attributes = wgpu::vertex_attr_array![2=>Float32x3,3=>Float32x4,4=>Float32x4];
+    // The instance stride carries the pad word after the tint, so the bounds box the face-on
+    // cut reads (issue 584 item 4) starts after it, at 48: the auto-accumulating macro would
+    // pack the attributes tight and read the pad as part of the box.
+    let instance_attributes = [
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 2,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 12,
+            shader_location: 3,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x4,
+            offset: 28,
+            shader_location: 4,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 48,
+            shader_location: 5,
+        },
+        wgpu::VertexAttribute {
+            format: wgpu::VertexFormat::Float32x3,
+            offset: 60,
+            shader_location: 6,
+        },
+    ];
     let vertex_layout = || {
         Some(wgpu::VertexBufferLayout {
             array_stride: 24,

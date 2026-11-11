@@ -432,10 +432,19 @@ fn an_attached_reference_is_uploaded_and_renders_visible_pixels() {
     assert_eq!(scene.max, [1000.0; 3]);
     assert_eq!(scene.meshes[0].vertex_count, 36);
     // Placement relative to the scene origin is zero, the orientation is the identity and no
-    // overlay colours a reference: the neutral tint.
-    let identity_instance =
-        instance_bytes([0.0; 3], [0.0, 0.0, 0.0, 1.0], [0.0; 3], [0.0; 3], WHITE).unwrap();
-    assert_eq!(scene.meshes[0].instances, identity_instance);
+    // overlay colours a reference: the neutral tint. The instance also carries the element's
+    // bounds box for the face-on cut (issue 584 item 4); those words belong to the element, not
+    // the placement, so the placement words compare on their own.
+    let identity_instance = instance_bytes(
+        [0.0; 3],
+        [0.0, 0.0, 0.0, 1.0],
+        [0.0; 3],
+        [0.0; 3],
+        WHITE,
+        None,
+    )
+    .unwrap();
+    assert_eq!(scene.meshes[0].instances[..48], identity_instance[..48]);
     assert_eq!(
         Scene::from_snapshot(&snapshot, Representation::Simplified).unwrap(),
         scene,
@@ -1152,7 +1161,9 @@ fn a_face_on_depth_slab_shows_the_cut_body_as_a_section() {
     let view = camera.view(1.0).unwrap();
     let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
     let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
-    let picture = |clip: &ClipGpu| {
+    // Tight rows: the readback pads each row to 256 bytes, and the pad words would otherwise
+    // count as drawn pixels.
+    let tight = |clip: &ClipGpu| {
         let index = renderer.draw(
             &gpu.device,
             &gpu.queue,
@@ -1163,14 +1174,22 @@ fn a_face_on_depth_slab_shows_the_cut_body_as_a_section() {
             clip,
         );
         wait(&gpu.device, index).unwrap();
-        renderer.readback(&gpu.device, &gpu.queue).unwrap().0
+        let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        let stride = row as usize;
+        let mut out = Vec::with_capacity(96 * 96 * 4);
+        for y in 0..96 {
+            let start = y * stride;
+            out.extend_from_slice(&pixels[start..start + 96 * 4]);
+        }
+        out
     };
-    // The slab clips the plate's 0 and 20 end faces away: [5, 15] keeps only wall material.
+    // The 6 mm plate spans z 0..6; the slab [2, 4] clips both end faces away and keeps only
+    // wall material.
     let bounds = scene.summary();
     let slab = Clipping {
         planes: vec![
-            ClipPlane::new([0.0, 0.0, bounds.origin_mm[2] + 15.0], [0.0, 0.0, -1.0]).unwrap(),
-            ClipPlane::new([0.0, 0.0, bounds.origin_mm[2] + 5.0], [0.0, 0.0, 1.0]).unwrap(),
+            ClipPlane::new([0.0, 0.0, bounds.origin_mm[2] + 1.0], [0.0, 0.0, -1.0]).unwrap(),
+            ClipPlane::new([0.0, 0.0, bounds.origin_mm[2] - 1.0], [0.0, 0.0, 1.0]).unwrap(),
         ],
         area: None,
     };
@@ -1186,10 +1205,10 @@ fn a_face_on_depth_slab_shows_the_cut_body_as_a_section() {
             .filter(|p| cap_ink(p))
             .count()
     };
-    let drawn = ink(&picture(&ClipGpu::of(&slab, bounds.origin_mm)));
+    let drawn = ink(&tight(&ClipGpu::of(&slab, bounds.origin_mm)));
     // The control: the same straight-through view without a cut draws the body, whose face-on
     // silhouette is the section's own footprint.
-    let uncut = picture(&ClipGpu::none());
+    let uncut = tight(&ClipGpu::none());
     let whole = uncut
         .as_chunks::<4>()
         .0
@@ -1198,12 +1217,87 @@ fn a_face_on_depth_slab_shows_the_cut_body_as_a_section() {
         .count();
     assert!(whole > 0, "the uncut body draws face-on");
     // Before the cap the straight-through slab picture kept only sliver fragments and crossing
-    // specks, under a fifth of the silhouette's area in ink; the cap fills about a third of it
-    // at this scale, the rest being MSAA-blended edges. Resolution moves both counts together,
-    // so the test pins the filled section, not a pixel threshold.
+    // specks, under a fifth of the silhouette's area in ink; the cap fills most of it, the rest
+    // being MSAA-blended edges. Resolution moves both counts together, so the test pins the
+    // filled section, not a pixel threshold.
     assert!(
         drawn > 10 && drawn * 5 > whole,
         "a face-on slab draws the body's filled section: {drawn} ink pixels against {whole} body pixels"
+    );
+}
+
+/// The review bound on the face-on cap (issue 584 item 4): a body lying entirely beyond the
+/// face-on plane must stay invisible — the cut hides it, and clamping its geometry onto the
+/// plane would paint it as a filled section it has no right to. Only a body the plane cuts
+/// through takes the cap, which the straddling control keeps proving.
+#[test]
+fn a_body_entirely_beyond_a_face_on_plane_stays_invisible() {
+    let pin = ViewPin::new(Sha256::digest(b"cut-beyond-face-on").unwrap(), 1);
+    let snapshot =
+        ViewSnapshot::build(pin, plate_scene(1, false).unwrap(), &Limits::default()).unwrap();
+    let scene = Scene::from_snapshot(&snapshot, Representation::Full).unwrap();
+    let gpu = gpu();
+    let stats = Stats::default();
+    let (target, extent) = scene.framing();
+    let mut camera = Camera::new(target, extent, 1.0).unwrap();
+    // Straight top view, orthographic, along the cut planes' normals.
+    camera
+        .navigate(
+            [0.0 - -0.8, std::f32::consts::FRAC_PI_2 - 0.85],
+            [0.0, 0.0],
+            0.0,
+        )
+        .unwrap();
+    camera.set_projection(true);
+    let view = camera.view(1.0).unwrap();
+    let uploaded = Uploaded::new(&gpu.device, &gpu.queue, &scene, &stats).unwrap();
+    let renderer = Renderer::new(&gpu.adapter, &gpu.device, 96, 96, &stats).unwrap();
+    // Tight rows: the readback pads each row to 256 bytes, and the pad words would otherwise
+    // count as drawn pixels.
+    let body = |clip: &ClipGpu| {
+        let index = renderer.draw(
+            &gpu.device,
+            &gpu.queue,
+            &uploaded,
+            view,
+            &stats,
+            RenderMode::Shaded,
+            clip,
+        );
+        wait(&gpu.device, index).unwrap();
+        let (pixels, row) = renderer.readback(&gpu.device, &gpu.queue).unwrap();
+        let stride = row as usize;
+        let mut count = 0usize;
+        for y in 0..96 {
+            let start = y * stride;
+            count += pixels[start..start + 96 * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .filter(|p| !is_background(**p))
+                .count();
+        }
+        count
+    };
+    let bounds = scene.summary();
+    // The 0..6 plate lies entirely beyond a cut that keeps z ≤ -10: nothing may draw.
+    let below = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, -10.0], [0.0, 0.0, -1.0]).unwrap()],
+        area: None,
+    };
+    assert_eq!(
+        body(&ClipGpu::of(&below, bounds.origin_mm)),
+        0,
+        "a body entirely beyond the face-on plane stays invisible"
+    );
+    // The control: a cut through the body keeps its section cap.
+    let through = Clipping {
+        planes: vec![ClipPlane::new([0.0, 0.0, 3.0], [0.0, 0.0, -1.0]).unwrap()],
+        area: None,
+    };
+    assert!(
+        body(&ClipGpu::of(&through, bounds.origin_mm)) > 0,
+        "the cut-through body keeps its section"
     );
 }
 
